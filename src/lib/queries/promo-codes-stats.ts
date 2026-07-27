@@ -1,7 +1,7 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
@@ -58,7 +58,7 @@ export type PromoCodesMoneyStats = {
 
 const cachedPromoCodesMoneyStats = unstable_cache(
   async (blacklistKey: string): Promise<PromoCodesMoneyStats> => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const blacklistIds = blacklistKey ? blacklistKey.split(",") : [];
     const blacklistFilter =
       blacklistIds.length > 0

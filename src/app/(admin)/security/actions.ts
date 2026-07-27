@@ -4,7 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { eq } from "drizzle-orm";
 
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { site_config } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -16,7 +16,7 @@ export async function upsertSiteConfig(
   value: string,
   description: string | null
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_upsert_site_config", "update site config");
 
@@ -44,7 +44,7 @@ export async function upsertSiteConfig(
 }
 
 export async function deleteSiteConfig(key: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_site_config", "delete site config");
 

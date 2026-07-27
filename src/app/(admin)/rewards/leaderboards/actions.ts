@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
   race_claim_holds,
   race_claims,
@@ -31,7 +31,7 @@ export async function upsertRacePrizeTier(
   position: number,
   prizeAmountUsd: number,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   if (!VALID_RACE_TYPES.has(raceType)) {
@@ -114,7 +114,7 @@ export async function upsertRacePrizeTiersBulk(
   raceType: string,
   rows: { position: number; prizeAmountUsd: number }[],
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   if (!VALID_RACE_TYPES.has(raceType)) {
@@ -228,7 +228,7 @@ export async function upsertRacePrizeTiersBulk(
  * podium. Deletion is hard; no soft-delete column on the table.
  */
 export async function deleteRacePrizeTier(id: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const [existing] = await db
@@ -298,7 +298,7 @@ export async function startRacePeriod(params: {
   monthlyStartDate?: string;
   monthlyEndDate?: string;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const { raceType, autoRenew, monthlyStartDate, monthlyEndDate } = params;
@@ -397,7 +397,7 @@ export async function startRacePeriod(params: {
  * until an admin starts a new one.
  */
 export async function toggleRacePeriodAutoRenew(periodId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -448,7 +448,7 @@ export async function toggleRacePeriodAutoRenew(periodId: string) {
  * is treated as an admin pause; the next period starts when admin says so.
  */
 export async function endRacePeriodNow(periodId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -550,7 +550,7 @@ export async function setRacePeriodClaimsFrozen(
   periodId: string,
   frozen: boolean,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   await requireCapability(
@@ -644,7 +644,7 @@ export async function freezeUserRaceClaim(params: {
   periodStart: string;
   reason: string;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const { userId, raceType, periodStart, reason } = params;
@@ -738,7 +738,7 @@ export async function unfreezeUserRaceClaim(params: {
   periodStart: string;
   releaseReason?: string | null;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const { userId, raceType, periodStart, releaseReason } = params;

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import {
   queryRows,
   sql,
@@ -170,7 +170,7 @@ function mapListRow(row: RawListRow): CardPaymentListItem {
 export async function getCardPayments(
   filters: CardPaymentListFilters,
 ): Promise<CardPaymentListResult> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const page = Math.max(1, Math.trunc(filters.page) || 1);
   const perPage = Math.min(200, Math.max(10, Math.trunc(filters.perPage) || 20));
   const offset = (page - 1) * perPage;
@@ -248,7 +248,7 @@ export async function getCardPayments(
 export async function getCardPaymentDetail(
   intentId: string,
 ): Promise<CardPaymentDetail | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = await queryRows<RawDetailRow[]>(db, sql`
     SELECT
       i.id::text AS id,

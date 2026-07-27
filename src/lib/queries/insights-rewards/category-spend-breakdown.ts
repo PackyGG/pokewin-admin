@@ -1,6 +1,6 @@
 import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
@@ -146,7 +146,7 @@ async function computeCategorySpendBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CategorySpendBreakdown> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the per-category ledger rollup + daily
   // series never scan the full ledger unbounded (CLAUDE.md "Performance &

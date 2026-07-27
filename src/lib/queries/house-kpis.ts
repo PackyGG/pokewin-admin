@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getWindowMetrics, type WindowMetrics } from "@/lib/metrics/queries";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
@@ -69,7 +69,7 @@ async function getOrganicUpgraderStake(
   cutoff: Date,
   excludedIds: readonly string[],
 ): Promise<number> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const probe = await db.execute<{ exists: string | null }>(sql`
     SELECT to_regclass('public.upgrader_games')::text AS exists
   `);

@@ -5,7 +5,7 @@ import { eq } from "drizzle-orm";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { site_config } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -72,7 +72,7 @@ export async function updateFiatConfigAction(input: unknown): Promise<{
       ? JSON.stringify([...new Set(parsed.data.value)].sort())
       : String(parsed.data.value);
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const existing = await db
     .select({
       key: site_config.key,

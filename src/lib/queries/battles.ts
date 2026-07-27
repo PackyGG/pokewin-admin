@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -338,7 +338,7 @@ export async function getBattles(params: {
     const env = await readDbEnv();
     const loadTopHitIds = unstable_cache(
       async (m: string | null, s: string | null): Promise<string[]> => {
-        const cdb = drizzleForEnv(env);
+        const cdb = readDrizzleForEnv(env);
         const modeClause = m && m !== "all" ? "AND b.mode::text = $1" : "";
         // 24h keeps its tight floor; every other mode (lifetime/all) is
         // capped at the 365d house convention (CLAUDE.md "Performance &

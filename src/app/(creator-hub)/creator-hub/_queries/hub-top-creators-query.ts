@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -45,7 +45,7 @@ async function rankTopCreatorsByDeposits(
   since: Date,
 ): Promise<DepositRankRow[]> {
   return (async () => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       const blacklistAnd = blacklistNotInClause("u.id", excluded);
       return queryRows<DepositRankRow[]>(db,
         `WITH covered_deposits AS (

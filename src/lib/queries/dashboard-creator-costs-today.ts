@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -198,7 +198,7 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
   leaderboardGross: number;
   affiliate: number;
 }> {
-  const queryDb = await getDrizzleDb();
+  const queryDb = await getReadDrizzleDb();
   const since = `'${sinceIso}'::timestamptz`;
 
   // Admin-managed excluded_users blacklist — applied to the receiving
@@ -451,7 +451,7 @@ export async function getLeaderboardGrossClaimants(): Promise<LeaderboardGrossBr
       const since = utcStartOfDay(now);
       const sinceIso = since.toISOString();
 
-      const queryDb = await getDrizzleDb();
+      const queryDb = await getReadDrizzleDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
       const excludedIds = await getExcludedUserIds();
 
@@ -620,7 +620,7 @@ export async function getCreatorWithdrawalsBreakdown(): Promise<CreatorWithdrawa
       const since = utcStartOfDay(now);
       const sinceIso = since.toISOString();
 
-      const queryDb = await getDrizzleDb();
+      const queryDb = await getReadDrizzleDb();
       const sinceSql = `'${sinceIso}'::timestamptz`;
       const excludedIds = await getExcludedUserIds();
 

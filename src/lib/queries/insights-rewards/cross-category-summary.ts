@@ -1,7 +1,7 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import type { SQL } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -167,7 +167,7 @@ async function computeCrossCategorySummary(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsCrossCategorySummary> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const blacklistSubquery = blacklistNotInSql("id", blacklistIds);
 

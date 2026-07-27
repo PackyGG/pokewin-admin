@@ -3,14 +3,15 @@ import { cookies } from "next/headers";
 
 // Per-request main-DB environment switch.
 //
-// The Main DB normally points at production (DATABASE_URL). A
-// logged-in admin can temporarily route *their* own requests at the
-// DEV environment (DEV_DATABASE_URL) via a cookie.
+// MAIN reads normally point at MIRROR_PRODUCTION_DB. A logged-in admin can
+// temporarily route *their* own reads at MIRROR_DEV_DB via a cookie. Mutation
+// flows resolve the same cookie but keep using DATABASE_URL / DEV_DATABASE_URL.
 //
 // Resolution is async and cookie-based — each call to `readDbEnv`
 // reads the `admin_db_env` cookie fresh. `cache()` memoizes the
 // result per React render so multiple queries in one request pay the
-// cookie read cost once. Use `getDrizzleDb()` from `@/lib/db` at call sites.
+// cookie read cost once. Use `getReadDrizzleDb()` for reads and
+// `getPrimaryDrizzleDb()` for write flows.
 //
 // The Admin DB is NEVER env-switched — admin users,
 // sessions and audit events always live in the same place.
@@ -20,7 +21,9 @@ export const DB_ENVS = ["prod", "dev"] as const;
 export type DbEnv = (typeof DB_ENVS)[number];
 
 export function isDevDbConfigured(): boolean {
-  return Boolean(process.env.DEV_DATABASE_URL?.trim());
+  return Boolean(
+    process.env.MIRROR_DEV_DB?.trim() && process.env.DEV_DATABASE_URL?.trim(),
+  );
 }
 
 function isDbEnv(value: unknown): value is DbEnv {

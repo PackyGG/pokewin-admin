@@ -46,7 +46,13 @@ function adminVoucherRemovalClaimedSql(sinceBind, scopedUserId) {
 
 async function main() {
   const admin = new pg.Client({ connectionString: process.env.ADMIN_DATABASE_URL });
-  const mainDb = new pg.Client({ connectionString: process.env.DATABASE_URL });
+  if (!process.env.MIRROR_PRODUCTION_DB?.trim()) {
+    throw new Error("MIRROR_PRODUCTION_DB is required");
+  }
+  const mainDb = new pg.Client({
+    connectionString: process.env.MIRROR_PRODUCTION_DB,
+    options: "-c default_transaction_read_only=on -c TimeZone=UTC",
+  });
   await admin.connect();
   await mainDb.connect();
 

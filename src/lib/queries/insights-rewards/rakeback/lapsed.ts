@@ -1,6 +1,6 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -78,7 +78,7 @@ async function computeLapsed(
 ): Promise<RakebackLapsed | null> {
   const days = daysForInsightsPeriod(period);
   if (days === null) return null;
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // Single CTE-driven query: identify lapsed users, compute their

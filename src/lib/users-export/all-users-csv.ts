@@ -3,7 +3,7 @@
 // follows whichever environment the calling admin has toggled on, same
 // as the existing email-export query.
 import { desc, eq, sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { balances, user } from "@/lib/db-schema/main/schema";
 
 /**
@@ -32,7 +32,7 @@ export type AllUsersRow = {
  * counts are far below this.
  */
 export async function getAllUsersForExport(): Promise<AllUsersRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = await db
     .select({
       email: user.email,

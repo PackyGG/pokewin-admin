@@ -4,7 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { eq } from "drizzle-orm";
 
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { vault_lock_times } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -26,7 +26,7 @@ export async function upsertVaultLockTime(
   hours: number,
   label: string
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_upsert_vault_lock", "upsert vault lock windows");
 
@@ -59,7 +59,7 @@ export async function upsertVaultLockTime(
 }
 
 export async function deleteVaultLockTime(id: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_vault_lock", "delete vault lock windows");
 

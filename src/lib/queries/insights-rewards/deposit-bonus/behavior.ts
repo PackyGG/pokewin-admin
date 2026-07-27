@@ -1,6 +1,6 @@
 import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -75,7 +75,7 @@ async function computeTimeToClaim(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeToClaim> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Lifetime is capped to the pairing lookback (365d) so the deposit-side
   // scan doesn't span the entire deposit history.
   const dateFilter = windowDateFilterCapped(period, "d");
@@ -265,7 +265,7 @@ async function computeRepeatClaimants(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusRepeatClaimants> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
@@ -396,7 +396,7 @@ async function computeNewVsReturning(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusNewVsReturning> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const windowStart = windowStartExpr(period);
@@ -556,7 +556,7 @@ async function computeTimeOfDay(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeOfDay> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 

@@ -2,7 +2,7 @@
 
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requirePageAccess, requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
@@ -59,7 +59,7 @@ export async function banUser(
   userId: string,
   reason: string,
 ): Promise<ServerActionResult<{ userId: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   try {
     await requireCapability(session, "__can_ban_users", "ban users");
@@ -125,7 +125,7 @@ export async function banUser(
 }
 
 export async function unbanUser(userId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_ban_users", "unban users");
 
@@ -158,7 +158,7 @@ export async function lockUser(
   userId: string,
   reason: string,
 ): Promise<ServerActionResult<{ userId: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   try {
     await requireCapability(session, "__can_lock_users", "lock user accounts");
@@ -213,7 +213,7 @@ export async function lockUser(
 }
 
 export async function unlockUser(userId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_lock_users", "unlock user accounts");
 
@@ -275,7 +275,7 @@ export async function exportAllUsersCsv(): Promise<{
 }
 
 export async function bulkDeleteUsers(userIds: string[], totpCode: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_bulk_delete_users", "bulk-delete users");
   await require2FA(session.userId, totpCode);
@@ -518,7 +518,7 @@ export async function bulkBanFilteredUsers(input: {
     );
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
   const bannedAt = new Date();
 
@@ -687,7 +687,7 @@ export async function bulkUnbanFilteredUsers(input: {
     );
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // Snapshot BEFORE the write — the unban destroys these three columns and
   // this is the only place they survive.

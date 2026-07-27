@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -42,7 +42,7 @@ import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
  * pre-escaped blacklist id list).
  */
 export async function getConvertedFromVouchersTotal(): Promise<number> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // Blacklist gate: drop excluded (owner-locked) creator ids from this
   // identifiable lifetime converted total — mirrors the withdrawn sibling

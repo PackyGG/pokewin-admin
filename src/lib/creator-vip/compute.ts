@@ -10,7 +10,7 @@ import {
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { user as mainUsers } from "@/lib/db-schema/main/schema";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -57,7 +57,7 @@ import {
  * The prod read is index-served: `idx_acu_upper_code` ∧
  * `idx_acu_referred_user_created_at` resolve as a BitmapAnd (verified by
  * EXPLAIN ANALYZE against prod 2026-07-22: 0.18 ms, 2 shared buffers). It is
- * read-only and uses `getProdDrizzleDb()` so a machine caller
+ * read-only and uses `getProdReadDrizzleDb()` so a machine caller
  * can never be served the admin's dev/prod cookie toggle.
  *
  * `usage_type` is compared as `::text` for the same 22P02 hardening every
@@ -183,7 +183,7 @@ async function userStanding(userId: string): Promise<{
   currentCode: string | null;
   codeExpiresAt: Date | null;
 } | null> {
-  const [row] = await getProdDrizzleDb()
+  const [row] = await getProdReadDrizzleDb()
     .select({
       is_banned: mainUsers.is_banned,
       is_locked: mainUsers.is_locked,
@@ -318,7 +318,7 @@ async function wagerPosition(
   const upper = codes.map((c) => c.toUpperCase());
   const since = utcNaive(accrualStart);
 
-  const result = await getProdDrizzleDb().execute<{
+  const result = await getProdReadDrizzleDb().execute<{
     run_start: Date | string;
     current: string;
     lifetime: string;
@@ -848,7 +848,7 @@ export async function computeAllEntitlements(
   ];
   if (allCodes.length === 0) return [];
 
-  const attached = await getProdDrizzleDb().execute<{ hit: boolean }>(sql`
+  const attached = await getProdReadDrizzleDb().execute<{ hit: boolean }>(sql`
     SELECT EXISTS (
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}

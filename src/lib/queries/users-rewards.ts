@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /** Per-frequency rakeback slice (daily / weekly / monthly). */
@@ -67,7 +67,7 @@ export const EMPTY_USER_REWARDS: UserRewards = {
 };
 
 export async function getUserRewards(userId: string): Promise<UserRewards> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Each number is pushed down to SQL so the payload stays O(1) regardless of
   // the user's reward history size. All three reads are per-user and hit the
   // user_id-leading index (rakeback: the

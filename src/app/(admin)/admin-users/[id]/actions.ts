@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { eq, ilike, or, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
   affiliate_accounts,
   affiliate_codes,
@@ -259,7 +259,7 @@ export async function updateUserPermissions(
 }
 
 export async function searchMainSiteUsers(query: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await requireAdmin();
 
   if (!query || query.length < 2) return [];
@@ -284,7 +284,7 @@ export async function searchMainSiteUsers(query: string) {
 }
 
 export async function linkCreatorToMainUser(adminUserId: string, mainUserId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const adminResult = await adminDrizzle.execute<{

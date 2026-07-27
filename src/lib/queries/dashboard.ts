@@ -2,7 +2,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { runWithConcurrency } from "@/lib/promise-pool";
 import { singleFlight } from "@/lib/cache/single-flight";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
@@ -610,7 +610,7 @@ export function getPeriodAggregates(
 
 const cachedDailyChart = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // GAMEPLAY wager (packs + battles) + deposits per day, last 30 days,
     // from the ledger. Upgrader is NOT here — it lives only in
     // `upgrader_games` (see `cachedDailyUpgrader`); the phantom
@@ -657,7 +657,7 @@ const cachedDailyChart = unstable_cache(
  */
 const cachedDailyUpgrader = unstable_cache(
   async (blacklistIdNotIn: string): Promise<{ date: Date | string; upgrader: string }[]> => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const probe = await queryRows<{ exists: string | null }[]>(
       db,
       `SELECT to_regclass('public.upgrader_games')::text AS exists`,
@@ -689,7 +689,7 @@ const cachedDailyUpgrader = unstable_cache(
 // signup pipeline itself, so it is the canonical bot signal on this table.
 const cachedDailySignups = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     return queryRows<{ date: Date | string; count: string }[]>(db, `
       SELECT DATE(created_at) as date, COUNT(*)::text as count
       FROM "user"
@@ -706,7 +706,7 @@ const cachedDailySignups = unstable_cache(
 
 const cachedDailyWagerAttribution = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     return queryRows<{
       date: Date | string;
       organic: string;
@@ -747,7 +747,7 @@ const cachedDailyWagerAttribution = unstable_cache(
 
 const cachedFtdCombined = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     return queryRows<{
       tag: string;
       bucket: Date | string | null;
@@ -787,7 +787,7 @@ const cachedFtdCombined = unstable_cache(
 
 const cachedLifetimeDepositMetrics = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     return queryRows<{
       lifetime: string;
       h24: string;
@@ -826,7 +826,7 @@ const cachedLifetimeDepositMetrics = unstable_cache(
 
 const cachedBalanceAggregates = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Raw SQL keeps the cached query shape stable.
     // the unstable_cache key argument must be serializable —
     // The blacklist fragment is trusted output from blacklistNotInClause.
@@ -875,7 +875,7 @@ const cachedBalanceAggregates = unstable_cache(
 
 const cachedUniqueDepositors = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM balances
@@ -893,7 +893,7 @@ const cachedUniqueDepositors = unstable_cache(
 
 const cached24hPackOpens = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM game_sessions
@@ -912,7 +912,7 @@ const cached24hPackOpens = unstable_cache(
 
 const cached24hBattles = unstable_cache(
   async (blacklistIdNotIn: string) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const rows = await queryRows<{ count: string }[]>(db, `
       SELECT COUNT(*)::text AS count
       FROM battles
@@ -935,7 +935,7 @@ const cachedUserCounts = unstable_cache(
     startOfWeekIso: string,
     startOfMonthIso: string,
   ) => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Re-hydrate the ISO strings into Date objects on the SQL side so
     // They are bound as timestamps. rolling24h is recomputed from
     // `now` here too — the cache TTL (5 min) bounds how stale this
@@ -1173,7 +1173,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
   // perceives when the streamed KPI strips resolve.
   const t0 = Date.now();
   const dbEnv = await readDbEnv();
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Resolve the combined staff+blacklist filter ONCE per request so
   // every aggregate below applies the same exclusion set. The list is
   // cached via React `cache()` in fetch.ts → repeated invocations are
@@ -1965,7 +1965,7 @@ export type ActiveRainSummary = {
 } | null;
 
 export async function getActiveRain(): Promise<ActiveRainSummary> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const [rain] = await queryRows<{
     id: string;
     participant_count: number;
@@ -2210,7 +2210,7 @@ async function ggrTopContributorsForCutoff(
   // Defensive clamp — server actions take a number from the client, so
   // an out-of-range value shouldn't blow up the query plan.
   const safeLimit = Math.max(1, Math.min(limit, 50));
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const excluded = await getExcludedUserIds();
   const blacklistIdNotIn = blacklistNotInClause("u.id", excluded);
   // Central canonical scope — staff + blacklist dropped, creators KEPT,

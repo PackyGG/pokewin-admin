@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { voucher_origin } from "@/lib/db-schema/main/schema";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /** `voucher_origin` members — keep in sync with the database schema. */
@@ -29,7 +29,7 @@ function filterVoucherOrigins(origins: readonly string[]): VoucherOrigin[] {
  */
 const liveVoucherOriginEnumCached = unstable_cache(
   async (env: DbEnv): Promise<string[]> => {
-    const db = drizzleForEnv(env);
+    const db = readDrizzleForEnv(env);
     const result = await db.execute<{ enumlabel: string }>(sql`
       SELECT e.enumlabel
         FROM pg_enum e

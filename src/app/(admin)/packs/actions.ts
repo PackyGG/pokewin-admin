@@ -4,7 +4,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { isUuid } from "@/lib/utils/ids";
 import { getPackSetAssignment } from "@/lib/queries/pack-set-assignments";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
@@ -229,7 +229,7 @@ export async function getCardPickerFilters() {
 }
 
 export async function togglePackActive(packId: string, active: boolean) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/packs");
   await requireCapability(session, "__can_toggle_pack_active", "toggle pack active state");
   if (
@@ -295,7 +295,7 @@ export async function createPack(data: {
   difficulty: number | null;
   cards: PackCardInput[];
 }): Promise<string> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -368,7 +368,7 @@ export async function updatePack(
     cards: PackCardInput[];
   },
 ): Promise<void> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/packs");
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -489,7 +489,7 @@ export async function updatePack(
 }
 
 export async function deletePack(packId: string): Promise<void> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/packs");
   await requireCapability(session, "__can_delete_pack", "delete packs");
 
@@ -553,7 +553,7 @@ const EMPTY_GAMES_PAGE = {
 /** Lightweight identity read for modal header when the pack isn't on the list page. */
 export async function fetchPackListSeed(packId: string) {
   await requirePageAccess("/packs");
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<{
     id: string; name: string; slug: string; image_url: string | null;
     price: string; active: boolean; pack_type: string;
@@ -655,7 +655,7 @@ export async function setPackSet(
 
   // Validate the pack exists (read-only main DB) so we don't persist an
   // assignment for a deleted/typo'd id.
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<{ id: string; name: string }>(sql`
     SELECT id, name FROM packs WHERE id = ${packId}::uuid
   `);
@@ -1047,7 +1047,7 @@ export async function repricePackToTargetEdge(
   // render…") — and the client can keep going through the rest of the batch.
   let comp: Awaited<ReturnType<typeof getPacksPoolComposition>>[number] | undefined;
   try {
-    const db = await getDrizzleDb();
+    const db = await getPrimaryDrizzleDb();
     [comp] = await getPacksPoolComposition({ packIds: [packId] });
     if (!comp) {
       return {
@@ -1505,7 +1505,7 @@ export async function planPackRetune(
 
   const targetEdge = resolveRetuneTargetEdge(targets.targetEdge);
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<{
     price: string; name: string; tags: string[];
   }>(sql`
@@ -1731,7 +1731,7 @@ async function applyPackRetuneInner(
   const targetEdge = resolveRetuneTargetEdge(targets.targetEdge);
   const winRateTol = 0.02; // matches shapeWeights' default winRateTol
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // Fresh pack row (price + scope + the existing pack_cards for color/anim/order).
   const packResult = await db.execute<{
@@ -2087,7 +2087,7 @@ async function applyPackRetuneInner(
   // transaction so weights + price always commit atomically.
   const priceChanged = Math.abs(priceAfter - price) > 1e-9;
   await replacePackState(
-    await getDrizzleDb(),
+    await getPrimaryDrizzleDb(),
     packId,
     rows,
     priceChanged ? { price: priceAfter.toFixed(2) } : undefined,
@@ -2261,7 +2261,7 @@ export async function revertPackToSnapshot(
   const packId = snapshot.packId;
   if (!isUuid(packId)) throw new Error("Snapshot references an invalid pack id.");
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // Fresh pack row: scope + name + price (drift detection since capture).
   const packResult = await db.execute<{
@@ -2361,7 +2361,7 @@ export async function revertPackToSnapshot(
 
   // SAME delete-all-then-createMany pattern updatePack / applyPackRetune use,
   // plus the snapshot price.
-  await replacePackState(await getDrizzleDb(), packId, rows, {
+  await replacePackState(await getPrimaryDrizzleDb(), packId, rows, {
     price: snapshotPrice,
     ...(restoreTags !== null ? { tags: restoreTags } : {}),
   });
@@ -2559,7 +2559,7 @@ async function materializeApprovedPack(
   // On-site risk bar: 0/undefined ships null (no bar), same as create/edit forms.
   const difficulty = data.difficulty && data.difficulty > 0 ? data.difficulty : null;
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const readDb = db;
 
   // Resolve each card slot to a {cardId, value}. Card ids → read fresh prices
@@ -2734,7 +2734,7 @@ async function materializeApprovedPack(
 async function previewPackBuildRequest(
   input: ParsedBuildPackInput,
 ): Promise<{ ok: true; edge: number; winRate: number } | { ok: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const existing = await db.execute<{ id: string }>(sql`
     SELECT id FROM packs WHERE slug = ${input.slug} LIMIT 1
   `);

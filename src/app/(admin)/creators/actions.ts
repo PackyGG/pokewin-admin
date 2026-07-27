@@ -6,7 +6,7 @@ import { after } from "next/server";
 import bcrypt from "bcryptjs";
 import { z } from "zod";
 import { eq, sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_users,
@@ -142,7 +142,7 @@ const updateDealSchema = z.object({
 });
 
 export async function makeCreator(userId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_make_creator", "promote a user to creator");
 
@@ -226,7 +226,7 @@ export async function makeCreator(userId: string) {
 }
 
 export async function updateAffiliateLevel(userId: string, level: number) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(
     session,
@@ -253,7 +253,7 @@ export async function updateAffiliateLevel(userId: string, level: number) {
 }
 
 export async function addAffiliateCode(userId: string, code: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
 
@@ -298,7 +298,7 @@ export async function addAffiliateCode(userId: string, code: string) {
 }
 
 export async function removeAffiliateCode(codeId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_assign_affiliate", "remove affiliate codes");
 
@@ -322,7 +322,7 @@ export async function removeAffiliateCode(codeId: string) {
 }
 
 export async function toggleAffiliateCode(codeId: string, isActive: boolean) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
 
@@ -357,7 +357,7 @@ export async function updateCreatorLimits(
     currencyLimitResetDays?: number | null;
   }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_update_creator_limits", "update creator limits");
 
@@ -415,7 +415,7 @@ export async function updateCreatorLimits(
 }
 
 export async function processCreatorPayout(affiliateUserId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_approve_creator_payout", "approve creator payouts");
 
@@ -520,7 +520,7 @@ export async function updateLevelConfig(
   level: number,
   data: { label?: string; commissionRate?: number; threshold?: number }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(
     session,
@@ -576,7 +576,7 @@ export async function updateLevelConfig(
 export async function updateAffiliateCutExpiration(
   days: number | null,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(
     session,
@@ -625,7 +625,7 @@ export async function updateAffiliateCutExpiration(
 }
 
 export async function toggleCodeActive(userId: string, isActive: boolean) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
 
@@ -1005,7 +1005,7 @@ async function syncWithdrawalLimits(
     tipLimitResetDays?: number | null;
   }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await db
     .insert(creator_withdrawal_limits)
     .values({

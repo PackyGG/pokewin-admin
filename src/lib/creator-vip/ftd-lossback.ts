@@ -4,7 +4,7 @@ import "server-only";
 import { and, count, eq, inArray, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import { creator_reward_claims } from "@/lib/db-schema/admin/schema";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
 
@@ -94,7 +94,7 @@ async function signedUpUnderCode(
 ): Promise<boolean> {
   if (codes.length === 0) return false;
   const upper = codes.map((c) => c.toUpperCase());
-  const result = await getProdDrizzleDb().execute<{ hit: boolean }>(sql`
+  const result = await getProdReadDrizzleDb().execute<{ hit: boolean }>(sql`
     SELECT EXISTS (
       SELECT 1 FROM affiliate_code_usages
        WHERE referred_user_id = ${userId}
@@ -137,7 +137,7 @@ async function signedUpUnderCode(
 export async function firstDeposits(
   userId: string,
 ): Promise<{ amountUsd: number; at: Date }[]> {
-  const result = await getProdDrizzleDb().execute<{
+  const result = await getProdReadDrizzleDb().execute<{
     amount: string;
     created_at: Date | string;
   }>(sql`
@@ -185,7 +185,7 @@ export async function holdingsUsd(userId: string): Promise<number> {
   // query: they are independent, all index-served, and on this path network
   // latency dwarfs execution time — three 20 ms trips cost 60 ms to compute a
   // number that takes under a millisecond.
-  const result = await getProdDrizzleDb().execute<{ total: string }>(sql`
+  const result = await getProdReadDrizzleDb().execute<{ total: string }>(sql`
     SELECT (
       COALESCE((
         SELECT available_balance::numeric + locked_balance::numeric

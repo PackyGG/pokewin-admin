@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -35,7 +35,7 @@ async function computeAffiliateAnalytics(
   period: Period,
   excluded: string[],
 ): Promise<AffiliateAnalyticsData> {
-  const queryDb = await getDrizzleDb();
+  const queryDb = await getReadDrizzleDb();
   const dateFilter = periodToDateFilter(period);
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
   const referredScope = `(SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})`;
@@ -174,7 +174,7 @@ export async function getAffiliateAnalytics(
 }
 
 export async function getAffiliateLevelConfigs() {
-  const queryDb = await getDrizzleDb();
+  const queryDb = await getReadDrizzleDb();
   const configs = await queryRows<{
     level: number;
     label: string;

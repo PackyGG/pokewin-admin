@@ -1,7 +1,7 @@
 import { queryRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 import {
   resolveUpgraderMetadata,
@@ -170,7 +170,7 @@ async function computeUpgraderTransactions(
   // illegal inside unstable_cache. Env is resolved in the request scope
   // by the public entry point and passed through as a cache-key dimension
   // (mirrors getDepositTransactions in transactions.ts).
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
 
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));

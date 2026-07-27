@@ -1,6 +1,6 @@
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
@@ -314,7 +314,7 @@ async function computeDepositTransactions(
     bonus_balance_after: string | null;
   };
 
-  const drizzleDb = drizzleForEnv(env);
+  const drizzleDb = readDrizzleForEnv(env);
   const [countResult, rows] = await Promise.all([
     queryRows<{ total: string }[]>(drizzleDb, countSql, ...queryParams),
     queryRows<Raw[]>(
@@ -507,7 +507,7 @@ async function computeTransactions(
   } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const rawDb = drizzleForEnv(env);
+  const rawDb = readDrizzleForEnv(env);
   const excludedIds =
     "id" in userScope && userScope.id && "notIn" in userScope.id
       ? [...userScope.id.notIn]

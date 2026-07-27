@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -49,7 +49,7 @@ async function computeTopWinners(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaceTopWinnersResult> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const dateFilter = daysAgoFilter("rc.claimed_at", days);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);

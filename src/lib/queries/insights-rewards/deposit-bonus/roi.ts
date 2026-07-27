@@ -1,6 +1,6 @@
 import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -71,7 +71,7 @@ async function computeRoi(
   rawLookbackDays: number,
   blacklistIds: string[],
 ): Promise<DepositBonusROI> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const lookbackDays = resolveLookback(period, rawLookbackDays);
   const costDateClause = windowDateFilter(period);

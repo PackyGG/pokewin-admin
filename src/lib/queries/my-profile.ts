@@ -1,4 +1,4 @@
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import {
@@ -45,7 +45,7 @@ function resolveAffiliateLevel(
 }
 
 export async function getMyProfileData(adminUserId: string) {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Find the admin user to get email
   const [adminUser] = await adminDrizzle.select({
     email: admin_users.email, username: admin_users.username,

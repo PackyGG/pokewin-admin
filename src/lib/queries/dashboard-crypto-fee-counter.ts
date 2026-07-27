@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 import { eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { crypto_fee_profit_counter } from "@/lib/db-schema/admin/schema";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
@@ -109,7 +109,7 @@ const cachedSinceAnchorVolume = unstable_cache(
     withdrawalVolumeUsd: number;
   }> => {
     return withTiming("dashboard.cryptoFeeCounter.volume", async () => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
 
       // Drift-guard: prove the crypto columns this query needs exist.
       const guard = await queryRows<

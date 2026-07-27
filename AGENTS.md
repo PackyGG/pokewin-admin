@@ -1,5 +1,12 @@
 # AGENTS.md — pokewin-admin
 
+## MAIN mirror routing
+
+Use `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB` for ordinary MAIN reads and
+`DATABASE_URL` / `DEV_DATABASE_URL` only through explicit application mutation
+clients. Mirror reads fail closed and force read-only sessions. Concurrent
+index DDL is allowed on the mirrors; direct agent DDL/DML on primaries is not.
+
 Agent rulebook for Codex/Cursor sessions in this repo. **The binding rules live in [`CLAUDE.md`](./CLAUDE.md) — read that first.** This file used to carry its own full copy of those rules (~65KB); as of 2026-07-12 it's a pointer instead, so the rules have exactly one source of truth and can't drift out of sync. `CLAUDE.md` covers: Prod-DB policy, the PostgreSQL/Drizzle query rule, the minimal-overhead speed rule, push discipline, browser-verification/done-criteria, UI & design conventions, dual-DB architecture, auth/permission patterns, and the file organization/naming conventions.
 
 ## Repository and production boundary

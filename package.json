@@ -10,6 +10,7 @@
 		"lint": "eslint",
 		"db:pull:main": "drizzle-kit introspect --config=drizzle.main.config.ts && node scripts/normalize-drizzle-introspection.mjs main",
 		"db:pull:admin": "drizzle-kit introspect --config=drizzle.admin.config.ts && node scripts/normalize-drizzle-introspection.mjs admin",
+		"db:index:mirrors": "node scripts/apply-main-mirror-indexes.mjs",
 		"changelog:regen": "node scripts/generate-changelog.mjs",
 		"admin:sql": "node scripts/apply-admin-sql.mjs",
 		"admin:seed": "tsx scripts/seed-admin.ts",

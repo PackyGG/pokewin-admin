@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "./_blacklist";
@@ -76,7 +76,7 @@ async function computeWithdrawnCoinsBreakdown(
   period: WithdrawalsPeriod,
   excluded: string[],
 ): Promise<WithdrawnCoinsData> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const interval = intervalSqlForPeriod(period);
   const dateFilter = interval
     ? `AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - ${interval}`

@@ -2,7 +2,7 @@ import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
@@ -93,7 +93,7 @@ async function computeRecipients(
 ): Promise<RewardRecipientRow[]> {
   void blacklistIds; // consumed by realCustomersScopeDrizzle; kept for the cache key
   return withTiming("insights-rewards.program-recipients", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const days = daysForInsightsPeriodCapped(period);
     const dateFilter = daysAgoFilter("lt.created_at", days);
     const scope = await realCustomersScopeDrizzle();

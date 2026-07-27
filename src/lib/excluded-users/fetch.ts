@@ -12,7 +12,7 @@ import {
   admin_withdrawal_unlocks,
   excluded_users,
 } from "@/lib/db-schema/admin/schema";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -195,7 +195,7 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
   const userIds = rows.map((r) => r.user_id);
   const depositByUserId = new Map<string, number>();
   if (userIds.length > 0) {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const balanceRows = (
       await db.execute<{ user_id: string; total_deposited: string }>(sql`
         SELECT user_id, total_deposited::text AS total_deposited

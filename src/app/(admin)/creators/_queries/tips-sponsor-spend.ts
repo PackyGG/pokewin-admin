@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -98,7 +98,7 @@ export type TipsSponsorSpend = {
 const cachedTipsSponsorSpend = (env: DbEnv, excludedIds: string[]) =>
   unstable_cache(
     async (): Promise<TipsSponsorSpend> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
 
       // Blacklist gate: drop excluded (owner-locked) recipient ids so a
       // blacklisted user who received a creator-funded tip/sponsorship never

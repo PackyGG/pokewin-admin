@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { queryRows } from "@/lib/drizzle-query";
 import {
@@ -42,7 +42,7 @@ async function computeDashboardKeno(
   blacklist: string[],
 ): Promise<KenoWindowMetrics> {
   return withTiming("dashboard.keno", async () => {
-    const db = drizzleForEnv(env);
+    const db = readDrizzleForEnv(env);
     const customerScope =
       excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist).replace(
         /^user_id\b/,

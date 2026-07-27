@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -67,7 +67,7 @@ const cachedBoardPnl = (
 ) =>
   unstable_cache(
     async (): Promise<[string, BoardAffiliatePnl][]> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
 
       // (boardId, creatorUserId, start, end) tuples — boardId is unique per
       // row; creatorUserId may repeat (same creator, multiple past boards).

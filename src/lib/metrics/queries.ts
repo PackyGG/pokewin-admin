@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -220,7 +220,7 @@ export type GamingLegs = {
  */
 export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
   return withTiming("metrics.gamingLegs", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Canonical scope: staff + blacklist dropped, creators KEPT, with
     // creator-on-session rows excluded per-row via the session-window
     // predicate (symmetric on wager + payout). See scope.ts.
@@ -384,7 +384,7 @@ async function doubleDownLegs(
   window: MetricWindow,
 ): Promise<DoubleDownLegs | null> {
   return withTiming("metrics.doubleDown", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
 
     // Probe: skip entirely if the table is absent (pre-DD DB).
     const probe = await queryRows<{ exists: string | null }[]>(
@@ -472,7 +472,7 @@ export type RewardCost = {
  */
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Same canonical session-window scope as the gaming legs so NGR is on
     // the SAME population as GGR (staff + blacklist dropped, creators kept,
     // creator-on-session reward rows excluded).
@@ -548,7 +548,7 @@ export async function upgraderMetrics(
   window: MetricWindow,
 ): Promise<UpgraderMetrics | null> {
   return withTiming("metrics.upgrader", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
 
     // Probe: skip entirely if the table is absent (pre-upgrader DB).
     // to_regclass returns NULL (not an error) for a missing relation.
@@ -764,7 +764,7 @@ export async function getDailyGamingMetrics(
   window: MetricWindow,
 ): Promise<DailyGamingMetricPoint[]> {
   return withTiming("metrics.dailyGamingMetrics", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Canonical session-window scope for the ledger + inventory legs.
     const scope = await getMetricsScope();
     const since = window.since;
@@ -1025,7 +1025,7 @@ export async function sumLedgerTypes(opts: {
 }): Promise<number> {
   if (opts.types.length === 0) return 0;
   return withTiming("metrics.sumLedgerTypes", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await getMetricsScope();
     const list = ledgerTypesToSqlList(opts.types);
     type Row = { total: string };
@@ -1070,7 +1070,7 @@ export async function sumLedgerTypesGrouped(opts: {
   const result = new Map<string, number>();
   if (opts.types.length === 0) return result;
   return withTiming("metrics.sumLedgerTypesGrouped", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await getMetricsScope();
     const list = ledgerTypesToSqlList(opts.types);
     type Row = { type: string; total: string };
@@ -1108,7 +1108,7 @@ export async function sumOfficialStreamAdjustments(opts: {
   window: MetricWindow;
 }): Promise<number> {
   return withTiming("metrics.sumOfficialStreamAdjustments", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await getMetricsScope();
     type Row = { total: string };
     const rows = await queryRows<Row[]>(db,
@@ -1135,7 +1135,7 @@ export async function sumStatsExcludedAdjustments(opts: {
   window: MetricWindow;
 }): Promise<number> {
   return withTiming("metrics.sumStatsExcludedAdjustments", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await getMetricsScope();
     type Row = { total: string };
     const rows = await queryRows<Row[]>(db,

@@ -120,6 +120,19 @@ Diese Datei (`CLAUDE.md`) ist die **bindende Regel-Quelle**. Zu Sessionbeginn mi
 
 ---
 
+## MAIN mirror routing override (Owner, 2026-07-27)
+
+- Ordinary reads use `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB`; read pools force
+  `default_transaction_read_only=on` and never fall back to primary.
+- Existing application mutation workflows use explicit primary clients backed
+  by `DATABASE_URL` / `DEV_DATABASE_URL`.
+- Concurrent index DDL is allowed on the mirrors via
+  `npm run db:index:mirrors -- <prod|dev|all>`.
+- Direct agent DDL/DML, migrations, and schema push remain forbidden on both
+  primary MAIN connections.
+
+This override supersedes older blanket MAIN read-only wording in this file.
+
 ## Repository- und Production-Grenze — höchste Priorität (Owner, 2026-07-27)
 
 Diese Regel gilt für jeden Agent, Sub-Agent, Background-Task und Workflow und

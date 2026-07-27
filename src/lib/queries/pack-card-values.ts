@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 
 /**
  * One row per pool card of a pack, reduced to the facts the weight-shaping
@@ -36,7 +36,7 @@ export type PackCardValue = {
 export async function getPackCardValues(
   packId: string,
 ): Promise<PackCardValue[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   const result = await db.execute<{
     card_id: string;

@@ -1,6 +1,6 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 
 /**
  * Read one or more keys from the generic site_config table in a single
@@ -17,7 +17,7 @@ export async function getSiteConfigValues(
 ): Promise<Record<string, string>> {
   if (keys.length === 0) return {};
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{ key: string; value: string }>(sql`
     SELECT key, value
     FROM site_config

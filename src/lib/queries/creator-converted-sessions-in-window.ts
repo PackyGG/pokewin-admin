@@ -1,7 +1,7 @@
 import "server-only";
 
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
@@ -42,7 +42,7 @@ export type ConvertedFillSessionRow = {
 export async function getConvertedFillSessionsInWindow(
   since: Date,
 ): Promise<ConvertedFillSessionRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const excludedIds = await getExcludedUserIds();
 
   type Row = {

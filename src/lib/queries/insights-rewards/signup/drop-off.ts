@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   daysForInsightsPeriod,
@@ -47,7 +47,7 @@ async function computeDropOff(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DropOffBreakdown> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const signupDateFilter = daysAgoFilter("u.created_at", days);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);

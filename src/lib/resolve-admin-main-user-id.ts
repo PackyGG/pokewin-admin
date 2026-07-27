@@ -1,7 +1,7 @@
 import { eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { admin_users } from "@/lib/db-schema/admin/schema";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 
 /**
  * Resolve a Main-DB `User.id` for the calling admin so it can be written
@@ -38,7 +38,7 @@ export async function resolveAdminMainUserId(
     .from(admin_users).where(eq(admin_users.id, adminUserId)).limit(1);
   if (!adminUser?.email) return null;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const mainUser = (
     await db.execute<{ id: string }>(
       sql`SELECT id FROM "user" WHERE email = ${adminUser.email} LIMIT 1`,

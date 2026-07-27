@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -52,7 +52,7 @@ async function computeSetsList(
     sortBy = "created_at",
     sortOrder = "desc",
   } = params;
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const predicates: SQL[] = [];
   if (search) predicates.push(sql`s.name ILIKE ${`%${search}%`}`);
   if (series) predicates.push(sql`s.series = ${series}`);
@@ -154,7 +154,7 @@ export async function getSetsList(
 }
 
 async function computeSeriesList(env: DbEnv): Promise<string[]> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{ series: string }>(sql`
     SELECT DISTINCT series FROM sets ORDER BY series ASC
   `);
@@ -179,7 +179,7 @@ export type SetsStats = {
 };
 
 async function computeSetsStats(env: DbEnv): Promise<SetsStats> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{
     total: string;
     total_series: string;

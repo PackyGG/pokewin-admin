@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
@@ -146,7 +146,7 @@ async function computeRetentionLift(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RewardsRetentionLift> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the claim-window, baseline-wager, and
   // non-claimant reward-exclusion sweeps over the full ledger_transactions

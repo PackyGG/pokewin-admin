@@ -4,7 +4,7 @@ import { randomUUID } from "crypto";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { asc, eq, gt } from "drizzle-orm";
-import { adminDrizzle, getDrizzleDb } from "@/lib/drizzle";
+import { adminDrizzle, getPrimaryDrizzleDb } from "@/lib/drizzle";
 import { admin_users } from "@/lib/db-schema/admin/schema";
 import {
   chat_messages,
@@ -63,7 +63,7 @@ async function resolveAdminMainUserId(
   )[0];
   if (!adminUser?.email) return null;
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const [mainUser] = await db
     .select({ id: user.id })
     .from(user)
@@ -90,7 +90,7 @@ export async function fetchMutesPanel(params: {
 }
 
 export async function deleteMessage(messageId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_delete_messages", "delete chat messages");
 
@@ -123,7 +123,7 @@ export async function deleteMessage(messageId: string) {
 }
 
 export async function pinMessage(messageId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "pin messages");
 
@@ -161,7 +161,7 @@ export async function pinMessage(messageId: string) {
 }
 
 export async function unpinMessage(messageId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_pin_messages", "unpin messages");
 
@@ -193,7 +193,7 @@ export async function unpinMessage(messageId: string) {
 }
 
 export async function muteUser(data: z.infer<typeof muteUserSchema>) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "mute users");
 
@@ -248,7 +248,7 @@ export async function pollMessages(sinceIso: string): Promise<{
   isPinned: boolean;
   createdAt: string;
 }[]> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await requirePageAccess("/chat");
   const since = new Date(sinceIso);
   const rows = await db
@@ -289,7 +289,7 @@ export async function pollMessages(sinceIso: string): Promise<{
 }
 
 export async function unmuteUser(muteId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/chat");
   await requireCapability(session, "__can_mute_users", "unmute users");
 

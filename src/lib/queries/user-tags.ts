@@ -4,7 +4,7 @@ import "server-only";
 import { asc, count, desc, eq, inArray, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import { admin_user_tags, admin_users } from "@/lib/db-schema/admin/schema";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { calculateUsersPnlBatch } from "./pnl";
 
 export type UserTagValue = "vip" | "wager_abuser";
@@ -127,7 +127,7 @@ export async function getUsersWithTags(
   }
 
   const targetUserIds = tagRows.map((r) => r.targetUserId);
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // country/country_code are plain scalar columns on the same PK-IN row
   // lookup — selecting them costs nothing extra (no new query), so they're
   // always fetched. Only the PnL batch (a genuinely separate, heavier

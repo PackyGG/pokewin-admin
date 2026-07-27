@@ -4,10 +4,14 @@ export { sql } from "drizzle-orm";
 export type { SQL } from "drizzle-orm";
 
 export {
-  drizzleForEnv,
-  getDevDrizzleDb,
-  getDrizzleDb,
-  getProdDrizzleDb,
+  getDevPrimaryDrizzleDb,
+  getDevReadDrizzleDb,
+  getPrimaryDrizzleDb,
+  getProdPrimaryDrizzleDb,
+  getProdReadDrizzleDb,
+  getReadDrizzleDb,
+  primaryDrizzleForEnv,
+  readDrizzleForEnv,
 } from "@/lib/db";
 export type { MainDrizzleDb } from "@/lib/db";
 

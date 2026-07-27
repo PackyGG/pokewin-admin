@@ -1,6 +1,6 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   filterLedgerTxTypes,
@@ -639,7 +639,7 @@ export async function getUserTransactions(
   // fetchUserTransactions action) the in-function resolution is used unchanged.
   viewerIsOwnerOverride?: boolean,
 ): Promise<PaginatedTransactions> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   page = Math.max(1, Math.trunc(page) || 1);
   perPage = Math.min(200, Math.max(1, Math.trunc(perPage) || 20));
   const filter: LedgerFilter = {

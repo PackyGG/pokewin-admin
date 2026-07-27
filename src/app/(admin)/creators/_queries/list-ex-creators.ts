@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { and, desc, inArray, isNotNull } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
@@ -503,7 +503,7 @@ async function getExCreatorUsers(
   ]);
   if (candidateIds.size === 0) return [];
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const excluded = new Set(excludedIds);
   const ids = [...candidateIds].filter((id) => !excluded.has(id));
   if (ids.length === 0) return [];

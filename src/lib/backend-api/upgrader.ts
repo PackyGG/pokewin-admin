@@ -2,7 +2,7 @@ import "server-only";
 
 import { desc, eq } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import {
   cards,
   upgrader_output_cards,
@@ -46,7 +46,7 @@ export type UpdateUpgraderOutputBody = {
 };
 
 async function listOutputsFromPostgres(): Promise<UpgraderOutputCard[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = await db
     .select({
       id: upgrader_output_cards.id,

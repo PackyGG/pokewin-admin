@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
@@ -70,7 +70,7 @@ async function computeUsersByCountry(
   period: Period,
   excluded: string[],
 ): Promise<MapData> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const blacklistFilter =
     excluded.length === 0
       ? sql``

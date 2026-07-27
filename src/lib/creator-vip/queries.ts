@@ -19,7 +19,7 @@ import {
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { user as mainUsers } from "@/lib/db-schema/main/schema";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -71,7 +71,7 @@ async function resolveUsers(
   try {
     // Still one `WHERE id IN (...)` point lookup on the primary key — this
     // widens the projection, not the access path.
-    const rows = await getProdDrizzleDb()
+    const rows = await getProdReadDrizzleDb()
       .select({
         id: mainUsers.id,
         username: mainUsers.username,
@@ -288,7 +288,7 @@ export async function getClaims(params: {
   const activeCodeByUser = new Map<string, string | null>();
   if (pendingUserIds.length > 0) {
     try {
-      const rows = await getProdDrizzleDb()
+      const rows = await getProdReadDrizzleDb()
         .select({ id: mainUsers.id, affiliate_code: mainUsers.affiliate_code })
         .from(mainUsers)
         .where(inArray(mainUsers.id, pendingUserIds));
@@ -416,7 +416,7 @@ export async function getPlayerRewardSummary(
   });
 
   const [userRows, entitlements, claimTotals] = await Promise.all([
-    getProdDrizzleDb()
+    getProdReadDrizzleDb()
       .select({
         username: mainUsers.username,
         affiliate_code: mainUsers.affiliate_code,

@@ -1,6 +1,6 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
@@ -125,7 +125,7 @@ async function hasExpirationDaysColumn(): Promise<boolean> {
   if (driftCache && now - driftCache.at < DRIFT_GUARD_CACHE_MS) {
     return driftCache.has;
   }
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   try {
     const rows = await queryRows<{ exists: boolean }[]>(db, sql`
       SELECT EXISTS (
@@ -149,7 +149,7 @@ async function fetchWindows(): Promise<{
   windows: RakebackExpiryWindow[];
   expirationConfigured: boolean;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const hasExp = await hasExpirationDaysColumn();
 
   // Only SELECT expiration_days when it exists — keeps a drifted DB from
@@ -200,7 +200,7 @@ async function computeForfeited(
 ): Promise<RakebackForfeited | null> {
   const days = daysForInsightsPeriod(period);
   if (days === null) return null;
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // current_users: anyone who claimed in the current window.
@@ -333,7 +333,7 @@ async function computeExpiry(
 // ENV-KEYED cache (mirrors users-detail-cache.ts): cache ONLY on prod so a
 // dev-toggled admin always sees live dev data instead of a prod-warmed
 // entry. `unstable_cache` runs outside the request scope, so the cached
-// callback's getDrizzleDb() resolves to prod regardless — caching it for a dev
+// callback's getReadDrizzleDb() resolves to prod regardless — caching it for a dev
 // admin would serve them prod numbers. Short layer for finite windows,
 // long layer for the lifetime sweep.
 const cachedShort = unstable_cache(

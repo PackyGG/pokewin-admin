@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { getPlayerRewardSummary } from "@/lib/creator-vip/queries";
@@ -31,7 +31,7 @@ import { getPlayerRewardSummary } from "@/lib/creator-vip/queries";
  * Numbers come from the same `computeAllEntitlements` behind `/check`, so the
  * two commands can never quote different figures.
  *
- * DATA BOUNDARY: reads prod read-only (`getProdDrizzleDb()`) plus
+ * DATA BOUNDARY: reads prod read-only (`getProdReadDrizzleDb()`) plus
  * the admin DB for claim totals. Writes nothing.
  */
 export const runtime = "nodejs";
@@ -83,7 +83,7 @@ export const POST = withApiKey(
 
     // Single index probe on the unique accountId. providerId is asserted so a
     // same-valued account on another provider can't resolve to a Packy user.
-    const [linkedAccount] = await getProdDrizzleDb()
+    const [linkedAccount] = await getProdReadDrizzleDb()
       .select({ providerId: account.providerId, userId: account.userId })
       .from(account)
       .where(eq(account.accountId, discordUserId))

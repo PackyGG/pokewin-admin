@@ -2,7 +2,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { cache } from "react";
 import { sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
@@ -69,7 +69,7 @@ const getPackMetaByKey = cache(async function getPackMetaByKey(
   const packIds = key.length === 0 ? [] : key.split(",");
   if (packIds.length === 0) return out;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     id: string;
     name: string;

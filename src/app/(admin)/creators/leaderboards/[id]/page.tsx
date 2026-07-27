@@ -6,7 +6,7 @@ import { requirePageAccess, verifySession } from "@/lib/dal";
 import { canSeeAdminMarking } from "@/lib/owners";
 import { isUuid } from "@/lib/utils/ids";
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import {
     affiliateLeaderboardsApi,
@@ -212,7 +212,7 @@ async function LeaderboardDetailBody({
     // badge; every other admin gets a clean board (matches the owner-only
     // Excluded Users page).
     const canSeeMarking = canSeeAdminMarking(await verifySession());
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const participatingCreatorIds = [lb.creator_user_id, ...(lb.co_creator_user_ids ?? [])];
     const [creators, standings, claimHolds, claims, leaderboardExpiryDays] = await Promise.all([
         // Hydrate the primary creator plus every co-creator in one query so we

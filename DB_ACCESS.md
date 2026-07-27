@@ -1,5 +1,20 @@
 # Database access policy
 
+## Current MAIN routing (owner update 2026-07-27)
+
+- Ordinary prod/dev reads use `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB`.
+  Mirror pools force `default_transaction_read_only=on` and fail closed.
+- Existing application mutations use explicit primary clients backed by
+  `DATABASE_URL` / `DEV_DATABASE_URL`.
+- Agents may apply concurrent index DDL to the two mirrors with
+  `npm run db:index:mirrors -- <prod|dev|all>`.
+- Direct agent DDL/DML, migrations, and schema push remain forbidden on the
+  primary MAIN connections.
+
+This section supersedes older read-only wording below: "MAIN read-only" means
+the mirror read path, while the explicit primary client is reserved for
+existing application mutation workflows.
+
 > **Owner rule (2026-06-06):** Agents may run **any admin DB operations** themselves (DDL/DML and reviewed SQL migrations). The owner does not want to apply admin migrations manually.
 >
 > **MAIN / prod game DB:** **read-only** — SELECT and schema inspection only. No writes, no migrations, no features that require MAIN schema changes.

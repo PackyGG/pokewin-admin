@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { readDrizzleForEnv, getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -48,7 +48,7 @@ export async function getWindowedSignupsByCreatorIds(
   const result = new Map<string, number>();
   if (creatorIds.length === 0) return result;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const excluded = await getExcludedUserIds();
   const blacklistAnd =
     excluded.length > 0
@@ -82,7 +82,7 @@ async function fetchTopSignupLeaders(
   limit: number,
   env: DbEnv,
 ): Promise<HubSignupLeader[]> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const excluded = await getExcludedUserIds();
   const blacklistAnd =
     excluded.length > 0

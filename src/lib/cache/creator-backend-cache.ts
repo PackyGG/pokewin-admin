@@ -5,7 +5,7 @@ import {
   type CreatorListItem,
   type CreatorSessionResponse,
 } from "@/lib/backend-api";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import {
   creator_deals,
@@ -102,7 +102,7 @@ async function pageCreatorRoster(): Promise<CreatorListItem[]> {
  * backend deployment must not blank a read-only roster.
  */
 async function pageCreatorRosterFromPostgres(): Promise<CreatorListItem[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const creators = await db
     .select({
       id: user.id,

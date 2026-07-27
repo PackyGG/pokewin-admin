@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -68,7 +68,7 @@ async function computeCreatorFillConversionCost(
   creatorUserId: string,
 ): Promise<CreatorFillConversionCost> {
   return withTiming("creators.netPnl.fillConversionCost", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
 
     type Row = { payout: string | null; voucher_count: string | null };
 

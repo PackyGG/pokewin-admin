@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 
@@ -20,7 +20,7 @@ import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
  * cannot be used to enumerate or profile players, only to confirm a link for an
  * ID the caller already knows. Ask before widening this.
  *
- * DATA BOUNDARY: read-only, and explicitly `getProdDrizzleDb()`.
+ * DATA BOUNDARY: read-only, and explicitly `getProdReadDrizzleDb()`.
  * The request-scoped resolver uses the admin's dev/prod cookie toggle, which is meaningless
  * for a machine caller — a bot must always read prod, never a dev database.
  *
@@ -75,7 +75,7 @@ export const POST = withApiKey({ scopes: ["discord:read"] }, async (request) => 
 
   const { discordUserId } = parsed.data;
 
-  const db = getProdDrizzleDb();
+  const db = getProdReadDrizzleDb();
   // accountId is globally unique, so this is one index probe. We still assert
   // providerId so a same-valued account on another provider can never be
   // mistaken for a Discord link.

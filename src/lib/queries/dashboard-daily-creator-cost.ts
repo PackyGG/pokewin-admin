@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { withTiming } from "@/lib/observability/query-timings";
 import { filterVoucherOriginsLive } from "@/lib/queries/_voucher-origins";
@@ -58,7 +58,7 @@ export type DailyCreatorCostPoint = {
 
 async function computeDailyCreatorCost(): Promise<DailyCreatorCostPoint[]> {
   return withTiming("dashboard.dailyCreatorCost", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
 
     // Native-enum, drift-safe origin list (keeps the index path; never throws
     // 22P02 if a member is absent from the live enum).

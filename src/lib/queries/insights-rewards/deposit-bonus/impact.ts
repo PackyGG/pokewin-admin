@@ -1,5 +1,5 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { type InsightsRewardsPeriod } from "../_period";
 import { makeCachedPair } from "../_cache";
@@ -114,7 +114,7 @@ async function computeDepositFrequency(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDepositFrequency> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Per-user-per-day grouping is heavy on the lifetime window — cap the
   // deposit scan to the pairing lookback (365d) so `all` never scans the
   // entire deposit history.
@@ -276,7 +276,7 @@ async function computeDepositSizeDistribution(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDepositSizeDistribution> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
@@ -407,7 +407,7 @@ async function computeCapHitters(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapHitters> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
@@ -659,7 +659,7 @@ async function computeTimeBetween(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusTimeBetween> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // LAG window over the full per-user deposit history is heavy on
   // lifetime — cap the deposit scan to 365d.
   const dateFilter = windowDateFilterCapped(period);
@@ -798,7 +798,7 @@ async function computeBonusWagerSegments(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusToWagerSegments> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
 
@@ -911,7 +911,7 @@ async function computePostCapBehavior(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusPostCapBehavior> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // The bonus side (cap detection + first-cap pairing) uses the plain
   // window bound; the deposit side of the post-cap scan is capped to 365d
   // on lifetime so it doesn't walk the full deposit history.
@@ -1045,7 +1045,7 @@ async function computeCapHitterCohorts(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCapHitterCohorts> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const windowStart = windowStartExpr(period);

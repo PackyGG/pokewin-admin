@@ -5,7 +5,7 @@ import { after } from "next/server";
 import countries from "i18n-iso-countries";
 import { eq, sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
   country_restrictions,
   site_config,
@@ -96,7 +96,7 @@ export async function updateCountryRestrictionArray(
   field: string,
   values: string[]
 ): Promise<void> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
 
@@ -164,7 +164,7 @@ export async function seedMissingCountryRestrictions(): Promise<{
   seeded: number;
   total: number;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
     session,
@@ -218,7 +218,7 @@ export async function toggleCountryRestriction(
   field: string,
   value: boolean
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_toggle_country_restriction", "toggle country restrictions");
 
@@ -330,7 +330,7 @@ export async function setGlobalFiatDeposits(
   seeded: number;
   lockedMethods: string[];
 }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
     session,
@@ -449,7 +449,7 @@ export async function setGlobalFiatDeposits(
 export async function setMandatoryJurisdictionsGeoBlocked(
   blocked: boolean,
 ): Promise<{ affected: number; seeded: number }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
     session,

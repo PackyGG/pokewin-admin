@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { asc, and, eq, inArray } from "drizzle-orm";
@@ -101,7 +101,7 @@ const cachedCodeAndWagerEntries = (
 ) =>
   unstable_cache(
     async (): Promise<[string, CreatorCodeAndWager][]> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       const blacklistAnd =
         excludedIds.length > 0
           ? ` AND u.id NOT IN (${excludedIds.map((id) => `'${id.replace(/'/g, "''")}'`).join(",")})`

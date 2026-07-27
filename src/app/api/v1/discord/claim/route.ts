@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { eq } from "drizzle-orm";
 
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
@@ -110,7 +110,7 @@ export const POST = withApiKey(
     // Same single index probe the sibling routes use. providerId is asserted
     // so a same-valued account on another provider can't resolve to a Packy
     // user.
-    const [linkedAccount] = await getProdDrizzleDb()
+    const [linkedAccount] = await getProdReadDrizzleDb()
       .select({ providerId: account.providerId, userId: account.userId })
       .from(account)
       .where(eq(account.accountId, discordUserId))

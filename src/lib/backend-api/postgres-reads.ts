@@ -12,7 +12,7 @@ import {
   sql,
 } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import {
   affiliate_leaderboard_prize_tiers,
   affiliate_leaderboards,
@@ -69,7 +69,7 @@ export async function listCreatorsFromPostgres(
   offset: number;
   limit: number;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { offset, limit } = pageBounds(query);
   const search = query.search?.trim();
   const where = search
@@ -207,7 +207,7 @@ export async function listCreatorDealsFromPostgres(
   offset: number;
   limit: number;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { offset, limit } = pageBounds(query);
   const where = eq(creator_deals.user_id, userId);
   const [data, totalRows] = await Promise.all([
@@ -235,7 +235,7 @@ export async function getCreatorDealFromPostgres(
   userId: string,
   dealId: string,
 ): Promise<CreatorDealResponse | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const [deal] = await db
     .select()
     .from(creator_deals)
@@ -259,7 +259,7 @@ export async function listCreatorSessionsFromPostgres(
   offset: number;
   limit: number;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { offset, limit } = pageBounds(query);
   const where = query.status
     ? and(
@@ -316,7 +316,7 @@ export async function listPendingConversionsFromPostgres(
   userId: string,
   query: { status?: PendingConversionStatus } = {},
 ): Promise<PendingConversionResponse[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const where = query.status
     ? and(
         eq(creator_session_pending_conversions.user_id, userId),
@@ -351,7 +351,7 @@ export async function listCreatorSocialsFromPostgres(
     limit?: number;
   } = {},
 ): Promise<{ items: AdminCreatorSocial[]; total: number }> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { offset, limit } = pageBounds(query);
   const where = query.status
     ? eq(creator_socials.status, query.status)
@@ -449,7 +449,7 @@ async function attachPrizeTiers(
   rows: LeaderboardRowWithoutTiers[],
 ): Promise<LeaderboardAdminRow[]> {
   if (rows.length === 0) return [];
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const tiers = await db
     .select({
       leaderboard_id: affiliate_leaderboard_prize_tiers.leaderboard_id,
@@ -484,7 +484,7 @@ async function attachPrizeTiers(
 export async function listAffiliateLeaderboardsFromPostgres(
   query: ListQuery = {},
 ): Promise<ListResult> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { offset, limit } = pageBounds(query);
   const where = leaderboardWhere(query);
   const [rows, totalRows] = await Promise.all([
@@ -513,7 +513,7 @@ export async function listAffiliateLeaderboardsFromPostgres(
 export async function getAffiliateLeaderboardFromPostgres(
   id: string,
 ): Promise<LeaderboardAdminRow | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const [row] = await db
     .select(selectLeaderboardRows())
     .from(affiliate_leaderboards)
@@ -529,7 +529,7 @@ export async function getAffiliateLeaderboardFromPostgres(
 export async function getCreatorApiKeyStatusFromPostgres(
   userId: string,
 ): Promise<{ has_api_key: boolean } | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const [row] = await db
     .select({
       has_api_key: sql<boolean>`${isNotNull(user.api_key)} AND ${user.api_key} <> ''`,

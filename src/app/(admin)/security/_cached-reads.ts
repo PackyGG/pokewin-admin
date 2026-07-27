@@ -29,7 +29,7 @@ import { SECURITY_CACHE_TAG } from "./security-cache-tag";
  * Correctness:
  *   • PROD-ONLY cache — same pattern as `users-detail-cache.ts`. The
  *     underlying reads resolve the per-admin `admin_db_env` cookie
- *     (`getDrizzleDb()` / `resolveBackendApiConfig()`); `unstable_cache` runs its
+ *     (`getReadDrizzleDb()` / `resolveBackendApiConfig()`); `unstable_cache` runs its
  *     callback OUTSIDE the request's dynamic scope, where that cookie read
  *     falls back to "prod". So we cache ONLY when the request is on prod and
  *     bypass to the live read for a dev-toggled admin, who then always sees

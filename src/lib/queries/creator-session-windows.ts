@@ -1,7 +1,7 @@
 import "server-only";
 
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { creatorsApi } from "@/lib/backend-api";
 
 // Creator deal/stream sessions live ONLY in the backend creators API —
@@ -74,7 +74,7 @@ export async function getCreatorSessionWindowsCte(): Promise<string> {
 }
 
 async function buildCte(): Promise<string> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{ id: string }>(sql`
     SELECT id
     FROM "user"

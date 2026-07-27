@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -38,7 +38,7 @@ async function computeTopOpenedPacks24h(
   limit: number,
   excluded: string[],
 ): Promise<TopPack24hRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const blacklistIdNotIn = blacklistNotInClause("id", excluded);
 
   // Clamp the limit so a caller-side bug can't pull thousands of rows.
@@ -236,7 +236,7 @@ async function computePackProfitability(
   period: PacksPeriod,
   excluded: string[],
 ): Promise<PacksProfitData> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForPeriod(period);
   const ltWhere = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
   // Inventory rows are bucketed by `obtained_at` (when the card landed),

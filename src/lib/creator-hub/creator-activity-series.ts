@@ -3,7 +3,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -161,7 +161,7 @@ const cachedCreatorActivityInner = (
 ) =>
   unstable_cache(
     async (): Promise<CreatorActivitySeries> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       const days = periodToDays(period);
       const sinceClause = (col: string) =>
         `AND ${col} >= NOW() - INTERVAL '${days} days'`;
@@ -332,7 +332,7 @@ export async function getCreatorActivitySeries(
 ): Promise<CreatorActivitySeries> {
   return withTiming("creator-hub.activitySeries", async () => {
     const env = await readDbEnv();
-    const probeDb = drizzleForEnv(env);
+    const probeDb = readDrizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 

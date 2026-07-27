@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { type DbEnv } from "@/lib/db-env";
 import { type DashboardPeriod } from "./dashboard-period";
@@ -96,7 +96,7 @@ async function fetchTrendSeriesPg(
   blacklistIdNotIn: string,
   env: DbEnv,
 ): Promise<DashboardTrendSeries> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const now = new Date();
   const cutoff = dashboardChartCutoff(period, now, LIFETIME_LOOKBACK_DAYS);
   const bucketLedger = dashboardChartBucketExpr("created_at", period);

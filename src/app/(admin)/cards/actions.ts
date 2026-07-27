@@ -4,7 +4,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { verifySession, requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -105,7 +105,7 @@ export async function createCard(data: {
   cost?: number | null;
   power?: number | null;
 }): Promise<ServerActionResult<{ id: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
 
   const parsed = createCardSchema.safeParse(data);
@@ -270,7 +270,7 @@ export async function updateCard(
     setId: string | null;
   },
 ): Promise<ServerActionResult<{ id: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
 
   if (!data.name.trim()) return fail("Name is required", "VALIDATION");
@@ -349,7 +349,7 @@ export async function updateCard(
 }
 
 export async function deleteCard(cardId: string): Promise<void> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
   await requireCapability(session, "__can_delete_card", "delete cards");
 
@@ -669,7 +669,7 @@ export async function deleteCards(input: {
   // De-dup just in case the client passed duplicate ids.
   const ids = Array.from(new Set(parsed.data.ids));
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   try {
     // Load the candidate cards (for their names in the blocked report). Missing

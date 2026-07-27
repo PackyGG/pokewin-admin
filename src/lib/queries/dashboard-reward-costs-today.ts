@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -214,7 +214,7 @@ async function rewardCostsTodayLinesFromPg(
   sinceIso: string,
 ): Promise<{ lines: RewardCostLine[] }> {
   return withTiming("dashboard.rewardCostsToday", async () => {
-    const queryDb = await getDrizzleDb();
+    const queryDb = await getReadDrizzleDb();
     const since = `'${sinceIso}'::timestamptz`;
 
       // ── Ledger reward legs (today) ───────────────────────────────────
@@ -581,7 +581,7 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
     const sinceIso = since.toISOString();
     const sinceSql = `'${sinceIso}'::timestamptz`;
 
-    const queryDb = await getDrizzleDb();
+    const queryDb = await getReadDrizzleDb();
     const scope = await getMetricsScope();
 
     type Row = {
@@ -666,7 +666,7 @@ export async function getPromoBalanceCreditClaimants(): Promise<PromoBalanceCred
       const sinceIso = since.toISOString();
       const sinceSql = `'${sinceIso}'::timestamptz`;
 
-      const queryDb = await getDrizzleDb();
+      const queryDb = await getReadDrizzleDb();
       const scope = await getMetricsScope();
       const countedAdj = countedAdjustmentSqlPredicate({
         typeColumn: "lt.type",

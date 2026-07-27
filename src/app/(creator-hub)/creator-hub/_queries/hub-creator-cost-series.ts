@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -87,7 +87,7 @@ export async function getHubCreatorCostSeries(
 async function creatorCostSeriesFromPg(
   period: DashboardPeriod,
 ): Promise<CreatorCostSeries> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const unit = bucketUnit(period);
   const interval = hubPeriodToInterval(period);
   const since = `NOW() - INTERVAL '${interval}'`;

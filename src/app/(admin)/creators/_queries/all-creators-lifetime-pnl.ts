@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -120,7 +120,7 @@ type LifetimePnlRow = {
 const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
   unstable_cache(
     async (): Promise<LifetimePnlRow[]> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       // Blacklist guard applied as an extra AND on every WHERE that aliases
       // the referred user as `u`. Inlined per query because we can't share
       // a binding across CTE definitions in raw SQL cleanly.

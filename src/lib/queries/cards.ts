@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
-import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { readDrizzleForEnv, getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -81,7 +81,7 @@ async function fetchCardsListCount(
   where: SQL,
   env: DbEnv,
 ): Promise<number> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::text AS count FROM cards c ${where}
   `);
@@ -122,7 +122,7 @@ export async function getCards(params: {
     sortOrder = "desc",
   } = params;
   const env = await readDbEnv();
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
 
   const where = buildCardsWhere({ search, rarity, setId, minPrice, maxPrice });
 
@@ -218,7 +218,7 @@ export async function getCardIdsForFilter(
   },
   limit: number,
 ): Promise<string[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const where = buildCardsWhere(params);
   const safeLimit = Math.min(500, Math.max(1, Math.trunc(limit) || 1));
   const result = await db.execute<{ id: string }>(sql`
@@ -268,7 +268,7 @@ export type CardInspector = {
 export async function getCardInspector(
   id: string,
 ): Promise<CardInspector | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const [cardResult, statsResult] = await Promise.all([
     db.execute<{
       id: string; name: string; image_url: string; price: string; price_raw: string;
@@ -338,7 +338,7 @@ async function fetchCardInventoryCount(
   id: string,
   env: DbEnv,
 ): Promise<number> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::text AS count
     FROM user_inventory
@@ -357,7 +357,7 @@ function getCardInventoryCount(id: string): Promise<number> {
 
 export async function getCardDetail(id: string) {
   const env = await readDbEnv();
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   // Explicit `select` on the card columns. Everything named here is a
   // column present on EVERY card DB (original schema), so the typed
   // `findUnique` is safe on production and on older snapshots alike.
@@ -459,7 +459,7 @@ export async function getCardDetail(id: string) {
 }
 
 export async function getSets() {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{ id: string; name: string }>(sql`
     SELECT id, name FROM sets ORDER BY name ASC
   `);
@@ -481,7 +481,7 @@ export type SetForMoveDialog = {
  * create-form) don't pay for the extra columns.
  */
 export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     id: string;
     name: string;
@@ -509,7 +509,7 @@ export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
  * the dropdown reads alphabetically.
  */
 export async function getDistinctSeries(): Promise<string[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{ series: string }>(sql`
     SELECT DISTINCT series FROM sets
     WHERE BTRIM(series) <> ''
@@ -551,7 +551,7 @@ async function fetchRarities(
   setId: string | undefined,
   env: DbEnv,
 ): Promise<(string | null)[]> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const where =
     setId && setId !== "unassigned"
       ? sql`WHERE set_id = ${setId}::uuid`
@@ -599,7 +599,7 @@ async function fetchCardsStats(
   setId: string | undefined,
   env: DbEnv,
 ): Promise<CardsStats> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   // When `setId` is provided, narrow every aggregate to that set so the
   // KPI strip + total count reflect the active per-set tab on /cards.
   // `totalSets` keeps the catalog-wide value either way — it's a meta

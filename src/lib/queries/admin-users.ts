@@ -15,7 +15,7 @@ import {
   admin_sessions,
   admin_users,
 } from "@/lib/db-schema/admin/schema";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
 import { ROLE_BASELINES, baselineTokensFor } from "@/lib/role-baselines";
@@ -33,7 +33,7 @@ import { logError } from "@/lib/errors/logger";
 const AUDIT_MAIN_DB_TIMEOUT_MS = 8_000;
 
 export async function getAdminUserDetail(id: string) {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Resilient to the unapplied `roles` migration: degrades to `roles: []`
   // (→ effective `[role]` below) so the detail page renders pre-migration.
   // The per-user override columns (permission_grants / permission_revokes)
@@ -371,7 +371,7 @@ export async function getAdminUserAuditEvents(
   perPage: number = 20,
   filters?: { eventType?: string; search?: string }
 ): Promise<PaginatedResult<AdminAuditEventItem>> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const conditions: SQL[] = [
     eq(admin_audit_events.admin_user_id, adminUserId),
   ];

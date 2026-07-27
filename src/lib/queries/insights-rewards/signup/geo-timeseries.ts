@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   daysForInsightsPeriod,
@@ -35,7 +35,7 @@ async function computeGeoTimeSeries(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<GeoTimeSeriesCountry[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   // Cap to 90 days on lifetime so we don't shovel years of points.
   const effectiveDays = days !== null ? days : 90;

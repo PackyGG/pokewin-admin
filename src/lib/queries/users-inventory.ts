@@ -1,5 +1,5 @@
 import { sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 export async function getUserInventory(
@@ -15,7 +15,7 @@ export async function getUserInventory(
     priceMax?: number;
   },
 ) {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const predicates: SQL[] = [sql`ui.user_id = ${userId}`];
 
   if (filters?.status === "owned") {

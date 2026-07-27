@@ -11,7 +11,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { cards, packs } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { toNumber } from "@/lib/utils/decimal";
@@ -32,7 +32,7 @@ export async function searchItems(
   type: "pack" | "card",
   filters?: { minPrice?: number; maxPrice?: number },
 ): Promise<SearchItem[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   await requirePageAccess("/rewards");
   const isUuid = UUID_RE.test(query);
 

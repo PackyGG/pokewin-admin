@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 export const FIAT_CACHE_TAG = "fiat-operations";
@@ -116,7 +116,7 @@ function stringArray(value: unknown): string[] {
 }
 
 async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
-  const result = await drizzleForEnv(env).execute<RawOverview>(sql`
+  const result = await readDrizzleForEnv(env).execute<RawOverview>(sql`
     WITH intent_stats AS (
       SELECT
         COUNT(*)::text AS intents,
@@ -256,7 +256,7 @@ type RawConfigRow = {
 };
 
 async function computeFiatConfig(env: DbEnv): Promise<FiatConfigRow[]> {
-  const result = await drizzleForEnv(env).execute<RawConfigRow>(sql`
+  const result = await readDrizzleForEnv(env).execute<RawConfigRow>(sql`
     SELECT
       key,
       value,
@@ -339,7 +339,7 @@ type RawAccess = {
 };
 
 async function computeFiatAccess(env: DbEnv): Promise<FiatAccess> {
-  const result = await drizzleForEnv(env).execute<RawAccess>(sql`
+  const result = await readDrizzleForEnv(env).execute<RawAccess>(sql`
     SELECT
       (SELECT COUNT(*) FROM country_restrictions)::text AS restriction_rows,
       (
@@ -442,7 +442,7 @@ type RawWebhookFailure = {
 };
 
 async function computeFiatWebhooks(env: DbEnv): Promise<FiatWebhooks> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const [summary, failures] = await Promise.all([
     db.execute<RawWebhookSummary>(sql`
       SELECT

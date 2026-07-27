@@ -1,7 +1,7 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { and, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/drizzle";
 import { admin_users, admin_voucher_actions } from "@/lib/db-schema/admin/schema";
 import { toNumber } from "@/lib/utils/decimal";
@@ -77,7 +77,7 @@ async function getVouchersImpl(params: {
   maxValue?: number;
   createdBy?: string;
 }): Promise<PaginatedResult<VoucherListItem>> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const { page = 1, perPage = 20, claimed, search, minValue, maxValue, createdBy } = params;
   const safePage = Math.max(1, Math.trunc(page) || 1);
   const safePerPage = Math.min(
@@ -300,7 +300,7 @@ export type VouchersListStats = {
 
 const cachedVouchersListStats = unstable_cache(
   async (): Promise<VouchersListStats> => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const rows = (
       await db.execute<{
         unclaimed_count: string;

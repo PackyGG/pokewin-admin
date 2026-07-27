@@ -2,7 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { SETS_CACHE_TAG } from "@/lib/queries/sets";
 import { verifySession } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -67,7 +67,7 @@ function postgresErrorCode(error: unknown): string | undefined {
 // ────────────────────────────────────────────────────────────────────
 
 export async function createSet(data: { name: string }): Promise<string> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
 
   if (!data.name.trim()) throw new Error("Name is required");
@@ -140,7 +140,7 @@ export async function updateSet(
     name: string;
   },
 ): Promise<void> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
 
   if (!id) throw new Error("Set id is required");
@@ -200,7 +200,7 @@ export async function seedInitialSets(): Promise<{
   pokemonCreated: boolean;
   onepieceCreated: boolean;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
   await requireCapability(
     session,
@@ -325,7 +325,7 @@ export async function forceAbsorbIntoPokemon(): Promise<{
   cardsMoved: number;
   legacySetsDeleted: number;
 }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
   await requireCapability(
     session,
@@ -435,7 +435,7 @@ export async function forceAbsorbIntoPokemon(): Promise<{
 export async function deleteSet(
   id: string,
 ): Promise<ServerActionResult<{ id: string; cardsOrphaned: number }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await verifySession();
 
   try {

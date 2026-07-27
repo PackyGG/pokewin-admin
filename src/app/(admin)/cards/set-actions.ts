@@ -4,7 +4,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -49,7 +49,7 @@ export async function bulkMoveCardsToSet(input: {
 
   // De-dup just-in-case the client passed duplicate ids.
   const uniqueIds = Array.from(new Set(cardIds));
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.transaction(async (tx) => {
     const set = (
       await tx.execute<{ id: string; name: string }>(sql`
@@ -147,7 +147,7 @@ export async function createSetForCards(input: {
     parsedReleaseDate = d;
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // Generate the next free negative tcgplayer_id. Retry on the rare
   // UNIQUE-collision (two admins creating simultaneously) by recomputing.

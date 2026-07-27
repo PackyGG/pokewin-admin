@@ -1,6 +1,6 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -56,7 +56,7 @@ async function computeCreatorWithdrawals(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CreatorWithdrawalsSummary> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   // Blacklist fragment applied to the user table inside the real_users
   // CTE (column `id`), matching the dashboard's real_users scope.

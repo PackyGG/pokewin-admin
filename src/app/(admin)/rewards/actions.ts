@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
   rakeback_config,
   rewards,
@@ -56,7 +56,7 @@ export async function createReward(data: {
   dailyUnlockPercentage?: number | null;
   metadata?: Record<string, unknown>;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -117,7 +117,7 @@ export async function updateReward(
     metadata?: Record<string, unknown>;
   }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   if (!data.slug.trim() || !data.name.trim()) {
@@ -159,7 +159,7 @@ export async function updateReward(
 }
 
 export async function deleteReward(rewardId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_delete_reward", "delete rewards");
 
@@ -187,7 +187,7 @@ export async function updateRakebackConfig(
   id: string,
   data: { percentage: number; expirationDays: number; enabled: boolean }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_rakeback", "update rakeback config");
 

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -76,7 +76,7 @@ async function computeCashflow(
   blacklist: string[],
 ): Promise<DashboardCashflow> {
   return withTiming("dashboard.cashflowPg", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Self-contained `user_id IN (SELECT id FROM "user" WHERE role NOT IN
     // ('admin','support') AND id NOT IN (...))` — the SAME real-customer
     // population calculateWindowedPnl's global scope uses (creators KEPT).

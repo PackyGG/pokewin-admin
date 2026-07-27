@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -144,7 +144,7 @@ async function computeUpgraderAnalytics(
   period: UpgraderPeriod,
   excluded: string[],
 ): Promise<UpgraderAnalytics> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // Probe: skip entirely if the table is absent (pre-upgrader DB).
   // to_regclass returns NULL (not an error) for a missing relation — same

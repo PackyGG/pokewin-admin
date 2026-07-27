@@ -1,5 +1,9 @@
 # Packy Antifraud Monitor
 
+`SOURCE_DATABASE_URL` must point to `MIRROR_PRODUCTION_DB`, never the primary
+`DATABASE_URL`. Source reads remain read-only; mirror indexes are managed by
+the repository root `db:index:mirrors` command.
+
 Independent TypeScript service for signup risk assessment and short-lived
 behaviour monitoring. It reads Packy through a read-only PostgreSQL connection
 and stores all antifraud state in the dedicated Antifraud PostgreSQL database.

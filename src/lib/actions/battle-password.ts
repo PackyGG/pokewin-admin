@@ -2,7 +2,7 @@
 
 import { eq } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { battles } from "@/lib/db-schema/main/schema";
 import { requireRole } from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -32,7 +32,7 @@ export async function revealBattlePassword(battleId: string): Promise<string> {
   if (!isUuid(battleId)) throw new Error("Invalid battle id");
 
   const session = await requireRole(["admin"]);
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   const [battle] = await db
     .select({

@@ -5,7 +5,7 @@ import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
 import { isUuid } from "@/lib/utils/ids";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/admin-db";
 import { sessionHasRole } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -406,7 +406,7 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
   await requireRetuneOwner();
   if (!isUuid(packId)) throw new Error("Invalid pack id");
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<{
     name: string;
     slug: string;
@@ -690,7 +690,7 @@ async function applyPackEditInner(
     throw new Error("Refused: price must be greater than 0.");
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // FRESH pack row: price + scope + the CURRENT live pool (so we can scope-check,
   // verify every edited card already exists, and compute the before/after risk).
@@ -1315,7 +1315,7 @@ async function resolveAndShapeStagedPool(
     }
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // FRESH pack row: price + scope + the CURRENT live pool (for before-risk +
   // card-count audit). Same select shape as `applyPackEdit`.
@@ -2025,7 +2025,7 @@ async function applyStagedPackEditAndRetuneInner(
   const tagDbValues = (r.tagWrite ?? []).map(packTagDbValue);
 
   // SAME delete-all-then-createMany pattern used by every other writer.
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await db.transaction(async (tx) => {
     await tx.execute(sql`
       UPDATE packs
@@ -2621,7 +2621,7 @@ async function planPackTuneLiveUncached(
   if (!p || !p.active || !(p.price > 0)) return null;
 
   // One-pack pool read (same composite-index probe as the legacy single arm).
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<BatchedPoolRow>(sql`
       SELECT
         pc.pack_id      AS pack_id,
@@ -3224,7 +3224,7 @@ async function planPackTuneStagedUncached(
   // deleted pack is out of scope — return null (data, not a throw) so the
   // workspace renders the neutral out-of-scope state. Also carries the slug
   // the resolver doesn't read.
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const result = await db.execute<{
     slug: string; active: boolean; price: string;
   }>(sql`

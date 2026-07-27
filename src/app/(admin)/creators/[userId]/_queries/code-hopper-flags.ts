@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 
 /**
@@ -44,7 +44,7 @@ export async function getCodeHopperFlags(
   const out = new Map<string, CodeHopperInfo>();
   if (referredUserIds.length === 0) return out;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   try {
     const rows = await queryRows<

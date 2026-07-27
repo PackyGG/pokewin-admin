@@ -1,5 +1,5 @@
 import { queryRows } from "@/lib/drizzle-query";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -127,7 +127,7 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
       official_stream_net: string;
       remove_locked_net: string;
     }[]
-  >(getProdDrizzleDb(), `
+  >(getProdReadDrizzleDb(), `
     WITH real_users AS (
       SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistFrag}
     )

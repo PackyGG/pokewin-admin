@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { asc, eq } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { creator_socials } from "@/lib/db-schema/admin/schema";
@@ -40,7 +40,7 @@ export async function getCandidateSetupProfile(
   userId: string,
 ): Promise<CandidateSetupProfile | null> {
   await requireCreatorHubAccess("Not authorized to add creators in Creator Hub.");
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   const [candidateRows, codes] = await Promise.all([
     db

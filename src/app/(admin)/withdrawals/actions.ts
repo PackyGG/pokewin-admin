@@ -3,7 +3,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { and, eq } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { card_withdrawal_requests } from "@/lib/db-schema/main/schema";
 import { WITHDRAWALS_LIST_TAG } from "@/lib/queries/withdrawals";
 import { requirePageAccess } from "@/lib/dal";
@@ -33,7 +33,7 @@ export async function processWithdrawal(
   withdrawalId: string,
   totpCode: string,
 ): Promise<ServerActionResult<{ withdrawalId: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   try {
     await requireCapability(
@@ -178,7 +178,7 @@ export async function shipWithdrawal(
   trackingNumber: string,
   carrier: string
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_ship_withdrawals", "mark withdrawals as shipped");
 
@@ -239,7 +239,7 @@ export async function shipWithdrawal(
 }
 
 export async function completeWithdrawal(withdrawalId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_complete_withdrawals", "mark withdrawals as complete");
 
@@ -287,7 +287,7 @@ export async function cancelWithdrawal(
   reason: string,
   totpCode: string,
 ): Promise<ServerActionResult<{ withdrawalId: string }>> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   try {
     await requireCapability(
@@ -371,7 +371,7 @@ export async function failWithdrawal(
   reason: string,
   totpCode: string,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/withdrawals");
   await requireCapability(session, "__can_fail_withdrawals", "mark withdrawals as failed");
   // Marking shipped-as-failed refunds the user (backend reverts the

@@ -2,7 +2,7 @@ import { daysAgoFilter, queryRows, realCustomersScopeDrizzle, sql } from "@/lib/
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getCreatorSessionWindowsCte } from "@/lib/queries/creator-session-windows";
@@ -114,7 +114,7 @@ async function computeDailyPacksGiveaway(
   // to the excluded-users list busts the cache (mirrors the other helpers).
   void _blacklistIds;
   return withTiming("insights-rewards.daily-packs", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await realCustomersScopeDrizzle();
     const sessionWindowsCte = await getCreatorSessionWindowsCte();
 

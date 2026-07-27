@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import {
@@ -544,7 +544,7 @@ async function computePastDealsFromPostgres(
   const [creatorRes, wagerRes, pnlRes] = await Promise.all([
     safeQuery(
       async () => {
-        const db = await getDrizzleDb();
+        const db = await getReadDrizzleDb();
         const creators = await db
           .select({ id: user.id, username: user.username, image: user.image })
           .from(user)

@@ -7,7 +7,7 @@ import {
   type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 // Reuse the EXISTING admin-side sponsored-% lookup (the house's prize-pool
 // share). The (creator-hub) group is a sibling of (admin) on disk, so this
@@ -414,7 +414,7 @@ export async function getLiveLeaderboards(
   let creatorMap = new Map<string, string | null>();
   if (creatorIds.length > 0) {
     try {
-      const db = await getDrizzleDb();
+      const db = await getReadDrizzleDb();
       const creators = await db
         .select({ id: user.id, username: user.username })
         .from(user)

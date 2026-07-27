@@ -1,7 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { ledger_transaction_type } from "@/lib/db-schema/main/schema";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 /** Ledger enum values — keep queries in sync with the database schema. */
@@ -42,9 +42,9 @@ const liveLedgerEnumCached = unstable_cache(
   // separate entries. Reading the cookie inside `unstable_cache` throws (no
   // request scope) and `readDbEnv` then silently falls back to "prod", which
   // poisoned a dev-toggled request with the PROD enum and dropped dev-only
-  // ledger types. Use the explicit `drizzleForEnv(env)` for the same reason.
+  // ledger types. Use the explicit `readDrizzleForEnv(env)` for the same reason.
   async (env: DbEnv): Promise<string[]> => {
-    const db = drizzleForEnv(env);
+    const db = readDrizzleForEnv(env);
     const result = await db.execute<{ enumlabel: string }>(sql`
       SELECT e.enumlabel
         FROM pg_enum e

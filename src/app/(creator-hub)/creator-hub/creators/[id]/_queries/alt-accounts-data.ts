@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
@@ -622,7 +622,7 @@ async function enrichMembers(
   >();
   if (memberIds.length === 0) return out;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   const [users, deposits, wagers] = await Promise.all([
     db

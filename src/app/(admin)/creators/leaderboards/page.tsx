@@ -14,7 +14,7 @@ import {
 
 import { requirePageAccess } from "@/lib/dal";
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import {
     affiliateLeaderboardsApi,
@@ -337,7 +337,7 @@ async function LeaderboardsBody({
 
     // Hydrate creator usernames from MAIN so admins see who owns each row.
     const creatorIds = [...new Set(rows.map((r) => r.creator_user_id))];
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const creators = creatorIds.length > 0
         ? await db
               .select({ id: user.id, username: user.username, email: user.email })

@@ -38,7 +38,7 @@ test("analytics lifetime reads use the canonical bounded lookback", () => {
 test("cached realized PnL is explicitly pinned to production", () => {
   const source = read("src/lib/queries/_realized-pnl.ts");
 
-  assert.match(source, /queryRows<[\s\S]*?>\(getProdDrizzleDb\(\), `/);
+  assert.match(source, /queryRows<[\s\S]*?>\(getProdReadDrizzleDb\(\), `/);
   assert.doesNotMatch(source, /queryMainRows/);
 });
 

@@ -1,6 +1,6 @@
 import { daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -82,7 +82,7 @@ async function computeSuspicious(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusSuspicious> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilter(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   const days = daysForInsightsPeriod(period);

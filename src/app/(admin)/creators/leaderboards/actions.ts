@@ -14,7 +14,7 @@ import { requirePageAccess, verifySession, sessionIsAdmin, getUserPermissions } 
 import { requireCapability } from "@/lib/require-capability";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
     admin_leaderboard_creator_paid,
@@ -35,7 +35,7 @@ export async function searchCreators(query: string): Promise<CreatorSearchResult
     const trimmed = query.trim();
     if (trimmed.length < 2) return [];
 
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     // Match on the creator's own affiliate codes (from affiliate_codes table),
     // not on user.affiliate_code (which is the code the user signed up with).
     const result = await db.execute<{
@@ -84,7 +84,7 @@ export async function searchCreators(query: string): Promise<CreatorSearchResult
 export async function getCreatorCodes(userId: string): Promise<string[]> {
     await requirePageAccess(PAGE_KEY);
     if (!userId) return [];
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const rows = await db
         .select({ code: affiliate_codes.code })
         .from(affiliate_codes)

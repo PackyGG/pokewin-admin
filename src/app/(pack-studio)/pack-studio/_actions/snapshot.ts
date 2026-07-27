@@ -5,7 +5,7 @@ import { revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
 import { requirePackStudioAccess } from "@/lib/require-pack-studio-access";
 import { adminDrizzle } from "@/lib/admin-db";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { computePackRiskFromAggregates } from "@/app/(admin)/insights/edge-calc/risk";
@@ -72,7 +72,7 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   // filtered id read is a cheap seq scan (the planner declines an index at
   // this cardinality — verified read-only EXPLAIN), matching the Foundation's
   // own composition query.
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // SAFETY INVARIANT: `included` is built ONLY from `PACK_STUDIO_CASH_PACK_TYPES`,
   // a hardcoded module constant of trusted string literals — never user input.
   // The current query still binds the resulting array. If this list ever

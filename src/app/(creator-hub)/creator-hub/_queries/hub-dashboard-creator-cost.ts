@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -40,7 +40,7 @@ export type HubCreatorCostBreakdown = {
 const cachedHubCreatorCost = unstable_cache(
   async (period: DashboardPeriod): Promise<HubCreatorCostBreakdown> => {
     return withTiming("creator-hub.creatorCost", async () => {
-      const db = await getDrizzleDb();
+      const db = await getReadDrizzleDb();
       const interval = hubPeriodToInterval(period);
       const since = `NOW() - INTERVAL '${interval}'`;
 

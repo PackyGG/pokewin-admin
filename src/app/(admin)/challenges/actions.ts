@@ -4,7 +4,7 @@ import { revalidatePath, unstable_cache } from "next/cache";
 import { z } from "zod";
 import { and, asc, eq, ilike, or, sql } from "drizzle-orm";
 
-import { drizzleForEnv, getDrizzleDb } from "@/lib/db";
+import { readDrizzleForEnv, getReadDrizzleDb } from "@/lib/db";
 import { cards, pack_cards, packs } from "@/lib/db-schema/main/schema";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
@@ -88,7 +88,7 @@ export async function searchItems(
     packId?: string;
   } = {},
 ): Promise<SearchItem[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   await requirePageAccess("/rewards");
   const isUuid = UUID_RE.test(query);
 
@@ -200,7 +200,7 @@ export async function searchItems(
  *      usable) instead of hanging the Server Action.
  *
  * `env` is threaded in (resolved by the public entry point) and the client
- * is taken via `drizzleForEnv(env)` — NOT the request-scoped resolver
+ * is taken via `readDrizzleForEnv(env)` — NOT the request-scoped resolver
  * cookie via `cookies()` and is illegal inside `unstable_cache`. The
  * returned value is a plain `number` (no Date), so the cache JSON
  * round-trip is lossless.
@@ -214,7 +214,7 @@ async function computeCardPullCount(
   packId: string,
   cardId: string,
 ): Promise<number> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const pullRows = await db.execute<{ count: string }>(sql`
     SELECT COUNT(*)::bigint AS count
     FROM user_inventory ui
@@ -256,7 +256,7 @@ export async function getChallengeCardSummary(
   packId: string,
   cardId: string,
 ): Promise<ChallengeCardSummary | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   await requirePageAccess("/rewards");
 
   if (!UUID_RE.test(packId) || !UUID_RE.test(cardId)) {

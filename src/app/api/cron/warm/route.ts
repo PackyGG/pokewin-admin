@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { sql } from "drizzle-orm";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { getCostBreakdownLifetimeCached } from "@/lib/queries/insights-analytics/cost-breakdown";
 import { getInsightsHubWager } from "@/lib/queries/insights-analytics/hub-wager";
 import {
@@ -62,7 +62,7 @@ export async function GET(request: Request): Promise<Response> {
   // Postgres keep-warm — read-only ping against the prod game DB.
   try {
     const t = Date.now();
-    const db = getProdDrizzleDb();
+    const db = getProdReadDrizzleDb();
     await db.execute(sql`SELECT 1`);
     result.postgres = `ok ${Date.now() - t}ms`;
   } catch (err) {

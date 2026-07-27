@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import {
   parseRafflePrizes,
@@ -72,7 +72,7 @@ type RawRaffleRow = {
 };
 
 async function computeRaffleLifetimeHistory(): Promise<RaffleLifetimeHistory> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   const raw = await queryRows<RawRaffleRow[]>(db, sql`
      SELECT id, name, prizes, total_entries, participant_count, ends_at, completed_at, status::text AS status

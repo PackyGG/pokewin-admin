@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   daysForInsightsPeriod,
@@ -60,7 +60,7 @@ async function computeCohortMatrix(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<CohortMatrixRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   // Cap at 52 weeks even for "lifetime" so the matrix is readable.
   const weeksBack = days !== null ? Math.ceil(days / 7) : 52;

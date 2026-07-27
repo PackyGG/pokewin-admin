@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { eq, ilike, or, sql } from "drizzle-orm";
 
-import { adminDrizzle, getDrizzleDb } from "@/lib/drizzle";
+import { adminDrizzle, getPrimaryDrizzleDb } from "@/lib/drizzle";
 import { admin_voucher_actions } from "@/lib/db-schema/admin/schema";
 import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
@@ -22,7 +22,7 @@ const createVoucherSchema = z.object({
 });
 
 export async function searchUsers(query: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await requirePageAccess("/vouchers");
 
   if (!query || query.length < 2) return [];
@@ -47,7 +47,7 @@ export async function searchUsers(query: string) {
 }
 
 export async function createVoucher(data: z.infer<typeof createVoucherSchema>) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/vouchers");
   await requireCapability(session, "__can_create_voucher", "create vouchers");
 

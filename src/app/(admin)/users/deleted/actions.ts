@@ -2,7 +2,7 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/admin-db";
 import { requireAdmin } from "@/lib/dal";
 import { require2FA } from "@/lib/require-2fa";
@@ -53,7 +53,7 @@ export async function restoreDeletedUser(
     throw new Error("Snapshot is malformed — cannot restore");
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const existing = await db.execute<{ id: string }>(sql`
     SELECT id FROM "user" WHERE id = ${snapshotId} LIMIT 1
   `);

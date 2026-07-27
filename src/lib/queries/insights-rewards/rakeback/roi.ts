@@ -1,5 +1,5 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -80,7 +80,7 @@ async function computeRoi(
   lookbackDays: RakebackRoiLookback,
   blacklistIds: string[],
 ): Promise<RakebackRoi> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
   const dateFilter = daysAgoFilter("rc.claimed_at", days);

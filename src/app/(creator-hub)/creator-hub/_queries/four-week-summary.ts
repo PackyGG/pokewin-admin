@@ -9,7 +9,7 @@ import {
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { inArray } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
 
@@ -369,7 +369,7 @@ export async function getFourWeekDealSummary(): Promise<FourWeekSummary> {
   const creatorIds = [...perCreator.keys()];
   const nameRes = await safeQuery(
     async () => {
-      const db = await getDrizzleDb();
+      const db = await getReadDrizzleDb();
       const users = await db
         .select({ id: user.id, username: user.username })
         .from(user)

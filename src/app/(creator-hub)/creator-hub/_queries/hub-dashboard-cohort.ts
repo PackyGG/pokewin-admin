@@ -2,7 +2,7 @@ import "server-only";
 
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -162,7 +162,7 @@ const cachedHubCohortScans = (
 ) =>
   unstable_cache(
     async (): Promise<HubCohortWindowed> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       // Chart series always roll 30 daily buckets — independent of the KPI chip.
       const chartPeriod = HUB_CHART_PERIOD;
       // are deterministically comparable (mirrors crm / top-creators). The
@@ -414,7 +414,7 @@ export async function getHubCohortWindowed(
 ): Promise<HubCohortWindowed> {
   return withTiming("creator-hub.cohort", async () => {
     const env = await readDbEnv();
-    const probeDb = drizzleForEnv(env);
+    const probeDb = readDrizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 

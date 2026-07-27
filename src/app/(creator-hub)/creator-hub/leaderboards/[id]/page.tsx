@@ -6,7 +6,7 @@ import { ArrowLeft, ExternalLink } from "lucide-react";
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { isUuid } from "@/lib/utils/ids";
 import { eq } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import {
   affiliateLeaderboardsApi,
@@ -149,7 +149,7 @@ export default async function CreatorHubLeaderboardDetailPage({
 async function CreatorLine({ creatorUserId }: { creatorUserId: string }) {
   const { data: creator } = await safeQueryOrNull(
     async () => {
-      const db = await getDrizzleDb();
+      const db = await getReadDrizzleDb();
       const [creator] = await db
         .select({ id: user.id, username: user.username, email: user.email })
         .from(user)

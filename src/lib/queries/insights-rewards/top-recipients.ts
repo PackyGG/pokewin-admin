@@ -1,6 +1,6 @@
 import { daysAgoFilter, blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { resolveRainHouseCost } from "@/lib/metrics";
@@ -93,7 +93,7 @@ async function computeTopRecipients(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<TopRecipientRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Lifetime (`all`) CAPPED to INSIGHTS_LIFETIME_LOOKBACK_DAYS (365d) via
   // daysForInsightsPeriodCapped so the reward/wager/payout sweeps over the
   // full ledger_transactions history never run unbounded (CLAUDE.md

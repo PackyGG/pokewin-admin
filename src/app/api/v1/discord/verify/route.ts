@@ -2,7 +2,7 @@ import { z } from "zod";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 
 /**
@@ -85,7 +85,7 @@ export const POST = withApiKey(
     // same-valued account on another provider can never be mistaken for a
     // Discord link.
     const account = (
-      await getProdDrizzleDb().execute<{
+      await getProdReadDrizzleDb().execute<{
         providerId: string;
         userId: string;
       }>(sql`

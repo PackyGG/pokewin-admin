@@ -1,5 +1,14 @@
 # Backend Query System
 
+## Current MAIN routing
+
+All ordinary MAIN reads use `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB` through
+the explicit read resolvers in `src/lib/db.ts`. Those pools force read-only
+sessions and never fall back to a primary. Existing application mutations use
+the explicit primary resolvers backed by `DATABASE_URL` / `DEV_DATABASE_URL`.
+Agents may apply concurrent indexes to mirrors only with
+`npm run db:index:mirrors -- <prod|dev|all>`.
+
 All database access in `pokewin-admin` targets PostgreSQL. Drizzle ORM is the
 default access layer. Use parameterized Drizzle `sql` for complex aggregates
 when it produces clearer SQL or a better execution plan.
@@ -91,4 +100,5 @@ For database changes:
 - inspect affected consumers after shared query changes;
 - verify important plans with read-only PostgreSQL `EXPLAIN`.
 
-Never execute MAIN DDL or data mutations from this repository.
+Never execute direct DDL or ad-hoc data mutations on primary MAIN connections.
+Index DDL is allowed on `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB` only.

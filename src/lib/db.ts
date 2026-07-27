@@ -7,22 +7,34 @@ import { readDbEnv, type DbEnv } from "./db-env";
 export type MainDrizzleDb = NodePgDatabase<typeof mainSchema>;
 
 const globalForMainDb = globalThis as unknown as {
-  mainDbPools: Map<DbEnv, Pool> | undefined;
-  mainDrizzleClients: Map<DbEnv, MainDrizzleDb> | undefined;
+  mainReadDbPools: Map<DbEnv, Pool> | undefined;
+  mainReadDrizzleClients: Map<DbEnv, MainDrizzleDb> | undefined;
+  mainPrimaryDbPools: Map<DbEnv, Pool> | undefined;
+  mainPrimaryDrizzleClients: Map<DbEnv, MainDrizzleDb> | undefined;
 };
 
-function createPool(connectionString: string | undefined, label: string): Pool {
+type MainDbAccess = "read" | "primary";
+
+function createPool(
+  connectionString: string | undefined,
+  env: DbEnv,
+  access: MainDbAccess,
+): Pool {
   if (!connectionString) {
-    throw new Error(`${label} PostgreSQL connection URL is not configured`);
+    throw new Error(
+      `${env} ${access} PostgreSQL connection URL is not configured`,
+    );
   }
 
+  const isReadMirror = access === "read";
   const pool = new Pool({
     connectionString,
-    application_name: `pokewin-admin-main-${label}`,
+    application_name: `pokewin-admin-main-${env}-${access}`,
     min: 0,
-    // MAIN is shared with the game backend. Keep each serverless instance
-    // deliberately small so concurrent warm instances cannot exhaust it.
-    max: 3,
+    // Read traffic is isolated on the mirrors and can use modestly wider
+    // request-local concurrency. Primary pools remain deliberately tiny
+    // because they exist only for mutation flows and their consistency reads.
+    max: isReadMirror ? 8 : 3,
     idleTimeoutMillis: 10_000,
     // A queued read must be allowed to outlive the longest statement already
     // occupying a slot. The old 10s acquire budget guaranteed false pool
@@ -36,67 +48,124 @@ function createPool(connectionString: string | undefined, label: string): Pool {
     keepAlive: true,
     keepAliveInitialDelayMillis: 5_000,
     allowExitOnIdle: true,
+    // Defense in depth: even if a caller accidentally sends mutation SQL
+    // through a mirror client, PostgreSQL rejects it before state can change.
+    ...(isReadMirror
+      ? { options: "-c default_transaction_read_only=on -c TimeZone=UTC" }
+      : {}),
   });
   pool.on("error", (error) => {
-    console.error(`[db:${label}] Pool error:`, error.message);
+    console.error(`[db:${env}:${access}] Pool error:`, error.message);
   });
   return pool;
 }
 
-const pools: Map<DbEnv, Pool> =
-  globalForMainDb.mainDbPools ?? new Map<DbEnv, Pool>();
-const clients: Map<DbEnv, MainDrizzleDb> =
-  globalForMainDb.mainDrizzleClients ?? new Map<DbEnv, MainDrizzleDb>();
+const readPools: Map<DbEnv, Pool> =
+  globalForMainDb.mainReadDbPools ?? new Map<DbEnv, Pool>();
+const readClients: Map<DbEnv, MainDrizzleDb> =
+  globalForMainDb.mainReadDrizzleClients ?? new Map<DbEnv, MainDrizzleDb>();
+const primaryPools: Map<DbEnv, Pool> =
+  globalForMainDb.mainPrimaryDbPools ?? new Map<DbEnv, Pool>();
+const primaryClients: Map<DbEnv, MainDrizzleDb> =
+  globalForMainDb.mainPrimaryDrizzleClients ?? new Map<DbEnv, MainDrizzleDb>();
 
 if (process.env.NODE_ENV !== "production") {
-  globalForMainDb.mainDbPools = pools;
-  globalForMainDb.mainDrizzleClients = clients;
+  globalForMainDb.mainReadDbPools = readPools;
+  globalForMainDb.mainReadDrizzleClients = readClients;
+  globalForMainDb.mainPrimaryDbPools = primaryPools;
+  globalForMainDb.mainPrimaryDrizzleClients = primaryClients;
 }
 
-function getPool(env: DbEnv): Pool {
-  const existing = pools.get(env);
-  if (existing) return existing;
+function readMirrorUrl(env: DbEnv): string {
+  const url =
+    env === "dev"
+      ? process.env.MIRROR_DEV_DB?.trim()
+      : process.env.MIRROR_PRODUCTION_DB?.trim();
+  if (!url) {
+    throw new Error(
+      env === "dev"
+        ? "MIRROR_DEV_DB is not configured on this server"
+        : "MIRROR_PRODUCTION_DB is not configured on this server",
+    );
+  }
+  return url;
+}
 
+function primaryUrl(env: DbEnv): string {
   const prodUrl = (
     process.env.DATABASE_URL_POOLED ?? process.env.DATABASE_URL
   )?.trim();
   const url = env === "dev" ? process.env.DEV_DATABASE_URL?.trim() : prodUrl;
-  if (env === "dev" && !url) {
-    throw new Error("DEV_DATABASE_URL is not configured on this server");
+  if (!url) {
+    throw new Error(
+      env === "dev"
+        ? "DEV_DATABASE_URL is not configured on this server"
+        : "DATABASE_URL_POOLED or DATABASE_URL is not configured on this server",
+    );
   }
-  const pool = createPool(url, env);
+  return url;
+}
+
+function getPool(env: DbEnv, access: MainDbAccess): Pool {
+  const pools = access === "read" ? readPools : primaryPools;
+  const existing = pools.get(env);
+  if (existing) return existing;
+
+  const pool = createPool(
+    access === "read" ? readMirrorUrl(env) : primaryUrl(env),
+    env,
+    access,
+  );
   pools.set(env, pool);
   return pool;
 }
 
-function getDrizzleClient(env: DbEnv): MainDrizzleDb {
+function getDrizzleClient(env: DbEnv, access: MainDbAccess): MainDrizzleDb {
+  const clients = access === "read" ? readClients : primaryClients;
   const existing = clients.get(env);
   if (existing) return existing;
 
-  const client = drizzle(getPool(env), { schema: mainSchema });
+  const client = drizzle(getPool(env, access), { schema: mainSchema });
   clients.set(env, client);
   return client;
 }
 
-/** Read-only MAIN access pinned to production. */
-export function getProdDrizzleDb(): MainDrizzleDb {
-  return getDrizzleClient("prod");
+/** Read-only MAIN mirror access pinned to production. */
+export function getProdReadDrizzleDb(): MainDrizzleDb {
+  return getDrizzleClient("prod", "read");
 }
 
-/** Read-only MAIN access pinned to development. */
-export function getDevDrizzleDb(): MainDrizzleDb {
-  if (!process.env.DEV_DATABASE_URL?.trim()) {
-    throw new Error("DEV_DATABASE_URL is not configured on this server");
-  }
-  return getDrizzleClient("dev");
+/** Read-only MAIN mirror access pinned to development. */
+export function getDevReadDrizzleDb(): MainDrizzleDb {
+  return getDrizzleClient("dev", "read");
 }
 
-/** Canonical request-scoped MAIN access respecting the admin DB toggle. */
-export async function getDrizzleDb(): Promise<MainDrizzleDb> {
-  return getDrizzleClient(await readDbEnv());
+/** Canonical request-scoped MAIN read respecting the admin DB toggle. */
+export async function getReadDrizzleDb(): Promise<MainDrizzleDb> {
+  return getDrizzleClient(await readDbEnv(), "read");
 }
 
-/** Sync MAIN access for cache callbacks whose environment is already keyed. */
-export function drizzleForEnv(env: DbEnv): MainDrizzleDb {
-  return getDrizzleClient(env);
+/** Sync MAIN mirror read for cache callbacks whose environment is already keyed. */
+export function readDrizzleForEnv(env: DbEnv): MainDrizzleDb {
+  return getDrizzleClient(env, "read");
+}
+
+/** Primary MAIN access pinned to production for mutation flows. */
+export function getProdPrimaryDrizzleDb(): MainDrizzleDb {
+  return getDrizzleClient("prod", "primary");
+}
+
+/** Primary MAIN access pinned to development for mutation flows. */
+export function getDevPrimaryDrizzleDb(): MainDrizzleDb {
+  return getDrizzleClient("dev", "primary");
+}
+
+/** Request-scoped primary MAIN access for writes and consistency reads. */
+export async function getPrimaryDrizzleDb(): Promise<MainDrizzleDb> {
+  return getDrizzleClient(await readDbEnv(), "primary");
+}
+
+/** Sync primary MAIN access when the environment is already resolved. */
+export function primaryDrizzleForEnv(env: DbEnv): MainDrizzleDb {
+  return getDrizzleClient(env, "primary");
 }

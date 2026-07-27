@@ -22,10 +22,10 @@ import { assertSafeWebhookUrl, isSafeWebhookUrl } from "@/lib/security/webhook-u
  * the main user_id in the admin_users username field as "creator_{username}"
  * and match by email. We query the main DB to find the user by email.
  */
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 
 async function getCreatorTargetUserId(): Promise<string> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const session = await verifySession();
   // Holds the creator role (primary OR secondary in a multi-role set).
   if (!sessionHasRole(session, "creator")) throw new Error("Not a creator");

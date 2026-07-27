@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
@@ -50,7 +50,7 @@ const cachedTodayNetHoldingsTopHolders = unstable_cache(
     excludeUserIds: string[],
   ): Promise<Omit<TodayNetHoldingsTopHolders, "dayStartIso">> => {
     void dayKey;
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const since = new Date(sinceIso);
     const blacklist = blacklistNotInClause("u.id", excludeUserIds);
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -39,7 +39,7 @@ export type WithdrawnFromConvertedTotal = {
 };
 
 export async function getWithdrawnFromConvertedTotal(): Promise<WithdrawnFromConvertedTotal> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
   // from this identifiable lifetime withdrawn total. Guarded for the empty set

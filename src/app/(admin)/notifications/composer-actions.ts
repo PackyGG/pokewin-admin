@@ -12,7 +12,7 @@ import {
   or,
 } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import {
   packs,
   promo_code_redemptions,
@@ -86,7 +86,7 @@ export async function searchAnnouncementPacks(
     "compose announcements",
   );
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const q = query.trim();
   const search = q
     ? or(
@@ -142,7 +142,7 @@ export async function searchAnnouncementPromoCodes(
     pageAccessGranted(allowedPages, "/promo-codes");
   if (!canSeeCodes) return { items: [], restricted: true };
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const codes = await db
     .select({
       id: promo_codes.id,

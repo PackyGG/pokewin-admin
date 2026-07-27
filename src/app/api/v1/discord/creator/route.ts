@@ -11,7 +11,7 @@ import {
   affiliate_codes,
   user,
 } from "@/lib/db-schema/main/schema";
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/drizzle";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -48,7 +48,7 @@ export const POST = withApiKey(
       );
     }
 
-    const db = getProdDrizzleDb();
+    const db = getProdReadDrizzleDb();
     const [linked] = await db
       .select({
         providerId: account.providerId,

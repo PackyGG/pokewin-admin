@@ -2,7 +2,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 // Use the request-scoped Drizzle client so the export follows whichever
 // environment the calling admin has toggled on.
 import { sql, type SQL } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
@@ -44,7 +44,7 @@ export type ExportedUser = {
 export async function getDistinctUserCountries(): Promise<
   { code: string; name: string }[]
 > {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     country_code: string | null;
     country: string | null;
@@ -129,7 +129,7 @@ export async function exportUsers(
     predicates.length > 0
       ? sql`WHERE ${sql.join(predicates, sql` AND `)}`
       : sql``;
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     email: string | null;
     username: string | null;

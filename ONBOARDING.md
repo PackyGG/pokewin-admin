@@ -1,5 +1,14 @@
 # Packy.GG Admin Dashboard — Master Knowledge & Operating Guide
 
+## 2026-07-27 MAIN mirror routing
+
+Normal MAIN reads use `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB`; runtime sessions
+are forced read-only and fail closed. Existing mutation workflows explicitly
+use `DATABASE_URL` / `DEV_DATABASE_URL`. Agents may apply indexes to mirrors
+with `npm run db:index:mirrors -- <prod|dev|all>`, but may not run direct
+DDL/DML against either primary. This supersedes older blanket read-only wording
+below.
+
 > **Durable architecture + domain knowledge** for **pokewin-admin**. Does NOT hold live session state.
 >
 > **Read order every session:** `AGENT_HANDOFF.md` (state) → **this file** (knowledge) → `AGENTS.md` (rules).

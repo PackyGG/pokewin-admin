@@ -2,7 +2,7 @@
 
 import { inArray } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { promo_codes, user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -41,7 +41,7 @@ import {
  * This is the one action here that writes to the MAIN game database
  * (`promo_codes` rows carry real money). It is therefore restricted to the
  * DEV environment by TWO independent checks — the backend availability gate
- * AND a direct read of the db-env cookie that `getDrizzleDb()` resolves. Both
+ * AND a direct read of the db-env cookie that `getPrimaryDrizzleDb()` resolves. Both
  * must say dev. Owner authorisation, 2026-07-23: dev game DB only.
  */
 
@@ -83,7 +83,7 @@ export async function sendRewardCampaignChunkAction(
   if (!availability.ready) {
     return { success: false, error: availability.reason ?? "Sending is not available." };
   }
-  // Gate 2 — the database `getDrizzleDb()` will actually write to. Deliberately not
+  // Gate 2 — the database `getPrimaryDrizzleDb()` will actually write to. Deliberately not
   // derived from gate 1: this one writes money-bearing rows, so it re-reads
   // the cookie that drives the database client rather than trusting a value
   // resolved for a different client.
@@ -124,7 +124,7 @@ export async function sendRewardCampaignChunkAction(
   const userIds = [...new Set(input.userIds.map((id) => id.trim()).filter(Boolean))];
   if (userIds.length === 0) return { success: false, error: "Chunk is empty" };
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
 
   // Only mint for accounts that exist. Primary-key `IN` lookup — index-served.
   // Unknown ids are reported, not fatal, mirroring the bulk endpoint.

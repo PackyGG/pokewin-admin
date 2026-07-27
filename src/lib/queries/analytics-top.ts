@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -118,7 +118,7 @@ function periodFilter(
  * throw on a migration-lagged snapshot that predates upgrader.
  */
 async function hasUpgraderGames(): Promise<boolean> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const probe = await queryRows<{ exists: string | null }[]>(
     db,
     "SELECT to_regclass('public.upgrader_games')::text AS exists",
@@ -131,7 +131,7 @@ async function computeTopDepositors(
   _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const scope = await realCustomersScopeSql();
   const rows = await queryRows<
     {
@@ -164,7 +164,7 @@ async function computeTopWagerers(
   _blacklistKey: string[],
 ): Promise<UserLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
@@ -253,7 +253,7 @@ type PnlRow = {
 async function getUserGamingPnl(
   period: LeaderboardPeriod,
 ): Promise<PnlRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();
@@ -422,7 +422,7 @@ async function computeTopCreatorsByVolume(
   _blacklistKey: string[],
 ): Promise<CreatorLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForPeriod(period);
   const refWindow =
     days !== null ? `AND lt.created_at >= NOW() - INTERVAL '${days} days'` : "";
@@ -489,7 +489,7 @@ async function computeTopCountries(
   _blacklistKey: string[],
 ): Promise<CountryLeaderRow[]> {
   void _blacklistKey; // cache-key dimension only; scope is fetched internally
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const scope = await realCustomersScopeSql();
   const sessionWindowsCte = await getCreatorSessionWindowsCte();
   const upgrader = await hasUpgraderGames();

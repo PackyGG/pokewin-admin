@@ -1,6 +1,6 @@
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 export type CountryRestrictionRow = {
@@ -35,7 +35,7 @@ export const GEO_BLOCKING_CACHE_TAG = "geo-blocking-restrictions";
 async function computeCountryRestrictions(
   env: DbEnv,
 ): Promise<CountryRestrictionRow[]> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{
     country_code: string;
     physical_withdrawal: boolean;

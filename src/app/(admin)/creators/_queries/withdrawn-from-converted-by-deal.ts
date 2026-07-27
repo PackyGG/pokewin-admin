@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
@@ -46,7 +46,7 @@ export async function getWithdrawnFromConvertedByDeal(
   const userIds = deals.map((d) => d.userId);
   const dealIds = deals.map((d) => d.dealId);
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // Blacklist gate: drop excluded (staff-flagged / owner-locked) creator ids
   // from this identifiable per-(creator,deal) withdrawn figure on the card.

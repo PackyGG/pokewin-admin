@@ -4,7 +4,7 @@ import { cache } from "react";
 import { unstable_cache } from "next/cache";
 import { and, eq, inArray, sql } from "drizzle-orm";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
@@ -216,7 +216,7 @@ const cachedNetGgrScans = (
 ) =>
   unstable_cache(
     async (): Promise<NetGgrScans> => {
-      const db = drizzleForEnv(env);
+      const db = readDrizzleForEnv(env);
       // Anchor BOTH engines to a single instant so the Postgres leg and the
       // creator-hub cohort twin). The anchor is fixed per unstable_cache entry
       // (revalidate 300s).
@@ -339,7 +339,7 @@ export const getAllCreatorsNetGgr = cache(async function getAllCreatorsNetGgr(
     // them to the cached scan so prod/dev and each scope land in their own
     // cross-request slot.
     const env = await readDbEnv();
-    const probeDb = drizzleForEnv(env);
+    const probeDb = readDrizzleForEnv(env);
     const scope = await getMetricsScope();
     const excluded = await getExcludedUserIds();
 

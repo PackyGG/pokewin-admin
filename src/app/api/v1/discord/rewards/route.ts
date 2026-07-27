@@ -1,7 +1,7 @@
 import { z } from "zod";
 import { and, asc, eq, isNull, sql } from "drizzle-orm";
 
-import { getProdDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb } from "@/lib/db";
 import {
   account,
   rakeback_claims,
@@ -54,7 +54,7 @@ import { computeAllEntitlements } from "@/lib/creator-vip/compute";
  *   an unlinked player "you have nothing", which is exactly the failure the bot
  *   must be able to distinguish.
  * • POST so the Discord ID stays out of access / proxy / error logs.
- * • Read-only, and `getProdDrizzleDb()`: a machine caller must
+ * • Read-only, and `getProdReadDrizzleDb()`: a machine caller must
  *   always read prod, never the admin's dev/prod cookie toggle.
  * • Both reads are per-user index hits — `user_rewards.user_id` FK and the
  *   `rakeback_claims_user_id_rakeback_type_period_start_unique` index. No scans.
@@ -135,7 +135,7 @@ export const POST = withApiKey(
     }
 
     const { discordUserId } = parsed.data;
-    const db = getProdDrizzleDb();
+    const db = getProdReadDrizzleDb();
 
     // Same single index probe as /discord/linked. providerId is asserted so a
     // same-valued account on another provider can't resolve to a Packy user.

@@ -21,7 +21,7 @@ import {
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
-import { getDrizzleDb, getProdDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, getProdReadDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
@@ -75,7 +75,7 @@ async function getClaimWithProgram(id: string) {
 async function findCreatorRewardLedgerId(
   claimId: string,
 ): Promise<string | null> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const row = (
     await db.execute<{ id: string }>(sql`
       SELECT id
@@ -257,7 +257,7 @@ export async function createCreatorRewardProgram(input: {
   // The creator must be real. Accept a current creator only — a program is a
   // forward-looking commitment, so unlike a leaderboard back-fill there is no
   // reason to allow attaching one to a retired account.
-  const mainDb = getProdDrizzleDb();
+  const mainDb = getProdReadDrizzleDb();
   const [creator] = await mainDb
     .select({ id: user.id, role: user.role })
     .from(user)
@@ -1014,7 +1014,7 @@ export async function previewCreatorRewardEntitlement(input: {
   const program = normalizeProgram(programRow);
 
   const q = parsed.data.query;
-  const [matchedUser] = await getProdDrizzleDb()
+  const [matchedUser] = await getProdReadDrizzleDb()
     .select({ id: user.id, username: user.username, email: user.email })
     .from(user)
     .where(
@@ -1226,7 +1226,7 @@ export async function searchCreatorsWithCodes(
   await requireAdmin();
 
   const q = query.trim();
-  const db = getProdDrizzleDb();
+  const db = getProdReadDrizzleDb();
 
   type Row = {
     id: string;

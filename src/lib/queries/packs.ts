@@ -2,10 +2,10 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
 import {
-  drizzleForEnv,
-  getDrizzleDb,
-  getDevDrizzleDb,
-  getProdDrizzleDb,
+  readDrizzleForEnv,
+  getReadDrizzleDb,
+  getDevReadDrizzleDb,
+  getProdReadDrizzleDb,
 } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -148,7 +148,7 @@ export async function getPacks(params: {
     sortOrder = "desc",
     set = "pokemon",
   } = params;
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const predicates: SQL[] = [];
   if (search) {
     predicates.push(sql`(p.name ILIKE ${`%${search}%`} OR p.slug ILIKE ${`%${search}%`})`);
@@ -364,7 +364,7 @@ async function fetchPacksListStats(
   set: PackSetFilter,
   env: DbEnv,
 ): Promise<PacksListStats> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
 
   // Build the pool predicate from the PACK-LEVEL admin assignments: a pack
   // counts toward the set it's assigned to; any pack without an assignment
@@ -512,7 +512,7 @@ export type PackPoolComposition = {
 export async function getPacksPoolComposition(opts?: {
   packIds?: string[];
 }): Promise<PackPoolComposition[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   let whereClause: SQL;
   if (opts?.packIds && opts.packIds.length > 0) {
     whereClause = sql`p.id = ANY(${pgArrayParam(opts.packIds)}::uuid[])`;
@@ -593,7 +593,7 @@ export async function getPacksPoolComposition(opts?: {
 }
 
 export async function getPackDetail(id: string) {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Explicit top-level `select` listing only the columns the detail mapper
   // consumes. Mirrors `getCardDetail`'s defense-in-depth pattern (commit
   // dfe8af1): switching off `findUnique`'s default "all columns" behaviour
@@ -729,7 +729,7 @@ export type PackStats = {
 const cachedPackStatScans = (packId: string, env: DbEnv) =>
   unstable_cache(
     async () => {
-      const db = env === "dev" ? getDevDrizzleDb() : getProdDrizzleDb();
+      const db = env === "dev" ? getDevReadDrizzleDb() : getProdReadDrizzleDb();
       // The single source of truth: provably_fair_results.result_metadata->>'pack_id'
       // tells us exactly which pack produced each card in both solo and battle openings.
       // Fetch the daily breakdown and the borrow/sponsor breakdown in parallel —
@@ -917,7 +917,7 @@ export async function getPackGames(
     type?: string; // "all" | "solo" | "battle"
   }
 ) {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const conditions: SQL[] = [sql`pf.result_metadata->>'pack_id' = ${packId}`];
 
   if (filters?.type === "solo") {

@@ -4,7 +4,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import crypto from "crypto";
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -543,7 +543,7 @@ export async function adjustBalance(data: {
 }): Promise<
   { success: true; ledgerTxId: string } | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parseResult = adjustBalanceSchema.safeParse(data);
@@ -1046,7 +1046,7 @@ export async function getBalanceAdjustmentForEdit(
 
   await requirePageAccess("/users");
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const row = (await db.execute<{
     id: string; type: string; amount: string; description: string; metadata: unknown;
   }>(sql`
@@ -1139,7 +1139,7 @@ export async function updateBalanceAdjustmentMeta(data: {
     };
   }
 
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const row = (await db.execute<{
     id: string; type: string; amount: string; description: string; metadata: unknown;
   }>(sql`
@@ -1310,7 +1310,7 @@ export async function moveBalanceToVault(
   | { success: true; movedAmount: number }
   | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   // Reuses the same gate as the adjust-balance action — anyone with
   // permission to manipulate a user's balance is permitted to park
@@ -1417,7 +1417,7 @@ export async function extendVaultLock(
   | { success: true; new_unlock_at: string; locked_amount_usd: string }
   | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   // Capability gate — admins / owner bypass automatically inside
   // requireCapability. Non-admins need the explicit
@@ -1556,7 +1556,7 @@ export async function recordManualWithdrawal(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parseResult = manualWithdrawalSchema.safeParse(data);
@@ -1753,7 +1753,7 @@ export async function changeRole(
   roles: string[],
   totpCode: string,
 ): Promise<{ rolesColumnExists: boolean }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   // Role changes remain admin-only (+ 2FA). The capability check is kept as
   // defence-in-depth so `__can_change_user_roles` is catalogued; admins pass
   // automatically.
@@ -1839,7 +1839,7 @@ export async function forceResetCreatorToUser(
   | { success: true; backendDemoted: boolean; backendError: string | null }
   | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_change_user_roles", "change user roles");
   await require2FA(session.userId, totpCode);
@@ -1898,7 +1898,7 @@ export async function updateUserIdentity(
     displayUsername?: string;
   },
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_edit_identity", "edit user identity");
 
@@ -2014,7 +2014,7 @@ export async function toggleFeatureLock(
   feature: string,
   locked: boolean
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_toggle_feature_locks", "toggle feature locks");
 
@@ -2094,7 +2094,7 @@ export async function getUserDeposits(
   userId: string,
 ): Promise<UserDepositRow[]> {
   await requirePageAccess("/users");
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const rows = (
     await db.execute<{
       id: string;
@@ -2159,7 +2159,7 @@ export async function getUserJoinedSponsoredBattles(
   userId: string,
 ): Promise<JoinedBattleRow[]> {
   await requirePageAccess("/users");
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const rows = (
     await db.execute<
     {
@@ -2258,7 +2258,7 @@ export async function getUserInventorySaleBatches(
   userId: string,
 ): Promise<InventorySaleBatch[]> {
   await requirePageAccess("/users");
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const rows = (
     await db.execute<{
       id: string;
@@ -2332,7 +2332,7 @@ export async function deleteUserVoucher(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = deleteVoucherSchema.safeParse(data);
@@ -2464,7 +2464,7 @@ export async function getUserVouchers(
   userId: string,
 ): Promise<UserVoucherRow[]> {
   await requirePageAccess("/users");
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const rows = (
     await db.execute<{
       id: string;
@@ -2517,7 +2517,7 @@ export async function deleteUserInventoryItem(data: {
   reason: string;
   totpCode: string;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = deleteInventoryItemSchema.safeParse(data);
@@ -2772,7 +2772,7 @@ export async function bulkDeleteUserInventoryItems(data: {
   | { success: true; deleted: number; skipped: number; firstError?: string }
   | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
 
   const parsed = bulkDeleteInventorySchema.safeParse(data);
@@ -2842,7 +2842,7 @@ export async function getGameSessionDetails(
   gameSessionId: string,
   userId: string,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await requirePageAccess("/users");
 
   const session = (
@@ -3199,7 +3199,7 @@ export async function getInventoryItemOrigin(
   userId: string,
   itemId: string,
 ): Promise<InventoryItemOrigin | null> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   await requirePageAccess("/users");
 
   const item = (
@@ -3261,7 +3261,7 @@ export async function updateWithdrawalLimits(data: {
   currencyLimitResetDays: number | null;
   percentageLimit: number | null;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_user_withdrawal_limits", "update user withdrawal limits");
   const parsed = withdrawalLimitsSchema.parse(data);
@@ -3345,7 +3345,7 @@ export async function assignAffiliateCode(
   userId: string,
   affiliateCode: string | null,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "assign affiliate codes");
 
@@ -3485,7 +3485,7 @@ export async function createAffiliateCode(
   userId: string,
   code: string,
 ): Promise<CreateAffiliateCodeResult> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "create affiliate codes");
   const trimmed = code.trim();
@@ -3575,7 +3575,7 @@ export async function transferAffiliateCode(args: {
   | { success: true; replacementCode: string; previousOwnerId: string }
   | { success: false; error: string }
 > {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_assign_affiliate", "transfer affiliate codes");
 
@@ -3692,7 +3692,7 @@ export async function adjustXp(data: {
   reason: string;
   totpCode: string;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   await requireCapability(session, "__can_adjust_xp", "adjust user XP");
   const parsed = adjustXpSchema.parse(data);
@@ -3861,7 +3861,7 @@ export async function updateUserBattleLimits(data: {
   maxValueUsd: number | null;
   baseBetLimitUsd: number | null;
 }): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   const parseResult = userBattleLimitsSchema.safeParse(data);
@@ -3912,7 +3912,7 @@ export async function updateUserBattleLimits(data: {
 export async function clearUserBattleLimits(
   userId: string,
 ): Promise<{ success: true } | { success: false; error: string }> {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
   if (!userId || typeof userId !== "string") {

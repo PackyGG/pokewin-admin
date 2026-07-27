@@ -3,7 +3,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { eq, inArray, sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import { rains, site_config } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -13,7 +13,7 @@ import { refreshSiteConfig } from "@/lib/refresh-site-config";
 import { RAIN_CONFIG_KEYS } from "./config-keys";
 
 export async function adjustRainBase(rainId: string, newBaseAmount: number) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/rain");
   await requireCapability(session, "__can_adjust_rain_base", "adjust rain base");
 
@@ -85,7 +85,7 @@ export async function updateRainConfig(input: {
   durationMinutes?: number;
   frequencyMs?: number;
 }) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/rain");
   await requireCapability(session, "__can_update_rain_config", "update rain config");
 

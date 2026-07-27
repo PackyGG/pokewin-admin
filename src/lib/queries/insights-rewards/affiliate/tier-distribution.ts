@@ -1,6 +1,6 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { CACHE_TAG, loadBlacklist } from "./_shared";
 
@@ -74,7 +74,7 @@ export type TierDistribution = {
 };
 
 async function compute(blacklistIds: string[]): Promise<TierDistribution> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);
 
   // One pass: every real affiliate row picks its level via a LATERAL

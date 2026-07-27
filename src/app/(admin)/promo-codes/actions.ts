@@ -4,7 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { desc, eq, inArray } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
   promo_code_redemptions,
   promo_codes,
@@ -65,7 +65,7 @@ const createPromoCodeSchema = z.object({
 export async function createPromoCode(
   data: z.infer<typeof createPromoCodeSchema>,
 ) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_create_promo_code", "create promo codes");
 
@@ -169,7 +169,7 @@ export async function getPromoCodeClaimDetail(promoCodeId: string): Promise<{
 }
 
 export async function getRedemptions(promoCodeId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_view_promo_redemptions", "view promo redemptions");
   const redemptions = await db
@@ -229,7 +229,7 @@ export async function getAllDeletablePromoCodeIds(): Promise<{
 }
 
 export async function deletePromoCode(promoCodeId: string) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 
@@ -288,7 +288,7 @@ const BULK_DELETE_MAX = 20_000;
  * single capped one. Total request still bounded by BULK_DELETE_MAX.
  */
 export async function deletePromoCodesBulk(promoCodeIds: string[]) {
-  const db = await getDrizzleDb();
+  const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_delete_promo_code", "delete promo codes");
 

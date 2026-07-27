@@ -1,5 +1,5 @@
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -107,7 +107,7 @@ async function computeWithdrawals(
   const { page = 1, perPage = 20, status, statuses, method, search, minValue, maxValue } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const safePage = Math.max(1, Math.floor(page));
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const binds: unknown[] = [];
   const filters: string[] = [];
 

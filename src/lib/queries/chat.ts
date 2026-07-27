@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import type { PaginatedResult } from "@/lib/types";
 
 export type ChatMessageItem = {
@@ -32,7 +32,7 @@ export async function getChatMessages(params: {
   perPage?: number;
   search?: string;
 }): Promise<PaginatedResult<ChatMessageItem>> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const page = Math.max(1, Math.trunc(params.page ?? 1) || 1);
   const perPage = Math.min(
     100,
@@ -108,7 +108,7 @@ export async function getMutes(params: {
   page?: number;
   perPage?: number;
 }): Promise<PaginatedResult<MuteItem>> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const page = Math.max(1, Math.trunc(params.page ?? 1) || 1);
   const perPage = Math.min(
     100,

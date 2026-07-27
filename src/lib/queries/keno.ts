@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 
 export type KenoMetricSlice = {
@@ -153,7 +153,7 @@ function metric(raw: RawMetric | null | undefined): KenoMetricSlice {
 }
 
 async function computeKenoDashboard(env: DbEnv): Promise<KenoDashboard> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<RawDashboardRow>(sql`
     WITH base AS MATERIALIZED (
       SELECT

@@ -2,7 +2,7 @@
 
 import { eq, ilike, or } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -318,7 +318,7 @@ export async function searchNotificationUsers(
   // the table would match and the 10-row cap would return noise.
   if (q.length >= 4) conditions.push(ilike(user.id, `${q}%`));
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const users = await db
     .select({ id: user.id, username: user.username, email: user.email })
     .from(user)

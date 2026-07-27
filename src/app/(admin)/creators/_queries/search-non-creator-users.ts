@@ -1,7 +1,7 @@
 "use server";
 
 import { and, desc, ilike, ne, or } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 
@@ -30,7 +30,7 @@ export async function searchNonCreatorUsers(
   const trimmed = search.trim();
   if (trimmed.length < 2) return [];
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const users = await db
     .select({
       id: user.id,

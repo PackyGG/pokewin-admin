@@ -1,6 +1,6 @@
 import "server-only";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { and, asc, eq } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
@@ -110,7 +110,7 @@ export type CreatorMetadata = {
 export async function getCreatorMetadata(
   userId: string,
 ): Promise<CreatorMetadata | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // ── MAIN (read-only): user record + owned affiliate codes, in parallel.
   const [userRows, codeRows] = await Promise.all([

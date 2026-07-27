@@ -1,6 +1,6 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import {
   resolveUpgraderMetadata,
   upgraderTargetMultiplierSql,
@@ -59,7 +59,7 @@ export async function fetchUpgraderTargetByLedgerTxIds(
   const ugTargetExpr = upgraderGameTargetSql("ug");
 
   try {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const result = await db.execute<UpgraderTargetBatchRow>(sql`
        SELECT lt.id::text AS ledger_tx_id,
               gs.id::text AS gsid,

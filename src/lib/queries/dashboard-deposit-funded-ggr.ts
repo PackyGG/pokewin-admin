@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -85,7 +85,7 @@ import {
 type RawEvent = { userId: string; t: number; kind: "deposit" | "wager"; amount: number };
 
 async function tableExists(name: string): Promise<boolean> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const probe = await queryRows<{ exists: string | null }[]>(db,
     `SELECT to_regclass('public.${name}')::text AS exists`,
   );
@@ -113,7 +113,7 @@ async function computeDepositFundedGgr(
   blacklist: string[],
 ): Promise<number> {
   return withTiming("dashboard.depositFundedGgr", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scopeSql = excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist);
     const cutoffLiteral = `'${cutoff.toISOString()}'::timestamptz`;
 

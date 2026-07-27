@@ -2,7 +2,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { adminDrizzle } from "@/lib/admin-db";
 import { isUuid } from "@/lib/utils/ids";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
@@ -60,7 +60,7 @@ async function readCurrentPackState(packId: string): Promise<{
   /** `packs.tags` (pack_tag[] → DB strings) at capture time — for tag revert. */
   tags: string[];
 } | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     price: string;
     tags: string[];
@@ -347,7 +347,7 @@ export async function getHistoryCardMeta(
 ): Promise<Map<string, HistoryCardMeta>> {
   const out = new Map<string, HistoryCardMeta>();
   if (cardIds.length === 0) return out;
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     id: string;
     name: string | null;

@@ -2,7 +2,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
 import { sql } from "drizzle-orm";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import {
@@ -113,7 +113,7 @@ export async function getChatRaffleStandings(params: {
     return { standings: [], totalTickets: 0, entrants: 0, truncated: false };
   }
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const bucketSeconds = scoring.bucketMinutes * 60;
 
   const excluded = await getExcludedUserIds();

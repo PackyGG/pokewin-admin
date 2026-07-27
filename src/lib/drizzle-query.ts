@@ -1,6 +1,6 @@
 import { sql } from "drizzle-orm";
 
-import { getDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import {
   decodePostgresRows,
   type PostgresDecoder,
@@ -44,7 +44,7 @@ export async function queryMainRows<T extends Record<string, unknown>[]>(
   query: string,
   ...values: readonly unknown[]
 ): Promise<T> {
-  return queryRows<T>(await getDrizzleDb(), query, ...values);
+  return queryRows<T>(await getReadDrizzleDb(), query, ...values);
 }
 
 export async function queryMainDecodedRows<T>(
@@ -52,7 +52,7 @@ export async function queryMainDecodedRows<T>(
   values: readonly unknown[],
   decoder: PostgresDecoder<T>,
 ): Promise<T[]> {
-  return queryDecodedRows(await getDrizzleDb(), query, values, decoder);
+  return queryDecodedRows(await getReadDrizzleDb(), query, values, decoder);
 }
 
 /** A `$n`-style MAIN read bound to one transaction's connection. */
@@ -98,7 +98,7 @@ export async function queryMainRowsInTimeboxedTx<T>(
   run: (query: TxQuery) => Promise<T>,
 ): Promise<T> {
   return queryRowsInTimeboxedTx(
-    await getDrizzleDb(),
+    await getReadDrizzleDb(),
     statementTimeoutMs,
     run,
   );

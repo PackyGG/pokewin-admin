@@ -4,7 +4,7 @@ import {
   sql,
 } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -99,7 +99,7 @@ const EMPTY: MothaGiveawayOverview = {
 async function computeOverview(
   period: InsightsRewardsPeriod,
 ): Promise<MothaGiveawayOverview> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
 
   // Window filters. `lt` for ledger_transactions, `rt` for rain_tips. Lifetime

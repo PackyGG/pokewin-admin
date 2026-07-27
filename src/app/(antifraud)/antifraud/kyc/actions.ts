@@ -12,7 +12,7 @@ import {
   reviewUserKyc,
   type UserKycStatus,
 } from "@/lib/backend-api/kyc";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 
@@ -44,7 +44,7 @@ function friendlyError(error: unknown): string {
 }
 
 async function resolveAccount(account: string): Promise<string | null> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = await db
     .select({ id: user.id })
     .from(user)

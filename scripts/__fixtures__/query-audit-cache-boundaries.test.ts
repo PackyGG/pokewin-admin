@@ -23,7 +23,7 @@ test("card cache computations use an explicit env and bypass cache on dev", () =
     assert.notEqual(start, -1, `missing ${helper}`);
     const body = source.slice(start, source.indexOf("\n}", start) + 2);
     assert.match(body, /env: DbEnv/);
-    assert.match(body, /drizzleForEnv\(env\)/);
+    assert.match(body, /readDrizzleForEnv\(env\)/);
     assert.doesNotMatch(body, /getDrizzleDb\(\)/);
   }
 
@@ -48,7 +48,7 @@ test("signup overview resolves env before cache and caches only prod", () => {
 
   assert.match(
     source,
-    /computeOverview\([\s\S]*?env: DbEnv,[\s\S]*?drizzleForEnv\(env\)/,
+    /computeOverview\([\s\S]*?env: DbEnv,[\s\S]*?readDrizzleForEnv\(env\)/,
   );
   assert.equal(
     (source.match(/computeOverview\(period, blacklistIds, "prod"\)/g) ?? [])
@@ -70,7 +70,7 @@ test("pack KPI stats use request env and bypass shared cache on dev", () => {
   );
 
   assert.match(body, /env: DbEnv/);
-  assert.match(body, /drizzleForEnv\(env\)/);
+  assert.match(body, /readDrizzleForEnv\(env\)/);
   assert.doesNotMatch(body, /getDrizzleDb\(\)/);
   assert.match(
     source,

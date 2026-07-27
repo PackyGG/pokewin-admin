@@ -2,7 +2,7 @@ import "server-only";
 
 import { desc, sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { announcements } from "@/lib/db-schema/main/schema";
 import { backendApi } from "./client";
 import type { AnnouncementPayload } from "@/lib/announcement-payload";
@@ -74,7 +74,7 @@ type ListSuccess<T> = {
 async function getAnnouncementsFromPostgres(
   params?: { limit?: number; offset?: number },
 ): Promise<ListSuccess<Announcement>> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const limit = Math.min(
     100,
     Math.max(1, Math.trunc(params?.limit ?? 25)),

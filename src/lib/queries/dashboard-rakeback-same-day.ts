@@ -1,7 +1,7 @@
 import "server-only";
 
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
@@ -49,7 +49,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
 async function computeRakebackFromTodayWager(sinceIso: string): Promise<number> {
   return withTiming("dashboard.rakebackFromTodayWager", async () => {
-    const db = await getDrizzleDb();
+    const db = await getReadDrizzleDb();
     const scope = await getMetricsScope();
     const since = `'${sinceIso}'::timestamptz`;
     const todayDate = `'${sinceIso.slice(0, 10)}'::date`;

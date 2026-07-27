@@ -1,6 +1,6 @@
 import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   daysForInsightsPeriod,
@@ -53,7 +53,7 @@ async function computeDailyBreakdown(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusDailyRow[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const days = daysForInsightsPeriod(period);
   const userScope = staffAndBlacklistSubquery(blacklistIds);
   // Lifetime is capped to the pairing lookback (365d) so the per-day

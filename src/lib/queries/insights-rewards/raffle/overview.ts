@@ -1,6 +1,6 @@
 import { blacklistNotInSql, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -109,7 +109,7 @@ async function computeRaffleBaseline(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<RaffleForecastBaseline> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   // Completed raffles are a small set; still bound the lifetime window to the
   // standard insights lookback so `all` never scans unboundedly.
   const days = daysForInsightsPeriodCapped(period);

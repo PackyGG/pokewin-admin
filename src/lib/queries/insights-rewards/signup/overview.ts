@@ -1,6 +1,6 @@
 import { blacklistNotInSql, daysAgoFilter, queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { drizzleForEnv } from "@/lib/db";
+import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
@@ -61,7 +61,7 @@ async function computeOverview(
   blacklistIds: string[],
   env: DbEnv,
 ): Promise<SignupOverview> {
-  const db = drizzleForEnv(env);
+  const db = readDrizzleForEnv(env);
   const days = daysForInsightsPeriod(period);
   const signupDateFilter = daysAgoFilter("u.created_at", days);
   const blacklistJoin = blacklistNotInSql("u.id", blacklistIds);

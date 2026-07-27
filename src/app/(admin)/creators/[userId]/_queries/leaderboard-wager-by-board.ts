@@ -3,7 +3,7 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 import { inArray, sql } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { affiliate_leaderboard_snapshots } from "@/lib/db-schema/main/schema";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
@@ -91,7 +91,7 @@ async function computeCreatorLeaderboardWagerMap(
   const result = new Map<string, WagerBreakdown>();
   if (boards.length === 0) return result;
 
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // ── Settled boards: authoritative weighted snapshot total ──
   // Per-game wager weights (packs / battles / upgrader) are applied at wager

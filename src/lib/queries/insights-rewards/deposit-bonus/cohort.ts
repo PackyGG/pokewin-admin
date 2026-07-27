@@ -1,6 +1,6 @@
 import { queryRows, sql } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { unstable_cache } from "next/cache";
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import {
   cacheTtlForInsightsPeriod,
@@ -116,7 +116,7 @@ async function computeCohortComparison(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusCohortComparison> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilterCapped(period, "d");
   const bonusDateFilter = windowDateFilterCapped(period, "b");
   const wagerDateFilter = windowDateFilterCappedTail(period, "w", 30);
@@ -293,7 +293,7 @@ async function computeRatioDistribution(
   period: InsightsRewardsPeriod,
   blacklistIds: string[],
 ): Promise<DepositBonusRatioDistribution> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const dateFilter = windowDateFilterCapped(period, "d");
   const bonusDateFilter = windowDateFilterCapped(period, "b");
   const userScope = staffAndBlacklistSubquery(blacklistIds);

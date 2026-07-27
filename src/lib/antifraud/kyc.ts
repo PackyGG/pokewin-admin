@@ -11,7 +11,7 @@ import {
   type SQL,
 } from "drizzle-orm";
 
-import { getDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import {
   sumsub_webhook_events,
@@ -204,7 +204,7 @@ function meaningfulKycRecordCondition(): SQL {
 async function listKycAccounts(
   filters: KycDashboardFilters,
 ): Promise<KycAccount[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const conditions: SQL[] = [meaningfulKycRecordCondition()];
   const filter = filters.status ?? "all";
   const status = statusCondition(filter);
@@ -279,7 +279,7 @@ async function listKycAccounts(
 }
 
 async function loadKycStats(): Promise<KycDashboardStats> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const result = await db.execute<{
     total: string;
     required: string;
@@ -341,7 +341,7 @@ async function loadKycStats(): Promise<KycDashboardStats> {
 }
 
 async function listSumsubEvents(): Promise<SumsubEventSummary[]> {
-  const db = await getDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = await db
     .select({
       digest: sumsub_webhook_events.digest,
