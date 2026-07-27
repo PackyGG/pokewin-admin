@@ -37,6 +37,34 @@ export function sourceSslFor(
   return { rejectUnauthorized: false };
 }
 
+export function sourceConnectionString(
+  connectionString: string,
+  mode: "disable" | "require",
+  ca?: string,
+): string {
+  let url: URL;
+  try {
+    url = new URL(connectionString);
+  } catch {
+    throw new Error("SOURCE_DATABASE_URL is invalid");
+  }
+
+  if (mode === "disable") {
+    url.searchParams.set("sslmode", "disable");
+    url.searchParams.delete("uselibpqcompat");
+  } else if (ca) {
+    url.searchParams.set("sslmode", "verify-full");
+    url.searchParams.delete("uselibpqcompat");
+  } else {
+    // pg-connection-string otherwise aliases require to verify-full and
+    // overwrites the Pool ssl object after parsing the connection string.
+    url.searchParams.set("sslmode", "require");
+    url.searchParams.set("uselibpqcompat", "true");
+  }
+
+  return url.toString();
+}
+
 export type Databases = {
   source: pg.Pool;
   antifraud: pg.Pool;
@@ -44,7 +72,11 @@ export type Databases = {
 
 export function createDatabases(config: Config): Databases {
   const source = new Pool({
-    connectionString: config.SOURCE_DATABASE_URL,
+    connectionString: sourceConnectionString(
+      config.SOURCE_DATABASE_URL,
+      config.SOURCE_DATABASE_SSL,
+      config.SOURCE_DATABASE_CA,
+    ),
     ssl: sourceSslFor(
       config.SOURCE_DATABASE_SSL,
       config.SOURCE_DATABASE_CA,
