@@ -42,7 +42,7 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
     "utf8",
   );
 
-  assert.match(source, /max:\s*isReadMirror\s*\?\s*1\s*:\s*3/);
+  assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
   assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*1\s*:\s*Infinity/);
   assert.match(
     source,
