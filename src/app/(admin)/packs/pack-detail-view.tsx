@@ -7,8 +7,8 @@ import {
   ArrowLeft,
   Boxes,
   Coins,
-  DollarSign,
   Gamepad2,
+  History,
   Layers,
   Package,
   Pencil,
@@ -19,11 +19,20 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { CardImage } from "@/components/card-image";
-import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { InlineError } from "@/components/entity-surface";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { toPercent } from "@/lib/house-pov";
+import {
+  computePackEconomics,
+  PackEconomicsPanel,
+} from "./pack-economics";
 import { cn } from "@/lib/utils";
 import { PackStatsSection } from "./[id]/revenue-chart";
 import { PackCardsView, GamesTable } from "./[id]/pack-tabs";
@@ -415,21 +424,34 @@ function ReadyBody({
   const openings = detail.totalOpenings;
   const revenue = openings * detail.priceUsd;
   const payout = detail.totalPayout;
-  const rtpPct = toPercent(detail.actualRtp);
-  const houseEdgePct = 100 - rtpPct;
+  const realizedRtpPct = toPercent(detail.actualRtp);
+  const realizedEdgePct = 100 - realizedRtpPct;
+  const econ = computePackEconomics({
+    priceUsd: detail.priceUsd,
+    cardsPerOpen: detail.cardsPerOpen,
+    packType: detail.packType,
+    pool: detail.cards.map((c) => ({ weight: c.weight, priceUsd: c.priceUsd })),
+  });
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4 lg:grid-cols-8">
-        <KpiTile label="Price" value={formatCurrency(detail.priceUsd)} icon={DollarSign} accent="blue" />
-        <KpiTile label="Openings" value={formatNumber(openings)} icon={Package} accent="cyan" />
-        <KpiTile label="Revenue" value={formatCurrency(revenue)} icon={TrendingUp} accent="emerald" />
-        <KpiTile label="Payout" value={formatCurrency(payout)} icon={Coins} accent="rose" />
-        <KpiTile label="RTP" value={`${rtpPct.toFixed(2)}%`} icon={Percent} accent={rtpPct > 100 ? "rose" : "purple"} />
-        <KpiTile label="House Edge" value={`${houseEdgePct.toFixed(2)}%`} icon={TrendingUp} accent={houseEdgePct < 0 ? "rose" : "emerald"} />
-        <KpiTile label="Cards/Open" value={String(detail.cardsPerOpen)} icon={Layers} accent="pink" />
-        <KpiTile label="Total Cards" value={String(detail.cards.length)} icon={Boxes} accent="orange" />
-      </div>
+      <PackEconomicsPanel econ={econ} />
+
+      <section className="space-y-3">
+        <SectionHeading icon={History} title="Lifetime performance" />
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+          <KpiTile label="Openings" value={formatNumber(openings)} icon={Package} accent="cyan" />
+          <KpiTile label="Revenue" value={formatCurrency(revenue)} icon={TrendingUp} accent="emerald" sub="Wagered into this pack" />
+          <KpiTile label="Payout" value={formatCurrency(payout)} icon={Coins} accent="rose" sub="Card value handed out" />
+          <KpiTile
+            label="Realized edge"
+            value={openings > 0 ? `${realizedEdgePct.toFixed(2)}%` : "—"}
+            icon={Percent}
+            accent={realizedEdgePct < 0 ? "rose" : "emerald"}
+            sub={openings > 0 ? `RTP ${realizedRtpPct.toFixed(2)}%` : "No opens yet"}
+          />
+        </div>
+      </section>
 
       {stats ? (
         <PackStatsSection stats={stats} />
@@ -451,25 +473,24 @@ function ReadyBody({
         </div>
       )}
 
-      <div className="space-y-3">
-        <div className="flex items-center gap-2">
-          <div className="flex size-8 items-center justify-center rounded-lg border bg-muted/40">
-            <Boxes className="size-4 text-muted-foreground" />
-          </div>
-          <h3 className="text-sm font-semibold tracking-tight">Pack Contents</h3>
-        </div>
-
-        <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
-          <ContentTabButton active={tab === "cards"} onClick={() => onTabChange("cards")} icon={Layers} label="Cards" count={detail.cards.length} />
-          <ContentTabButton active={tab === "games"} onClick={() => onTabChange("games")} icon={Gamepad2} label="Games" />
-        </div>
+      <section className="space-y-3">
+        <SectionHeading
+          icon={Boxes}
+          title="Pack contents"
+          action={
+            <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
+              <ContentTabButton active={tab === "cards"} onClick={() => onTabChange("cards")} icon={Layers} label="Cards" count={detail.cards.length} />
+              <ContentTabButton active={tab === "games"} onClick={() => onTabChange("games")} icon={Gamepad2} label="Games" />
+            </div>
+          }
+        />
 
         {tab === "cards" ? (
           <PackCardsView cards={detail.cards} />
         ) : (
           <GamesTab packId={detail.id} />
         )}
-      </div>
+      </section>
     </>
   );
 }
@@ -558,12 +579,21 @@ function GamesTab({ packId }: { packId: string }) {
 function DetailBodySkeleton() {
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4 lg:grid-cols-8">
-        {Array.from({ length: 8 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-[92px] rounded-xl" />
+        ))}
+      </div>
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-[68px] rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-32 rounded-xl" />
+      <div className="grid grid-cols-2 gap-2.5 sm:gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Skeleton key={i} className="h-[68px] rounded-xl" />
+        ))}
+      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Skeleton className="h-[250px] rounded-xl" />
         <Skeleton className="h-[250px] rounded-xl" />

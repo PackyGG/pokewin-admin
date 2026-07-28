@@ -8,15 +8,23 @@ import {
 
 /**
  * Matches /packs/[id]: detail hero with pack art + toggle/edit/delete
- * actions, 8-tile KPI strip (Price, Openings, Revenue, Payout, RTP,
- * Edge, Stock, etc.), the deferred stats block (period-tiles card + two
- * charts), then the "Pack Contents" section with a cards grid.
+ * actions, the Economics block (4 metric tiles + a 4-tile pool row), the
+ * 4-tile lifetime-performance row, the deferred stats block (period-tiles
+ * card + two charts), then the "Pack contents" section with a cards grid.
  */
 export default function PackDetailLoading() {
   return (
     <div className="space-y-6">
       <DetailHeroSkeleton action />
-      <KpiStripSkeleton count={8} />
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={110} />
+        <KpiStripSkeleton count={4} />
+        <KpiStripSkeleton count={4} />
+      </div>
+      <div className="space-y-3">
+        <SectionHeadingSkeleton titleWidth={170} />
+        <KpiStripSkeleton count={4} />
+      </div>
       {/* Stats block — mirrors the page's own deferred-stats Suspense fallback
           (no section heading above it on the real page): a period-tiles card
           plus two chart boxes sized to the real h-[250px] charts. Matching the

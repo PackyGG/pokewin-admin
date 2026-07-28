@@ -1,8 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Upload } from "lucide-react";
+import { Boxes, Image as ImageIcon, Package, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,11 +17,11 @@ import {
 import { CardPickerDialog } from "./card-picker-dialog";
 import type { CardPickerItem } from "./actions";
 import { SortableCardTable, type SortableCard } from "./sortable-card-table";
+import { SectionHeading } from "@/components/modern-panels";
+import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import {
-  computePackEv,
-  suggestedPriceFromEv,
-} from "@/app/(admin)/insights/edge-calc/math";
+import { suggestedPriceFromEv } from "@/app/(admin)/insights/edge-calc/math";
+import { computePackEconomics, PackEconomicsPanel } from "./pack-economics";
 import { updatePack, getCardPickerFilters } from "./actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 const pack_tag = {
@@ -228,20 +228,33 @@ export function PackEditForm({
   }
 
   const totalOdds = cards.reduce((sum, c) => sum + c.odds, 0);
-  const weightedPriceSum = cards.reduce((sum, c) => sum + c.priceUsd * c.odds, 0);
   const packPrice = parseFloat(price) || 0;
   const cpo = parseInt(cardsPerOpen) || 1;
 
-  const ev = computePackEv({
-    pricePerOpen: packPrice,
-    cardsPerOpen: cpo,
-    totalWeight: totalOdds,
-    weightedPriceSum,
-  });
-  const evPerCard = ev.expectedCardValue;
-  const expectedPayout = ev.expectedPayoutPerOpen;
-  const houseEdge = packPrice > 0 ? ev.houseEdge * 100 : 0;
-  const suggestedPrice = suggestedPriceFromEv(expectedPayout);
+  // ONE economics read, shared verbatim with the overview page — the odds the
+  // form edits are percentages, and `computePackEconomics` only ever uses
+  // weight RATIOS, so passing odds as weights is exact (not an approximation).
+  const econ = useMemo(
+    () =>
+      computePackEconomics({
+        priceUsd: packPrice,
+        cardsPerOpen: cpo,
+        packType,
+        pool: cards.map((c) => ({ weight: c.odds, priceUsd: c.priceUsd })),
+      }),
+    [packPrice, cpo, packType, cards],
+  );
+  const expectedPayout = econ.evPerOpen;
+  // Price the suggestion at THIS pack's target edge (the curve: 10.99% floor +
+  // risk premium) — the same target the panel above reports and the same one
+  // the /packs re-price tool aims a per-pack run at. Previously this suggested
+  // a flat 10.99% while the page's target could be higher, so "use it" landed
+  // the pack under its own target.
+  const suggestedPrice = suggestedPriceFromEv(
+    expectedPayout,
+    econ.targetEdgePct / 100,
+  );
+  const oddsOff = cards.length > 0 && Math.abs(totalOdds - 100) > 0.000001;
 
   function oddsToWeights(entries: PackCard[]): number[] {
     return entries.map((c) => Math.max(1, Math.round((c.odds / 100) * 1_000_000)));
@@ -289,8 +302,17 @@ export function PackEditForm({
 
   return (
     <div className="space-y-6">
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground">Pack Info</h3>
+      {/* Live economics — the same panel the overview shows, recomputed on
+          every keystroke so price / odds / cards-per-open edits are steered by
+          the actual edge instead of a 6-decimal footnote under the table. */}
+      <PackEconomicsPanel
+        econ={econ}
+        title="Live economics"
+        hint="Updates as you edit — not saved until you hit Save"
+      />
+
+      <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+        <SectionHeading icon={Package} title="Pack info" />
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <div className="space-y-1.5">
             <Label>Name</Label>
@@ -311,12 +333,12 @@ export function PackEditForm({
             <Input type="number" value={price} onChange={(e) => setPrice(e.target.value)} min="0" step="0.01" disabled={saving} />
             {suggestedPrice > 0 && (
               <p className="text-xs text-muted-foreground">
-                EV {formatCurrency(expectedPayout)} · Suggested {formatCurrency(suggestedPrice)}
+                {formatCurrency(suggestedPrice)} hits the {econ.targetEdgePct.toFixed(2)}% target
                 {price !== suggestedPrice.toFixed(2) && (
                   <>
                     {" · "}
-                    <button type="button" onClick={() => setPrice(suggestedPrice.toFixed(2))} className="text-primary underline underline-offset-2">
-                      set from EV
+                    <button type="button" onClick={() => setPrice(suggestedPrice.toFixed(2))} className="font-medium text-primary underline underline-offset-2">
+                      use it
                     </button>
                   </>
                 )}
@@ -374,7 +396,10 @@ export function PackEditForm({
           </div>
         </div>
         <div className="space-y-1.5">
-          <Label>Image</Label>
+          <Label className="flex items-center gap-1.5">
+            <ImageIcon className="size-3.5 text-muted-foreground" />
+            Image
+          </Label>
           <ImageDropzone
             preview={imagePreview}
             onFile={(file) => {
@@ -387,47 +412,78 @@ export function PackEditForm({
             }}
           />
         </div>
-      </div>
+      </section>
 
-      <div className="space-y-4">
-        <h3 className="text-sm font-medium text-muted-foreground">
-          Cards & Odds ({cards.length} cards)
-        </h3>
+      <section className="space-y-4 rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+        <SectionHeading
+          icon={Boxes}
+          title={
+            <>
+              Cards &amp; odds
+              <span className="text-xs font-normal text-muted-foreground">
+                ({cards.length} in pool)
+              </span>
+            </>
+          }
+        />
         <CardPickerDialog
           selectedIds={cards.map((c) => c.cardId)}
           onSelect={handleAddCard}
           sets={pickerSets}
           rarities={pickerRarities}
         />
-        {cards.length > 0 && (
+        {cards.length > 0 ? (
           <>
-            <SortableCardTable cards={cards} onReorder={setCards} updateCard={updateCard} removeCard={removeCard} />
-            <div className="flex flex-wrap items-center gap-4 text-xs">
-              <p className={Math.abs(totalOdds - 100) > 0.000001 ? "text-yellow-500" : "text-muted-foreground"}>
-                Total odds: {totalOdds.toFixed(6)}%
-              </p>
-              <p className="text-muted-foreground">EV/card: {formatCurrency(evPerCard)} · EV/open: {formatCurrency(expectedPayout)}</p>
-              {packType !== "reward" && (
-              <p className={houseEdge < 0 ? "text-rose-600" : houseEdge < 5 ? "text-yellow-500" : "text-emerald-600"}>
-                House edge: {houseEdge.toFixed(6)}%
-              </p>
+            {/* Odds total is the one thing that can silently break a pack, so
+                it gets a real status row instead of a 6-decimal footnote. */}
+            <div
+              className={cn(
+                "flex flex-wrap items-center justify-between gap-2 rounded-lg border px-3 py-2 text-xs",
+                oddsOff
+                  ? "border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                  : "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
               )}
+            >
+              <span className="font-medium tabular-nums">
+                Total odds {totalOdds.toFixed(4)}%
+                {oddsOff ? ` — ${(100 - totalOdds).toFixed(4)}pp off 100%` : " — balanced"}
+              </span>
+              <span className="text-muted-foreground tabular-nums">
+                EV/card {formatCurrency(econ.evPerCard)} · EV/open{" "}
+                {formatCurrency(expectedPayout)}
+              </span>
             </div>
+            <SortableCardTable cards={cards} onReorder={setCards} updateCard={updateCard} removeCard={removeCard} />
           </>
+        ) : (
+          <p className="rounded-lg border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+            No cards in this pack yet — add one to give it an EV.
+          </p>
         )}
-      </div>
+      </section>
 
       <ChangePackSet packId={pack.id} />
 
-      <div className="flex items-center justify-end gap-2">
-        {showCancel && onCancel ? (
-          <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
-            Cancel
+      {/* Sticky action bar: the card table is long, and the edge/odds status
+          has to stay reachable next to Save without scrolling back up. */}
+      <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        <p className="text-xs text-muted-foreground tabular-nums">
+          {econ.showEdge
+            ? `House edge ${econ.edgePct.toFixed(2)}% · target ${econ.targetEdgePct.toFixed(2)}%`
+            : econ.isReward
+              ? "Reward pack — no house edge"
+              : "Set a price and add cards to get an edge"}
+        </p>
+        <div className="flex items-center gap-2">
+          {showCancel && onCancel ? (
+            <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+              Cancel
+            </Button>
+          ) : null}
+          <Button onClick={handleSubmit} disabled={saving || !name || !price}>
+            {saving ? "Saving..." : "Save Changes"}
           </Button>
-        ) : null}
-        <Button onClick={handleSubmit} disabled={saving || !name || !price}>
-          {saving ? "Saving..." : "Save Changes"}
-        </Button>
+        </div>
       </div>
     </div>
   );
