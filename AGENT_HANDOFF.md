@@ -10,7 +10,7 @@
 
 ## CURRENT STATE
 
-- **2026-07-28 fiat locked-account alerts:** The repository-contained Antifraud monitor now durably sends new Whop fiat intents created while a user-level fiat deposit lock was already active to the dedicated fiat Discord webhook. Alerts show the account, amount, intent status, active lock methods, and lock reason without allowing mentions; locks applied after an older intent do not mislabel that deposit. The dedicated production webhook variable is present. Monitor TypeScript and all 100 tests, task-scoped ESLint, dashboard TypeScript, all 286 guardrails, and the production build pass.
+- **2026-07-28 fiat risk Discord alerts:** The repository-contained Antifraud monitor now durably sends both canonical `bad` fiat-payment assessments and new Whop fiat intents created while a user-level fiat deposit lock was already active to the dedicated fiat Discord webhook. Alerts show the account, amount, status, risk or lock evidence, and reason without allowing mentions; cursors start at release time and durably cover later downtime without replaying historical assessments. The dedicated production webhook variable is present. Monitor TypeScript and all 101 tests, task-scoped ESLint, dashboard TypeScript, all 286 guardrails, and the production build pass.
 
 - **2026-07-28 shared topbar rain status:** Every dashboard shell now mounts the same streamed active-rain card in its topbar. The card matches the profile control's 40px rounded-rectangle form and shows the live pool, authoritative entry total, end countdown, and drawing state without blocking the shell. The focused contract, all 282 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
 

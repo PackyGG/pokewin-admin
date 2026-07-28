@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildFiatDiscordPayload,
   fetchFailedPaymentWebhooks,
+  fetchHighRiskFiatProblems,
   fiatProblemTitle,
   type FiatProblem,
 } from "../src/fiat-alerts.js";
@@ -80,7 +81,36 @@ test("locked-account deposit alerts expose the active fiat lock", () => {
   assert.match(JSON.stringify(payload), /High account risk/);
 });
 
+test("canonical bad fiat assessments use the same dedicated webhook payload", () => {
+  const payload = buildFiatDiscordPayload(
+    "https://admin.packydash.com/fiat?tab=payments",
+    {
+      ...failedIntent,
+      source_id: "intent-3:high_risk",
+      problem_code: "high_risk",
+      details: {
+        intent_id: "intent-3",
+        status: "completed",
+        credited_amount_cents: 75_000,
+        risk_score: 85,
+        verdict: "bad",
+        summary: "Shared device and provider dispute evidence.",
+      },
+    },
+  );
+
+  assert.equal(payload.embeds[0]?.title, "High-risk fiat deposit");
+  assert.match(payload.embeds[0]?.description ?? "", /high-risk verdict/);
+  assert.equal(
+    payload.embeds[0]?.fields.find((field) => field.name === "Risk score")
+      ?.value,
+    "85/100",
+  );
+  assert.match(JSON.stringify(payload), /provider dispute evidence/);
+});
+
 test("every monitored problem has explicit operator-facing copy", () => {
+  assert.equal(fiatProblemTitle("high_risk"), "High-risk fiat deposit");
   assert.equal(
     fiatProblemTitle("fiat_locked_account"),
     "High-risk fiat deposit from locked account",
@@ -111,6 +141,9 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /cardinality\(ufl\.locked_deposits_fiat\) > 0/);
   assert.match(source, /ufl\.locked_deposits_at <= fdi\.created_at/);
   assert.match(source, /fiat_locked_account/);
+  assert.match(source, /FROM fiat_deposit_assessments fda/);
+  assert.match(source, /fda\.verdict = 'bad'/);
+  assert.match(source, /HIGH_RISK_CURSOR_STREAM/);
   assert.match(source, /FROM payment_webhook_events pwe/);
   assert.match(source, /received_at >= .*interval '30 days'/s);
   assert.match(source, /checkout_creating_stale/);
@@ -135,4 +168,22 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   assert.equal(calls[0]?.values[0], 250);
   assert.match(calls[0]?.text ?? "", /processing_status = 'failed'/);
+
+  const riskCalls: Array<{ text: string; values: unknown[] }> = [];
+  const riskPool = {
+    query: async (text: string, values: unknown[]) => {
+      riskCalls.push({ text, values });
+      return { rows: [] };
+    },
+  };
+  await fetchHighRiskFiatProblems(
+    riskPool as never,
+    {
+      occurredAt: new Date("2026-07-28T12:00:00.000Z"),
+      sourceId: "intent-2:high_risk",
+    },
+    50,
+  );
+  assert.equal(riskCalls[0]?.values[2], 50);
+  assert.match(riskCalls[0]?.text ?? "", /verdict = 'bad'/);
 });

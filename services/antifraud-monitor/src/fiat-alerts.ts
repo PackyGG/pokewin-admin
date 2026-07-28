@@ -5,11 +5,13 @@ import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 
 const CURSOR_STREAM = "fiat-problems";
+const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
 const BATCH_SIZE = 100;
 const SEND_TIMEOUT_MS = 5_000;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export const FIAT_PROBLEM_CODES = [
+  "high_risk",
   "fiat_locked_account",
   "failed",
   "review",
@@ -95,6 +97,8 @@ function formatUsdCents(value: unknown): string | null {
 
 export function fiatProblemTitle(code: FiatProblemCode): string {
   switch (code) {
+    case "high_risk":
+      return "High-risk fiat deposit";
     case "fiat_locked_account":
       return "High-risk fiat deposit from locked account";
     case "failed":
@@ -160,6 +164,14 @@ export function buildFiatDiscordPayload(
   if (attempts) {
     fields.push({ name: "Attempts", value: clean(attempts), inline: true });
   }
+  const riskScore = detail(details, "risk_score");
+  if (riskScore) {
+    fields.push({
+      name: "Risk score",
+      value: `${clean(riskScore)}/100`,
+      inline: true,
+    });
+  }
   const lockedMethods = detail(details, "locked_deposits_fiat");
   if (lockedMethods) {
     fields.push({
@@ -171,6 +183,7 @@ export function buildFiatDiscordPayload(
   const reason =
     detail(details, "failure_reason") ??
     detail(details, "last_error") ??
+    detail(details, "summary") ??
     detail(details, "locked_deposits_reason");
   if (reason) {
     fields.push({
@@ -182,7 +195,9 @@ export function buildFiatDiscordPayload(
 
   const url = new URL(dashboardUrl).toString();
   const description =
-    problem.problem_code === "fiat_locked_account"
+    problem.problem_code === "high_risk"
+      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
+      : problem.problem_code === "fiat_locked_account"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} was created for an account with fiat deposits locked.`
       : problem.source_kind === "deposit_intent"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} requires attention.`
@@ -387,6 +402,49 @@ export async function fetchFailedPaymentWebhooks(
   return result.rows;
 }
 
+export async function fetchHighRiskFiatProblems(
+  antifraud: pg.Pool,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = BATCH_SIZE,
+): Promise<FiatProblem[]> {
+  const result = await antifraud.query<FiatProblem>(
+    `
+      SELECT
+        'deposit_intent'::text AS source_kind,
+        fda.deposit_intent_id::text || ':high_risk' AS source_id,
+        'high_risk'::text AS problem_code,
+        fda.user_id,
+        fda.username,
+        jsonb_build_object(
+          'intent_id', fda.deposit_intent_id::text,
+          'provider', fda.provider,
+          'status', fda.status,
+          'currency', fda.currency,
+          'credited_amount_cents',
+            round(fda.credited_amount_usd * 100)::bigint,
+          'provider_payment_status', fda.provider_payment_status,
+          'provider_risk_score', fda.provider_risk_score,
+          'risk_score', fda.risk_score,
+          'verdict', fda.verdict,
+          'recommendation', fda.recommendation,
+          'summary', fda.summary
+        ) AS details,
+        fda.assessed_at AS occurred_at
+      FROM fiat_deposit_assessments fda
+      WHERE fda.verdict = 'bad'
+        AND (
+          fda.assessed_at,
+          fda.deposit_intent_id::text || ':high_risk'
+        ) >
+          ($1::timestamptz, $2::text)
+      ORDER BY fda.assessed_at, fda.deposit_intent_id
+      LIMIT $3
+    `,
+    [cursor.occurredAt, cursor.sourceId, limit],
+  );
+  return result.rows;
+}
+
 export class FiatProblemAlerts {
   constructor(
     private readonly config: Config,
@@ -398,16 +456,57 @@ export class FiatProblemAlerts {
     await this.db.antifraud.query(
       `
         INSERT INTO source_cursors(stream, occurred_at, source_id)
-        VALUES ($1, now() - interval '2 minutes', '')
+        VALUES
+          ($1, now() - interval '2 minutes', ''),
+          ($2, now() - interval '2 minutes', '')
         ON CONFLICT (stream) DO NOTHING
       `,
-      [CURSOR_STREAM],
+      [CURSOR_STREAM, HIGH_RISK_CURSOR_STREAM],
     );
   }
 
   async process(): Promise<void> {
+    await this.captureHighRiskAssessments();
     await this.capture();
     await this.deliver();
+  }
+
+  private async captureHighRiskAssessments(): Promise<void> {
+    for (;;) {
+      const cursor = await this.db.antifraud.query<{
+        occurred_at: Date;
+        source_id: string;
+      }>(
+        `
+          SELECT occurred_at, source_id
+          FROM source_cursors
+          WHERE stream = $1
+        `,
+        [HIGH_RISK_CURSOR_STREAM],
+      );
+      const row = cursor.rows[0];
+      if (!row) throw new Error("High-risk fiat cursor is missing");
+
+      const problems = await fetchHighRiskFiatProblems(
+        this.db.antifraud,
+        { occurredAt: row.occurred_at, sourceId: row.source_id },
+      );
+      if (problems.length === 0) return;
+
+      await this.storeProblems(problems);
+      const last = problems.at(-1);
+      if (!last) throw new Error("High-risk fiat batch was empty");
+      await this.db.antifraud.query(
+        `
+          UPDATE source_cursors
+          SET occurred_at = $2, source_id = $3, updated_at = now()
+          WHERE stream = $1
+        `,
+        [HIGH_RISK_CURSOR_STREAM, last.occurred_at, last.source_id],
+      );
+
+      if (problems.length < BATCH_SIZE) return;
+    }
   }
 
   private async capture(): Promise<void> {
