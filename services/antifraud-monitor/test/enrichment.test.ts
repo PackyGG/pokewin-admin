@@ -54,7 +54,7 @@ test("proxy and Tor detections use the higher network-risk weight", () => {
     result.signals.map((signal) => [signal.key, signal.points]),
     [
       ["proxycheck_anonymous", 55],
-      ["proxycheck_risk", 45],
+      ["proxycheck_risk", 80],
     ],
   );
   assert.deepEqual(

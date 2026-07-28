@@ -101,12 +101,6 @@ export function baseSignupSignals(
     detail: "The signup username resembles machine-generated account data.",
     points: SCORE_POINTS.generatedUsername,
   });
-  add(!signup.email, {
-    key: "missing_email",
-    title: "Missing email",
-    detail: "The account has no email address.",
-    points: SCORE_POINTS.missingEmail,
-  });
   const disposableDomain = disposableEmailDomain(signup.email);
   add(disposableDomain !== null, {
     key: "disposable_email",

@@ -66,15 +66,36 @@ test("normal signup has no baseline risk", () => {
 
 test("custom signup and activity weights drive new scores", () => {
   const weights = defaultScoreWeights();
-  weights.missing_email = 37;
+  weights.generated_username = 37;
   weights.fiat_deposit = 61;
   const signals = baseSignupSignals(
-    { ...signup, email: null },
+    { ...signup, username: "botuser123456" },
     normalContext,
     weights,
   );
-  assert.equal(signals.find((signal) => signal.key === "missing_email")?.points, 37);
+  assert.equal(
+    signals.find((signal) => signal.key === "generated_username")?.points,
+    37,
+  );
   assert.equal(activityScoreFor("fiat_deposit", weights), 61);
+});
+
+test("requested signup and provider defaults use the live point values", () => {
+  const weights = defaultScoreWeights();
+  assert.equal(weights.ip_velocity_10m, 60);
+  assert.equal(weights.generated_username, 25);
+  assert.equal(weights.country_cluster_ten_plus, 25);
+  assert.equal(weights.country_cluster_twenty_five_plus, 50);
+  assert.equal(weights.proxycheck_risk_medium, 40);
+  assert.equal(weights.proxycheck_risk_high, 80);
+});
+
+test("a signup without stored email is not scored", () => {
+  const signals = baseSignupSignals(
+    { ...signup, email: null },
+    normalContext,
+  );
+  assert.equal(signals.some((signal) => signal.key === "missing_email"), false);
 });
 
 test("large signup bot clusters escalate beyond small shared groups", () => {
@@ -108,7 +129,7 @@ test("large signup bot clusters escalate beyond small shared groups", () => {
   );
   assert.equal(
     signals.find((signal) => signal.key === "country_cluster")?.points,
-    25,
+    50,
   );
 });
 
@@ -160,30 +181,41 @@ test("activity scoring and the public catalog use the same values", () => {
   assert.equal(activityScoreFor("unknown"), 0);
 });
 
-test("reward-before-deposit does not match after a fiat deposit", () => {
+test("welcome reward rush does not match after a fiat deposit", () => {
   const now = Date.now();
   assert.equal(sequenceMatches([
     { event_type: "fiat_deposit", occurred_at: new Date(now) },
-    { event_type: "reward_opened", occurred_at: new Date(now + 1_000) },
-  ], ["reward_opened"], 180, [
+    { event_type: "welcome_reward_opened", occurred_at: new Date(now + 1_000) },
+    { event_type: "ledger_upgrader_bet", occurred_at: new Date(now + 2_000) },
+  ], ["welcome_reward_opened", "ledger_upgrader_bet"], 180, [
     "fiat_deposit",
     "crypto_deposit",
-    "deposit_unclassified",
   ]), false);
 });
 
-test("fiat and crypto deposits have separate risk treatment", () => {
+test("live behavior uses real deposit, game, and reward programs", () => {
   assert.equal(activityScoreFor("fiat_deposit"), 20);
   assert.equal(activityScoreFor("crypto_deposit"), -20);
-  assert.equal(activityScoreFor("deposit_unclassified"), 20);
+  assert.equal(activityScoreFor("paid_pack_opened"), -5);
+  assert.equal(activityScoreFor("ledger_battle_bet"), -5);
+  assert.equal(activityScoreFor("ledger_battle_sponsorship"), -5);
+  assert.equal(activityScoreFor("ledger_upgrader_bet"), -5);
+  assert.equal(activityScoreFor("daily_reward_opened"), -10);
+  assert.equal(activityScoreFor("ledger_deposit_bonus"), -10);
+  assert.equal(activityScoreFor("ledger_rakeback_claim"), -10);
+  assert.equal(activityScoreFor("ledger_rain_win"), 0);
+  assert.equal(activityScoreFor("deposit_unclassified"), 0);
+  assert.equal(activityScoreFor("reward_opened"), 0);
+  assert.equal(activityScoreFor("bonus_received"), 0);
   assert.equal(activityScoreFor("rain_joined"), 0);
 });
 
 test("sequence matching retries from a later valid first event", () => {
   const now = Date.now();
   assert.equal(sequenceMatches([
-    { event_type: "reward_opened", occurred_at: new Date(now) },
-    { event_type: "reward_opened", occurred_at: new Date(now + 200_000) },
-    { event_type: "reward_opened", occurred_at: new Date(now + 210_000) },
-  ], ["reward_opened", "reward_opened"], 180), true);
+    { event_type: "welcome_reward_opened", occurred_at: new Date(now) },
+    { event_type: "ledger_battle_bet", occurred_at: new Date(now + 200_000) },
+    { event_type: "welcome_reward_opened", occurred_at: new Date(now + 210_000) },
+    { event_type: "ledger_battle_bet", occurred_at: new Date(now + 220_000) },
+  ], ["welcome_reward_opened", "ledger_battle_bet"], 180), true);
 });

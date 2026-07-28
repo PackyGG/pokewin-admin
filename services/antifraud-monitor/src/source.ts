@@ -234,11 +234,15 @@ export type SourceActivity = {
  * `risk_events` dedupes on `(source, source_ref)` only — the event type is not
  * part of the key. A `user_rewards` row therefore has to expose a DIFFERENT
  * source_ref for its granted and its opened state, otherwise the granted row
- * swallows the opened row and the reward-rush / reward-before-deposit rules
- * can never match.
+ * swallows the opened row and the reward-specific behavior rules cannot match.
  */
 const USER_REWARD_SOURCE_REF =
   "ur.id::text || CASE WHEN ur.opened_at IS NULL THEN ':granted' ELSE ':opened' END";
+
+export const WELCOME_REWARD_PACK_ID =
+  "86b89005-d49f-46ad-9c38-f2a35b136eba";
+export const LEVEL_ONE_REWARD_PACK_ID =
+  "91577f77-8589-4e85-bea1-69bf37c46169";
 
 export function rewardSourceRef(
   rewardId: string,
@@ -282,16 +286,7 @@ export async function fetchSessionActivity(
         lt.user_id,
         CASE
           WHEN lt.type::text = 'deposit' AND fdi.id IS NOT NULL THEN 'fiat_deposit'
-          WHEN lt.type::text = 'deposit' AND (
-            lt.crypto_asset IS NOT NULL
-            OR lt.deposit_address_id IS NOT NULL
-            OR lt.fireblocks_tx_id IS NOT NULL
-            OR lt.blockchain_tx_hash IS NOT NULL
-          ) THEN 'crypto_deposit'
-          WHEN lt.type::text = 'deposit' THEN 'deposit_unclassified'
-          WHEN lt.type::text IN ('deposit_bonus','promo_code_redeemed','gift_card_redeemed',
-                                 'balance_reward_claim','waitlist_prize')
-            THEN 'bonus_received'
+          WHEN lt.type::text = 'deposit' THEN 'crypto_deposit'
           WHEN lt.type::text = 'pack_opening' THEN 'paid_pack_opened'
           ELSE 'ledger_' || lt.type::text
         END AS event_type,
@@ -320,16 +315,40 @@ export async function fetchSessionActivity(
         AND lt.created_at >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
         AND lt.created_at <= ($6::timestamptz ${UTC})
-        AND lt.type::text <> 'rain_win'
 
       UNION ALL
 
       SELECT
         ur.user_id,
-        CASE WHEN ur.opened_at IS NULL THEN 'reward_granted' ELSE 'reward_opened' END,
+        CASE
+          WHEN '${WELCOME_REWARD_PACK_ID}'::uuid =
+            ANY(COALESCE(r.pack_ids, ARRAY[]::uuid[]))
+            THEN CASE
+              WHEN ur.opened_at IS NULL THEN 'welcome_reward_granted'
+              ELSE 'welcome_reward_opened'
+            END
+          WHEN '${LEVEL_ONE_REWARD_PACK_ID}'::uuid =
+            ANY(COALESCE(r.pack_ids, ARRAY[]::uuid[]))
+            THEN CASE
+              WHEN ur.opened_at IS NULL THEN 'level_one_reward_granted'
+              ELSE 'level_one_reward_opened'
+            END
+          WHEN r.type::text = 'daily'
+            THEN CASE
+              WHEN ur.opened_at IS NULL THEN 'daily_reward_granted'
+              ELSE 'daily_reward_opened'
+            END
+          ELSE CASE
+            WHEN ur.opened_at IS NULL THEN 'other_reward_granted'
+            ELSE 'other_reward_opened'
+          END
+        END,
         'user_rewards',
         ${USER_REWARD_SOURCE_REF},
-        CASE WHEN ur.opened_at IS NULL THEN 'Reward granted' ELSE 'Reward opened' END,
+        r.name || CASE
+          WHEN ur.opened_at IS NULL THEN ' granted'
+          ELSE ' opened'
+        END,
         r.name,
         COALESCE(ur.opened_at, ur.granted_at) ${UTC},
         jsonb_build_object(
@@ -337,7 +356,8 @@ export async function fetchSessionActivity(
           'reward_slug', r.slug,
           'reward_name', r.name,
           'reward_type', r.type::text,
-          'level_required', r.level_required
+          'level_required', r.level_required,
+          'pack_ids', r.pack_ids
         )
       FROM user_rewards ur
       JOIN rewards r ON r.id = ur.reward_id
@@ -346,6 +366,33 @@ export async function fetchSessionActivity(
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
         AND COALESCE(ur.opened_at, ur.granted_at) <=
           ($6::timestamptz ${UTC})
+
+      UNION ALL
+
+      SELECT
+        bp.user_id,
+        'creator_sponsored_battle_received',
+        'battle_participants',
+        bp.id::text || ':sponsored',
+        'Sponsored battle received',
+        'The account joined a battle funded through sponsorship.',
+        bp.created_at ${UTC},
+        jsonb_build_object(
+          'battle_id', bp.battle_id::text,
+          'sponsorship_percentage', b.sponsorship_percentage,
+          'sponsorship_amount_paid', b.sponsorship_amount_paid::text,
+          'creator_session_id', bp.source_session_id::text
+        )
+      FROM battle_participants bp
+      JOIN battles b ON b.id = bp.battle_id
+      WHERE bp.user_id = $1
+        AND (
+          b.sponsorship_percentage > 0
+          OR bp.source_session_id IS NOT NULL
+        )
+        AND bp.created_at >=
+          ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+        AND bp.created_at <= ($6::timestamptz ${UTC})
       )
       SELECT *
       FROM candidate_activity

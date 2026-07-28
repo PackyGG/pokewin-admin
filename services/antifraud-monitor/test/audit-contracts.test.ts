@@ -339,6 +339,13 @@ test("editable score migration seeds every runtime weight", async () => {
       ),
       "utf8",
     ),
+    await readFile(
+      new URL(
+        "../migrations/014_signup_live_behavior_tuning.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   ].join("\n");
   assert.match(migration, /CREATE TABLE IF NOT EXISTS score_weights/);
   for (const key of SCORE_WEIGHT_KEYS) {
@@ -586,6 +593,13 @@ test("signup and activity cursors preserve exact application-precision UTC tuple
   assert.match(sql, /':granted'/);
   assert.match(sql, /':opened'/);
   assert.match(sql, /created_at <= \(\$6::timestamptz AT TIME ZONE 'UTC'\)/);
+  assert.match(sql, /86b89005-d49f-46ad-9c38-f2a35b136eba/);
+  assert.match(sql, /91577f77-8589-4e85-bea1-69bf37c46169/);
+  assert.match(sql, /creator_sponsored_battle_received/);
+  assert.match(sql, /b\.sponsorship_percentage > 0/);
+  assert.match(sql, /WHEN lt\.type::text = 'deposit' THEN 'crypto_deposit'/);
+  assert.doesNotMatch(sql, /deposit_unclassified/);
+  assert.doesNotMatch(sql, /lt\.type::text <> 'rain_win'/);
   assert.deepEqual(activity.queries[0]?.values, [
     session.user_id,
     session.activity_cursor_at,
