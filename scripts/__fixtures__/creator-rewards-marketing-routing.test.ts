@@ -56,4 +56,5 @@ test("Creator Rewards lives only in the Marketing workspace", () => {
   const middleware = source("src/middleware.ts");
   assert.match(middleware, /pathname === "\/creator-rewards"/);
   assert.match(middleware, /creatorHub\.host\}\/rewards/);
+  assert.match(middleware, /url\.search = request\.nextUrl\.search/);
 });

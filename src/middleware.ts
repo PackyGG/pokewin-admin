@@ -158,10 +158,9 @@ export async function middleware(request: NextRequest) {
         (entry) => entry.basePath === "/creator-hub",
       );
       if (creatorHub) {
-        return NextResponse.redirect(
-          new URL(`https://${creatorHub.host}/rewards`),
-          308,
-        );
+        const url = new URL(`https://${creatorHub.host}/rewards`);
+        url.search = request.nextUrl.search;
+        return NextResponse.redirect(url, 308);
       }
     }
 
