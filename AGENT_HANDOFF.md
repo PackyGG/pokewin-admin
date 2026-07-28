@@ -12,6 +12,8 @@
 
 - **2026-07-28 Keno configurable max bet:** Content → Keno → Configuration now reads and updates the live `keno_max_bet_usd` value through `GET/PUT /v1/admin/keno-config`, validates the backend's $0.25–$1,000 range, audit-logs changes, caches production reads, and hides the raw key from the generic Security editor. Production currently returns $20. Focused tests, all 268 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
 
+- **2026-07-28 Account Review opener visibility:** `/antifraud/reviews` now identifies the staff member who opened each case instead of showing assignment state. Automatically ingested cases are labeled `Antifraud monitor`, and unresolved deleted staff identities fall back to `Unknown staff`. Focused ESLint and TypeScript pass.
+
 - **2026-07-28 Antifraud Discord alert redesign:** Score-60 signup alerts now show separate account, risk, trigger, top signal, and case sections with severity-aware accents and a direct Review case button. Rule-match alerts use the same clean layout and add score change plus outcome. Mention allowlisting and durable delivery are unchanged. The monitor passes 91 tests; dashboard TypeScript and focused zero-warning ESLint pass.
 
 - **2026-07-28 fiat-threshold holds in Account Review:** the signed ingest accepts the backend's high-severity `fiat_deposit_withdrawal_hold` signal as an automatic Account Review case. Queue, case summary, and related-signal rows render a clear “Fiat-triggered withdrawal hold” badge instead of the raw event key. Dashboard TypeScript, zero-warning ESLint, all 259 guardrails, and the production build pass. The separate backend sender/webhook branch is verified but still needs explicit backend release and environment authorization.

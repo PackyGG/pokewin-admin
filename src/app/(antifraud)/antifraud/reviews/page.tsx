@@ -304,9 +304,9 @@ async function QueueList({
 
                 <span className="flex shrink-0 items-center gap-3 text-[11px] text-muted-foreground">
                   <span className="min-w-0 truncate">
-                    {review.assignee
-                      ? `→ ${review.assignee.label}`
-                      : "unassigned"}
+                    Opened by{" "}
+                    {review.opener?.label ??
+                      (review.openedBy ? "Unknown staff" : "Antifraud monitor")}
                   </span>
                   <span
                     className="shrink-0 whitespace-nowrap"
