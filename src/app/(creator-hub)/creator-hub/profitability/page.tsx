@@ -1,36 +1,32 @@
 import { Suspense } from "react";
 import {
-  Activity,
+  AlertTriangle,
   Coins,
-  Handshake,
   History,
   LineChart,
-  Percent,
   TrendingUp,
   Users,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TabChips } from "@/components/ux";
-import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 
 import { getCreatorProfitability } from "./_queries/deal-profitability";
 import {
+  PAST_DEALS_PAGE_SIZE,
   getPastDeals,
   parsePastDealsPage,
 } from "./_queries/past-deals";
-import { HubKpiBox } from "../_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "../_components/hub-kpi-info-popover";
+import { HubNotice } from "../_components/hub-notice";
+import { conversionClass } from "./_components/deal-formatters";
 import { ProfitabilityList } from "./_components/profitability-list";
 import { PastDealsList } from "./_components/past-deals-list";
-import { RosterError } from "../creators/_components/roster-error";
+import { ProfitabilitySkeleton } from "./_components/profitability-skeleton";
 
 export const metadata = { title: "Profitability · Creator Hub" };
 
@@ -67,13 +63,14 @@ const TAB_SUBTITLES: Record<ProfitabilityTab, string> = {
 /**
  * Creator Hub — Profitability.
  *
- * Shell-first: the hero + tab strip paint instantly; the active tab's
- * data section streams behind Suspense. Only the active tab loads on
- * each render (Active-Timeframe-Only). The Active tab keeps the existing
- * roster-walk view; the Past Deals tab lists every ENDED leaderboard frame
- * (= past deal under the "leaderboard frame IS the deal" model — the same
- * entity as Active, just finished) with server-side pagination
- * (25/page, `?page=`).
+ * Shell-first: the SectionHeading identity + tab strip paint instantly
+ * (page identity is a SectionHeading — no hero titles, owner decision);
+ * the active tab's data section streams behind Suspense. Only the active
+ * tab loads on each render (Active-Timeframe-Only). The Active tab keeps
+ * the existing roster-walk view; the Past Deals tab lists every ENDED
+ * leaderboard frame (= past deal under the "leaderboard frame IS the deal"
+ * model — the same entity as Active, just finished) with server-side
+ * pagination (25/page, `?page=`).
  */
 export default async function CreatorHubProfitabilityPage({
   searchParams,
@@ -88,14 +85,11 @@ export default async function CreatorHubProfitabilityPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={TrendingUp}
-          accent="emerald"
-          title="Profitability"
-          subtitle={TAB_SUBTITLES[tab]}
-        />
-      </PageHero>
+      {/* Page identity — SectionHeading (no hero titles by owner decision). */}
+      <div className="space-y-1.5">
+        <SectionHeading icon={TrendingUp} title="Profitability" />
+        <p className="text-xs text-muted-foreground">{TAB_SUBTITLES[tab]}</p>
+      </div>
 
       <div className="space-y-3">
         <div className="flex items-center justify-between gap-2">
@@ -113,7 +107,7 @@ export default async function CreatorHubProfitabilityPage({
         {/* Keyed Suspense so flipping tab/page shows skeleton, not stale data. */}
         <Suspense
           key={tab === "past" ? `past-${page}` : "active"}
-          fallback={<ProfitabilitySkeleton />}
+          fallback={<ProfitabilitySkeleton coldLoadNote={tab === "past"} />}
         >
           {tab === "past" ? (
             <PastDealsSection page={page} />
@@ -126,25 +120,70 @@ export default async function CreatorHubProfitabilityPage({
   );
 }
 
+/** Amber degraded card for a failed roster/backend walk (HubNotice tone). */
+function ProfitabilityUnavailable() {
+  return (
+    <HubNotice
+      tone="amber"
+      icon={AlertTriangle}
+      title="Profitability unavailable"
+    >
+      Couldn&apos;t load the creator roster from the backend. Try refreshing in
+      a moment.
+    </HubNotice>
+  );
+}
+
+/**
+ * Compact secondary stat line — the demoted wager/conversion trio (plus the
+ * deal count) that used to be four full KPI boxes. One flat rounded-lg bar
+ * under the headline tiles.
+ */
+function SecondaryStatLine({
+  items,
+}: {
+  items: { label: string; value: string; className?: string }[];
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-x-6 gap-y-1.5 rounded-lg border bg-card px-3 py-2">
+      {items.map((item) => (
+        <div key={item.label} className="flex items-baseline gap-1.5">
+          <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            {item.label}
+          </span>
+          <span
+            className={cn(
+              "text-xs font-semibold tabular-nums",
+              item.className,
+            )}
+          >
+            {item.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 async function ActiveProfitabilitySection() {
   // Same hard error isolation as `PastDealsSection` below (digest 3304963582):
   // `getCreatorProfitability` degrades its own legs, but an unexpected throw
   // here — a database connection drop, a transient rejection — would escape to
-  // (creator-hub)/error.tsx and take the hero + tab strip with it. This is the
-  // DEFAULT tab, so it is the likeliest path to hit; degrade to the roster
-  // error card and keep the shell painted.
+  // (creator-hub)/error.tsx and take the identity + tab strip with it. This is
+  // the DEFAULT tab, so it is the likeliest path to hit; degrade to the amber
+  // notice and keep the shell painted.
   let data: Awaited<ReturnType<typeof getCreatorProfitability>>;
   try {
     data = await getCreatorProfitability();
   } catch (err) {
-    console.error("[creator-hub.profitability] section threw — roster error:", err);
-    return <RosterError />;
+    console.error("[creator-hub.profitability] section threw — notice:", err);
+    return <ProfitabilityUnavailable />;
   }
 
   const { rows, totals, rosterUnavailable } = data;
 
   if (rosterUnavailable) {
-    return <RosterError />;
+    return <ProfitabilityUnavailable />;
   }
 
   // Actual PnL = affiliates made us − deal cost (house-profit convention).
@@ -158,66 +197,109 @@ async function ActiveProfitabilitySection() {
 
   return (
     <FadeIn className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        <HubKpiBox
-          label="Active Deals"
-          icon={Handshake}
-          accent="blue"
-          value={formatNumber(totals.totalActiveDeals)}
-          sub="Creators on an active deal"
-        />
-        <HubKpiBox
-          label="Total Cost"
-          icon={Coins}
-          accent="rose"
-          value={formatCurrency(totals.totalCost)}
-          sub="Cap + leaderboard + tips"
-        />
-        <HubKpiBox
-          label="Total Actual PNL"
-          icon={LineChart}
-          accent={pnlAccent}
-          value={formatCurrency(totals.totalActualPnl)}
-          sub="Affiliates made us − deal cost"
-        />
-        <HubKpiBox
-          label="Affiliates Made Us"
-          icon={Users}
-          accent={affiliatesAccent}
-          value={formatCurrency(totals.totalAffiliatesMadeUs)}
-          sub="Deposits − withdrawals − claims"
-          info={
-            <HubKpiInfoPopover
-              title="Affiliates Made Us"
-              description="What each creator's affiliate cohort net-earned the house, summed across the roster. Per creator = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim code earnings, all measured strictly inside that creator's deal frame. Staff, creator-role users, blacklisted users and the creator's own deposits are excluded. House POV: positive = we kept value (emerald), negative = net loss (rose)."
-              footer={{
-                label: "Total",
-                value: formatCurrency(totals.totalAffiliatesMadeUs),
-                tone: totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
-              }}
-            />
-          }
-        />
-        <HubKpiBox
-          label="Expected Wager"
-          icon={TrendingUp}
-          accent="blue"
-          value={formatCurrency(totals.totalExpectedWager)}
-          sub="To cover deal cost"
-        />
-        <HubKpiBox
-          label="Creator Wager"
-          icon={Activity}
-          accent="emerald"
-          value={formatCurrency(totals.totalCreatorWager)}
-          sub="Actual · in deal frame"
-        />
-        <HubKpiBox
-          label="Avg Conversion"
-          icon={Percent}
-          accent="blue"
-          value={`${totals.avgConversionRate.toFixed(2)}x`}
-          sub="Actual ÷ expected wager"
+      <div className="space-y-2">
+        {/* Explicit totals scope — the Active strip sums the FULL roster. */}
+        <p className="text-[11px] text-muted-foreground">
+          Totals: all {formatNumber(rows.length)} current deals (full set) ·{" "}
+          {formatNumber(totals.totalActiveDeals)} active,{" "}
+          {formatNumber(rows.length - totals.totalActiveDeals)} scheduled
+        </p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <KpiTile
+            label="Deal Cost"
+            icon={Coins}
+            accent="rose"
+            value={formatCurrency(totals.totalCost)}
+            sub="Cap + leaderboard + tips"
+            action={
+              <HubKpiInfoPopover
+                title="Deal Cost"
+                description="Σ per-creator cost of the current deal frame: full withdraw cap + (tip + sponsor) × fills across the frame's weekly deals, plus the leaderboard net prize × 50% (the house always pays half). No daily-fill leg — the withdraw cap already bounds fill exposure. House cost → rose."
+                lines={[
+                  {
+                    label: "Expected wager to cover (cost ÷ 7.5% edge)",
+                    value: formatCurrency(totals.totalExpectedWager),
+                    tone: "muted",
+                  },
+                ]}
+                footer={{
+                  label: "Total cost",
+                  value: formatCurrency(totals.totalCost),
+                  tone: "rose",
+                }}
+              />
+            }
+          />
+          <KpiTile
+            label="Affiliates Made Us"
+            icon={Users}
+            accent={affiliatesAccent}
+            value={formatCurrency(totals.totalAffiliatesMadeUs)}
+            sub="Deposits − withdrawals − claims"
+            action={
+              <HubKpiInfoPopover
+                title="Affiliates Made Us"
+                description="What each creator's affiliate cohort net-earned the house, summed across the roster. Per creator = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim code earnings, all measured strictly inside that creator's deal frame. Staff, creator-role users, blacklisted users and the creator's own deposits are excluded. House POV: positive = we kept value (emerald), negative = net loss (rose)."
+                footer={{
+                  label: "Total",
+                  value: formatCurrency(totals.totalAffiliatesMadeUs),
+                  tone: totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+                }}
+              />
+            }
+          />
+          <KpiTile
+            label="Actual PnL"
+            icon={LineChart}
+            accent={pnlAccent}
+            value={formatCurrency(totals.totalActualPnl)}
+            sub="Affiliates made us − deal cost"
+            action={
+              <HubKpiInfoPopover
+                title="Actual PnL"
+                description="Affiliates made us − deal cost, summed across the roster (house-profit convention). Positive = the cohorts earned back more than the deals cost (emerald); negative = the deals cost more than the cohorts earned us (rose)."
+                lines={[
+                  {
+                    label: "Affiliates made us",
+                    value: formatCurrency(totals.totalAffiliatesMadeUs),
+                    tone: totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+                  },
+                  {
+                    label: "Deal cost",
+                    value: `− ${formatCurrency(totals.totalCost)}`,
+                    tone: "rose",
+                  },
+                ]}
+                footer={{
+                  label: "Actual PnL",
+                  value: formatCurrency(totals.totalActualPnl),
+                  tone: totals.totalActualPnl < 0 ? "rose" : "emerald",
+                }}
+              />
+            }
+          />
+        </div>
+        <SecondaryStatLine
+          items={[
+            {
+              label: "Active Deals",
+              value: formatNumber(totals.totalActiveDeals),
+            },
+            {
+              label: "Expected Wager",
+              value: formatCurrency(totals.totalExpectedWager),
+            },
+            {
+              label: "Actual Wager",
+              value: formatCurrency(totals.totalCreatorWager),
+              className: "text-emerald-600 dark:text-emerald-400",
+            },
+            {
+              label: "Avg Conversion",
+              value: `${totals.avgConversionRate.toFixed(2)}x`,
+              className: conversionClass(totals.avgConversionRate),
+            },
+          ]}
         />
       </div>
 
@@ -237,11 +319,11 @@ async function PastDealsSection({ page }: { page: number }) {
   // slow / failing legs (safeQuery + per-leg try/catch), an unexpected throw
   // here (a database connection drop, an Edge-Config read inside `resolveAdminRead`
   // erroring, a Suspense child rejecting on a transient state) must NOT escape
-  // the section — otherwise the page hero + tab strip vanish behind the route
-  // error boundary. The bug class behind digest `3304963582` is exactly this
-  // kind of escape: the section throws, the (creator-hub)/error.tsx catches it,
-  // and the user loses the whole page. Catching here keeps the shell painted
-  // and degrades only the inner card to a friendly empty state.
+  // the section — otherwise the page identity + tab strip vanish behind the
+  // route error boundary. The bug class behind digest `3304963582` is exactly
+  // this kind of escape: the section throws, the (creator-hub)/error.tsx
+  // catches it, and the user loses the whole page. Catching here keeps the
+  // shell painted and degrades only the inner card to a friendly empty state.
   let data: Awaited<ReturnType<typeof getPastDeals>>;
   try {
     data = await getPastDeals(page);
@@ -274,68 +356,117 @@ async function PastDealsSection({ page }: { page: number }) {
   const affiliatesAccent =
     data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald";
 
+  const first = (data.page - 1) * PAST_DEALS_PAGE_SIZE + 1;
+  const last = Math.min(data.page * PAST_DEALS_PAGE_SIZE, data.totalCount);
+  const scopeLabel =
+    data.totalCount > 0
+      ? `Totals: this page (${formatNumber(first)}–${formatNumber(last)} of ${formatNumber(
+          data.totalCount,
+        )} ended deals)`
+      : "Totals: this page (no ended deals)";
+
   return (
     <FadeIn className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        <HubKpiBox
-          label="Ended Deals"
-          icon={History}
-          accent="blue"
-          value={formatNumber(data.totals.totalEndedDeals)}
-          sub="Ended leaderboard frames"
-        />
-        <HubKpiBox
-          label="Page Cost"
-          icon={Coins}
-          accent="rose"
-          value={formatCurrency(data.totals.totalCost)}
-          sub="Fill + cap + LB + tips · page"
-        />
-        <HubKpiBox
-          label="Page Actual PNL"
-          icon={LineChart}
-          accent={pnlAccent}
-          value={formatCurrency(data.totals.totalActualPnl)}
-          sub="Affiliates made us − cost · page"
-        />
-        <HubKpiBox
-          label="Affiliates Made Us"
-          icon={Users}
-          accent={affiliatesAccent}
-          value={formatCurrency(data.totals.totalAffiliatesMadeUs)}
-          sub="Deposits − withdrawals · page"
-          info={
-            <HubKpiInfoPopover
-              title="Affiliates Made Us (page)"
-              description="Sum of the visible page's affiliate-PnL legs. Per row = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, measured strictly inside that frame's window. Page-scoped so the heavy MAIN scan stays bounded to 25 frames per request (Active-Timeframe-Only)."
-              footer={{
-                label: "Page total",
-                value: formatCurrency(data.totals.totalAffiliatesMadeUs),
-                tone: data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
-              }}
-            />
-          }
-        />
-        <HubKpiBox
-          label="Expected Wager"
-          icon={TrendingUp}
-          accent="blue"
-          value={formatCurrency(data.totals.totalExpectedWager)}
-          sub="To cover page cost"
-        />
-        <HubKpiBox
-          label="Page Wager"
-          icon={Activity}
-          accent="emerald"
-          value={formatCurrency(data.totals.totalCreatorWager)}
-          sub="Actual · this page"
-        />
-        <HubKpiBox
-          label="Avg Conversion"
-          icon={Percent}
-          accent="blue"
-          value={`${data.totals.avgConversionRate.toFixed(2)}x`}
-          sub="Page average"
+      <div className="space-y-2">
+        {/* Explicit totals scope — Past money totals are PAGE-scoped. */}
+        <p className="text-[11px] text-muted-foreground">{scopeLabel}</p>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <KpiTile
+            label="Deal Cost"
+            icon={Coins}
+            accent="rose"
+            value={formatCurrency(data.totals.totalCost)}
+            sub="Cap + leaderboard + tips"
+            action={
+              <HubKpiInfoPopover
+                title="Deal Cost (page)"
+                description="Σ cost of the 25 ended frames on this page: full withdraw cap + (tip + sponsor) × fills across each frame's weekly deals, plus the leaderboard net prize × 50% (the house always pays half). No daily-fill leg. Page-scoped so the strip matches the rows below."
+                lines={[
+                  {
+                    label: "Expected wager to cover (cost ÷ 7.5% edge)",
+                    value: formatCurrency(data.totals.totalExpectedWager),
+                    tone: "muted",
+                  },
+                ]}
+                footer={{
+                  label: "Page cost",
+                  value: formatCurrency(data.totals.totalCost),
+                  tone: "rose",
+                }}
+              />
+            }
+          />
+          <KpiTile
+            label="Affiliates Made Us"
+            icon={Users}
+            accent={affiliatesAccent}
+            value={formatCurrency(data.totals.totalAffiliatesMadeUs)}
+            sub="Deposits − withdrawals − claims"
+            action={
+              <HubKpiInfoPopover
+                title="Affiliates Made Us (page)"
+                description="Sum of the visible page's affiliate-PnL legs. Per row = coverage-attributed cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, measured strictly inside that frame's window. Page-scoped so the heavy MAIN scan stays bounded to 25 frames per request (Active-Timeframe-Only)."
+                footer={{
+                  label: "Page total",
+                  value: formatCurrency(data.totals.totalAffiliatesMadeUs),
+                  tone: data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+                }}
+              />
+            }
+          />
+          <KpiTile
+            label="Actual PnL"
+            icon={LineChart}
+            accent={pnlAccent}
+            value={formatCurrency(data.totals.totalActualPnl)}
+            sub="Affiliates made us − deal cost"
+            action={
+              <HubKpiInfoPopover
+                title="Actual PnL (page)"
+                description="Affiliates made us − deal cost, summed over this page's ended frames (house-profit convention). Positive = the cohorts earned back more than the deals cost (emerald); negative = house loss (rose)."
+                lines={[
+                  {
+                    label: "Affiliates made us",
+                    value: formatCurrency(data.totals.totalAffiliatesMadeUs),
+                    tone:
+                      data.totals.totalAffiliatesMadeUs < 0 ? "rose" : "emerald",
+                  },
+                  {
+                    label: "Deal cost",
+                    value: `− ${formatCurrency(data.totals.totalCost)}`,
+                    tone: "rose",
+                  },
+                ]}
+                footer={{
+                  label: "Actual PnL",
+                  value: formatCurrency(data.totals.totalActualPnl),
+                  tone: data.totals.totalActualPnl < 0 ? "rose" : "emerald",
+                }}
+              />
+            }
+          />
+        </div>
+        <SecondaryStatLine
+          items={[
+            {
+              label: "Ended Deals",
+              value: formatNumber(data.totals.totalEndedDeals),
+            },
+            {
+              label: "Expected Wager",
+              value: formatCurrency(data.totals.totalExpectedWager),
+            },
+            {
+              label: "Actual Wager",
+              value: formatCurrency(data.totals.totalCreatorWager),
+              className: "text-emerald-600 dark:text-emerald-400",
+            },
+            {
+              label: "Avg Conversion",
+              value: `${data.totals.avgConversionRate.toFixed(2)}x`,
+              className: conversionClass(data.totals.avgConversionRate),
+            },
+          ]}
         />
       </div>
 
@@ -355,22 +486,5 @@ async function PastDealsSection({ page }: { page: number }) {
         />
       </div>
     </FadeIn>
-  );
-}
-
-function ProfitabilitySkeleton() {
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-7">
-        {Array.from({ length: 7 }).map((_, i) => (
-          <Skeleton key={i} className="h-[104px] rounded-2xl" />
-        ))}
-      </div>
-      <div className="space-y-2">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-[76px] rounded-2xl" />
-        ))}
-      </div>
-    </div>
   );
 }

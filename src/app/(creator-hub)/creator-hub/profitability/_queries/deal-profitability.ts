@@ -104,6 +104,8 @@ export type CreatorProfitabilityRow = {
   username: string | null;
   image: string | null;
   code: string | null;
+  /** Current-frame leaderboard id, when the frame is a board (row link). */
+  boardId: string | null;
   /** Current-frame leaderboard title, when the frame is a board. */
   boardTitle: string | null;
   frameStartMs: number | null;
@@ -373,6 +375,7 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
       username: c.username,
       image: c.image,
       code: codeWager.get(c.id)?.code ?? null,
+      boardId: fr.board?.boardId ?? null,
       boardTitle: fr.board?.title ?? null,
       frameStartMs: Number.isFinite(fr.startMs) ? fr.startMs : null,
       frameEndMs: Number.isFinite(fr.endMs) ? fr.endMs : null,

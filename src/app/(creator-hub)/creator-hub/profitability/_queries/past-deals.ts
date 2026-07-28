@@ -131,9 +131,9 @@ export function frameWeeks(startMs: number, endMs: number): number {
 }
 
 /**
- * Whole days in a frame — used to scale the daily balance fill over the frame
- * length. Rounded to the nearest day and floored at 1 (a degenerate /
- * same-day frame is one fill, never zero).
+ * Whole days in a frame — display-only frame length (`dealDays`). There is
+ * NO daily-fill cost leg (the deal cost is cap + leaderboard × 50%
+ * `LB_HOUSE_SHARE` + tips). Rounded to the nearest day and floored at 1.
  */
 function frameDays(startMs: number, endMs: number): number {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
@@ -171,7 +171,7 @@ export type PastDealRow = {
   weeklyTipSponsorUsd: number;
   /** Total tip + sponsor allowance over the frame (`weekly × dealWeeks`). */
   tipSponsorUsd: number;
-  /** The frame's sponsored-weighted house cost (net prize × sponsored%, rose). */
+  /** The frame's leaderboard house cost (net prize × 50% `LB_HOUSE_SHARE`, rose). */
   leaderboardUsd: number;
   /** capUsd + leaderboardUsd + tipSponsorUsd (rose house cost). */
   dealCost: number;

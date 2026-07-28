@@ -1,242 +1,25 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Handshake } from "lucide-react";
 
-import { cn } from "@/lib/utils";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { formatCurrency } from "@/lib/utils/format";
 import type { CreatorProfitabilityRow } from "../_queries/deal-profitability";
+import { HubEmptyState } from "../../_components/hub-notice";
+import { DealRow } from "./deal-row";
 
 /** Creators per page — rows are already loaded, this is a client-side slice. */
 const PAGE_SIZE = 25;
 
 /**
- * Per-creator deal profitability list. Left: avatar + name + code + the
- * current deal frame (board title · dates · "day X/N" or upcoming). Right:
- * deal cost (rose), the wager needed to cover it (expected), the wager
- * actually driven in the frame (emerald), and the conversion ratio.
+ * Active-tab list — a thin wrapper: rows render through the shared
+ * `DealRow` (variant "active"), empty state through `HubEmptyState`.
  *
- * House-POV colours: deal cost is a house cost → rose; actual wager is
- * house throughput income → emerald; conversion ≥ 1× = the creator
- * out-wagered the cost (house win) → emerald.
+ * Pagination is CLIENT-SIDE (the full active roster is already in props —
+ * a URL flip would only re-render the same data), but the control mirrors
+ * the shared `HubPagination` look (outline sm Previous/Next + "x / y") so
+ * both tabs page identically to the eye.
  */
-
-const MS_PER_DAY = 24 * 60 * 60 * 1000;
-const DATE_FMT = new Intl.DateTimeFormat("en-US", {
-  month: "short",
-  day: "numeric",
-});
-
-function conversionClass(rate: number): string {
-  if (rate >= 1) return "text-emerald-600 dark:text-emerald-400";
-  if (rate >= 0.5) return "text-amber-600 dark:text-amber-400";
-  if (rate > 0) return "text-rose-600 dark:text-rose-400";
-  return "text-muted-foreground";
-}
-
-/**
- * House-POV color for Actual PnL = affiliates made us − deal cost.
- * Positive (affiliates earned back more than the deal cost → house gain) →
- * emerald; negative (deal cost exceeded earnings → house loss) → rose.
- */
-function housePnlClass(value: number): string {
-  if (value > 0) return "text-emerald-600 dark:text-emerald-400";
-  if (value < 0) return "text-rose-600 dark:text-rose-400";
-  return "text-muted-foreground";
-}
-
-/** Frame label: dates + day X/N (live), "Upcoming" (not started), or "Ended". */
-function frameLabel(row: CreatorProfitabilityRow): string {
-  const { frameStartMs, frameEndMs, isLive } = row;
-  if (frameStartMs == null || frameEndMs == null) return "No active frame";
-
-  const range = `${DATE_FMT.format(frameStartMs)} – ${DATE_FMT.format(frameEndMs)}`;
-  const totalDays = Math.max(
-    1,
-    Math.round((frameEndMs - frameStartMs) / MS_PER_DAY),
-  );
-  const now = Date.now();
-
-  if (isLive) {
-    const dayN = Math.min(
-      totalDays,
-      Math.max(1, Math.floor((now - frameStartMs) / MS_PER_DAY) + 1),
-    );
-    return `${range} · day ${dayN}/${totalDays}`;
-  }
-  if (frameStartMs > now) return `${range} · upcoming`;
-  return `${range} · ended`;
-}
-
-/** Deal length as whole weeks (with a day count fallback under a week). */
-function dealLengthLabel(row: CreatorProfitabilityRow): string {
-  const { frameStartMs, frameEndMs, dealWeeks } = row;
-  if (frameStartMs == null || frameEndMs == null) return "—";
-  if (dealWeeks <= 1) {
-    const days = Math.max(
-      1,
-      Math.round((frameEndMs - frameStartMs) / MS_PER_DAY),
-    );
-    return `${days} day${days === 1 ? "" : "s"}`;
-  }
-  return `${dealWeeks} weeks`;
-}
-
-/** Time remaining in the frame: "X days" (live), "Upcoming", or "Ended". */
-function timeLeftLabel(row: CreatorProfitabilityRow): string {
-  const { frameStartMs, frameEndMs } = row;
-  if (frameStartMs == null || frameEndMs == null) return "—";
-  const now = Date.now();
-  if (frameStartMs > now) return "Upcoming";
-  if (frameEndMs < now) return "Ended";
-  const daysLeft = Math.max(0, Math.ceil((frameEndMs - now) / MS_PER_DAY));
-  return `${daysLeft} day${daysLeft === 1 ? "" : "s"}`;
-}
-
-function Metric({
-  label,
-  value,
-  className,
-}: {
-  label: string;
-  value: string;
-  className?: string;
-}) {
-  return (
-    <div className="sm:w-28 sm:text-right">
-      <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        {label}
-      </div>
-      <div className={cn("text-sm font-semibold tabular-nums", className)}>
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function ProfitabilityRow({ row }: { row: CreatorProfitabilityRow }) {
-  const initial = (row.username ?? row.code ?? "?").slice(0, 1).toUpperCase();
-  const capLabel =
-    row.dealWeeks > 1
-      ? `Cap ${formatCurrency(row.capUsd)} (${formatCurrency(
-          row.weeklyCapUsd,
-        )}/wk × ${row.dealWeeks})`
-      : `Cap ${formatCurrency(row.capUsd)}`;
-  // Tip+sponsor recurs every fill the deal grants in its weekly window,
-  // and the weekly figure scales across the leaderboard frame the same
-  // way cap does (owner directive 2026-06-23). Show the weekly × weeks
-  // multiplication for multi-week frames so the math is auditable.
-  const tipLabel =
-    row.dealWeeks > 1 && row.weeklyTipSponsorUsd > 0
-      ? `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)} (${formatCurrency(
-          row.weeklyTipSponsorUsd,
-        )}/wk × ${row.dealWeeks})`
-      : `Tip+Sponsor ${formatCurrency(row.tipSponsorUsd)}`;
-  const breakdown = `${capLabel} · LB ${formatCurrency(
-    row.leaderboardUsd,
-  )} · ${tipLabel}`;
-
-  return (
-    <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-      <div className="flex min-w-0 items-center gap-3">
-        <Avatar className="size-10 shrink-0">
-          <AvatarImage src={row.image ?? undefined} alt={row.username ?? ""} />
-          <AvatarFallback>{initial}</AvatarFallback>
-        </Avatar>
-        <div className="min-w-0">
-          <div className="flex min-w-0 items-center gap-2">
-            <Link
-              href={`/creator-hub/creators/${row.userId}`}
-              className="truncate text-sm font-semibold hover:underline"
-            >
-              {row.username ?? "Unknown creator"}
-            </Link>
-            {row.code && (
-              <span className="shrink-0 rounded-md border border-border bg-muted/60 px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">
-                {row.code}
-              </span>
-            )}
-            {row.isLive && (
-              <span className="shrink-0 rounded-full bg-emerald-500/15 px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide text-emerald-600 dark:text-emerald-400">
-                Live
-              </span>
-            )}
-          </div>
-          <div className="truncate text-[11px] text-muted-foreground">
-            {row.boardTitle ? `${row.boardTitle} · ` : ""}
-            {frameLabel(row)}
-          </div>
-          <div className="truncate text-[10px] text-muted-foreground/70">
-            {breakdown}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-2 gap-x-6 gap-y-2 sm:flex sm:items-center sm:gap-6">
-        <div className="col-span-2 flex items-center gap-3 rounded-lg border bg-background/40 px-3 py-1.5 sm:col-span-1">
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Length
-            </div>
-            <div className="text-sm font-semibold tabular-nums">
-              {dealLengthLabel(row)}
-            </div>
-          </div>
-          <div className="h-7 w-px bg-border" />
-          <div>
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Time Left
-            </div>
-            <div className="text-sm font-semibold tabular-nums">
-              {timeLeftLabel(row)}
-            </div>
-          </div>
-          <div className="h-7 w-px bg-border" />
-          <div
-            title={`Affiliates made us ${formatCurrency(
-              row.affiliatesMadeUs,
-            )} (cohort deposits − card withdrawals − the creator's own affiliate_claim earnings, this deal's timeframe) − deal cost ${formatCurrency(
-              row.dealCost,
-            )}. Positive = the affiliates earned back more than the deal cost.`}
-          >
-            <div className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Actual PnL
-            </div>
-            <div
-              className={cn(
-                "text-sm font-semibold tabular-nums",
-                housePnlClass(row.actualPnl),
-              )}
-            >
-              {row.actualPnl >= 0 ? "+" : ""}
-              {formatCurrency(row.actualPnl)}
-            </div>
-          </div>
-        </div>
-        <Metric
-          label="Deal Cost"
-          value={formatCurrency(row.dealCost)}
-          className="text-rose-600 dark:text-rose-400"
-        />
-        <Metric label="Expected Wager" value={formatCurrency(row.expectedWager)} />
-        <Metric
-          label="Actual Wager"
-          value={formatCurrency(row.actualWager)}
-          className="text-emerald-600 dark:text-emerald-400"
-        />
-        <Metric
-          label="Conversion"
-          value={`${row.conversionRate.toFixed(2)}x`}
-          className={conversionClass(row.conversionRate)}
-        />
-      </div>
-    </div>
-  );
-}
-
 export function ProfitabilityList({
   rows,
 }: {
@@ -253,9 +36,11 @@ export function ProfitabilityList({
 
   if (rows.length === 0) {
     return (
-      <div className="rounded-2xl border bg-card p-10 text-center text-sm text-muted-foreground">
-        No creators with a current deal to cost out yet.
-      </div>
+      <HubEmptyState
+        icon={Handshake}
+        title="No creators with a current deal"
+        sub="Nothing to cost out yet — creators appear here once a deal frame is active or scheduled."
+      />
     );
   }
 
@@ -266,36 +51,38 @@ export function ProfitabilityList({
     <div className="space-y-3">
       <div className="divide-y overflow-hidden rounded-2xl border bg-card">
         {pageRows.map((row) => (
-          <ProfitabilityRow key={row.userId} row={row} />
+          <DealRow key={row.userId} variant="active" row={row} />
         ))}
       </div>
 
       {rows.length > PAGE_SIZE && (
-        <div className="flex items-center justify-between gap-2">
-          <span className="text-[11px] text-muted-foreground">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs text-muted-foreground">
             {first}–{last} of {rows.length} creators
           </span>
           <div className="flex items-center gap-2">
             <Button
               variant="outline"
-              size="icon"
-              className="size-8"
+              size="sm"
+              className="gap-1"
               disabled={safePage <= 1}
               onClick={() => setPage(safePage - 1)}
+              aria-label="Previous page"
             >
-              <ChevronLeft className="size-4" />
+              <ChevronLeft className="size-3.5" aria-hidden /> Previous
             </Button>
-            <span className="text-sm text-muted-foreground">
-              Page {safePage} of {totalPages}
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {safePage} / {totalPages}
             </span>
             <Button
               variant="outline"
-              size="icon"
-              className="size-8"
+              size="sm"
+              className="gap-1"
               disabled={safePage >= totalPages}
               onClick={() => setPage(safePage + 1)}
+              aria-label="Next page"
             >
-              <ChevronRight className="size-4" />
+              Next <ChevronRight className="size-3.5" aria-hidden />
             </Button>
           </div>
         </div>
