@@ -44,6 +44,7 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
 
   assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
   assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*1\s*:\s*Infinity/);
+  assert.match(source, /idle_session_timeout=5s/);
   assert.match(
     source,
     /idleTimeoutMillis:\s*isReadMirror\s*\?\s*5_000\s*:\s*10_000/,

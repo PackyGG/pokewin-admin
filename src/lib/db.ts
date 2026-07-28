@@ -73,8 +73,14 @@ function createPool(
     allowExitOnIdle: true,
     // Defense in depth: even if a caller accidentally sends mutation SQL
     // through a mirror client, PostgreSQL rejects it before state can change.
+    // The server-side idle timeout is also essential on Vercel: an isolate can
+    // freeze after the response before node-postgres finishes sending its
+    // socket close, so PostgreSQL must reclaim that orphaned session itself.
     ...(isReadMirror
-      ? { options: "-c default_transaction_read_only=on -c TimeZone=UTC" }
+      ? {
+          options:
+            "-c default_transaction_read_only=on -c TimeZone=UTC -c idle_session_timeout=5s",
+        }
       : {}),
   });
   pool.on("error", (error) => {
