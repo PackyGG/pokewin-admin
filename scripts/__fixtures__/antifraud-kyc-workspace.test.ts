@@ -62,6 +62,10 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(page, /KYC in progress/);
   assert.match(page, /historical verification\s+records/);
   assert.match(page, /Ready for admin decision/);
+  assert.match(page, /<AccountRowEvidence account=\{account\}/);
+  assert.match(page, /label:\s*"Decline type"/);
+  assert.match(page, /Provider note:/);
+  assert.match(page, /label:\s*"Last event"/);
   assert.doesNotMatch(page, /System details and webhook activity/);
   assert.doesNotMatch(page, /Configuration and policy/);
   assert.doesNotMatch(page, /Sumsub webhook evidence/);

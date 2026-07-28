@@ -307,6 +307,7 @@ function AccountCard({
           <span className="mt-1 block text-xs text-muted-foreground">
             {presentation.summary}
           </span>
+          <AccountRowEvidence account={account} />
           <span className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
             <span>
               Country:{" "}
@@ -463,6 +464,101 @@ function AccountCard({
         </div>
       </div>
     </details>
+  );
+}
+
+function AccountRowEvidence({ account }: { account: KycAccount }) {
+  const evidence: Array<{ label: string; value: string }> = [];
+  const providerReviewOpen =
+    account.status === "pending" || account.status === "on_hold";
+  const providerDeclined = account.status === "rejected";
+  const readyForAdminReview =
+    account.kycRequired &&
+    account.adminDecision === "pending" &&
+    account.status === "approved";
+
+  if (providerReviewOpen) {
+    evidence.push({
+      label: "Provider",
+      value: providerStatusLabel(account.status),
+    });
+    if (account.lastWebhookCreatedAt) {
+      evidence.push({
+        label: "Last event",
+        value: formatRelative(account.lastWebhookCreatedAt),
+      });
+    }
+  }
+
+  if (providerDeclined) {
+    evidence.push({
+      label: "Answer",
+      value: account.reviewAnswer ?? "Declined",
+    });
+    if (account.rejectType) {
+      evidence.push({ label: "Decline type", value: account.rejectType });
+    }
+  }
+
+  if (readyForAdminReview) {
+    evidence.push({
+      label: "Provider",
+      value: account.reviewAnswer ?? "Approved",
+    });
+    if (account.lastWebhookCreatedAt) {
+      evidence.push({
+        label: "Approved",
+        value: formatRelative(account.lastWebhookCreatedAt),
+      });
+    }
+  }
+
+  if (account.adminDecision === "rejected") {
+    evidence.push({
+      label: "Admin review",
+      value:
+        account.adminReviewedByLabel ??
+        account.adminReviewedBy ??
+        "Rejected",
+    });
+    if (account.adminReviewedAt) {
+      evidence.push({
+        label: "Reviewed",
+        value: formatRelative(account.adminReviewedAt),
+      });
+    }
+  }
+
+  if (
+    evidence.length === 0 &&
+    !(providerDeclined && account.moderationComment)
+  ) {
+    return null;
+  }
+
+  return (
+    <span className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+      {evidence.map((item) => (
+        <span
+          key={`${item.label}-${item.value}`}
+          className="inline-flex min-w-0 items-baseline gap-1"
+        >
+          <span className="text-muted-foreground">{item.label}:</span>
+          <span className="max-w-56 truncate font-medium text-foreground">
+            {item.value}
+          </span>
+        </span>
+      ))}
+      {providerDeclined && account.moderationComment && (
+        <span
+          className="basis-full truncate text-rose-600 dark:text-rose-400"
+          title={account.moderationComment}
+        >
+          <span className="font-semibold">Provider note:</span>{" "}
+          {account.moderationComment}
+        </span>
+      )}
+    </span>
   );
 }
 

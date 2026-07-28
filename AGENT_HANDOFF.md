@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 KYC row evidence:** Collapsed `/antifraud/kyc` account rows now surface active Sumsub review stage and last-event timing, approved results awaiting admin review, and provider/admin decline details including safe moderation notes. Expanded evidence and admin controls are unchanged. The focused KYC test, all 305 guardrails, task-scoped zero-warning ESLint, TypeScript, and the production build pass; local browser rendering reached the login gate but could not verify the authenticated row without a session.
+
 - **2026-07-28 Risk scoring tabs:** `/antifraud/points` now combines Risk Scoring and Point Flows as active-tab-only views, with Risk Scoring as the default. The legacy `/antifraud/flows` route redirects to the Point Flows tab and the duplicate sidebar entry is removed. All 305 guardrails, TypeScript, full repository ESLint, and the isolated production build pass.
 
 - **2026-07-28 KYC country visibility:** Every collapsed account row on `/kyc` now shows the account country code, or `Unknown` when the source account has no country.
