@@ -38,11 +38,12 @@ import {
   applyGlobalFiatPolicy,
   fiatJurisdictionName,
   FIAT_JURISDICTION_POLICY,
-  isCreditCardDepositLocked,
+  hasAllWhopFiatDepositLocks,
+  hasAnyWhopFiatDepositLock,
   isGlobalFiatPolicyActive,
   isMandatoryFiatJurisdiction,
   MANDATORY_FIAT_JURISDICTION_CODES,
-  withCreditCardLock,
+  withWhopFiatDepositLocks,
 } from "@/lib/fiat-jurisdiction-policy";
 
 countries.registerLocale(enLocale);
@@ -230,7 +231,9 @@ export function GeoBlockingContent({
           { duration: 12000 },
         );
       } else {
-        toast.success(`Reloaded the ${res.resolvedEnv.toUpperCase()} country-restriction cache`);
+        toast.success(
+          `Reloaded the ${res.resolvedEnv.toUpperCase()} fiat/site and country-restriction caches`,
+        );
       }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to reload cache");
@@ -267,11 +270,21 @@ export function GeoBlockingContent({
       try {
         const res = await setGlobalFiatDeposits(allowed);
         setCurrentSiteLockedMethods(res.lockedMethods);
-        toast.success(
-          allowed
-            ? `Card deposits enabled outside ${res.protected} required exclusions`
-            : `Card deposits disabled across ${res.affected} location entries`,
-        );
+        if (
+          res.siteConfigCacheReloaded &&
+          res.countryRestrictionsCacheReloaded
+        ) {
+          toast.success(
+            allowed
+              ? `Whop fiat enabled outside ${res.protected} required exclusions`
+              : `Whop fiat disabled across ${res.affected} location entries`,
+          );
+        } else {
+          toast.warning(
+            "The database policy was saved, but the backend cache did not fully reload. Use Reload cache before treating the change as live.",
+            { duration: 12000 },
+          );
+        }
         router.refresh();
       } catch (e) {
         setRows(previous);
@@ -298,9 +311,16 @@ export function GeoBlockingContent({
     startTransition(async () => {
       try {
         const res = await setMandatoryJurisdictionsGeoBlocked(blocked);
-        toast.success(
-          `${blocked ? "Geo-blocked" : "Unblocked"} ${res.affected} policy jurisdictions`,
-        );
+        if (res.countryRestrictionsCacheReloaded) {
+          toast.success(
+            `${blocked ? "Geo-blocked" : "Unblocked"} ${res.affected} policy jurisdictions`,
+          );
+        } else {
+          toast.warning(
+            "The geo-block policy was saved, but the backend cache did not reload. Use Reload cache before treating the change as live.",
+            { duration: 12000 },
+          );
+        }
         router.refresh();
       } catch (error) {
         setRows(previous);
@@ -355,7 +375,7 @@ export function GeoBlockingContent({
       patchRow(
         countryCode,
         "lockedDepositsFiat",
-        withCreditCardLock(previousFiatLocks),
+        withWhopFiatDepositLocks(previousFiatLocks),
       );
     }
     beginPending(countryCode);
@@ -429,7 +449,7 @@ export function GeoBlockingContent({
   const fiatDisabledCount = useMemo(
     () =>
       restrictionRows.filter((row) =>
-        isCreditCardDepositLocked(row.lockedDepositsFiat),
+        hasAnyWhopFiatDepositLock(row.lockedDepositsFiat),
       ).length,
     [restrictionRows],
   );
@@ -440,7 +460,7 @@ export function GeoBlockingContent({
   // baseline, not a per-location restriction. See ./restrictions-table.tsx.
   const fiatLockIsBaseline = !allFiatAllowed;
   const policyFiatLocked = policyRows.filter((row) =>
-    isCreditCardDepositLocked(row.lockedDepositsFiat),
+    hasAllWhopFiatDepositLocks(row.lockedDepositsFiat),
   ).length;
   const policyGeoBlocked = policyRows.filter((row) => row.blocked).length;
   const allPolicyGeoBlocked =
@@ -580,7 +600,9 @@ export function GeoBlockingContent({
         <div className="flex items-center gap-2.5">
           <CreditCard className="size-4 text-muted-foreground" />
           <div>
-            <div className="text-sm font-medium">Card deposits - global</div>
+            <div className="text-sm font-medium">
+              Whop fiat deposits - global
+            </div>
             <div className="text-xs text-muted-foreground">{globalFiatCaption}</div>
           </div>
         </div>

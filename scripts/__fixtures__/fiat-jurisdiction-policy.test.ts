@@ -3,14 +3,16 @@ import test from "node:test";
 
 import {
   applyGlobalFiatPolicy,
-  CREDIT_CARD_DEPOSIT_METHOD,
   FIAT_JURISDICTION_POLICY,
+  hasAllWhopFiatDepositLocks,
+  hasAnyWhopFiatDepositLock,
   isCreditCardDepositLocked,
   isGlobalFiatPolicyActive,
   isMandatoryFiatJurisdiction,
   MANDATORY_FIAT_JURISDICTION_CODES,
-  withCreditCardLock,
-  withoutCreditCardLock,
+  WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
+  withWhopFiatDepositLocks,
+  withoutWhopFiatDepositLocks,
 } from "@/lib/fiat-jurisdiction-policy";
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 
@@ -92,18 +94,30 @@ test("fiat policy contains the exact 33 unique required jurisdictions", () => {
   assert.ok(!isMandatoryFiatJurisdiction("DE"));
 });
 
-test("credit-card helpers replace the ineffective legacy fiat token", () => {
-  assert.deepEqual(withCreditCardLock(["paypal", "fiat", "credit_card"]), [
-    "paypal",
-    CREDIT_CARD_DEPOSIT_METHOD,
-  ]);
+test("Whop helpers move card and wallet locks as one policy", () => {
   assert.deepEqual(
-    withoutCreditCardLock(["paypal", "fiat", "credit_card"]),
+    withWhopFiatDepositLocks(["paypal", "fiat", "credit_card"]),
+    ["paypal", ...WHOP_FIAT_DEPOSIT_LOCK_TOKENS],
+  );
+  assert.deepEqual(
+    withoutWhopFiatDepositLocks([
+      "paypal",
+      "fiat",
+      "credit_card",
+      "apple_pay",
+      "google_pay",
+      "cash_app",
+      "cashapp",
+    ]),
     ["paypal"],
   );
   assert.ok(isCreditCardDepositLocked(["fiat"]));
   assert.ok(isCreditCardDepositLocked(["credit_card"]));
   assert.ok(!isCreditCardDepositLocked(["paypal"]));
+  assert.ok(hasAnyWhopFiatDepositLock(["apple_pay"]));
+  assert.ok(hasAnyWhopFiatDepositLock(["cashapp"]));
+  assert.ok(hasAllWhopFiatDepositLocks([...WHOP_FIAT_DEPOSIT_LOCK_TOKENS]));
+  assert.ok(!hasAllWhopFiatDepositLocks(["credit_card"]));
 });
 
 test("global enablement opens ordinary locations and locks every policy row", () => {
@@ -120,9 +134,7 @@ test("global enablement opens ordinary locations and locks every policy row", ()
   assert.ok(
     enabled
       .filter((row) => row.countryCode !== "DE")
-      .every((row) =>
-        row.lockedDepositsFiat.includes(CREDIT_CARD_DEPOSIT_METHOD),
-      ),
+      .every((row) => hasAllWhopFiatDepositLocks(row.lockedDepositsFiat)),
   );
   assert.ok(isGlobalFiatPolicyActive([], enabled));
   assert.ok(!isGlobalFiatPolicyActive(["credit_card"], enabled));
@@ -135,7 +147,7 @@ test("global disablement locks every row and incomplete policy is never active",
   );
   assert.ok(
     disabled.every((row) =>
-      row.lockedDepositsFiat.includes(CREDIT_CARD_DEPOSIT_METHOD),
+      hasAllWhopFiatDepositLocks(row.lockedDepositsFiat),
     ),
   );
   assert.ok(!isGlobalFiatPolicyActive([], disabled));

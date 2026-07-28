@@ -11,7 +11,7 @@ import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { refreshSiteConfig } from "@/lib/refresh-site-config";
 import { FIAT_CACHE_TAG } from "@/lib/queries/fiat";
-import { isCreditCardDepositLocked } from "@/lib/fiat-jurisdiction-policy";
+import { isWhopFiatDepositLockToken } from "@/lib/fiat-jurisdiction-policy";
 
 const FIAT_METHODS = [
   "credit_card",
@@ -20,6 +20,8 @@ const FIAT_METHODS = [
   "pulse",
   "apple_pay",
   "google_pay",
+  "cash_app",
+  "cashapp",
   "bank_transfer",
 ] as const;
 
@@ -49,6 +51,10 @@ function parseFiatMethods(value: string): string[] {
   } catch {
     throw new Error("The configured fiat lock list is invalid JSON");
   }
+}
+
+function globalWhopLockFingerprint(methods: readonly string[]): string {
+  return methods.filter(isWhopFiatDepositLockToken).sort().join("|");
 }
 
 export async function updateFiatConfigAction(input: unknown): Promise<{
@@ -92,11 +98,11 @@ export async function updateFiatConfigAction(input: unknown): Promise<{
 
   if (
     parsed.data.key === "locked_deposits_fiat" &&
-    isCreditCardDepositLocked(parseFiatMethods(current.value)) !==
-      isCreditCardDepositLocked(parsed.data.value)
+    globalWhopLockFingerprint(parseFiatMethods(current.value)) !==
+      globalWhopLockFingerprint(parsed.data.value)
   ) {
     throw new Error(
-      "Use the global card-deposit switch to change credit-card availability so required jurisdiction exclusions stay enforced.",
+      "Use the global Whop fiat switch to change card and wallet availability so required jurisdiction exclusions stay enforced.",
     );
   }
 

@@ -22,7 +22,7 @@ import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 import {
   applyGlobalFiatPolicy,
   FIAT_JURISDICTION_POLICY,
-  isCreditCardDepositLocked,
+  hasAllWhopFiatDepositLocks,
   isGlobalFiatPolicyActive,
   MANDATORY_FIAT_JURISDICTION_CODES,
 } from "@/lib/fiat-jurisdiction-policy";
@@ -33,8 +33,6 @@ const METHOD_OPTIONS = [
   { value: "paypal", label: "PayPal" },
   { value: "paysafecard", label: "Paysafecard" },
   { value: "pulse", label: "Pulse" },
-  { value: "apple_pay", label: "Apple Pay" },
-  { value: "google_pay", label: "Google Pay" },
   { value: "bank_transfer", label: "Bank transfer" },
 ] as const;
 
@@ -101,7 +99,7 @@ export function FiatConfigCard({
     rowsByCode.has(code),
   ).length;
   const policyRowsLocked = MANDATORY_FIAT_JURISDICTION_CODES.filter((code) =>
-    isCreditCardDepositLocked(
+    hasAllWhopFiatDepositLocks(
       rowsByCode.get(code)?.lockedDepositsFiat ?? [],
     ),
   ).length;
@@ -117,11 +115,21 @@ export function FiatConfigCard({
       try {
         const result = await setGlobalFiatDeposits(allowed);
         setLockedMethods(result.lockedMethods);
-        toast.success(
-          allowed
-            ? `Card deposits enabled globally with ${result.protected} required exclusions`
-            : "Card deposits disabled site-wide",
-        );
+        if (
+          result.siteConfigCacheReloaded &&
+          result.countryRestrictionsCacheReloaded
+        ) {
+          toast.success(
+            allowed
+              ? `Whop fiat enabled globally with ${result.protected} required exclusions`
+              : "Whop fiat disabled site-wide",
+          );
+        } else {
+          toast.warning(
+            "The database policy was saved, but the backend cache did not fully reload. Open Geo Blocking and use Reload cache before treating the change as live.",
+            { duration: 12000 },
+          );
+        }
         router.refresh();
       } catch (error) {
         setRestrictionRows(previousRows);
@@ -251,12 +259,13 @@ export function FiatConfigCard({
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
             <CreditCard className="size-4" />
-            Global card-deposit availability
+            Global Whop fiat availability
           </CardTitle>
           <CardDescription>
-            Enables the live Whop credit-card method everywhere except the 33
-            mandatory policy jurisdictions. Disabling it locks card deposits
-            site-wide.
+            Controls the complete Whop checkout: card, Apple Pay, Google Pay,
+            and eligible Cash App. Enabling opens it everywhere except the 33
+            mandatory policy jurisdictions; disabling blocks the whole
+            checkout site-wide.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -265,7 +274,7 @@ export function FiatConfigCard({
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border px-3 py-3">
                 <div>
                   <div className="text-sm font-medium">
-                    Accept card deposits
+                    Accept Whop fiat deposits
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {globalCardDepositsEnabled
@@ -301,7 +310,7 @@ export function FiatConfigCard({
               <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
                 <span>
                   Policy rows present: {policyRowsPresent} /{" "}
-                  {MANDATORY_FIAT_JURISDICTION_CODES.length}. Card-locked:{" "}
+                  {MANDATORY_FIAT_JURISDICTION_CODES.length}. Whop-locked:{" "}
                   {policyRowsLocked} /{" "}
                   {MANDATORY_FIAT_JURISDICTION_CODES.length}.
                 </span>
@@ -314,12 +323,12 @@ export function FiatConfigCard({
               <div className="space-y-2 border-t pt-4">
                 <div className="flex items-center gap-2 text-xs font-medium">
                   <ShieldCheck className="size-3.5" />
-                  Advanced legacy provider locks
+                  Other legacy provider locks
                 </div>
                 <p className="text-xs text-muted-foreground">
-                  Checked providers are site-locked. Credit card is controlled
-                  only by the global switch above so jurisdiction exclusions
-                  cannot be bypassed.
+                  Checked providers are site-locked. Card and Whop wallets are
+                  controlled only by the global switch above so jurisdiction
+                  exclusions cannot be bypassed.
                 </p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                 {METHOD_OPTIONS.map((method) => {

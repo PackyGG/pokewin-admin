@@ -19,18 +19,39 @@ import { FIAT_CACHE_TAG } from "@/lib/queries/fiat";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { backendApi } from "@/lib/backend-api";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
-import { refreshSiteConfig } from "@/lib/refresh-site-config";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
   CREDIT_CARD_DEPOSIT_METHOD,
-  isCreditCardDepositLocked,
+  hasAllWhopFiatDepositLocks,
+  hasAnyWhopFiatDepositLock,
   isMandatoryFiatJurisdiction,
+  LEGACY_FIAT_DEPOSIT_METHOD,
   MANDATORY_FIAT_JURISDICTION_CODES,
-  withCreditCardLock,
-  withoutCreditCardLock,
+  WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
+  withWhopFiatDepositLocks,
+  withoutWhopFiatDepositLocks,
 } from "@/lib/fiat-jurisdiction-policy";
 
 const SITE_FIAT_LOCK_KEY = "locked_deposits_fiat";
+const WHOP_FIAT_DEPOSIT_LOCK_ALIASES = [
+  LEGACY_FIAT_DEPOSIT_METHOD,
+  ...WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
+];
+
+function normalizedWhopFiatLocksSql(locked: boolean) {
+  const retainedLocks = sql`
+    ARRAY(
+      SELECT DISTINCT method
+      FROM unnest(locked_deposits_fiat) AS method
+      WHERE method <> ALL(
+        ${pgArrayParam(WHOP_FIAT_DEPOSIT_LOCK_ALIASES)}::text[]
+      )
+    )
+  `;
+  return locked
+    ? sql`${retainedLocks} || ${pgArrayParam(WHOP_FIAT_DEPOSIT_LOCK_TOKENS)}::text[]`
+    : retainedLocks;
+}
 
 function parseSiteFiatLocks(value: string): string[] {
   try {
@@ -109,18 +130,18 @@ export async function updateCountryRestrictionArray(
 
   const normalizedValues =
     field === "locked_deposits_fiat"
-      ? isCreditCardDepositLocked(values)
-        ? withCreditCardLock(values)
-        : withoutCreditCardLock(values)
+      ? hasAnyWhopFiatDepositLock(values)
+        ? withWhopFiatDepositLocks(values)
+        : withoutWhopFiatDepositLocks(values)
       : [...new Set(values)];
 
   if (
     field === "locked_deposits_fiat" &&
     isMandatoryFiatJurisdiction(countryCode) &&
-    !isCreditCardDepositLocked(normalizedValues)
+    !hasAllWhopFiatDepositLocks(normalizedValues)
   ) {
     throw new Error(
-      "Card deposits are required to stay locked for this policy jurisdiction.",
+      "Whop fiat deposits are required to stay locked for this policy jurisdiction.",
     );
   }
 
@@ -236,15 +257,7 @@ export async function toggleCountryRestriction(
     updated_at: new Date().toISOString(),
     ...(isMandatoryFiatJurisdiction(countryCode)
       ? {
-          locked_deposits_fiat: sql`
-            array_append(
-              array_remove(
-                array_remove(locked_deposits_fiat, 'fiat'),
-                'credit_card'
-              ),
-              'credit_card'
-            )
-          `,
+          locked_deposits_fiat: normalizedWhopFiatLocksSql(true),
         }
       : {}),
   };
@@ -298,9 +311,12 @@ export async function reloadCountryRestrictionsCache(): Promise<{
   ]);
   const resolvedEnv = config.env;
 
-  // Direct + awaited (NOT the swallowing helper) so a backend/CF failure
+  // Direct + awaited (NOT the swallowing helpers) so a backend/CF failure
   // throws back to the button instead of vanishing into a logged catch.
-  await backendApi.post("/admin/invalidate-country-restrictions-cache");
+  await Promise.all([
+    backendApi.post("/admin/refresh-site-config"),
+    backendApi.post("/admin/invalidate-country-restrictions-cache"),
+  ]);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -316,11 +332,10 @@ export async function reloadCountryRestrictionsCache(): Promise<{
 }
 
 /**
- * Global card-deposit switch. Enabling removes the site-wide credit-card lock,
+ * Global Whop-fiat switch. Enabling removes the site-wide card/wallet locks,
  * opens every non-policy location, and keeps all mandatory jurisdictions
  * locked. Disabling locks the site and every location. The site_config row and
- * location rows move atomically, and the ineffective legacy `fiat` token is
- * normalized away.
+ * location rows move atomically, and legacy aliases are normalized away.
  */
 export async function setGlobalFiatDeposits(
   allowed: boolean,
@@ -329,6 +344,8 @@ export async function setGlobalFiatDeposits(
   protected: number;
   seeded: number;
   lockedMethods: string[];
+  siteConfigCacheReloaded: boolean;
+  countryRestrictionsCacheReloaded: boolean;
 }> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
@@ -359,8 +376,8 @@ export async function setGlobalFiatDeposits(
 
     const currentSiteLocks = parseSiteFiatLocks(siteRow.value);
     const nextSiteLocks = allowed
-      ? withoutCreditCardLock(currentSiteLocks)
-      : withCreditCardLock(currentSiteLocks);
+      ? withoutWhopFiatDepositLocks(currentSiteLocks)
+      : withWhopFiatDepositLocks(currentSiteLocks);
 
     await tx
       .update(site_config)
@@ -388,17 +405,8 @@ export async function setGlobalFiatDeposits(
               WHEN country_code = ANY(
                 ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
               )
-                THEN array_append(
-                  array_remove(
-                    array_remove(locked_deposits_fiat, 'fiat'),
-                    'credit_card'
-                  ),
-                  'credit_card'
-                )
-              ELSE array_remove(
-                array_remove(locked_deposits_fiat, 'fiat'),
-                'credit_card'
-              )
+                THEN ${normalizedWhopFiatLocksSql(true)}
+              ELSE ${normalizedWhopFiatLocksSql(false)}
             END,
             updated_at = NOW()
           RETURNING country_code
@@ -406,13 +414,7 @@ export async function setGlobalFiatDeposits(
       : await tx.execute<{ country_code: string }>(sql`
           UPDATE country_restrictions
           SET
-            locked_deposits_fiat = array_append(
-              array_remove(
-                array_remove(locked_deposits_fiat, 'fiat'),
-                'credit_card'
-              ),
-              'credit_card'
-            ),
+            locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
             updated_at = NOW()
           RETURNING country_code
         `);
@@ -438,17 +440,27 @@ export async function setGlobalFiatDeposits(
     },
   });
 
-  after(() => {
-    invalidateCountryRestrictionsCache().catch(() => {});
-  });
-  await refreshSiteConfig();
+  const [siteConfigCache, countryRestrictionsCache] =
+    await Promise.allSettled([
+      backendApi.post("/admin/refresh-site-config"),
+      backendApi.post("/admin/invalidate-country-restrictions-cache"),
+    ]);
   revalidateFiatPolicyPages();
-  return result;
+  return {
+    ...result,
+    siteConfigCacheReloaded: siteConfigCache.status === "fulfilled",
+    countryRestrictionsCacheReloaded:
+      countryRestrictionsCache.status === "fulfilled",
+  };
 }
 
 export async function setMandatoryJurisdictionsGeoBlocked(
   blocked: boolean,
-): Promise<{ affected: number; seeded: number }> {
+): Promise<{
+  affected: number;
+  seeded: number;
+  countryRestrictionsCacheReloaded: boolean;
+}> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(
@@ -472,13 +484,7 @@ export async function setMandatoryJurisdictionsGeoBlocked(
       UPDATE country_restrictions
       SET
         blocked = ${blocked},
-        locked_deposits_fiat = array_append(
-          array_remove(
-            array_remove(locked_deposits_fiat, 'fiat'),
-            'credit_card'
-          ),
-          'credit_card'
-        ),
+        locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
         updated_at = NOW()
       WHERE country_code = ANY(
         ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
@@ -500,9 +506,13 @@ export async function setMandatoryJurisdictionsGeoBlocked(
     },
   });
 
-  after(() => {
-    invalidateCountryRestrictionsCache().catch(() => {});
-  });
+  const countryRestrictionsCache = await Promise.allSettled([
+    backendApi.post("/admin/invalidate-country-restrictions-cache"),
+  ]);
   revalidateFiatPolicyPages();
-  return result;
+  return {
+    ...result,
+    countryRestrictionsCacheReloaded:
+      countryRestrictionsCache[0]?.status === "fulfilled",
+  };
 }

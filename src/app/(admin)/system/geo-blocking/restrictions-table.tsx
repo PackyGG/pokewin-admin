@@ -21,9 +21,10 @@ import {
 } from "@/components/ui/tooltip";
 import { EmptyState } from "@/components/empty-state";
 import {
-  CREDIT_CARD_DEPOSIT_METHOD,
-  isCreditCardDepositLocked,
+  hasAnyWhopFiatDepositLock,
   isMandatoryFiatJurisdiction,
+  WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
+  withoutWhopFiatDepositLocks,
 } from "@/lib/fiat-jurisdiction-policy";
 
 /**
@@ -157,10 +158,9 @@ export const CRYPTO_OPTIONS = [
   { value: "ripple", label: "XRP" }, // NEW — verify string
 ];
 
-// Fiat deposits lock is a SINGLE on/off (one provider - no per-currency split).
-// The backend's enforced Whop token is `credit_card`; the former `fiat` token
-// was a silent no-op and is normalized away by the server actions.
-export const FIAT_LOCK_VALUE = [CREDIT_CARD_DEPOSIT_METHOD];
+// One switch owns the complete Whop checkout. The backend security gate uses
+// `credit_card`; the companion tokens keep the frontend wallet choices aligned.
+export const FIAT_LOCK_VALUE = [...WHOP_FIAT_DEPOSIT_LOCK_TOKENS];
 
 const RESTRICTED_BADGE = "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30";
 const OPEN_BADGE = "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";
@@ -393,24 +393,20 @@ function RowDetail({
                 ? "Fiat deposits (required lock)"
                 : "Fiat deposits"
             }
-            hint="Card / fiat deposits (one provider — a single on/off, no per-currency split)."
+            hint="Whop fiat checkout: card, Apple Pay, Google Pay, and eligible Cash App."
             polarity="allow"
-            checked={!isCreditCardDepositLocked(row.lockedDepositsFiat)}
+            checked={!hasAnyWhopFiatDepositLock(row.lockedDepositsFiat)}
             disabled={isPending || mandatoryFiatLock}
             onCheckedChange={() =>
               onArrayChange(
                 row.code,
                 "locked_deposits_fiat",
                 row.lockedDepositsFiat,
-                isCreditCardDepositLocked(row.lockedDepositsFiat)
-                  ? row.lockedDepositsFiat.filter(
-                      (value) =>
-                        value !== CREDIT_CARD_DEPOSIT_METHOD &&
-                        value !== "fiat",
-                    )
+                hasAnyWhopFiatDepositLock(row.lockedDepositsFiat)
+                  ? withoutWhopFiatDepositLocks(row.lockedDepositsFiat)
                   : [
-                      ...row.lockedDepositsFiat.filter(
-                        (value) => value !== "fiat",
+                      ...withoutWhopFiatDepositLocks(
+                        row.lockedDepositsFiat,
                       ),
                       ...FIAT_LOCK_VALUE,
                     ],
