@@ -4,10 +4,6 @@ import { notFound } from "next/navigation";
 import { z } from "zod";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
-import {
-  FormCardSkeleton,
-  KpiStripSkeleton,
-} from "@/components/loading-skeletons";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { sessionHasRole } from "@/lib/dal";
 import { isOwner } from "@/lib/owners";
@@ -24,6 +20,7 @@ import {
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackBuilderForm } from "./pack-builder-form";
 import { loadPackBuilderDraft } from "./draft-data";
+import { BuilderSkeleton } from "./builder-skeleton";
 
 export const metadata = { title: "Pack Builder" };
 
@@ -37,21 +34,6 @@ export const metadata = { title: "Pack Builder" };
  * a saved draft stays in ADMIN staging, while live requests go through the
  * owner queue. Nothing is created in MAIN until a live request is approved.
  */
-
-/** Shell-matching fallback shared by the page <Suspense> and `loading.tsx`. */
-export function BuilderSkeleton() {
-  return (
-    <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-      <div className="lg:col-span-2">
-        <FormCardSkeleton rows={6} />
-      </div>
-      <div className="space-y-4">
-        <KpiStripSkeleton count={4} />
-        <FormCardSkeleton rows={3} />
-      </div>
-    </div>
-  );
-}
 
 async function BuilderBody({
   canBuild,

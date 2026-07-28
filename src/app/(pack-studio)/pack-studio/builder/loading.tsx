@@ -1,7 +1,7 @@
 import { Wand2 } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
-import { BuilderSkeleton } from "./page";
+import { BuilderSkeleton } from "./builder-skeleton";
 
 /**
  * Route-level loading shell for the Pack Builder — renders the same hero +

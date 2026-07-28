@@ -103,7 +103,7 @@ export function withApiKey<P = Record<string, never>>(
 ) {
   return async function route(
     request: Request,
-    args?: RouteArgs<P>,
+    args: RouteArgs<P>,
   ): Promise<Response> {
     let rate: ApiRateLimitResult | undefined;
     try {
@@ -113,7 +113,7 @@ export function withApiKey<P = Record<string, never>>(
       }
       rate = auth.rateLimit;
 
-      const params = (args?.params ? await args.params : ({} as P)) as P;
+      const params = await args.params;
       const result = await handler(request, { principal: auth.principal, params });
 
       // A handler may return a Response directly (streaming, custom status);
