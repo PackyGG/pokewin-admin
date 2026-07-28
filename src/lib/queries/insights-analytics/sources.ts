@@ -7,6 +7,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { periodToDays, type InsightsPeriod } from "./period";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Signup source breakdown. Two sub-tabs:
@@ -123,6 +124,14 @@ const cachedSourcesBuckets = unstable_cache(
         WHERE u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
           ${usersDateFilter}
       ),
+      refunds AS (
+        SELECT i.user_id, SUM(${fiatRefundCreditUsdSql("i")}) AS amount
+        FROM fiat_deposit_intents i
+        JOIN cohort c ON c.id = i.user_id
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          AND i.updated_at >= NOW() - INTERVAL '${days} days'
+        GROUP BY i.user_id
+      ),
       activity AS (
         SELECT
           c.id AS user_id,
@@ -138,9 +147,11 @@ const cachedSourcesBuckets = unstable_cache(
           COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} AND lt.status = 'completed' ${ledgerDateFilter}
             THEN ABS(lt.amount::numeric) ELSE 0 END), 0) AS payouts_in_period,
           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' AND lt.status = 'completed' ${ledgerDateFilter}
-            THEN lt.amount::numeric ELSE 0 END), 0) AS deposits_in_period
+            THEN lt.amount::numeric ELSE 0 END), 0)
+            - COALESCE(MAX(r.amount), 0) AS deposits_in_period
         FROM cohort c
         LEFT JOIN ledger_transactions lt ON lt.user_id = c.id
+        LEFT JOIN refunds r ON r.user_id = c.id
         GROUP BY c.id, c.bucket
       )
       SELECT
@@ -157,7 +168,7 @@ const cachedSourcesBuckets = unstable_cache(
       ORDER BY signups DESC
     `);
   },
-  ["insights-analytics-sources-buckets-v1"],
+  ["insights-analytics-sources-buckets-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -42,6 +43,16 @@ function transactionDateFilter(period: Period): SQL {
     return sql`AND lt.created_at >= ${utcStartOfDay()}`;
   }
   return sql`AND lt.created_at >= NOW() - (${periodToDays[period]} * INTERVAL '1 day')`;
+}
+
+function refundDateFilter(period: Period): SQL {
+  if (period === "all") {
+    return sql`AND i.updated_at >= NOW() - (365 * INTERVAL '1 day')`;
+  }
+  if (period === "today") {
+    return sql`AND i.updated_at >= ${utcStartOfDay()}`;
+  }
+  return sql`AND i.updated_at >= NOW() - (${periodToDays[period]} * INTERVAL '1 day')`;
 }
 
 export type CountryUserCount = {
@@ -96,7 +107,7 @@ async function computeUsersByCountry(
   // mirrors the reward-side INSIGHTS_LIFETIME_LOOKBACK_DAYS). The signup
   // user-count leg (dateFilter above) stays lifetime — it scans the much
   // smaller users table, not the ledger.
-  const [countryResult, financialsResult] =
+  const [countryResult, financialsResult, refundsResult] =
     await Promise.all([
       db.execute<{
         country_code: string | null;
@@ -137,6 +148,19 @@ async function computeUsersByCountry(
           ${transactionDateFilter(period)}
         GROUP BY u.country_code
       `),
+      db.execute<{ country_code: string; refunds: string }>(sql`
+        SELECT
+          u.country_code,
+          COALESCE(SUM(${sql.raw(fiatRefundCreditUsdSql("i"))}), 0)::text AS refunds
+        FROM fiat_deposit_intents i
+        JOIN "user" u ON u.id = i.user_id
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          AND u.role NOT IN ('admin', 'support')
+          ${blacklistFilter}
+          AND u.country_code IS NOT NULL
+          ${refundDateFilter(period)}
+        GROUP BY u.country_code
+      `),
     ]);
   const countryRows = countryResult.rows;
   const byCountryRaw = countryRows.filter(
@@ -144,12 +168,16 @@ async function computeUsersByCountry(
       row.country_code !== null,
   );
   const financialsRaw = financialsResult.rows;
+  const refundsByCountry = new Map(
+    refundsResult.rows.map((r) => [r.country_code, Number(r.refunds)]),
+  );
 
   const financialsMap = new Map(
     financialsRaw.map((f) => [
       f.country_code,
       {
-        total_deposits: Number(f.total_deposits),
+        total_deposits:
+          Number(f.total_deposits) - (refundsByCountry.get(f.country_code) ?? 0),
         deposit_count: Number(f.deposit_count),
         total_wager: Number(f.total_wager),
       },
@@ -191,13 +219,13 @@ async function computeUsersByCountry(
  */
 const cachedUsersByCountry = unstable_cache(
   computeUsersByCountry,
-  ["analytics-map-users-by-country-v1"],
+  ["analytics-map-users-by-country-v2-refunds"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedUsersByCountryLifetime = unstable_cache(
   computeUsersByCountry,
-  ["analytics-map-users-by-country-lifetime-v1"],
+  ["analytics-map-users-by-country-lifetime-v2-refunds"],
   { revalidate: 300, tags: ["analytics"] },
 );
 

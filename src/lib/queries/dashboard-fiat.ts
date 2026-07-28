@@ -14,6 +14,10 @@ import {
   kpiWindowToCutoff,
   type DashboardKpiWindow,
 } from "./dashboard-period";
+import {
+  fiatPartialRefundAmountPresentSql,
+  fiatRefundCreditCentsSql,
+} from "./fiat-refund-credits";
 
 export type DashboardFiatMetrics = {
   grossCreditedUsd: number;
@@ -49,75 +53,6 @@ type RawDashboardFiatMetrics = {
  * to the original customer total. This keeps EUR and other adaptive-pricing
  * payments from being treated as though their provider amount were USD.
  */
-const REFUND_CREDIT_CENTS_SQL = `
-  CASE
-    WHEN i.status = 'refunded' THEN i.credited_amount_cents::numeric
-    WHEN i.status = 'partially_refunded' THEN
-      LEAST(
-        i.credited_amount_cents::numeric,
-        GREATEST(
-          0::numeric,
-          COALESCE(
-            CASE
-              WHEN i.provider_metadata->>'refunded_credit_cents' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN (i.provider_metadata->>'refunded_credit_cents')::numeric
-            END,
-            CASE
-              WHEN i.provider_metadata->>'refunded_credited_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN (i.provider_metadata->>'refunded_credited_amount_cents')::numeric
-            END,
-            CASE
-              WHEN i.actual_customer_total_cents > 0
-                AND i.provider_metadata->>'refunded_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN i.credited_amount_cents::numeric
-                  * (i.provider_metadata->>'refunded_amount_cents')::numeric
-                  / i.actual_customer_total_cents::numeric
-            END,
-            CASE
-              WHEN i.actual_customer_total_cents > 0
-                AND i.provider_metadata->>'refund_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN i.credited_amount_cents::numeric
-                  * (i.provider_metadata->>'refund_amount_cents')::numeric
-                  / i.actual_customer_total_cents::numeric
-            END,
-            CASE
-              WHEN i.actual_customer_total_cents > 0
-                AND i.provider_metadata->>'refunded_amount' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN i.credited_amount_cents::numeric
-                  * ((i.provider_metadata->>'refunded_amount')::numeric * 100)
-                  / i.actual_customer_total_cents::numeric
-            END,
-            CASE
-              WHEN i.actual_customer_total_cents > 0
-                AND i.provider_metadata->'payment'->>'refunded_amount' ~ '^[0-9]+([.][0-9]+)?$'
-                THEN i.credited_amount_cents::numeric
-                  * ((i.provider_metadata->'payment'->>'refunded_amount')::numeric * 100)
-                  / i.actual_customer_total_cents::numeric
-            END,
-            0::numeric
-          )
-        )
-      )
-    ELSE 0::numeric
-  END
-`;
-
-const PARTIAL_REFUND_AMOUNT_PRESENT_SQL = `
-  (
-    i.provider_metadata->>'refunded_credit_cents' ~ '^[0-9]+([.][0-9]+)?$'
-    OR i.provider_metadata->>'refunded_credited_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-    OR (
-      i.actual_customer_total_cents > 0
-      AND (
-        i.provider_metadata->>'refunded_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-        OR i.provider_metadata->>'refund_amount_cents' ~ '^[0-9]+([.][0-9]+)?$'
-        OR i.provider_metadata->>'refunded_amount' ~ '^[0-9]+([.][0-9]+)?$'
-        OR i.provider_metadata->'payment'->>'refunded_amount' ~ '^[0-9]+([.][0-9]+)?$'
-      )
-    )
-  )
-`;
-
 async function computeDashboardFiatMetrics(
   cutoff: Date,
   blacklist: string[],
@@ -136,7 +71,7 @@ async function computeDashboardFiatMetrics(
              WHERE i.completed_at >= $1
                AND i.status IN ('completed', 'partially_refunded', 'refunded', 'disputed')
            ), 0)::text AS gross_credited_cents,
-           COALESCE(SUM(${REFUND_CREDIT_CENTS_SQL}) FILTER (
+           COALESCE(SUM(${fiatRefundCreditCentsSql()}) FILTER (
              WHERE i.updated_at >= $1
                AND i.status IN ('partially_refunded', 'refunded')
            ), 0)::text AS refund_credit_cents,
@@ -155,7 +90,7 @@ async function computeDashboardFiatMetrics(
            COUNT(*) FILTER (
              WHERE i.updated_at >= $1
                AND i.status = 'partially_refunded'
-               AND NOT ${PARTIAL_REFUND_AMOUNT_PRESENT_SQL}
+               AND NOT ${fiatPartialRefundAmountPresentSql()}
            )::text AS unresolved_partial_refund_count,
            COUNT(*) FILTER (
              WHERE i.updated_at >= $1 AND i.status = 'review'

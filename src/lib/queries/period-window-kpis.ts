@@ -3,6 +3,7 @@ import "server-only";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL } from "@/lib/metrics";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 /**
  * Shared rolling-window KPI query for deposits, withdrawals, and customer
@@ -126,10 +127,21 @@ export async function runPeriodWindowQuery(
       FROM card_withdrawal_requests cwr
       JOIN real_users ru ON ru.id = cwr.user_id
       WHERE cwr.status IN ('completed', 'shipped')
+    ),
+    fiat_refunds AS (
+      SELECT ${fiatRefundCreditUsdSql("i")} AS amount,
+             i.updated_at AS effective_at
+      FROM fiat_deposit_intents i
+      JOIN real_users ru ON ru.id = i.user_id
+      WHERE i.status IN ('partially_refunded', 'refunded')
+        AND i.updated_at >= $1
     )
     SELECT
       'current'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $2 THEN amount ELSE 0 END), 0)::text AS deposits,
+      (
+        COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $2 THEN amount ELSE 0 END), 0)
+        - COALESCE((SELECT SUM(amount) FROM fiat_refunds WHERE effective_at >= $2), 0)
+      )::text AS deposits,
       COUNT(CASE WHEN type::text = 'deposit' AND created_at >= $2 THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= $2 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
       COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND created_at >= $2 THEN ABS(amount) ELSE 0 END), 0)::text AS wager,
@@ -141,7 +153,10 @@ export async function runPeriodWindowQuery(
     UNION ALL
     SELECT
       'previous'::text AS window,
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $3 AND created_at < $4 THEN amount ELSE 0 END), 0)::text AS deposits,
+      (
+        COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $3 AND created_at < $4 THEN amount ELSE 0 END), 0)
+        - COALESCE((SELECT SUM(amount) FROM fiat_refunds WHERE effective_at >= $3 AND effective_at < $4), 0)
+      )::text AS deposits,
       COUNT(CASE WHEN type::text = 'deposit' AND created_at >= $3 AND created_at < $4 THEN 1 END)::text AS deposit_count,
       COALESCE((SELECT SUM(CASE WHEN effective_at >= $3 AND effective_at < $4 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawals,
       COALESCE(SUM(CASE WHEN type::text IN ${METRICS_WAGER_TYPES_SQL} AND NOT in_session AND created_at >= $3 AND created_at < $4 THEN ABS(amount) ELSE 0 END), 0)::text AS wager,

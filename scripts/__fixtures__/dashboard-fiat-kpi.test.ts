@@ -24,6 +24,14 @@ const todayPnl = fs.readFileSync(
   path.join(root, "src/lib/queries/dashboard-today-pnl.ts"),
   "utf8",
 );
+const refundContract = fs.readFileSync(
+  path.join(root, "src/lib/queries/fiat-refund-credits.ts"),
+  "utf8",
+);
+const canonicalPnl = fs.readFileSync(
+  path.join(root, "src/lib/queries/pnl.ts"),
+  "utf8",
+);
 
 test("dashboard top row includes a fourth streamed Fiat payments card", () => {
   assert.match(page, /xl:grid-cols-4/);
@@ -33,21 +41,24 @@ test("dashboard top row includes a fourth streamed Fiat payments card", () => {
 });
 
 test("fiat refund math handles full and proportional partial reversals", () => {
-  assert.match(query, /WHEN i\.status = 'refunded' THEN i\.credited_amount_cents/);
-  assert.match(query, /WHEN i\.status = 'partially_refunded'/);
-  assert.match(query, /refunded_credit_cents/);
-  assert.match(query, /refunded_amount_cents/);
-  assert.match(query, /refunded_amount/);
-  assert.match(query, /i\.actual_customer_total_cents::numeric/);
+  assert.match(refundContract, /WHEN \$\{alias\}\.status = 'refunded'/);
+  assert.match(refundContract, /WHEN \$\{alias\}\.status = 'partially_refunded'/);
+  assert.match(refundContract, /refunded_credit_cents/);
+  assert.match(refundContract, /refunded_amount_cents/);
+  assert.match(refundContract, /refunded_amount/);
+  assert.match(refundContract, /actual_customer_total_cents::numeric/);
+  assert.match(query, /fiatRefundCreditCentsSql\(\)/);
   assert.match(query, /unresolved_partial_refund_count/);
 });
 
-test("refund credits reduce the dashboard deposit and P&L numbers", () => {
+test("refund credits reduce canonical deposit and P&L numbers exactly once", () => {
   assert.match(
     cashflow,
     /deposits: cashflow\.deposits - fiat\.refundCreditsUsd/,
   );
   assert.match(payload, /fiatRefunds: cashflow\?\.fiatRefunds/);
-  assert.match(todayPnl, /deposits: pnl\.deposits - fiat\.refundCreditsUsd/);
-  assert.match(todayPnl, /pnl: pnl\.pnl - fiat\.refundCreditsUsd/);
+  assert.match(canonicalPnl, /fiatRefundCreditUsdSql/);
+  assert.match(canonicalPnl, /toNumber\(ledger\[0\]\?\.deposits\) - toNumber\(refunds\[0\]\?\.refunds\)/);
+  assert.match(todayPnl, /calculateWindowedPnl owns the shared refund-aware/);
+  assert.doesNotMatch(todayPnl, /refundCreditsUsd/);
 });

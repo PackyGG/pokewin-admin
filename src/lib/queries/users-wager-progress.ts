@@ -1,4 +1,5 @@
 import "server-only";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 import { queryMainRows } from "@/lib/drizzle-query";
 import {
@@ -214,7 +215,15 @@ export async function getUserWagerProgress(
     `
     SELECT
       available_balance::text            AS available_balance,
-      total_deposited::text              AS total_deposited,
+      GREATEST(
+        0,
+        total_deposited::numeric - COALESCE((
+          SELECT SUM(${fiatRefundCreditUsdSql("i")})
+          FROM fiat_deposit_intents i
+          WHERE i.user_id = balances.user_id
+            AND i.status IN ('partially_refunded', 'refunded')
+        ), 0)
+      )::text                            AS total_deposited,
       total_bonus_won::text              AS total_bonus_won,
       total_affiliate_won::text          AS total_affiliate_won,
       total_rakeback_won::text           AS total_rakeback_won,

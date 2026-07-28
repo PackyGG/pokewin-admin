@@ -28,6 +28,7 @@ import {
   padDashboardFtdSeries,
   padDashboardWagerSeries,
 } from "./dashboard-chart-series";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 const LIFETIME_LOOKBACK_DAYS = 365;
 
@@ -99,7 +100,7 @@ function mergeLedgerRows(
     dailyDeposits: padDashboardDepositSeries(
       rows.map((d) => ({
         date: bucketKey(d.bucket, period),
-        amount: Math.abs(Number(d.deposits)),
+        amount: Number(d.deposits),
       })),
       period,
     ),
@@ -147,22 +148,36 @@ async function fetchTrendSeriesPg(
   ] = await runWithConcurrency([
     () => safeQuery(
       () => queryRows<LedgerBucketRow[]>(db, `
+      WITH events AS (
+        SELECT user_id, type::text AS type, amount::numeric AS amount, created_at
+        FROM ledger_transactions
+        WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit')
+          AND status = 'completed'
+          AND created_at >= $1
+          AND user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+          )
+        UNION ALL
+        SELECT i.user_id, 'deposit_refund'::text AS type,
+               -${fiatRefundCreditUsdSql("i")} AS amount, i.updated_at AS created_at
+        FROM fiat_deposit_intents i
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          AND i.updated_at >= $1
+          AND i.user_id IN (
+            SELECT id FROM "user"
+            WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+          )
+      )
       SELECT ${bucketLedger} AS bucket,
              COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
                                THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs,
              COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
                                THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles,
-             COALESCE(SUM(CASE WHEN type::text = 'deposit'
+             COALESCE(SUM(CASE WHEN type::text IN ('deposit','deposit_refund')
                                THEN amount::numeric ELSE 0 END), 0)::text AS deposits,
              COUNT(DISTINCT CASE WHEN type::text = 'deposit' THEN user_id END)::text AS active_depositors
-        FROM ledger_transactions
-       WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit')
-         AND status = 'completed'
-         AND created_at >= $1
-         AND user_id IN (
-           SELECT id FROM "user"
-           WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-         )
+        FROM events
        GROUP BY 1
        ORDER BY 1`, cutoff),
       [],
@@ -236,15 +251,20 @@ async function fetchTrendSeriesPg(
     () => safeQuery(
       () => queryRows<FtdBucketRow[]>(db, `
       WITH first_deposits AS (
-        SELECT DISTINCT ON (user_id)
-               user_id, amount::numeric AS amount, created_at
-          FROM ledger_transactions
-         WHERE type::text = 'deposit' AND status = 'completed'
-           AND user_id IN (
+        SELECT DISTINCT ON (lt.user_id)
+               lt.user_id,
+               (lt.amount::numeric - COALESCE(${fiatRefundCreditUsdSql("i")}, 0)) AS amount,
+               lt.created_at
+          FROM ledger_transactions lt
+          LEFT JOIN fiat_deposit_intents i
+            ON i.completed_ledger_id = lt.id
+           AND i.status IN ('partially_refunded', 'refunded')
+         WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
+           AND lt.user_id IN (
              SELECT id FROM "user"
              WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
            )
-         ORDER BY user_id, created_at ASC
+         ORDER BY lt.user_id, lt.created_at ASC
       )
       SELECT ${bucketFtd} AS bucket,
              COUNT(*)::text AS count,

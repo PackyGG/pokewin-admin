@@ -11,6 +11,7 @@ import {
   PAYOUT_TYPES_SQL,
 } from "@/lib/queries/_wager-payout-types";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Top-N "whales" lenses. The user requested multiple top-10 lists by
@@ -348,21 +349,28 @@ const cachedBiggestSingleDeposit = unstable_cache(
     >(
       `
       SELECT u.id, u.username, u.image,
-             ABS(lt.amount::numeric)::text AS amount,
+             GREATEST(0, ABS(lt.amount::numeric) - COALESCE(fr.amount, 0))::text AS amount,
              lt.created_at
       FROM ledger_transactions lt
       JOIN "user" u ON u.id = lt.user_id
+      LEFT JOIN LATERAL (
+        SELECT SUM(${fiatRefundCreditUsdSql("i")}) AS amount
+        FROM fiat_deposit_intents i
+        WHERE i.completed_ledger_id = lt.id
+          AND i.status IN ('partially_refunded', 'refunded')
+      ) fr ON true
       WHERE lt.status = 'completed' AND lt.type::text = 'deposit'
         AND lt.created_at >= $1
         AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
-      ORDER BY ABS(lt.amount::numeric) DESC
+        AND ABS(lt.amount::numeric) - COALESCE(fr.amount, 0) > 0
+      ORDER BY ABS(lt.amount::numeric) - COALESCE(fr.amount, 0) DESC
       LIMIT $2
       `,
       since,
       LIMIT,
     );
   },
-  ["insights-analytics-whales-biggest-deposit-v1"],
+  ["insights-analytics-whales-biggest-deposit-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

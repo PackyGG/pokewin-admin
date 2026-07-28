@@ -13,6 +13,7 @@ import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-vi
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getCreatorProtectedUserIds } from "./creator-protected-ids";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 // Allowlist from the database user_role enum — validate the
 // role filter before it reaches SQL
@@ -342,6 +343,12 @@ function buildRankingOrderExpr(sortBy: string): string {
           + COALESCE(inv.inv_value, 0)
           + COALESCE(vc.voucher_value, 0)
           - COALESCE(b.total_deposited::numeric, 0)
+          + COALESCE((
+              SELECT SUM(${fiatRefundCreditUsdSql("fri")})
+              FROM fiat_deposit_intents fri
+              WHERE fri.user_id = u.id
+                AND fri.status IN ('partially_refunded', 'refunded')
+            ), 0)
           - COALESCE(osrl.osrl_net, 0)`;
 }
 
@@ -656,7 +663,14 @@ function buildUserListColumnOrderSql(
   if (sortBy === "totalDeposited") {
     return {
       needsBalanceJoin: true,
-      orderSql: `ORDER BY b.total_deposited ${orderSql} NULLS LAST, u.id ASC`,
+      orderSql: `ORDER BY (
+        COALESCE(b.total_deposited::numeric, 0) - COALESCE((
+          SELECT SUM(${fiatRefundCreditUsdSql("fri")})
+          FROM fiat_deposit_intents fri
+          WHERE fri.user_id = u.id
+            AND fri.status IN ('partially_refunded', 'refunded')
+        ), 0)
+      ) ${orderSql} NULLS LAST, u.id ASC`,
     };
   }
   if (sortBy === "totalWagered") {
@@ -1534,8 +1548,13 @@ const cachedUsersListStats = unstable_cache(
       // 60s cache. Revisit if `balances` ever grows an order of magnitude.
       queryMainRows<{ depositors: string }[]>(`
         SELECT COUNT(*)::text AS depositors
-          FROM balances
-         WHERE total_deposited > 0
+          FROM balances b
+         WHERE b.total_deposited::numeric - COALESCE((
+           SELECT SUM(${fiatRefundCreditUsdSql("fri")})
+           FROM fiat_deposit_intents fri
+           WHERE fri.user_id = b.user_id
+             AND fri.status IN ('partially_refunded', 'refunded')
+         ), 0) > 0
       `),
       // FTDs (24h). Fully index-served — EXPLAIN (ANALYZE, BUFFERS) on
       // read-only prod, 2026-07-23, 0.31 ms execution / 86 shared hits:

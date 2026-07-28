@@ -5,6 +5,7 @@ import { unstable_cache } from "next/cache";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Signup-cohort retention + revenue trajectory.
@@ -139,6 +140,17 @@ const cachedCohortRows = unstable_cache(
         WHERE lt.status = 'completed'
           AND lt.created_at >= c.created_at
           AND lt.type::text = 'deposit'
+        UNION ALL
+        SELECT c.cohort,
+          LEAST(${MAX_PERIODS - 1},
+            FLOOR(EXTRACT(EPOCH FROM (date_trunc('${dateTrunc}', i.updated_at) - c.cohort))
+              / EXTRACT(EPOCH FROM INTERVAL '${periodInterval}'))::int
+          ) AS period_index,
+          -${fiatRefundCreditUsdSql("i")} AS amount
+        FROM cohorts c
+        JOIN fiat_deposit_intents i ON i.user_id = c.user_id
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          AND i.updated_at >= c.created_at
       ),
       retained AS (
         SELECT cohort, period_index,
@@ -175,7 +187,7 @@ const cachedCohortRows = unstable_cache(
       ORDER BY cs.cohort DESC, r.period_index ASC
     `);
   },
-  ["insights-analytics-cohorts-v1"],
+  ["insights-analytics-cohorts-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

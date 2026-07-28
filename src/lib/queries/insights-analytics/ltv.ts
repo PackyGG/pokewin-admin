@@ -10,6 +10,7 @@ import {
   WAGER_TYPES_SQL,
   PAYOUT_TYPES_SQL,
 } from "@/lib/queries/_wager-payout-types";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Lifetime Value (LTV) analysis — per-user GGR contribution, deposits,
@@ -275,6 +276,13 @@ const cachedPerUserLtv = unstable_cache(
         FROM ledger_transactions lt
         JOIN real_users ru ON ru.id = lt.user_id
         WHERE lt.status = 'completed'
+        UNION ALL
+        SELECT i.user_id, 'deposit_refund'::text,
+               -${fiatRefundCreditUsdSql("i")} AS amount,
+               false AS in_session
+        FROM fiat_deposit_intents i
+        JOIN real_users ru ON ru.id = i.user_id
+        WHERE i.status IN ('partially_refunded', 'refunded')
       ),
       withdrawal_amounts AS (
         SELECT cwr.user_id, COALESCE(SUM(cwr.total_value_usd::numeric), 0) AS amount
@@ -289,7 +297,7 @@ const cachedPerUserLtv = unstable_cache(
         ru.role::text AS role,
         ru.referred_by,
         ru.referrer_is_creator,
-        COALESCE(SUM(CASE WHEN b.type::text = 'deposit' THEN b.amount ELSE 0 END), 0)::text AS deposits,
+        COALESCE(SUM(CASE WHEN b.type::text IN ('deposit','deposit_refund') THEN b.amount ELSE 0 END), 0)::text AS deposits,
         COALESCE(MAX(wa.amount), 0)::text AS withdrawals,
         COALESCE(SUM(CASE WHEN b.type::text IN ${WAGER_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS wager,
         COALESCE(SUM(CASE WHEN b.type::text IN ${PAYOUT_TYPES_SQL} AND NOT b.in_session THEN ABS(b.amount) ELSE 0 END), 0)::text AS payouts,
@@ -301,6 +309,6 @@ const cachedPerUserLtv = unstable_cache(
       `,
     );
   },
-  ["insights-analytics-per-user-ltv-v1"],
+  ["insights-analytics-per-user-ltv-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );

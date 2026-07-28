@@ -188,11 +188,12 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - `GET /v1/keno/multipliers` returns the backend table only in development/test. The backend deliberately registers no Keno routes in production, so `/keno?tab=odds` uses the tested compile-time mirror in `src/lib/keno/payouts.ts`. Settled `keno_games` rows are evidence/drift detection only, never the source for unobserved configured multipliers.
 - Any backend payout edit must update the admin mirror and `scripts/__fixtures__/keno-payouts.test.ts` in the same release. The test locks 30 complete rows, anchor multipliers, probability normalization, and the reference RTP band.
 
-### Fiat refund accounting on the dashboard
+### Fiat refund accounting in financial reporting
 
-- Dashboard deposit cash flow is net of Fiat credit reversed during the selected Today/24h window. The immutable deposit ledger remains the gross credit source; `fiat_deposit_intents` is the authoritative refund lifecycle.
+- Every monetary deposit total and derived P&L value in dashboard, analytics, creator, user, and export reporting is net of finalized Fiat credit reversals. The immutable deposit ledger remains the gross credit source; `fiat_deposit_intents` is the authoritative refund lifecycle.
 - A full refund reverses the full credited amount. A partial refund uses an explicit reversed-credit amount when present, otherwise it converts the provider refund proportionally against the original customer total so adaptive-pricing currencies are not mistaken for USD.
-- P&L Today subtracts the same refund credit from both its deposit component and headline P&L. The matching backend balance debit remains part of the balance-change leg, preserving the balance-sheet reconciliation.
+- Windowed reports recognize the reversal at the intent's refund update time; lifetime and transaction-linked reports subtract it from the original credited total. Completed-deposit counts and immutable transaction history remain event counts/gross records.
+- All reporting SQL must use `src/lib/queries/fiat-refund-credits.ts`; do not reimplement partial-refund metadata parsing per surface.
 
 ---
 

@@ -10,6 +10,7 @@ import {
   removeLockedBalanceAdjustmentSqlPredicate,
   statsExcludedAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 /**
  * Ledger-only admin inventory disposals — rows hard-deleted before we
@@ -205,6 +206,7 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
       voucher_value: string;
       official_stream: string;
       remove_locked: string;
+      fiat_refunds: string;
     };
     const [row] = await queryMainRows<Row[]>(
       `SELECT
@@ -233,6 +235,10 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
                    FROM ledger_transactions lt
                    WHERE lt.user_id = $1 AND lt.status::text = 'completed'
                      AND ${removeLocked}), 0)::text AS remove_locked
+         ,COALESCE((SELECT SUM(${fiatRefundCreditUsdSql("i")})
+                    FROM fiat_deposit_intents i
+                    WHERE i.user_id = $1
+                      AND i.status IN ('partially_refunded', 'refunded')), 0)::text AS fiat_refunds
        FROM (SELECT $1::text AS user_id) requested
        LEFT JOIN balances b ON b.user_id = requested.user_id`,
       userId,
@@ -240,7 +246,8 @@ export async function calculateUserPnl(userId: string): Promise<UserPnl> {
     );
 
     const components: PnlComponents = {
-      deposits: toNumber(row?.total_deposited),
+      deposits:
+        toNumber(row?.total_deposited) - toNumber(row?.fiat_refunds),
       withdrawals:
         toNumber(row?.total_withdrawn) + toNumber(row?.card_withdrawals),
       onSiteBalance:
@@ -334,11 +341,12 @@ export async function calculateWindowedPnl(opts: {
     const userScopeLt = scope("lt.user_id");
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
+    type RefundRow = { refunds: string };
     type CardRow = { card_wd: string };
     type InvRow = { obtained: string; disposed: string };
     type VchRow = { issued: string; claimed: string };
 
-    const [ledger, card, inv, vch] = await Promise.all([
+    const [ledger, card, inv, vch, refunds] = await Promise.all([
       queryMainRows<LedgerRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
@@ -388,9 +396,18 @@ export async function calculateWindowedPnl(opts: {
            AND ${scope("v.user_id")}`,
         ...params,
       ),
+      queryMainRows<RefundRow[]>(
+        `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refunds
+         FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= $1
+           AND ${scope("i.user_id")}`,
+        ...params,
+      ),
     ]);
 
-    const deposits = toNumber(ledger[0]?.deposits);
+    const deposits =
+      toNumber(ledger[0]?.deposits) - toNumber(refunds[0]?.refunds);
     const manualWd = toNumber(ledger[0]?.manual_wd);
     const cardWd = toNumber(card[0]?.card_wd);
     const withdrawalsGross = Math.abs(manualWd) + cardWd;
@@ -455,7 +472,7 @@ export async function calculateUsersBoundedWindowedPnlBatch(
     type AmountRow = { user_id: string; amount: string };
     type InvRow = { user_id: string; obtained: string; ui_disposed: string };
 
-    const [ledger, card, inv, adminInv, vchIssued, vchClaimed, adminVch] =
+    const [ledger, card, inv, adminInv, vchIssued, vchClaimed, adminVch, refunds] =
       await Promise.all([
       queryMainRows<LedgerRow[]>(
         `SELECT lt.user_id,
@@ -569,6 +586,19 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         start,
         end,
       ),
+      queryMainRows<AmountRow[]>(
+        `SELECT i.user_id,
+           COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS amount
+         FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= $2
+           AND i.updated_at < $3
+           AND i.user_id = ANY($1::text[])
+         GROUP BY i.user_id`,
+        userIds,
+        start,
+        end,
+      ),
     ]);
 
     const ledgerByUser = new Map(ledger.map((r) => [r.user_id, r]));
@@ -578,10 +608,13 @@ export async function calculateUsersBoundedWindowedPnlBatch(
     const vchIssuedByUser = new Map(vchIssued.map((r) => [r.user_id, r]));
     const vchClaimedByUser = new Map(vchClaimed.map((r) => [r.user_id, r]));
     const adminVchByUser = new Map(adminVch.map((r) => [r.user_id, r]));
+    const refundsByUser = new Map(refunds.map((r) => [r.user_id, r]));
 
     for (const userId of userIds) {
       const lt = ledgerByUser.get(userId);
-      const deposits = toNumber(lt?.deposits);
+      const deposits =
+        toNumber(lt?.deposits) -
+        toNumber(refundsByUser.get(userId)?.amount);
       const manualWd = toNumber(lt?.manual_wd);
       const cardWd = toNumber(cardByUser.get(userId)?.amount);
       const balanceChange = toNumber(lt?.balance_change);
@@ -670,11 +703,18 @@ export async function calculateUsersPnlBatch(
          WHERE lt.user_id = ANY($1::text[]) AND lt.status::text = 'completed'
            AND (${official} OR ${removeLocked})
          GROUP BY lt.user_id
+       ),
+       fiat_refunds AS (
+         SELECT i.user_id, SUM(${fiatRefundCreditUsdSql("i")}) AS amount
+         FROM fiat_deposit_intents i
+         WHERE i.user_id = ANY($1::text[])
+           AND i.status IN ('partially_refunded', 'refunded')
+         GROUP BY i.user_id
        )
        SELECT requested.user_id,
          COALESCE(b.available_balance, 0)::text AS available_balance,
          COALESCE(b.locked_balance, 0)::text AS locked_balance,
-         COALESCE(b.total_deposited, 0)::text AS total_deposited,
+         (COALESCE(b.total_deposited, 0) - COALESCE(fiat_refunds.amount, 0))::text AS total_deposited,
          COALESCE(b.total_withdrawn, 0)::text AS total_withdrawn,
          COALESCE(card.amount, 0)::text AS card_withdrawals,
          COALESCE(inventory.amount, 0)::text AS inventory_value,
@@ -686,7 +726,8 @@ export async function calculateUsersPnlBatch(
        LEFT JOIN card USING (user_id)
        LEFT JOIN inventory USING (user_id)
        LEFT JOIN voucher USING (user_id)
-       LEFT JOIN adjustments USING (user_id)`,
+       LEFT JOIN adjustments USING (user_id)
+       LEFT JOIN fiat_refunds USING (user_id)`,
       userIds,
       [...WITHDRAWAL_LIABILITY_STATUSES],
     );
@@ -768,11 +809,12 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
       manual_wd: number;
       balance_change: number;
     };
+    type RefundRow = { d: Date; refunds: number };
     type CardRow = { d: Date; card_wd: number };
     type InvRow = { d: Date; obtained: number; disposed: number };
     type VchRow = { d: Date; issued: number; claimed: number };
 
-    const [ledger, card, inv, vch] = await Promise.all([
+    const [ledger, card, inv, vch, refunds] = await Promise.all([
       queryMainRows<LedgerRow[]>(
         `SELECT DATE(lt.created_at) AS d,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
@@ -900,6 +942,15 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
          ) x
          GROUP BY d`,
       ),
+      queryMainRows<RefundRow[]>(
+        `SELECT DATE(i.updated_at) AS d,
+           COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::float8 AS refunds
+         FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= NOW() - INTERVAL '30 days'
+           AND i.user_id IN ${usersScope}
+         GROUP BY DATE(i.updated_at)`,
+      ),
     ]);
 
     type Acc = {
@@ -934,6 +985,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
       a.manualWd += r.manual_wd;
       a.balanceChange += r.balance_change;
     }
+    for (const r of refunds) acc(dayKey(r.d)).deposits -= r.refunds;
     for (const r of card) acc(dayKey(r.d)).cardWd += r.card_wd;
     for (const r of inv)
       acc(dayKey(r.d)).inventoryChange += r.obtained - r.disposed;
@@ -996,7 +1048,7 @@ const cachedDailyPnl = unstable_cache(
     // confirmed (aligned-window harness: every field, every day Δ=0.00).
     return computeDailyPnl(excluded);
   },
-  ["dashboard-daily-pnl-v1"],
+  ["dashboard-daily-pnl-v2-refunds"],
   { revalidate: 300, tags: ["dashboard-activity"] },
 );
 
@@ -1116,6 +1168,11 @@ async function computePnlBreakdownWindows(
       mwd_h24: string; mwd_d3: string; mwd_d7: string;
     };
     type CardWdRow = { cwd_h24: string; cwd_d3: string; cwd_d7: string };
+    type RefundWindowRow = {
+      ref_h24: string;
+      ref_d3: string;
+      ref_d7: string;
+    };
     type InvRow = {
       obt_h24: string; obt_d3: string; obt_d7: string;
       dis_h24: string; dis_d3: string; dis_d7: string;
@@ -1130,7 +1187,7 @@ async function computePnlBreakdownWindows(
     // mwd_* = manual-withdrawal admin adjustments (subset of
     //         admin_balance_adjustment); only non-zero on the
     //         admin_balance_adjustment row in the grouped result.
-    const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
+    const [ledger, cardWd, inv, vch, adminInvRem, adminVchRem, refunds] = await Promise.all([
       queryMainRows<LedgerRow[]>(
         `SELECT type,
            COALESCE(SUM(CASE WHEN created_at >= $1 THEN GREATEST(balance_after - balance_before, 0)::numeric ELSE 0 END), 0)::text AS cr_h24,
@@ -1218,6 +1275,17 @@ async function computePnlBreakdownWindows(
            )`,
         h24, d3, d7,
       ),
+      queryMainRows<RefundWindowRow[]>(
+        `SELECT
+           COALESCE(SUM(CASE WHEN updated_at >= $1 THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS ref_h24,
+           COALESCE(SUM(CASE WHEN updated_at >= $2 THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS ref_d3,
+           COALESCE(SUM(CASE WHEN updated_at >= $3 THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS ref_d7
+         FROM fiat_deposit_intents i
+         WHERE status IN ('partially_refunded', 'refunded')
+           AND updated_at >= $3
+           AND ${scope}`,
+        h24, d3, d7,
+      ),
     ]);
 
     // Build per-window aggregates.
@@ -1231,10 +1299,11 @@ async function computePnlBreakdownWindows(
       disKey: "dis_h24" | "dis_d3" | "dis_d7";
       issKey: "iss_h24" | "iss_d3" | "iss_d7";
       clmKey: "clm_h24" | "clm_d3" | "clm_d7";
+      refKey: "ref_h24" | "ref_d3" | "ref_d7";
     }> = [
-      { key: "h24", crKey: "cr_h24", dlKey: "dl_h24", mwdKey: "mwd_h24", cwdKey: "cwd_h24", obtKey: "obt_h24", disKey: "dis_h24", issKey: "iss_h24", clmKey: "clm_h24" },
-      { key: "d3",  crKey: "cr_d3",  dlKey: "dl_d3",  mwdKey: "mwd_d3",  cwdKey: "cwd_d3",  obtKey: "obt_d3",  disKey: "dis_d3",  issKey: "iss_d3",  clmKey: "clm_d3"  },
-      { key: "d7",  crKey: "cr_d7",  dlKey: "dl_d7",  mwdKey: "mwd_d7",  cwdKey: "cwd_d7",  obtKey: "obt_d7",  disKey: "dis_d7",  issKey: "iss_d7",  clmKey: "clm_d7"  },
+      { key: "h24", crKey: "cr_h24", dlKey: "dl_h24", mwdKey: "mwd_h24", cwdKey: "cwd_h24", obtKey: "obt_h24", disKey: "dis_h24", issKey: "iss_h24", clmKey: "clm_h24", refKey: "ref_h24" },
+      { key: "d3",  crKey: "cr_d3",  dlKey: "dl_d3",  mwdKey: "mwd_d3",  cwdKey: "cwd_d3",  obtKey: "obt_d3",  disKey: "dis_d3",  issKey: "iss_d3",  clmKey: "clm_d3", refKey: "ref_d3"  },
+      { key: "d7",  crKey: "cr_d7",  dlKey: "dl_d7",  mwdKey: "mwd_d7",  cwdKey: "cwd_d7",  obtKey: "obt_d7",  disKey: "dis_d7",  issKey: "iss_d7",  clmKey: "clm_d7", refKey: "ref_d7"  },
     ];
 
     function buildRow(w: (typeof windows)[number]): PnlBreakdownRow {
@@ -1251,6 +1320,7 @@ async function computePnlBreakdownWindows(
         creditByType.set(r.type, cr);
         if (r.type === "deposit") deposits = cr;
       }
+      deposits -= toNumber(refunds[0]?.[w.refKey]);
       const cardWdAmount = toNumber(cardWd[0]?.[w.cwdKey]);
       const withdrawals = manualWd + cardWdAmount;
       const inventoryDelta =
@@ -1323,7 +1393,7 @@ async function computePnlBreakdownWindows(
  */
 const cachedPnlBreakdownWindows = unstable_cache(
   computePnlBreakdownWindows,
-  ["pnl-breakdown-windows-v1"],
+  ["pnl-breakdown-windows-v2-refunds"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 

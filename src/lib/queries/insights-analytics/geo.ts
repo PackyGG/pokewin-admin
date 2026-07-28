@@ -7,6 +7,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { periodToDays, type InsightsPeriod } from "./period";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Geographic breakdown. Groups can be country (default), continent,
@@ -87,6 +88,7 @@ const cachedGeoReads = unstable_cache(
     // metric, unlike the lifetime `users` group count below).
     const days = periodToDays(period) ?? GEO_LIFETIME_LOOKBACK_DAYS;
     const periodFilter = `AND lt.created_at >= NOW() - INTERVAL '${days} days'`;
+    const refundPeriodFilter = `AND i.updated_at >= NOW() - INTERVAL '${days} days'`;
     const periodFilterSignups = `AND u.created_at >= NOW() - INTERVAL '${days} days'`;
     const withdrawalFilter = `AND COALESCE(cwr.completed_at, cwr.shipped_at) >= NOW() - INTERVAL '${days} days'`;
 
@@ -147,17 +149,28 @@ const cachedGeoReads = unstable_cache(
         payouts: string;
       }[]
     >(`
+      WITH events AS (
+        SELECT lt.user_id, lt.type::text AS type, lt.amount::numeric AS amount
+        FROM ledger_transactions lt
+        WHERE lt.status = 'completed'
+          ${periodFilter}
+        UNION ALL
+        SELECT i.user_id, 'deposit_refund'::text AS type,
+               -${fiatRefundCreditUsdSql("i")} AS amount
+        FROM fiat_deposit_intents i
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          ${refundPeriodFilter}
+      )
       SELECT
         ${groupKeyExpr} AS bucket,
-        COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
-        COALESCE(SUM(CASE WHEN lt.type::text IN ${WAGER_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS wager,
-        COALESCE(SUM(CASE WHEN lt.type::text IN ${PAYOUT_TYPES_SQL} THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS payouts
-      FROM ledger_transactions lt
-      JOIN "user" u ON u.id = lt.user_id
-      WHERE lt.status = 'completed'
+        COALESCE(SUM(CASE WHEN e.type IN ('deposit','deposit_refund') THEN e.amount ELSE 0 END), 0)::text AS deposits,
+        COALESCE(SUM(CASE WHEN e.type IN ${WAGER_TYPES_SQL} THEN ABS(e.amount) ELSE 0 END), 0)::text AS wager,
+        COALESCE(SUM(CASE WHEN e.type IN ${PAYOUT_TYPES_SQL} THEN ABS(e.amount) ELSE 0 END), 0)::text AS payouts
+      FROM events e
+      JOIN "user" u ON u.id = e.user_id
+      WHERE 1=1
         AND u.role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         ${stateFilter}
-        ${periodFilter}
       GROUP BY ${groupKeyExpr}
     `),
     queryMainRows<
@@ -181,7 +194,7 @@ const cachedGeoReads = unstable_cache(
 
     return { usersRows, ledgerRows, withdrawalRows };
   },
-  ["insights-analytics-geo-v1"],
+  ["insights-analytics-geo-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

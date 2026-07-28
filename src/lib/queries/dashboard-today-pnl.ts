@@ -2,7 +2,6 @@ import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
-import { getDashboardFiatMetrics } from "./dashboard-fiat";
 
 /**
  * Today's house P&L — the CURRENT CALENDAR DAY since 00:00 (NOT a rolling
@@ -74,7 +73,7 @@ const cachedTodayPnl = unstable_cache(
       excludeUserIds,
     });
   },
-  ["dashboard-today-pnl-v2"],
+  ["dashboard-today-pnl-v3-refunds"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -88,18 +87,11 @@ export async function getTodayPnl(): Promise<TodayPnl> {
     const dayKey = sinceIso.slice(0, 10);
     const excluded = await getExcludedUserIds();
 
-    const [pnl, fiat] = await Promise.all([
-      cachedTodayPnl(dayKey, sinceIso, excluded),
-      getDashboardFiatMetrics("today", now),
-    ]);
-    // The ledger deposit leg is gross and immutable. Refunds are recorded on
-    // the authoritative fiat intent, so reverse the credited amount here.
-    // The matching balance debit remains in balanceChange; adjusting both
-    // deposits and headline P&L keeps the balance-sheet formula reconciled.
+    const pnl = await cachedTodayPnl(dayKey, sinceIso, excluded);
+    // calculateWindowedPnl owns the shared refund-aware net-deposit contract.
+    // Do not subtract again here; this wrapper only adds the day boundary.
     return {
       ...pnl,
-      deposits: pnl.deposits - fiat.refundCreditsUsd,
-      pnl: pnl.pnl - fiat.refundCreditsUsd,
       dayStartIso: sinceIso,
     };
   });

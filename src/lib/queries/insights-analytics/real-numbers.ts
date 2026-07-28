@@ -24,6 +24,7 @@ import {
   GAMING_PAYOUT_TYPES_SQL,
   REWARD_PAYOUT_TYPES,
 } from "@/lib/metrics/ledger-sets";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 // READ-ONLY imports of the canonical reward-cost classification. The reward
 // itemization below mirrors `@/lib/metrics/queries.ts` `getRewardCost`'s EXACT
 // predicates (the REWARD_PAYOUT_TYPES set excl. rain, the manual-voucher
@@ -783,10 +784,12 @@ const cachedPnlCustomersExclCreators = unstable_cache(
         unclaimed_rakeback: string;
         official_stream_net: string;
         remove_locked_net: string;
+        fiat_refunds: string;
       }[]
     >(`
       SELECT
         COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS deposited,
+        COALESCE((SELECT SUM(${fiatRefundCreditUsdSql("i")}) FROM fiat_deposit_intents i WHERE i.status IN ('partially_refunded','refunded') AND i.user_id IN ${userScopeSql}), 0)::text AS fiat_refunds,
         COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS balance_withdrawn,
         COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN ${userScopeSql}), 0)::text AS card_withdrawn,
         COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN ${userScopeSql}), 0)::text AS available_balance,
@@ -799,7 +802,8 @@ const cachedPnlCustomersExclCreators = unstable_cache(
     `);
 
     const r = rows[0];
-    const totalDeposited = toNumber(r?.deposited);
+    const totalDeposited =
+      toNumber(r?.deposited) - toNumber(r?.fiat_refunds);
     const balanceWithdrawn = toNumber(r?.balance_withdrawn);
     const cardWithdrawn = toNumber(r?.card_withdrawn);
     const totalWithdrawn = balanceWithdrawn + cardWithdrawn;
@@ -828,7 +832,7 @@ const cachedPnlCustomersExclCreators = unstable_cache(
 
     return { pnl };
   },
-  ["insights-real-numbers-pnl-excl-creators-v1"],
+  ["insights-real-numbers-pnl-excl-creators-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 
@@ -915,10 +919,12 @@ const cachedCreatorNetCashDetail = unstable_cache(
         unclaimed_rakeback: string;
         official_stream_net: string;
         remove_locked_net: string;
+        fiat_refunds: string;
       }[]
     >(`
       SELECT
         COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS deposited,
+        COALESCE((SELECT SUM(${fiatRefundCreditUsdSql("i")}) FROM fiat_deposit_intents i WHERE i.status IN ('partially_refunded','refunded') AND i.user_id IN ${creatorScopeSql}), 0)::text AS fiat_refunds,
         COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS balance_withdrawn,
         COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN ${creatorScopeSql}), 0)::text AS card_withdrawn,
         COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN ${creatorScopeSql}), 0)::text AS available_balance,
@@ -931,7 +937,8 @@ const cachedCreatorNetCashDetail = unstable_cache(
     `);
 
     const r = rows[0];
-    const deposited = toNumber(r?.deposited);
+    const deposited =
+      toNumber(r?.deposited) - toNumber(r?.fiat_refunds);
     const balanceWithdrawn = toNumber(r?.balance_withdrawn);
     const cardWithdrawn = toNumber(r?.card_withdrawn);
     const withdrawn = balanceWithdrawn + cardWithdrawn;
@@ -954,7 +961,7 @@ const cachedCreatorNetCashDetail = unstable_cache(
 
     return { deposited, withdrawn, holdings, netCash };
   },
-  ["insights-real-numbers-creator-net-cash-v1"],
+  ["insights-real-numbers-creator-net-cash-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 
@@ -1045,8 +1052,10 @@ const cachedCustomerRecycling = unstable_cache(
       // counter, customer scope (per-user total; no per-row session filter,
       // exactly like the snapshot's deposit leg).
       queryMainRows<{ deposits: string }[]>(
-        `SELECT COALESCE(SUM(total_deposited::numeric), 0)::text AS deposits
-         FROM balances WHERE user_id IN ${userScopeSql}`,
+        `SELECT (
+           COALESCE((SELECT SUM(total_deposited::numeric) FROM balances WHERE user_id IN ${userScopeSql}), 0)
+           - COALESCE((SELECT SUM(${fiatRefundCreditUsdSql("i")}) FROM fiat_deposit_intents i WHERE i.status IN ('partially_refunded','refunded') AND i.user_id IN ${userScopeSql}), 0)
+         )::text AS deposits`,
       ),
       // Card sell-backs to balance — the NEUTRAL inventory↔balance /
       // voucher↔balance conversions customers re-bet. card_sale +
@@ -1075,7 +1084,7 @@ const cachedCustomerRecycling = unstable_cache(
       cardExchangeLeg: sellRows[0]?.card_exchange ?? "0",
     };
   },
-  ["insights-real-numbers-customer-recycling-v1"],
+  ["insights-real-numbers-customer-recycling-v2-refunds"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );
 

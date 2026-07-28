@@ -15,6 +15,7 @@ import {
 import { getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Cache tag for the `/system/excluded-users` PAGE list read
@@ -198,9 +199,18 @@ async function computeExcludedUsersForPage(): Promise<ExcludedUsersPageData> {
     const db = await getReadDrizzleDb();
     const balanceRows = (
       await db.execute<{ user_id: string; total_deposited: string }>(sql`
-        SELECT user_id, total_deposited::text AS total_deposited
-        FROM balances
-        WHERE user_id = ANY(${pgArrayParam(userIds)}::text[])
+        SELECT b.user_id,
+          GREATEST(0, b.total_deposited::numeric - COALESCE(fr.amount, 0))::text
+            AS total_deposited
+        FROM balances b
+        LEFT JOIN (
+          SELECT i.user_id, SUM(${sql.raw(fiatRefundCreditUsdSql("i"))}) AS amount
+          FROM fiat_deposit_intents i
+          WHERE i.status IN ('partially_refunded', 'refunded')
+            AND i.user_id = ANY(${pgArrayParam(userIds)}::text[])
+          GROUP BY i.user_id
+        ) fr ON fr.user_id = b.user_id
+        WHERE b.user_id = ANY(${pgArrayParam(userIds)}::text[])
       `)
     ).rows;
     for (const b of balanceRows) {

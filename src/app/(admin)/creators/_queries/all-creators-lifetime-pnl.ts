@@ -10,6 +10,7 @@ import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import type { CreatorsTab } from "../_lib/search-params";
 import { getFillCreatorIds } from "./fill-creator-count";
 import { getMultiplierCreatorIds } from "./multiplier-creator-count";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Combined lifetime House P&L across EVERY creator's affiliate-code
@@ -140,10 +141,16 @@ const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
       SELECT DISTINCT ON (lt.id)
              lt.id           AS deposit_id,
              lt.user_id,
-             lt.amount::numeric AS amount,
+             (
+               lt.amount::numeric
+               - COALESCE(${fiatRefundCreditUsdSql("i")}, 0)
+             ) AS amount,
              acu.affiliate_user_id AS creator_id
         FROM ledger_transactions lt
         JOIN "user" u ON u.id = lt.user_id
+        LEFT JOIN fiat_deposit_intents i
+               ON i.completed_ledger_id = lt.id
+              AND i.status IN ('partially_refunded', 'refunded')
         LEFT JOIN affiliate_code_usages acu
                ON acu.referred_user_id = lt.user_id
               AND acu.created_at <= lt.created_at
@@ -247,7 +254,7 @@ const cachedLifetimePnlRows = (env: DbEnv, blacklistIds: string[]) =>
      WHERE cu.role = 'creator'
   `);
     },
-    ["creators-lifetime-pnl-rows-v1", env, ...blacklistIds],
+    ["creators-lifetime-pnl-rows-v2-refunds", env, ...blacklistIds],
     { revalidate: 900, tags: ["creators-lifetime-pnl"] },
   );
 

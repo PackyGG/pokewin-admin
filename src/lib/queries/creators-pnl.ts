@@ -8,6 +8,7 @@ import type {
   CreatorPnlPeriod,
   CreatorPnlPeriodUser,
 } from "./creators-types";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 // card_withdrawal_requests statuses that count as a house liability —
 // the SAME set the per-user / lifetime balance-sheet P&L uses
@@ -454,9 +455,15 @@ export async function getCreatorPnl(userId: string): Promise<CreatorPnlData> {
   // matches byte-for-byte. The cardWD sum (`attr_wd`) has no outer-user
   // staff filter either, exactly like the old lifetime cardWD sub-select.
   const lifetimeSql = `WITH attr_dep AS (
-       SELECT lt.amount::numeric AS amount
+       SELECT (
+                lt.amount::numeric
+                - COALESCE(${fiatRefundCreditUsdSql("i")}, 0)
+              ) AS amount
          FROM ledger_transactions lt
          JOIN "user" u ON u.id = lt.user_id
+         LEFT JOIN fiat_deposit_intents i
+           ON i.completed_ledger_id = lt.id
+          AND i.status IN ('partially_refunded', 'refunded')
         WHERE lt.type::text = 'deposit'
           AND lt.status = 'completed'
           AND lt.created_at >= NOW() - ${LIFETIME_LOOKBACK_INTERVAL}

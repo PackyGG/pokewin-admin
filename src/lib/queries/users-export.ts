@@ -4,6 +4,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql, type SQL } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
 
@@ -118,11 +119,11 @@ export async function exportUsers(
 
   // Deposit filter
   if (filters.deposit === "has_deposited") {
-    predicates.push(sql`COALESCE(b.total_deposited, 0) > 0`);
+    predicates.push(sql`COALESCE(b.total_deposited, 0) - COALESCE(fr.amount, 0) > 0`);
   } else if (filters.deposit === "no_deposit") {
     // Users with no deposits — either no balances row or
     // total_deposited = 0. COALESCE handles the missing-row case.
-    predicates.push(sql`COALESCE(b.total_deposited, 0) = 0`);
+    predicates.push(sql`COALESCE(b.total_deposited, 0) - COALESCE(fr.amount, 0) <= 0`);
   }
 
   const whereSql =
@@ -143,10 +144,16 @@ export async function exportUsers(
       u.username,
       u.country,
       u.country_code,
-      b.total_deposited::text AS total_deposited,
+      GREATEST(0, COALESCE(b.total_deposited, 0) - COALESCE(fr.amount, 0))::text AS total_deposited,
       u.created_at
     FROM "user" u
     LEFT JOIN balances b ON b.user_id = u.id
+    LEFT JOIN (
+      SELECT i.user_id, SUM(${sql.raw(fiatRefundCreditUsdSql("i"))}) AS amount
+      FROM fiat_deposit_intents i
+      WHERE i.status IN ('partially_refunded', 'refunded')
+      GROUP BY i.user_id
+    ) fr ON fr.user_id = u.id
     ${whereSql}
     ORDER BY u.created_at DESC
     LIMIT 200000

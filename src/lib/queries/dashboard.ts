@@ -58,6 +58,7 @@ import {
   getDashboardTrendSeries,
   type DashboardTrendSeries,
 } from "./dashboard-trend-series";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -470,6 +471,13 @@ export function getPeriodAggregates(
       WHERE cwr.status IN ('completed', 'shipped')
         AND (cwr.completed_at >= $1 OR (cwr.completed_at IS NULL AND cwr.shipped_at >= $1))
     ),
+    fiat_refunds AS (
+      SELECT ${fiatRefundCreditUsdSql("i")} AS amount
+      FROM fiat_deposit_intents i
+      JOIN real_users ru ON ru.id = i.user_id
+      WHERE i.status IN ('partially_refunded', 'refunded')
+        AND i.updated_at >= $1
+    ),
     -- Creator DEAL-PAYOUT cash-outs — the house's REAL creator cost that
     -- has actually walked out the door. Joins completed/shipped
     -- card_withdrawal_requests to the deal-payout vouchers they cashed out
@@ -507,7 +515,10 @@ export function getPeriodAggregates(
         AND (cwr.completed_at >= $1 OR (cwr.completed_at IS NULL AND cwr.shipped_at >= $1))
     )
     SELECT
-      COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $1 THEN amount ELSE 0 END), 0)::text AS revenue,
+      (
+        COALESCE(SUM(CASE WHEN type::text = 'deposit' AND created_at >= $1 THEN amount ELSE 0 END), 0)
+        - COALESCE((SELECT SUM(amount) FROM fiat_refunds), 0)
+      )::text AS revenue,
 
       COALESCE((SELECT SUM(CASE WHEN effective_at >= $1 THEN amount ELSE 0 END) FROM withdrawals), 0)::text AS withdrawal,
 
@@ -624,21 +635,33 @@ const cachedDailyChart = unstable_cache(
       deposits: string;
       active_depositors: string;
     }[]>(db, `
+      WITH events AS (
+        SELECT user_id, type::text AS type, amount::numeric AS amount, created_at
+        FROM ledger_transactions
+        WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit')
+          AND status = 'completed'
+          AND created_at >= NOW() - INTERVAL '30 days'
+          AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+        UNION ALL
+        SELECT i.user_id, 'deposit_refund'::text,
+               -${fiatRefundCreditUsdSql("i")}, i.updated_at
+        FROM fiat_deposit_intents i
+        WHERE i.status IN ('partially_refunded', 'refunded')
+          AND i.updated_at >= NOW() - INTERVAL '30 days'
+          AND i.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+      )
       SELECT
         DATE(created_at) as date,
         COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text as packs,
         COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text as battles,
-        COALESCE(SUM(CASE WHEN type::text = 'deposit' THEN amount::numeric ELSE 0 END), 0)::text as deposits,
+        COALESCE(SUM(CASE WHEN type::text IN ('deposit','deposit_refund') THEN amount::numeric ELSE 0 END), 0)::text as deposits,
         COUNT(DISTINCT CASE WHEN type::text = 'deposit' THEN user_id END)::text as active_depositors
-      FROM ledger_transactions
-      WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit') AND status = 'completed'
-        AND created_at >= NOW() - INTERVAL '30 days'
-        AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+      FROM events
       GROUP BY DATE(created_at)
       ORDER BY date
     `);
   },
-  ["dashboard-daily-chart-v2"],
+  ["dashboard-daily-chart-v3-refunds"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -755,15 +778,23 @@ const cachedFtdCombined = unstable_cache(
       total: string;
     }[]>(db, `
       WITH first_deposits AS (
-        SELECT DISTINCT ON (user_id)
-          user_id, amount::numeric AS amount, created_at
-        FROM ledger_transactions
-        WHERE type::text = 'deposit' AND status = 'completed'
-          AND user_id IN (
+        SELECT DISTINCT ON (lt.user_id)
+          lt.user_id,
+          (
+            lt.amount::numeric
+            - COALESCE(${fiatRefundCreditUsdSql("i")}, 0)
+          ) AS amount,
+          lt.created_at
+        FROM ledger_transactions lt
+        LEFT JOIN fiat_deposit_intents i
+          ON i.completed_ledger_id = lt.id
+         AND i.status IN ('partially_refunded', 'refunded')
+        WHERE lt.type::text = 'deposit' AND lt.status = 'completed'
+          AND lt.user_id IN (
             SELECT id FROM "user"
             WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
           )
-        ORDER BY user_id, created_at ASC
+        ORDER BY lt.user_id, lt.created_at ASC
       )
       SELECT 'rolling24h'::text AS tag,
              NULL::date AS bucket,
@@ -781,7 +812,7 @@ const cachedFtdCombined = unstable_cache(
       GROUP BY DATE(created_at)
     `);
   },
-  ["dashboard-ftd-combined-v1"],
+  ["dashboard-ftd-combined-v2-refunds"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -840,7 +871,18 @@ const cachedBalanceAggregates = unstable_cache(
       }[]
     >(db, `
       SELECT
-        COALESCE(SUM(total_deposited::numeric), 0)::text AS total_deposited,
+        (
+          COALESCE(SUM(total_deposited::numeric), 0)
+          - COALESCE((
+              SELECT SUM(${fiatRefundCreditUsdSql("i")})
+              FROM fiat_deposit_intents i
+              WHERE i.status IN ('partially_refunded', 'refunded')
+                AND i.user_id IN (
+                  SELECT id FROM "user"
+                  WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+                )
+            ), 0)
+        )::text AS total_deposited,
         COALESCE(SUM(total_withdrawn::numeric), 0)::text AS total_withdrawn,
         COALESCE(SUM(total_wagered::numeric), 0)::text AS total_wagered,
         COALESCE(SUM(total_won::numeric), 0)::text AS total_won,
@@ -869,7 +911,7 @@ const cachedBalanceAggregates = unstable_cache(
     `);
     return rows[0] ?? null;
   },
-  ["dashboard-balance-aggregates-v1"],
+  ["dashboard-balance-aggregates-v2-refunds"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -877,17 +919,24 @@ const cachedUniqueDepositors = unstable_cache(
   async (blacklistIdNotIn: string) => {
     const db = await getReadDrizzleDb();
     const rows = await queryRows<{ count: string }[]>(db, `
+      WITH fiat_refunds AS (
+        SELECT i.user_id, SUM(${fiatRefundCreditUsdSql("i")}) AS amount
+        FROM fiat_deposit_intents i
+        WHERE i.status IN ('partially_refunded', 'refunded')
+        GROUP BY i.user_id
+      )
       SELECT COUNT(*)::text AS count
-      FROM balances
-      WHERE total_deposited::numeric > 0
-        AND user_id IN (
+      FROM balances b
+      LEFT JOIN fiat_refunds fr ON fr.user_id = b.user_id
+      WHERE b.total_deposited::numeric - COALESCE(fr.amount, 0) > 0
+        AND b.user_id IN (
           SELECT id FROM "user"
           WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
         )
     `);
     return Number(rows[0]?.count ?? 0);
   },
-  ["dashboard-unique-depositors-v1"],
+  ["dashboard-unique-depositors-v2-refunds"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -1845,7 +1894,7 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
       ? trendSeries.dailyDeposits
       : dailyChart.map((d) => ({
           date: new Date(d.date).toISOString().split("T")[0],
-          amount: Math.abs(Number(d.deposits)),
+          amount: Number(d.deposits),
         })),
     dailySignups: trendSeries
       ? trendSeries.dailySignups

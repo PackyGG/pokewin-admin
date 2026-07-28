@@ -10,6 +10,7 @@ import {
   officialStreamAdjustmentSqlPredicate,
   removeLockedBalanceAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 
 /**
  * Lifetime realized P&L from the house perspective — a balance-sheet snapshot.
@@ -88,7 +89,7 @@ export type RealizedPnlSnapshot = {
  */
 const cachedSnapshot = unstable_cache(
   realizedPnlSnapshotInner,
-  ["realized-pnl-snapshot"],
+  ["realized-pnl-snapshot-v2-refunds"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -126,6 +127,7 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
       unclaimed_rakeback: string;
       official_stream_net: string;
       remove_locked_net: string;
+      fiat_refunds: string;
     }[]
   >(getProdReadDrizzleDb(), `
     WITH real_users AS (
@@ -133,6 +135,7 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
     )
     SELECT
       COALESCE((SELECT SUM(total_deposited::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS deposited,
+      COALESCE((SELECT SUM(${fiatRefundCreditUsdSql("i")}) FROM fiat_deposit_intents i WHERE i.status IN ('partially_refunded','refunded') AND i.user_id IN (SELECT id FROM real_users)), 0)::text AS fiat_refunds,
       COALESCE((SELECT SUM(total_withdrawn::numeric)     FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS balance_withdrawn,
       COALESCE((SELECT SUM(total_value_usd::numeric)     FROM card_withdrawal_requests  WHERE status IN ('pending','processing','shipped','completed') AND user_id IN (SELECT id FROM real_users)), 0)::text AS card_withdrawn,
       COALESCE((SELECT SUM(available_balance::numeric)   FROM balances                 WHERE user_id IN (SELECT id FROM real_users)), 0)::text AS available_balance,
@@ -152,7 +155,8 @@ async function realizedPnlSnapshotPg(): Promise<RealizedPnlSnapshot> {
   `);
 
   const r = rows[0];
-  const totalDeposited = Number(r?.deposited ?? 0);
+  const totalDeposited =
+    Number(r?.deposited ?? 0) - Number(r?.fiat_refunds ?? 0);
   const balanceWithdrawn = Number(r?.balance_withdrawn ?? 0);
   const cardWithdrawn = Number(r?.card_withdrawn ?? 0);
   const totalWithdrawn = balanceWithdrawn + cardWithdrawn;

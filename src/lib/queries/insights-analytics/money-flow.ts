@@ -19,6 +19,7 @@ import {
   periodToCutoff,
   type InsightsPeriod,
 } from "./period";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Money Flow — decompose the gap between GGR and P&L over a window, built
@@ -199,11 +200,12 @@ const cachedBridge = unstable_cache(
     const since = `'${cutoff.toISOString()}'::timestamptz`;
 
     type DepWdRow = { deposits: string; manual_wd: string };
+    type RefundRow = { refunds: string };
     type CardRow = { total: string };
     type InvRow = { obtained: string; disposed: string };
     type VchRow = { issued: string; claimed: string };
 
-    const [depWd, cardWd, inv, vch] = await Promise.all([
+    const [depWd, cardWd, inv, vch, refunds] = await Promise.all([
       queryMainRows<DepWdRow[]>(
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
@@ -242,17 +244,27 @@ const cachedBridge = unstable_cache(
          WHERE (v.created_at >= ${since} OR v.claimed_at >= ${since})
            AND ${scopeSql}`,
       ),
+      queryMainRows<RefundRow[]>(
+        `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refunds
+         FROM fiat_deposit_intents i
+         JOIN "user" u ON u.id = i.user_id
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= ${since}
+           AND ${scopeSql}`,
+      ),
     ]);
 
     return {
-      deposits: depWd[0]?.deposits ?? "0",
+      deposits: String(
+        toNumber(depWd[0]?.deposits) - toNumber(refunds[0]?.refunds),
+      ),
       manualWd: depWd[0]?.manual_wd ?? "0",
       cardWd: cardWd[0]?.total ?? "0",
       inv: inv[0] ?? { obtained: "0", disposed: "0" },
       vch: vch[0] ?? { issued: "0", claimed: "0" },
     };
   },
-  ["insights-analytics-money-flow-bridge-v2"],
+  ["insights-analytics-money-flow-bridge-v3-refunds"],
   { revalidate: 60, tags: ["insights-analytics", "dashboard-stats"] },
 );
 
@@ -311,6 +323,15 @@ const cachedDailyPnl = unstable_cache(
            AND COALESCE(cwr.completed_at, cwr.shipped_at) >= ${since}
          GROUP BY DATE(COALESCE(cwr.completed_at, cwr.shipped_at))
        ),
+       daily_refunds AS (
+         SELECT DATE(i.updated_at) AS d,
+                COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0) AS refunds
+         FROM fiat_deposit_intents i
+         JOIN real_users ru ON ru.id = i.user_id
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= ${since}
+         GROUP BY DATE(i.updated_at)
+       ),
        daily_inventory AS (
          SELECT d, COALESCE(SUM(obtained), 0) - COALESCE(SUM(disposed), 0) AS inv_delta
          FROM (
@@ -345,19 +366,21 @@ const cachedDailyPnl = unstable_cache(
          dl.d AS date,
          (
            dl.deposits
+           - COALESCE(dr.refunds, 0)
            - (dl.manual_wd + COALESCE(cw.card_wd, 0))
            - dl.balance_change
            - COALESCE(di.inv_delta, 0)
            - COALESCE(dv.vch_delta, 0)
          )::text AS pnl
        FROM daily_ledger dl
+       LEFT JOIN daily_refunds dr ON dr.d = dl.d
        LEFT JOIN daily_card_wd cw ON cw.d = dl.d
        LEFT JOIN daily_inventory di ON di.d = dl.d
        LEFT JOIN daily_voucher dv ON dv.d = dl.d
        ORDER BY dl.d`,
     );
   },
-  ["insights-analytics-money-flow-daily-pnl-v1"],
+  ["insights-analytics-money-flow-daily-pnl-v2-refunds"],
   { revalidate: 60, tags: ["insights-analytics", "dashboard-stats"] },
 );
 

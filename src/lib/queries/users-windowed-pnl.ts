@@ -2,6 +2,7 @@ import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
+import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import type { WindowedPnl } from "./pnl";
 
@@ -76,6 +77,12 @@ export async function getUserWindowedPnlMulti(
           `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
       )
       .join(", ");
+    const fiatRefundCase = windows
+      .map(
+        (_, i) =>
+          `COALESCE(SUM(CASE WHEN i.updated_at >= ${wParam(i)} THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS refunds_${i}`,
+      )
+      .join(", ");
     // Stats-excluded adjustments (official_stream + remove_locked_balance)
     // must NOT enter the balance-delta term — mirrors calculateWindowedPnl.
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
@@ -139,7 +146,7 @@ export async function getUserWindowedPnlMulti(
     type InvRow = Record<string, string>;
     type VchRow = Record<string, string>;
 
-    const [ledger, card, inv, vch, adminInvRem, adminVchRem] = await Promise.all([
+    const [ledger, card, inv, vch, adminInvRem, adminVchRem, refunds] = await Promise.all([
       queryMainRows<LedgerRow[]>(
         `SELECT ${ledgerDepositCase}, ${ledgerManualWdCase}, ${ledgerBalanceChangeCase}
          FROM ledger_transactions lt
@@ -199,6 +206,14 @@ export async function getUserWindowedPnlMulti(
            )`,
         ...params,
       ),
+      queryMainRows<Record<string, string>[]>(
+        `SELECT ${fiatRefundCase}
+         FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND i.updated_at >= $2
+           AND i.user_id = $1`,
+        ...params,
+      ),
     ]);
 
     const lRow = ledger[0];
@@ -207,10 +222,13 @@ export async function getUserWindowedPnlMulti(
     const vRow = vch[0];
     const adminInvRow = adminInvRem[0];
     const adminVchRow = adminVchRem[0];
+    const refundRow = refunds[0];
 
     for (let i = 0; i < windows.length; i++) {
       const w = windows[i];
-      const deposits = toNumber(lRow?.[`deposits_${i}`]);
+      const deposits =
+        toNumber(lRow?.[`deposits_${i}`]) -
+        toNumber(refundRow?.[`refunds_${i}`]);
       const manualWd = toNumber(lRow?.[`manual_wd_${i}`]);
       const balanceChange = toNumber(lRow?.[`balance_change_${i}`]);
       const cardWd = toNumber(cRow?.[`card_wd_${i}`]);

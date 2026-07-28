@@ -59,7 +59,7 @@ const REVALIDATE_SECONDS = 300;
 
 const cachedCreatorPnl = unstable_cache(
   (userId: string): Promise<CreatorPnlData> => getCreatorPnl(userId),
-  ["creators-detail-pnl-v1"],
+  ["creators-detail-pnl-v2-refunds"],
   { revalidate: REVALIDATE_SECONDS, tags: ["creators-detail-pnl"] },
 );
 
