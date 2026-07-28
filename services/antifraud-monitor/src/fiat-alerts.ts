@@ -220,11 +220,21 @@ export function buildFiatDiscordPayload(
     });
   }
   const emailDomain = detail(details, "email_domain");
+  const patternMatch =
+    detail(details, "email_risk_type") === "gmail_dot_fragmentation";
   if (emailDomain) {
     fields.push({
-      name: "Blacklisted domain",
+      name: patternMatch ? "Email provider" : "Blacklisted domain",
       value: clean(emailDomain),
       inline: true,
+    });
+  }
+  const emailRiskReason = detail(details, "email_risk_reason");
+  if (emailRiskReason) {
+    fields.push({
+      name: "Email risk",
+      value: clean(emailRiskReason),
+      inline: false,
     });
   }
   const reason =
@@ -243,7 +253,9 @@ export function buildFiatDiscordPayload(
   const url = new URL(dashboardUrl).toString();
   const description =
     problem.problem_code === "blacklisted_email_domain"
-      ? problem.source_kind === "signup"
+      ? patternMatch
+        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked."
+        : problem.source_kind === "signup"
         ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
         : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
       : problem.problem_code === "high_risk"
@@ -260,7 +272,9 @@ export function buildFiatDiscordPayload(
     allowed_mentions: { parse: [] },
     embeds: [
       {
-        title: fiatProblemTitle(problem.problem_code),
+        title: patternMatch
+          ? "Suspicious checkout email blocked"
+          : fiatProblemTitle(problem.problem_code),
         description,
         url,
         color:

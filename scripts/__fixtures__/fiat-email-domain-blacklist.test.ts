@@ -43,18 +43,22 @@ test("blacklisted signup and Whop signals lock MAIN only through signed ingest",
   assert.match(monitor, /INSERT INTO risk_events/);
   assert.match(monitor, /fiat_blacklisted_email_domain/);
   assert.match(monitor, /persistSignupMatch/);
+  assert.match(monitor, /suspiciousGmailDotPattern/);
+  assert.match(monitor, /gmail_dot_fragmentation/);
   assert.match(monitor, /match_source: "signup"/);
   assert.doesNotMatch(monitor, /UPDATE user_feature_locks/);
   assert.match(ingest, /getProdPrimaryDrizzleDb/);
   assert.match(ingest, /ARRAY\['all'\]::text\[\]/);
   assert.match(ingest, /locked_withdrawals_items = TRUE/);
   assert.match(ingest, /signal\.riskScore !== 100/);
+  assert.match(ingest, /suspicious dot-fragmented Gmail address/);
 });
 
 test("Fraud Fiat deposits force blacklist matches to the critical score", () => {
   const risk = read("services/antifraud-monitor/src/fiat-risk.ts");
 
   assert.match(risk, /blacklisted_checkout_email_domain/);
+  assert.match(risk, /suspicious_checkout_email_pattern/);
   assert.match(risk, /riskScore: 100/);
   assert.match(risk, /verdict: "bad"/);
   assert.match(risk, /Keep crypto and item withdrawals locked/);

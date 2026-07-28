@@ -220,8 +220,12 @@ async function lockBlacklistedEmailDomainAccount(
   const db = getProdPrimaryDrizzleDb();
   const source =
     signal.payload?.matchSource === "signup" ? "signup" : "Whop checkout";
+  const patternMatch =
+    signal.payload?.emailRiskType === "gmail_dot_fragmentation";
   const reason =
-    `Automatic fraud lock: ${source} used blacklisted email domain ${domain}`
+    (patternMatch
+      ? `Automatic fraud lock: ${source} used a suspicious dot-fragmented Gmail address (${domain})`
+      : `Automatic fraud lock: ${source} used blacklisted email domain ${domain}`)
       .slice(0, 500);
   const locked = await db.execute<{ user_id: string }>(sql`
     INSERT INTO user_feature_locks (

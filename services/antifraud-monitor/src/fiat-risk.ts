@@ -123,6 +123,7 @@ export type BlacklistedCheckoutEmail = {
   deposit_intent_id: string;
   checkout_email: string;
   domain: string;
+  match_type: "blacklisted_domain" | "gmail_dot_fragmentation";
   lock_delivered_at: Date | null;
 };
 
@@ -722,11 +723,17 @@ export function applyBlacklistedCheckoutEmail(
   scored: ReturnType<typeof scoreFiatDeposit>,
   match: BlacklistedCheckoutEmail,
 ): ReturnType<typeof scoreFiatDeposit> {
+  const patternMatch = match.match_type === "gmail_dot_fragmentation";
   const signal: FiatSignal = {
-    key: "blacklisted_checkout_email_domain",
-    label: "Blacklisted checkout email",
-    detail:
-      `Whop checkout used ${match.checkout_email}; ${match.domain} is on the active email-domain blacklist.`,
+    key: patternMatch
+      ? "suspicious_checkout_email_pattern"
+      : "blacklisted_checkout_email_domain",
+    label: patternMatch
+      ? "Suspicious checkout email"
+      : "Blacklisted checkout email",
+    detail: patternMatch
+      ? `Whop checkout used ${match.checkout_email}; its Gmail local part is heavily dot-fragmented.`
+      : `Whop checkout used ${match.checkout_email}; ${match.domain} is on the active email-domain blacklist.`,
     points: 100,
     tone: "bad",
     category: "provider",
@@ -737,8 +744,9 @@ export function applyBlacklistedCheckoutEmail(
     verdict: "bad",
     recommendation:
       "Keep crypto and item withdrawals locked and review the checkout identity.",
-    summary:
-      "Critical: the Whop checkout email matched an active blocked domain.",
+    summary: patternMatch
+      ? "Critical: the Whop checkout email matched the dot-fragmentation fraud pattern."
+      : "Critical: the Whop checkout email matched an active blocked domain.",
     signals: [
       signal,
       ...scored.signals.filter((entry) => entry.key !== signal.key),
@@ -754,7 +762,9 @@ export function applyBlacklistedCheckoutEmail(
             status: "block" as const,
             score: 100,
             evidence: [
-              `Blocked checkout domain: ${match.domain}`,
+              patternMatch
+                ? "Blocked checkout pattern: dot-fragmented Gmail"
+                : `Blocked checkout domain: ${match.domain}`,
               match.lock_delivered_at
                 ? "Crypto and item withdrawal lock confirmed"
                 : "Automatic withdrawal lock is pending confirmation",
@@ -777,6 +787,7 @@ async function loadBlacklistedCheckoutEmails(
         deposit_intent_id,
         checkout_email,
         domain,
+        match_type,
         lock_delivered_at
       FROM fiat_email_domain_matches
       WHERE deposit_intent_id = ANY($1::text[])

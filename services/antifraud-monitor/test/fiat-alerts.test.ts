@@ -176,6 +176,37 @@ test("signup blacklist alerts identify the signup email", () => {
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
 });
 
+test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
+  const payload = buildFiatDiscordPayload(
+    "https://fraud.packydash.com/antifraud/fiat-deposits",
+    {
+      source_kind: "payment_webhook",
+      source_id: "event-1:blacklisted_email_domain:gmail.com",
+      problem_code: "blacklisted_email_domain",
+      user_id: "user-1",
+      username: "test-user",
+      details: {
+        checkout_email: "carmenw.oods29.7.1@gmail.com",
+        email_domain: "gmail.com",
+        email_risk_type: "gmail_dot_fragmentation",
+        email_risk_reason: "Dot-fragmented Gmail pattern",
+        risk_score: 100,
+        status: "withdrawals_locked",
+      },
+      occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+    },
+  );
+
+  assert.equal(payload.embeds[0]?.title, "Suspicious checkout email blocked");
+  assert.match(payload.embeds[0]?.description ?? "", /dot-fragmentation/);
+  assert.equal(
+    payload.embeds[0]?.fields.find((field) => field.name === "Email provider")
+      ?.value,
+    "gmail.com",
+  );
+  assert.doesNotMatch(JSON.stringify(payload), /Blacklisted domain/);
+});
+
 test("fiat Discord delivery honors bounded retry-after headers", () => {
   assert.equal(
     discordRetryAfterSeconds(new Headers({ "retry-after": "2.4" })),

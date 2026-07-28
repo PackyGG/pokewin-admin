@@ -54,6 +54,7 @@ async function listRules(db: Databases, ruleId?: string): Promise<RuleRow[]> {
           AS pending_locks
       FROM fiat_email_domain_blacklist b
       LEFT JOIN fiat_email_domain_matches m ON m.domain = b.domain
+        AND m.match_type = 'blacklisted_domain'
       WHERE ($1::uuid IS NULL OR b.id = $1::uuid)
       GROUP BY b.id
       ORDER BY b.enabled DESC, b.created_at DESC
@@ -325,6 +326,7 @@ export async function registerFiatEmailDomainRoutes(
       deposit_intent_id: string;
       checkout_email: string;
       domain: string;
+      match_type: "blacklisted_domain" | "gmail_dot_fragmentation";
       occurred_at: Date;
       lock_delivered_at: Date | null;
     }>(
@@ -333,6 +335,7 @@ export async function registerFiatEmailDomainRoutes(
           deposit_intent_id,
           checkout_email,
           domain,
+          match_type,
           occurred_at,
           lock_delivered_at
         FROM fiat_email_domain_matches
@@ -346,6 +349,7 @@ export async function registerFiatEmailDomainRoutes(
         intentId: match.deposit_intent_id,
         checkoutEmail: match.checkout_email,
         domain: match.domain,
+        riskType: match.match_type,
         riskScore: 100,
         severity: "critical",
         withdrawalsLocked: match.lock_delivered_at !== null,
