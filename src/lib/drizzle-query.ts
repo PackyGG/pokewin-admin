@@ -5,6 +5,7 @@ import {
   decodePostgresRows,
   type PostgresDecoder,
 } from "@/lib/postgres-runtime";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { positionalSql } from "@/lib/sql/positional";
 
 type DrizzleExecutor = Pick<MainDrizzleDb, "execute">;
@@ -44,7 +45,10 @@ export async function queryMainRows<T extends Record<string, unknown>[]>(
   query: string,
   ...values: readonly unknown[]
 ): Promise<T> {
-  return queryRows<T>(await getReadDrizzleDb(), query, ...values);
+  return withTransientPostgresReadRetry(
+    async () => queryRows<T>(await getReadDrizzleDb(), query, ...values),
+    { context: "main.read", delayMs: 0 },
+  );
 }
 
 export async function queryMainDecodedRows<T>(
@@ -52,7 +56,11 @@ export async function queryMainDecodedRows<T>(
   values: readonly unknown[],
   decoder: PostgresDecoder<T>,
 ): Promise<T[]> {
-  return queryDecodedRows(await getReadDrizzleDb(), query, values, decoder);
+  return withTransientPostgresReadRetry(
+    async () =>
+      queryDecodedRows(await getReadDrizzleDb(), query, values, decoder),
+    { context: "main.read.decoded", delayMs: 0 },
+  );
 }
 
 /** A `$n`-style MAIN read bound to one transaction's connection. */

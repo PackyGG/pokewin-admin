@@ -6,11 +6,22 @@ import {
   withTransientPostgresReadRetry,
 } from "@/lib/postgres-read-retry";
 
-test("recognizes a nested PostgreSQL connection timeout", () => {
+test("recognizes nested PostgreSQL connection and idle-session timeouts", () => {
   const error = new Error("Failed query", {
     cause: new Error("Connection terminated due to connection timeout"),
   });
   assert.equal(isTransientPostgresReadError(error), true);
+  assert.equal(
+    isTransientPostgresReadError(
+      new Error("Failed query", {
+        cause: Object.assign(
+          new Error("terminating connection due to idle-session timeout"),
+          { code: "57P05" },
+        ),
+      }),
+    ),
+    true,
+  );
 });
 
 test("retries one transient read and returns the successful result", async () => {

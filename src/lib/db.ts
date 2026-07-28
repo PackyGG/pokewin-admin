@@ -58,7 +58,10 @@ function createPool(
     // clients. Primary pools remain at three for mutation flows.
     max: isReadMirror ? 2 : 3,
     maxUses: isReadMirror ? 1 : Infinity,
-    idleTimeoutMillis: isReadMirror ? 5_000 : 10_000,
+    // Retire idle mirror clients before PostgreSQL's 5s backstop. Normally
+    // maxUses closes them after one checkout; this ordering also protects any
+    // client released without a completed query.
+    idleTimeoutMillis: isReadMirror ? 4_000 : 10_000,
     // A queued read must be allowed to outlive the longest statement already
     // occupying a slot. The old 10s acquire budget guaranteed false pool
     // failures while valid 30s statements were still running.

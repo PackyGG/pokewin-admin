@@ -5,7 +5,7 @@ type TransientReadRetryOptions = {
 };
 
 const TRANSIENT_POSTGRES_READ_ERROR =
-  /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|57P01|57P02|57P03|53300)\b|connection (?:terminated|timeout|closed|reset)|terminating connection|server closed the connection|too many clients|database system is (?:starting up|shutting down)/i;
+  /\b(?:ECONNRESET|ECONNREFUSED|ETIMEDOUT|EPIPE|57P01|57P02|57P03|57P05|08(?:000|001|003|004|006|007|P01)|53300)\b|connection (?:terminated|timeout|closed|reset)|terminating connection|server closed the connection|too many clients|database system is (?:starting up|shutting down)/i;
 
 function errorChainText(error: unknown): string {
   const parts: string[] = [];
