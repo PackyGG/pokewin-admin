@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, ExternalLink } from "lucide-react";
+import { ExternalLink, Trophy } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { isUuid } from "@/lib/utils/ids";
@@ -14,7 +14,7 @@ import {
   type TimeStatus,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
-import { PageHero } from "@/components/modern-panels";
+import { PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -96,46 +96,41 @@ export default async function CreatorHubLeaderboardDetailPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex items-start gap-3">
-          <Link
-            href="/creator-hub/leaderboards"
-            className="mt-1 flex size-9 items-center justify-center rounded-lg border hover:bg-muted"
+      {/* Standard back affordance (controls-only identity row). */}
+      <PageHeroIdentity
+        icon={Trophy}
+        title={lb.title}
+        backHref="/creator-hub/leaderboards"
+      />
+
+      <div className="min-w-0">
+        <h1 className="text-2xl font-bold leading-tight tracking-tight">
+          {lb.title}
+        </h1>
+        <div className="mt-1 flex flex-wrap items-center gap-2">
+          <Badge
+            variant="outline"
+            className={APPROVAL_COLORS[lb.approval_status]}
           >
-            <ArrowLeft className="size-4" />
-          </Link>
-          <div className="min-w-0 flex-1">
-            <h1 className="text-2xl font-bold leading-tight tracking-tight">
-              {lb.title}
-            </h1>
-            <div className="mt-1 flex flex-wrap items-center gap-2">
-              <Badge
-                variant="outline"
-                className={APPROVAL_COLORS[lb.approval_status]}
-              >
-                {lb.approval_status}
-              </Badge>
-              <Badge variant="outline" className={TIME_COLORS[lb.time_status]}>
-                {lb.time_status}
-              </Badge>
-              {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
-              {lb.cancelled_at && (
-                <Badge
-                  variant="outline"
-                  className="border-zinc-500/30 bg-zinc-500/15 text-zinc-600"
-                >
-                  cancelled
-                </Badge>
-              )}
-            </div>
-            <Suspense fallback={<CreatorLineSkeleton />}>
-              <CreatorLine
-                creatorUserId={lb.creator_user_id}
-              />
-            </Suspense>
-          </div>
+            {lb.approval_status}
+          </Badge>
+          <Badge variant="outline" className={TIME_COLORS[lb.time_status]}>
+            {lb.time_status}
+          </Badge>
+          {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
+          {lb.cancelled_at && (
+            <Badge
+              variant="outline"
+              className="border-zinc-500/30 bg-zinc-500/15 text-zinc-600"
+            >
+              cancelled
+            </Badge>
+          )}
         </div>
-      </PageHero>
+        <Suspense fallback={<CreatorLineSkeleton />}>
+          <CreatorLine creatorUserId={lb.creator_user_id} />
+        </Suspense>
+      </div>
 
       <Suspense fallback={<DetailSkeleton />}>
         <DetailSections board={lb} />
@@ -241,7 +236,7 @@ async function DetailSections({ board: lb }: { board: Board }) {
   return (
     <>
       <FadeIn>
-        <div className="space-y-3 rounded-2xl border bg-card p-5">
+        <div className="space-y-3 rounded-xl border bg-card p-5">
           <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
             Summary
           </h2>
@@ -297,7 +292,14 @@ async function DetailSections({ board: lb }: { board: Board }) {
         </div>
       </FadeIn>
 
-      <LeaderboardClaimsPanel claimWindow={claimWindow} claims={claims} />
+      {/* userHref keeps the Hub self-contained: user links stay inside
+          /creator-hub instead of jumping into the admin /users route.
+          Both panels are Server Components, so a function prop is fine. */}
+      <LeaderboardClaimsPanel
+        claimWindow={claimWindow}
+        claims={claims}
+        userHref={(userId) => `/creator-hub/creators/${userId}`}
+      />
 
       <LeaderboardStandingsPanel
         leaderboardId={lb.id}
@@ -305,6 +307,7 @@ async function DetailSections({ board: lb }: { board: Board }) {
         holdByUserId={holdByUserId}
         timeStatus={lb.time_status}
         source={standings.source}
+        userHref={(userId) => `/creator-hub/creators/${userId}`}
       />
     </>
   );
@@ -313,9 +316,9 @@ async function DetailSections({ board: lb }: { board: Board }) {
 function DetailSkeleton() {
   return (
     <div className="space-y-6">
-      <Skeleton className="h-[220px] rounded-2xl" />
-      <Skeleton className="h-[180px] rounded-2xl" />
-      <Skeleton className="h-[320px] rounded-2xl" />
+      <Skeleton className="h-[220px] rounded-xl" />
+      <Skeleton className="h-[180px] rounded-xl" />
+      <Skeleton className="h-[320px] rounded-xl" />
     </div>
   );
 }

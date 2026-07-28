@@ -1,21 +1,23 @@
 import Link from "next/link";
-import { Trophy, Coins, Percent, Calendar, Clock, Hash, Wallet } from "lucide-react";
+import {
+  Trophy,
+  Coins,
+  Percent,
+  Calendar,
+  Clock,
+  Hash,
+  Wallet,
+  ServerCrash,
+} from "lucide-react";
 
-import { cn } from "@/lib/utils";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 
+import { HubEmptyState, HubNotice } from "../../_components/hub-notice";
 import {
   type LiveLeaderboardRow,
   type LiveLeaderboardView,
 } from "../_queries/live-leaderboards";
 import { LeaderboardTimeLeft } from "./leaderboard-time-left";
-
-function rankBadgeTint(i: number): string {
-  if (i === 0) return "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30";
-  if (i === 1) return "bg-zinc-400/15 text-zinc-700 dark:text-zinc-300 border-zinc-400/30";
-  if (i === 2) return "bg-orange-500/15 text-orange-700 dark:text-orange-300 border-orange-500/30";
-  return "bg-muted text-muted-foreground border-border";
-}
 
 function LifecyclePill({ row }: { row: LiveLeaderboardRow }) {
   if (row.lifecycle === "active") {
@@ -43,6 +45,18 @@ function LifecyclePill({ row }: { row: LiveLeaderboardRow }) {
   );
 }
 
+/**
+ * One ranked board — a flat single-link row card.
+ *
+ * The WHOLE row navigates to the board detail via a stretched link
+ * (`absolute inset-0`, rendered LAST so it sits on top of the static
+ * content — nested <a> is invalid HTML, so the title is plain text). The
+ * creator chip is the one secondary link inside; it stacks ABOVE the
+ * stretched link (`relative z-10`) so clicking it goes to the creator
+ * instead. Flat house standard: solid `bg-card`, hairline border, no
+ * sheen/raise, neutral rank index (no medal tints — the number is a sort
+ * position, not a podium).
+ */
 function LiveLeaderboardCard({
   row,
   index,
@@ -55,33 +69,25 @@ function LiveLeaderboardCard({
   const creatorLabel = row.creatorUsername ?? `id ${row.creatorUserId.slice(0, 8)}…`;
 
   return (
-    <li className="hover-raise surface-sheen relative overflow-hidden rounded-xl border bg-card/60 p-3 transition-colors hover:bg-accent/30 sm:p-4">
+    <li className="relative rounded-xl border bg-card p-3 transition-colors hover:bg-muted/40 focus-within:bg-muted/40 sm:p-4">
       <div className="flex items-start gap-3">
         <span
-          className={cn(
-            "mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border text-xs font-bold tabular-nums",
-            rankBadgeTint(index),
-          )}
-          aria-label={`Rank ${index + 1}`}
+          className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg border border-border bg-muted text-xs font-bold tabular-nums text-muted-foreground"
+          aria-hidden
         >
           {index + 1}
         </span>
 
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Link
-              href={`/creator-hub/leaderboards/${row.id}`}
-              className="truncate text-sm font-semibold outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              {row.title}
-            </Link>
+            <span className="truncate text-sm font-semibold">{row.title}</span>
             <LifecyclePill row={row} />
           </div>
 
           <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
             <Link
               href={`/creator-hub/creators/${row.creatorUserId}`}
-              className="inline-flex max-w-[180px] items-center gap-1 truncate font-medium text-foreground/80 outline-none hover:underline focus-visible:ring-2 focus-visible:ring-ring"
+              className="relative z-10 inline-flex max-w-[180px] items-center gap-1 truncate rounded-md border bg-muted/50 px-1.5 py-0.5 font-medium text-foreground/80 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
             >
               <Trophy className="size-3 shrink-0 text-amber-500" />
               <span className="truncate">{creatorLabel}</span>
@@ -147,6 +153,14 @@ function LiveLeaderboardCard({
           </div>
         </div>
       </div>
+
+      {/* Stretched row link — LAST child so it paints above the static
+          content; the creator chip opts back on top with z-10. */}
+      <Link
+        href={`/creator-hub/leaderboards/${row.id}`}
+        aria-label={`Rank ${index + 1}: open leaderboard ${row.title}`}
+        className="absolute inset-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      />
     </li>
   );
 }
@@ -184,25 +198,20 @@ export function LiveLeaderboardsRanklist({
 }) {
   if (backendUnavailable) {
     return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-12 text-center">
-        <Trophy className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">Leaderboards backend unavailable</p>
-        <p className="text-xs text-muted-foreground">
-          The approved-leaderboard list couldn&apos;t be loaded. Try again shortly.
-        </p>
-      </div>
+      <HubNotice
+        tone="amber"
+        icon={ServerCrash}
+        title="Leaderboards backend unavailable"
+      >
+        The approved-leaderboard list couldn&apos;t be loaded. Try again
+        shortly.
+      </HubNotice>
     );
   }
 
   if (rows.length === 0) {
     const copy = EMPTY_COPY[view];
-    return (
-      <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed py-12 text-center">
-        <Trophy className="size-6 text-muted-foreground/60" />
-        <p className="text-sm font-medium">{copy.title}</p>
-        <p className="text-xs text-muted-foreground">{copy.body}</p>
-      </div>
-    );
+    return <HubEmptyState icon={Trophy} title={copy.title} sub={copy.body} />;
   }
 
   return (

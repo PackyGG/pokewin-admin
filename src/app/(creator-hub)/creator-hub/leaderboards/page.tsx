@@ -5,21 +5,17 @@ import {
   Layers,
   Percent,
   Activity,
-  ListOrdered,
   Wallet,
+  AlertTriangle,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  KpiTile,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn, PeriodChips } from "@/components/ux";
-import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { formatTime } from "@/lib/timezone/core";
 
+import { HubNotice } from "../_components/hub-notice";
 import {
   getLiveLeaderboards,
   parseLiveLeaderboardRank,
@@ -28,6 +24,11 @@ import {
   type LiveLeaderboardView,
 } from "./_queries/live-leaderboards";
 import { LiveLeaderboardsRanklist } from "./_components/live-leaderboards-ranklist";
+import { LeaderboardRankSelect } from "./_components/rank-select";
+import {
+  LeaderboardsKpiSkeleton,
+  LeaderboardsRanklistSkeleton,
+} from "./_components/list-skeletons";
 
 export const metadata = { title: "Live Leaderboards · Creator Hub" };
 
@@ -37,25 +38,6 @@ const VIEW_CHIPS = [
   { value: "ended", label: "Ended" },
   { value: "all", label: "All" },
 ] as const;
-
-const SORT_CHIPS = [
-  { value: "house_cost", label: "House cost ↓" },
-  { value: "house_cost_asc", label: "House cost ↑" },
-  { value: "prize_pool", label: "Prize ↓" },
-  { value: "prize_pool_asc", label: "Prize ↑" },
-  { value: "wager", label: "Wager ↓" },
-  { value: "wager_asc", label: "Wager ↑" },
-  { value: "ending_soon", label: "Ending soon" },
-  { value: "starting_soon", label: "Starting soon" },
-  { value: "recently_ended", label: "Recently ended" },
-] as const;
-
-const VIEW_SUBTITLES: Record<LiveLeaderboardView, string> = {
-  active: "Creator leaderboards running right now",
-  upcoming: "Approved boards scheduled to start",
-  ended: "Completed creator affiliate leaderboards",
-  all: "Every approved creator leaderboard — all lifecycle stages",
-};
 
 /**
  * Per-request memo so the two streamed sections below (KPI strip + ranklist)
@@ -80,45 +62,42 @@ export default async function CreatorHubLeaderboardsPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Trophy}
-          accent="amber"
-          title="Live Leaderboards"
-          subtitle={VIEW_SUBTITLES[view]}
-        />
-      </PageHero>
-
-      {/* KPI strip — streams on its own; the filter/sort chips below stay
-          mounted in the shell so a filter switch never removes the control
-          the manager just clicked. */}
-      <Suspense key={`kpis:${view}:${rank}`} fallback={<KpiSkeleton />}>
-        <KpiSection rank={rank} view={view} />
-      </Suspense>
-
+      {/* Page opener — SectionHeading owns the page identity (the old
+          PageHero title block renders nothing by owner decision). The
+          controls live in its action slot so they stay mounted in the shell:
+          a filter/sort switch never removes the control just clicked. */}
       <div className="space-y-3">
-        <SectionHeading icon={ListOrdered} title="Ranked boards" />
-        <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
-          <PeriodChips
-            items={VIEW_CHIPS}
-            current={view}
-            paramKey="view"
-            defaultValue="active"
-            ariaNoun="filter"
-          />
-          <PeriodChips
-            items={SORT_CHIPS}
-            current={rank}
-            paramKey="rank"
-            defaultValue="house_cost"
-            ariaNoun="sort"
-            className="xl:max-w-[720px]"
-          />
-        </div>
-        <Suspense key={`rows:${view}:${rank}`} fallback={<RanklistSkeleton />}>
-          <RanklistSection rank={rank} view={view} />
+        <SectionHeading
+          icon={Trophy}
+          title="Live Leaderboards"
+          action={
+            <>
+              <PeriodChips
+                items={VIEW_CHIPS}
+                current={view}
+                paramKey="view"
+                defaultValue="active"
+                ariaNoun="filter"
+              />
+              <LeaderboardRankSelect current={rank} />
+            </>
+          }
+        />
+
+        {/* KPI strip — keyed on the VIEW only: the tiles are sums over the
+            visible set, so re-sorting can't change them. Keeping `rank` out
+            of the key means a sort switch doesn't re-skeleton the strip. */}
+        <Suspense key={`kpis:${view}`} fallback={<LeaderboardsKpiSkeleton />}>
+          <KpiSection rank={rank} view={view} />
         </Suspense>
       </div>
+
+      <Suspense
+        key={`rows:${view}:${rank}`}
+        fallback={<LeaderboardsRanklistSkeleton />}
+      >
+        <RanklistSection rank={rank} view={view} />
+      </Suspense>
     </div>
   );
 }
@@ -143,42 +122,48 @@ async function KpiSection({
 
   return (
     <FadeIn>
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-        <KpiTile
-          label="Live Now"
-          value={formatNumber(data.activeCount)}
-          sub={liveSub}
-          icon={Activity}
-          accent="emerald"
-        />
-        <KpiTile
-          label="View House Cost"
-          value={formatCurrency(data.viewHouseCostUsd)}
-          sub="Σ pool × house share"
-          icon={Coins}
-          accent="rose"
-        />
-        <KpiTile
-          label="View Prize Pools"
-          value={formatCurrency(data.viewPrizeUsd)}
-          sub="full pools, net of refunds"
-          icon={Layers}
-          accent="blue"
-        />
-        <KpiTile
-          label="View Wager"
-          value={formatCurrency(data.viewWagerUsd)}
-          sub="code-scoped window total"
-          icon={Wallet}
-          accent="emerald"
-        />
-        <KpiTile
-          label="Blended House Share"
-          value={`${data.viewHouseSharePct.toFixed(1)}%`}
-          sub="prize-weighted — the % we pay"
-          icon={Percent}
-          accent="rose"
-        />
+      <div className="space-y-3">
+        <p className="text-xs text-muted-foreground">
+          as of {formatTime(data.snapshotMs)} UTC · refreshes every 60s
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <KpiTile
+            label="Live Now"
+            value={formatNumber(data.activeCount)}
+            sub={liveSub}
+            icon={Activity}
+            accent="emerald"
+            live={data.activeCount > 0}
+          />
+          <KpiTile
+            label="View House Cost"
+            value={formatCurrency(data.viewHouseCostUsd)}
+            sub="Σ pool × house share"
+            icon={Coins}
+            accent="rose"
+          />
+          <KpiTile
+            label="View Prize Pools"
+            value={formatCurrency(data.viewPrizeUsd)}
+            sub="full pools, net of refunds"
+            icon={Layers}
+            accent="blue"
+          />
+          <KpiTile
+            label="View Wager"
+            value={formatCurrency(data.viewWagerUsd)}
+            sub="code-scoped window total"
+            icon={Wallet}
+            accent="emerald"
+          />
+          <KpiTile
+            label="Blended House Share"
+            value={`${data.viewHouseSharePct.toFixed(1)}%`}
+            sub="prize-weighted — the % we pay"
+            icon={Percent}
+            accent="rose"
+          />
+        </div>
       </div>
     </FadeIn>
   );
@@ -193,33 +178,31 @@ async function RanklistSection({
 }) {
   const data = await loadLeaderboards(rank, view);
 
+  const degraded: string[] = [];
+  if (data.sponsorshipUnavailable) {
+    degraded.push(
+      "the house-share lookup failed, so every board is shown at 100% house share (house cost may be overstated)",
+    );
+  }
+  if (data.usernamesUnavailable) {
+    degraded.push("creator usernames couldn't be resolved (rows show raw ids)");
+  }
+
   return (
     <FadeIn>
-      <LiveLeaderboardsRanklist
-        rows={data.rows}
-        view={view}
-        backendUnavailable={data.backendUnavailable}
-      />
+      <div className="space-y-3">
+        {degraded.length > 0 && (
+          <HubNotice tone="amber" icon={AlertTriangle} title="Partial data">
+            {degraded.join("; ")}. The figures refresh automatically — retry in
+            a minute.
+          </HubNotice>
+        )}
+        <LiveLeaderboardsRanklist
+          rows={data.rows}
+          view={view}
+          backendUnavailable={data.backendUnavailable}
+        />
+      </div>
     </FadeIn>
-  );
-}
-
-function KpiSkeleton() {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Skeleton key={i} className="h-[88px] rounded-xl" />
-      ))}
-    </div>
-  );
-}
-
-function RanklistSkeleton() {
-  return (
-    <div className="space-y-2.5">
-      {Array.from({ length: 5 }).map((_, i) => (
-        <Skeleton key={i} className="h-[80px] rounded-xl" />
-      ))}
-    </div>
   );
 }

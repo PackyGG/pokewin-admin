@@ -165,6 +165,14 @@ export type LiveLeaderboardsResult = {
   viewWagerUsd: number;
   /** True when the backend leaderboard walk failed (UI shows an error state). */
   backendUnavailable: boolean;
+  /**
+   * True when the sponsorship (house-share %) lookup failed and every board
+   * fell back to 100% house share — the UI flags this instead of silently
+   * over-stating house cost.
+   */
+  sponsorshipUnavailable: boolean;
+  /** True when the MAIN username hydration failed (rows show raw ids). */
+  usernamesUnavailable: boolean;
   /** Request-time snapshot clock (ms epoch) the buckets/edges were computed against. */
   snapshotMs: number;
 };
@@ -213,6 +221,7 @@ const getLiveLeaderboardsBase = unstable_cache(
   async (): Promise<{
     rows: LiveLeaderboardBaseRow[];
     backendUnavailable: boolean;
+    sponsorshipUnavailable: boolean;
     snapshotMs: number;
   }> => {
     const snapshotMs = Date.now();
@@ -224,13 +233,21 @@ const getLiveLeaderboardsBase = unstable_cache(
         "[live-leaderboards] approved-board walk failed (ranklist empty):",
         e,
       );
-      return { rows: [], backendUnavailable: true, snapshotMs };
+      return {
+        rows: [],
+        backendUnavailable: true,
+        sponsorshipUnavailable: false,
+        snapshotMs,
+      };
     }
 
     // Sponsored % per board (house share). Resilient: a blip → treat every
     // board as 100% (house cost collapses to the un-weighted pool) rather than
-    // blanking the whole list. Same fallback as leaderboard-cost.ts.
+    // blanking the whole list. Same fallback as leaderboard-cost.ts — but the
+    // degradation is FLAGGED so the UI can say so instead of silently
+    // over-stating house cost.
     let sponsorship: Map<string, number>;
+    let sponsorshipUnavailable = false;
     try {
       sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
     } catch (e) {
@@ -239,6 +256,7 @@ const getLiveLeaderboardsBase = unstable_cache(
         e,
       );
       sponsorship = new Map();
+      sponsorshipUnavailable = all.length > 0;
     }
 
     const rows: Omit<LiveLeaderboardRow, "creatorUsername" | "wagerUsd">[] = [];
@@ -289,9 +307,9 @@ const getLiveLeaderboardsBase = unstable_cache(
         msUntilEdge,
       });
     }
-    return { rows, backendUnavailable: false, snapshotMs };
+    return { rows, backendUnavailable: false, sponsorshipUnavailable, snapshotMs };
   },
-  ["creator-hub:live-leaderboards:base:v2"],
+  ["creator-hub:live-leaderboards:base:v3"],
   { revalidate: 60, tags: ["creator-hub-live-leaderboards"] },
 );
 
@@ -412,6 +430,7 @@ export async function getLiveLeaderboards(
     ...new Set(viewFilteredBase.map((r) => r.creatorUserId)),
   ];
   let creatorMap = new Map<string, string | null>();
+  let usernamesUnavailable = false;
   if (creatorIds.length > 0) {
     try {
       const db = await getReadDrizzleDb();
@@ -425,6 +444,7 @@ export async function getLiveLeaderboards(
         "[live-leaderboards] username hydration failed (rows show id):",
         e,
       );
+      usernamesUnavailable = true;
     }
   }
 
@@ -456,6 +476,8 @@ export async function getLiveLeaderboards(
     viewHouseSharePct,
     viewWagerUsd,
     backendUnavailable: base.backendUnavailable,
+    sponsorshipUnavailable: base.sponsorshipUnavailable,
+    usernamesUnavailable,
     snapshotMs: base.snapshotMs,
   };
 }
