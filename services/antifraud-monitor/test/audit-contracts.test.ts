@@ -198,7 +198,7 @@ const runtimeConfig: Config = {
   FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
   FIAT_ALERT_DASHBOARD_URL:
-    "https://admin.packydash.com/fiat?tab=payments",
+    "https://fraud.packydash.com/fiat-deposits",
   ALLOWED_ORIGINS: "https://fraud.packydash.com",
   API_RATE_LIMIT_PER_MINUTE: 300,
   API_WRITE_RATE_LIMIT_PER_MINUTE: 30,

@@ -47,8 +47,25 @@ export type FiatProblem = {
 };
 
 type PendingFiatAlert = FiatProblem & {
+  destination: FiatAlertDestination;
   attempt_count: number;
 };
+
+export const FIAT_ALERT_DESTINATIONS = [
+  "antifraud_risk",
+  "fiat_operations",
+  "email_blacklist",
+] as const;
+
+export type FiatAlertDestination =
+  (typeof FIAT_ALERT_DESTINATIONS)[number];
+
+type FiatAlertWebhookConfig = Pick<
+  Config,
+  | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
+  | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
+  | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
+>;
 
 type DiscordPayload = {
   username: string;
@@ -510,22 +527,33 @@ export async function fetchHighRiskFiatProblems(
   return result.rows;
 }
 
-export function fiatAlertWebhookUrl(
-  config: Pick<
-    Config,
-    | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
-    | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
-    | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
-  >,
+export function fiatAlertDestinations(
   problemCode: FiatProblemCode,
-): string | undefined {
+): readonly FiatAlertDestination[] {
   if (problemCode === "blacklisted_email_domain") {
-    return config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
+    return ["email_blacklist"];
   }
-  if (isFiatRiskProblem(problemCode)) {
-    return config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
+  if (
+    problemCode === "high_risk" ||
+    problemCode === "fiat_locked_account"
+  ) {
+    return ["antifraud_risk", "fiat_operations"];
   }
-  return config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+  return ["fiat_operations"];
+}
+
+export function fiatAlertWebhookUrl(
+  config: FiatAlertWebhookConfig,
+  destination: FiatAlertDestination,
+): string | undefined {
+  switch (destination) {
+    case "antifraud_risk":
+      return config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
+    case "fiat_operations":
+      return config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+    case "email_blacklist":
+      return config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
+  }
 }
 
 export class FiatProblemAlerts {
@@ -551,6 +579,7 @@ export class FiatProblemAlerts {
   async process(): Promise<void> {
     await this.captureHighRiskAssessments();
     await this.capture();
+    await this.syncDeliveries();
     await this.deliver();
   }
 
@@ -668,14 +697,41 @@ export class FiatProblemAlerts {
     }
   }
 
+  private async syncDeliveries(): Promise<void> {
+    await this.db.antifraud.query(
+      `
+        INSERT INTO fiat_problem_alert_deliveries (
+          source_kind, source_id, destination
+        )
+        SELECT
+          alert.source_kind,
+          alert.source_id,
+          destination.destination
+        FROM fiat_problem_alert_outbox AS alert
+        CROSS JOIN LATERAL (
+          SELECT 'email_blacklist'::text AS destination
+          WHERE alert.problem_code = 'blacklisted_email_domain'
+
+          UNION ALL
+
+          SELECT 'antifraud_risk'::text
+          WHERE alert.problem_code IN ('high_risk', 'fiat_locked_account')
+
+          UNION ALL
+
+          SELECT 'fiat_operations'::text
+          WHERE alert.problem_code <> 'blacklisted_email_domain'
+        ) AS destination
+        ON CONFLICT (source_kind, source_id, destination) DO NOTHING
+      `,
+    );
+  }
+
   private async deliver(): Promise<void> {
     const operationsWebhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
-    const riskWebhookUrl =
-      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
-    const blacklistWebhookUrl = fiatAlertWebhookUrl(
-      this.config,
-      "blacklisted_email_domain",
-    );
+    const riskWebhookUrl = this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
+    const blacklistWebhookUrl =
+      this.config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
     if (
       !operationsWebhookUrl &&
       !riskWebhookUrl &&
@@ -687,30 +743,41 @@ export class FiatProblemAlerts {
     const pending = await this.db.antifraud.query<PendingFiatAlert>(
       `
         SELECT
-          source_kind, source_id, problem_code, user_id, username, details,
-          occurred_at, attempt_count
-        FROM fiat_problem_alert_outbox
-        WHERE discord_delivered_at IS NULL
-          AND next_attempt_at <= now()
+          alert.source_kind,
+          alert.source_id,
+          alert.problem_code,
+          alert.user_id,
+          alert.username,
+          alert.details,
+          alert.occurred_at,
+          delivery.destination,
+          delivery.attempt_count
+        FROM fiat_problem_alert_deliveries AS delivery
+        JOIN fiat_problem_alert_outbox AS alert
+          USING (source_kind, source_id)
+        WHERE delivery.delivered_at IS NULL
+          AND delivery.next_attempt_at <= now()
+          AND alert.next_attempt_at <= now()
           AND (
             (
-              problem_code = 'blacklisted_email_domain'
+              delivery.destination = 'email_blacklist'
+              AND $1::boolean
+            )
+            OR
+            (
+              delivery.destination = 'antifraud_risk'
               AND $2::boolean
             )
             OR
             (
-              problem_code = ANY($1::text[])
-              AND problem_code <> 'blacklisted_email_domain'
+              delivery.destination = 'fiat_operations'
               AND $3::boolean
             )
-            OR
-            (problem_code <> ALL($1::text[]) AND $4::boolean)
           )
-        ORDER BY occurred_at
+        ORDER BY alert.occurred_at, delivery.destination
         LIMIT 1
       `,
       [
-        FIAT_RISK_PROBLEM_CODES,
         Boolean(blacklistWebhookUrl),
         Boolean(riskWebhookUrl),
         Boolean(operationsWebhookUrl),
@@ -720,7 +787,7 @@ export class FiatProblemAlerts {
     for (const problem of pending.rows) {
       const webhookUrl = fiatAlertWebhookUrl(
         this.config,
-        problem.problem_code,
+        problem.destination,
       );
       if (!webhookUrl) continue;
       const delivery = await this.send(webhookUrl, problem);
@@ -730,33 +797,76 @@ export class FiatProblemAlerts {
         Math.min(300, 2 ** Math.min(attempt, 8));
       await this.db.antifraud.query(
         `
-          UPDATE fiat_problem_alert_outbox
+          UPDATE fiat_problem_alert_deliveries
           SET
-            discord_delivered_at = CASE
-              WHEN $3::boolean THEN COALESCE(discord_delivered_at, now())
-              ELSE discord_delivered_at
+            delivered_at = CASE
+              WHEN $4::boolean THEN COALESCE(delivered_at, now())
+              ELSE delivered_at
             END,
-            attempt_count = $4,
+            attempt_count = $5,
             next_attempt_at = CASE
-              WHEN $3::boolean THEN now()
-              ELSE now() + ($5::text || ' seconds')::interval
+              WHEN $4::boolean THEN now()
+              ELSE now() + ($6::text || ' seconds')::interval
             END,
             last_error = CASE
-              WHEN $3::boolean THEN NULL
+              WHEN $4::boolean THEN NULL
               ELSE 'Discord delivery failed'
             END,
             updated_at = now()
-          WHERE source_kind = $1 AND source_id = $2
+          WHERE source_kind = $1
+            AND source_id = $2
+            AND destination = $3
         `,
         [
           problem.source_kind,
           problem.source_id,
+          problem.destination,
           delivery.delivered,
           attempt,
           retrySeconds,
         ],
       );
+      await this.refreshLegacyDeliveryState(problem);
     }
+  }
+
+  private async refreshLegacyDeliveryState(
+    problem: PendingFiatAlert,
+  ): Promise<void> {
+    await this.db.antifraud.query(
+      `
+        WITH delivery_state AS (
+          SELECT
+            count(*) FILTER (WHERE delivered_at IS NULL) AS pending_count,
+            COALESCE(sum(attempt_count), 0)::integer AS attempt_count,
+            min(next_attempt_at) FILTER (
+              WHERE delivered_at IS NULL
+            ) AS next_attempt_at,
+            string_agg(last_error, '; ' ORDER BY destination) FILTER (
+              WHERE delivered_at IS NULL AND last_error IS NOT NULL
+            ) AS last_error
+          FROM fiat_problem_alert_deliveries
+          WHERE source_kind = $1 AND source_id = $2
+        )
+        UPDATE fiat_problem_alert_outbox AS alert
+        SET
+          discord_delivered_at = CASE
+            WHEN state.pending_count = 0
+              THEN COALESCE(alert.discord_delivered_at, now())
+            ELSE NULL
+          END,
+          attempt_count = state.attempt_count,
+          next_attempt_at = COALESCE(
+            state.next_attempt_at,
+            'infinity'::timestamptz
+          ),
+          last_error = state.last_error,
+          updated_at = now()
+        FROM delivery_state AS state
+        WHERE alert.source_kind = $1 AND alert.source_id = $2
+      `,
+      [problem.source_kind, problem.source_id],
+    );
   }
 
   private async send(
