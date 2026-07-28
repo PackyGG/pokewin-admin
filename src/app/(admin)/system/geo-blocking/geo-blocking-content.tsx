@@ -647,8 +647,8 @@ export function GeoBlockingContent({
           ))}
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          Ukraine region rows are stored here now. Runtime enforcement for
-          those four subdivisions begins when backend PR #470 is deployed.
+          Ukraine subdivision enforcement is live. The four region rows use
+          the same runtime restriction path as countries and US states.
         </p>
       </div>
 

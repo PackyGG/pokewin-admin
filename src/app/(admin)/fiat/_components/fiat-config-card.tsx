@@ -306,7 +306,8 @@ export function FiatConfigCard({
                   {MANDATORY_FIAT_JURISDICTION_CODES.length}.
                 </span>
                 <span>
-                  Ukraine subdivision enforcement requires backend PR #470.
+                  Backend subdivision enforcement is live; this switch seeds
+                  and locks all 33 policy rows.
                 </span>
               </div>
 
