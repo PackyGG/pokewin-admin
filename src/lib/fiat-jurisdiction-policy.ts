@@ -2,12 +2,33 @@ import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 
 export const CREDIT_CARD_DEPOSIT_METHOD = "credit_card";
 export const LEGACY_FIAT_DEPOSIT_METHOD = "fiat";
+export const GEO_POLICY_SITE_CONFIG_KEYS = ["locked_deposits_fiat"] as const;
 export const WHOP_FIAT_DEPOSIT_LOCK_TOKENS = [
   CREDIT_CARD_DEPOSIT_METHOD,
   "apple_pay",
   "google_pay",
   "cash_app",
   "cashapp",
+] as const;
+
+/**
+ * Exact backend lock names used by deposit-address and withdrawal routes.
+ * Keep these concrete instead of relying on the special `all` token: current
+ * withdrawal routes understand `all`, while deposit-address filtering checks
+ * concrete asset names.
+ */
+export const CRYPTO_RESTRICTION_TOKENS = [
+  "bitcoin",
+  "ethereum",
+  "litecoin",
+  "solana",
+  "usdt_erc20",
+  "usdt_trc20",
+  "usdt_sol",
+  "usdc_erc20",
+  "usdc_sol",
+  "doge",
+  "xrp",
 ] as const;
 
 const WHOP_FIAT_DEPOSIT_LOCK_SET = new Set<string>([
@@ -155,17 +176,86 @@ export function hasAllWhopFiatDepositLocks(
   );
 }
 
+function withRequiredTokens(
+  methods: readonly string[],
+  required: readonly string[],
+): string[] {
+  return [...new Set([...methods, ...required])];
+}
+
+function hasAllRequiredTokens(
+  methods: readonly string[],
+  required: readonly string[],
+): boolean {
+  const configured = new Set(methods);
+  return required.every((method) => configured.has(method));
+}
+
+export function hasAllCryptoRestrictionTokens(
+  methods: readonly string[],
+): boolean {
+  return hasAllRequiredTokens(methods, CRYPTO_RESTRICTION_TOKENS);
+}
+
+/**
+ * A mandatory jurisdiction is a full legal exclusion, not only a landing-page
+ * redirect. Keep every independently enforced backend capability closed so a
+ * stale/missed frontend redirect cannot expose a direct money or code route.
+ */
+export function applyMandatoryJurisdictionPolicy(
+  row: CountryRestrictionRow,
+): CountryRestrictionRow {
+  if (!isMandatoryFiatJurisdiction(row.countryCode)) return row;
+
+  return {
+    ...row,
+    blocked: true,
+    physicalWithdrawal: false,
+    digitalWithdrawal: false,
+    giftCardDeposit: false,
+    promoCodeDeposit: false,
+    lockedDepositsCrypto: withRequiredTokens(
+      row.lockedDepositsCrypto,
+      CRYPTO_RESTRICTION_TOKENS,
+    ),
+    lockedDepositsFiat: withWhopFiatDepositLocks(row.lockedDepositsFiat),
+    lockedWithdrawalsCrypto: withRequiredTokens(
+      row.lockedWithdrawalsCrypto,
+      CRYPTO_RESTRICTION_TOKENS,
+    ),
+  };
+}
+
+export function isMandatoryJurisdictionPolicyEnforced(
+  row: CountryRestrictionRow,
+): boolean {
+  return (
+    isMandatoryFiatJurisdiction(row.countryCode) &&
+    row.blocked &&
+    !row.physicalWithdrawal &&
+    !row.digitalWithdrawal &&
+    !row.giftCardDeposit &&
+    !row.promoCodeDeposit &&
+    hasAllCryptoRestrictionTokens(row.lockedDepositsCrypto) &&
+    hasAllWhopFiatDepositLocks(row.lockedDepositsFiat) &&
+    hasAllCryptoRestrictionTokens(row.lockedWithdrawalsCrypto)
+  );
+}
+
 export function applyGlobalFiatPolicy(
   rows: readonly CountryRestrictionRow[],
   allowed: boolean,
 ): CountryRestrictionRow[] {
-  return rows.map((row) => ({
-    ...row,
-    lockedDepositsFiat:
-      !allowed || isMandatoryFiatJurisdiction(row.countryCode)
-        ? withWhopFiatDepositLocks(row.lockedDepositsFiat)
-        : withoutWhopFiatDepositLocks(row.lockedDepositsFiat),
-  }));
+  return rows.map((row) => {
+    const next = {
+      ...row,
+      lockedDepositsFiat:
+        !allowed || isMandatoryFiatJurisdiction(row.countryCode)
+          ? withWhopFiatDepositLocks(row.lockedDepositsFiat)
+          : withoutWhopFiatDepositLocks(row.lockedDepositsFiat),
+    };
+    return applyMandatoryJurisdictionPolicy(next);
+  });
 }
 
 export function isGlobalFiatPolicyActive(

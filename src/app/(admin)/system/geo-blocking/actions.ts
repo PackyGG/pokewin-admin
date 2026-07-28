@@ -22,6 +22,8 @@ import { resolveBackendApiConfig } from "@/lib/backend-api/config";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
   CREDIT_CARD_DEPOSIT_METHOD,
+  CRYPTO_RESTRICTION_TOKENS,
+  hasAllCryptoRestrictionTokens,
   hasAllWhopFiatDepositLocks,
   hasAnyWhopFiatDepositLock,
   isMandatoryFiatJurisdiction,
@@ -116,7 +118,7 @@ export async function updateCountryRestrictionArray(
   countryCode: string,
   field: string,
   values: string[]
-): Promise<void> {
+): Promise<{ countryRestrictionsCacheReloaded: boolean }> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
@@ -144,6 +146,16 @@ export async function updateCountryRestrictionArray(
       "Whop fiat deposits are required to stay locked for this policy jurisdiction.",
     );
   }
+  if (
+    isMandatoryFiatJurisdiction(countryCode) &&
+    (field === "locked_deposits_crypto" ||
+      field === "locked_withdrawals_crypto") &&
+    !hasAllCryptoRestrictionTokens(normalizedValues)
+  ) {
+    throw new Error(
+      "All crypto deposits and withdrawals must stay locked for this legal-policy jurisdiction.",
+    );
+  }
 
   const updated = await db
     .update(country_restrictions)
@@ -164,11 +176,15 @@ export async function updateCountryRestrictionArray(
     metadata: { country_code: countryCode, field, values: normalizedValues },
   });
 
-  after(() => {
-    invalidateCountryRestrictionsCache().catch(() => {});
-  });
+  const countryRestrictionsCache = await Promise.allSettled([
+    backendApi.post("/admin/invalidate-country-restrictions-cache"),
+  ]);
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
+  return {
+    countryRestrictionsCacheReloaded:
+      countryRestrictionsCache[0]?.status === "fulfilled",
+  };
 }
 
 /**
@@ -241,7 +257,7 @@ export async function toggleCountryRestriction(
   countryCode: string,
   field: string,
   value: boolean
-) {
+): Promise<{ countryRestrictionsCacheReloaded: boolean }> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_toggle_country_restriction", "toggle country restrictions");
@@ -254,13 +270,30 @@ export async function toggleCountryRestriction(
     "blocked",
   ];
   if (!validFields.includes(field)) throw new Error("Invalid field");
+  if (isMandatoryFiatJurisdiction(countryCode)) {
+    const weakensLegalPolicy =
+      (field === "blocked" && !value) ||
+      (field !== "blocked" && value);
+    if (weakensLegalPolicy) {
+      throw new Error(
+        "This jurisdiction is part of the mandatory legal block and cannot be opened individually.",
+      );
+    }
+  }
 
   const valuesToSet = {
     [field]: value,
     updated_at: new Date().toISOString(),
     ...(isMandatoryFiatJurisdiction(countryCode)
       ? {
+          blocked: true,
+          physical_withdrawal: false,
+          digital_withdrawal: false,
+          gift_card_deposit: false,
+          promo_code_deposit: false,
+          locked_deposits_crypto: [...CRYPTO_RESTRICTION_TOKENS],
           locked_deposits_fiat: normalizedWhopFiatLocksSql(true),
+          locked_withdrawals_crypto: [...CRYPTO_RESTRICTION_TOKENS],
         }
       : {}),
   };
@@ -277,11 +310,15 @@ export async function toggleCountryRestriction(
     metadata: { country_code: countryCode, field, value },
   });
 
-  after(() => {
-    invalidateCountryRestrictionsCache().catch(() => {});
-  });
+  const countryRestrictionsCache = await Promise.allSettled([
+    backendApi.post("/admin/invalidate-country-restrictions-cache"),
+  ]);
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
+  return {
+    countryRestrictionsCacheReloaded:
+      countryRestrictionsCache[0]?.status === "fulfilled",
+  };
 }
 
 /**
@@ -422,6 +459,28 @@ export async function setGlobalFiatDeposits(
           RETURNING country_code
         `);
 
+    // The 33-row legal policy is broader than the Whop method lock. Reassert
+    // every independently enforced route restriction whenever this adjacent
+    // global control runs so old/partial rows cannot survive unnoticed.
+    await tx.execute(sql`
+      UPDATE country_restrictions
+      SET
+        blocked = true,
+        physical_withdrawal = false,
+        digital_withdrawal = false,
+        gift_card_deposit = false,
+        promo_code_deposit = false,
+        locked_deposits_crypto =
+          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
+        locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
+        locked_withdrawals_crypto =
+          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
+        updated_at = NOW()
+      WHERE country_code = ANY(
+        ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
+      )
+    `);
+
     return {
       affected: updated.rows.length,
       protected: MANDATORY_FIAT_JURISDICTION_CODES.length,
@@ -482,9 +541,21 @@ export async function setGlobalPhysicalItemWithdrawals(
     WITH changed_rows AS (
       UPDATE country_restrictions
       SET
-        physical_withdrawal = ${enabled},
+        physical_withdrawal = CASE
+          WHEN country_code = ANY(
+            ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
+          )
+            THEN false
+          ELSE ${enabled}
+        END,
         updated_at = NOW()
-      WHERE physical_withdrawal IS DISTINCT FROM ${enabled}
+      WHERE physical_withdrawal IS DISTINCT FROM CASE
+        WHEN country_code = ANY(
+          ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
+        )
+          THEN false
+        ELSE ${enabled}
+      END
       RETURNING 1
     )
     SELECT
@@ -531,6 +602,11 @@ export async function setMandatoryJurisdictionsGeoBlocked(
     "__can_toggle_country_restriction",
     "toggle country restrictions",
   );
+  if (!blocked) {
+    throw new Error(
+      "The mandatory legal-policy jurisdictions cannot be globally unblocked.",
+    );
+  }
 
   const result = await db.transaction(async (tx) => {
     const inserted = await tx
@@ -546,8 +622,16 @@ export async function setMandatoryJurisdictionsGeoBlocked(
     const updated = await tx.execute<{ country_code: string }>(sql`
       UPDATE country_restrictions
       SET
-        blocked = ${blocked},
+        blocked = true,
+        physical_withdrawal = false,
+        digital_withdrawal = false,
+        gift_card_deposit = false,
+        promo_code_deposit = false,
+        locked_deposits_crypto =
+          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
         locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
+        locked_withdrawals_crypto =
+          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
         updated_at = NOW()
       WHERE country_code = ANY(
         ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
@@ -563,7 +647,7 @@ export async function setMandatoryJurisdictionsGeoBlocked(
     eventType: "country_restriction_updated",
     metadata: {
       action: "mandatory_jurisdictions_geo_block",
-      blocked,
+      blocked: true,
       affected: result.affected,
       seeded: result.seeded,
     },

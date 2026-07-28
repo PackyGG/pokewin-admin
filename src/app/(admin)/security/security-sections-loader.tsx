@@ -31,6 +31,7 @@ import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
 import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 import type { TelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
+import { GEO_POLICY_SITE_CONFIG_KEYS } from "@/lib/fiat-jurisdiction-policy";
 
 /**
  * Async data loader for the /security sections. Lives behind a <Suspense>
@@ -94,6 +95,9 @@ export async function SecuritySectionsLoader() {
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
     ...TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS,
     ...KENO_SITE_CONFIG_KEYS,
+    // Owned by /fiat and /system/geo-blocking. Raw edits here would change
+    // the site-wide lock without atomically updating the 305 location rows.
+    ...GEO_POLICY_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>

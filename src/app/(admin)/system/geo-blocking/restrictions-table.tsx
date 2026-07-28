@@ -137,25 +137,20 @@ export function countActiveRestrictions(
   return n;
 }
 
-// ⚠️ These `value` strings are STORED in country_restrictions.locked_deposits_crypto /
-// locked_withdrawals_crypto and read by the GAME BACKEND (packy-backend) to enforce the
-// lock. The first five are the confirmed live values already in prod. The six marked NEW
-// are best-guess strings following the existing naming convention (full coin name; USDx
-// suffixed by network) to cover all 11 supported assets — VERIFY each against packy-backend
-// before relying on it, because a value the backend doesn't recognise = the lock silently
-// does nothing.
+// Exact values stored in country_restrictions and consumed by the backend's
+// deposit-address and withdrawal asset maps.
 export const CRYPTO_OPTIONS = [
   { value: "bitcoin", label: "Bitcoin (BTC)" },
   { value: "ethereum", label: "Ethereum (ETH)" },
-  { value: "litecoin", label: "Litecoin (LTC)" }, // NEW — verify string
+  { value: "litecoin", label: "Litecoin (LTC)" },
   { value: "solana", label: "Solana (SOL)" },
   { value: "usdt_erc20", label: "USDT (ERC20)" },
   { value: "usdt_trc20", label: "USDT (TRC20)" },
-  { value: "usdt_sol", label: "USDT (Solana)" }, // NEW — verify string
-  { value: "usdc_erc20", label: "USDC (ERC20)" }, // NEW — verify string
-  { value: "usdc_sol", label: "USDC (Solana)" }, // NEW — verify string
-  { value: "dogecoin", label: "Dogecoin (DOGE)" }, // NEW — verify string
-  { value: "ripple", label: "XRP" }, // NEW — verify string
+  { value: "usdt_sol", label: "USDT (Solana)" },
+  { value: "usdc_erc20", label: "USDC (ERC20)" },
+  { value: "usdc_sol", label: "USDC (Solana)" },
+  { value: "doge", label: "Dogecoin (DOGE)" },
+  { value: "xrp", label: "XRP" },
 ];
 
 // One switch owns the complete Whop checkout. The backend security gate uses
@@ -321,8 +316,9 @@ function RowDetail({
         <div className="mb-4 flex items-start gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
           <Ban className="mt-0.5 size-3.5 shrink-0" />
           <span>
-            This country is fully geo-blocked — users can&apos;t reach the site, so the
-            deposit / withdrawal settings below don&apos;t apply. Unblock it to edit them.
+            {mandatoryFiatLock
+              ? "This legal-policy jurisdiction is fully blocked. Direct deposit, withdrawal, and code routes stay disabled as defense in depth."
+              : "This country is fully geo-blocked — users can’t reach the site, so the deposit and withdrawal settings below don’t apply. Unblock it to edit them."}
           </span>
         </div>
       )}
@@ -528,7 +524,15 @@ export function RestrictionsTable({
                         <Switch
                           checked={row.blocked}
                           onCheckedChange={() => onToggle(row.code, "blocked", row.blocked)}
-                          disabled={rowPending}
+                          disabled={
+                            rowPending ||
+                            (isMandatoryFiatJurisdiction(row.code) && row.blocked)
+                          }
+                          aria-label={
+                            isMandatoryFiatJurisdiction(row.code)
+                              ? "Mandatory legal geo block"
+                              : undefined
+                          }
                         />
                         <span
                           className={cn(
@@ -595,7 +599,15 @@ export function RestrictionsTable({
                   <Switch
                     checked={row.blocked}
                     onCheckedChange={() => onToggle(row.code, "blocked", row.blocked)}
-                    disabled={rowPending}
+                    disabled={
+                      rowPending ||
+                      (isMandatoryFiatJurisdiction(row.code) && row.blocked)
+                    }
+                    aria-label={
+                      isMandatoryFiatJurisdiction(row.code)
+                        ? "Mandatory legal geo block"
+                        : undefined
+                    }
                   />
                   <span
                     className={cn(

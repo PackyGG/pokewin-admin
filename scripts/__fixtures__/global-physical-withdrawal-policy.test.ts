@@ -26,8 +26,9 @@ test("global physical switch changes only the physical location flag", () => {
     /export async function setGlobalPhysicalItemWithdrawals[\s\S]*?\r?\n}\r?\n\r?\nexport async function setMandatoryJurisdictionsGeoBlocked/,
   )?.[0];
   assert.ok(action);
-  assert.match(action, /physical_withdrawal = \$\{enabled\}/);
-  assert.match(action, /physical_withdrawal IS DISTINCT FROM \$\{enabled\}/);
+  assert.match(action, /physical_withdrawal = CASE/);
+  assert.match(action, /THEN false[\s\S]*ELSE \$\{enabled\}/);
+  assert.match(action, /physical_withdrawal IS DISTINCT FROM CASE/);
   assert.match(
     action,
     /backendApi\.post\("\/admin\/invalidate-country-restrictions-cache"\)/,
@@ -43,14 +44,14 @@ test("Geo Blocking renders all three global controls on one desktop row", () => 
   assert.match(geoUiSource, /Geo-block policy jurisdictions/);
 });
 
-test("physical switch state and optimistic update cover every location row", () => {
+test("physical switch state and optimistic update preserve legal exclusions", () => {
   assert.match(
     geoUiSource,
-    /rows\.length > 0 && physicalAllowedCount === rows\.length/,
+    /ordinaryRows\.every\(\(row\) => row\.physicalWithdrawal\)/,
   );
   assert.match(
     geoUiSource,
-    /current\.map\(\(row\) => \(\{ \.\.\.row, physicalWithdrawal: enabled \}\)\)/,
+    /applyMandatoryJurisdictionPolicy\(row\)/,
   );
   assert.match(
     geoUiSource,

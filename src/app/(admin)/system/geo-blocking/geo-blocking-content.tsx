@@ -50,15 +50,16 @@ import {
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 import { isUsStateCode, usStateName } from "./us-states";
 import {
+  applyMandatoryJurisdictionPolicy,
   applyGlobalFiatPolicy,
   fiatJurisdictionName,
   FIAT_JURISDICTION_POLICY,
   hasAllWhopFiatDepositLocks,
   hasAnyWhopFiatDepositLock,
   isGlobalFiatPolicyActive,
+  isMandatoryJurisdictionPolicyEnforced,
   isMandatoryFiatJurisdiction,
   MANDATORY_FIAT_JURISDICTION_CODES,
-  withWhopFiatDepositLocks,
 } from "@/lib/fiat-jurisdiction-policy";
 
 countries.registerLocale(enLocale);
@@ -299,11 +300,15 @@ export function GeoBlockingContent({
   }
 
   function handlePolicyGeoBlock(blocked: boolean) {
+    if (!blocked) {
+      toast.error("The mandatory legal-policy jurisdictions cannot be unblocked.");
+      return;
+    }
     const previous = rows;
     setRows((current) =>
       current.map((row) =>
         isMandatoryFiatJurisdiction(row.countryCode)
-          ? { ...row, blocked }
+          ? applyMandatoryJurisdictionPolicy(row)
           : row,
       ),
     );
@@ -313,7 +318,7 @@ export function GeoBlockingContent({
         const res = await setMandatoryJurisdictionsGeoBlocked(blocked);
         if (res.countryRestrictionsCacheReloaded) {
           toast.success(
-            `${blocked ? "Geo-blocked" : "Unblocked"} ${res.affected} policy jurisdictions`,
+            `Enforced the complete legal block across ${res.affected} policy jurisdictions`,
           );
         } else {
           toast.warning(
@@ -338,7 +343,11 @@ export function GeoBlockingContent({
   function handleGlobalPhysicalItemWithdrawals(enabled: boolean) {
     const previous = rows;
     setRows((current) =>
-      current.map((row) => ({ ...row, physicalWithdrawal: enabled })),
+      current.map((row) =>
+        isMandatoryFiatJurisdiction(row.countryCode)
+          ? applyMandatoryJurisdictionPolicy(row)
+          : { ...row, physicalWithdrawal: enabled },
+      ),
     );
     setGlobalPhysicalPending(true);
     startTransition(async () => {
@@ -347,7 +356,7 @@ export function GeoBlockingContent({
         if (res.countryRestrictionsCacheReloaded) {
           toast.success(
             enabled
-              ? `Physical item withdrawals enabled across ${res.total} location entries`
+              ? `Physical item withdrawals enabled outside ${MANDATORY_FIAT_JURISDICTION_CODES.length} legal exclusions`
               : `Physical item withdrawals disabled across ${res.total} location entries`,
           );
         } else {
@@ -402,26 +411,39 @@ export function GeoBlockingContent({
   function handleToggle(countryCode: string, field: BooleanField, currentValue: boolean) {
     const next = !currentValue;
     const prop = BOOL_PROP[field];
-    const previousFiatLocks =
-      rows.find((row) => row.countryCode === countryCode)
-        ?.lockedDepositsFiat ?? [];
-    patchRow(countryCode, prop, next);
+    const previousRow = rows.find((row) => row.countryCode === countryCode);
     if (isMandatoryFiatJurisdiction(countryCode)) {
-      patchRow(
-        countryCode,
-        "lockedDepositsFiat",
-        withWhopFiatDepositLocks(previousFiatLocks),
+      setRows((current) =>
+        current.map((row) =>
+          row.countryCode === countryCode
+            ? applyMandatoryJurisdictionPolicy(row)
+            : row,
+        ),
       );
+    } else {
+      patchRow(countryCode, prop, next);
     }
     beginPending(countryCode);
     startTransition(async () => {
       try {
-        await toggleCountryRestriction(countryCode, field, next);
-        toast.success("Restriction updated");
+        const res = await toggleCountryRestriction(countryCode, field, next);
+        if (res.countryRestrictionsCacheReloaded) {
+          toast.success("Restriction updated");
+        } else {
+          toast.warning(
+            "The restriction was saved, but the backend cache did not reload. Use Reload cache before treating it as live.",
+            { duration: 12000 },
+          );
+        }
       } catch (e) {
-        patchRow(countryCode, prop, currentValue);
-        if (isMandatoryFiatJurisdiction(countryCode)) {
-          patchRow(countryCode, "lockedDepositsFiat", previousFiatLocks);
+        if (previousRow) {
+          setRows((current) =>
+            current.map((row) =>
+              row.countryCode === countryCode ? previousRow : row,
+            ),
+          );
+        } else {
+          patchRow(countryCode, prop, currentValue);
         }
         toast.error(e instanceof Error ? e.message : "Failed");
       } finally {
@@ -441,8 +463,19 @@ export function GeoBlockingContent({
     beginPending(countryCode);
     startTransition(async () => {
       try {
-        await updateCountryRestrictionArray(countryCode, field, newValues);
-        toast.success("Restriction updated");
+        const res = await updateCountryRestrictionArray(
+          countryCode,
+          field,
+          newValues,
+        );
+        if (res.countryRestrictionsCacheReloaded) {
+          toast.success("Restriction updated");
+        } else {
+          toast.warning(
+            "The restriction was saved, but the backend cache did not reload. Use Reload cache before treating it as live.",
+            { duration: 12000 },
+          );
+        }
       } catch (e) {
         patchRow(countryCode, prop, previousValues);
         toast.error(e instanceof Error ? e.message : "Failed");
@@ -491,10 +524,17 @@ export function GeoBlockingContent({
   const physicalAllowedCount = rows.filter(
     (row) => row.physicalWithdrawal,
   ).length;
+  const ordinaryRows = rows.filter(
+    (row) => !isMandatoryFiatJurisdiction(row.countryCode),
+  );
   const allPhysicalAllowed =
-    rows.length > 0 && physicalAllowedCount === rows.length;
+    ordinaryRows.length > 0 &&
+    ordinaryRows.every((row) => row.physicalWithdrawal) &&
+    rows
+      .filter((row) => isMandatoryFiatJurisdiction(row.countryCode))
+      .every((row) => !row.physicalWithdrawal);
   const globalPhysicalCaption = allPhysicalAllowed
-    ? `Enabled across all ${rows.length} location rows`
+    ? `Enabled outside ${MANDATORY_FIAT_JURISDICTION_CODES.length} legal exclusions`
     : physicalAllowedCount === 0
       ? `Disabled across all ${rows.length} location rows`
       : `${physicalAllowedCount}/${rows.length} location rows enabled`;
@@ -507,10 +547,11 @@ export function GeoBlockingContent({
   const policyFiatLocked = policyRows.filter((row) =>
     hasAllWhopFiatDepositLocks(row.lockedDepositsFiat),
   ).length;
-  const policyGeoBlocked = policyRows.filter((row) => row.blocked).length;
-  const allPolicyGeoBlocked =
-    policyRows.length === MANDATORY_FIAT_JURISDICTION_CODES.length &&
-    policyGeoBlocked === policyRows.length;
+  const policyFullyEnforced = rows.filter(
+    isMandatoryJurisdictionPolicyEnforced,
+  ).length;
+  const allPolicyFullyEnforced =
+    policyFullyEnforced === MANDATORY_FIAT_JURISDICTION_CODES.length;
   const globalFiatCaption =
     currentSiteLockedMethods === null
       ? "Site lock configuration could not be loaded"
@@ -691,15 +732,16 @@ export function GeoBlockingContent({
                   Geo-block policy jurisdictions
                 </div>
                 <div className="truncate text-xs text-muted-foreground">
-                  {policyGeoBlocked}/{MANDATORY_FIAT_JURISDICTION_CODES.length}{" "}
-                  blocked · fiat locks always on
+                  {policyFullyEnforced}/{MANDATORY_FIAT_JURISDICTION_CODES.length}{" "}
+                  fully restricted · site and direct routes
                 </div>
               </div>
             </div>
             <Switch
-              checked={allPolicyGeoBlocked}
-              disabled={policyGeoPending}
+              checked={allPolicyFullyEnforced}
+              disabled={policyGeoPending || allPolicyFullyEnforced}
               onCheckedChange={handlePolicyGeoBlock}
+              aria-label="Enforce mandatory legal geo blocks"
             />
           </div>
           <Collapsible open={policyListOpen} onOpenChange={setPolicyListOpen}>

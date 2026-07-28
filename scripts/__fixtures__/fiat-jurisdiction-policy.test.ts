@@ -2,12 +2,15 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  applyMandatoryJurisdictionPolicy,
   applyGlobalFiatPolicy,
+  CRYPTO_RESTRICTION_TOKENS,
   FIAT_JURISDICTION_POLICY,
   hasAllWhopFiatDepositLocks,
   hasAnyWhopFiatDepositLock,
   isCreditCardDepositLocked,
   isGlobalFiatPolicyActive,
+  isMandatoryJurisdictionPolicyEnforced,
   isMandatoryFiatJurisdiction,
   MANDATORY_FIAT_JURISDICTION_CODES,
   WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
@@ -134,10 +137,31 @@ test("global enablement opens ordinary locations and locks every policy row", ()
   assert.ok(
     enabled
       .filter((row) => row.countryCode !== "DE")
-      .every((row) => hasAllWhopFiatDepositLocks(row.lockedDepositsFiat)),
+      .every(isMandatoryJurisdictionPolicyEnforced),
   );
   assert.ok(isGlobalFiatPolicyActive([], enabled));
   assert.ok(!isGlobalFiatPolicyActive(["credit_card"], enabled));
+});
+
+test("mandatory policy closes every independently enforced direct route", () => {
+  const original = restriction("US-CA");
+  const enforced = applyMandatoryJurisdictionPolicy(original);
+
+  assert.equal(enforced.blocked, true);
+  assert.equal(enforced.physicalWithdrawal, false);
+  assert.equal(enforced.digitalWithdrawal, false);
+  assert.equal(enforced.giftCardDeposit, false);
+  assert.equal(enforced.promoCodeDeposit, false);
+  assert.deepEqual(enforced.lockedDepositsCrypto, [
+    ...CRYPTO_RESTRICTION_TOKENS,
+  ]);
+  assert.ok(hasAllWhopFiatDepositLocks(enforced.lockedDepositsFiat));
+  assert.deepEqual(enforced.lockedWithdrawalsCrypto, [
+    ...CRYPTO_RESTRICTION_TOKENS,
+  ]);
+  assert.ok(isMandatoryJurisdictionPolicyEnforced(enforced));
+  const ordinary = restriction("DE");
+  assert.equal(applyMandatoryJurisdictionPolicy(ordinary), ordinary);
 });
 
 test("global disablement locks every row and incomplete policy is never active", () => {
