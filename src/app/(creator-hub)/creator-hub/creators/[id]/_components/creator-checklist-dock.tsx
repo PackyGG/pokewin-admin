@@ -41,12 +41,15 @@ import { fetchCreatorChecklistForDock } from "./checklist-dock-actions";
  * Extract the creator id from a Creator-Hub detail pathname.
  *
  * Matches ONLY `/creator-hub/creators/<id>` (optionally with a trailing slash) —
- * the single-segment detail route. The bare roster (`/creator-hub/creators`)
- * and any deeper/other path return null so the dock never shows off the detail
- * page. The id segment is decoded + sanity-checked (non-empty, no slash).
+ * the single-segment detail route. On marketing.packydash.com the middleware
+ * rewrite strips the `/creator-hub` prefix from the browser URL, so the short
+ * form `/creators/<id>` matches too (this dock only renders inside the Hub
+ * layout, so the short form is unambiguous here). The bare roster and any
+ * deeper/other path return null so the dock never shows off the detail page.
+ * The id segment is decoded + sanity-checked (non-empty, no slash).
  */
 function creatorIdFromPath(pathname: string): string | null {
-  const match = pathname.match(/^\/creator-hub\/creators\/([^/]+)\/?$/);
+  const match = pathname.match(/^(?:\/creator-hub)?\/creators\/([^/]+)\/?$/);
   if (!match) return null;
   let id: string;
   try {

@@ -30,6 +30,8 @@ import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
 import { AppSwitcher, type AppSwitcherAccess } from "@/components/app-switcher";
+import { useAppHost } from "@/lib/use-app-host";
+import { hrefFrom } from "@/lib/app-hosts";
 
 /**
  * Creator Hub sidebar — the swapped nav rendered by the Creator Hub
@@ -95,25 +97,41 @@ function HubNavMenu({
   items,
   pathname,
   onNavTap,
+  toHref,
 }: {
   items: HubNavItem[];
   pathname: string;
   onNavTap: () => void;
+  /**
+   * Canonical path → the href for the current host. On marketing.packydash.com
+   * the `/creator-hub` prefix is stripped, which BOTH keeps the URL clean and
+   * keeps the active check below honest: after the middleware rewrite the
+   * browser URL is the short form, so comparing it against the long form would
+   * mark every item inactive.
+   */
+  toHref: (path: string) => string;
 }) {
+  const root = toHref("/creator-hub");
+  const activeHref = items
+    .map((item) => toHref(item.href))
+    .filter(
+      (href) =>
+        pathname === href || (href !== root && pathname.startsWith(href + "/")),
+    )
+    .sort((a, b) => b.length - a.length)[0];
+
   return (
     <SidebarMenu>
       {items.map((item, i) => {
         const Icon = item.icon;
-        const isActive =
-          pathname === item.href ||
-          (item.href !== "/creator-hub" &&
-            pathname.startsWith(item.href + "/"));
+        const href = toHref(item.href);
+        const isActive = href === activeHref;
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
-              render={<Link href={item.href} />}
+              render={<Link href={href} />}
               onClick={onNavTap}
               className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
             >
@@ -144,6 +162,11 @@ export function CreatorHubSidebar({
 } = {}) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
+  // Host-aware hrefs: on marketing.packydash.com the `/creator-hub` prefix is
+  // stripped from in-app links. Cross-app links are handled by the switcher's
+  // HostLink (a bare /dashboard here would be rewritten into this segment).
+  const appHost = useAppHost();
+  const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
   // applies — otherwise the new page renders behind the still-open sheet).
@@ -157,7 +180,7 @@ export function CreatorHubSidebar({
           Creator Hub title/subtitle sit below the logo when expanded. */}
       <SidebarHeader className="border-b border-border px-4 py-4 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-16 group-data-[collapsible=icon]:py-0">
         <Link
-          href="/creator-hub"
+          href={toHref("/creator-hub")}
           onClick={handleNavTap}
           title="Creator Hub"
           className="flex flex-col items-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
@@ -199,6 +222,7 @@ export function CreatorHubSidebar({
               items={HUB_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
+              toHref={toHref}
             />
           </SidebarGroupContent>
         </SidebarGroup>

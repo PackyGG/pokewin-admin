@@ -7,7 +7,7 @@
  *   packydash.com            → the main admin dashboard      (lands /dashboard)
  *   packs.packydash.com      → Pack Studio                   (lands /pack-studio)
  *   fraud.packydash.com      → the Antifraud workspace       (lands /antifraud)
- *   marketing.packydash.com  → the marketing surfaces        (lands /analytics)
+ *   marketing.packydash.com  → the Creator Hub               (lands /creator-hub)
  *
  * TWO KINDS OF HOST, and the distinction is the whole design:
  *
@@ -16,12 +16,8 @@
  *     owns the whole hostname and its URLs are clean.
  *
  *   • LANDING hosts (`basePath` null) don't rewrite anything — they serve the
- *     app at its canonical paths and only decide where `/` goes. The apex and
- *     `marketing` are landing hosts: the marketing surfaces are pages of the
- *     main admin app (`/analytics`, `/creators`, …), not a separate sub-app, so
- *     rewriting them into a segment would be inventing a route tree that
- *     doesn't exist. When a real marketing sub-app is built, giving it a
- *     `basePath` here is the only change needed.
+ *     app at its canonical paths and only decide where `/` goes. The apex is
+ *     the landing host: it serves the main admin app at canonical paths.
  *
  * CROSS-APP LINKS: because a segment host rewrites unknown paths into its own
  * tree, a bare `/dashboard` link would resolve to `/pack-studio/dashboard` and
@@ -174,15 +170,28 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     allowRoles: ["admin", "support", "marketing", "creator_manager"],
   },
   {
-    // No marketing sub-app exists — the marketing surfaces are pages of the
-    // main admin app. This is a LANDING host: same app, different front door,
-    // landing on /analytics instead of /dashboard.
+    // The Creator Hub — the creator/marketing team's workspace — owns this
+    // hostname as a SEGMENT host, so marketing.packydash.com/creators renders
+    // /creator-hub/creators with a clean URL, exactly like packs./fraud.
     host: `marketing.${ROOT_DOMAIN}`,
-    basePath: null,
-    segmentRoutes: [],
-    landing: "/analytics",
-    label: "Marketing",
-    allowRoles: ["admin", "marketing"],
+    basePath: "/creator-hub",
+    segmentRoutes: [
+      "creators",
+      "leaderboards",
+      "tips-sponsors",
+      "rewards",
+      "socials-review",
+      "profitability",
+      "profitable-algo",
+    ],
+    landing: "/creator-hub",
+    label: "Creator Hub",
+    // Mirrors the role half of `canAccessCreatorHub`: the per-role Hub
+    // toggles exist for admin + creator_manager. `marketing` stays listed so
+    // the old marketing front door doesn't hard-bounce that team at the
+    // routing layer — the DB-fresh layout gate (`canAccessCreatorHub`) is
+    // still the real boundary and decides who actually gets in.
+    allowRoles: ["admin", "creator_manager", "marketing"],
   },
 ];
 

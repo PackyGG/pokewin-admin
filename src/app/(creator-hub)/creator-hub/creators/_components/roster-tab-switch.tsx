@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { Coins, UserX, Zap } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useHostHref } from "@/lib/use-app-host";
 
 const TABS = [
   { value: "fill", label: "Fill Creators", Icon: Coins },
@@ -21,6 +22,10 @@ const TABS = [
  * but preserves grid/list `view`.
  */
 export function RosterTabSwitch() {
+  // Host-aware: `/creator-hub/creators` on the apex, `/creators` on
+  // marketing.packydash.com — keeps tab switches a clean soft navigation
+  // instead of bouncing through the middleware's canonicalizing redirect.
+  const rosterHref = useHostHref("/creator-hub/creators");
   const searchParams = useSearchParams();
   const raw = searchParams.get("tab");
   const current =
@@ -38,12 +43,10 @@ export function RosterTabSwitch() {
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
         const baseHref =
-          value === "fill"
-            ? "/creator-hub/creators"
-            : `/creator-hub/creators?tab=${value}`;
+          value === "fill" ? rosterHref : `${rosterHref}?tab=${value}`;
         const href = viewSuffix
           ? value === "fill"
-            ? `/creator-hub/creators?${viewSuffix}`
+            ? `${rosterHref}?${viewSuffix}`
             : `${baseHref}&${viewSuffix}`
           : baseHref;
         return (

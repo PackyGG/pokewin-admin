@@ -4,6 +4,7 @@ import Link from "next/link";
 
 import { cn } from "@/lib/utils";
 import type { CreatorSocialStatus } from "@/lib/backend-api";
+import { useHostHref } from "@/lib/use-app-host";
 
 const TABS: { key: CreatorSocialStatus; label: string }[] = [
   { key: "pending", label: "Pending" },
@@ -18,6 +19,9 @@ export function SocialsQueueTabs({
 }: {
   current: CreatorSocialStatus;
 }) {
+  // Host-aware: the `/creator-hub` prefix is stripped on the marketing
+  // subdomain, keeping status switches a clean soft navigation.
+  const reviewHref = useHostHref(HUB_SOCIALS_REVIEW_PATH);
   return (
     <nav className="flex flex-wrap gap-1 rounded-lg border border-pink-500/15 bg-background/40 p-1">
       {TABS.map((tab) => {
@@ -25,7 +29,7 @@ export function SocialsQueueTabs({
         return (
           <Link
             key={tab.key}
-            href={`${HUB_SOCIALS_REVIEW_PATH}?status=${tab.key}`}
+            href={`${reviewHref}?status=${tab.key}`}
             className={cn(
               "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
               active

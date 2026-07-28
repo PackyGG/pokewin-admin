@@ -35,7 +35,7 @@ export async function middleware(request: NextRequest) {
   //   packydash.com           → main dashboard   (landing host, no rewrite)
   //   packs.packydash.com     → Pack Studio      (rewrites into /pack-studio)
   //   fraud.packydash.com     → Antifraud        (rewrites into /antifraud)
-  //   marketing.packydash.com → marketing pages  (landing host, no rewrite)
+  //   marketing.packydash.com → Creator Hub      (rewrites into /creator-hub)
   //
   // INERT until a hostname actually resolves here: an unmatched Host yields
   // `appHost === null` and every line below behaves exactly as it did on a
@@ -168,9 +168,8 @@ export async function middleware(request: NextRequest) {
     const isSetup2FARoute = pathname === "/setup-2fa";
     if ((isPublicRoute || isPending2FARoute) && !isSetup2FARoute) {
       // Each host has its own landing page: a segment host's role routes
-      // (/dashboard, /users, …) don't exist there, and `marketing` deliberately
-      // lands on /analytics rather than the viewer's role default. Falling back
-      // to the role map keeps single-domain behaviour identical.
+      // (/dashboard, /users, …) don't exist there. Falling back to the role
+      // map keeps single-domain behaviour identical.
       //
       // On a segment host we bounce to "/" rather than to the base path
       // itself: the rewrite resolves "/" to the segment anyway, and this keeps
