@@ -61,6 +61,18 @@ export type DirectNotificationHistoryEntry = {
   /** Reward campaigns only — new codes minted, and the money they carry. */
   codesMinted: number;
   valueUsd: number | null;
+  /**
+   * Exact notification identities retained for read analytics. Older bulk
+   * audit rows predate this field, so `trackingComplete` must stay separate:
+   * an empty array can be complete, while a missing array is unknown.
+   */
+  trackingItems: DirectNotificationTrackingItem[];
+  trackingComplete: boolean;
+};
+
+export type DirectNotificationTrackingItem = {
+  userId: string;
+  dedupeKey: string;
 };
 
 const str = (v: unknown): string | null =>
@@ -71,6 +83,22 @@ const asPayload = (v: unknown): Record<string, unknown> | null =>
   v && typeof v === "object" && !Array.isArray(v)
     ? (v as Record<string, unknown>)
     : null;
+
+function asTrackingItems(
+  value: unknown,
+): DirectNotificationTrackingItem[] | null {
+  if (!Array.isArray(value)) return null;
+
+  const items: DirectNotificationTrackingItem[] = [];
+  for (const item of value) {
+    const row = asPayload(item);
+    const userId = str(row?.userId);
+    const dedupeKey = str(row?.dedupeKey);
+    if (!userId || !dedupeKey) return null;
+    items.push({ userId, dedupeKey });
+  }
+  return items;
+}
 
 export async function getDirectNotificationHistory(): Promise<
   DirectNotificationHistoryEntry[]
@@ -104,6 +132,13 @@ export async function getDirectNotificationHistory(): Promise<
     const env = str(meta.env);
 
     if (row.event_type === "user_notification_sent") {
+      const dedupeKey = str(meta.dedupeKey);
+      const explicitTrackingItems = asTrackingItems(meta.trackingItems);
+      const trackingItems =
+        explicitTrackingItems ??
+        (row.target_user_id && dedupeKey
+          ? [{ userId: row.target_user_id, dedupeKey }]
+          : []);
       entries.push({
         id: row.id,
         kind: "single",
@@ -125,6 +160,10 @@ export async function getDirectNotificationHistory(): Promise<
         samplePayload: asPayload(meta.payload),
         codesMinted: 0,
         valueUsd: null,
+        trackingItems,
+        trackingComplete:
+          explicitTrackingItems !== null ||
+          Boolean(row.target_user_id && dedupeKey),
       });
       continue;
     }
@@ -137,6 +176,7 @@ export async function getDirectNotificationHistory(): Promise<
       ? meta.unknownUsers.filter((u): u is string => typeof u === "string")
       : [];
     const sampleItem = asPayload(meta.sampleItem);
+    const trackingItems = asTrackingItems(meta.trackingItems);
 
     const existingIndex = byCampaign.get(key);
     if (existingIndex === undefined) {
@@ -161,6 +201,8 @@ export async function getDirectNotificationHistory(): Promise<
         samplePayload: sampleItem ? asPayload(sampleItem.payload) : null,
         codesMinted: isReward ? num(meta.codesMinted) : 0,
         valueUsd: isReward ? num(meta.valueUsd) : null,
+        trackingItems: trackingItems ?? [],
+        trackingComplete: trackingItems !== null,
       });
       continue;
     }
@@ -183,6 +225,11 @@ export async function getDirectNotificationHistory(): Promise<
       // Per-user amount, not a sum — every chunk of one campaign carries the
       // same value, so folding must not add them up.
       if (entry.valueUsd === null) entry.valueUsd = num(meta.valueUsd);
+    }
+    entry.trackingComplete =
+      entry.trackingComplete && trackingItems !== null;
+    if (trackingItems) {
+      entry.trackingItems.push(...trackingItems);
     }
   }
 

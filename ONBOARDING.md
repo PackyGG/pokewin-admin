@@ -56,6 +56,13 @@ Two fully separate Postgres databases, treated **very differently**:
 
 **Known MAIN-DB tables that surprised us:** `gift_cards` and `vouchers` live in MAIN (not admin) — so bulk-delete on those = a MAIN write = forbidden.
 
+**Notification read analytics:** broadcasts have exact site-marked-read totals
+in `announcement_reads`. Direct notifications are attributable through the
+indexed `(user_id, dedupe_key)` pair; new admin sends retain those identities
+in the ADMIN audit trail, while older bulk sends without them remain
+untrackable. A read marker is not proof of an impression, view duration, or CTA
+click.
+
 Drizzle schemas are catalog snapshots. After any approved ADMIN migration,
 re-introspect and review the generated diff before committing it.
 

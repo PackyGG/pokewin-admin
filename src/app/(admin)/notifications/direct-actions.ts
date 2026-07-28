@@ -160,6 +160,12 @@ export async function sendDirectNotificationAction(
       category: input.category,
       type,
       dedupeKey: dedupeKey ?? null,
+      // Exact read analytics need the same indexed pair the notification row
+      // is unique on. A single send without a dedupe key cannot be attributed
+      // safely later, so it stays explicitly untracked.
+      trackingItems: dedupeKey
+        ? [{ userId, dedupeKey }]
+        : null,
       payload: payloadCheck.payload ?? null,
     },
   });
@@ -277,6 +283,12 @@ export async function sendBulkNotificationChunkAction(
       // One representative item so the history can answer "what did I
       // actually send?" without storing 1000 payloads per chunk.
       sampleItem: items[0] ?? null,
+      // Retain only the indexed identity of each requested notification.
+      // Payloads remain represented by the existing single sample.
+      trackingItems: items.map((item) => ({
+        userId: item.user_id,
+        dedupeKey: item.dedupe_key,
+      })),
     },
   });
 

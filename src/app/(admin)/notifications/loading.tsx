@@ -11,7 +11,7 @@ export default function NotificationsLoading() {
       <PageHeroSkeleton />
       <Skeleton className="h-10 w-full max-w-xs rounded-lg" />
       <div className="space-y-4">
-        <TableSkeleton rows={8} columns={5} />
+        <TableSkeleton rows={8} columns={6} />
       </div>
     </div>
   );

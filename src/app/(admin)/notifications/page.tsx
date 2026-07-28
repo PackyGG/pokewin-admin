@@ -6,7 +6,10 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { getAnnouncements } from "@/lib/backend-api/announcements";
+import {
+  getAnnouncementReadCounts,
+  getAnnouncements,
+} from "@/lib/backend-api/announcements";
 import { getDirectNotificationAvailability } from "@/lib/backend-api/user-notifications-availability";
 import { AnnouncementsContent } from "./announcements-content";
 import { DirectNotificationsContent } from "./direct-notifications-content";
@@ -36,6 +39,12 @@ async function AnnouncementsSection({
     "notifications.announcements",
     15_000,
   );
+  const { data: readCounts, error: readCountsError } = await safeQuery(
+    () => getAnnouncementReadCounts(result.data.map((item) => item.id)),
+    {},
+    "notifications.announcementReadCounts",
+    10_000,
+  );
 
   return (
     <AnnouncementsContent
@@ -44,6 +53,8 @@ async function AnnouncementsSection({
       page={page}
       perPage={PAGE_SIZE}
       loadError={error}
+      readCounts={readCounts}
+      readCountsUnavailable={readCountsError !== null}
       canManage={canManage}
     />
   );
@@ -132,7 +143,7 @@ export default async function NotificationsPage({
             key={page}
             fallback={
               <div className="space-y-4">
-                <TableSkeleton rows={8} columns={5} />
+                <TableSkeleton rows={8} columns={6} />
               </div>
             }
           >

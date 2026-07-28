@@ -3,7 +3,14 @@
 import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
-import { ExternalLink, Megaphone, Plus, Trash2 } from "lucide-react";
+import {
+  CheckCheck,
+  ExternalLink,
+  Info,
+  Megaphone,
+  Plus,
+  Trash2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -15,7 +22,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/empty-state";
-import { formatDateTime } from "@/lib/utils/format";
+import { formatDateTime, formatNumber } from "@/lib/utils/format";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { shortUrlLabel } from "@/lib/announcement-payload";
 import { revokeAnnouncementAction } from "./actions";
@@ -62,6 +69,8 @@ export function AnnouncementsContent({
   page,
   perPage,
   loadError,
+  readCounts,
+  readCountsUnavailable,
   canManage,
 }: {
   announcements: Announcement[];
@@ -69,6 +78,8 @@ export function AnnouncementsContent({
   page: number;
   perPage: number;
   loadError: string | null;
+  readCounts: Record<string, number>;
+  readCountsUnavailable: boolean;
   canManage: boolean;
 }) {
   const router = useRouter();
@@ -110,7 +121,7 @@ export function AnnouncementsContent({
   }
 
   const totalPages = Math.max(1, Math.ceil(total / perPage));
-  const colCount = canManage ? 6 : 5;
+  const colCount = canManage ? 7 : 6;
 
   return (
     <div className="space-y-4">
@@ -126,6 +137,15 @@ export function AnnouncementsContent({
         )}
       </div>
 
+      <div className="flex items-start gap-2 rounded-md border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+        <Info className="mt-0.5 size-3.5 shrink-0" />
+        <p>
+          <span className="font-medium text-foreground">Marked read</span> is
+          recorded by the site. It is not a guaranteed impression, time viewed,
+          or link click.
+        </p>
+      </div>
+
       <div className="rounded-md border overflow-x-auto">
         <Table>
           <TableHeader>
@@ -134,6 +154,7 @@ export function AnnouncementsContent({
               <TableHead>Audience</TableHead>
               <TableHead>Category</TableHead>
               <TableHead>Status</TableHead>
+              <TableHead className="text-right">Marked read</TableHead>
               <TableHead>Created</TableHead>
               {canManage && <TableHead className="w-[100px]" />}
             </TableRow>
@@ -227,6 +248,24 @@ export function AnnouncementsContent({
                     <Badge variant="outline" className={status.className}>
                       {status.label}
                     </Badge>
+                  </TableCell>
+                  <TableCell className="text-right">
+                    {readCountsUnavailable ? (
+                      <span
+                        className="text-xs text-muted-foreground"
+                        title="Read counts could not be loaded. Refresh to retry."
+                      >
+                        Unavailable
+                      </span>
+                    ) : (
+                      <span
+                        className="inline-flex items-center justify-end gap-1.5 text-sm font-medium tabular-nums"
+                        title="Users for whom the site recorded this announcement as read"
+                      >
+                        <CheckCheck className="size-3.5 text-emerald-600 dark:text-emerald-400" />
+                        {formatNumber(readCounts[a.id] ?? 0)}
+                      </span>
+                    )}
                   </TableCell>
                   <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                     {formatDateTime(a.created_at)}

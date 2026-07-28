@@ -1,9 +1,12 @@
 import "server-only";
 
-import { desc, sql } from "drizzle-orm";
+import { desc, inArray, sql } from "drizzle-orm";
 
 import { getReadDrizzleDb } from "@/lib/db";
-import { announcements } from "@/lib/db-schema/main/schema";
+import {
+  announcement_reads,
+  announcements,
+} from "@/lib/db-schema/main/schema";
 import { backendApi } from "./client";
 import type { AnnouncementPayload } from "@/lib/announcement-payload";
 
@@ -128,6 +131,36 @@ export const getAnnouncements = async (
     return getAnnouncementsFromPostgres(params);
   }
 };
+
+/**
+ * Exact per-announcement "marked read" totals from the site.
+ *
+ * This deliberately does not call the number an impression or an open:
+ * `announcement_reads` proves that the site marked the announcement read,
+ * but it does not prove how long it was visible or whether its CTA was
+ * clicked. The composite primary key starts with `announcement_id`, so this
+ * bounded page-sized aggregate is index-served.
+ */
+export async function getAnnouncementReadCounts(
+  announcementIds: string[],
+): Promise<Record<string, number>> {
+  const ids = [...new Set(announcementIds)].slice(0, 100);
+  if (ids.length === 0) return {};
+
+  const db = await getReadDrizzleDb();
+  const rows = await db
+    .select({
+      announcementId: announcement_reads.announcement_id,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(announcement_reads)
+    .where(inArray(announcement_reads.announcement_id, ids))
+    .groupBy(announcement_reads.announcement_id);
+
+  return Object.fromEntries(
+    rows.map((row) => [row.announcementId, row.count]),
+  );
+}
 
 export const createAnnouncement = (input: CreateAnnouncementInput) =>
   backendApi

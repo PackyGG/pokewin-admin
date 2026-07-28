@@ -298,6 +298,10 @@ export async function sendRewardCampaignChunkAction(
         created: result.created,
         deduped: result.deduped,
         unknownUsers: [...new Set([...unknownUsers, ...result.unknown_users])],
+        trackingItems: planned.map((item) => ({
+          userId: item.userId,
+          dedupeKey: dedupeKeyFor(campaign, item.userId),
+        })),
         // Money moved per recipient — the number an audit reader needs most.
         totalValueUsd: Number((codesMinted * valueUsd).toFixed(2)),
       },
