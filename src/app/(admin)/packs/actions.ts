@@ -2542,7 +2542,10 @@ async function materializeApprovedPack(
 
   const parsed = buildPackRequestSchema.safeParse(input);
   if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid pack input");
+    return {
+      ok: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid pack input",
+    };
   }
   const data = parsed.data;
   const targetEdge = resolveRetuneTargetEdge(data.targets.targetEdge);

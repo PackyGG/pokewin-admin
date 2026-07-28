@@ -173,6 +173,14 @@ export function PackRequestReviewList({
                       )}
                       {item.requestedActive ? "Go live" : "Inactive draft"}
                     </Badge>
+                    {!item.imageUrl && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      >
+                        Image required
+                      </Badge>
+                    )}
                   </div>
 
                   <p className="text-xs text-muted-foreground">
@@ -234,7 +242,7 @@ export function PackRequestReviewList({
                   </Button>
                   <Button
                     type="button"
-                    disabled={isPending}
+                    disabled={isPending || !item.imageUrl}
                     onClick={() => approve(item)}
                     className="gap-2"
                   >
@@ -243,7 +251,7 @@ export function PackRequestReviewList({
                     ) : (
                       <Check className="size-4" />
                     )}
-                    Approve
+                    {item.imageUrl ? "Approve" : "Image required"}
                   </Button>
                 </div>
               ) : item.createdPackId ? (

@@ -508,11 +508,18 @@ export function PackBuilderForm({
     edgeWithinBuilderRange &&
     !shapeError &&
     Boolean(shapeOk);
+  const canRequestLive = canSubmit && imageFile !== null;
 
   // `activate:true` requests a live push. `false` saves an ADMIN-only draft.
   // Neither path changes MAIN at submission time.
   function handleSubmit(activate: boolean) {
     if (!canSubmit) return;
+    if (activate && !imageFile) {
+      toast.error(
+        "Add a pack image before requesting a live push. Drafts can be saved without one.",
+      );
+      return;
+    }
     startTransition(async () => {
       try {
         let imageUrl: string | undefined;
@@ -673,6 +680,10 @@ export function PackBuilderForm({
                     setImagePreview(null);
                   }}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Optional for saved drafts. Required before requesting a live
+                  push.
+                </p>
               </div>
             </div>
           </div>
@@ -1039,7 +1050,7 @@ export function PackBuilderForm({
                   onOpenChange={setActivateConfirmOpen}
                 >
                   <AlertDialogTrigger
-                    disabled={!canSubmit}
+                    disabled={!canRequestLive}
                     className={cn(buttonVariants(), "w-full gap-2")}
                   >
                     <Rocket className="size-4" />
@@ -1076,6 +1087,14 @@ export function PackBuilderForm({
                     </AlertDialogFooter>
                   </AlertDialogContent>
                 </AlertDialog>
+
+                {!imageFile && (
+                  <p className="flex items-center justify-center gap-1.5 text-xs text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="size-3.5" />
+                    Add an image to request a live push. You can still save this
+                    as a draft.
+                  </p>
+                )}
 
                 {/* ADMIN-only saved build. It enters the owner queue only when
                     a builder requests a live push from Saved Builds. */}

@@ -22,7 +22,10 @@ const buildPackCardSchema = z.union([
   z.object({ value: z.number().positive() }),
 ]);
 
-export const buildPackRequestSchema = z.object({
+export const PACK_IMAGE_REQUIRED_ERROR =
+  "Add a pack image before requesting a live push. Drafts can be saved without one.";
+
+const storedBuildPackRequestSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(60),
   slug: z.string().trim().min(1, "Slug is required").max(60),
   description: z.string().trim().max(2000).optional(),
@@ -45,8 +48,20 @@ export const buildPackRequestSchema = z.object({
   }),
 });
 
+export const buildPackRequestSchema = storedBuildPackRequestSchema.superRefine(
+  (request, context) => {
+    if (request.activate === true && !request.imageUrl) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["imageUrl"],
+        message: PACK_IMAGE_REQUIRED_ERROR,
+      });
+    }
+  },
+);
+
 export type BuildPackInput = z.input<typeof buildPackRequestSchema>;
-export type ParsedBuildPackInput = z.output<typeof buildPackRequestSchema>;
+export type ParsedBuildPackInput = z.output<typeof storedBuildPackRequestSchema>;
 
 export type PackCreationRequestStatus =
   | "pending"
@@ -91,7 +106,10 @@ type RawPackCreationRequest = {
 };
 
 function parseRequestRow(row: RawPackCreationRequest): PackCreationRequest {
-  const payload = buildPackRequestSchema.safeParse(row.request_payload);
+  // Keep old queued rows readable so the owner queue never crashes on legacy
+  // image-less requests. New live requests and final materialization use the
+  // stricter schema below and fail closed until artwork is supplied.
+  const payload = storedBuildPackRequestSchema.safeParse(row.request_payload);
   if (!payload.success) {
     throw new Error(`Pack request ${row.id} has an invalid stored payload`);
   }
@@ -246,16 +264,64 @@ export async function listPackBuildDrafts(input: {
  * The stored payload is updated with the same intent so approval cannot read
  * a stale `activate:false` value.
  */
+export type PackBuildDraftSubmissionOutcome =
+  | "submitted"
+  | "missing_image"
+  | "unavailable";
+
 export async function submitPackBuildDraftForApproval(input: {
   requestId: string;
   actorId: string;
   canManageAll: boolean;
-}): Promise<boolean> {
+}): Promise<PackBuildDraftSubmissionOutcome> {
   const result = await adminDrizzle.execute<{ id: string }>(sql`
     UPDATE pack_creation_requests
     SET
       requested_active = true,
       request_payload = jsonb_set(request_payload, '{activate}', 'true'::jsonb)
+    WHERE id = ${input.requestId}::uuid
+      AND status = 'pending'
+      AND requested_active = false
+      AND NULLIF(BTRIM(request_payload->>'imageUrl'), '') IS NOT NULL
+      AND (
+        requested_by = ${input.actorId}::uuid
+        OR ${input.canManageAll}
+      )
+    RETURNING id
+  `);
+  if (result.rows.length === 1) return "submitted";
+
+  const missingImage = await adminDrizzle.execute<{ id: string }>(sql`
+    SELECT id
+    FROM pack_creation_requests
+    WHERE id = ${input.requestId}::uuid
+      AND status = 'pending'
+      AND requested_active = false
+      AND NULLIF(BTRIM(request_payload->>'imageUrl'), '') IS NULL
+      AND (
+        requested_by = ${input.actorId}::uuid
+        OR ${input.canManageAll}
+      )
+    LIMIT 1
+  `);
+  return missingImage.rows.length === 1 ? "missing_image" : "unavailable";
+}
+
+/** Add or replace artwork on a saved build without making it live. */
+export async function updatePackBuildDraftImage(input: {
+  requestId: string;
+  actorId: string;
+  canManageAll: boolean;
+  imageUrl: string;
+}): Promise<boolean> {
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    UPDATE pack_creation_requests
+    SET request_payload = jsonb_set(
+      request_payload,
+      '{imageUrl}',
+      to_jsonb(${input.imageUrl}::text),
+      true
+    )
     WHERE id = ${input.requestId}::uuid
       AND status = 'pending'
       AND requested_active = false

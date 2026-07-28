@@ -75,6 +75,7 @@ async function BuildDraftsBody({
     requesterUsername: draft.requesterUsername,
     name: draft.name,
     slug: draft.slug,
+    imageUrl: draft.requestPayload.imageUrl ?? null,
     price: draft.requestPayload.price,
     cardCount: draft.requestPayload.cards.length,
     difficulty: draft.requestPayload.difficulty ?? 0,
@@ -115,7 +116,7 @@ async function BuildDraftsBody({
         <SectionHeading icon={ClipboardList} title="Saved pack builds" />
         <p className="text-sm text-muted-foreground">
           Saving here only writes the ADMIN staging row. Request live approval
-          when the build is ready for an owner decision.
+          when the build has an image and is ready for an owner decision.
         </p>
         <BuildDraftsList drafts={items} />
       </section>

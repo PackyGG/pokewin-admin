@@ -121,6 +121,67 @@ test("inactive Pack Builder saves land on Saved Builds without owner approval", 
   assert.match(buildAction, /ok:\s*false/);
 });
 
+test("live Pack Builder requests require artwork while saved drafts remain allowed", async () => {
+  const [
+    actions,
+    builderForm,
+    buildDraftsPage,
+    buildDraftsList,
+    buildRequests,
+    approvalList,
+  ] = await Promise.all([
+    readFile(actionsPath, "utf8"),
+    readFile(builderFormPath, "utf8"),
+    readFile(buildDraftsPagePath, "utf8"),
+    readFile(buildDraftsListPath, "utf8"),
+    readFile(buildRequestsPath, "utf8"),
+    readFile(approvalListPath, "utf8"),
+  ]);
+
+  assert.match(buildRequests, /storedBuildPackRequestSchema\.superRefine/);
+  assert.match(
+    buildRequests,
+    /request\.activate === true && !request\.imageUrl/,
+  );
+  assert.match(
+    buildRequests,
+    /Drafts can be saved without one/,
+  );
+  assert.match(
+    buildRequests,
+    /NULLIF\(BTRIM\(request_payload->>'imageUrl'\), ''\) IS NOT NULL/,
+  );
+  assert.match(buildRequests, /return "submitted"/);
+  assert.match(buildRequests, /"missing_image"/);
+  assert.match(buildRequests, /updatePackBuildDraftImage/);
+
+  assert.match(builderForm, /const canRequestLive = canSubmit && imageFile !== null/);
+  assert.match(builderForm, /disabled=\{!canRequestLive\}/);
+  assert.match(builderForm, /Optional for saved drafts/);
+  assert.match(builderForm, /handleSubmit\(false\)/);
+
+  assert.match(buildDraftsPage, /imageUrl:\s*draft\.requestPayload\.imageUrl \?\? null/);
+  assert.match(buildDraftsList, /updatePackBuildDraftImageAction/);
+  assert.match(buildDraftsList, /Add image/);
+  assert.match(buildDraftsList, /disabled=\{isPending \|\| !draft\.imageUrl\}/);
+  assert.match(approvalList, /Image required/);
+  assert.match(approvalList, /disabled=\{isPending \|\| !item\.imageUrl\}/);
+
+  const materialize = actions.slice(
+    actions.indexOf("async function materializeApprovedPack"),
+    actions.indexOf("async function previewPackBuildRequest"),
+  );
+  assert.match(
+    materialize,
+    /if \(!parsed\.success\) \{[\s\S]*?ok:\s*false/,
+  );
+  const approval = actions.slice(
+    actions.indexOf("export async function approvePackCreationRequest"),
+    actions.indexOf("export async function declinePackCreationRequestAction"),
+  );
+  assert.match(approval, /if \(!result\.ok\) \{[\s\S]*?releasePackCreationRequest/);
+});
+
 test("Pack Builder preserves card color and animation through owner approval", async () => {
   const [actions, builderForm, buildRequests] = await Promise.all([
     readFile(actionsPath, "utf8"),

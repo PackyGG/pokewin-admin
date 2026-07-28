@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ClipboardList,
+  ImageUp,
   Loader2,
   Rocket,
   Trash2,
@@ -15,9 +16,12 @@ import { toast } from "sonner";
 import {
   discardPackBuildDraftAction,
   requestPackBuildDraftApproval,
+  updatePackBuildDraftImageAction,
 } from "../builder/actions";
+import { CardImage } from "@/components/card-image";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import { uploadImageClient } from "@/lib/upload-image-client";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
@@ -26,6 +30,7 @@ export type PackBuildDraftItem = {
   requesterUsername: string;
   name: string;
   slug: string;
+  imageUrl: string | null;
   price: number;
   cardCount: number;
   difficulty: number;
@@ -44,6 +49,12 @@ export function BuildDraftsList({
   const [activeAction, setActiveAction] = useState<string | null>(null);
 
   function requestApproval(draft: PackBuildDraftItem) {
+    if (!draft.imageUrl) {
+      toast.error(
+        "Add a pack image before requesting live approval. The draft is still saved.",
+      );
+      return;
+    }
     if (
       !window.confirm(
         `Send "${draft.name}" to the owner queue as a live request?`,
@@ -63,6 +74,33 @@ export function BuildDraftsList({
         router.refresh();
       } catch {
         toast.error("Could not request approval for this build draft.");
+      } finally {
+        setActiveAction(null);
+      }
+    });
+  }
+
+  function uploadDraftImage(draft: PackBuildDraftItem, file: File) {
+    setActiveAction(`image:${draft.id}`);
+    startTransition(async () => {
+      try {
+        const imageUrl = await uploadImageClient(file, "/packs");
+        const result = await updatePackBuildDraftImageAction(
+          draft.id,
+          imageUrl,
+        );
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
+        toast.success(`${draft.name} image updated.`);
+        router.refresh();
+      } catch (error) {
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Could not upload this pack image.",
+        );
       } finally {
         setActiveAction(null);
       }
@@ -116,47 +154,89 @@ export function BuildDraftsList({
       {drafts.map((draft) => {
         const submitting = activeAction === `submit:${draft.id}`;
         const discarding = activeAction === `discard:${draft.id}`;
+        const uploadingImage = activeAction === `image:${draft.id}`;
         return (
           <article
             key={draft.id}
             className="rounded-xl border border-border/70 bg-card p-4"
           >
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-              <div className="min-w-0 flex-1 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold">{draft.name}</h3>
-                  <Badge
-                    variant="outline"
-                    className="border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                  >
-                    Saved draft
-                  </Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  /{draft.slug} · saved by {draft.requesterUsername} ·{" "}
-                  {formatDateTime(draft.createdAt)}
-                </p>
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span>
-                    Price <strong>{formatCurrency(draft.price)}</strong>
-                  </span>
-                  <span>
-                    Cards <strong>{draft.cardCount}</strong>
-                  </span>
-                  <span>
-                    Edge <strong>{(draft.previewEdge * 100).toFixed(2)}%</strong>
-                  </span>
-                  <span>
-                    Win rate{" "}
-                    <strong>{(draft.previewWinRate * 100).toFixed(1)}%</strong>
-                  </span>
-                  <span>
-                    Risk bar <strong>{Math.round(draft.difficulty * 100)}%</strong>
-                  </span>
+              <div className="flex min-w-0 flex-1 gap-3">
+                <CardImage
+                  src={draft.imageUrl}
+                  alt={draft.name}
+                  className="size-16 shrink-0 rounded-lg border border-border/70"
+                />
+                <div className="min-w-0 flex-1 space-y-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-sm font-semibold">{draft.name}</h3>
+                    <Badge
+                      variant="outline"
+                      className="border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                    >
+                      Saved draft
+                    </Badge>
+                    {!draft.imageUrl && (
+                      <Badge
+                        variant="outline"
+                        className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+                      >
+                        Image required for live
+                      </Badge>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    /{draft.slug} · saved by {draft.requesterUsername} ·{" "}
+                    {formatDateTime(draft.createdAt)}
+                  </p>
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    <span>
+                      Price <strong>{formatCurrency(draft.price)}</strong>
+                    </span>
+                    <span>
+                      Cards <strong>{draft.cardCount}</strong>
+                    </span>
+                    <span>
+                      Edge <strong>{(draft.previewEdge * 100).toFixed(2)}%</strong>
+                    </span>
+                    <span>
+                      Win rate{" "}
+                      <strong>{(draft.previewWinRate * 100).toFixed(1)}%</strong>
+                    </span>
+                    <span>
+                      Risk bar <strong>{Math.round(draft.difficulty * 100)}%</strong>
+                    </span>
+                  </div>
                 </div>
               </div>
 
               <div className="flex shrink-0 flex-col gap-2 sm:flex-row">
+                <label
+                  aria-disabled={isPending}
+                  className={cn(
+                    buttonVariants({ variant: "outline" }),
+                    "gap-2",
+                    isPending && "pointer-events-none opacity-50",
+                  )}
+                >
+                  {uploadingImage ? (
+                    <Loader2 className="size-4 animate-spin" />
+                  ) : (
+                    <ImageUp className="size-4" />
+                  )}
+                  {draft.imageUrl ? "Replace image" : "Add image"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="sr-only"
+                    disabled={isPending}
+                    onChange={(event) => {
+                      const file = event.currentTarget.files?.[0];
+                      event.currentTarget.value = "";
+                      if (file) uploadDraftImage(draft, file);
+                    }}
+                  />
+                </label>
                 <Button
                   type="button"
                   variant="outline"
@@ -173,7 +253,7 @@ export function BuildDraftsList({
                 </Button>
                 <Button
                   type="button"
-                  disabled={isPending}
+                  disabled={isPending || !draft.imageUrl}
                   onClick={() => requestApproval(draft)}
                   className="gap-2"
                 >

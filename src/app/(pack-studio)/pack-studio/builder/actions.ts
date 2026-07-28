@@ -12,7 +12,9 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getCards } from "@/lib/queries/cards";
 import {
   discardPackBuildDraft,
+  PACK_IMAGE_REQUIRED_ERROR,
   submitPackBuildDraftForApproval,
+  updatePackBuildDraftImage,
 } from "@/lib/packs/build-requests";
 
 /**
@@ -120,12 +122,15 @@ export async function requestPackBuildDraftApproval(
     const parsed = z.string().uuid().safeParse(requestId);
     if (!parsed.success) return { ok: false, error: "Invalid build draft id" };
 
-    const submitted = await submitPackBuildDraftForApproval({
+    const outcome = await submitPackBuildDraftForApproval({
       requestId: parsed.data,
       actorId: session.userId,
       canManageAll: canManageEveryBuildDraft(session),
     });
-    if (!submitted) {
+    if (outcome === "missing_image") {
+      return { ok: false, error: PACK_IMAGE_REQUIRED_ERROR };
+    }
+    if (outcome === "unavailable") {
       return {
         ok: false,
         error: "This build draft is no longer available or belongs to another builder.",
@@ -149,6 +154,56 @@ export async function requestPackBuildDraftApproval(
         error instanceof Error
           ? error.message
           : "Could not request approval for this build draft.",
+    };
+  }
+}
+
+/** Add or replace artwork on a saved build without submitting it. */
+export async function updatePackBuildDraftImageAction(
+  requestId: string,
+  imageUrl: string,
+): Promise<PackBuildDraftActionResult> {
+  try {
+    const session = await requireBuildDraftOperator();
+    const parsed = z
+      .object({
+        requestId: z.string().uuid(),
+        imageUrl: z.string().trim().url(),
+      })
+      .safeParse({ requestId, imageUrl });
+    if (!parsed.success) {
+      return { ok: false, error: "Choose a valid pack image." };
+    }
+
+    const updated = await updatePackBuildDraftImage({
+      requestId: parsed.data.requestId,
+      imageUrl: parsed.data.imageUrl,
+      actorId: session.userId,
+      canManageAll: canManageEveryBuildDraft(session),
+    });
+    if (!updated) {
+      return {
+        ok: false,
+        error: "This build draft is no longer available or belongs to another builder.",
+      };
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_build_draft_image_updated",
+      metadata: { request_id: parsed.data.requestId },
+    });
+    revalidatePath("/pack-studio/builder-drafts");
+    revalidateTag("pack-build-drafts");
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Could not update this build draft's image.",
     };
   }
 }
