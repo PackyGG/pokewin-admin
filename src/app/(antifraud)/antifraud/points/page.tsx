@@ -6,6 +6,7 @@ import {
   Radar,
   RadioTower,
   ShieldAlert,
+  Users,
   Workflow,
 } from "lucide-react";
 
@@ -20,7 +21,11 @@ import {
   listAnalysisRules,
   type AntifraudAnalysisRule,
 } from "@/lib/antifraud/network-api";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabChips } from "@/components/ux";
@@ -96,30 +101,58 @@ async function ScoringDashboard() {
     config.signupSignals.length +
     config.providerSignals.length +
     config.activitySignals.length;
+  const cards = [
+    {
+      label: "Monitor starts at",
+      value: `${config.monitorStartScore} pts`,
+      icon: Radar,
+      tone: "text-cyan-600 dark:text-cyan-400",
+    },
+    {
+      label: "Monitor window",
+      value: `${config.monitorDurationSeconds / 60} min`,
+      icon: Clock3,
+      tone: "text-cyan-600 dark:text-cyan-400",
+    },
+    {
+      label: "Score signals",
+      value: String(fixedSignals),
+      icon: Activity,
+      tone: "text-emerald-600 dark:text-emerald-400",
+    },
+    {
+      label: "Active flows",
+      value: `${activeRules}/${config.behaviorRules.length}`,
+      icon: Workflow,
+      tone:
+        activeRules < config.behaviorRules.length
+          ? "text-amber-600 dark:text-amber-400"
+          : "text-emerald-600 dark:text-emerald-400",
+    },
+  ];
 
   return (
-    <div className="space-y-5">
-      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card sm:grid-cols-4">
-        <SummaryItem
-          icon={Radar}
-          label="Monitor starts"
-          value={`${config.monitorStartScore} pts`}
-        />
-        <SummaryItem
-          icon={Clock3}
-          label="Monitor window"
-          value={`${config.monitorDurationSeconds / 60} min`}
-        />
-        <SummaryItem
-          icon={Activity}
-          label="Score signals"
-          value={String(fixedSignals)}
-        />
-        <SummaryItem
-          icon={Workflow}
-          label="Active flows"
-          value={`${activeRules}/${config.behaviorRules.length}`}
-        />
+    <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => {
+          const Icon = card.icon;
+          return (
+            <div
+              key={card.label}
+              className="rounded-xl border border-border/70 bg-card p-4"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-muted-foreground">
+                  {card.label}
+                </span>
+                <Icon className={cn("size-4", card.tone)} />
+              </div>
+              <p className="mt-2 text-2xl font-semibold tabular-nums">
+                {card.value}
+              </p>
+            </div>
+          );
+        })}
       </div>
 
       <SeverityBands bands={config.severityBands} />
@@ -127,7 +160,7 @@ async function ScoringDashboard() {
       <ScoreSection
         icon={Radar}
         title="Signup checks"
-        description="Account and signup data"
+        description="account and signup data"
         definitions={config.signupSignals}
       />
       <ScoreSection
@@ -139,20 +172,22 @@ async function ScoringDashboard() {
       <ScoreSection
         icon={Activity}
         title="Live behavior"
-        description="Actions recorded during the monitor window"
+        description="actions recorded during the monitor window"
         definitions={config.activitySignals}
       />
       <BehaviorRules config={config} />
       {analysis.configured && !analysis.error && (
         <>
           <AnalysisRules
+            icon={Users}
             title="Account network checks"
-            description="Full connected-component scoring"
+            description="full connected-component scoring"
             rules={analysis.data.filter((rule) => rule.category === "network")}
           />
           <AnalysisRules
+            icon={Radar}
             title="Creator fraud checks"
-            description="Referred-account networks and activity; creator behavior is excluded"
+            description="referred-account networks and activity; creator behavior is excluded"
             rules={analysis.data.filter((rule) => rule.category === "creator")}
           />
         </>
@@ -188,46 +223,48 @@ async function FlowBuilderData() {
   );
 }
 
+function SectionTitleText({
+  title,
+  description,
+}: {
+  title: string;
+  description?: string;
+}) {
+  return (
+    <>
+      {title}
+      {description && (
+        <span className="text-xs font-normal text-muted-foreground">
+          {description}
+        </span>
+      )}
+    </>
+  );
+}
+
 function AnalysisRules({
+  icon,
   title,
   description,
   rules,
 }: {
+  icon: ComponentType<{ className?: string }>;
   title: string;
   description: string;
   rules: AntifraudAnalysisRule[];
 }) {
   return (
-    <section>
-      <SectionTitle icon={Radar} title={title} description={description} />
-      <div className="mt-2 divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-card">
+    <section className="space-y-3">
+      <SectionHeading
+        icon={icon}
+        title={<SectionTitleText title={title} description={description} />}
+      />
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
         {rules.map((rule) => (
           <AnalysisRuleEditor key={rule.key} rule={rule} />
         ))}
       </div>
     </section>
-  );
-}
-
-function SummaryItem({
-  icon: Icon,
-  label,
-  value,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="flex items-center gap-2.5 border-border/70 p-3 [&:nth-child(odd)]:border-r [&:nth-child(n+3)]:border-t sm:[&:not(:last-child)]:border-r sm:[&:nth-child(n+3)]:border-t-0">
-      <Icon className="size-4 shrink-0 text-cyan-500" />
-      <span className="min-w-0">
-        <span className="block truncate text-[11px] text-muted-foreground">
-          {label}
-        </span>
-        <span className="block text-sm font-semibold tabular-nums">{value}</span>
-      </span>
-    </div>
   );
 }
 
@@ -244,19 +281,27 @@ function SeverityBands({
   };
 
   return (
-    <section>
-      <SectionTitle icon={Gauge} title="Severity" />
-      <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <section className="space-y-3">
+      <SectionHeading
+        icon={Gauge}
+        title={
+          <SectionTitleText
+            title="Severity bands"
+            description="how a case's total points map to severity"
+          />
+        }
+      />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
         {bands.map((band) => (
           <div
             key={band.key}
             className={cn(
-              "flex items-center justify-between rounded-md border px-3 py-2",
+              "rounded-lg border px-3 py-2.5",
               colors[band.key],
             )}
           >
-            <span className="text-xs font-medium">{band.label}</span>
-            <span className="text-xs font-semibold tabular-nums">
+            <span className="block text-xs font-semibold">{band.label}</span>
+            <span className="mt-0.5 block text-sm font-semibold tabular-nums">
               {band.maximum == null
                 ? `${band.minimum}+`
                 : `${band.minimum}–${band.maximum}`}{" "}
@@ -281,13 +326,16 @@ function ScoreSection({
   definitions: AntifraudScoreDefinition[];
 }) {
   return (
-    <section>
-      <SectionTitle icon={icon} title={title} description={description} />
-      <div className="mt-2 divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-card">
+    <section className="space-y-3">
+      <SectionHeading
+        icon={icon}
+        title={<SectionTitleText title={title} description={description} />}
+      />
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
         {definitions.map((definition) => (
           <div
             key={definition.key}
-            className="grid gap-2 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+            className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
           >
             <div className="min-w-0">
               <p className="text-sm font-medium">{definition.title}</p>
@@ -334,17 +382,21 @@ function ScoreBadge({ label, points }: { label: string; points: number }) {
 
 function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
   return (
-    <section>
-      <SectionTitle
+    <section className="space-y-3">
+      <SectionHeading
         icon={Workflow}
-        title="Behavior flows"
-        description="Sequence rules evaluated during live monitoring"
+        title={
+          <SectionTitleText
+            title="Behavior flows"
+            description="sequence rules evaluated during live monitoring"
+          />
+        }
       />
-      <div className="mt-2 divide-y divide-border/60 overflow-hidden rounded-lg border border-border/70 bg-card">
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
         {config.behaviorRules.map((rule) => (
           <div
             key={rule.id}
-            className="grid gap-2 px-3 py-2.5 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+            className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
           >
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-1.5">
@@ -367,32 +419,11 @@ function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
   );
 }
 
-function SectionTitle({
-  icon: Icon,
-  title,
-  description,
-}: {
-  icon: ComponentType<{ className?: string }>;
-  title: string;
-  description?: string;
-}) {
-  return (
-    <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-      <span className="flex items-center gap-1.5 text-sm font-semibold">
-        <Icon className="size-3.5 text-cyan-500" />
-        {title}
-      </span>
-      {description && (
-        <span className="text-xs text-muted-foreground">{description}</span>
-      )}
-    </div>
-  );
-}
-
 function Unavailable({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-sm text-muted-foreground">
-      {text}
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+      <RadioTower className="mx-auto mb-3 size-6 text-muted-foreground" aria-hidden />
+      <p className="text-sm text-muted-foreground">{text}</p>
     </div>
   );
 }
@@ -408,11 +439,15 @@ function UnavailableWithIcon({ text }: { text: string }) {
 
 function PointsSkeleton() {
   return (
-    <div className="space-y-5">
-      <Skeleton className="h-16 rounded-lg" />
-      <Skeleton className="h-20 rounded-lg" />
-      <Skeleton className="h-52 rounded-lg" />
-      <Skeleton className="h-52 rounded-lg" />
+    <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
+        ))}
+      </div>
+      <Skeleton className="h-24 rounded-xl" />
+      <Skeleton className="h-52 rounded-xl" />
+      <Skeleton className="h-52 rounded-xl" />
     </div>
   );
 }
