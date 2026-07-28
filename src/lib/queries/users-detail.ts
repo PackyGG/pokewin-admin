@@ -7,6 +7,7 @@ import { calculateUserPnl } from "./pnl";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { getExcludedUserIdsForAdminSearch } from "@/lib/excluded-users/search-visible-override";
+import { logError } from "@/lib/errors/logger";
 
 const TIP_RECENT_LIMIT = 10;
 
@@ -471,7 +472,7 @@ async function fetchWagerLocked(
   } catch (e) {
     // Defence-in-depth: the column probe already succeeded, but a single
     // catch keeps the page rendering if a transient query failure hits.
-    console.error("[getUserDetail] fetchWagerLocked failed:", e);
+    logError("users.detail.wagerLocked", "query failed", e);
     return { wagerLocked: null, wagerProgress: null };
   }
 }
@@ -515,7 +516,7 @@ export async function getUserDetail(id: string) {
           ),
     )
     .catch((e) => {
-      console.error("[getUserDetail] wager breakdown query failed:", e);
+      logError("users.detail.wagerBreakdown", "query failed", e);
       return [] as { type: string; _sum: { amount: unknown } }[];
     });
 
@@ -554,7 +555,7 @@ export async function getUserDetail(id: string) {
       ),
     )
     .catch((e) => {
-      console.error("[getUserDetail] owned-code referral count query failed:", e);
+      logError("users.detail.referralCounts", "query failed", e);
       return [] as Array<{
         upper_code: string;
         referral_count: string | number | null;
@@ -600,7 +601,7 @@ export async function getUserDetail(id: string) {
     `, id)
     .then((rows) => Number(rows[0]?.others ?? 0))
     .catch((e) => {
-      console.error("[getUserDetail] shared signup_ip query failed:", e);
+      logError("users.detail.sharedSignupIp", "query failed", e);
       return 0;
     });
 
@@ -658,7 +659,7 @@ export async function getUserDetail(id: string) {
       deviceVisitorIdCount: Number(rows[0]?.distinct_visitor_ids ?? 0),
     }))
     .catch((e) => {
-      console.error("[getUserDetail] fingerprint signal query failed:", e);
+      logError("users.detail.fingerprint", "query failed", e);
       return {
         suspectedAlt: false,
         linkedDeviceAccountCount: 0,
@@ -900,7 +901,7 @@ export async function getUserDetail(id: string) {
       `,
       id,
     ).catch((e) => {
-      console.error("[getUserDetail] live affiliate aggregate query failed:", e);
+      logError("users.detail.affiliateAggregate", "query failed", e);
       return [] as Array<{
         total_referred: string | number | null;
         total_wager_volume_usd: string | null;

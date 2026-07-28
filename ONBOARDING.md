@@ -10,11 +10,15 @@ DDL/DML against either primary. This supersedes older blanket read-only wording
 below.
 
 The production mirror role `fraud_app` has a 30-session limit shared by the
-dashboard and Antifraud reader. Dashboard mirror pools use one connection per
-serverless instance and retire it after every checkout so frozen instances do
-not retain idle sessions; the five-second idle timeout is a secondary backstop.
-The primary mutation pool remains capped at three. Do not widen or persist the
-mirror pool without first increasing role capacity or putting a transaction
+dashboard and Antifraud reader. Dashboard mirror pools allow two concurrent
+reads per warm serverless instance and reuse each connection for up to 100
+checkouts. Client idle cleanup starts after one second; the server-enforced
+five-second `idle_session_timeout` is the authoritative backstop when Vercel
+freezes an isolate before Node can close its socket. The shared MAIN read
+boundary retries one confirmed transient connection failure, including
+SQLSTATE `57P05`, while SQL, schema, and permission failures remain fail-closed.
+The primary mutation pool remains capped at three. Do not widen the mirror pool
+above two without first increasing role capacity or putting a transaction
 pooler in front of it.
 
 > **Durable architecture + domain knowledge** for **pokewin-admin**. Does NOT hold live session state.

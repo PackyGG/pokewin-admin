@@ -105,9 +105,13 @@ export async function queryMainRowsInTimeboxedTx<T>(
   statementTimeoutMs: number,
   run: (query: TxQuery) => Promise<T>,
 ): Promise<T> {
-  return queryRowsInTimeboxedTx(
-    await getReadDrizzleDb(),
-    statementTimeoutMs,
-    run,
+  return withTransientPostgresReadRetry(
+    async () =>
+      queryRowsInTimeboxedTx(
+        await getReadDrizzleDb(),
+        statementTimeoutMs,
+        run,
+      ),
+    { context: "main.read.transaction" },
   );
 }

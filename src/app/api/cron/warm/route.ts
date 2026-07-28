@@ -42,7 +42,7 @@ import { getFiatConfig } from "@/lib/queries/fiat";
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
-export const maxDuration = 30;
+export const maxDuration = 60;
 
 export async function GET(request: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET?.trim();
@@ -76,10 +76,10 @@ export async function GET(request: Request): Promise<Response> {
   // Heavy-cache keep-warm — refresh the hottest shared `unstable_cache`
   // aggregates so a burst of concurrent admin loads after a cache expiry
   // reads warm cache instead of re-stampeding the single-slot mirror pool.
-  // All read-only; each runs independently under a one-worker concurrency
+  // All read-only; each runs independently under a two-worker concurrency
   // cap matching the per-instance mirror pool. Ordered
   // heaviest-first (the
-  // stampede drivers) to make best use of the maxDuration = 30s budget.
+  // stampede drivers) to make best use of the maxDuration = 60s budget.
   const warmed: Record<string, string> = {};
   try {
     const warmers: Array<[string, () => Promise<unknown>]> = [
@@ -99,7 +99,7 @@ export async function GET(request: Request): Promise<Response> {
     ];
     const settled: PromiseSettledResult<string>[] = new Array(warmers.length);
     let nextIndex = 0;
-    const workers = Array.from({ length: 1 }, async () => {
+    const workers = Array.from({ length: 2 }, async () => {
       while (nextIndex < warmers.length) {
         const index = nextIndex++;
         const [label, fn] = warmers[index];

@@ -1,6 +1,7 @@
 import { unstable_cache } from "next/cache";
 import { readDbEnv } from "@/lib/db-env";
 import { getUserDetail, resolveUserIdFromRouteKey } from "./users-detail";
+import { logError } from "@/lib/errors/logger";
 import { getUserPnlBreakdown, type PnlBreakdown } from "./users-financial";
 import { getUserTransactions } from "./users-transactions";
 
@@ -326,16 +327,12 @@ export async function getUserFinancialTransactionsCached(
  * throw up to the page:
  *   - `{ found: true, id }`  — resolved to a real user id → render the page,
  *   - `{ found: false }`     — either a genuinely-unknown key (clean null)
- *                              OR a slow/failed resolve. In BOTH cases the
- *                              caller `notFound()`s.
+ *                              or a slow/failed resolve. The caller uses
+ *                              `degraded` to avoid a misleading outage 404.
  *
- * On timeout/failure we DEGRADE to `found: false` (→ notFound) rather than
- * re-throwing: the whole page hangs off this id (every band, the hero
- * identity, the tab reads), so there is no partial shell we could render
- * without it — a clean 404 (retry-able by re-navigating) is strictly better
- * than a raw error-boundary crash. `degraded` marks the timeout/failure case
- * so it is logged distinctly from a real miss (the failure is transient — a
- * refresh re-runs the now-indexed lookup and resolves).
+ * On timeout/failure we DEGRADE to `found: false` rather than re-throwing.
+ * `degraded` marks the transient failure so the page can render an honest,
+ * retryable load error. Only a real missing user maps to `notFound()`.
  */
 const RESOLVE_TIMEOUT_MS = 4_000;
 
@@ -369,9 +366,10 @@ export async function resolveUserIdCritical(
     // instead of throwing to the error boundary and crashing the page.
     // Logged so the degrade is visible upstream and distinguishable from a
     // genuine unknown route key.
-    console.error(
-      "[users/[id]] critical-path resolveUserIdFromRouteKey degraded:",
-      err instanceof Error ? err.message : err,
+    logError(
+      "users.detail.resolve",
+      "critical-path route-key lookup degraded",
+      err,
     );
     return { found: false, degraded: true };
   } finally {

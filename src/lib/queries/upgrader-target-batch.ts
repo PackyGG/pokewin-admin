@@ -1,6 +1,7 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { sql } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
+import { logError } from "@/lib/errors/logger";
 import {
   resolveUpgraderMetadata,
   upgraderTargetMultiplierSql,
@@ -120,8 +121,9 @@ export async function fetchUpgraderTargetByLedgerTxIds(
       out.set(r.ledger_tx_id, r);
     }
   } catch (e) {
-    console.error(
-      "[fetchUpgraderTargetByLedgerTxIds] batch lookup failed (non-fatal):",
+    logError(
+      "upgrader.targetBatch",
+      "batch lookup failed (non-fatal)",
       e,
     );
   }

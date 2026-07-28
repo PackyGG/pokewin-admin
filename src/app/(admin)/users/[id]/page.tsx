@@ -166,11 +166,20 @@ export default async function UserDetailPage({
   // Suspense boundary below, so an UNGUARDED throw here (pool starvation /
   // transient DB error) would hit the segment error boundary and crash the
   // whole page. resolveUserIdCritical races the (now-indexed) lookup against
-  // a short timeout and NEVER throws — a slow/failed resolve degrades to a
-  // clean notFound() instead of a raw crash (a refresh re-runs the indexed
-  // lookup and resolves). A genuinely-unknown key also returns found:false.
+  // a short timeout and NEVER throws. A genuinely unknown key is a 404, while
+  // a transient failure renders an honest retryable load error.
   const resolved = await resolveUserIdCritical(routeKey);
-  if (!resolved.found) notFound();
+  if (!resolved.found) {
+    if (!resolved.degraded) notFound();
+    return (
+      <div className="space-y-4">
+        <InlineError
+          title="User lookup is temporarily unavailable"
+          hint="The database did not resolve this account within the critical-path budget. Retry the page; this is not a Not Found result."
+        />
+      </div>
+    );
+  }
   const id = resolved.id;
   const sp = await searchParams;
   // Active tab is URL-driven (?tab=<key>): the URL is the source of truth
@@ -184,11 +193,11 @@ export default async function UserDetailPage({
   // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
   //
   // Existence / 404 is already settled above by resolveUserIdCritical: a
-  // clean null (unknown key) OR a slow/failed resolve both surface as
-  // found:false → notFound(), and a non-null id only for a row that exists.
-  // Crucially, that guard NEVER throws, so a transient resolve failure can
-  // no longer crash this (highest-traffic) route via the segment error
-  // boundary — it degrades to a retry-able 404. The streamed body's hero
+  // clean null (unknown key) maps to notFound(), while a slow/failed resolve
+  // renders the retryable load error above. A non-null id is returned only
+  // for a row that exists. Crucially, the guard never throws, so a transient
+  // resolve failure cannot crash this highest-traffic route via the segment
+  // error boundary or masquerade as a missing user. The streamed body's hero
   // renders the identity (username/email) from its own timeout-wrapped
   // getUserDetail, so the critical path needs no second identity read. The
   // whole heavy body still streams behind its own Suspense boundary below,

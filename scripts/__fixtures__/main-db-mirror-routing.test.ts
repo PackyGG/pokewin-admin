@@ -43,13 +43,18 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
   );
 
   assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
-  assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*1\s*:\s*Infinity/);
+  assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*100\s*:\s*Infinity/);
   assert.match(source, /idle_session_timeout=5s/);
   assert.match(
     source,
-    /idleTimeoutMillis:\s*isReadMirror\s*\?\s*4_000\s*:\s*10_000/,
+    /idleTimeoutMillis:\s*isReadMirror\s*\?\s*1_000\s*:\s*10_000/,
   );
-  assert.match(warmRoute, /Array\.from\(\{ length: 1 \}/);
+  assert.match(warmRoute, /export const maxDuration = 60/);
+  assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
+  assert.match(
+    fs.readFileSync(path.join(repoRoot, "src/lib/drizzle-query.ts"), "utf8"),
+    /withTransientPostgresReadRetry/,
+  );
 });
 
 test("mirror index failures expose safe, actionable connection diagnostics", () => {

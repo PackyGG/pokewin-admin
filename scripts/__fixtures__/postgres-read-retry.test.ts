@@ -24,6 +24,26 @@ test("recognizes nested PostgreSQL connection and idle-session timeouts", () => 
   );
 });
 
+test("retries PostgreSQL idle-session reclamation once", async () => {
+  let attempts = 0;
+  const idleTimeout = Object.assign(
+    new Error("terminating connection due to idle-session timeout"),
+    { code: "57P05" },
+  );
+
+  const result = await withTransientPostgresReadRetry(
+    async () => {
+      attempts += 1;
+      if (attempts === 1) throw idleTimeout;
+      return "recovered";
+    },
+    { context: "test.idle-session", delayMs: 0 },
+  );
+
+  assert.equal(result, "recovered");
+  assert.equal(attempts, 2);
+});
+
 test("retries one transient read and returns the successful result", async () => {
   let attempts = 0;
   const result = await withTransientPostgresReadRetry(

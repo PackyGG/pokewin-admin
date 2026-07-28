@@ -36,6 +36,75 @@ import * as Sentry from "@sentry/nextjs";
 
 type LogLevel = "error" | "warn" | "info";
 
+type ErrorDetails = {
+  cause?: unknown;
+  code?: unknown;
+  digest?: unknown;
+  message?: unknown;
+  name?: unknown;
+};
+
+function boundedLogText(value: string): string {
+  return value
+    .replace(/postgres(?:ql)?:\/\/[^\s]+/gi, "[redacted-database-url]")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+}
+
+/**
+ * Prefer the deepest causal error. Drizzle's outer message embeds the full
+ * SQL statement and bound parameters, while the node-postgres cause carries
+ * the useful SQLSTATE and a short operational message.
+ */
+function summarizeError(error: Error): string {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  let name = error.name || "Error";
+  let message = error.message || "Unknown error";
+  let code: string | null = null;
+  let digest: string | null = null;
+
+  for (let depth = 0; depth < 8 && current != null; depth += 1) {
+    if (seen.has(current) || typeof current !== "object") break;
+    seen.add(current);
+    const details = current as ErrorDetails;
+
+    try {
+      if (typeof details.name === "string" && details.name) {
+        name = details.name;
+      }
+      if (typeof details.message === "string" && details.message) {
+        message = details.message;
+      }
+      if (
+        code == null &&
+        typeof details.code === "string" &&
+        /^[0-9A-Z]{5}$/.test(details.code)
+      ) {
+        code = details.code;
+      }
+      if (
+        digest == null &&
+        typeof details.digest === "string" &&
+        details.digest
+      ) {
+        digest = boundedLogText(details.digest);
+      }
+      current = details.cause;
+    } catch {
+      break;
+    }
+  }
+
+  const safeMessage = /failed query:|(?:^|\s)params:/i.test(message)
+    ? "Database query failed"
+    : boundedLogText(message);
+  const codePart = code ? ` code=${code}` : "";
+  const digestPart = digest ? ` digest=${digest}` : "";
+  return `${name}: ${safeMessage}${codePart}${digestPart}`;
+}
+
 /**
  * Internal — emit a single prefixed line. Stays a function so future
  * deployments (e.g. structured logging via a Vercel Drain) can swap
@@ -48,11 +117,9 @@ function emit(level: LogLevel, area: string, message: string, err?: unknown) {
   let suffix = "";
   if (err !== undefined && err !== null) {
     if (err instanceof Error) {
-      const digest = (err as Error & { digest?: string }).digest;
-      const digestPart = digest ? ` digest=${digest}` : "";
-      suffix = ` — ${err.name}: ${err.message}${digestPart}`;
+      suffix = ` — ${summarizeError(err)}`;
     } else if (typeof err === "string") {
-      suffix = ` — ${err}`;
+      suffix = ` — ${boundedLogText(err)}`;
     } else {
       // Last-resort stringify. Never spread arbitrary objects directly
       // into the log line; one Pg error can include the entire failed

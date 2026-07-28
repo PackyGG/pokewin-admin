@@ -54,14 +54,14 @@ function createPool(
     // The production mirror role is capped at 30 sessions and is shared with
     // Antifraud. Two slots prevent one slow read from serializing every query
     // on a page, while remaining far below the old eight-session fan-out.
-    // Retiring each checkout prevents frozen isolates from retaining idle
-    // clients. Primary pools remain at three for mutation flows.
+    // Reuse a checkout within a hot isolate so a page with several reads does
+    // not pay a fresh TLS/PostgreSQL handshake for every query. The mirror's
+    // server-side idle_session_timeout remains the authoritative frozen-
+    // isolate backstop, and the short client idle timeout closes normally
+    // scheduled isolates even sooner. Primary pools remain at three.
     max: isReadMirror ? 2 : 3,
-    maxUses: isReadMirror ? 1 : Infinity,
-    // Retire idle mirror clients before PostgreSQL's 5s backstop. Normally
-    // maxUses closes them after one checkout; this ordering also protects any
-    // client released without a completed query.
-    idleTimeoutMillis: isReadMirror ? 4_000 : 10_000,
+    maxUses: isReadMirror ? 100 : Infinity,
+    idleTimeoutMillis: isReadMirror ? 1_000 : 10_000,
     // A queued read must be allowed to outlive the longest statement already
     // occupying a slot. The old 10s acquire budget guaranteed false pool
     // failures while valid 30s statements were still running.
