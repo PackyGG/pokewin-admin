@@ -78,6 +78,7 @@ const NETWORK_NAV: NavItem[] = [
 
 const TRANSACTION_NAV: NavItem[] = [
   { label: "Fiat Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
+  { label: "Fiat Fraud", href: "/antifraud/fiat-fraud", icon: ShieldAlert },
   { label: "Withdrawals", href: "/antifraud/withdrawals", icon: ArrowUpFromLine },
 ];
 

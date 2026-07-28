@@ -12,6 +12,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import type { FiatEmailCatch } from "@/lib/antifraud/fiat-email-catches-api";
+import { ROOT_DOMAIN } from "@/lib/app-hosts";
 import type { FiatFraudDepositSummary } from "@/lib/queries/fiat-fraud";
 import {
   formatCurrency,
@@ -22,6 +23,10 @@ import {
 export type FiatFraudRow = FiatEmailCatch & {
   deposit: FiatFraudDepositSummary | null;
 };
+
+function adminHref(path: string): string {
+  return `https://${ROOT_DOMAIN}${path}`;
+}
 
 function riskLabel(riskType: FiatEmailCatch["riskType"]): string {
   if (riskType === "blacklisted_domain") return "Blocked email domain";
@@ -106,7 +111,7 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
               <TableRow key={row.id} className="bg-red-500/[0.025]">
                 <TableCell>
                   <Link
-                    href={`/users/${row.userId}`}
+                    href={adminHref(`/users/${row.userId}`)}
                     className="block max-w-40 hover:underline"
                   >
                     <span className="block truncate font-medium">
@@ -147,7 +152,9 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
                 <TableCell>
                   {row.depositIntentId ? (
                     <Link
-                      href={`/transactions/card-payments/${row.depositIntentId}`}
+                      href={adminHref(
+                        `/transactions/card-payments/${row.depositIntentId}`,
+                      )}
                       className="block max-w-44 hover:underline"
                     >
                       <span className="block font-medium tabular-nums">
@@ -187,7 +194,10 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
             className="space-y-3 border-b border-border/60 p-3 last:border-b-0"
           >
             <div className="flex items-start justify-between gap-3">
-              <Link href={`/users/${row.userId}`} className="min-w-0 hover:underline">
+              <Link
+                href={adminHref(`/users/${row.userId}`)}
+                className="min-w-0 hover:underline"
+              >
                 <p className="truncate text-sm font-semibold">
                   {row.username || "Unknown username"}
                 </p>
@@ -222,7 +232,9 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
             <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
               {row.depositIntentId ? (
                 <Link
-                  href={`/transactions/card-payments/${row.depositIntentId}`}
+                  href={adminHref(
+                    `/transactions/card-payments/${row.depositIntentId}`,
+                  )}
                   className="truncate font-mono hover:underline"
                 >
                   {row.depositIntentId}

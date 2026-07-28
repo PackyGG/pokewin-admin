@@ -6,26 +6,39 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Transactions exposes a permission-gated, active-only Fiat Fraud tab", () => {
-  const page = read("src/app/(admin)/transactions/deposits/page.tsx");
-  const tab = read(
-    "src/app/(admin)/transactions/deposits/fiat-fraud-tab.tsx",
+test("Fraud Transactions owns the permission-gated canonical Fiat Fraud page", () => {
+  const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
+  const page = read("src/app/(antifraud)/antifraud/fiat-fraud/page.tsx");
+  const sidebar = read(
+    "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
-  assert.match(page, /requirePageAccess\("\/transactions\/deposits"\)/);
-  assert.match(page, /value: "fiat-fraud"/);
-  assert.match(page, /<FiatFraudTab/);
-  assert.match(page, /prefetch=\{false\}/);
-  assert.match(tab, /<Suspense/);
-  assert.match(tab, /TableSkeleton/);
+  const hosts = read("src/lib/app-hosts.ts");
+  assert.match(page, /requireAntifraudPageAccess\(\)/);
+  assert.match(page, /<FiatFraudContent/);
+  assert.match(sidebar, /label: "Fiat Fraud"/);
+  assert.match(sidebar, /href: "\/antifraud\/fiat-fraud"/);
+  assert.match(hosts, /"fiat-fraud"/);
+  assert.doesNotMatch(adminPage, /value: "fiat-fraud"/);
+  assert.doesNotMatch(adminPage, /<FiatFraud(?:Tab|Content)/);
+});
+
+test("The retired Admin deep link redirects to Fraud with query state intact", () => {
+  const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
+  assert.match(adminPage, /firstValue\("tab"\) === "fiat-fraud"/);
+  assert.match(adminPage, /absoluteOriginForBasePath\("\/antifraud"\)/);
+  assert.match(adminPage, /new URL\(\s*"\/fiat-fraud"/);
+  assert.match(adminPage, /key === "tab"/);
+  assert.match(adminPage, /destination\.searchParams\.append\(key, value\)/);
+  assert.match(adminPage, /redirect\(destination\.toString\(\)\)/);
 });
 
 test("Fiat Fraud reads durable caught history with server-side controls", () => {
   const api = read("src/lib/antifraud/fiat-email-catches-api.ts");
-  const tab = read(
-    "src/app/(admin)/transactions/deposits/fiat-fraud-tab.tsx",
+  const content = read(
+    "src/app/(antifraud)/antifraud/fiat-fraud/fiat-fraud-content.tsx",
   );
   const table = read(
-    "src/app/(admin)/transactions/deposits/fiat-fraud-table.tsx",
+    "src/app/(antifraud)/antifraud/fiat-fraud/fiat-fraud-table.tsx",
   );
 
   assert.match(api, /\/v1\/fiat-email-catches/);
@@ -47,22 +60,25 @@ test("Fiat Fraud reads durable caught history with server-side controls", () => 
   assert.match(api, /"signup"/);
   assert.match(api, /searchParams\.set\("lockStatus"/);
   assert.match(api, /cache: "no-store"/);
-  assert.match(tab, /DataTablePagination/);
+  assert.match(content, /<Suspense/);
+  assert.match(content, /TableSkeleton/);
+  assert.match(content, /DataTablePagination/);
   assert.match(table, /No fraudulent fiat deposits found/);
-  assert.match(tab, /Fiat fraud history is unavailable/);
-  assert.match(tab, /Durable fraud catches remain here/);
+  assert.match(content, /Fiat fraud history is unavailable/);
+  assert.match(content, /Durable fraud catches remain here/);
 });
 
 test("Fiat Fraud rows link to exact users and deposits without MAIN writes", () => {
   const table = read(
-    "src/app/(admin)/transactions/deposits/fiat-fraud-table.tsx",
+    "src/app/(antifraud)/antifraud/fiat-fraud/fiat-fraud-table.tsx",
   );
   const query = read("src/lib/queries/fiat-fraud.ts");
 
-  assert.match(table, /href=\{`\/users\/\$\{row\.userId\}`\}/);
+  assert.match(table, /`https:\/\/\$\{ROOT_DOMAIN\}\$\{path\}`/);
+  assert.match(table, /adminHref\(`\/users\/\$\{row\.userId\}`\)/);
   assert.match(
     table,
-    /href=\{`\/transactions\/card-payments\/\$\{row\.depositIntentId\}`\}/,
+    /adminHref\(\s*`\/transactions\/card-payments\/\$\{row\.depositIntentId\}`/,
   );
   assert.match(table, /Blocked email domain/);
   assert.match(table, /Suspicious deposit cluster/);

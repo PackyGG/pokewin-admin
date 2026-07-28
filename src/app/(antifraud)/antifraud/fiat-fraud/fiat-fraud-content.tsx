@@ -20,7 +20,7 @@ import {
 import { getFiatFraudDepositSummaries } from "@/lib/queries/fiat-fraud";
 import { FiatFraudTable, type FiatFraudRow } from "./fiat-fraud-table";
 
-export function FiatFraudTab({
+export function FiatFraudContent({
   page,
   perPage,
   params,

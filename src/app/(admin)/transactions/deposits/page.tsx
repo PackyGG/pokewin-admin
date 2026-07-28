@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import {
   AlertTriangle,
   ArrowDownToLine,
@@ -8,7 +9,6 @@ import {
   DatabaseZap,
   ListChecks,
   Receipt,
-  ShieldAlert,
 } from "lucide-react";
 import { getDepositTransactions } from "@/lib/queries/transactions";
 import { getCardPayments } from "@/lib/queries/card-payments";
@@ -37,13 +37,13 @@ import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
-import { FiatFraudTab } from "./fiat-fraud-tab";
+import { absoluteOriginForBasePath } from "@/lib/app-hosts";
 
 export const metadata = { title: "Transactions" };
 
-// Deposits, card payments, caught fiat fraud, and withdrawals share the same
-// "money flow" surface so admins only have one entry-point in the
-// sidebar for both. The withdrawals tab embeds the same query +
+// Deposits, card payments, and withdrawals share the same "money flow"
+// surface so admins only have one entry-point in the sidebar for both.
+// The withdrawals tab embeds the same query +
 // data-table + toolbar that the legacy /withdrawals page used; that
 // page is now a redirect to ?tab=withdrawals so existing bookmarks
 // and links keep working.
@@ -59,11 +59,6 @@ const TABS = [
     icon: CreditCard,
   },
   {
-    value: "fiat-fraud",
-    label: "Fiat Fraud",
-    icon: ShieldAlert,
-  },
-  {
     value: "withdrawals",
     label: "Withdrawals",
     icon: ArrowUpFromLine,
@@ -75,18 +70,38 @@ type TabValue = (typeof TABS)[number]["value"];
 export default async function TransactionsPage({
   searchParams,
 }: {
-  searchParams: Promise<Record<string, string | undefined>>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  const rawParams = await searchParams;
+  const firstValue = (key: string) => {
+    const raw = rawParams[key];
+    return Array.isArray(raw) ? raw[0] : raw;
+  };
+  if (firstValue("tab") === "fiat-fraud") {
+    const destination = new URL(
+      "/fiat-fraud",
+      absoluteOriginForBasePath("/antifraud") ??
+        "https://fraud.packydash.com",
+    );
+    for (const [key, raw] of Object.entries(rawParams)) {
+      if (key === "tab" || raw === undefined) continue;
+      for (const value of Array.isArray(raw) ? raw : [raw]) {
+        destination.searchParams.append(key, value);
+      }
+    }
+    redirect(destination.toString());
+  }
+
   await requirePageAccess("/transactions/deposits");
-  const params = await searchParams;
+  const params = Object.fromEntries(
+    Object.keys(rawParams).map((key) => [key, firstValue(key)]),
+  ) as Record<string, string | undefined>;
   const tab: TabValue =
     params.tab === "withdrawals"
       ? "withdrawals"
-      : params.tab === "fiat-fraud"
-        ? "fiat-fraud"
-        : params.tab === "card-payments"
-          ? "card-payments"
-          : "deposits";
+      : params.tab === "card-payments"
+        ? "card-payments"
+        : "deposits";
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
@@ -99,11 +114,9 @@ export default async function TransactionsPage({
           subtitle={
             tab === "card-payments"
               ? "Whop card-payment lifecycle, fees, and ledger reconciliation."
-              : tab === "fiat-fraud"
-                ? "Fraudulent fiat deposits caught by durable Antifraud signals."
-                : tab === "deposits"
-                  ? "All inbound deposit transactions across users."
-                  : "All physical and crypto withdrawal requests — filter by status and method."
+              : tab === "deposits"
+                ? "All inbound deposit transactions across users."
+                : "All physical and crypto withdrawal requests — filter by status and method."
           }
         />
       </PageHero>
@@ -162,8 +175,6 @@ export default async function TransactionsPage({
         <DepositsTab page={page} perPage={perPage} params={params} />
       ) : tab === "card-payments" ? (
         <CardPaymentsTab page={page} perPage={perPage} params={params} />
-      ) : tab === "fiat-fraud" ? (
-        <FiatFraudTab page={page} perPage={perPage} params={params} />
       ) : (
         <WithdrawalsTab page={page} perPage={perPage} params={params} />
       )}
