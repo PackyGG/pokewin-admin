@@ -58,7 +58,7 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | `/creator-hub` | Dashboard (period KPIs, top creators, charts) |
 | `/creator-hub/creators` | Roster grid |
 | `/creator-hub/creators/[id]` | Detail + tabs (Overview default; `?tab=` lazy) |
-| `/creator-hub/leaderboards` | Live leaderboards |
+| `/creator-hub/leaderboards` | Live leaderboards; sole sidebar-owned leaderboard entry point |
 | `/creator-hub/creator-check` | Kick/Twitter check tool |
 | `/creator-hub/acquisition` | Acquisition funnel |
 | `/creator-hub/socials-review` | Social post review queue |

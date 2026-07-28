@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 Creator leaderboard workspace ownership:** Leaderboards are exposed only through the Creators app sidebar. The duplicate normal Admin sidebar entry is removed, and the leaderboard-prize breakdown now links to `/creator-hub/leaderboards`. A focused ownership guardrail, TypeScript, and task-scoped zero-warning ESLint pass.
+
 - **2026-07-28 Whop fiat and geo-policy hardening:** the global fiat switch now moves direct card, Apple Pay, Google Pay, and both Cash App lock aliases together across the site and every location, while preserving all 33 mandatory exclusions. The 33-location full geo-block switch keeps the same complete wallet lock. Both bulk actions now await backend cache reload attempts and warn instead of claiming the change is live when either runtime cache fails; the manual reload button refreshes both site config and country restrictions. Stale Ukraine-subdivision deployment copy is corrected. Ten focused checks, all 257 guardrails, TypeScript, task-scoped zero-warning ESLint, diff check, and the production build pass.
 
 - **2026-07-28 Pack Builder strict production math:** New Pack Builder production writes now fail closed unless the solver output and the final persisted card rows each total exactly 1,000,000 integer ticket units (100.0000%). The inclusive house-edge band is narrowed to 10.95%–11.50% across client controls, queued-request validation, preview, saved-build promotion UI, owner review UI, and the fresh final production solve.

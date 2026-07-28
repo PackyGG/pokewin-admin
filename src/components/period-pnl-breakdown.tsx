@@ -133,7 +133,7 @@ const PAYOUT_ROWS: RowDef[] = [
     contribution: (b) => -b.leaderboardPrizes,
     icon: Award,
     accent: "rose",
-    href: "/creators/leaderboards",
+    href: "/creator-hub/leaderboards",
   },
   {
     label: "Rakeback Claims",
