@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import {
+  AlertTriangle,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -9,7 +10,9 @@ import {
   RadioTower,
   ScanSearch,
   ShieldCheck,
+  UserRound,
   UserRoundSearch,
+  Users,
 } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -73,11 +76,26 @@ async function SignupsData({ page }: { page: number }) {
   const { data, pagination, summary } = result.data;
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card lg:grid-cols-4">
-        <Summary label="All signups" value={summary.total} />
-        <Summary label="Risk checked" value={summary.assessed} />
-        <Summary label="Needs attention" value={summary.attention} tone="risk" />
-        <Summary label="Monitoring now" value={summary.monitoring} tone="live" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <Summary label="All signups" value={summary.total} icon={Users} />
+        <Summary
+          label="Risk checked"
+          value={summary.assessed}
+          icon={ShieldCheck}
+          tone="text-emerald-600 dark:text-emerald-400"
+        />
+        <Summary
+          label="Needs attention"
+          value={summary.attention}
+          icon={AlertTriangle}
+          tone="text-rose-600 dark:text-rose-400"
+        />
+        <Summary
+          label="Monitoring now"
+          value={summary.monitoring}
+          icon={RadioTower}
+          tone="text-cyan-600 dark:text-cyan-400"
+        />
       </div>
 
       {data.length === 0 ? (
@@ -258,6 +276,14 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
           <Button
             variant="outline"
             size="sm"
+            render={<HostLink href={`/users/${signup.user_id}`} />}
+          >
+            <UserRound className="size-3.5" />
+            User profile
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
             render={
               <HostLink
                 href={`/antifraud/networks?user=${encodeURIComponent(signup.user_id)}`}
@@ -346,22 +372,21 @@ function Info({
 function Summary({
   label,
   value,
-  tone = "default",
+  icon: Icon,
+  tone = "text-muted-foreground",
 }: {
   label: string;
   value: number;
-  tone?: "default" | "risk" | "live";
+  icon: typeof Users;
+  tone?: string;
 }) {
   return (
-    <div className="border-b border-r border-border/60 px-3 py-2.5 last:border-r-0 lg:border-b-0">
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p
-        className={cn(
-          "mt-0.5 text-lg font-semibold tabular-nums",
-          tone === "risk" && "text-rose-600 dark:text-rose-400",
-          tone === "live" && "text-cyan-600 dark:text-cyan-400",
-        )}
-      >
+    <div className="rounded-xl border border-border/70 bg-card p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">{label}</span>
+        <Icon className={cn("size-4", tone)} />
+      </div>
+      <p className="mt-2 text-2xl font-semibold tabular-nums">
         {value.toLocaleString()}
       </p>
     </div>
@@ -370,8 +395,9 @@ function Summary({
 
 function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-lg border border-dashed border-border px-4 py-10 text-center text-sm text-muted-foreground">
-      {text}
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+      <UserRoundSearch className="mx-auto mb-3 size-6 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">{text}</p>
     </div>
   );
 }
@@ -379,7 +405,11 @@ function EmptyState({ text }: { text: string }) {
 function SignupsSkeleton() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-[67px] w-full rounded-lg" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
+        ))}
+      </div>
       <div className="space-y-3">
         {Array.from({ length: 6 }).map((_, index) => (
           <div

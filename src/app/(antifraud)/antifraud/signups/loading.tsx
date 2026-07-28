@@ -6,12 +6,16 @@ export default function AntifraudSignupsLoading() {
     <div className="space-y-6">
       <PageHeroSkeleton />
       <div className="space-y-4">
-        <Skeleton className="h-[67px] w-full rounded-lg" />
-        <div className="overflow-hidden rounded-lg border border-border/70">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-24 rounded-xl" />
+          ))}
+        </div>
+        <div className="space-y-3">
           {Array.from({ length: 6 }).map((_, index) => (
             <div
               key={index}
-              className="flex items-center gap-3 border-b border-border/60 p-4 last:border-b-0"
+              className="flex items-center gap-3 rounded-xl border border-border/70 bg-card p-4 shadow-sm"
             >
               <Skeleton className="size-10 shrink-0 rounded-full" />
               <div className="flex-1 space-y-2">
