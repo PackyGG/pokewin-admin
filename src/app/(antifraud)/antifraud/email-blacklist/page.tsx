@@ -60,7 +60,12 @@ async function EmailBlacklistContent() {
       )}
 
       {result.configured && !result.error && (
-        <EmailBlacklistClient initialRules={result.data} />
+        <EmailBlacklistClient
+          key={result.data
+            .map((rule) => `${rule.id}:${rule.updatedAt}`)
+            .join("|")}
+          initialRules={result.data}
+        />
       )}
     </>
   );

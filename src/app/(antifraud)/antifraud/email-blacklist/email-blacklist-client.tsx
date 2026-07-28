@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, Loader2, MailWarning, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -25,6 +25,15 @@ export function EmailBlacklistClient({
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
   const [isPending, startTransition] = useTransition();
+  const isCheckingHistory = rules.some(
+    (rule) => rule.enabled && !rule.backfillComplete,
+  );
+
+  useEffect(() => {
+    if (!isCheckingHistory) return;
+    const timer = window.setInterval(() => router.refresh(), 3_000);
+    return () => window.clearInterval(timer);
+  }, [isCheckingHistory, router]);
 
   function addDomain(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();

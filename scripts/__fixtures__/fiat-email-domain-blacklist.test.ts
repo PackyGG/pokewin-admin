@@ -28,6 +28,10 @@ test("Fraud System owns the manager-only email blacklist without a reason field"
     "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
   );
   assert.doesNotMatch(client, /blacklist-reason|<Textarea|rule\.reason/);
+  assert.match(page, /key=\{result\.data/);
+  assert.match(page, /rule\.updatedAt/);
+  assert.match(client, /isCheckingHistory/);
+  assert.match(client, /setInterval\(\(\) => router\.refresh\(\), 3_000\)/);
 });
 
 test("blacklisted signup and Whop signals lock MAIN only through signed ingest", () => {
