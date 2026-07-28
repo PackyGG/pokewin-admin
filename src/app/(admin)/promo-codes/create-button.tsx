@@ -96,6 +96,16 @@ export function CreatePromoCodeButton() {
           expiresAt: expiresAt || null,
         });
         if (!result.success) {
+          if (result.code === "PROMO_CODE_EXISTS") {
+            const params = new URLSearchParams({
+              tab: "promo-codes",
+              search: code.trim(),
+            });
+            setOpen(false);
+            router.replace(`/rewards?${params.toString()}`);
+            toast.error(`${result.error}. Showing it below.`);
+            return;
+          }
           toast.error(result.error);
           return;
         }

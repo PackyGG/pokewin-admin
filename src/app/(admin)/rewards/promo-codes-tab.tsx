@@ -168,7 +168,7 @@ export async function PromoCodesTab({
           <div className="space-y-4">
             <Suspense fallback={<Skeleton className="h-10 w-full" />}>
               <DataTableToolbar
-                searchPlaceholder="Search promo codes..."
+                searchPlaceholder="Find exact promo code..."
                 filters={[
                   {
                     name: "Status",
@@ -187,7 +187,7 @@ export async function PromoCodesTab({
                 the table skeleton instead of blocking on the previous
                 render. */}
             <Suspense
-              key={`${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
+              key={`${params.search ?? ""}|${params.status ?? ""}|${params.region ?? ""}|${params.page ?? "1"}|${params.perPage ?? "20"}`}
               fallback={
                 <>
                   <TableSkeleton rows={12} columns={7} />
@@ -219,6 +219,7 @@ async function PromoCodesListAsync({
       getPromoCodes({
         page,
         perPage,
+        search: params.search,
         region: params.region,
         status: params.status,
       }),

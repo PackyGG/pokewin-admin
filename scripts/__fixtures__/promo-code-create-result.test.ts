@@ -28,6 +28,6 @@ test("duplicate promo codes return a readable Server Action result", () => {
   );
   assert.match(
     buttonSource,
-    /if \(!result\.success\) \{\s*toast\.error\(result\.error\);\s*return;/,
+    /if \(!result\.success\) \{[\s\S]*toast\.error\(result\.error\);[\s\S]*return;/,
   );
 });

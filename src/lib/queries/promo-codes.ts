@@ -1,5 +1,9 @@
 import { unstable_cache } from "next/cache";
 import { queryMainRows } from "@/lib/drizzle-query";
+import {
+  hashRewardCode,
+  resolveCodePepper,
+} from "@/lib/reward-campaign-codes";
 import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 
@@ -67,14 +71,21 @@ export type PromoCodeListItem = {
 export async function getPromoCodes(params: {
   page?: number;
   perPage?: number;
+  search?: string;
   region?: string;
   status?: string;
 }): Promise<PaginatedResult<PromoCodeListItem>> {
-  const { page = 1, perPage = 20, region, status } = params;
+  const { page = 1, perPage = 20, search, region, status } = params;
   const safePage = Math.max(1, Math.floor(page));
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
   const binds: unknown[] = [];
   const filters: string[] = [];
+  const normalizedSearch = search?.trim();
+  if (normalizedSearch) {
+    const pepper = await resolveCodePepper();
+    binds.push(hashRewardCode(normalizedSearch, pepper));
+    filters.push(`pc.code_hash = $${binds.length}`);
+  }
   if (region && region !== "all") {
     binds.push(region);
     filters.push(`pc.region::text = $${binds.length}`);
