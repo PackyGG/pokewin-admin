@@ -1,10 +1,5 @@
-"use client";
-
-import Link from "next/link";
-
-import { cn } from "@/lib/utils";
+import { TabChips } from "@/components/ux/period-chips";
 import type { CreatorSocialStatus } from "@/lib/backend-api";
-import { useHostHref } from "@/lib/use-app-host";
 
 const TABS: { key: CreatorSocialStatus; label: string }[] = [
   { key: "pending", label: "Pending" },
@@ -12,35 +7,46 @@ const TABS: { key: CreatorSocialStatus; label: string }[] = [
   { key: "rejected", label: "Rejected" },
 ];
 
-const HUB_SOCIALS_REVIEW_PATH = "/creator-hub/socials-review";
-
+/**
+ * Status tabs for the Socials Review queue — thin composition over the shared
+ * `TabChips` (the canonical URL-driven chip selector), so status switches get
+ * the house affordances for free: `router.replace(..., { scroll: false })`,
+ * the in-chip pending spinner, and the dim-the-others loading state.
+ *
+ * `activeCount` (when known) renders as a live suffix on the ACTIVE chip only
+ * ("Pending · 12") — per-status counts for the other tabs would need extra
+ * queries, so they stay plain. The server page streams this in; the Suspense
+ * fallback renders the same tabs without the count.
+ *
+ * Host-awareness: TabChips writes a query-only URL (`?status=…`), which never
+ * touches the path — so it works unchanged on the marketing subdomain where
+ * the `/creator-hub` prefix is stripped (no `useHostHref` needed).
+ *
+ * `defaultValue="pending"` keeps the canonical queue at a bare URL. Note:
+ * TabChips preserves unrelated params, so a deep `?page=` survives a status
+ * switch — the pager clamps/parks gracefully, and page 1 URLs carry no param.
+ */
 export function SocialsQueueTabs({
   current,
+  activeCount,
 }: {
   current: CreatorSocialStatus;
+  activeCount?: number;
 }) {
-  // Host-aware: the `/creator-hub` prefix is stripped on the marketing
-  // subdomain, keeping status switches a clean soft navigation.
-  const reviewHref = useHostHref(HUB_SOCIALS_REVIEW_PATH);
+  const items = TABS.map((tab) => ({
+    value: tab.key,
+    label:
+      tab.key === current && activeCount != null
+        ? `${tab.label} · ${activeCount}`
+        : tab.label,
+  }));
+
   return (
-    <nav className="flex flex-wrap gap-1 rounded-lg border border-pink-500/15 bg-background/40 p-1">
-      {TABS.map((tab) => {
-        const active = tab.key === current;
-        return (
-          <Link
-            key={tab.key}
-            href={`${reviewHref}?status=${tab.key}`}
-            className={cn(
-              "rounded-md px-3 py-1.5 text-xs font-semibold transition-colors",
-              active
-                ? "bg-pink-500/15 text-pink-700 dark:text-pink-300"
-                : "text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            {tab.label}
-          </Link>
-        );
-      })}
-    </nav>
+    <TabChips
+      items={items}
+      current={current}
+      paramKey="status"
+      defaultValue="pending"
+    />
   );
 }

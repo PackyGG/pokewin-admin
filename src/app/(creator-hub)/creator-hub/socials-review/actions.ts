@@ -128,3 +128,81 @@ export async function rejectCreatorSocial(
     throw toActionError(err);
   }
 }
+
+/** One queue page worth — the bulk bar can never select more than a page. */
+const BULK_MAX_IDS = 50;
+
+export type BulkReviewResult = {
+  succeeded: string[];
+  failed: { id: string; message: string }[];
+};
+
+/**
+ * Bulk approve/reject — the SAME per-item backend calls and per-item audit
+ * events as the single-row actions, behind the SAME access gate
+ * (`requireCreatorHubReviewAccess` = active admin user + Hub access +
+ * `__can_review_creator_social` capability), checked once up front. Items run
+ * sequentially; one failure never aborts the rest — per-id outcomes are
+ * returned so the client can restore only the rows that failed. Paths are
+ * revalidated once at the end.
+ */
+export async function bulkReviewCreatorSocials(input: {
+  ids: string[];
+  action: "approve" | "reject";
+  reason?: string;
+}): Promise<BulkReviewResult> {
+  const { userId } = await requireCreatorHubReviewAccess();
+
+  const ids = [...new Set(input.ids)].filter(
+    (id) => typeof id === "string" && id.length > 0,
+  );
+  if (ids.length === 0) throw new Error("No submissions selected.");
+  if (ids.length > BULK_MAX_IDS) {
+    throw new Error(`Too many submissions selected (max ${BULK_MAX_IDS}).`);
+  }
+  const reason = input.reason?.trim().slice(0, 500) || undefined;
+
+  const succeeded: string[] = [];
+  const failed: { id: string; message: string }[] = [];
+  const touchedUserIds = new Set<string>();
+
+  for (const id of ids) {
+    try {
+      const result =
+        input.action === "approve"
+          ? await creatorsApi.approveSocial(id)
+          : await creatorsApi.rejectSocial(id, reason);
+
+      await createAdminAuditEvent({
+        adminUserId: userId,
+        eventType:
+          input.action === "approve"
+            ? "creator_social_approved"
+            : "creator_social_rejected",
+        targetUserId: result.user_id,
+        metadata: {
+          via: "creator_hub_socials_review",
+          bulk: true,
+          social_id: result.id,
+          platform: result.platform,
+          username: result.username,
+          ...(input.action === "reject" ? { reason: reason ?? null } : {}),
+        },
+      });
+
+      touchedUserIds.add(result.user_id);
+      succeeded.push(id);
+    } catch (err) {
+      failed.push({ id, message: toActionError(err).message });
+    }
+  }
+
+  for (const targetUserId of touchedUserIds) {
+    revalidatePath(`/creator-hub/creators/${targetUserId}`);
+    revalidatePath(`/creators/${targetUserId}`);
+  }
+  revalidatePath("/creator-hub/socials-review");
+  revalidatePath("/creators/socials");
+
+  return { succeeded, failed };
+}

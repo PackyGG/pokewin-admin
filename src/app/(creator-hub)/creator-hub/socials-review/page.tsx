@@ -1,46 +1,20 @@
 import { cache, Suspense } from "react";
-import Image from "next/image";
-import Link from "next/link";
-import {
-  ChevronLeft,
-  ChevronRight,
-  Inbox,
-  ShieldCheck,
-} from "lucide-react";
+import { Inbox, ShieldCheck } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { FadeIn } from "@/components/fade-in";
-import { Badge } from "@/components/ui/badge";
-import {
-  PageHero,
-  PageHeroIdentity,
-  KpiTile,
-} from "@/components/modern-panels";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SectionHeading } from "@/components/modern-panels";
 import { creatorsApi, type CreatorSocialStatus } from "@/lib/backend-api";
 
+import { HubNotice, HubEmptyState } from "../_components/hub-notice";
+import { HubPagination } from "../_components/hub-pagination";
 import { SocialsQueueTabs } from "./tabs";
-import { SocialReviewActions } from "./review-actions";
+import { SocialsQueueList } from "./queue-list";
+import { SocialsQueueBodySkeleton } from "./skeletons";
 
 export const metadata = { title: "Socials Review · Creator Hub" };
 
 const HUB_SOCIALS_REVIEW_PATH = "/creator-hub/socials-review";
-
-const STATUS_TONES: Record<CreatorSocialStatus, string> = {
-  pending: "bg-amber-500/10 text-amber-600 dark:text-amber-300",
-  approved: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-300",
-  rejected: "bg-red-500/10 text-red-600 dark:text-red-300",
-};
-
-const PLATFORM_LABEL: Record<string, string> = {
-  twitch: "Twitch",
-  kick: "Kick",
-  youtube: "YouTube",
-  x: "X",
-  instagram: "Instagram",
-  tiktok: "TikTok",
-  discord: "Discord",
-};
 
 const LIMIT = 50;
 
@@ -51,22 +25,19 @@ type SocialsPage = {
 };
 
 /**
- * One guarded fetch per (status, offset), memoized for the request so the KPI
- * tile, the "showing N of M" counter and the list body can each stream in
- * their own boundary without triple-fetching. A backend failure resolves to a
- * describable error instead of throwing — a missing `creator_socials` table is
- * an un-migrated environment, not an outage.
+ * One guarded fetch per (status, page), memoized for the request so the tab
+ * counts and the list body can each stream in their own boundary without
+ * double-fetching. A backend failure resolves to a describable error instead
+ * of throwing — a missing `creator_socials` table is an un-migrated
+ * environment, not an outage.
  */
 const loadSocials = cache(
-  async (
-    status: CreatorSocialStatus,
-    offset: number,
-  ): Promise<SocialsPage> => {
+  async (status: CreatorSocialStatus, page: number): Promise<SocialsPage> => {
     try {
       const result = await creatorsApi.listSocials({
         status,
         limit: LIMIT,
-        offset,
+        offset: (page - 1) * LIMIT,
       });
       return { items: result.items, total: result.total, loadError: null };
     } catch (err) {
@@ -91,22 +62,25 @@ const loadSocials = cache(
 );
 
 /**
- * Creator Hub → Socials Review.
- *
- * 1:1 port of `/creators/socials`: the approval queue for creator-uploaded
- * social accounts. Reads via `creatorsApi.listSocials` (backend API / MAIN
- * DB read-only from the admin panel's perspective); approve/reject mutations
- * write through the backend API and stamp ADMIN-DB audit rows.
+ * Creator Hub → Socials Review — the approval queue for creator-uploaded
+ * social accounts. Reads via `creatorsApi.listSocials`; approve/reject
+ * mutations write through the backend API and stamp ADMIN-DB audit rows
+ * (see `actions.ts`).
  *
  * ACCESS: `canAccessCreatorHub` (founder `motha`, or a role whose ADMIN-DB
  * toggle is on) — NOT bare `requireRole`. The Hub layout already guards the
  * segment; this page adds the explicit gate per house convention.
  *
- * SHELL-FIRST / LAZY: the hero, the card and the status tabs render
- * immediately; only the data-bearing leaves (KPI, count, list) stream behind
- * `<Suspense key={status-offset}>` boundaries. So a status switch or page turn
- * fetches just that one view and never removes the tab control the reviewer
- * just clicked. All three leaves share one memoized `loadSocials` fetch.
+ * SHELL-FIRST / LAZY: the heading, card chrome and status tabs render
+ * immediately; only the data-bearing leaves (tab count, list body) stream
+ * behind `<Suspense key={status-page}>` boundaries, sharing one memoized
+ * `loadSocials` fetch. A status switch or page turn fetches just that one
+ * view and never removes the control the reviewer just clicked.
+ *
+ * URL contract: `?status=` (pending is the bare default) + `?page=` (1-based,
+ * pagination via the shared `HubPagination`; the old `?offset=` param is
+ * retired). A stale deep `?page=` past the end renders the empty page with a
+ * working "Previous" — never a crash.
  */
 export default async function SocialsReviewPage({
   searchParams,
@@ -120,41 +94,31 @@ export default async function SocialsReviewPage({
     params.status === "approved" || params.status === "rejected"
       ? params.status
       : "pending";
-  const offset = Math.max(0, Number(params.offset ?? "0")) || 0;
+  const page = Math.max(1, Math.floor(Number(params.page ?? "1")) || 1);
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={ShieldCheck}
-          accent="pink"
-          title="Socials Review"
-          subtitle="Approve or reject social accounts submitted by creators"
-        />
-      </PageHero>
-
-      {status === "pending" && (
-        <Suspense key={`kpi-${offset}`} fallback={<KpiSkeleton />}>
-          <PendingKpi offset={offset} />
-        </Suspense>
-      )}
-
-      {/* The card chrome + status tabs live in the SHELL, so switching status
-          never removes the control the reviewer just clicked — only the body
-          below swaps to a skeleton. */}
-      <div className="rounded-2xl border bg-card p-4">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <SocialsQueueTabs current={status} />
+      <SectionHeading
+        icon={ShieldCheck}
+        title="Socials Review"
+        action={
           <Suspense
-            key={`count-${status}-${offset}`}
-            fallback={<Skeleton className="h-4 w-28 rounded" />}
+            key={`tabs-${status}-${page}`}
+            fallback={<SocialsQueueTabs current={status} />}
           >
-            <ShowingCount status={status} offset={offset} />
+            <TabsWithCount status={status} page={page} />
           </Suspense>
-        </div>
+        }
+      />
 
-        <Suspense key={`${status}-${offset}`} fallback={<QueueSkeleton />}>
-          <QueueSection status={status} offset={offset} />
+      {/* Card chrome lives in the SHELL: switching status/page only swaps the
+          body below to a skeleton. */}
+      <div className="rounded-2xl border bg-card p-4">
+        <Suspense
+          key={`${status}-${page}`}
+          fallback={<SocialsQueueBodySkeleton />}
+        >
+          <QueueSection status={status} page={page} />
         </Suspense>
       </div>
     </div>
@@ -163,260 +127,88 @@ export default async function SocialsReviewPage({
 
 // ─── Streamed leaves (all share the memoized `loadSocials` fetch) ─────
 
-async function PendingKpi({ offset }: { offset: number }) {
-  const { total, loadError } = await loadSocials("pending", offset);
-  if (loadError) return null;
-  return (
-    <div className="grid grid-cols-1 gap-3 sm:max-w-xs">
-      <KpiTile
-        label="Pending in queue"
-        value={String(total)}
-        sub="awaiting review"
-        icon={Inbox}
-        accent="pink"
-      />
-    </div>
-  );
-}
-
-async function ShowingCount({
+/**
+ * Tabs with the live count of the ACTIVE status suffixed onto its chip
+ * ("Pending · 12") — the persistent home of the pending count now that the
+ * layout-jumping KPI tile is gone. Falls back to plain tabs while loading.
+ */
+async function TabsWithCount({
   status,
-  offset,
+  page,
 }: {
   status: CreatorSocialStatus;
-  offset: number;
+  page: number;
 }) {
-  const { items, total } = await loadSocials(status, offset);
+  const { total, loadError } = await loadSocials(status, page);
   return (
-    <span className="text-xs text-muted-foreground">
-      Showing {items.length} of {total}
-    </span>
+    <SocialsQueueTabs
+      current={status}
+      activeCount={loadError ? undefined : total}
+    />
   );
 }
 
 async function QueueSection({
   status,
-  offset,
+  page,
 }: {
   status: CreatorSocialStatus;
-  offset: number;
+  page: number;
 }) {
-  const { items, total, loadError } = await loadSocials(status, offset);
+  const { items, total, loadError } = await loadSocials(status, page);
+
+  if (loadError) {
+    return (
+      <HubNotice tone="amber" title={loadError.title} className="mt-1">
+        {/* Never print the raw backend error inline — the specifics stay
+            behind a disclosure (server logs carry the full stack). */}
+        <details>
+          <summary className="cursor-pointer select-none font-medium">
+            Details
+          </summary>
+          <p className="mt-1 break-words">{loadError.detail}</p>
+        </details>
+      </HubNotice>
+    );
+  }
+
+  const pageCount = Math.max(1, Math.ceil(total / LIMIT));
+  const start = total === 0 ? 0 : (page - 1) * LIMIT + 1;
+  const end = (page - 1) * LIMIT + items.length;
 
   return (
     <FadeIn>
-      {loadError ? (
-        <div className="mt-4 rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-4">
-          <div className="text-sm font-semibold text-amber-700 dark:text-amber-300">
-            {loadError.title}
-          </div>
-          <div className="mt-1 text-xs text-muted-foreground">
-            {loadError.detail}
-          </div>
-        </div>
-      ) : items.length === 0 ? (
-        <div className="mt-6 flex flex-col items-center gap-2 rounded-xl border border-dashed py-10 text-muted-foreground">
-          <Inbox className="size-6" />
-          <span className="text-sm">No submissions in this status.</span>
-        </div>
+      {items.length === 0 ? (
+        <HubEmptyState
+          icon={Inbox}
+          title="No submissions in this status."
+          sub={
+            page > 1
+              ? "This page is past the end of the list — go back a page."
+              : status === "pending"
+                ? "New creator social submissions land here for review."
+                : undefined
+          }
+          className="mt-4"
+        />
       ) : (
-        <ul className="mt-4 divide-y">
-          {items.map((row) => {
-            const submittedAt = new Date(row.submitted_at);
-            const reviewedAt = row.reviewed_at
-              ? new Date(row.reviewed_at)
-              : null;
-            return (
-              <li
-                key={row.id}
-                className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="size-9 shrink-0 overflow-hidden rounded-full bg-muted">
-                    {row.creator_image ? (
-                      <Image
-                        src={row.creator_image}
-                        alt={row.creator_username ?? row.user_id}
-                        width={36}
-                        height={36}
-                        className="size-full object-cover"
-                        unoptimized
-                      />
-                    ) : null}
-                  </div>
-                  <div className="flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <Link
-                        href={`/creator-hub/creators/${row.user_id}`}
-                        className="text-sm font-semibold hover:underline"
-                      >
-                        {row.creator_username ?? row.user_id}
-                      </Link>
-                      <Badge variant="outline" className="text-[10px]">
-                        {PLATFORM_LABEL[row.platform] ?? row.platform}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className={`text-[10px] ${STATUS_TONES[row.status]}`}
-                      >
-                        {row.status}
-                      </Badge>
-                    </div>
-                    <div className="flex items-center gap-3 text-xs text-muted-foreground">
-                      <span className="font-medium">{row.username}</span>
-                      {row.url ? (
-                        // SECURITY (SECURITY_AUDIT.md LOW): only linkify http(s)
-                        // URLs — a stored `javascript:` / `data:` URL in an href
-                        // would execute on click. Anything else renders as text.
-                        /^https?:\/\//i.test(row.url) ? (
-                          <a
-                            href={row.url}
-                            target="_blank"
-                            rel="noreferrer noopener"
-                            className="truncate hover:underline"
-                          >
-                            {row.url}
-                          </a>
-                        ) : (
-                          <span className="truncate">{row.url}</span>
-                        )
-                      ) : null}
-                    </div>
-                    <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-                      <span>Submitted {submittedAt.toLocaleString()}</span>
-                      {reviewedAt ? (
-                        <span>· Reviewed {reviewedAt.toLocaleString()}</span>
-                      ) : null}
-                      {row.rejection_reason ? (
-                        <span className="text-red-500">
-                          · Reason: {row.rejection_reason}
-                        </span>
-                      ) : null}
-                    </div>
-                  </div>
-                </div>
-
-                {row.status === "pending" ? (
-                  <SocialReviewActions socialId={row.id} />
-                ) : (
-                  <span className="text-xs italic text-muted-foreground">
-                    Already reviewed
-                  </span>
-                )}
-              </li>
-            );
-          })}
-        </ul>
+        <SocialsQueueList rows={items} />
       )}
 
-      {!loadError && total > 0 && (
-      <PaginationFooter
-        status={status}
-        offset={offset}
-        limit={LIMIT}
-        total={total}
-        shown={items.length}
-      />
+      {total > 0 && (
+        <HubPagination
+          basePath={HUB_SOCIALS_REVIEW_PATH}
+          page={page}
+          pageCount={pageCount}
+          extraParams={{
+            status: status === "pending" ? undefined : status,
+          }}
+          summary={
+            items.length > 0 ? `${start}–${end} of ${total}` : `${total} total`
+          }
+          className="mt-4 border-t pt-3"
+        />
       )}
     </FadeIn>
-  );
-}
-
-function KpiSkeleton() {
-  return <Skeleton className="h-[88px] max-w-xs rounded-xl" />;
-}
-
-function PaginationFooter({
-  status,
-  offset,
-  limit,
-  total,
-  shown,
-}: {
-  status: CreatorSocialStatus;
-  offset: number;
-  limit: number;
-  total: number;
-  shown: number;
-}) {
-  const pageStart = total === 0 ? 0 : offset + 1;
-  const pageEnd = offset + shown;
-  const hasPrev = offset > 0;
-  const hasNext = pageEnd < total;
-
-  const linkFor = (nextOffset: number) => {
-    const params = new URLSearchParams();
-    params.set("status", status);
-    if (nextOffset > 0) params.set("offset", String(nextOffset));
-    return `${HUB_SOCIALS_REVIEW_PATH}?${params.toString()}`;
-  };
-
-  return (
-    <div className="mt-4 flex items-center justify-between border-t pt-3">
-      <span className="text-xs text-muted-foreground">
-        {pageStart}–{pageEnd} of {total}
-      </span>
-      <div className="flex items-center gap-2">
-        {hasPrev ? (
-          <Link
-            href={linkFor(Math.max(0, offset - limit))}
-            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted"
-          >
-            <ChevronLeft className="size-3.5" />
-            Previous
-          </Link>
-        ) : (
-          <span className="inline-flex h-8 cursor-not-allowed items-center gap-1 rounded-md border px-3 text-xs font-semibold text-muted-foreground/40">
-            <ChevronLeft className="size-3.5" />
-            Previous
-          </span>
-        )}
-        {hasNext ? (
-          <Link
-            href={linkFor(offset + limit)}
-            className="inline-flex h-8 items-center gap-1 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted"
-          >
-            Next
-            <ChevronRight className="size-3.5" />
-          </Link>
-        ) : (
-          <span className="inline-flex h-8 cursor-not-allowed items-center gap-1 rounded-md border px-3 text-xs font-semibold text-muted-foreground/40">
-            Next
-            <ChevronRight className="size-3.5" />
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─── In-boundary skeleton (tab / page switch) ───────────────────────
-
-/**
- * In-card body skeleton — the card chrome + tabs are rendered by the shell, so
- * this only stands in for the submission rows while a status/page switch loads.
- */
-function QueueSkeleton() {
-  return (
-    <ul className="mt-4 divide-y">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <li
-          key={i}
-          className="flex flex-col gap-3 py-4 md:flex-row md:items-center md:justify-between"
-        >
-          <div className="flex items-start gap-3">
-            <Skeleton className="size-9 shrink-0 rounded-full" />
-            <div className="space-y-1.5">
-              <Skeleton className="h-4 w-32 rounded" />
-              <Skeleton className="h-3 w-48 rounded" />
-            </div>
-          </div>
-          <div className="flex gap-2">
-            <Skeleton className="h-8 w-20 rounded-md" />
-            <Skeleton className="h-8 w-20 rounded-md" />
-          </div>
-        </li>
-      ))}
-    </ul>
   );
 }
