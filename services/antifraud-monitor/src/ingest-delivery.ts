@@ -8,7 +8,10 @@ import { severity } from "./scoring.js";
 
 const CURSOR = "admin-dashboard";
 const LEADER_LOCK = 841_772_993;
-const BATCH_SIZE = 50;
+// Containment signals perform an idempotent MAIN lock before acknowledgement.
+// Keep each signed request below the dashboard's function timeout even when
+// an entire batch contains withdrawal-lock commands.
+const BATCH_SIZE = 10;
 const DELIVERY_INTERVAL_MS = 5_000;
 const DELIVERY_TIMEOUT_MS = 10_000;
 const MAX_BACKOFF_MS = 60_000;

@@ -164,6 +164,26 @@ test("delivery advances only after every event is confirmed", async () => {
   );
 });
 
+test("signed delivery batches stay bounded for containment writes", async () => {
+  const fixture = deliveryPool([]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () => new Response(),
+  );
+
+  assert.equal(await delivery.flushOnce(), 0);
+  assert.equal(
+    fixture.queries.some((sql) => /LIMIT \$3/.test(sql)),
+    true,
+  );
+  const source = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(new URL("../src/ingest-delivery.ts", import.meta.url), "utf8")
+  );
+  assert.match(source, /const BATCH_SIZE = 10/);
+});
+
 test("partial confirmation keeps the cursor for an idempotent retry", async () => {
   const fixture = deliveryPool([row]);
   const delivery = new IngestDelivery(
