@@ -148,7 +148,10 @@ export async function updateCountryRestrictionArray(
   const updated = await db
     .update(country_restrictions)
     .set({
-      [field]: sql.param(normalizedValues),
+      // Pass the value through Drizzle's schema-aware setter so text[] is
+      // encoded as a PostgreSQL array. A raw sql.param() leaves this as a
+      // nested JavaScript array and fails at runtime in the production driver.
+      [field]: normalizedValues,
       updated_at: new Date().toISOString(),
     })
     .where(eq(country_restrictions.country_code, countryCode))
