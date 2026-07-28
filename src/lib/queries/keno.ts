@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
 
 export type KenoMetricSlice = {
@@ -191,13 +192,13 @@ async function computeKenoDashboard(
   blacklist: string[],
 ): Promise<KenoDashboard> {
   const db = readDrizzleForEnv(env);
-  const customerScope =
-    excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist).replace(
-      /^user_id\b/,
-      "kg.user_id",
-    );
-  const result = await db.execute<RawDashboardRow>(sql`
-    WITH base AS MATERIALIZED (
+  const customerScope = excludeStaffCreatorsAndBlacklistedSqlFromIds(
+    blacklist,
+  ).replace(/^user_id\b/, "kg.user_id");
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<RawDashboardRow>(sql`
+        WITH base AS MATERIALIZED (
       SELECT
         kg.id,
         kg.user_id,
@@ -359,7 +360,9 @@ async function computeKenoDashboard(
         ),
         '[]'::jsonb
       ) AS recent_games
-  `);
+      `),
+    { context: "keno.operations" },
+  );
 
   const raw = result.rows[0];
   if (!raw) return EMPTY_KENO_DASHBOARD;

@@ -12,11 +12,9 @@ import {
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
-import {
-  kpiWindowToCutoff,
-  type DashboardKpiWindow,
-} from "./dashboard-period";
+import { kpiWindowToCutoff, type DashboardKpiWindow } from "./dashboard-period";
 
 type RawKenoWindow = {
   games: string;
@@ -43,22 +41,24 @@ async function computeDashboardKeno(
 ): Promise<KenoWindowMetrics> {
   return withTiming("dashboard.keno", async () => {
     const db = readDrizzleForEnv(env);
-    const customerScope =
-      excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist).replace(
-        /^user_id\b/,
-        "kg.user_id",
-      );
-    const rows = await queryRows<RawKenoWindow[]>(
-      db,
-      `SELECT
-         COUNT(*)::text AS games,
-         COUNT(DISTINCT kg.user_id)::text AS players,
-         COALESCE(SUM(kg.bet_amount::numeric), 0)::text AS wager,
-         COALESCE(SUM(kg.won_amount::numeric), 0)::text AS payout
-       FROM keno_games kg
-       WHERE kg.created_at >= $1
-         AND ${customerScope}`,
-      cutoff,
+    const customerScope = excludeStaffCreatorsAndBlacklistedSqlFromIds(
+      blacklist,
+    ).replace(/^user_id\b/, "kg.user_id");
+    const rows = await withTransientPostgresReadRetry(
+      () =>
+        queryRows<RawKenoWindow[]>(
+          db,
+          `SELECT
+             COUNT(*)::text AS games,
+             COUNT(DISTINCT kg.user_id)::text AS players,
+             COALESCE(SUM(kg.bet_amount::numeric), 0)::text AS wager,
+             COALESCE(SUM(kg.won_amount::numeric), 0)::text AS payout
+           FROM keno_games kg
+           WHERE kg.created_at >= $1
+             AND ${customerScope}`,
+          cutoff,
+        ),
+      { context: "dashboard.keno" },
     );
     const row = rows[0];
 
@@ -104,10 +104,5 @@ export async function getDashboardKenoMetrics(
     return computeDashboardKeno(env, cutoff, blacklist);
   }
 
-  return cachedDashboardKeno(
-    env,
-    window,
-    cutoff.toISOString(),
-    blacklist,
-  );
+  return cachedDashboardKeno(env, window, cutoff.toISOString(), blacklist);
 }

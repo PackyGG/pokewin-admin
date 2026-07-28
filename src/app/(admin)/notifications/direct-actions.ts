@@ -8,6 +8,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import type { DbEnv } from "@/lib/db-env";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { getDirectNotificationAvailability } from "@/lib/backend-api/user-notifications-availability";
 import {
@@ -41,7 +42,8 @@ import {
  *      `__can_manage_announcements`: a bulk personal send writes one row per
  *      recipient and can carry per-user money-adjacent content (promo codes),
  *      which is a different blast radius from a single broadcast row.
- *   3. dev environment only (see requireDevEnv)
+ *   3. a configured backend target, with the resolved environment returned for
+ *      accurate operator confirmation and audit metadata
  */
 
 const PAGE_KEY = "/notifications";
@@ -56,7 +58,7 @@ export type BulkChunkResult =
   | { success: false; error: string; status?: number };
 
 /**
- * Hard env gate. Resolves the env the request would ACTUALLY go to rather
+ * Backend target gate. Resolves the env the request would ACTUALLY go to rather
  * than the `admin_db_env` cookie — see the note in
  * `@/lib/backend-api/user-notifications-availability`: the cookie is run
  * through a fallback that can resolve "dev" to the prod backend when no dev
@@ -224,10 +226,14 @@ export async function sendBulkNotificationChunkAction(
       return { success: false, error: "Every item needs a user_id" };
     }
     const keyError = validateDedupeKey(item.dedupe_key ?? "");
-    if (keyError) return { success: false, error: `${item.user_id}: ${keyError}` };
+    if (keyError)
+      return { success: false, error: `${item.user_id}: ${keyError}` };
     const payloadCheck = validateNotificationPayload(item.payload);
     if (!payloadCheck.ok) {
-      return { success: false, error: `${item.user_id}: ${payloadCheck.error}` };
+      return {
+        success: false,
+        error: `${item.user_id}: ${payloadCheck.error}`,
+      };
     }
   }
 
@@ -319,11 +325,15 @@ export async function searchNotificationUsers(
   if (q.length >= 4) conditions.push(ilike(user.id, `${q}%`));
 
   const db = await getReadDrizzleDb();
-  const users = await db
-    .select({ id: user.id, username: user.username, email: user.email })
-    .from(user)
-    .where(or(...conditions))
-    .limit(10);
+  const users = await withTransientPostgresReadRetry(
+    async () =>
+      db
+        .select({ id: user.id, username: user.username, email: user.email })
+        .from(user)
+        .where(or(...conditions))
+        .limit(10),
+    { context: "notifications.recipient-search" },
+  );
 
   return users.map((u) => ({
     id: u.id,

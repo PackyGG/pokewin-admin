@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 released Fiat/Keno/notification read resilience:** every read owned by the released surfaces now uses the bounded connection-only PostgreSQL retry: Fiat overview/access/webhook reads, Keno operations/dashboard KPI reads, and notification recipient search. Direct-notification docs no longer describe a retired dev-only gate, and the production release contract fixture locks the resolved environment behavior. Vercel production has the backend URL/key, writable MAIN client, read mirror, Admin DB, and gift-card pepper bindings. A read-only live mirror probe was rejected with SQLSTATE `53300` (`too many connections for role "fraud_app"`), matching recent production logs; no database capacity or data was changed. All 276 guardrails, focused retry/release tests, TypeScript, zero-warning ESLint, diff check, and the production build pass.
+
 - **2026-07-28 navigation unseen badges:** Main Fiat plus Antifraud Fiat Deposits, Signups, and Account Review now show per-staff unseen counts from visible-tab 60-second polling and clear on visit. Counts cover completed fiat deposits, new signup subjects, and new review cases; they are capped at 99+, bounded to 30 days, backed by indexed read-only queries, and preserve the last known badge through transient failures. All 273 dashboard guardrails, TypeScript, zero-warning ESLint, the production build, and all 95 monitor checks pass.
 
 - **2026-07-28 Keno navigation order:** Keno now appears in Overview directly below Fiat instead of under Content. TypeScript and task-scoped ESLint pass.

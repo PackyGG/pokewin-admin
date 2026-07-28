@@ -117,8 +117,11 @@ function stringArray(value: unknown): string[] {
 }
 
 async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
-  const result = await readDrizzleForEnv(env).execute<RawOverview>(sql`
-    WITH intent_stats AS (
+  const db = readDrizzleForEnv(env);
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<RawOverview>(sql`
+        WITH intent_stats AS (
       SELECT
         COUNT(*)::text AS intents,
         COUNT(DISTINCT user_id)::text AS customers,
@@ -195,7 +198,9 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
       ) AS kyc_required_users
     FROM intent_stats i
     CROSS JOIN webhook_stats w
-  `);
+      `),
+    { context: "fiat.overview" },
+  );
 
   const row = result.rows[0];
   if (!row) return EMPTY_FIAT_OVERVIEW;
@@ -345,8 +350,11 @@ type RawAccess = {
 };
 
 async function computeFiatAccess(env: DbEnv): Promise<FiatAccess> {
-  const result = await readDrizzleForEnv(env).execute<RawAccess>(sql`
-    SELECT
+  const db = readDrizzleForEnv(env);
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<RawAccess>(sql`
+        SELECT
       (SELECT COUNT(*) FROM country_restrictions)::text AS restriction_rows,
       (
         SELECT COUNT(*) FROM country_restrictions WHERE blocked
@@ -381,7 +389,9 @@ async function computeFiatAccess(env: DbEnv): Promise<FiatAccess> {
         WHERE key = 'locked_deposits_fiat'
           AND value ~ '^[[:space:]]*\\['
       ) AS site_locked_methods
-  `);
+      `),
+    { context: "fiat.access" },
+  );
   const row = result.rows[0];
   if (!row) return EMPTY_FIAT_ACCESS;
   return {
@@ -450,8 +460,10 @@ type RawWebhookFailure = {
 async function computeFiatWebhooks(env: DbEnv): Promise<FiatWebhooks> {
   const db = readDrizzleForEnv(env);
   const [summary, failures] = await Promise.all([
-    db.execute<RawWebhookSummary>(sql`
-      SELECT
+    withTransientPostgresReadRetry(
+      () =>
+        db.execute<RawWebhookSummary>(sql`
+          SELECT
         event_type,
         processing_status,
         COUNT(*)::text AS events,
@@ -462,9 +474,13 @@ async function computeFiatWebhooks(env: DbEnv): Promise<FiatWebhooks> {
       FROM payment_webhook_events
       GROUP BY event_type, processing_status
       ORDER BY events DESC, event_type, processing_status
-    `),
-    db.execute<RawWebhookFailure>(sql`
-      SELECT
+        `),
+      { context: "fiat.webhooks.summary" },
+    ),
+    withTransientPostgresReadRetry(
+      () =>
+        db.execute<RawWebhookFailure>(sql`
+          SELECT
         event_type,
         attempt_count::text,
         last_error,
@@ -474,7 +490,9 @@ async function computeFiatWebhooks(env: DbEnv): Promise<FiatWebhooks> {
         AND last_error IS NOT NULL
       ORDER BY received_at DESC
       LIMIT 20
-    `),
+        `),
+      { context: "fiat.webhooks.failures" },
+    ),
   ]);
 
   return {
