@@ -1,5 +1,13 @@
 # Creator Hub Revamp Plan — `iridescent-mixing-lecun`
 
+## 2026-07-29 Marketing Alerts removal
+
+- The Marketing-only right-edge Alerts dock and its polling, derived-alert sync,
+  read/dismiss mutations, saved rail state, action endpoint, and reserved gutter
+  were removed at the owner's request.
+- Shared staff notification bells and Admin, Packs, and Fraud notification
+  surfaces remain unchanged.
+
 ## 2026-07-26 production incident follow-up
 
 - Creator roster consumers share one environment-keyed Upstash cache.
@@ -26,7 +34,7 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | **1** | Core pages — roster, `creators/[id]` Overview + tabs, profitable-algo, live-leaderboards, changelog, nav wiring | **DONE** |
 | **Substrate** | 9 ADMIN-DB tables (kick/twitter/crm/alerts/session meta) + `src/lib/creator-hub/*` (TTL cache, throttle, server-only) + Settings (RapidAPI keys in `admin_settings`) | **DONE** |
 | **Per-creator tabs** | Creator, Risk, Forecast, Cohorts&LTV, Alt Accounts, Kick, Twitter, Sessions+VOD | **DONE** |
-| **Ops tools** | Creator Check, onboarding checklist dock, acquisition, compare, alerts (right-rail dock), deal-tracker, socials-review | **DONE** |
+| **Ops tools** | Creator Check, onboarding checklist dock, acquisition, compare, deal-tracker, socials-review | **DONE** |
 | **B** | Dashboard 24h real-data + bucketed charts, Add Creator v2, ops routes wired | **DONE** |
 | **C** | Top Creators = most wager; post-B+C fixes (Vercel build, creator cost converted payouts, linked socials, Kick refetch) | **DONE** |
 | **AUDIT-FIX** | Design, security, perf, math sweep + safe fixes | **DONE** (see checklist below) |
@@ -67,7 +75,6 @@ Build a self-contained **Creator Hub** sub-app (`/creator-hub/*`) for the in-hou
 | `/creator-hub/deal-tracker` | Deal timeline |
 | `/creator-hub/compare` | Creator compare |
 | `/creator-hub/settings` | RapidAPI integration keys |
-| `/creator-hub/alerts` | Legacy → redirects to dashboard (alerts in right-rail dock) |
 | `/creator-hub/codes-ads` | Affiliate codes + house ads (`?tab=codes` \| `ads`) |
 | `/creator-hub/codes-ads/ads/[code]` | Hub-native ad code detail (KPIs, wager source, charts) |
 

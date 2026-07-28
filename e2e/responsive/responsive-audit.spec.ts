@@ -2,7 +2,6 @@ import { test, expect } from "@playwright/test";
 import { mintAdminSession, readSampleUserId } from "./mint-session";
 import {
   injectSessionCookie,
-  seedCollapsedRail,
   assertAuthenticated,
   auditRouteOnPage,
   summarizeResult,
@@ -63,10 +62,6 @@ test.describe("responsive audit — Wave 0 (/users/[id])", () => {
 
     const context = await browser.newContext();
     await injectSessionCookie(context, cookieValue, baseURL!);
-    // Collapse the persistent right-edge docked panels so we measure PAGE
-    // CONTENT layout, not the fixed-overlay chrome (which blankets a phone
-    // viewport and would mask the hero). See seedCollapsedRail.
-    await seedCollapsedRail(context);
     const page = await context.newPage();
 
     try {

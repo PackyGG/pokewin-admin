@@ -5,7 +5,6 @@ import {
 } from "./mint-session";
 import {
   injectSessionCookie,
-  seedCollapsedRail,
   assertCreatorHubAuthenticated,
   auditRouteOnPage,
   summarizeResult,
@@ -51,7 +50,6 @@ test.describe("responsive audit — Creator Hub", () => {
 
     const context = await browser.newContext();
     await injectSessionCookie(context, cookieValue, baseURL!);
-    await seedCollapsedRail(context);
     const page = await context.newPage();
 
     try {

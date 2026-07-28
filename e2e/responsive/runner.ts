@@ -53,28 +53,6 @@ export async function injectSessionCookie(
 }
 
 /**
- * Seed client-side localStorage BEFORE the app's React mounts, so the
- * admin shell renders in a state suitable for measuring PAGE CONTENT
- * layout rather than persistent chrome:
- *
- *   - Creator Hub's Alerts dock is fixed and can cover page content at
- *     phone widths, so responsive audits collapse it before measuring.
- *
- * Uses the EXACT storage keys the context reads (STORAGE_KEYS) so this is
- * a faithful "user collapsed the panels" state, not a hack.
- */
-export async function seedCollapsedRail(context: BrowserContext): Promise<void> {
-  await context.addInitScript(() => {
-    try {
-      window.localStorage.setItem("docked-alerts:open", "0");
-      window.localStorage.setItem("right-rail:open-order", "[]");
-    } catch {
-      /* localStorage unavailable — non-fatal */
-    }
-  });
-}
-
-/**
  * Sanity check: with the cookie injected, /dashboard must render and NOT
  * bounce to /login. A bounce means the minted cookie didn't satisfy
  * middleware (wrong SESSION_SECRET, payload shape, or expiry) — fail loud

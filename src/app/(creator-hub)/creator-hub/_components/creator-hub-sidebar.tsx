@@ -44,8 +44,7 @@ import { hrefFrom } from "@/lib/app-hosts";
  * Live nav, sectioned (owner request 2026-07-29): Overview (Dashboard),
  * Creators (Roster, Socials Review), Programs & Payouts (Leaderboards,
  * Tips & Sponsors, Creator Rewards), Economics (Profitability, ROI
- * Calculator). The theme toggle sits in the footer. Alerts live on the
- * right rail dock.
+ * Calculator). The theme toggle sits in the footer.
  *
  * Removed 2026-07-23 (owner): All Sessions, Wager / Fraud Abusers and
  * Changelog — Changelog still exists in the main admin app

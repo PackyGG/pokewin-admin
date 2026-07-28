@@ -5,9 +5,6 @@ import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
 import { HeaderRainSlot } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
-import { RightRailProvider } from "@/components/right-rail-context";
-import { RailWidthSync } from "@/components/rail-width-sync";
-import { readRailOpenOrder } from "@/lib/right-rail-server";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
 
@@ -36,7 +33,6 @@ import { resolveAppAccess } from "@/lib/app-access";
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
 import { PageTransition } from "@/components/page-transition";
 import { CreatorHubSidebar } from "./_components/creator-hub-sidebar";
-import { DockedAlerts } from "./_components/docked-alerts";
 import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checklist-dock";
 
 /**
@@ -44,7 +40,7 @@ import { CreatorChecklistDock } from "./creators/[id]/_components/creator-checkl
  * Creator Hub as an "app inside the app". It reuses the SAME shell
  * geometry + providers as the main admin layout
  * (`src/app/(admin)/layout.tsx`) — SidebarProvider / SidebarInset,
- * TimezoneProvider, the AdminHeader, the right-rail docks — but swaps in
+ * TimezoneProvider and the AdminHeader — but swaps in
  * the `CreatorHubSidebar` instead of the main `AppSidebar`, so the user
  * enters a visually distinct sub-app while every auth / session / theme
  * provider keeps working unchanged.
@@ -206,17 +202,13 @@ export default async function CreatorHubLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [appAccess, profile, preferences, dbEnv, tzCookie, railOpenOrder] =
+  const [appAccess, profile, preferences, dbEnv, tzCookie] =
     await Promise.all([
       resolveAppAccess(session),
       loadHeaderProfile(session.userId),
       loadPreferences(session.userId),
       readDbEnvFromCookie(),
       readTzCookie(),
-      // Open dock keys from the `admin_rail` cookie — seeds the rail so SSR +
-      // first client paint match the admin's saved layout (no open/close
-      // flip). Shared 1:1 with the main (admin) shell.
-      readRailOpenOrder(),
     ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
@@ -263,20 +255,12 @@ export default async function CreatorHubLayout({
           </div>
         </SidebarInset>
         {/* Onboarding checklist DOCK — the TOP of the right rail (above the
-            live/recent docks), the owner's most-prominent rail item. It's a
+            page content), the owner's most-prominent rail item. It's a
             self-contained client island: it reads the `creators/[id]` id from
             the pathname, shows ONLY on a creator detail page, sits at `z-40`
             above the `z-30` rail, and auto-hides once that creator is fully
             onboarded. Lazy — it fetches nothing on any other Hub route. */}
         <CreatorChecklistDock />
-        {/* Creator Hub keeps its separate Alerts dock. */}
-        <RightRailProvider
-          mounted={{ alerts: true }}
-          initialOpenOrder={railOpenOrder}
-        >
-          <RailWidthSync />
-          <DockedAlerts />
-        </RightRailProvider>
       </SidebarProvider>
     </TimezoneProvider>
   );

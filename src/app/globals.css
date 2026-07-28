@@ -745,24 +745,3 @@
     transform: translateY(-1px);
   }
 }
-
-/* Right-rail space reservation.
-   The docked widgets (Live Money / Recent Activity / Chat) are
-   `position: fixed; right: 0` and float over the page with z-30. Without
-   reserving room the admin content (KPI tiles, the rightmost table
-   columns) ends up hidden underneath them. `--rail-occupied` is published
-   by <RailWidthSync> as a CONSTANT 56px (the collapsed edge-tab width). It never grows to
-   320px when a dock expands — the open 320px panel is a fixed right-0
-   OVERLAY that floats on top, so opening a dock never reflows the layout.
-   Only applied at lg+ — that's the breakpoint where the docks are meant to
-   sit beside content. This rule is
-   intentionally unlayered so it overrides the layered `md:p-6` right
-   padding utility on the scroll container. */
-:root {
-  --rail-occupied: 56px;
-}
-@media (min-width: 1024px) {
-  [data-admin-scroll] {
-    padding-right: calc(1.5rem + var(--rail-occupied, 56px));
-  }
-}
