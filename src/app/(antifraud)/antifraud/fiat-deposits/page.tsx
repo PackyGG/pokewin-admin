@@ -36,6 +36,7 @@ const STATUSES = [
   "partially_refunded",
   "refunded",
   "disputed",
+  "paid_unreconciled",
 ] as const;
 const VERDICTS = ["good", "review", "bad"] as const;
 const REVIEWS = [
@@ -118,6 +119,7 @@ function FiltersBar({ state }: { state: Filters }) {
           <Filter label="Refunded" active={state.status === "refunded"} state={state} status="refunded" />
           <Filter label="Partial refund" active={state.status === "partially_refunded"} state={state} status="partially_refunded" />
           <Filter label="Disputed" active={state.status === "disputed"} state={state} status="disputed" />
+          <Filter label="Reconciliation failed" active={state.status === "paid_unreconciled"} state={state} status="paid_unreconciled" />
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/fiat-deposits">
           {state.status && <input type="hidden" name="status" value={state.status} />}
@@ -300,6 +302,7 @@ function FiatRow({ item }: { item: FiatAssessment }) {
   const name = item.username ?? item.user_id;
   const funding = item.funding_evidence;
   const behavior = item.behavior_evidence;
+  const unreconciled = item.status === "paid_unreconciled";
   return (
     <article className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-4 border-b border-border/60 p-4 xl:flex-row xl:items-center xl:justify-between">
@@ -312,15 +315,30 @@ function FiatRow({ item }: { item: FiatAssessment }) {
             <p className="truncate font-semibold">{name}</p>
             <p className="truncate text-xs text-muted-foreground">{item.email ?? item.user_id}</p>
           </div>
-          <Badge variant="outline" className="capitalize">{item.status.replaceAll("_", " ")}</Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "capitalize",
+              unreconciled &&
+                "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+            )}
+          >
+            {unreconciled
+              ? "Paid · reconciliation failed"
+              : item.status.replaceAll("_", " ")}
+          </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 xl:justify-end">
           <div>
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Deposited</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {unreconciled ? "Whop paid" : "Deposited"}
+            </p>
             <p className="text-sm font-medium tabular-nums">{formatDate(item.occurred_at)}</p>
           </div>
           <div className="min-w-24 text-right">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Credited</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              {unreconciled ? "Expected credit" : "Credited"}
+            </p>
             <p className="text-lg font-semibold tabular-nums">{formatCurrency(item.credited_amount_usd)}</p>
           </div>
           <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", style.box)}>

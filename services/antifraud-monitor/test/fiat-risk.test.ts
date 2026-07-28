@@ -151,16 +151,40 @@ test("assessment refresh excludes creators and protected users", async () => {
   assert.match(source, /payment_webhook_events/);
 });
 
-test("assessment refresh only loads paid fiat lifecycle states", async () => {
+test("paid webhook failures remain visible until MAIN reconciliation succeeds", () => {
+  const result = scoreFiatDeposit({
+    ...safeInput,
+    status: "paid_unreconciled",
+  });
+  assert.equal(result.verdict, "review");
+  assert.equal(
+    result.signals.some(
+      (signal) => signal.key === "payment_reconciliation_failed",
+    ),
+    true,
+  );
+  assert.match(result.recommendation, /Reconcile the successful Whop payment/);
+});
+
+test("assessment refresh loads settled and paid-unreconciled fiat", async () => {
   const source = await readFile(
     new URL("../src/fiat-risk.ts", import.meta.url),
     "utf8",
   );
-  assert.match(source, /SETTLED_FIAT_STATUSES/);
+  assert.match(source, /FIAT_ASSESSMENT_STATUSES/);
   assert.match(source, /"completed"/);
   assert.match(source, /"partially_refunded"/);
   assert.match(source, /"refunded"/);
   assert.match(source, /"disputed"/);
-  assert.match(source, /fdi\.status::text=ANY/);
-  assert.doesNotMatch(source, /SETTLED_FIAT_STATUSES[\s\S]{0,200}"checkout_ready"/);
+  assert.match(source, /"paid_unreconciled"/);
+  assert.match(source, /event_type='payment\.succeeded'/);
+  assert.match(source, /processing_status='failed'/);
+  assert.match(
+    source,
+    /payload#>>'\{data,metadata,deposit_intent_id\}'/,
+  );
+  assert.doesNotMatch(
+    source,
+    /FIAT_ASSESSMENT_STATUSES[\s\S]{0,200}"checkout_ready"/,
+  );
 });

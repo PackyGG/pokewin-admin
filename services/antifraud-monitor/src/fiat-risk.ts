@@ -270,12 +270,25 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
   flowChecks: FiatFlowCheck[];
 } {
   const signals: FiatSignal[] = [];
-  const completed = [
+  const paymentSucceeded = [
     "completed",
     "partially_refunded",
     "refunded",
     "disputed",
+    "paid_unreconciled",
   ].includes(input.status);
+
+  if (input.status === "paid_unreconciled") {
+    addSignal(signals, {
+      key: "payment_reconciliation_failed",
+      label: "Paid but not reconciled",
+      detail:
+        "Whop confirmed this payment, but MAIN did not complete or credit the linked deposit intent.",
+      points: 40,
+      tone: "warning",
+      category: "provider",
+    });
+  }
 
   if (input.status === "disputed" || input.provider.disputeCount > 0) {
     addSignal(signals, {
@@ -319,7 +332,7 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       tone: "good",
       category: "provider",
     });
-  } else if (completed && input.provider.threeDsVerified === false) {
+  } else if (paymentSucceeded && input.provider.threeDsVerified === false) {
     addSignal(signals, {
       key: "three_ds_failed",
       label: "3DS not verified",
@@ -341,7 +354,7 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       tone: points >= 30 ? "bad" : points > 0 ? "warning" : "good",
       category: "provider",
     });
-  } else if (completed) {
+  } else if (paymentSucceeded) {
     addSignal(signals, {
       key: "provider_evidence_missing",
       label: "Provider evidence missing",
@@ -668,11 +681,13 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
     primary?.detail ??
     "Whop, funding history, account trust, and post-deposit behavior are consistent.";
   const recommendation =
-    verdict === "bad"
+    input.status === "paid_unreconciled"
+      ? "Reconcile the successful Whop payment before closing this review."
+      : verdict === "bad"
       ? "Hold withdrawals and complete an analyst review."
       : verdict === "review"
         ? "Review before allowing value to leave the account."
-        : completed
+        : paymentSucceeded
           ? "No fraud hold recommended."
           : "Wait for final Whop payment evidence.";
   return {
@@ -1055,25 +1070,27 @@ function contextBehavior(
   };
 }
 
-export const SETTLED_FIAT_STATUSES = [
+export const FIAT_ASSESSMENT_STATUSES = [
   "completed",
   "partially_refunded",
   "refunded",
   "disputed",
+  "paid_unreconciled",
 ] as const;
 
-type SettledFiatStatus = (typeof SETTLED_FIAT_STATUSES)[number];
+type FiatAssessmentStatus = (typeof FIAT_ASSESSMENT_STATUSES)[number];
 
 export class FiatRiskService {
   constructor(private readonly db: Databases) {}
 
   async refresh(input: {
-    status?: SettledFiatStatus;
+    status?: FiatAssessmentStatus;
     search?: string;
     excludedUserIds?: string[];
     limit?: number;
   }): Promise<{ ids: string[] }> {
-    const values: unknown[] = [];
+    const settledStatuses = FIAT_ASSESSMENT_STATUSES.slice(0, -1);
+    const values: unknown[] = [settledStatuses];
     const conditions = [
       `COALESCE(u.role::text,'')<>'creator'`,
       `'creator'<>ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))`,
@@ -1082,12 +1099,19 @@ export class FiatRiskService {
       values.push(input.excludedUserIds);
       conditions.push(`fdi.user_id<>ALL($${values.length}::text[])`);
     }
-    if (input.status) {
+    if (input.status === "paid_unreconciled") {
+      conditions.push(
+        `paid.provider_resource_id IS NOT NULL
+         AND fdi.status::text<>ALL($1::text[])`,
+      );
+    } else if (input.status) {
       values.push(input.status);
       conditions.push(`fdi.status::text=$${values.length}`);
     } else {
-      values.push(SETTLED_FIAT_STATUSES);
-      conditions.push(`fdi.status::text=ANY($${values.length}::text[])`);
+      conditions.push(
+        `(fdi.status::text=ANY($1::text[])
+          OR paid.provider_resource_id IS NOT NULL)`,
+      );
     }
     if (input.search) {
       values.push(`%${input.search.toLowerCase()}%`);
@@ -1102,6 +1126,29 @@ export class FiatRiskService {
     values.push(Math.min(100, Math.max(1, input.limit ?? 100)));
     const result = await this.db.source.query<SourceFiatIntent>(
       `
+        WITH paid_unreconciled AS (
+          SELECT DISTINCT ON (
+            payload#>>'{data,metadata,deposit_intent_id}'
+          )
+            payload#>>'{data,metadata,deposit_intent_id}' AS intent_id,
+            provider_resource_id,
+            payload,
+            received_at
+          FROM payment_webhook_events
+          WHERE provider='whop'
+            AND event_type='payment.succeeded'
+            AND processing_status='failed'
+            AND received_at >=
+              (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '30 days'
+            AND COALESCE(
+              payload#>>'{data,metadata,deposit_intent_id}',
+              ''
+            ) <> ''
+          ORDER BY
+            payload#>>'{data,metadata,deposit_intent_id}',
+            received_at DESC,
+            id DESC
+        )
         SELECT
           fdi.id::text, fdi.user_id, u.username, u.email, u.image,
           u.created_at AS account_created_at, u.country_code,
@@ -1112,13 +1159,45 @@ export class FiatRiskService {
             AS kyc_admin_decision,
           fdi.provider, fdi.currency, fdi.requested_amount_cents,
           fdi.credited_amount_cents, fdi.actual_customer_total_cents,
-          fdi.provider_net_amount_cents, fdi.status,
-          fdi.provider_payment_status, fdi.provider_checkout_id,
-          fdi.provider_payment_id, fdi.completed_ledger_id::text,
-          fdi.paid_at, fdi.completed_at, fdi.created_at, fdi.updated_at
+          fdi.provider_net_amount_cents,
+          CASE
+            WHEN paid.provider_resource_id IS NOT NULL
+              AND fdi.status::text<>ALL($1::text[])
+              THEN 'paid_unreconciled'
+            ELSE fdi.status::text
+          END AS status,
+          CASE
+            WHEN paid.provider_resource_id IS NOT NULL
+              AND fdi.status::text<>ALL($1::text[])
+              THEN COALESCE(
+                paid.payload#>>'{data,status}',
+                'paid'
+              )
+            ELSE fdi.provider_payment_status
+          END AS provider_payment_status,
+          fdi.provider_checkout_id,
+          CASE
+            WHEN paid.provider_resource_id IS NOT NULL
+              AND fdi.status::text<>ALL($1::text[])
+              THEN paid.provider_resource_id
+            ELSE fdi.provider_payment_id
+          END AS provider_payment_id,
+          fdi.completed_ledger_id::text,
+          CASE
+            WHEN paid.provider_resource_id IS NOT NULL
+              AND fdi.status::text<>ALL($1::text[])
+              -- Keep the source-native timestamp convention used by the
+              -- intent lifecycle columns so mixed rows sort consistently.
+              THEN paid.received_at
+            ELSE fdi.paid_at
+          END AS paid_at,
+          fdi.completed_at,
+          fdi.created_at,
+          GREATEST(fdi.updated_at, paid.received_at) AS updated_at
         FROM fiat_deposit_intents fdi
         JOIN "user" u ON u.id=fdi.user_id
         LEFT JOIN user_kyc kyc ON kyc.user_id=fdi.user_id
+        LEFT JOIN paid_unreconciled paid ON paid.intent_id=fdi.id::text
         WHERE ${conditions.join(" AND ")}
         ORDER BY fdi.created_at DESC, fdi.id DESC
         LIMIT $${values.length}

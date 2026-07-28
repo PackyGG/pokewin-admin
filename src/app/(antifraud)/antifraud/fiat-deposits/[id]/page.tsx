@@ -51,6 +51,7 @@ export default async function FiatDepositReviewPage({
   const funding = item.funding_evidence;
   const behavior = item.behavior_evidence;
   const account = item.account_evidence;
+  const unreconciled = item.status === "paid_unreconciled";
   return (
     <div className="space-y-6">
       <PageHero>
@@ -58,7 +59,7 @@ export default async function FiatDepositReviewPage({
           icon={Banknote}
           accent="cyan"
           title="Fiat deposit review"
-          subtitle={`${item.username ?? item.user_id} · ${formatCurrency(item.credited_amount_usd)} via ${item.provider}`}
+          subtitle={`${item.username ?? item.user_id} · ${formatCurrency(item.credited_amount_usd)} ${unreconciled ? "expected credit" : "credited"} via ${item.provider}`}
           backHref="/antifraud/fiat-deposits"
         />
       </PageHero>
@@ -71,14 +72,28 @@ export default async function FiatDepositReviewPage({
               <div className="flex flex-wrap items-center gap-2">
                 <p className={cn("text-lg font-semibold capitalize", style.text)}>{item.verdict} · {item.risk_score}/100</p>
                 <Badge variant="outline" className="capitalize">{item.review_status.replaceAll("_", " ")}</Badge>
-                <Badge variant="outline" className="capitalize">{item.status.replaceAll("_", " ")}</Badge>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "capitalize",
+                    unreconciled &&
+                      "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {unreconciled
+                    ? "Paid · reconciliation failed"
+                    : item.status.replaceAll("_", " ")}
+                </Badge>
               </div>
               <p className="mt-1 text-sm font-medium">{item.recommendation}</p>
               <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{item.summary}</p>
             </div>
           </div>
           <div className="grid grid-cols-2 gap-3 text-right sm:grid-cols-3">
-            <HeaderMetric label="Credited" value={formatCurrency(item.credited_amount_usd)} />
+            <HeaderMetric
+              label={unreconciled ? "Expected credit" : "Credited"}
+              value={formatCurrency(item.credited_amount_usd)}
+            />
             <HeaderMetric label="Customer paid" value={item.customer_total_usd === null ? "—" : formatCurrency(item.customer_total_usd)} />
             <HeaderMetric label="Occurred" value={formatDate(item.occurred_at)} />
           </div>
