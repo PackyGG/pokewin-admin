@@ -28,6 +28,7 @@ import { resolveAppAccess } from "@/lib/app-access";
 import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
 import { PageTransition } from "@/components/page-transition";
 import { PackStudioSidebar } from "./_components/pack-studio-sidebar";
+import { getPackStudioNavCounts } from "./_queries/nav-counts";
 
 export const metadata = {
   title: {
@@ -173,6 +174,15 @@ export default async function PackStudioLayout({
   const dbEnvP = readDbEnvFromCookie();
   const tzCookieP = readTzCookie();
   const appAccessP = resolveAppAccess(session);
+  // Sidebar badge counts (pending Approval-Queue requests / retune Drafts) —
+  // both role checks are sync on the session, so this joins the same wave.
+  // The loader resolves (never rejects) with zeros on a fault.
+  const viewerIsOwner = isOwner(session);
+  const viewerIsRetuneOperator = isPackStudioRetuneOperator(session);
+  const navCountsP = getPackStudioNavCounts({
+    includeQueue: viewerIsOwner,
+    includeDrafts: viewerIsRetuneOperator,
+  });
 
   // Studio access gate: owners, admins, and Pack Builders enter. Everyone
   // else is redirected to the normal landing route for their assigned roles.
@@ -188,13 +198,15 @@ export default async function PackStudioLayout({
     redirect(getDefaultRouteForRoles(roles, allowedPages));
   }
 
-  const [profile, preferences, dbEnv, tzCookie, appAccess] = await Promise.all([
-    profileP,
-    preferencesP,
-    dbEnvP,
-    tzCookieP,
-    appAccessP,
-  ]);
+  const [profile, preferences, dbEnv, tzCookie, appAccess, navCounts] =
+    await Promise.all([
+      profileP,
+      preferencesP,
+      dbEnvP,
+      tzCookieP,
+      appAccessP,
+      navCountsP,
+    ]);
 
   const canSwitchDbEnv = session.role === "admin" && isDevDbConfigured();
 
@@ -214,9 +226,11 @@ export default async function PackStudioLayout({
             are gated server-side, so hiding the link just avoids a click
             that would bounce. */}
         <PackStudioSidebar
-          isOwner={isOwner(session)}
-          isRetuneOperator={isPackStudioRetuneOperator(session)}
+          isOwner={viewerIsOwner}
+          isRetuneOperator={viewerIsRetuneOperator}
           access={appAccess}
+          pendingRequests={navCounts.pendingRequests}
+          pendingDrafts={navCounts.pendingDrafts}
         />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}

@@ -15,18 +15,18 @@ export default function PackStudioLoading() {
     <div className="space-y-6">
       <PageHeroSkeleton />
 
-      {/* Quick tools — 4 tiles (one per Studio nav destination). */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-[72px] rounded-2xl" />
+      {/* Quick actions — mirrors the role-aware quick-link strip. */}
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <Skeleton key={i} className="h-[68px] rounded-xl" />
         ))}
       </div>
 
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={100} action />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {Array.from({ length: 4 }).map((_, i) => (
-            <Skeleton key={i} className="h-[104px] rounded-2xl" />
+        <SectionHeadingSkeleton titleWidth={200} action />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-[88px] rounded-xl" />
           ))}
         </div>
       </div>

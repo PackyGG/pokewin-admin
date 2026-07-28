@@ -51,6 +51,11 @@ type StudioNavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  /**
+   * Optional pending-count badge (e.g. requests awaiting review). Rendered
+   * only when > 0; the count comes from the layout's cached nav-count read.
+   */
+  badge?: number;
 };
 
 const STUDIO_OVERVIEW_NAV: StudioNavItem[] = [
@@ -143,9 +148,25 @@ function StudioNavMenu({
                 )}
               />
               <span>{item.label}</span>
+              {typeof item.badge === "number" && item.badge > 0 && (
+                <span
+                  className={cn(
+                    "ml-auto shrink-0 rounded-full border px-1.5 py-0.5 text-[10px] font-medium tabular-nums group-data-[collapsible=icon]:hidden",
+                    isActive
+                      ? "border-violet-500/30 bg-violet-500/10 text-violet-600 dark:text-violet-400"
+                      : "border-border/60 bg-background/60 text-muted-foreground",
+                  )}
+                >
+                  {item.badge > 99 ? "99+" : item.badge}
+                </span>
+              )}
               <LinkPending
                 size={13}
-                className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden"
+                className={cn(
+                  "shrink-0 group-data-[collapsible=icon]:hidden",
+                  !(typeof item.badge === "number" && item.badge > 0) &&
+                    "ml-auto",
+                )}
               />
             </SidebarMenuButton>
           </SidebarMenuItem>
@@ -159,6 +180,8 @@ export function PackStudioSidebar({
   isOwner = false,
   isRetuneOperator = false,
   access = { creatorHub: false, packStudio: true, antifraud: false },
+  pendingRequests = 0,
+  pendingDrafts = 0,
 }: {
   isOwner?: boolean;
   /** Server-computed workspace entitlement for the footer switcher. */
@@ -169,6 +192,10 @@ export function PackStudioSidebar({
    * Reveals the "Drafts" nav entry; the page is gated server-side too.
    */
   isRetuneOperator?: boolean;
+  /** Pending pack-creation requests — badge on the owner Approval Queue link. */
+  pendingRequests?: number;
+  /** Retune drafts awaiting push — badge on the operator Drafts link. */
+  pendingDrafts?: number;
 }) {
   const pathname = usePathname();
   const { isMobile, setOpenMobile } = useSidebar();
@@ -179,9 +206,21 @@ export function PackStudioSidebar({
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
 
   const operationsNav = [
-    ...(isRetuneOperator ? STUDIO_OPERATOR_NAV : []),
+    ...(isRetuneOperator
+      ? STUDIO_OPERATOR_NAV.map((item) => ({
+          ...item,
+          badge: pendingDrafts,
+        }))
+      : []),
     ...(isOwner ? STUDIO_OWNER_NAV : []),
   ];
+
+  // Owner-only System group with the pending-review badge stamped on the
+  // Approval Queue entry.
+  const systemNav = STUDIO_SYSTEM_NAV.map((item) => ({
+    ...item,
+    badge: pendingRequests,
+  }));
 
   // Close the mobile drawer on a navigation tap (same UX the main sidebar
   // applies — otherwise the new page renders behind the still-open sheet).
@@ -278,7 +317,7 @@ export function PackStudioSidebar({
             <SidebarGroupLabel>System</SidebarGroupLabel>
             <SidebarGroupContent>
               <StudioNavMenu
-                items={STUDIO_SYSTEM_NAV}
+                items={systemNav}
                 pathname={pathname}
                 onNavTap={handleNavTap}
                 toHref={toHref}

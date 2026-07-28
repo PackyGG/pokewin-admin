@@ -24,7 +24,11 @@ import {
   StatPanel,
   type AccentColor,
 } from "@/components/modern-panels";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatNumber,
+  formatRelativeStrict,
+} from "@/lib/utils/format";
 import {
   getPackStudioOverview,
   type ComplianceAlert,
@@ -206,7 +210,24 @@ export async function PackStudioOverviewContent() {
     <div className="space-y-6">
       {/* ── KPI strip ──────────────────────────────────────────── */}
       <section className="space-y-3">
-        <SectionHeading icon={Gauge} title="Risk & compliance at a glance" />
+        <SectionHeading
+          icon={Gauge}
+          title="Risk & compliance at a glance"
+          action={
+            data.lastComputedAt ? (
+              // Snapshot freshness — every KPI below derives from this run, so
+              // say when it happened and where to re-run it (Pack Doctor owns
+              // the snapshot button). Relative time is timezone-independent.
+              <HostLink
+                href="/pack-studio/doctor"
+                className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+              >
+                Snapshot {formatRelativeStrict(data.lastComputedAt)} · re-run in
+                Pack Doctor
+              </HostLink>
+            ) : undefined
+          }
+        />
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <KpiTile
             label="Avg edge"
