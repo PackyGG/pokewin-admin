@@ -86,7 +86,12 @@ export type KpiWindowPayload = {
   wagerOrganic: number;
   /** Total deposit dollars + transaction count for the window. */
   deposits: number;
+  /** Gross completed deposits before fiat refunds processed in the window. */
+  grossDeposits: number;
   depositCount: number;
+  /** Fiat credit reversed by full/partial refunds processed in the window. */
+  fiatRefunds: number;
+  fiatRefundCount: number;
   /** Total withdrawal dollars + completed/shipped request count. */
   withdrawals: number;
   withdrawalCount: number;
@@ -205,7 +210,10 @@ async function computeKpiWindowPayload(
     },
     wagerOrganic: stats?.wagersOrganic ?? 0,
     deposits: cashflow?.deposits ?? 0,
+    grossDeposits: cashflow?.grossDeposits ?? 0,
     depositCount: cashflow?.depositCount ?? 0,
+    fiatRefunds: cashflow?.fiatRefunds ?? 0,
+    fiatRefundCount: cashflow?.fiatRefundCount ?? 0,
     withdrawals: cashflow?.withdrawals ?? 0,
     withdrawalCount: cashflow?.withdrawalCount ?? 0,
     keno: keno
@@ -241,7 +249,10 @@ export function emptyKpiWindowPayload(
     wagerBreakdown: { packs: 0, battles: 0, upgrader: 0 },
     wagerOrganic: 0,
     deposits: 0,
+    grossDeposits: 0,
     depositCount: 0,
+    fiatRefunds: 0,
+    fiatRefundCount: 0,
     withdrawals: 0,
     withdrawalCount: 0,
     keno: {

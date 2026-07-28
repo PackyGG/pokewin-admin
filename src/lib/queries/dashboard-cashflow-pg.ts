@@ -12,12 +12,21 @@ import {
   kpiWindowToCutoff,
   type DashboardKpiWindow,
 } from "./dashboard-period";
+import { getDashboardFiatMetrics } from "./dashboard-fiat";
 export type DashboardCashflow = {
   deposits: number;
+  grossDeposits: number;
   depositCount: number;
+  fiatRefunds: number;
+  fiatRefundCount: number;
   withdrawals: number;
   withdrawalCount: number;
 };
+
+type GrossDashboardCashflow = Pick<
+  DashboardCashflow,
+  "deposits" | "depositCount" | "withdrawals" | "withdrawalCount"
+>;
 
 /**
  * Dashboard "Deposits / Withdrawals" KPI-box cash-flow — the Postgres
@@ -74,7 +83,7 @@ export type DashboardCashflow = {
 async function computeCashflow(
   cutoff: Date,
   blacklist: string[],
-): Promise<DashboardCashflow> {
+): Promise<GrossDashboardCashflow> {
   return withTiming("dashboard.cashflowPg", async () => {
     const db = await getReadDrizzleDb();
     // Self-contained `user_id IN (SELECT id FROM "user" WHERE role NOT IN
@@ -159,7 +168,7 @@ const cachedCashflow = unstable_cache(
     _window: DashboardKpiWindow,
     cutoffIso: string,
     blacklist: string[],
-  ): Promise<DashboardCashflow> => {
+  ): Promise<GrossDashboardCashflow> => {
     void _window; // cache-key discriminator only
     return computeCashflow(new Date(cutoffIso), blacklist);
   },
@@ -181,6 +190,17 @@ export async function getDashboardCashflowFromPostgres(
   const cutoffIso = cutoff.toISOString();
   const blacklist = await getExcludedUserIds();
   const env = await readDbEnv();
-  if (env !== "prod") return computeCashflow(cutoff, blacklist);
-  return cachedCashflow(window, cutoffIso, blacklist);
+  const [cashflow, fiat] = await Promise.all([
+    env !== "prod"
+      ? computeCashflow(cutoff, blacklist)
+      : cachedCashflow(window, cutoffIso, blacklist),
+    getDashboardFiatMetrics(window, now),
+  ]);
+  return {
+    ...cashflow,
+    grossDeposits: cashflow.deposits,
+    deposits: cashflow.deposits - fiat.refundCreditsUsd,
+    fiatRefunds: fiat.refundCreditsUsd,
+    fiatRefundCount: fiat.refundCount,
+  };
 }

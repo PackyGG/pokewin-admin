@@ -12,12 +12,12 @@ import { ChartRowSkeleton, TodayTileSkeleton } from "./dashboard-skeletons";
  * Suspense fallbacks agree, and the real content swaps in with zero layout
  * shift:
  *   • PageHero.
- *   • Today tiles — 3-up at xl, matches the P&L Today · Reward + Creators
- *     Costs (merged) · Upgrader + Double Down (merged) row that page.tsx
- *     renders FIRST (directly under the hero). All three now render as the
+ *   • Today tiles — 4-up at xl: P&L Today · Reward + Creators Costs
+ *     (merged) · Upgrader + Double Down (merged) · Fiat payments. This row
+ *     renders FIRST (directly under the hero). All four now render as the
  *     same compact tile shape (owner request, 2026-07-02: merge Reward Costs
  *     + Creators Costs into one box, and Upgrader + Double Down into
- *     another, both "like deposits / withdrawals"), so all three reuse the
+ *     another, both "like deposits / withdrawals"), so all four reuse the
  *     same `TodayTileSkeleton` the in-page Suspense fallbacks use — the
  *     route skeleton and the streamed fallbacks agree exactly.
  *   • KPI strip (4 tiles: Wager [Total + Organic merged] · Deposits /
@@ -38,10 +38,11 @@ export default function DashboardLoading() {
       <PageHeroSkeleton />
 
       {/* Today tiles — P&L Today · Reward + Creators Costs (merged) ·
-          Upgrader + Double Down (merged) (3-up at xl). Rendered ABOVE the
+          Upgrader + Double Down (merged) + Fiat payments (4-up at xl). Rendered ABOVE the
           KPI strip to match page.tsx (which renders this row directly under
           the hero), so the real content swaps in with no layout shift. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
+        <TodayTileSkeleton />
         <TodayTileSkeleton />
         <TodayTileSkeleton />
         <TodayTileSkeleton />

@@ -445,6 +445,7 @@ export function DashboardKpiSection({
         {(() => {
           const p = payloadFor("cashflow");
           const mode = modeFor("cashflow");
+          const depositsPositive = p.deposits >= 0;
           return (
             <KpiPanel
               title="Deposits / Withdrawals"
@@ -461,16 +462,50 @@ export function DashboardKpiSection({
                 <div className="space-y-2.5">
                 <div className="min-w-0">
                   <div className="flex items-center justify-between gap-2">
-                    <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
-                      Deposits
+                    <p
+                      className={cn(
+                        "text-[11px] font-semibold uppercase tracking-wider",
+                        depositsPositive
+                          ? "text-emerald-600 dark:text-emerald-400"
+                          : "text-rose-600 dark:text-rose-400",
+                      )}
+                    >
+                      Net deposits
                     </p>
-                    <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
-                      {formatNumber(p.depositCount)} tx
+                    <span
+                      className={cn(
+                        "shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums",
+                        depositsPositive
+                          ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                          : "bg-rose-500/15 text-rose-600 dark:text-rose-400",
+                      )}
+                    >
+                      {formatNumber(p.depositCount)} paid
+                      {p.fiatRefundCount > 0
+                        ? ` · ${formatNumber(p.fiatRefundCount)} refunded`
+                        : ""}
                     </span>
                   </div>
-                  <div className="truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-xl">
+                  <div
+                    className={cn(
+                      "truncate text-lg font-bold tabular-nums sm:text-xl",
+                      depositsPositive
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-rose-600 dark:text-rose-400",
+                    )}
+                  >
                     <AnimatedNumber value={p.deposits} format="currency" />
                   </div>
+                  {p.fiatRefunds > 0 && (
+                    <p className="text-[11px] leading-snug text-rose-600 dark:text-rose-400">
+                      {formatNumber(p.fiatRefundCount)} fiat refund
+                      {p.fiatRefundCount === 1 ? "" : "s"} · −
+                      <AnimatedNumber
+                        value={p.fiatRefunds}
+                        format="currency"
+                      />
+                    </p>
+                  )}
                 </div>
                 <div className="border-t border-border/50" />
                 <div className="min-w-0">

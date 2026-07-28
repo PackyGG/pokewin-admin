@@ -10,6 +10,7 @@ import { getRakebackFromTodayWager } from "@/lib/queries/dashboard-rakeback-same
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
+import { getDashboardFiatMetrics } from "@/lib/queries/dashboard-fiat";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
@@ -28,6 +29,7 @@ import {
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCreatorCostsTodayCard } from "./reward-creator-costs-today-card";
 import { UpgraderDoubleDownTodayCard } from "./upgrader-double-down-today-card";
+import { FiatTodayCard } from "./fiat-today-card";
 import { AutoRefresh } from "./auto-refresh";
 import {
   WagerChart,
@@ -82,10 +84,11 @@ export default async function DashboardPage() {
           2026-07-02: merge the two panels into one box "like deposits /
           withdrawals" and drop it into the slot the standalone Creators
           Costs card used to occupy, now that Creators Costs merged into the
-          Reward Costs card). Each of the three streams behind its OWN
-          Suspense + safeQuery. Full-width on mobile, 2-up at sm, 3-up at
+          Reward Costs card). Fiat payments fills the fourth live-ops slot.
+          Each card streams behind its OWN Suspense + safeQuery.
+          Full-width on mobile, 2-up at sm, 4-up at
           xl. */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardTodayPnl />
         </Suspense>
@@ -94,6 +97,9 @@ export default async function DashboardPage() {
         </Suspense>
         <Suspense fallback={<TodayTileSkeleton />}>
           <DashboardUpgraderDoubleDownToday />
+        </Suspense>
+        <Suspense fallback={<TodayTileSkeleton />}>
+          <DashboardFiatToday />
         </Suspense>
       </div>
 
@@ -250,6 +256,26 @@ async function DashboardKpiBoxes() {
       };
 
   return <DashboardKpiSection today={today} cryptoFee={cryptoFee} />;
+}
+
+async function DashboardFiatToday() {
+  const { data, error, kind } = await safeQuery(
+    () => getDashboardFiatMetrics("today"),
+    null,
+    "dashboard.fiatToday",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  if (error || !data) {
+    return (
+      <TileErrorFallback
+        label="Fiat payments"
+        hint="The fiat payment summary failed to load — other sections still rendered. Refresh to retry."
+        kind={kind ?? undefined}
+        size="compact"
+      />
+    );
+  }
+  return <FiatTodayCard data={data} />;
 }
 
 /**
