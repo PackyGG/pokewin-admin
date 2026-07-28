@@ -3,6 +3,7 @@ import { redirect, unstable_rethrow } from "next/navigation";
 
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { AdminHeader } from "@/components/admin-header";
+import { HeaderRainSlot } from "@/components/header-rain-chip";
 import { TopProgressBar } from "@/components/top-progress-bar";
 import { TimezoneProvider } from "@/components/timezone-provider";
 import { DevDbBanner } from "@/components/dev-db-banner";
@@ -262,6 +263,7 @@ export default async function AntifraudLayout({
             preferences={preferences}
             dbEnv={dbEnv}
             canSwitchDbEnv={canSwitchDbEnv}
+            rainSlot={<HeaderRainSlot />}
           />
           <div
             data-admin-scroll
