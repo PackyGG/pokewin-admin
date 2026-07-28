@@ -4,7 +4,11 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import crypto from "crypto";
 import { revalidatePath, revalidateTag, unstable_cache } from "next/cache";
 import { z } from "zod";
-import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
+import {
+  getPrimaryDrizzleDb,
+  getReadDrizzleDb,
+  type MainDrizzleDb,
+} from "@/lib/db";
 import { adminDrizzle, sql } from "@/lib/drizzle";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
@@ -45,6 +49,7 @@ import {
 } from "@/lib/user-site-roles";
 import { isSafeWebhookUrl } from "@/lib/security/webhook-url";
 import { postgresTimestamp, postgresTimestampIso } from "@/lib/postgres-runtime";
+import type { KenoGameDetails } from "./user-tabs-types";
 
 /**
  * Bust BOTH the route segment AND the per-user `unstable_cache` entries for
@@ -3151,6 +3156,113 @@ export async function getGameSessionDetails(
     pfResults,
     packsOpened,
     createdAt: postgresTimestampIso(session.created_at, "session.created_at"),
+  };
+}
+
+function normalizeKenoNumbers(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return [
+    ...new Set(
+      value.filter(
+        (number): number is number =>
+          typeof number === "number" &&
+          Number.isInteger(number) &&
+          number >= 0 &&
+          number < 40,
+      ),
+    ),
+  ];
+}
+
+/**
+ * Lazy Keno replay lookup for the transaction-detail modal.
+ *
+ * The requested ledger row is ownership-checked before any game data can be
+ * returned. The lateral Keno lookup is bounded to that user and a two-day
+ * window around the ledger event, allowing PostgreSQL to use
+ * idx_keno_games_user_id_created_at rather than sweeping keno_games.
+ */
+export async function getKenoGameDetails(
+  ledgerTxId: string,
+  userId: string,
+): Promise<KenoGameDetails | null> {
+  await requirePageAccess("/users");
+
+  const parsedTxId = z.string().uuid().safeParse(ledgerTxId);
+  if (!parsedTxId.success || !userId) return null;
+
+  const db = await getReadDrizzleDb();
+  const row = (
+    await db.execute<{
+      id: string;
+      risk: string;
+      selected_numbers: unknown;
+      drawn_numbers: unknown;
+      hits: number;
+      result_multiplier: string;
+      bet_amount: string;
+      won_amount: string;
+      bet_ledger_tx_id: string | null;
+      payout_ledger_tx_id: string | null;
+      created_at: Date | string;
+    }>(sql`
+      WITH requested_tx AS MATERIALIZED (
+        SELECT id, user_id, created_at
+        FROM ledger_transactions
+        WHERE id = ${parsedTxId.data}::uuid
+          AND user_id = ${userId}
+          AND type::text IN ('keno_bet', 'keno_payout')
+        LIMIT 1
+      )
+      SELECT
+        game.id,
+        game.risk::text AS risk,
+        game.selected_numbers,
+        game.drawn_numbers,
+        game.hits,
+        game.result_multiplier::text AS result_multiplier,
+        game.bet_amount::text AS bet_amount,
+        game.won_amount::text AS won_amount,
+        game.bet_ledger_tx_id,
+        game.payout_ledger_tx_id,
+        game.created_at
+      FROM requested_tx tx
+      JOIN LATERAL (
+        SELECT kg.*
+        FROM keno_games kg
+        WHERE kg.user_id = tx.user_id
+          AND kg.created_at >= tx.created_at - INTERVAL '1 day'
+          AND kg.created_at <= tx.created_at + INTERVAL '1 day'
+          AND (
+            kg.bet_ledger_tx_id = tx.id
+            OR kg.payout_ledger_tx_id = tx.id
+          )
+        ORDER BY kg.created_at DESC
+        LIMIT 1
+      ) game ON TRUE
+      LIMIT 1
+    `)
+  ).rows[0];
+
+  if (
+    !row ||
+    (row.risk !== "low" && row.risk !== "medium" && row.risk !== "high")
+  ) {
+    return null;
+  }
+
+  return {
+    id: row.id,
+    risk: row.risk,
+    selectedNumbers: normalizeKenoNumbers(row.selected_numbers),
+    drawnNumbers: normalizeKenoNumbers(row.drawn_numbers),
+    hits: row.hits,
+    resultMultiplier: Number(row.result_multiplier),
+    betAmount: Number(row.bet_amount),
+    wonAmount: Number(row.won_amount),
+    betLedgerTxId: row.bet_ledger_tx_id,
+    payoutLedgerTxId: row.payout_ledger_tx_id,
+    createdAt: postgresTimestampIso(row.created_at, "keno_game.created_at"),
   };
 }
 

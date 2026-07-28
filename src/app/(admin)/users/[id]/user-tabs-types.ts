@@ -757,6 +757,22 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
+export type KenoGameDetails = {
+  id: string;
+  risk: "low" | "medium" | "high";
+  /** Backend-native positions, always in the inclusive 0-39 range. */
+  selectedNumbers: number[];
+  /** Backend-native positions, always in the inclusive 0-39 range. */
+  drawnNumbers: number[];
+  hits: number;
+  resultMultiplier: number;
+  betAmount: number;
+  wonAmount: number;
+  betLedgerTxId: string | null;
+  payoutLedgerTxId: string | null;
+  createdAt: string;
+};
+
 // Gaming = the full pack / battle / upgrader / Keno play cycle: the bet/play
 // and payout legs. The
 // item cash-OUTS — card_sale / reward_card_sale (selling a won/reward card back

@@ -1,0 +1,44 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const actions = readFileSync(
+  "src/app/(admin)/users/[id]/actions.ts",
+  "utf8",
+);
+const modal = readFileSync(
+  "src/app/(admin)/users/[id]/transaction-detail-modal.tsx",
+  "utf8",
+);
+const transactions = readFileSync(
+  "src/app/(admin)/users/[id]/user-tabs-transactions.tsx",
+  "utf8",
+);
+const replay = readFileSync(
+  "src/app/(admin)/users/[id]/keno-game-replay.tsx",
+  "utf8",
+);
+
+test("Keno replay lookup is ownership checked and index bounded", () => {
+  assert.match(actions, /export async function getKenoGameDetails/);
+  assert.match(actions, /await requirePageAccess\("\/users"\)/);
+  assert.match(actions, /AND user_id = \$\{userId\}/);
+  assert.match(actions, /type::text IN \('keno_bet', 'keno_payout'\)/);
+  assert.match(actions, /kg\.created_at >= tx\.created_at - INTERVAL '1 day'/);
+  assert.match(actions, /kg\.bet_ledger_tx_id = tx\.id/);
+  assert.match(actions, /kg\.payout_ledger_tx_id = tx\.id/);
+});
+
+test("Keno transaction modal lazy loads the visual replay", () => {
+  assert.match(transactions, /onClick=\{\(\) => \{[\s\S]*setSelectedTx\(t\)/);
+  assert.match(modal, /getKenoGameDetails\(kenoTxId, userId\)/);
+  assert.match(modal, /<KenoGameReplay game=\{kenoGame\} \/>/);
+  assert.match(modal, /t\.type === "keno_bet" \|\| t\.type === "keno_payout"/);
+});
+
+test("Keno replay renders all 40 tiles and the hit state", () => {
+  assert.match(replay, /Array\.from\(\{ length: 40 \}/);
+  assert.match(replay, /const wasHit = wasSelected && wasDrawn/);
+  assert.match(replay, /Picked \+ hit/);
+  assert.match(replay, /stored position \$\{number\}/);
+});

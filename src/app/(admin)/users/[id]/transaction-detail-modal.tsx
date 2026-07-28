@@ -48,11 +48,16 @@ import {
   ledgerDirection,
 } from "@/lib/utils/ledger-direction";
 import { ledgerTypeLabel } from "@/lib/utils/ledger-labels";
-import { getGameSessionDetails } from "./actions";
+import { getGameSessionDetails, getKenoGameDetails } from "./actions";
 import { battleUrl } from "@/lib/utils/main-site";
 import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
-import type { Transaction, GameSessionDetails } from "./user-tabs-types";
+import { KenoGameReplay } from "./keno-game-replay";
+import type {
+  Transaction,
+  GameSessionDetails,
+  KenoGameDetails,
+} from "./user-tabs-types";
 
 // Readable labels for the battle_mode enum so the admin sees consistent
 // mode names everywhere. Unknown values fall back to the raw enum string.
@@ -115,6 +120,14 @@ export function TransactionDetailModal({
   // with no catch) — surface it as an inline row instead, distinguishable
   // from the legitimate "Game session not found" null result.
   const [sessionError, setSessionError] = useState(false);
+  const [kenoGame, setKenoGame] = useState<KenoGameDetails | null>(null);
+  const [loadingKeno, setLoadingKeno] = useState(false);
+  const [kenoError, setKenoError] = useState(false);
+  const kenoTxId =
+    transaction?.type === "keno_bet" ||
+    transaction?.type === "keno_payout"
+      ? transaction.id
+      : null;
 
   useEffect(() => {
     // The synthetic double-down row carries the battle's game_session_id
@@ -146,8 +159,37 @@ export function TransactionDetailModal({
     userId,
   ]);
 
+  useEffect(() => {
+    if (!kenoTxId) {
+      setKenoGame(null);
+      setKenoError(false);
+      setLoadingKeno(false);
+      return;
+    }
+
+    let active = true;
+    setLoadingKeno(true);
+    setKenoGame(null);
+    setKenoError(false);
+    getKenoGameDetails(kenoTxId, userId)
+      .then((game) => {
+        if (active) setKenoGame(game);
+      })
+      .catch(() => {
+        if (active) setKenoError(true);
+      })
+      .finally(() => {
+        if (active) setLoadingKeno(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [kenoTxId, userId]);
+
   if (!transaction) return null;
   const t = transaction;
+  const isKeno = t.type === "keno_bet" || t.type === "keno_payout";
 
   // Synthetic post-battle DOUBLE-DOWN row — it has no ledger backing, so the
   // generic ledger-oriented rows below (crypto/blockchain/worth/balance) would
@@ -684,11 +726,43 @@ export function TransactionDetailModal({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="sm:max-w-2xl flex flex-col max-h-[85vh]">
+      <DialogContent
+        className={cn(
+          "flex max-h-[90vh] flex-col",
+          isKeno ? "sm:max-w-3xl" : "sm:max-w-2xl",
+        )}
+      >
         <DialogHeader>
-          <DialogTitle>Transaction Details</DialogTitle>
+          <DialogTitle>
+            {isKeno ? "Keno Game Details" : "Transaction Details"}
+          </DialogTitle>
         </DialogHeader>
         <div className="overflow-y-auto flex-1 -mx-4 px-4 space-y-4">
+          {isKeno && (
+            <div>
+              {loadingKeno ? (
+                <div className="flex min-h-56 items-center justify-center rounded-xl border border-border/60 bg-muted/20">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="size-4 motion-safe:animate-spin" />
+                    Loading Keno replay...
+                  </div>
+                </div>
+              ) : kenoError ? (
+                <p className="rounded-xl border border-amber-500/25 bg-amber-500/10 px-4 py-6 text-center text-sm text-amber-700 dark:text-amber-300">
+                  Couldn&apos;t load this Keno game. Close and reopen the
+                  transaction to retry.
+                </p>
+              ) : kenoGame ? (
+                <KenoGameReplay game={kenoGame} />
+              ) : (
+                <p className="rounded-xl border border-border/60 bg-muted/20 px-4 py-6 text-center text-sm text-muted-foreground">
+                  No matching Keno game record was found for this ledger
+                  transaction.
+                </p>
+              )}
+            </div>
+          )}
+
           <div className="grid grid-cols-2 gap-x-6 gap-y-3">
             {rows.map((row) => (
               <div key={row.label} className="flex flex-col gap-1">
