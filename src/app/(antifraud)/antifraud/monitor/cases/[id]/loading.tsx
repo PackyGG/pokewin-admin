@@ -1,13 +1,14 @@
+import { PageHeroSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Hard-navigation fallback. Mirrors the page shell (back row + KPI strip +
+ * Hard-navigation fallback. Mirrors the page shell (hero + KPI strip +
  * two-column body) so the layout does not jump when the case streams in.
  */
 export default function MonitorCaseDetailLoading() {
   return (
     <div className="space-y-6">
-      <Skeleton className="h-8 w-32" />
+      <PageHeroSkeleton />
 
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (

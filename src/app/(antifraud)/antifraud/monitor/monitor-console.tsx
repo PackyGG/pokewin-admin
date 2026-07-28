@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   ChevronRight,
   Clock3,
+  History,
   Radio,
   RefreshCw,
   ShieldAlert,
@@ -16,7 +17,7 @@ import {
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { KpiTile } from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
 import { useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
@@ -926,29 +927,34 @@ export function MonitorConsole() {
       )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
-        <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          <div className="flex items-center justify-between gap-3 border-b border-border/60 px-3 py-3 sm:px-4">
-            <div>
-              <h3 className="text-sm font-semibold">Active sessions</h3>
-              <p className="text-[11px] text-muted-foreground">
-                Three-minute signup behavior windows
-              </p>
-            </div>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void loadSnapshot(true)}
-              disabled={refreshing}
-            >
-              <RefreshCw
-                className={cn("size-3.5", refreshing && "animate-spin")}
-                aria-hidden
-              />
-              Refresh
-            </Button>
-          </div>
-
+        <section className="space-y-3">
+          <SectionHeading
+            icon={UserRoundSearch}
+            title={
+              <>
+                Active sessions
+                <span className="text-xs font-normal text-muted-foreground">
+                  three-minute signup behavior windows
+                </span>
+              </>
+            }
+            action={
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void loadSnapshot(true)}
+                disabled={refreshing}
+              >
+                <RefreshCw
+                  className={cn("size-3.5", refreshing && "animate-spin")}
+                  aria-hidden
+                />
+                Refresh
+              </Button>
+            }
+          />
+          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           {sessions.length === 0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
               <UserRoundSearch className="size-6 text-muted-foreground" aria-hidden />
@@ -1046,16 +1052,22 @@ export function MonitorConsole() {
               })}
             </ul>
           )}
+          </div>
         </section>
 
-        <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          <div className="border-b border-border/60 px-3 py-3 sm:px-4">
-            <h3 className="text-sm font-semibold">Live activity</h3>
-            <p className="text-[11px] text-muted-foreground">
-              Signups, pack openings, player actions and matched flows
-            </p>
-          </div>
-          <div className="max-h-[480px] overflow-y-auto">
+        <section className="space-y-3">
+          <SectionHeading
+            icon={Radio}
+            title={
+              <>
+                Live activity
+                <span className="text-xs font-normal text-muted-foreground">
+                  Signups, pack openings, player actions and matched flows
+                </span>
+              </>
+            }
+          />
+          <div className="max-h-[480px] overflow-y-auto rounded-xl border border-border/60 bg-card">
             {events.length === 0 ? (
               <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
                 <Radio className="size-6 text-muted-foreground" aria-hidden />
@@ -1118,13 +1130,19 @@ export function MonitorConsole() {
         </section>
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="border-b border-border/60 px-3 py-3 sm:px-4">
-          <h3 className="text-sm font-semibold">Recent monitor cases</h3>
-          <p className="text-[11px] text-muted-foreground">
-            Stored in the dedicated antifraud database
-          </p>
-        </div>
+      <section className="space-y-3">
+        <SectionHeading
+          icon={History}
+          title={
+            <>
+              Recent monitor cases
+              <span className="text-xs font-normal text-muted-foreground">
+                stored in the dedicated antifraud database
+              </span>
+            </>
+          }
+        />
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         {cases.length === 0 ? (
           <p className="px-4 py-10 text-center text-xs text-muted-foreground">
             No monitor cases have been recorded yet.
@@ -1181,6 +1199,7 @@ export function MonitorConsole() {
             })}
           </ul>
         )}
+        </div>
       </section>
     </>
   );

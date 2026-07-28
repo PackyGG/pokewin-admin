@@ -24,6 +24,7 @@ import {
 } from "@/components/modern-panels";
 import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
@@ -78,7 +79,8 @@ export default async function MonitorCaseDetailPage({
           icon={ShieldAlert}
           accent="cyan"
           title="Monitor case"
-          subtitle="Case"
+          subtitle="Signup behavior evidence and verdict"
+          backHref="/antifraud/monitor"
         />
       </PageHero>
 
@@ -138,7 +140,7 @@ async function CaseDetail({ caseId }: { caseId: string }) {
           value={formatNumber(subject.score)}
           sub={subject.severity.toUpperCase()}
           icon={Gauge}
-          accent="cyan"
+          accent={severityAccent(subject.severity)}
         />
         <KpiTile
           label="Peak score"
@@ -176,22 +178,48 @@ async function CaseDetail({ caseId }: { caseId: string }) {
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_320px]">
         <div className="space-y-6">
           {/* ── Subject ─────────────────────────────────────────── */}
-          <div className="space-y-3 rounded-xl border border-border/60 bg-card p-4">
-            <div className="flex flex-wrap items-center gap-1.5">
-              <span className="mr-1 truncate text-sm font-semibold">
-                {subject.username ?? "Unnamed account"}
-              </span>
-              <ReviewSeverityBadge severity={subject.severity} />
-              <CaseStatusBadge status={subject.status} />
-              <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                score {subject.score}
-              </span>
+          <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
+            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <h1 className="truncate text-lg font-semibold">
+                    {subject.username ?? "Unnamed account"}
+                  </h1>
+                  <ReviewSeverityBadge severity={subject.severity} />
+                  <CaseStatusBadge status={subject.status} />
+                </div>
+                <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                  {subject.email ?? subject.user_id}
+                </p>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  render={<HostLink href={`/users/${subject.user_id}`} />}
+                >
+                  <ExternalLink className="size-4" />
+                  User profile
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  render={
+                    <HostLink
+                      href={`/antifraud/networks?user=${encodeURIComponent(subject.user_id)}`}
+                    />
+                  }
+                >
+                  <Network className="size-4" />
+                  Account network
+                </Button>
+              </div>
             </div>
 
-            <p className="text-sm leading-relaxed">{subject.summary}</p>
+            <p className="mt-3 text-sm leading-relaxed">{subject.summary}</p>
 
             {subject.subject_type === "network" && (
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge variant="outline">
                   <Network className="mr-1 size-3" />
                   {members.length} connected accounts
@@ -206,23 +234,25 @@ async function CaseDetail({ caseId }: { caseId: string }) {
               </div>
             )}
 
-            <dl className="grid gap-x-4 gap-y-2 border-t border-border/60 pt-3 text-xs sm:grid-cols-2">
-              <Field label="Player id" value={subject.user_id} mono />
-              <Field label="Email" value={subject.email ?? "—"} />
-              <Field label="Signup IP" value={subject.signup_ip ?? "—"} mono />
-              <Field label="Location" value={location || "Unavailable"} />
-              <Field
+            <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+              <FactTile label="Player id" value={subject.user_id} mono />
+              <FactTile label="Signup IP" value={subject.signup_ip ?? "—"} mono />
+              <FactTile label="Location" value={location || "Unavailable"} />
+              <FactTile
                 label="Signed up"
                 value={formatRelative(subject.source_created_at)}
                 title={formatDateTime(subject.source_created_at)}
               />
-              <Field
+              <FactTile
                 label="Case opened"
                 value={formatRelative(subject.opened_at)}
                 title={formatDateTime(subject.opened_at)}
               />
-              <Field label="Assigned to" value={subject.assigned_to ?? "Unassigned"} />
-              <Field
+              <FactTile
+                label="Assigned to"
+                value={subject.assigned_to ?? "Unassigned"}
+              />
+              <FactTile
                 label="Resolved"
                 value={
                   subject.resolved_at
@@ -235,22 +265,15 @@ async function CaseDetail({ caseId }: { caseId: string }) {
                     : undefined
                 }
               />
-            </dl>
+              <FactTile label="Email" value={subject.email ?? "—"} />
+            </div>
 
             {subject.resolution && (
-              <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs">
+              <p className="mt-3 rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs">
                 <span className="font-semibold">Verdict: </span>
                 {decisionLabel(subject.resolution)}
               </p>
             )}
-
-            <HostLink
-              href={`/users/${subject.user_id}`}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
-            >
-              <ExternalLink className="size-3.5" />
-              Open this player on the main dashboard
-            </HostLink>
           </div>
 
           {subject.subject_type === "network" && members.length > 0 && (
@@ -607,7 +630,14 @@ function decisionLabel(value: string): string {
   );
 }
 
-function Field({
+/** Monitor severity bands → KPI accent (risk colours, not money colours). */
+function severityAccent(severity: string): "emerald" | "amber" | "rose" {
+  if (severity === "critical" || severity === "high") return "rose";
+  if (severity === "medium") return "amber";
+  return "emerald";
+}
+
+function FactTile({
   label,
   value,
   mono,
@@ -619,16 +649,19 @@ function Field({
   title?: string;
 }) {
   return (
-    <div className="min-w-0">
-      <dt className="text-[10px] uppercase tracking-wide text-muted-foreground">
+    <div className="min-w-0 rounded-lg border border-border/60 bg-muted/20 p-3">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
         {label}
-      </dt>
-      <dd
-        className={mono ? "truncate font-mono text-[11px]" : "truncate text-xs"}
+      </p>
+      <p
+        className={cn(
+          "mt-1 truncate",
+          mono ? "font-mono text-[11px]" : "text-xs font-medium",
+        )}
         title={title ?? value}
       >
         {value}
-      </dd>
+      </p>
     </div>
   );
 }

@@ -1,11 +1,7 @@
-import { RadioTower, ShieldAlert } from "lucide-react";
+import { ShieldAlert } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 
 import { MonitorConsole } from "./monitor-console";
 
@@ -34,7 +30,6 @@ export default async function AntifraudMonitorPage() {
         />
       </PageHero>
 
-      <SectionHeading icon={RadioTower} title="Live behavior monitor" />
       <MonitorConsole />
     </div>
   );
