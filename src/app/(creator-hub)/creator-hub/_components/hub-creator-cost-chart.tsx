@@ -18,16 +18,18 @@ import {
   type ChartConfig,
   ChartContainer,
   ChartTooltip,
+  ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 
-/** Rose-500 — house spends money on creators = a house cost (House-POV). */
-const COST_COLOR = "#f43f5e";
-
+// Rose-500 — house spends money on creators = a house cost (House-POV).
+// Same semantic rose the main dashboard uses for house-down figures. The hex
+// lives ONLY here in the config; every chart element reads the
+// ChartContainer-generated `var(--color-cost)` token.
 const config = {
   cost: {
     label: "Creator cost",
-    color: COST_COLOR,
+    color: "#f43f5e", // rose-500
   },
 } satisfies ChartConfig;
 
@@ -37,36 +39,6 @@ export type CreatorCostChartPoint = {
   /** Decimal-safe USD cost for this bucket. */
   cost: number;
 };
-
-function CostTooltipContent({
-  active,
-  payload,
-  label,
-}: {
-  active?: boolean;
-  payload?: Array<{ value?: number | string }>;
-  label?: string;
-}) {
-  if (!active || !payload || payload.length === 0) return null;
-  const cost = Number(payload[0]?.value ?? 0);
-  return (
-    <div className="grid min-w-36 gap-1 rounded-lg border border-border/50 bg-background px-2.5 py-1.5 text-xs shadow-xl">
-      {label && <div className="font-medium">{label}</div>}
-      <div className="flex items-center gap-2">
-        <span
-          className="h-2.5 w-2.5 shrink-0 rounded-[2px]"
-          style={{ background: COST_COLOR }}
-        />
-        <div className="flex flex-1 items-center justify-between leading-none">
-          <span className="text-muted-foreground">Creator cost</span>
-          <span className="font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-            {formatCurrency(cost)}
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 /**
  * Creator-cost time series — a single ROSE area chart. House-POV: every
@@ -112,8 +84,16 @@ export function HubCreatorCostChart({
           <AreaChart data={data} accessibilityLayer>
             <defs>
               <linearGradient id="creatorCostFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor={COST_COLOR} stopOpacity={0.4} />
-                <stop offset="100%" stopColor={COST_COLOR} stopOpacity={0.05} />
+                <stop
+                  offset="0%"
+                  stopColor="var(--color-cost)"
+                  stopOpacity={0.4}
+                />
+                <stop
+                  offset="100%"
+                  stopColor="var(--color-cost)"
+                  stopOpacity={0.05}
+                />
               </linearGradient>
             </defs>
             <CartesianGrid vertical={false} />
@@ -133,11 +113,26 @@ export function HubCreatorCostChart({
               width={70}
               tickFormatter={formatCompactUsd}
             />
-            <ChartTooltip content={<CostTooltipContent />} />
+            <ChartTooltip
+              content={
+                <ChartTooltipContent
+                  formatter={(value) => (
+                    <div className="flex flex-1 items-center justify-between gap-4 leading-none">
+                      <span className="text-muted-foreground">
+                        Creator cost
+                      </span>
+                      <span className="font-mono font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+                        {formatCurrency(Number(value))}
+                      </span>
+                    </div>
+                  )}
+                />
+              }
+            />
             <Area
               type="monotone"
               dataKey="cost"
-              stroke={COST_COLOR}
+              stroke="var(--color-cost)"
               strokeWidth={2}
               fill="url(#creatorCostFill)"
               animationDuration={700}

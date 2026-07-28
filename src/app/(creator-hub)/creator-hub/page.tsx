@@ -1,49 +1,40 @@
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
+import Link from "next/link";
 import {
   Megaphone,
-  Users,
   TrendingUp,
-  Coins,
-  Tv,
-  UserPlus,
-  Check,
-  ArrowDownToLine,
   Trophy,
-  Sparkles,
   CalendarRange,
   Handshake,
   Activity,
   Percent,
+  ChevronRight,
+  AlertTriangle,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   parseDashboardPeriod,
-  DASHBOARD_PERIOD_LABELS,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
-import { safeQueryOrNull } from "@/lib/errors/safe-query";
+import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 
 import { AddCreatorDialogV2 } from "./creators/_components/add-creator-dialog-v2";
-import { HubQuickTools } from "./_components/hub-quick-tools";
 import { NetGgrBreakdownPopover } from "../../(admin)/creators/_components/net-ggr-breakdown-popover";
-import {
-  DepositsChart,
-  WagerChart,
-} from "../../(admin)/dashboard/charts";
+import { DepositsChart, WagerChart } from "../../(admin)/dashboard/charts";
 
-import { HubKpiBox } from "./_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "./_components/hub-kpi-info-popover";
+import { HubNotice } from "./_components/hub-notice";
 import { SectionErrorBoundary } from "./_components/section-error-boundary";
-import { HubWagerBreakdownPopover } from "./_components/hub-wager-breakdown-popover";
 import { HubTopCreators } from "./_components/hub-top-creators";
 import { HubTopCreatorsPeriodSelector } from "./_components/hub-top-creators-period-selector";
 import { HubSignupsFtdsChart } from "./_components/hub-signups-ftds-chart";
@@ -51,11 +42,27 @@ import {
   HubCreatorCostChart,
   type CreatorCostChartPoint,
 } from "./_components/hub-creator-cost-chart";
-import { HubPeriodSelector } from "./_components/hub-period-selector";
+import {
+  HubPeriodSelector,
+  hubWindowLabel,
+} from "./_components/hub-period-selector";
+import {
+  CostChartSkeleton,
+  FourWeekBandSkeleton,
+  HubBylineSkeleton,
+  OVERVIEW_KPI_GRID_CLASS,
+  OVERVIEW_KPI_TILES,
+  OverviewBandSkeleton,
+  TopCreatorsListSkeleton,
+  TrendsBandSkeleton,
+} from "./_components/hub-dashboard-skeleton";
+import { getCreatorsGlobalStats } from "../../(admin)/creators/_queries/creators-stats";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 import { getFourWeekDealSummary } from "./_queries/four-week-summary";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
 import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
+import { getHubCohortWindowed } from "./_queries/hub-dashboard-cohort";
+import { HUB_CHART_PERIOD } from "./_queries/hub-period-sql";
 import {
   getHubCreatorCostSeries,
   padCreatorCostSeries,
@@ -68,31 +75,39 @@ import {
 export const metadata = { title: "Creator Hub" };
 
 /**
- * The "4 Weeks" section's board walk + per-owner deal-history fan-out can be a
- * slow cold scan; 120s matches the profitability page (which does the same
- * walk). The section streams behind its own Suspense + error boundary, and its
- * own per-leg timeouts (25s + 20s) degrade well before this — so this only
- * bounds the streamed segment and the shell still paints instantly.
+ * The "Deal performance" band's board walk + per-owner deal-history fan-out
+ * can be a slow cold scan; 120s matches the profitability page (which does
+ * the same walk). The band streams behind its own unkeyed Suspense + error
+ * boundary OUTSIDE the period-keyed Overview boundary (so a chip flip hits
+ * its 5-min cache instead of re-walking), and its own per-leg timeouts
+ * (25s + 20s) degrade well before this — this only bounds the streamed
+ * segment on a cold cache; the shell still paints instantly.
  */
 export const maxDuration = 120;
 
 /**
- * Creator Hub — home dashboard.
+ * Creator Hub — home dashboard, structured by TIME CONTRACT into three
+ * labelled bands so each figure's window is unambiguous:
  *
- * Layout (matches the approved mockup):
- *   1. Slim hero ("Creator Hub" + window label).
- *   2. Quick-tools button row (My Creators / Leaderboards / ROI Calculator
- *      / Changelogs).
- *   3. Overview KPI boxes (house-POV colors).
- *   4. 3-up row: Top Creators (ranked) + Wager chart + Deposits chart.
+ *   a. "Overview · {window}"        — the six period-scoped KPI tiles + the
+ *      creator-cost-over-time chart. ONLY this band lives inside
+ *      `<Suspense key={period}>` (active-timeframe-only: a chip flip
+ *      re-fetches just this band).
+ *   b. "Trends · fixed 30 days"     — Wager / Deposits / Sign-ups & FTDs
+ *      charts. Always 30 daily buckets (HUB_CHART_PERIOD), so the band sits
+ *      OUTSIDE the period-keyed boundary in its own unkeyed Suspense and
+ *      reads the cached fixed-30d cohort entry — a chip flip never re-runs
+ *      the chart scans.
+ *   c. "Deal performance · last 4 weeks" — the fixed 28-day deal tiles.
+ *      Also OUTSIDE the period boundary (cached 5 min), so the chip flip
+ *      never re-triggers the slow backend board walk.
+ *
+ * Between b and c: the Top Creators card with its OWN independent ranking
+ * window (`?topPeriod=`), rendered as an inline "Ranking window" control so
+ * it can't be confused with the global chips.
  *
  * ACCESS: `canAccessCreatorHub` (the layout enforces it; this page adds the
  * explicit gate too — every protected page gates server-side first).
- *
- * ACTIVE-TIMEFRAME-ONLY: the period selector defaults to 24h; the data
- * section is wrapped in a Suspense boundary keyed on `period`, so only the
- * active window is fetched on first render and switching lazily loads just
- * the picked window (never preloading all windows).
  */
 export default async function CreatorHubDashboardPage({
   searchParams,
@@ -104,49 +119,507 @@ export default async function CreatorHubDashboardPage({
   const params = await searchParams;
   const period = parseDashboardPeriod(params.period);
   const topPeriod = parseTopCreatorsPeriod(params.topPeriod);
-  const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
+  const windowLabel = hubWindowLabel(period);
 
   return (
     <div className="space-y-6">
-      {/* Slim hero — Creator Hub identity + active window. */}
-      <PageHero>
-        <PageHeroIdentity
-          icon={Megaphone}
-          accent="pink"
-          title="Creator Hub"
-          subtitle={`Your CM team's command center · ${windowLabel}`}
-          action={<AddCreatorDialogV2 />}
-        />
-      </PageHero>
-
-      {/* Quick tools */}
-      <HubQuickTools />
-
-      {/* Overview — window selector + KPI boxes + 3-up row. The whole
-          data-bearing block is keyed on `period` so only the active window
-          loads and switching repaints just this boundary (lazy). */}
-      <div className="space-y-3">
+      {/* Page identity — SectionHeading (PageHeroIdentity renders no titles
+          by owner decision) with the global window chips + Add Creator. */}
+      <div className="space-y-1.5">
         <SectionHeading
-          icon={TrendingUp}
-          title="Overview"
-          action={<HubPeriodSelector current={period} />}
+          icon={Megaphone}
+          title="Creator Hub"
+          action={
+            <>
+              <HubPeriodSelector current={period} />
+              <AddCreatorDialogV2 />
+            </>
+          }
         />
-        <Suspense key={period} fallback={<OverviewSkeleton />}>
-          <OverviewSection period={period} topPeriod={topPeriod} />
+        {/* One-line muted status byline — streams in its own tiny Suspense
+            (roster counts come from the cached backend roster walk). */}
+        <Suspense fallback={<HubBylineSkeleton />}>
+          <StatusByline windowLabel={windowLabel} />
         </Suspense>
       </div>
+
+      {/* a) Overview — the ONLY period-keyed band (active-timeframe-only). */}
+      <section className="space-y-3">
+        <SectionHeading icon={TrendingUp} title={`Overview · ${windowLabel}`} />
+        <SectionErrorBoundary
+          fallback={<BandUnavailable label="Overview" />}
+        >
+          <Suspense key={period} fallback={<OverviewBandSkeleton />}>
+            <OverviewSection period={period} />
+          </Suspense>
+        </SectionErrorBoundary>
+      </section>
+
+      {/* b) Trends — fixed 30-day charts, outside the period boundary. */}
+      <section className="space-y-3">
+        <SectionHeading icon={Activity} title="Trends · fixed 30 days" />
+        <SectionErrorBoundary fallback={<BandUnavailable label="Trends" />}>
+          <Suspense fallback={<TrendsBandSkeleton />}>
+            <TrendsSection />
+          </Suspense>
+        </SectionErrorBoundary>
+      </section>
+
+      {/* Top Creators — own independent ranking window (?topPeriod=). The
+          Card shell + control render statically; only the list streams. */}
+      <Card>
+        <CardHeader>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="flex items-center gap-2 text-sm font-medium">
+              <Trophy className="size-4 text-amber-500" />
+              Top Creators
+            </CardTitle>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground">
+                Ranking window
+              </span>
+              <HubTopCreatorsPeriodSelector current={topPeriod} />
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <SectionErrorBoundary
+            fallback={<BandUnavailable label="Top creators" />}
+          >
+            <Suspense key={topPeriod} fallback={<TopCreatorsListSkeleton />}>
+              <TopCreatorsList period={topPeriod} />
+            </Suspense>
+          </SectionErrorBoundary>
+        </CardContent>
+      </Card>
+
+      {/* c) Deal performance — fixed 28-day view, outside the period
+          boundary so a chip flip never re-runs the slow board walk. */}
+      <section className="space-y-3">
+        <SectionHeading
+          icon={CalendarRange}
+          title="Deal performance · last 4 weeks"
+          action={
+            <Link
+              href="/creator-hub/profitability"
+              className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              View profitability
+              <ChevronRight className="size-3.5" aria-hidden />
+            </Link>
+          }
+        />
+        <SectionErrorBoundary fallback={<FourWeekUnavailable />}>
+          <Suspense fallback={<FourWeekBandSkeleton />}>
+            <FourWeekSection />
+          </Suspense>
+        </SectionErrorBoundary>
+      </section>
     </div>
   );
 }
 
-// ─── 4 Weeks section (data-bearing, streamed via Suspense) ─────────
+// ─── Status byline ─────────────────────────────────────────────────
+//
+// "Last 24h · 41 creators · 3 live" — Total Creators and Live Now were
+// demoted out of the KPI grid (max 6 tiles) into this line. Counts come
+// from the cached (5-min) backend roster walk; a failure degrades to the
+// window label alone.
+async function StatusByline({ windowLabel }: { windowLabel: string }) {
+  const { data } = await safeQuery(
+    () => getCreatorsGlobalStats(),
+    null,
+    "creator-hub.bylineStats",
+    15_000,
+  );
+
+  const windowText =
+    windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
+
+  return (
+    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
+      <span>{windowText}</span>
+      {data ? (
+        <>
+          <span aria-hidden>·</span>
+          <span>{formatNumber(data.totalCreators)} creators</span>
+          <span aria-hidden>·</span>
+          <span className="inline-flex items-center gap-1.5">
+            {data.liveCount > 0 && (
+              <span className="relative flex size-1.5" aria-hidden>
+                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
+                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
+              </span>
+            )}
+            {formatNumber(data.liveCount)} live
+          </span>
+        </>
+      ) : (
+        <>
+          <span aria-hidden>·</span>
+          <span>roster unavailable</span>
+        </>
+      )}
+    </p>
+  );
+}
+
+// ─── Band fallbacks ────────────────────────────────────────────────
+
+function BandUnavailable({ label }: { label: string }) {
+  return (
+    <HubNotice tone="amber" icon={AlertTriangle} title={`${label} unavailable`}>
+      This section could not load right now — try again shortly.
+    </HubNotice>
+  );
+}
+
+function FourWeekUnavailable() {
+  return (
+    <HubNotice
+      tone="amber"
+      icon={AlertTriangle}
+      title="4-week deal summary unavailable"
+    >
+      The deal-performance walk could not load right now — try again shortly.
+    </HubNotice>
+  );
+}
+
+// ─── a) Overview band (period-scoped, streamed via keyed Suspense) ─
+
+async function OverviewSection({ period }: { period: DashboardPeriod }) {
+  const [data, signupLeaders] = await Promise.all([
+    getHubDashboardOverview(period),
+    getTopSignupLeaders(period).catch((err) => {
+      console.error("[creator-hub] signup leaders failed:", err);
+      return [];
+    }),
+  ]);
+  const windowLabel = hubWindowLabel(period);
+  const periodLabel =
+    windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
+
+  const signupLeaderLines = signupLeaders.map((c) => ({
+    label: c.username ?? "Unknown",
+    value: formatNumber(c.signups),
+    tone: "foreground" as const,
+  }));
+
+  const creatorCostLines =
+    data.creatorCostBreakdown?.lines
+      .filter((l) => l.amount > 0)
+      .map((l) => ({
+        label: l.label,
+        value: formatCurrency(l.amount),
+        tone: "rose" as const,
+      })) ?? [];
+
+  const wagerLines = data.ggrLegs
+    ? [
+        {
+          label: "Packs & battles wager",
+          total: data.ggrLegs.packBattleWager,
+        },
+        { label: "Upgrader wager", total: data.ggrLegs.upgraderWager },
+      ]
+        .filter((r) => r.total > 0)
+        .map((r) => ({
+          label: r.label,
+          value: formatCurrency(r.total),
+          tone: "foreground" as const,
+        }))
+    : [];
+
+  // Per-tile dynamic slice (value / sub / popover) keyed by the static tile
+  // definition in OVERVIEW_KPI_TILES — one map renders the whole strip, and
+  // the skeleton derives its count from the same array.
+  const tileData: Record<
+    (typeof OVERVIEW_KPI_TILES)[number]["key"],
+    {
+      value: string;
+      sub: string;
+      accent?: "emerald" | "rose" | "blue";
+      action?: ReactNode;
+    }
+  > = {
+    wager: {
+      value:
+        data.affiliateWagerUsd != null
+          ? formatCurrency(data.affiliateWagerUsd)
+          : "—",
+      sub:
+        data.affiliateWagerUsd != null
+          ? "code-cohort wager"
+          : "Windowed GGR query unavailable",
+      action: data.ggrLegs ? (
+        <HubKpiInfoPopover
+          title="Affiliate wager breakdown"
+          description={`${periodLabel}. Code-cohort wager attributed while a creator's code covered the player (7-day windows). Real customers only — staff, excluded users, and creator-on-stream play removed.`}
+          lines={wagerLines}
+          footer={{
+            label: "Wagers",
+            value: `+${formatCurrency(data.ggrLegs.wagersTotal)}`,
+            tone: "emerald",
+          }}
+          ringClassName="focus-visible:ring-emerald-500/40"
+        />
+      ) : undefined,
+    },
+    creatorCost: {
+      value:
+        data.creatorCostUsd != null
+          ? formatCurrency(data.creatorCostUsd)
+          : "—",
+      sub:
+        data.creatorCostUsd != null
+          ? "withdrawals + tips + LB"
+          : "Cost query unavailable",
+      action: data.creatorCostBreakdown ? (
+        <HubKpiInfoPopover
+          title={`Creator cost · ${periodLabel}`}
+          description="House spend on creator activity in the selected window — every line is money paid out (a house cost): fill conversion vouchers minted, multiplier payouts, house-funded tips, and full leaderboard prize gross."
+          lines={creatorCostLines}
+          footer={{
+            label: "Total",
+            value: formatCurrency(data.creatorCostBreakdown.total),
+            tone: "rose",
+          }}
+          ringClassName="focus-visible:ring-rose-500/40"
+        />
+      ) : undefined,
+    },
+    signups: {
+      value: data.signups != null ? formatNumber(data.signups) : "—",
+      sub:
+        data.signups != null
+          ? "referred by creators"
+          : data.cohortUnavailable
+            ? "Cohort metrics unavailable"
+            : "No data yet",
+      action:
+        data.signups != null ? (
+          <HubKpiInfoPopover
+            title={`Sign-ups · ${periodLabel}`}
+            description="New users who joined in the window and were referred by a creator (`user.referred_by` points at a creator account). Staff and excluded users are dropped."
+            lines={signupLeaderLines}
+            footer={{ label: "Total", value: formatNumber(data.signups) }}
+          />
+        ) : undefined,
+    },
+    ftds: {
+      value: data.ftds != null ? formatNumber(data.ftds) : "—",
+      sub:
+        data.ftds != null
+          ? "code-attributed depositors"
+          : data.cohortUnavailable
+            ? "Cohort metrics unavailable"
+            : "No data yet",
+      action:
+        data.ftds != null ? (
+          <HubKpiInfoPopover
+            title={`New FTDs · ${periodLabel}`}
+            description="Distinct referred players who made their first code-attributed deposit in the window (`affiliate_code_usages` with `usage_type = deposit`). Self-attributed creator play is excluded."
+            footer={{ label: "Total FTDs", value: formatNumber(data.ftds) }}
+          />
+        ) : undefined,
+    },
+    deposits: {
+      value:
+        data.depositsUsd != null ? formatCurrency(data.depositsUsd) : "—",
+      sub:
+        data.depositsUsd != null
+          ? "coverage-attributed"
+          : data.cohortUnavailable
+            ? "Cohort metrics unavailable"
+            : "No data yet",
+      action:
+        data.depositsUsd != null ? (
+          <HubKpiInfoPopover
+            title={`Deposits · ${periodLabel}`}
+            description="Sum of completed player deposits in the window, attributed to the creator whose code covered the player at deposit time (7-day lookback, most recent code wins)."
+            footer={{
+              label: "Total",
+              value: formatCurrency(data.depositsUsd),
+              tone: "emerald",
+            }}
+            ringClassName="focus-visible:ring-emerald-500/40"
+          />
+        ) : undefined,
+    },
+    netGgr: {
+      value: data.netGgrUsd != null ? formatCurrency(data.netGgrUsd) : "—",
+      sub:
+        data.netGgrUsd != null
+          ? "wager − payout"
+          : "Windowed GGR query unavailable",
+      // House-POV: cohort net-lost to us = emerald; cohort up on us = rose.
+      accent:
+        data.netGgrUsd != null && data.netGgrUsd < 0 ? "rose" : "emerald",
+      action:
+        data.ggrLegs && data.netGgrUsd != null ? (
+          <NetGgrBreakdownPopover
+            packBattleWager={data.ggrLegs.packBattleWager}
+            upgraderWager={data.ggrLegs.upgraderWager}
+            inventoryPayout={data.ggrLegs.inventoryPayout}
+            battleRefundLedger={data.ggrLegs.battleRefundLedger}
+            upgraderPayout={data.ggrLegs.upgraderPayout}
+            wagersTotal={data.ggrLegs.wagersTotal}
+            payoutsTotal={data.ggrLegs.payoutsTotal}
+            ggr={data.netGgrUsd}
+            periodLabel={periodLabel}
+          />
+        ) : undefined,
+    },
+  };
+
+  return (
+    <FadeIn className="space-y-4">
+      <div className={OVERVIEW_KPI_GRID_CLASS}>
+        {OVERVIEW_KPI_TILES.map((tile) => {
+          const slice = tileData[tile.key];
+          return (
+            <KpiTile
+              key={tile.key}
+              label={tile.label}
+              icon={tile.icon}
+              accent={slice.accent ?? tile.accent}
+              value={slice.value}
+              sub={slice.sub}
+              action={slice.action}
+            />
+          );
+        })}
+      </div>
+
+      {/* Creator-cost time series (active window). Nested Suspense so the
+          KPI strip paints as soon as the overview lands and the chart
+          hydrates when its own series query resolves. */}
+      <Suspense
+        key={`creator-cost-${period}`}
+        fallback={<CostChartSkeleton />}
+      >
+        <CreatorCostSeriesSection period={period} />
+      </Suspense>
+    </FadeIn>
+  );
+}
+
+// ─── Creator-cost series (data-bearing, streamed via Suspense) ─────
+//
+// Hits `getHubCreatorCostSeries(period)` which is `unstable_cache`'d.
+// Wrapped in `safeQueryOrNull` so a query failure degrades to a HubNotice
+// instead of crashing the dashboard shell. Decimal-safe money throughout.
+async function CreatorCostSeriesSection({
+  period,
+}: {
+  period: DashboardPeriod;
+}) {
+  const { data, error } = await safeQueryOrNull(
+    () => getHubCreatorCostSeries(period),
+    "creator-hub.creatorCostSeries",
+    8_000,
+  );
+
+  if (!data) {
+    return (
+      <HubNotice
+        tone="amber"
+        icon={AlertTriangle}
+        title="Creator-cost series unavailable"
+      >
+        {error ?? "Backend unavailable."}
+      </HubNotice>
+    );
+  }
+
+  const padded = padCreatorCostSeries(data, period);
+  const hourly = data.granularity === "hour";
+  const chartData: CreatorCostChartPoint[] = padded.map((b) => ({
+    bucket: hourly
+      ? b.bucketIso.slice(11, 16) // "HH:MM"
+      : b.bucketIso.slice(0, 10), // "YYYY-MM-DD"
+    cost: b.costUsd,
+  }));
+
+  return (
+    <HubCreatorCostChart
+      data={chartData}
+      title={
+        hourly
+          ? `Creator costs over time · ${hubWindowLabel(period)} (hourly)`
+          : `Creator costs over time · ${hubWindowLabel(period)}`
+      }
+      subtitle="Converted deal payouts · House-funded tips · Leaderboard prize gross"
+      hourlyXAxis={hourly}
+    />
+  );
+}
+
+// ─── b) Trends band (fixed 30 days, outside the period boundary) ───
+//
+// Reads the cohort scan pinned to HUB_CHART_PERIOD ("30d") — the chart legs
+// inside that bundle are ALWAYS 30 daily buckets, and the pinned entry is
+// `unstable_cache`'d (5-min revalidate), so a global chip flip resolves this
+// band from cache instead of re-running the chart scans.
+async function TrendsSection() {
+  const { data, error } = await safeQueryOrNull(
+    () => getHubCohortWindowed(HUB_CHART_PERIOD),
+    "creator-hub.trends30d",
+    20_000,
+  );
+
+  if (!data) {
+    console.error("[creator-hub] 30d trends failed:", error);
+    return <BandUnavailable label="Trends" />;
+  }
+
+  return (
+    <FadeIn className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <WagerChart
+        title="Code-cohort wagers · last 30 days"
+        data={data.dailyWagers}
+      />
+      <DepositsChart
+        title="Code-cohort deposits · last 30 days"
+        data={data.dailyDeposits}
+      />
+      <HubSignupsFtdsChart
+        title="Sign-ups & FTDs · last 30 days"
+        data={data.dailySignupsFtds}
+      />
+    </FadeIn>
+  );
+}
+
+// ─── Top Creators list (own ranking window) ────────────────────────
+//
+// `getHubTopCreatorsByDeposits` runs a live PG leg; guarded with
+// `safeQueryOrNull` so a transient failure degrades to a notice instead of
+// crashing the hub (digest 491822067, 2026-07-05).
+async function TopCreatorsList({ period }: { period: TopCreatorsPeriod }) {
+  const { data, error } = await safeQueryOrNull(
+    () => getHubTopCreatorsByDeposits(period),
+    "creator-hub.topCreatorsByDeposits",
+    8_000,
+  );
+
+  if (data == null) {
+    console.error("[creator-hub] top creators by deposits failed:", error);
+    return <BandUnavailable label="Top creators" />;
+  }
+
+  return <HubTopCreators creators={data} periodLabel={period} />;
+}
+
+// ─── c) Deal performance band (fixed 28 days, streamed) ────────────
 //
 // Fully guarded: `getFourWeekDealSummary` never throws (both heavy legs are
-// safeQuery-bounded), and `safeQueryOrNull` here is a belt-and-suspenders
-// boundary. A `null` / `backendUnavailable` result renders the degraded card.
-// The whole thing is ALSO wrapped in a SectionErrorBoundary in the page body,
-// so even an unexpected render throw degrades to the card instead of crashing
-// the hub.
+// safeQuery-bounded) and is cached (5-min revalidate); `safeQueryOrNull`
+// here is a belt-and-suspenders boundary. A `null` / `backendUnavailable`
+// result renders the degraded notice. The band is ALSO wrapped in a
+// SectionErrorBoundary in the page body, so even an unexpected render throw
+// degrades to the notice instead of crashing the hub.
 async function FourWeekSection() {
   const { data } = await safeQueryOrNull(
     () => getFourWeekDealSummary(),
@@ -155,7 +628,7 @@ async function FourWeekSection() {
   );
 
   if (!data || data.backendUnavailable) {
-    return <FourWeekErrorCard />;
+    return <FourWeekUnavailable />;
   }
 
   // Per-creator drill-down lines for each tile's (i) popover — "where it's
@@ -191,14 +664,14 @@ async function FourWeekSection() {
     }));
 
   return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <HubKpiBox
+    <FadeIn className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+      <KpiTile
         label="Active Creators"
         icon={Handshake}
         accent="blue"
         value={formatNumber(data.activeCreators)}
         sub="With a deal · last 28 days"
-        info={
+        action={
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Active creators · last 28 days"
@@ -212,13 +685,13 @@ async function FourWeekSection() {
           ) : undefined
         }
       />
-      <HubKpiBox
+      <KpiTile
         label="Expected Wager"
         icon={TrendingUp}
         accent="blue"
         value={formatCurrency(data.expectedWagerUsd)}
         sub="To break even · 4 weeks"
-        info={
+        action={
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Expected wager · 4 weeks"
@@ -232,13 +705,13 @@ async function FourWeekSection() {
           ) : undefined
         }
       />
-      <HubKpiBox
+      <KpiTile
         label="Actual Wager"
         icon={Activity}
         accent="emerald"
         value={formatCurrency(data.actualWagerUsd)}
         sub="Driven in deal frames · 4 weeks"
-        info={
+        action={
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Actual wager · 4 weeks"
@@ -254,13 +727,13 @@ async function FourWeekSection() {
           ) : undefined
         }
       />
-      <HubKpiBox
+      <KpiTile
         label="Avg Conversion"
         icon={Percent}
         accent="blue"
         value={`${data.avgConversionRatio.toFixed(2)}x`}
         sub="Actual ÷ expected · avg"
-        info={
+        action={
           hasBreakdown ? (
             <HubKpiInfoPopover
               title="Conversion · 4 weeks"
@@ -274,457 +747,6 @@ async function FourWeekSection() {
           ) : undefined
         }
       />
-    </div>
-  );
-}
-
-function FourWeekErrorCard() {
-  return (
-    <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
-      4-week deal summary is unavailable right now — try again shortly.
-    </div>
-  );
-}
-
-function FourWeekSkeleton() {
-  return (
-    <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <Skeleton key={i} className="h-[104px] rounded-2xl" />
-      ))}
-    </div>
-  );
-}
-
-// ─── Overview section (data-bearing, streamed via Suspense) ─────────
-
-async function OverviewSection({
-  period,
-  topPeriod,
-}: {
-  period: DashboardPeriod;
-  topPeriod: TopCreatorsPeriod;
-}) {
-  const [data, signupLeaders] = await Promise.all([
-    getHubDashboardOverview(period),
-    getTopSignupLeaders(period).catch((err) => {
-      console.error("[creator-hub] signup leaders failed:", err);
-      return [];
-    }),
-  ]);
-  const windowLabel = DASHBOARD_PERIOD_LABELS[period].toLowerCase();
-  const periodLabel =
-    windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
-
-  const signupLeaderLines = signupLeaders.map((c) => ({
-    label: c.username ?? "Unknown",
-    value: formatNumber(c.signups),
-    tone: "foreground" as const,
-  }));
-
-  const creatorCostLines =
-    data.creatorCostBreakdown?.lines
-      .filter((l) => l.amount > 0)
-      .map((l) => ({
-        label: l.label,
-        value: formatCurrency(l.amount),
-        tone: "rose" as const,
-      })) ?? [];
-
-  return (
-    <FadeIn className="space-y-4">
-      {/* KPI boxes — house-POV colors:
-            • blue   = neutral count (creators / live / signups / FTDs)
-            • emerald = house gain (affiliate wager / deposits / GGR)
-            • rose   = house cost (creator cost) */}
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <HubKpiBox
-          label="Total Creators"
-          icon={Users}
-          accent="blue"
-          value={data.totalCreators != null ? formatNumber(data.totalCreators) : "—"}
-          sub="all creator accounts"
-          placeholder={data.totalCreators == null}
-          placeholderNote={
-            data.rosterUnavailable ? "Backend unavailable" : "No data yet"
-          }
-          info={
-            data.totalCreators != null ? (
-              <HubKpiInfoPopover
-                title="Total creators · breakdown"
-                description="Live backend roster count. Sub-lines show fill-program creators and those with an active or scheduled deal."
-                lines={[
-                  {
-                    label: "All creators",
-                    value: formatNumber(data.totalCreators),
-                  },
-                  ...(data.creatorsStats
-                    ? [
-                        {
-                          label: "With fill deals",
-                          value: formatNumber(data.creatorsStats.fillCreatorCount),
-                        },
-                        {
-                          label: "Active / scheduled deal",
-                          value: formatNumber(data.creatorsStats.activeDealCount),
-                        },
-                      ]
-                    : []),
-                ]}
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label={`Affiliate Wager · ${period}`}
-          icon={TrendingUp}
-          accent="emerald"
-          value={
-            data.affiliateWagerUsd != null
-              ? formatCurrency(data.affiliateWagerUsd)
-              : "—"
-          }
-          sub={`code-cohort wager · ${windowLabel}`}
-          placeholder={data.affiliateWagerUsd == null}
-          placeholderNote={
-            data.affiliateWagerUsd == null
-              ? "Windowed GGR query unavailable"
-              : undefined
-          }
-          info={
-            data.ggrLegs ? (
-              <HubWagerBreakdownPopover
-                packBattleWager={data.ggrLegs.packBattleWager}
-                upgraderWager={data.ggrLegs.upgraderWager}
-                wagersTotal={data.ggrLegs.wagersTotal}
-                periodLabel={periodLabel}
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label={`Creator Cost · ${period}`}
-          icon={Coins}
-          accent="rose"
-          value={
-            data.creatorCostUsd != null
-              ? formatCurrency(data.creatorCostUsd)
-              : "—"
-          }
-          sub={`withdrawals + tips + LB · ${windowLabel}`}
-          placeholder={data.creatorCostUsd == null}
-          info={
-            data.creatorCostBreakdown ? (
-              <HubKpiInfoPopover
-                title={`Creator cost · ${periodLabel}`}
-                description="House spend on creator activity in the selected window — every line is money paid out (a house cost): fill conversion vouchers minted, multiplier payouts, house-funded tips, and full leaderboard prize gross."
-                lines={creatorCostLines}
-                footer={{
-                  label: "Total",
-                  value: formatCurrency(data.creatorCostBreakdown.total),
-                  tone: "rose",
-                }}
-                ringClassName="focus-visible:ring-rose-500/40"
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label="Live Now"
-          icon={Tv}
-          accent="blue"
-          value={data.liveCount != null ? formatNumber(data.liveCount) : "—"}
-          sub="creators streaming now"
-          live={data.liveCount != null && data.liveCount > 0}
-          placeholder={data.liveCount == null}
-          placeholderNote={
-            data.rosterUnavailable ? "Backend unavailable" : "No data yet"
-          }
-          info={
-            data.liveCount != null ? (
-              <HubKpiInfoPopover
-                title="Live now"
-                description="Creators with an active fill stream session right now (`active_session_id` on the backend roster). Updates as creators go live or end a session."
-                lines={[
-                  {
-                    label: "Streaming now",
-                    value: formatNumber(data.liveCount),
-                  },
-                ]}
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label={`Sign-ups · ${period}`}
-          icon={UserPlus}
-          accent="blue"
-          value={
-            data.signups != null ? formatNumber(data.signups) : "—"
-          }
-          sub={`referred by creators · ${windowLabel}`}
-          placeholder={data.signups == null}
-          placeholderNote={
-            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
-          }
-          info={
-            data.signups != null ? (
-              <HubKpiInfoPopover
-                title={`Sign-ups · ${periodLabel}`}
-                description="New users who joined in the window and were referred by a creator (`user.referred_by` points at a creator account). Staff and excluded users are dropped."
-                lines={signupLeaderLines}
-                footer={{
-                  label: "Total",
-                  value: formatNumber(data.signups),
-                }}
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label={`New FTDs · ${period}`}
-          icon={Check}
-          accent="blue"
-          value={data.ftds != null ? formatNumber(data.ftds) : "—"}
-          sub={`code-attributed depositors · ${windowLabel}`}
-          placeholder={data.ftds == null}
-          placeholderNote={
-            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
-          }
-          info={
-            data.ftds != null ? (
-              <HubKpiInfoPopover
-                title={`New FTDs · ${periodLabel}`}
-                description="Distinct referred players who made their first code-attributed deposit in the window (`affiliate_code_usages` with `usage_type = deposit`). Self-attributed creator play is excluded."
-                footer={{
-                  label: "Total FTDs",
-                  value: formatNumber(data.ftds),
-                }}
-              />
-            ) : undefined
-          }
-        />
-        <HubKpiBox
-          label={`Deposits · ${period}`}
-          icon={ArrowDownToLine}
-          accent="emerald"
-          value={
-            data.depositsUsd != null
-              ? formatCurrency(data.depositsUsd)
-              : "—"
-          }
-          sub={`coverage-attributed · ${windowLabel}`}
-          placeholder={data.depositsUsd == null}
-          placeholderNote={
-            data.cohortUnavailable ? "Cohort metrics unavailable" : undefined
-          }
-          info={
-            data.depositsUsd != null ? (
-              <HubKpiInfoPopover
-                title={`Deposits · ${periodLabel}`}
-                description="Sum of completed player deposits in the window, attributed to the creator whose code covered the player at deposit time (7-day lookback, most recent code wins)."
-                footer={{
-                  label: "Total",
-                  value: formatCurrency(data.depositsUsd),
-                  tone: "emerald",
-                }}
-                ringClassName="focus-visible:ring-emerald-500/40"
-              />
-            ) : undefined
-          }
-        />
-        {/* Net Code-User GGR — a real bonus figure from the same windowed
-            pass (house POV). Emerald when the cohort net-lost to us; we
-            keep the box emerald-accented since GGR here is the house-gain
-            lens, and show the signed value. */}
-        <HubKpiBox
-          label={`Net Cohort GGR · ${period}`}
-          icon={Sparkles}
-          accent="emerald"
-          value={
-            data.netGgrUsd != null ? formatCurrency(data.netGgrUsd) : "—"
-          }
-          sub={`wager − payout · ${windowLabel}`}
-          placeholder={data.netGgrUsd == null}
-          placeholderNote={
-            data.netGgrUsd == null
-              ? "Windowed GGR query unavailable"
-              : undefined
-          }
-          info={
-            data.ggrLegs && data.netGgrUsd != null ? (
-              <NetGgrBreakdownPopover
-                packBattleWager={data.ggrLegs.packBattleWager}
-                upgraderWager={data.ggrLegs.upgraderWager}
-                inventoryPayout={data.ggrLegs.inventoryPayout}
-                battleRefundLedger={data.ggrLegs.battleRefundLedger}
-                upgraderPayout={data.ggrLegs.upgraderPayout}
-                wagersTotal={data.ggrLegs.wagersTotal}
-                payoutsTotal={data.ggrLegs.payoutsTotal}
-                ggr={data.netGgrUsd}
-                periodLabel={periodLabel}
-              />
-            ) : undefined
-          }
-        />
-      </div>
-
-      {/* 3-up row: Top Creators (hero) + Wager chart + Deposits chart. */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1.05fr_1fr_1fr]">
-        <div className="rounded-2xl border bg-card p-4 sm:p-5">
-          <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-            <span className="flex items-center gap-2 text-sm font-semibold">
-              <Trophy className="size-4 text-amber-500" />
-              Top Creators
-            </span>
-            <HubTopCreatorsPeriodSelector current={topPeriod} />
-          </div>
-          <Suspense
-            key={topPeriod}
-            fallback={<Skeleton className="h-[220px] w-full rounded-lg" />}
-          >
-            <TopCreatorsList period={topPeriod} />
-          </Suspense>
-        </div>
-
-        <WagerChart
-          title="Code-cohort wagers (30 days)"
-          data={data.dailyWagers}
-        />
-
-        <DepositsChart
-          title="Code-cohort deposits (30 days)"
-          data={data.dailyDeposits}
-        />
-      </div>
-
-      {/* 4 Weeks — a FIXED rolling 28-day view of every leaderboard-frame deal
-          overlapping [now−28d, now], placed directly above "Creator costs over
-          time". Wrapped in a SectionErrorBoundary so a render throw degrades to
-          a card instead of crashing the hub (a <Suspense> boundary does NOT
-          catch errors); its data path is fully guarded and its own timeouts
-          keep it well under maxDuration. Streams behind its own Suspense. */}
-      <div className="space-y-3">
-        <SectionHeading icon={CalendarRange} title="4 Weeks" />
-        <SectionErrorBoundary fallback={<FourWeekErrorCard />}>
-          <Suspense fallback={<FourWeekSkeleton />}>
-            <FourWeekSection />
-          </Suspense>
-        </SectionErrorBoundary>
-      </div>
-
-      {/* Creator-cost time series (active timeframe only). Streams behind
-          its own Suspense boundary keyed on `period`, so the surrounding
-          KPIs and the 3-up row paint immediately and the chart hydrates
-          when its data lands. The KPI box still holds the breakdown
-          popover — this chart adds the OVER-TIME view (what the box's
-          total looks like spread across the active window). */}
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Coins}
-          title={`Creator costs over time · ${windowLabel}`}
-        />
-        <Suspense
-          key={`creator-cost-${period}`}
-          fallback={<Skeleton className="h-[300px] rounded-2xl" />}
-        >
-          <CreatorCostSeriesSection period={period} />
-        </Suspense>
-      </div>
-
-      <HubSignupsFtdsChart data={data.dailySignupsFtds} />
     </FadeIn>
-  );
-}
-
-// ─── Creator-cost series (data-bearing, streamed via Suspense) ─────
-//
-// Hits `getHubCreatorCostSeries(period)` which is `unstable_cache`'d and
-// wired through `resolveAdminRead` (PG twin = canonical; CH twin dormant
-// until parity proven). Wrapped in `safeQueryOrNull` so a query failure
-// degrades to a friendly "Backend unavailable" placeholder instead of
-// crashing the dashboard shell. Decimal-safe money throughout.
-async function CreatorCostSeriesSection({ period }: { period: DashboardPeriod }) {
-  const { data, error } = await safeQueryOrNull(
-    () => getHubCreatorCostSeries(period),
-    "creator-hub.creatorCostSeries",
-    8_000,
-  );
-
-  if (!data) {
-    return (
-      <div className="rounded-2xl border bg-card p-6 text-sm text-muted-foreground">
-        {error ?? "Backend unavailable."}
-      </div>
-    );
-  }
-
-  const padded = padCreatorCostSeries(data, period);
-  const hourly = data.granularity === "hour";
-  const chartData: CreatorCostChartPoint[] = padded.map((b) => ({
-    bucket: hourly
-      ? b.bucketIso.slice(11, 16) // "HH:MM"
-      : b.bucketIso.slice(0, 10), // "YYYY-MM-DD"
-    cost: b.costUsd,
-  }));
-
-  return (
-    <HubCreatorCostChart
-      data={chartData}
-      title={hourly ? "Creator costs (hourly)" : "Creator costs"}
-      subtitle="Converted deal payouts · House-funded tips · Leaderboard prize gross"
-      hourlyXAxis={hourly}
-    />
-  );
-}
-
-// `getHubTopCreatorsByDeposits` runs a live PG leg (`creator_hub_top_creators`
-// Postgres directly with no try/catch around it — see resolve-read.ts's
-// "off"/"comparison" path). Unlike every sibling query on this page it was
-// NOT wrapped in `safeQuery`/`safeQueryOrNull`, so a transient failure (pool
-// blip, statement timeout, connection error) threw straight past this
-// Suspense leaf to the group-level error boundary and crashed the whole
-// Creator Hub dashboard (digest 491822067, 2026-07-05). Guarded here to match
-// the house pattern — a query failure now degrades to a "Backend
-// unavailable" placeholder instead of taking down the page.
-async function TopCreatorsList({ period }: { period: TopCreatorsPeriod }) {
-  const { data, error } = await safeQueryOrNull(
-    () => getHubTopCreatorsByDeposits(period),
-    "creator-hub.topCreatorsByDeposits",
-    8_000,
-  );
-
-  if (data == null) {
-    console.error("[creator-hub] top creators by deposits failed:", error);
-    return (
-      <div className="flex min-h-[180px] flex-col items-center justify-center gap-2 rounded-md border border-dashed py-8 text-center text-sm text-muted-foreground">
-        Backend unavailable.
-      </div>
-    );
-  }
-
-  return <HubTopCreators creators={data} periodLabel={period} />;
-}
-
-// ─── Skeleton ──────────────────────────────────────────────────────
-
-function OverviewSkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <Skeleton key={i} className="h-[104px] rounded-2xl" />
-        ))}
-      </div>
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-[260px] rounded-2xl" />
-        ))}
-      </div>
-      {/* Creator-cost time series. */}
-      <Skeleton className="h-[300px] rounded-2xl" />
-      {/* Sign-ups & FTDs (30 days). */}
-      <Skeleton className="h-[300px] rounded-2xl" />
-    </div>
   );
 }

@@ -22,8 +22,19 @@ const HUB_PERIOD_ITEMS: { value: DashboardPeriod; label: string }[] = [
   { value: "24h", label: "24h" },
   { value: "7d", label: "7d" },
   { value: "30d", label: "30d" },
-  { value: "all", label: "All" },
+  // Honest label: the Hub's "all" value is a bounded 365-day trailing
+  // lookback (HUB_LIFETIME_LOOKBACK_DAYS), not true lifetime — say so.
+  { value: "all", label: "365d" },
 ];
+
+/**
+ * Honest window label for the Hub's active period — the "all" chip maps to a
+ * bounded 365-day lookback in every Hub query (hub-period-sql.ts), so it must
+ * never be described as "all time". Lowercase, for inline byline/sub use.
+ */
+export function hubWindowLabel(period: DashboardPeriod): string {
+  return period === "all" ? "last 365 days" : `last ${period}`;
+}
 
 export function HubPeriodSelector({ current }: { current: DashboardPeriod }) {
   return (

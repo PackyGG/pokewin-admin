@@ -138,7 +138,9 @@ export function DockedAlerts() {
         onClick={() => setOpen(false)}
         aria-label="Minimize alerts panel"
         title="Minimize"
-        className="flex w-full items-center justify-between gap-2 border-b bg-gradient-to-r from-pink-500/5 via-card to-rose-500/5 px-3 py-2 text-left transition-colors hover:from-pink-500/10 hover:to-rose-500/10"
+        // Flat header — plain bg-card (the old pink→rose gradient wash was
+        // decorative noise; the flat standard keeps accent on icons/badges).
+        className="flex w-full items-center justify-between gap-2 border-b bg-card px-3 py-2 text-left transition-colors hover:bg-accent/40"
       >
         <div className="flex min-w-0 items-center gap-2">
           <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-pink-500/10">

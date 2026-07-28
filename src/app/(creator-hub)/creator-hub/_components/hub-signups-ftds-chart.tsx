@@ -16,20 +16,24 @@ import {
 import { formatNumber } from "@/lib/utils/format";
 import { type HubSignupsFtdsChartRow } from "../_queries/hub-types";
 
+// Two emerald shades — same pair as the main dashboard's merged
+// Signups+FTDs chart (src/app/(admin)/dashboard/charts.tsx), so the funnel
+// reads identically across surfaces: tall emerald-500 signup bar next to a
+// short emerald-300 FTD bar.
 const config = {
   signups: {
     label: "Sign-ups",
-    color: "#3b82f6",
+    color: "#10b981", // emerald-500
   },
   ftds: {
     label: "FTDs",
-    color: "#64748b",
+    color: "#6ee7b7", // emerald-300
   },
 } satisfies ChartConfig;
 
 export function HubSignupsFtdsChart({
   data,
-  title = "Sign-ups & FTDs (30 days)",
+  title = "Sign-ups & FTDs · last 30 days",
 }: {
   data: HubSignupsFtdsChartRow[];
   title?: string;

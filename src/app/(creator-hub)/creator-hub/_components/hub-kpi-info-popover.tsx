@@ -18,6 +18,11 @@ export type HubInfoLine = {
 /**
  * Generic (i) breakdown popover for Creator Hub KPI tiles — same chrome as
  * the main dashboard GGR / creator-cost info buttons.
+ *
+ * This is the ONE info-popover primitive for the Hub: the old
+ * `HubWagerBreakdownPopover` was merged into it (its wager legs are just a
+ * `lines` array with a footer total). API is backward compatible — the
+ * profitability and tips pages consume it unchanged; changes stay additive.
  */
 export function HubKpiInfoPopover({
   title,
@@ -56,7 +61,9 @@ export function HubKpiInfoPopover({
             aria-label={ariaLabel ?? `Show ${title} breakdown`}
             title={ariaLabel ?? `Show ${title} breakdown`}
             className={cn(
-              "rounded text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2",
+              // p-1 -m-1 = a real hit area without shifting layout (the
+              // trigger sits in a KpiTile's compact `action` corner slot).
+              "-m-1 rounded p-1 text-muted-foreground/70 transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2",
               ringClassName,
             )}
           />
@@ -73,7 +80,7 @@ export function HubKpiInfoPopover({
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
             {title}
           </p>
-          <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
+          <p className="mt-0.5 text-xs leading-snug text-muted-foreground">
             {description}
           </p>
         </div>
