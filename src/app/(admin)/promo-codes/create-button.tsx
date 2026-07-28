@@ -76,7 +76,7 @@ export function CreatePromoCodeButton() {
 
     startTransition(async () => {
       try {
-        await createPromoCode({
+        const result = await createPromoCode({
           code: code.trim(),
           value: numValue,
           region,
@@ -95,6 +95,10 @@ export function CreatePromoCodeButton() {
           maxUses: parseInt(maxUses) || 1,
           expiresAt: expiresAt || null,
         });
+        if (!result.success) {
+          toast.error(result.error);
+          return;
+        }
         toast.success("Promo code created");
         setOpen(false);
         reset();

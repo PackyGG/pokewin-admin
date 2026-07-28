@@ -16,6 +16,8 @@ import { createHash } from "crypto";
 import { resolveCodePepper } from "@/lib/reward-campaign-codes";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { safeQuery } from "@/lib/errors/safe-query";
+import { fail, ok, type ServerActionResult } from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
 import {
   getPromoCodeClaims,
   getDeletablePromoCodeIds,
@@ -64,14 +66,16 @@ const createPromoCodeSchema = z.object({
 
 export async function createPromoCode(
   data: z.infer<typeof createPromoCodeSchema>,
-) {
-  const db = await getPrimaryDrizzleDb();
+): Promise<ServerActionResult> {
   const session = await requirePageAccess("/promo-codes");
   await requireCapability(session, "__can_create_promo_code", "create promo codes");
 
   const parsed = createPromoCodeSchema.safeParse(data);
   if (!parsed.success) {
-    throw new Error(parsed.error.issues[0]?.message ?? "Invalid promo code input");
+    return fail(
+      parsed.error.issues[0]?.message ?? "Invalid promo code input",
+      "INVALID_INPUT",
+    );
   }
   const v = parsed.data;
 
@@ -81,18 +85,34 @@ export async function createPromoCode(
   // toggled to dev — either way producing a hash the target backend can never
   // look up, so the code redeems as "Code not found". `resolveCodePepper`
   // picks by env and throws rather than minting an unredeemable code.
-  const pepper = await resolveCodePepper();
+  let pepper: string;
+  try {
+    pepper = await resolveCodePepper();
+  } catch (error) {
+    return fail(
+      error instanceof Error
+        ? error.message
+        : "Promo-code hashing is not configured for this environment.",
+      "PEPPER_NOT_CONFIGURED",
+    );
+  }
   const normalizedCode = v.code.toUpperCase().trim();
   const codeHash = createHash("sha256").update(normalizedCode + pepper).digest("hex");
 
-  const [existing] = await db
-    .select({ id: promo_codes.id })
-    .from(promo_codes)
-    .where(eq(promo_codes.code_hash, codeHash))
-    .limit(1);
-  if (existing) throw new Error("A promo code with this value already exists");
-
   try {
+    const db = await getPrimaryDrizzleDb();
+    const [existing] = await db
+      .select({ id: promo_codes.id })
+      .from(promo_codes)
+      .where(eq(promo_codes.code_hash, codeHash))
+      .limit(1);
+    if (existing) {
+      return fail(
+        "A promo code with this value already exists",
+        "PROMO_CODE_EXISTS",
+      );
+    }
+
     await db.insert(promo_codes).values({
       id: crypto.randomUUID(),
       code_hash: codeHash,
@@ -114,9 +134,16 @@ export async function createPromoCode(
     });
   } catch (error) {
     if ((error as { code?: string })?.code === "23505") {
-      throw new Error("A promo code with this value already exists");
+      return fail(
+        "A promo code with this value already exists",
+        "PROMO_CODE_EXISTS",
+      );
     }
-    throw error;
+    logError("promoCodes.create", "promo code database write failed", error);
+    return fail(
+      "Couldn't create the promo code. Please try again.",
+      "PROMO_CODE_CREATE_FAILED",
+    );
   }
 
   await createAdminAuditEvent({
@@ -132,6 +159,7 @@ export async function createPromoCode(
   // bust tagged data-cache entries — each tag has to be busted explicitly.
   revalidateTag("promo-codes-list-stats");
   revalidateTag("promo-codes-money-stats");
+  return ok();
 }
 
 /**

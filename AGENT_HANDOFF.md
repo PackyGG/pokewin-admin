@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 promo-code duplicate error:** Creating an already-existing promo code now returns the readable duplicate message from the Server Action instead of Next.js's masked production digest. Validation, missing-pepper, and database failures also return typed safe errors; unexpected database details stay server-side. Production logs confirmed the reported failure was the duplicate-code path. The focused regression, all 309 guardrails, TypeScript, repository ESLint, and the production build pass.
+
 - **2026-07-28 Keno transaction replay:** Clicking a `keno_bet` or `keno_payout` transaction ID on `/users/[id]` now opens a 40-tile game replay showing the player's picks, drawn tiles, hits, misses, risk, multiplier, stake, payout, and house result. The game record lazy-loads only after the modal opens through a `/users`-permission-gated, exact-user-owned MAIN mirror read. Production `EXPLAIN ANALYZE` used both the ledger PK and `idx_keno_games_user_id_created_at` (0.622 ms). The focused replay checks, all 308 guardrails, TypeScript, full zero-warning ESLint, diff check, and the production build pass.
 
 - **2026-07-28 Whop checkout email on Fiat Deposits:** `/antifraud/fiat-deposits` now shows the exact Whop checkout email directly below the account email. The monitor extracts only `data.user.email` from the existing sanitized webhook evidence, falls back across payment events, and remains compatible with older assessments by showing an honest unavailable state until refresh. The monitor passes 114 tests; all 305 guardrails, TypeScript, focused zero-warning ESLint, and the production build pass.
