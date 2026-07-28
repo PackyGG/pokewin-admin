@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { STATUS_COLORS } from "@/lib/constants";
+import { announcementStatus } from "@/app/(admin)/notifications/announcement-status";
 
 const root = process.cwd();
 
@@ -22,6 +24,43 @@ test("announcement history reports exact site-marked read totals", () => {
   );
   assert.match(content, />Marked read</);
   assert.match(content, /not a guaranteed impression/);
+});
+
+test("revoked announcements render red and remain distinct from ended and active", () => {
+  const now = Date.parse("2026-07-29T12:00:00.000Z");
+  const revoked = announcementStatus(
+    {
+      revoked_at: "2026-07-29T11:00:00.000Z",
+      starts_at: "2026-07-29T10:00:00.000Z",
+      ends_at: null,
+    },
+    now,
+  );
+  const ended = announcementStatus(
+    {
+      revoked_at: null,
+      starts_at: "2026-07-29T10:00:00.000Z",
+      ends_at: "2026-07-29T11:00:00.000Z",
+    },
+    now,
+  );
+  const active = announcementStatus(
+    {
+      revoked_at: null,
+      starts_at: "2026-07-29T10:00:00.000Z",
+      ends_at: null,
+    },
+    now,
+  );
+
+  assert.deepEqual(revoked, {
+    label: "Revoked",
+    className: STATUS_COLORS.failed,
+  });
+  assert.equal(ended.label, "Ended");
+  assert.equal(active.label, "Active");
+  assert.notEqual(revoked.className, ended.className);
+  assert.notEqual(revoked.className, active.className);
 });
 
 test("new direct sends retain exact indexed notification identities", () => {

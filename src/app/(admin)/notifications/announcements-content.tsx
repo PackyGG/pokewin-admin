@@ -26,42 +26,12 @@ import { formatDateTime, formatNumber } from "@/lib/utils/format";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { shortUrlLabel } from "@/lib/announcement-payload";
 import { revokeAnnouncementAction } from "./actions";
+import { announcementStatus } from "./announcement-status";
 import {
   CreateAnnouncementDialog,
   audienceLabel,
 } from "./create-announcement-dialog";
 import type { Announcement } from "@/lib/backend-api/announcements";
-
-function announcementStatus(a: Announcement): {
-  label: string;
-  className: string;
-} {
-  if (a.revoked_at) {
-    return {
-      label: "Revoked",
-      className: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-    };
-  }
-  const now = Date.now();
-  const starts = new Date(a.starts_at).getTime();
-  const ends = a.ends_at ? new Date(a.ends_at).getTime() : null;
-  if (starts > now) {
-    return {
-      label: "Scheduled",
-      className: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-    };
-  }
-  if (ends != null && ends <= now) {
-    return {
-      label: "Ended",
-      className: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-    };
-  }
-  return {
-    label: "Active",
-    className: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  };
-}
 
 export function AnnouncementsContent({
   announcements,
