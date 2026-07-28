@@ -73,7 +73,11 @@ test("email blacklist alerts have a dedicated Discord destination", () => {
   assert.match(alerts, /problemCode === "blacklisted_email_domain"/);
   assert.match(
     alerts,
-    /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL \?\?[\s\S]*FIAT_ALERT_DISCORD_WEBHOOK_URL/,
+    /return config\.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/,
+  );
+  assert.doesNotMatch(
+    alerts,
+    /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL \?\?/,
   );
   assert.match(server, /config\.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
 });
