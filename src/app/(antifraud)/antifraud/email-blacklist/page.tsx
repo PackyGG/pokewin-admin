@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import { AlertTriangle, Ban, LockKeyhole, MailWarning } from "lucide-react";
 
+import {
+  FormCardSkeleton,
+  KpiStripSkeleton,
+} from "@/components/loading-skeletons";
 import {
   KpiTile,
   PageHero,
@@ -11,8 +16,7 @@ import { EmailBlacklistClient } from "./email-blacklist-client";
 
 export const metadata = { title: "Email Blacklist · Antifraud" };
 
-export default async function EmailBlacklistPage() {
-  await requireAntifraudManagerPage();
+async function EmailBlacklistContent() {
   const result = await listFiatEmailDomains();
   const active = result.data.filter((rule) => rule.enabled);
   const affectedUsers = result.data.reduce(
@@ -25,16 +29,7 @@ export default async function EmailBlacklistPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={MailWarning}
-          accent="rose"
-          title="Checkout email blacklist"
-          subtitle="Contain accounts that use blocked email domains during Whop checkout"
-        />
-      </PageHero>
-
+    <>
       <div className="grid gap-3 sm:grid-cols-3">
         <KpiTile
           label="Active domains"
@@ -67,6 +62,37 @@ export default async function EmailBlacklistPage() {
       {result.configured && !result.error && (
         <EmailBlacklistClient initialRules={result.data} />
       )}
+    </>
+  );
+}
+
+function EmailBlacklistFallback() {
+  return (
+    <>
+      <KpiStripSkeleton count={3} />
+      <div className="grid gap-5 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
+        <FormCardSkeleton rows={1} />
+        <FormCardSkeleton rows={3} />
+      </div>
+    </>
+  );
+}
+
+export default async function EmailBlacklistPage() {
+  await requireAntifraudManagerPage();
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity
+          icon={MailWarning}
+          accent="rose"
+          title="Checkout email blacklist"
+          subtitle="Contain accounts that use blocked email domains during Whop checkout"
+        />
+      </PageHero>
+      <Suspense fallback={<EmailBlacklistFallback />}>
+        <EmailBlacklistContent />
+      </Suspense>
     </div>
   );
 }
