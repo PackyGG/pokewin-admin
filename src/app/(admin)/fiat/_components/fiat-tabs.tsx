@@ -83,10 +83,86 @@ export async function FiatOverviewTab() {
         <KpiTile
           label="Last 24h credit"
           value={formatCurrency(data.last24HoursCompletedUsd)}
+          sub={`${formatNumber(data.last24HoursIntents)} intents`}
           icon={DollarSign}
           accent="orange"
         />
       </div>
+
+      <section className="space-y-3">
+        <SectionHeading icon={DollarSign} title="Recorded money flow" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Provider reconciliation</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Control
+                label="Customer paid"
+                value={formatCurrency(data.customerPaidUsd)}
+              />
+              <Control
+                label="Balance credited"
+                value={formatCurrency(data.completedCreditUsd)}
+              />
+              <Control
+                label="Provider net"
+                value={formatCurrency(data.providerNetUsd)}
+              />
+              <Control
+                label="Recorded provider fees"
+                value={formatCurrency(data.providerFeesUsd)}
+              />
+              <Control
+                label="Provider net minus credited"
+                value={formatCurrency(
+                  data.providerNetUsd - data.completedCreditUsd,
+                )}
+              />
+            </CardContent>
+          </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm">Pipeline freshness</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <Control
+                label="Intents in last 24h"
+                value={formatNumber(data.last24HoursIntents)}
+              />
+              <Control
+                label="Latest intent"
+                value={
+                  data.latestIntentAt
+                    ? formatDateTime(data.latestIntentAt)
+                    : "No events"
+                }
+              />
+              <Control
+                label="Webhook events"
+                value={formatNumber(data.webhooks)}
+              />
+              <Control
+                label="Failed webhooks"
+                value={formatNumber(data.failedWebhooks)}
+              />
+              <Control
+                label="Latest webhook"
+                value={
+                  data.latestWebhookAt
+                    ? formatDateTime(data.latestWebhookAt)
+                    : "No events"
+                }
+              />
+            </CardContent>
+          </Card>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          These are independently recorded ledger and provider fields. A
+          difference is an investigation signal, not automatically revenue or
+          loss.
+        </p>
+      </section>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card>

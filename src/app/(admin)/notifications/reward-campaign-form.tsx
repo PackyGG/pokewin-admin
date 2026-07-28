@@ -39,6 +39,7 @@ import {
   type PickedUser,
 } from "./audience-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
+import type { DbEnv } from "@/lib/db-env";
 
 type Mode = "pick" | "filter";
 type Failure = { chunkIndex: number; error: string };
@@ -67,7 +68,7 @@ const ANY = "__any__";
  * Laid out as three steps rather than one wall of fields: who, what, send.
  * The money total is stated before the button, not after.
  */
-export function RewardCampaignForm() {
+export function RewardCampaignForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [mode, setMode] = useState<Mode>("pick");
   const [picked, setPicked] = useState<PickedUser[]>([]);
   const [filters, setFilters] = useState<AudienceFilters>({});
@@ -213,6 +214,13 @@ export function RewardCampaignForm() {
 
   function handleStart() {
     if (chunks.length === 0) return;
+    if (
+      !window.confirm(
+        `Mint and deliver ${recipientCount} single-use reward code${recipientCount === 1 ? "" : "s"} worth ${formatCurrency(exposure)} total in ${targetEnv.toUpperCase()}?`,
+      )
+    ) {
+      return;
+    }
     const days = Number(expiresInDays);
     const plan = {
       chunks,

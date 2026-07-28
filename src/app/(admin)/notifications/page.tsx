@@ -51,7 +51,7 @@ async function AnnouncementsSection({
 
 /**
  * Composer + send history. Availability resolves the env a send would ACTUALLY
- * reach, so the "Backend not updated yet" card and the server-side gate can't
+ * reach, so the unavailable card and the server-side gate can't
  * disagree. The history streams behind its own boundary — it reads the admin
  * DB and must never hold up the composer's first paint.
  */
@@ -62,6 +62,7 @@ async function DirectSection({ canSend }: { canSend: boolean }) {
     <div className="space-y-8">
       <DirectNotificationsContent
         canSend={canSend}
+        backendEnv={availability.backendEnv}
         ready={availability.ready}
         reason={availability.reason}
       />

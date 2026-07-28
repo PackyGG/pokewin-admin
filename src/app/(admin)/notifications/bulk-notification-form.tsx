@@ -42,10 +42,11 @@ import { sendBulkNotificationChunkAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 import { NotificationPreview } from "./notification-preview";
 import type { BulkNotificationResult } from "@/lib/backend-api/user-notifications";
+import type { DbEnv } from "@/lib/db-env";
 
-const RECIPIENT_PLACEHOLDER = `user_id,code,value
-kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g,PACKY-A1B2-C3D4,25
-aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY,PACKY-E5F6-G7H8,25
+const RECIPIENT_PLACEHOLDER = `user_id
+kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g
+aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY
 
 — or one id per line, or a JSON array of { user_id, payload }`;
 
@@ -68,10 +69,10 @@ type Failure = { chunkIndex: number; error: string };
  * always safe. Already-delivered items come back as `deduped`, which is why
  * that counter is presented as normal rather than as an error.
  */
-export function BulkNotificationForm() {
+export function BulkNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [campaign, setCampaign] = useState("");
   const [category, setCategory] = useState<UserNotificationCategory>("rewards");
-  const [type, setType] = useState("promo_code_granted");
+  const [type, setType] = useState("");
   const [sharedPayloadText, setSharedPayloadText] = useState("");
   const [recipientsText, setRecipientsText] = useState("");
   const [chunkSize, setChunkSize] = useState(BULK_MAX_ITEMS);
@@ -184,6 +185,17 @@ export function BulkNotificationForm() {
 
   function handleStart() {
     if (!chunks) return;
+    const recipientCount = chunks.reduce(
+      (count, chunk) => count + chunk.length,
+      0,
+    );
+    if (
+      !window.confirm(
+        `Send ${recipientCount} personal notification${recipientCount === 1 ? "" : "s"} to ${targetEnv.toUpperCase()}?`,
+      )
+    ) {
+      return;
+    }
     const plan = {
       chunks,
       category,
@@ -261,7 +273,7 @@ export function BulkNotificationForm() {
             <Input
               value={type}
               onChange={(e) => setType(e.target.value)}
-              placeholder="promo_code_granted"
+              placeholder="notification_type"
               maxLength={NOTIFICATION_TYPE_MAX}
               className="font-mono text-xs"
               disabled={sending}
@@ -311,7 +323,7 @@ export function BulkNotificationForm() {
             rows={3}
             spellCheck={false}
             className="font-mono text-xs"
-            placeholder='{ "value": 25 }'
+            placeholder='{ "key": "value" }'
             disabled={sending}
           />
           <p

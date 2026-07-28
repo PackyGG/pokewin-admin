@@ -5,6 +5,8 @@ import { sql } from "drizzle-orm";
 
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
 
 export type KenoMetricSlice = {
   games: number;
@@ -49,6 +51,19 @@ export type KenoPayoutObservation = {
   observedGames: number;
 };
 
+export type KenoRecentGame = {
+  id: string;
+  userId: string;
+  risk: "low" | "medium" | "high";
+  selectedNumbers: number[];
+  drawnNumbers: number[];
+  hits: number;
+  bet: number;
+  payout: number;
+  multiplier: number;
+  createdAt: string;
+};
+
 export type KenoDashboard = {
   lifetime: KenoMetricSlice;
   last24Hours: KenoMetricSlice;
@@ -57,6 +72,7 @@ export type KenoDashboard = {
   picks: KenoPickBreakdown[];
   daily: KenoDailyPoint[];
   payoutObservations: KenoPayoutObservation[];
+  recentGames: KenoRecentGame[];
 };
 
 type RawMetric = {
@@ -90,6 +106,18 @@ type RawDashboardRow = {
     multiplier: string;
     observed_games: string;
   }> | null;
+  recent_games: Array<{
+    id: string;
+    user_id: string;
+    risk: KenoRecentGame["risk"];
+    selected_numbers: unknown;
+    drawn_numbers: unknown;
+    hits: number;
+    bet_amount: string;
+    won_amount: string;
+    result_multiplier: string;
+    created_at: string;
+  }> | null;
 };
 
 const ZERO_METRIC: KenoMetricSlice = {
@@ -118,11 +146,17 @@ export const EMPTY_KENO_DASHBOARD: KenoDashboard = {
   picks: [],
   daily: [],
   payoutObservations: [],
+  recentGames: [],
 };
 
 function finite(value: unknown): number {
   const parsed = Number(value ?? 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function numberArray(value: unknown): number[] {
+  if (!Array.isArray(value)) return [];
+  return value.map(Number).filter(Number.isFinite);
 }
 
 function metric(raw: RawMetric | null | undefined): KenoMetricSlice {
@@ -152,20 +186,32 @@ function metric(raw: RawMetric | null | undefined): KenoMetricSlice {
   };
 }
 
-async function computeKenoDashboard(env: DbEnv): Promise<KenoDashboard> {
+async function computeKenoDashboard(
+  env: DbEnv,
+  blacklist: string[],
+): Promise<KenoDashboard> {
   const db = readDrizzleForEnv(env);
+  const customerScope =
+    excludeStaffCreatorsAndBlacklistedSqlFromIds(blacklist).replace(
+      /^user_id\b/,
+      "kg.user_id",
+    );
   const result = await db.execute<RawDashboardRow>(sql`
     WITH base AS MATERIALIZED (
       SELECT
-        user_id,
-        risk::text AS risk,
-        jsonb_array_length(selected_numbers)::integer AS picks,
-        hits,
-        bet_amount::numeric AS bet_amount,
-        won_amount::numeric AS won_amount,
-        result_multiplier::numeric AS result_multiplier,
-        created_at
-      FROM keno_games
+        kg.id,
+        kg.user_id,
+        kg.risk::text AS risk,
+        kg.selected_numbers,
+        kg.drawn_numbers,
+        jsonb_array_length(kg.selected_numbers)::integer AS picks,
+        kg.hits,
+        kg.bet_amount::numeric AS bet_amount,
+        kg.won_amount::numeric AS won_amount,
+        kg.result_multiplier::numeric AS result_multiplier,
+        kg.created_at
+      FROM keno_games kg
+      WHERE ${sql.raw(customerScope)}
     ),
     risk_rows AS (
       SELECT
@@ -217,6 +263,22 @@ async function computeKenoDashboard(env: DbEnv): Promise<KenoDashboard> {
         COUNT(*)::text AS observed_games
       FROM base
       GROUP BY risk, picks, hits, result_multiplier
+    ),
+    recent_rows AS (
+      SELECT
+        id,
+        user_id,
+        risk,
+        selected_numbers,
+        drawn_numbers,
+        hits,
+        bet_amount::text AS bet_amount,
+        won_amount::text AS won_amount,
+        result_multiplier::text AS result_multiplier,
+        created_at::text AS created_at
+      FROM base
+      ORDER BY created_at DESC
+      LIMIT 25
     )
     SELECT
       (
@@ -286,7 +348,17 @@ async function computeKenoDashboard(env: DbEnv): Promise<KenoDashboard> {
           FROM payout_rows
         ),
         '[]'::jsonb
-      ) AS payout_observations
+      ) AS payout_observations,
+      COALESCE(
+        (
+          SELECT jsonb_agg(
+            to_jsonb(recent_rows)
+            ORDER BY created_at DESC
+          )
+          FROM recent_rows
+        ),
+        '[]'::jsonb
+      ) AS recent_games
   `);
 
   const raw = result.rows[0];
@@ -323,23 +395,40 @@ async function computeKenoDashboard(env: DbEnv): Promise<KenoDashboard> {
       multiplier: finite(row.multiplier),
       observedGames: finite(row.observed_games),
     })),
+    recentGames: (raw.recent_games ?? []).map((row) => ({
+      id: row.id,
+      userId: row.user_id,
+      risk: row.risk,
+      selectedNumbers: numberArray(row.selected_numbers),
+      drawnNumbers: numberArray(row.drawn_numbers),
+      hits: finite(row.hits),
+      bet: finite(row.bet_amount),
+      payout: finite(row.won_amount),
+      multiplier: finite(row.result_multiplier),
+      createdAt: row.created_at,
+    })),
   };
 }
 
 const cachedKenoDashboard = unstable_cache(
   computeKenoDashboard,
-  ["keno-dashboard-v1"],
+  ["keno-dashboard-v2"],
   { revalidate: 300, tags: ["keno-dashboard"] },
 );
 
 /**
- * Operational Keno snapshot. The current production relation is deliberately
- * read as one materialized base and then aggregated in memory by PostgreSQL.
- * EXPLAIN ANALYZE on 2026-07-26 showed the planner-selected sequential scan
- * was optimal for the 431-row / 496 KiB table; the complete JSON aggregate
- * executed in 7.3 ms from warm buffers. The five-minute cache prevents that
- * lifetime scan from running per viewer.
+ * Operational Keno snapshot. The current production relation is read as one
+ * materialized, customer-scoped base and then aggregated by PostgreSQL.
+ * Read-only production verification on 2026-07-28 returned 253 customer games
+ * and 25 recent rows; EXPLAIN ANALYZE for the scoped recent-game path completed
+ * in 0.661 ms. The five-minute cache prevents the lifetime aggregation from
+ * running per viewer, and the blacklist participates in the cache key.
  */
 export async function getKenoDashboard(): Promise<KenoDashboard> {
-  return cachedKenoDashboard(await readDbEnv());
+  const [env, excludedUserIds] = await Promise.all([
+    readDbEnv(),
+    getExcludedUserIds(),
+  ]);
+  const blacklist = [...excludedUserIds].sort();
+  return cachedKenoDashboard(env, blacklist);
 }

@@ -172,16 +172,13 @@ export function WagerRequirementCard({
     initial,
   );
 
-  // Form state: one ×-multiplier string per field. Seeded from the initial
-  // bps values. Hooks must run unconditionally, so this is declared even
-  // when initial is null (the degraded branch returns before using it).
+  // Form state: one ×-multiplier string per field. Missing response keys stay
+  // empty and disabled; inventing a 1× fallback would present an unconfirmed
+  // backend value as live configuration.
   const [values, setValues] = useState<Record<FieldKey, string>>(() => {
     const seed = {} as Record<FieldKey, string>;
     for (const f of FIELDS) {
-      // `?? BPS_PER_X` guards the brief deploy window where this admin build
-      // is live but the backend hasn't yet shipped a new knob (the field is
-      // absent from the response) — fall back to 1× rather than rendering NaN.
-      seed[f.key] = initial ? bpsToX(initial[f.key] ?? BPS_PER_X) : "";
+      seed[f.key] = initial ? bpsToX(initial[f.key]) : "";
     }
     return seed;
   });
@@ -217,6 +214,9 @@ export function WagerRequirementCard({
   // Past the `!initial` guard above, initial is non-null; baseline is seeded
   // from it (and re-baselined on save), so this is the current server truth.
   const base = baseline ?? initial;
+  const unavailableFields = FIELDS.filter(
+    (field) => typeof base[field.key] !== "number",
+  );
 
   const handleSave = () => {
     const payload: Partial<Record<FieldKey, number>> = {};
@@ -282,8 +282,20 @@ export function WagerRequirementCard({
           </p>
         </div>
 
+        {unavailableFields.length > 0 && (
+          <div className="flex gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+            <p>
+              The selected backend did not return{" "}
+              {unavailableFields.map((field) => field.label).join(", ")}. Those
+              controls are disabled instead of assuming a value.
+            </p>
+          </div>
+        )}
+
         <div className="grid gap-4 md:grid-cols-2">
           {FIELDS.map((f) => {
+            const available = typeof base[f.key] === "number";
             const raw = values[f.key].trim();
             const x = raw === "" ? null : Number(raw);
             const bpsHint =
@@ -307,7 +319,8 @@ export function WagerRequirementCard({
                   onChange={(e) =>
                     setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
                   }
-                  disabled={isPending}
+                  disabled={isPending || !available}
+                  placeholder={available ? undefined : "Not returned by backend"}
                 />
                 <p className="text-[11px] text-muted-foreground">{f.help}</p>
               </div>

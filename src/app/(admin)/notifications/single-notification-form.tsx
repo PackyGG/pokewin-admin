@@ -26,6 +26,7 @@ import {
 import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 import { NotificationPreview } from "./notification-preview";
+import type { DbEnv } from "@/lib/db-env";
 
 type Sent =
   | { kind: "ok"; message: string }
@@ -33,7 +34,7 @@ type Sent =
   | { kind: "error"; message: string };
 
 /**
- * Quick smoke test for `POST /admin/notifications` — one user, one payload.
+ * Single-recipient composer for `POST /admin/notifications`.
  *
  * Two things this form has to make honest, because the endpoint's semantics
  * are easy to misread:
@@ -43,14 +44,12 @@ type Sent =
  *   • 404 is its own outcome (the backend checks the user explicitly), not a
  *     generic failure — it gets its own callout.
  */
-export function SingleNotificationForm() {
+export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [userId, setUserId] = useState("");
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [category, setCategory] = useState<UserNotificationCategory>("rewards");
-  const [type, setType] = useState("promo_code_granted");
-  const [payloadText, setPayloadText] = useState(
-    '{\n  "code": "PACKY-A1B2-C3D4",\n  "value": 25\n}',
-  );
+  const [type, setType] = useState("");
+  const [payloadText, setPayloadText] = useState("");
   const [dedupeKey, setDedupeKey] = useState("");
   const [sent, setSent] = useState<Sent | null>(null);
   const [isPending, startTransition] = useTransition();
@@ -76,6 +75,14 @@ export function SingleNotificationForm() {
   function handleSend() {
     if (!payloadCheck.ok) {
       toast.error(payloadCheck.error);
+      return;
+    }
+    if (
+      targetEnv === "prod" &&
+      !window.confirm(
+        "Send this notification to the selected user in PRODUCTION?",
+      )
+    ) {
       return;
     }
     setSent(null);
@@ -150,7 +157,7 @@ export function SingleNotificationForm() {
           <Input
             value={type}
             onChange={(e) => setType(e.target.value)}
-            placeholder="promo_code_granted"
+            placeholder="notification_type"
             maxLength={NOTIFICATION_TYPE_MAX}
             className="font-mono text-xs"
             disabled={isPending}
@@ -185,7 +192,7 @@ export function SingleNotificationForm() {
           rows={6}
           spellCheck={false}
           className="font-mono text-xs"
-          placeholder='{ "code": "PACKY-A1B2-C3D4" }'
+          placeholder='{ "key": "value" }'
           disabled={isPending}
         />
         {payloadCheck.ok ? (

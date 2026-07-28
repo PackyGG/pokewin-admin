@@ -1,9 +1,11 @@
+import Link from "next/link";
 import {
   BarChart3,
   Banknote,
   CircleDollarSign,
   Dices,
   Gauge,
+  History,
   Percent,
   Trophy,
   Users,
@@ -26,7 +28,11 @@ import {
 } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatDateTime,
+  formatNumber,
+} from "@/lib/utils/format";
 import {
   EMPTY_KENO_DASHBOARD,
   getKenoDashboard,
@@ -144,6 +150,105 @@ export async function KenoOverviewTab() {
         <PeriodPanel title="Last 24 hours" data={data.last24Hours} />
         <PeriodPanel title="Last 7 days" data={data.last7Days} />
       </div>
+
+      <section className="space-y-3">
+        <SectionHeading
+          icon={History}
+          title="Recent settled games"
+          action={
+            <span className="text-xs text-muted-foreground">
+              Customer scope only
+            </span>
+          }
+        />
+        <div className="overflow-x-auto rounded-xl border bg-card">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>User</TableHead>
+                <TableHead>Risk</TableHead>
+                <TableHead>Selected</TableHead>
+                <TableHead>Drawn</TableHead>
+                <TableHead className="text-right">Hits</TableHead>
+                <TableHead className="text-right">Bet</TableHead>
+                <TableHead className="text-right">Paid</TableHead>
+                <TableHead className="text-right">House</TableHead>
+                <TableHead className="text-right">Multiplier</TableHead>
+                <TableHead className="text-right">Settled</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {data.recentGames.length === 0 ? (
+                <TableRow>
+                  <TableCell
+                    colSpan={10}
+                    className="h-24 text-center text-muted-foreground"
+                  >
+                    No customer Keno games recorded yet.
+                  </TableCell>
+                </TableRow>
+              ) : (
+                data.recentGames.map((game) => {
+                  const house = game.bet - game.payout;
+                  return (
+                    <TableRow key={game.id}>
+                      <TableCell>
+                        <Link
+                          href={`/users/${encodeURIComponent(game.userId)}`}
+                          className="font-mono text-xs text-primary hover:underline"
+                        >
+                          {game.userId.slice(0, 10)}…
+                        </Link>
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant="outline" className="capitalize">
+                          {game.risk}
+                        </Badge>
+                      </TableCell>
+                      <TableCell
+                        className="max-w-44 truncate font-mono text-xs"
+                        title={game.selectedNumbers.join(", ")}
+                      >
+                        {game.selectedNumbers.join(", ") || "—"}
+                      </TableCell>
+                      <TableCell
+                        className="max-w-56 truncate font-mono text-xs"
+                        title={game.drawnNumbers.join(", ")}
+                      >
+                        {game.drawnNumbers.join(", ") || "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatNumber(game.hits)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(game.bet)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {formatCurrency(game.payout)}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          house >= 0
+                            ? "text-right tabular-nums text-emerald-600 dark:text-emerald-400"
+                            : "text-right tabular-nums text-rose-600 dark:text-rose-400"
+                        }
+                      >
+                        {formatCurrency(house)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {game.multiplier.toFixed(2)}×
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-right text-xs text-muted-foreground">
+                        {formatDateTime(game.createdAt)}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </div>
+      </section>
 
       <section className="space-y-3">
         <SectionHeading icon={Gauge} title="Performance by risk mode" />

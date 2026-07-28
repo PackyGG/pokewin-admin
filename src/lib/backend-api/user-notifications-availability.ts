@@ -16,14 +16,9 @@ import type { DbEnv } from "@/lib/db-env";
  * target are the same value by construction.
  *
  * Used by both the server actions (as the hard gate) and the page (to decide
- * between the composer and the "Backend not updated yet" card), so the UI can
+ * between the composer and the unavailable card), so the UI can
  * never claim a different target than the one a send would use.
  */
-
-/** Owner directive, 2026-07-22: "this is for dev db and site only atm".
- * The endpoints (PackyGG/backend#461) are merged to `dev`; prod hasn't taken
- * them. Flip to false once they ship to prod — nothing else has to change. */
-export const DIRECT_NOTIFICATIONS_DEV_ONLY = true;
 
 export type DirectNotificationAvailability = {
   /** The env a send would actually go to, or null when nothing is configured. */
@@ -46,15 +41,6 @@ export async function getDirectNotificationAvailability(): Promise<DirectNotific
       ready: false,
       reason:
         "No backend API URL or admin key is configured on this deploy, so there is nothing to send to.",
-    };
-  }
-
-  if (DIRECT_NOTIFICATIONS_DEV_ONLY && backendEnv !== "dev") {
-    return {
-      backendEnv,
-      ready: false,
-      reason:
-        "The per-user notification endpoints only exist on the dev backend deploy. Switch the environment toggle in the header to DEV to use them.",
     };
   }
 

@@ -31,8 +31,11 @@ const InputSchema = z
   .object({
     wager_requirement_bps: Bps.optional(),
     bonus_wager_requirement_bps: Bps.optional(),
+    affiliate_wager_requirement_bps: Bps.optional(),
+    affiliate_leaderboard_wager_requirement_bps: Bps.optional(),
     rakeback_wager_requirement_bps: Bps.optional(),
     tips_wager_requirement_bps: Bps.optional(),
+    admin_adjustment_wager_requirement_bps: Bps.optional(),
     wager_weight_packs_bps: Bps.optional(),
     wager_weight_battles_bps: Bps.optional(),
     wager_weight_upgrader_bps: Bps.optional(),
