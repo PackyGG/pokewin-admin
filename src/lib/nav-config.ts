@@ -315,18 +315,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Notifications — global broadcast announcements. Backend
-    // /v1/admin/announcements; per-user notifications have no admin
-    // endpoint yet. Icon "Megaphone" is already registered in the ICONS
-    // map (app-sidebar.tsx), reused here to avoid a React #130 miss.
+    // Notifications — global announcements and direct user campaigns.
+    // Icon "Megaphone" is already registered in the ICONS map
+    // (app-sidebar.tsx), reused here to avoid a React #130 miss.
     id: "nav.notifications",
     group: "Players",
     label: "Notifications",
     href: "/notifications",
     pageKey: "/notifications",
     icon: "Megaphone",
-    description: "Send a site-wide announcement to all users",
+    description: "Send announcements and direct user notification campaigns",
     keywords: ["announcement", "broadcast", "notify", "alert", "news"],
+    isNew: true,
     inSidebar: true,
     inPalette: true,
   },
