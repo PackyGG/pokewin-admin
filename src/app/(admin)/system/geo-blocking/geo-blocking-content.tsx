@@ -63,14 +63,31 @@ import {
 } from "@/lib/fiat-jurisdiction-policy";
 import {
   applyRestrictionValue,
+  CONFIRMED_RESTRICTIONS_STORAGE_KEY,
+  parseConfirmedRestrictions,
   reconcileConfirmedRestrictions,
   rememberConfirmedRestriction,
+  serializeConfirmedRestrictions,
   type ConfirmedRestrictionOverrides,
   type RestrictionProperty,
   type RestrictionValue,
 } from "./restriction-state";
 
 countries.registerLocale(enLocale);
+
+function persistConfirmedRestrictions(
+  overrides: ConfirmedRestrictionOverrides,
+) {
+  if (typeof window === "undefined") return;
+  if (Object.keys(overrides).length === 0) {
+    window.sessionStorage.removeItem(CONFIRMED_RESTRICTIONS_STORAGE_KEY);
+    return;
+  }
+  window.sessionStorage.setItem(
+    CONFIRMED_RESTRICTIONS_STORAGE_KEY,
+    serializeConfirmedRestrictions(overrides),
+  );
+}
 
 /**
  * Geo Blocking — relocated from the old `/settings` "Country Restrictions"
@@ -246,6 +263,7 @@ export function GeoBlockingContent({
     siteLockedMethods,
   );
   const confirmedOverridesRef = useRef<ConfirmedRestrictionOverrides>({});
+  const confirmedStorageLoadedRef = useRef(false);
   const mutationRevisionRef = useRef(0);
   const latestRevisionByCountryRef = useRef<Record<string, number>>({});
 
@@ -404,11 +422,24 @@ export function GeoBlockingContent({
   }
 
   useEffect(() => {
+    if (!confirmedStorageLoadedRef.current) {
+      confirmedOverridesRef.current = parseConfirmedRestrictions(
+        window.sessionStorage.getItem(CONFIRMED_RESTRICTIONS_STORAGE_KEY),
+      );
+      mutationRevisionRef.current = Math.max(
+        mutationRevisionRef.current,
+        ...Object.values(confirmedOverridesRef.current).map(
+          (override) => override.revision,
+        ),
+      );
+      confirmedStorageLoadedRef.current = true;
+    }
     const reconciled = reconcileConfirmedRestrictions(
       countryRestrictions,
       confirmedOverridesRef.current,
     );
     confirmedOverridesRef.current = reconciled.remainingOverrides;
+    persistConfirmedRestrictions(reconciled.remainingOverrides);
     setRows(reconciled.rows);
     setCurrentSiteLockedMethods(siteLockedMethods);
   }, [countryRestrictions, siteLockedMethods]);
@@ -447,6 +478,7 @@ export function GeoBlockingContent({
       confirmedOverridesRef.current,
       { countryCode, property, value, revision },
     );
+    persistConfirmedRestrictions(confirmedOverridesRef.current);
     patchRow(countryCode, property, value);
   }
 

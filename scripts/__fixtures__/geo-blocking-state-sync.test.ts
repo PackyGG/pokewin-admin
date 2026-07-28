@@ -6,8 +6,10 @@ import { fileURLToPath } from "node:url";
 
 import {
   applyRestrictionValue,
+  parseConfirmedRestrictions,
   reconcileConfirmedRestrictions,
   rememberConfirmedRestriction,
+  serializeConfirmedRestrictions,
   type ConfirmedRestrictionOverrides,
 } from "@/app/(admin)/system/geo-blocking/restriction-state";
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
@@ -51,6 +53,12 @@ test("primary-confirmed fiat value survives stale transition props until readbac
       },
     );
 
+  // A hard reload creates a new component instance. The primary-confirmed
+  // value must survive that reload while the mirror still returns old props.
+  overrides = parseConfirmedRestrictions(
+    serializeConfirmedRestrictions(overrides, 1_000),
+    1_001,
+  );
   const staleTransition = reconcileConfirmedRestrictions(
     initialRows,
     overrides,
@@ -90,6 +98,10 @@ test("primary-confirmed fiat value survives stale transition props until readbac
       value: [],
       revision: 2,
     },
+  );
+  overrides = parseConfirmedRestrictions(
+    serializeConfirmedRestrictions(overrides, 2_000),
+    2_001,
   );
   const staleReverseTransition = reconcileConfirmedRestrictions(
     freshReadbackRows,
@@ -161,8 +173,29 @@ test("the component wires authoritative readback, stale-prop reconciliation, ref
     /\[countryRestrictions,\s*isPending,\s*siteLockedMethods\]/,
   );
   assert.match(componentSource, /res\.persistedValues/);
+  assert.match(componentSource, /window\.sessionStorage\.setItem/);
+  assert.match(componentSource, /parseConfirmedRestrictions\(/);
   assert.match(componentSource, /patchRow\(countryCode, prop, previousValues\)/);
   assert.match(componentSource, /router\.refresh\(\)/);
   assert.match(actionSource, /persisted_values:\s*persistedColumn/);
   assert.match(actionSource, /persistedValues:\s*updated\[0\]\.persisted_values/);
+});
+
+test("expired or malformed persisted confirmations fail closed", () => {
+  const override = rememberConfirmedRestriction(
+    {},
+    {
+      countryCode: "BV",
+      property: "lockedDepositsFiat",
+      value: ["credit_card"],
+      revision: 1,
+    },
+  );
+  const serialized = serializeConfirmedRestrictions(override, 1_000);
+
+  assert.deepEqual(
+    parseConfirmedRestrictions(serialized, 1_000 + 10 * 60 * 1000 + 1),
+    {},
+  );
+  assert.deepEqual(parseConfirmedRestrictions("{not-json", 1_001), {});
 });

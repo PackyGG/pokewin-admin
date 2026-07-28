@@ -22,6 +22,25 @@ export type ConfirmedRestrictionOverrides = Record<
   ConfirmedRestrictionOverride
 >;
 
+export const CONFIRMED_RESTRICTIONS_STORAGE_KEY =
+  "geo-blocking:primary-confirmed:v1";
+export const CONFIRMED_RESTRICTIONS_MAX_AGE_MS = 10 * 60 * 1000;
+
+const ARRAY_RESTRICTION_PROPERTIES = new Set<RestrictionProperty>([
+  "lockedDepositsCrypto",
+  "lockedDepositsFiat",
+  "lockedWithdrawalsCrypto",
+]);
+
+const RESTRICTION_PROPERTIES = new Set<RestrictionProperty>([
+  "physicalWithdrawal",
+  "digitalWithdrawal",
+  "giftCardDeposit",
+  "promoCodeDeposit",
+  "blocked",
+  ...ARRAY_RESTRICTION_PROPERTIES,
+]);
+
 export function restrictionOverrideKey(
   countryCode: string,
   property: RestrictionProperty,
@@ -112,4 +131,83 @@ export function reconcileConfirmedRestrictions(
   }
 
   return { rows, remainingOverrides };
+}
+
+export function serializeConfirmedRestrictions(
+  overrides: ConfirmedRestrictionOverrides,
+  savedAt = Date.now(),
+): string {
+  return JSON.stringify({ version: 1, savedAt, overrides });
+}
+
+export function parseConfirmedRestrictions(
+  serialized: string | null,
+  now = Date.now(),
+): ConfirmedRestrictionOverrides {
+  if (!serialized) return {};
+
+  try {
+    const parsed = JSON.parse(serialized) as {
+      version?: unknown;
+      savedAt?: unknown;
+      overrides?: unknown;
+    };
+    if (
+      parsed.version !== 1 ||
+      typeof parsed.savedAt !== "number" ||
+      !Number.isFinite(parsed.savedAt) ||
+      parsed.savedAt > now ||
+      now - parsed.savedAt > CONFIRMED_RESTRICTIONS_MAX_AGE_MS ||
+      !parsed.overrides ||
+      typeof parsed.overrides !== "object" ||
+      Array.isArray(parsed.overrides)
+    ) {
+      return {};
+    }
+
+    const overrides: ConfirmedRestrictionOverrides = {};
+    for (const [key, candidate] of Object.entries(parsed.overrides)) {
+      if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+        return {};
+      }
+      const override = candidate as Partial<ConfirmedRestrictionOverride>;
+      if (
+        typeof override.countryCode !== "string" ||
+        !/^[A-Z]{2}(-[A-Z0-9]{2,3})?$/.test(override.countryCode) ||
+        typeof override.property !== "string" ||
+        !RESTRICTION_PROPERTIES.has(
+          override.property as RestrictionProperty,
+        ) ||
+        typeof override.revision !== "number" ||
+        !Number.isSafeInteger(override.revision) ||
+        override.revision < 0
+      ) {
+        return {};
+      }
+
+      const property = override.property as RestrictionProperty;
+      const valueIsValid = ARRAY_RESTRICTION_PROPERTIES.has(property)
+        ? Array.isArray(override.value) &&
+          override.value.every((value) => typeof value === "string")
+        : typeof override.value === "boolean";
+      if (
+        !valueIsValid ||
+        key !== restrictionOverrideKey(override.countryCode, property)
+      ) {
+        return {};
+      }
+
+      overrides[key] = {
+        countryCode: override.countryCode,
+        property,
+        value: Array.isArray(override.value)
+          ? [...override.value]
+          : override.value,
+        revision: override.revision,
+      } as ConfirmedRestrictionOverride;
+    }
+    return overrides;
+  } catch {
+    return {};
+  }
 }
