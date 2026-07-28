@@ -151,6 +151,7 @@ const engine = new MonitorEngine(
   app.log,
   (userId) => networkRisk.enqueueAccount(userId).then(() => undefined),
 );
+let shuttingDown = false;
 
 /** Lookback that bounds the resolved tail of the case list. */
 const CASES_RECENT_DAYS = 30;
@@ -1143,6 +1144,7 @@ app.setErrorHandler((error, request, reply) => {
 });
 
 app.addHook("onClose", async () => {
+  shuttingDown = true;
   withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
@@ -1152,7 +1154,7 @@ app.addHook("onClose", async () => {
 });
 
 await migrate(db.antifraud);
-await assertDatabaseConnections(db);
+await db.antifraud.query("SELECT 1");
 await preloadDisposableEmailDomains();
 if (!isDisposableEmailListLoaded()) {
   throw new Error("Disposable email domain list failed to load");
@@ -1161,7 +1163,32 @@ if (!isDisposableEmailListLoaded()) {
 // publishing into a channel with zero subscribers is silently broken.
 await live.start();
 await ingestDelivery.start();
-await engine.start();
 await networkRisk.start();
 withdrawalRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
+
+// The MAIN mirror role is shared with other read-only consumers and can
+// temporarily exhaust its connection allowance during a rolling deployment.
+// Keep the API and durable Antifraud DB online while the poller retries. The
+// /ready route remains 503 until both databases and the poller are healthy.
+void (async () => {
+  let failures = 0;
+  while (!shuttingDown) {
+    try {
+      await engine.start();
+      app.log.info(
+        failures > 0 ? { failures } : undefined,
+        "Antifraud source poller started",
+      );
+      return;
+    } catch (error) {
+      failures += 1;
+      const retryInMs = Math.min(30_000, 1_000 * (2 ** Math.min(failures - 1, 5)));
+      app.log.warn(
+        { err: error, failures, retryInMs },
+        "Antifraud source poller startup deferred",
+      );
+      await new Promise((resolve) => setTimeout(resolve, retryInMs));
+    }
+  }
+})();
