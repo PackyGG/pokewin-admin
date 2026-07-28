@@ -161,6 +161,15 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
               <p className="truncate text-xs text-muted-foreground">
                 {signup.email ?? signup.user_id}
               </p>
+              <div
+                className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-md border border-cyan-500/25 bg-cyan-500/[0.07] px-1.5 py-0.5"
+                title={`Signed up ${formatDate(signup.source_created_at)}`}
+              >
+                <Clock3 className="size-3 shrink-0 text-cyan-600 dark:text-cyan-400" />
+                <span className="truncate text-[11px] font-medium text-cyan-700 dark:text-cyan-300">
+                  Signed up {formatSignupAge(signup.source_created_at)}
+                </span>
+              </div>
             </div>
             <div className="w-36 shrink-0 sm:w-40">
               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -170,24 +179,6 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
                 </span>
               </div>
               <RiskScoreBar score={signup.score} />
-            </div>
-          </div>
-
-          <div
-            className="ml-[52px] flex w-fit max-w-[calc(100%-52px)] items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-2"
-            title={`Signed up ${formatDate(signup.source_created_at)}`}
-          >
-            <Clock3 className="size-4 shrink-0 text-cyan-600 dark:text-cyan-400" />
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700/80 dark:text-cyan-300/80">
-                Signed up
-              </p>
-              <p className="text-sm font-semibold text-cyan-700 dark:text-cyan-300">
-                {formatSignupAge(signup.source_created_at)}
-              </p>
-              <p className="truncate text-[10px] text-muted-foreground">
-                {formatDate(signup.source_created_at)}
-              </p>
             </div>
           </div>
 

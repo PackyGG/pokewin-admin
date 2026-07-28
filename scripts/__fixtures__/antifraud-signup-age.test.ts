@@ -7,10 +7,11 @@ const page = readFileSync(
   "utf8",
 );
 
-test("signup rows prominently show compact account age and the exact timestamp", () => {
-  assert.match(page, /Signed up/);
+test("signup rows show account age without disturbing the row grid", () => {
+  assert.match(page, /Signed up \{formatSignupAge/);
   assert.match(page, /formatSignupAge\(signup\.source_created_at\)/);
-  assert.match(page, /border-cyan-500\/30 bg-cyan-500\/10/);
+  assert.match(page, /inline-flex max-w-full/);
+  assert.doesNotMatch(page, /max-w-\[calc\(100%-52px\)\]/);
   assert.match(page, /`\$\{minutes\} min ago`/);
   assert.match(page, /formatDate\(signup\.source_created_at\)/);
 });
