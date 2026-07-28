@@ -1,6 +1,7 @@
 "use client";
 
 import * as React from "react";
+import { usePathname, useRouter } from "next/navigation";
 import {
   Calculator,
   TrendingUp,
@@ -9,13 +10,16 @@ import {
   Info,
   CheckCircle2,
   XCircle,
-  Gauge,
   Wallet,
   Trophy,
   Gift,
-  Sparkles,
+  Crosshair,
+  Copy,
+  RotateCcw,
 } from "lucide-react";
+import { toast } from "sonner";
 
+import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -28,48 +32,37 @@ import {
   SectionHeading,
   StatPanel,
   PanelRow,
-  type AccentColor,
 } from "@/components/modern-panels";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import { HOUSE_EDGE, LB_HOUSE_SHARE } from "@/lib/deal-economics";
 
 /**
- * Profitable Algo — Deal Profitability calculator (Creator Hub).
+ * ROI Calculator (Creator Hub → Profitable Algo route).
  *
- * A PURE calculator: no DB, no server data, no API. The manager types deal
- * parameters and the tool evaluates whether the deal is profitable using the
- * owner's exact math, routed through the canonical `@/lib/deal-economics`
- * constants (`HOUSE_EDGE` = 0.075, `LB_HOUSE_SHARE` = 0.5).
+ * A PURE calculator: no DB, no server data, no API. The manager enters ONE
+ * deal (spend legs + expected wager + frame length) and the tool evaluates it
+ * with the canonical `@/lib/deal-economics` math:
  *
- *   HOUSE_EDGE = 0.075  ("value generated per $ wagered" for deal economics —
- *   DISTINCT from the 10.8% / 10% gross edge in the Risk tool). The house
- *   always funds LB_HOUSE_SHARE (50%) of every leaderboard prize pool.
+ *   Generated Value   = WAGER × HOUSE_EDGE                  (7.5%)
+ *   Deal Spend        = WITHDRAW CAP + LB CONTRIBUTION + TIP/SPONSOR
+ *   Rate of Return    = Generated Value / Deal Spend        (profitable > 1)
+ *   Break-even Wager  = Deal Spend / HOUSE_EDGE             (same
+ *                       `expectedWager` formula the Profitability page uses)
  *
- * Deal Profitability
- *   Generated Value = WAGER × 0.075
- *   Deal Spend      = MAX WITHDRAW CAP + LB CONTRIBUTION + TIP/SPONSOR ALLOWANCE
- *   Rate of Return  = Generated Value / Deal Spend     → profitable when > 1
+ * Weekly/daily figures are DERIVED from the frame length (days) — the deal is
+ * entered once, never twice at different periodicities.
  *
- * Performance Forecast (over x days)
- *   Generated Value = (WAGER over x days) × 0.075
- *   Daily Value     = Generated Value / x days
- *   Weekly Value    = Daily Value × 7
+ * House-POV colors: generated value → emerald (value to the house), spend →
+ * rose (house cost), neutral/derived → blue.
  *
- * Daily Spend
- *   Max Weekly Spend = WEEKLY CAP + WEEKLY LB FUNDING + WEEKLY TIP/SPONSOR ALLOWANCE
- *   Daily Spend      = Max Weekly Spend / 7
- *
- * House-POV colors:
- *   • Generated Value (the value the deal generates for the HOUSE) → emerald.
- *   • Spend (what the deal COSTS the house) → rose.
- *   • Rate of Return ≥ 1 → emerald (profitable), < 1 → rose (loss-making).
- *
- * Client-only: all state + math live here; the page is a thin server shell.
+ * Inputs mirror to the URL (`?wager=&cap=&lb=&tip=&days=`, debounced
+ * `router.replace`) so a scenario is shareable; the server page parses them
+ * back as initial state.
  */
 
-// Value generated per $ wagered for deal economics comes from the canonical
-// `HOUSE_EDGE` (7.5%); the LB house share is `LB_HOUSE_SHARE` (50%).
+/** "7.5%" — the house value rate as a display label, derived from the constant. */
+const HOUSE_EDGE_PCT_LABEL = `${HOUSE_EDGE * 100}%`;
 
 /** "50%" — the LB house share as a display label, derived from the constant. */
 const LB_HOUSE_PCT_LABEL = `${LB_HOUSE_SHARE * 100}%`;
@@ -95,7 +88,23 @@ function formatRoR(v: number): string {
   return `${v.toFixed(2)}×`;
 }
 
-// ─── labelled input with hover help ────────────────────────────────
+export type CalculatorInitialValues = {
+  wager: string;
+  cap: string;
+  lb: string;
+  tip: string;
+  days: string;
+};
+
+const EMPTY_VALUES: CalculatorInitialValues = {
+  wager: "",
+  cap: "",
+  lb: "",
+  tip: "",
+  days: "",
+};
+
+// ─── labelled input with hover help + unit adornment ───────────────
 
 function FieldRow({
   id,
@@ -106,6 +115,7 @@ function FieldRow({
   placeholder,
   icon: Icon,
   iconColor,
+  unit,
 }: {
   id: string;
   label: string;
@@ -115,16 +125,20 @@ function FieldRow({
   placeholder?: string;
   icon: React.ElementType;
   iconColor: string;
+  /** "$" renders a left prefix; "days" renders a right suffix. */
+  unit: "$" | "days";
 }) {
   return (
     <div className="space-y-1.5">
       <Label htmlFor={id} className="gap-1.5">
         <Icon className={cn("size-3.5 shrink-0", iconColor)} />
         <span className="min-w-0 truncate">{label}</span>
-        {/* Hover help — mirrors the dashboard's (i) info affordance. */}
+        {/* Hover help — tabIndex={-1} keeps the (i) out of the tab order so
+            tabbing moves field → field, not field → tooltip → field. */}
         <Tooltip>
           <TooltipTrigger
             type="button"
+            tabIndex={-1}
             aria-label={`About ${label}`}
             className="ml-0.5 inline-flex size-4 shrink-0 items-center justify-center rounded-full text-muted-foreground/60 outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -135,368 +149,486 @@ function FieldRow({
           </TooltipContent>
         </Tooltip>
       </Label>
-      <Input
-        id={id}
-        inputMode="decimal"
-        autoComplete="off"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder={placeholder}
-        className="font-mono"
-      />
-    </div>
-  );
-}
-
-// ─── verdict banner ────────────────────────────────────────────────
-
-function VerdictBanner({
-  profitable,
-  hasSpend,
-  ror,
-  label,
-}: {
-  profitable: boolean;
-  hasSpend: boolean;
-  ror: number;
-  label: string;
-}) {
-  // No spend entered yet → neutral prompt (don't claim "infinitely
-  // profitable" when the denominator is 0).
-  if (!hasSpend) {
-    return (
-      <div className="flex items-center gap-2.5 rounded-xl border border-blue-500/20 bg-blue-500/10 px-3.5 py-2.5 text-sm text-blue-600 dark:text-blue-400">
-        <Info className="size-4 shrink-0" />
-        <span>Enter a spend value to evaluate {label}.</span>
+      <div className="relative">
+        {unit === "$" && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 left-3 flex items-center text-sm text-muted-foreground"
+          >
+            $
+          </span>
+        )}
+        <Input
+          id={id}
+          inputMode="decimal"
+          autoComplete="off"
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className={cn("font-mono", unit === "$" ? "pl-7" : "pr-14")}
+        />
+        {unit === "days" && (
+          <span
+            aria-hidden
+            className="pointer-events-none absolute inset-y-0 right-3 flex items-center text-sm text-muted-foreground"
+          >
+            days
+          </span>
+        )}
       </div>
-    );
-  }
-  return (
-    <div
-      className={cn(
-        "flex items-center gap-2.5 rounded-xl border px-3.5 py-2.5 text-sm font-semibold",
-        profitable
-          ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-          : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
-      )}
-    >
-      {profitable ? (
-        <CheckCircle2 className="size-4 shrink-0" />
-      ) : (
-        <XCircle className="size-4 shrink-0" />
-      )}
-      <span>
-        {profitable ? "Profitable" : "Not profitable"} — {label} returns{" "}
-        {formatRoR(ror)}{" "}
-        <span className="font-normal opacity-80">
-          ({profitable ? "above" : "below"} 1.00× break-even)
-        </span>
-      </span>
     </div>
   );
 }
 
 // ─── main calculator ───────────────────────────────────────────────
 
-export function ProfitableAlgoCalculator() {
-  // Deal Profitability inputs (one-off deal evaluation).
-  const [wager, setWager] = React.useState("");
-  const [maxWithdrawCap, setMaxWithdrawCap] = React.useState("");
-  const [lbContribution, setLbContribution] = React.useState("");
-  const [tipSponsorAllowance, setTipSponsorAllowance] = React.useState("");
+export function ProfitableAlgoCalculator({
+  initial = EMPTY_VALUES,
+}: {
+  initial?: CalculatorInitialValues;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
 
-  // Performance Forecast inputs (wager-over-x-days run-rate).
-  const [wagerOverDays, setWagerOverDays] = React.useState("");
-  const [days, setDays] = React.useState("");
+  // ONE deal model — every figure below derives from these five inputs.
+  const [wager, setWager] = React.useState(initial.wager);
+  const [cap, setCap] = React.useState(initial.cap);
+  const [lb, setLb] = React.useState(initial.lb);
+  const [tip, setTip] = React.useState(initial.tip);
+  const [days, setDays] = React.useState(initial.days);
 
-  // Daily Spend inputs (weekly spend budget → per day).
-  const [weeklyCap, setWeeklyCap] = React.useState("");
-  const [weeklyLbFunding, setWeeklyLbFunding] = React.useState("");
-  const [weeklyTipSponsor, setWeeklyTipSponsor] = React.useState("");
+  // ── URL sync (shareable scenarios) ── mirror inputs to query params,
+  // debounced so typing doesn't spam history. `replace` + scroll:false keeps
+  // it invisible; empty inputs drop their param entirely.
+  const skipFirstSync = React.useRef(true);
+  React.useEffect(() => {
+    if (skipFirstSync.current) {
+      skipFirstSync.current = false;
+      return;
+    }
+    const t = setTimeout(() => {
+      const params = new URLSearchParams();
+      if (wager) params.set("wager", wager);
+      if (cap) params.set("cap", cap);
+      if (lb) params.set("lb", lb);
+      if (tip) params.set("tip", tip);
+      if (days) params.set("days", days);
+      const qs = params.toString();
+      router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false });
+    }, 400);
+    return () => clearTimeout(t);
+  }, [wager, cap, lb, tip, days, pathname, router]);
 
-  // ── Deal Profitability math ──
+  // ── Deal math (canonical: deal-economics constants) ──
   const wagerN = num(wager);
-  const generatedValue = wagerN * HOUSE_EDGE;
-  const dealSpend =
-    num(maxWithdrawCap) + num(lbContribution) + num(tipSponsorAllowance);
-  const rateOfReturn = dealSpend > 0 ? generatedValue / dealSpend : Infinity;
-  const dealProfitable = dealSpend > 0 && rateOfReturn > 1;
-
-  // ── Performance Forecast math ──
+  const capN = num(cap);
+  const lbN = num(lb);
+  const tipN = num(tip);
   const daysN = num(days);
-  const forecastWagerN = num(wagerOverDays);
-  const forecastGeneratedValue = forecastWagerN * HOUSE_EDGE;
-  const dailyValue = daysN > 0 ? forecastGeneratedValue / daysN : 0;
+
+  const generatedValue = wagerN * HOUSE_EDGE;
+  const dealSpend = capN + lbN + tipN;
+  const hasSpend = dealSpend > 0;
+  const net = generatedValue - dealSpend;
+  const rateOfReturn = hasSpend ? generatedValue / dealSpend : Infinity;
+  const profitable = hasSpend && rateOfReturn > 1;
+
+  // Break-even solver — the same `expectedWager = dealCost / HOUSE_EDGE`
+  // formula `computeDealCost` uses on the Profitability page.
+  const breakEvenWager = hasSpend ? dealSpend / HOUSE_EDGE : 0;
+  const wagerDelta = wagerN - breakEvenWager;
+
+  // Derived weekly/daily views from the frame length. Zero days (or zero
+  // wager for the value legs) → "—", never a misleading $0.00.
+  const hasFrame = daysN > 0;
+  const dailyValue = hasFrame ? generatedValue / daysN : 0;
   const weeklyValue = dailyValue * 7;
+  const dailySpend = hasFrame ? dealSpend / daysN : 0;
+  const weeklySpend = dailySpend * 7;
+  const weeklyNet = weeklyValue - weeklySpend;
 
-  // ── Daily Spend math ──
-  const maxWeeklySpend =
-    num(weeklyCap) + num(weeklyLbFunding) + num(weeklyTipSponsor);
-  const dailySpend = maxWeeklySpend / 7;
+  const handleReset = React.useCallback(() => {
+    setWager("");
+    setCap("");
+    setLb("");
+    setTip("");
+    setDays("");
+  }, []);
 
-  // ── Forecast vs spend verdict (weekly value vs max weekly spend) ──
-  const weeklyRoR =
-    maxWeeklySpend > 0 ? weeklyValue / maxWeeklySpend : Infinity;
-  const weeklyProfitable = maxWeeklySpend > 0 && weeklyRoR > 1;
+  const handleCopySummary = React.useCallback(() => {
+    const verdict = !hasSpend
+      ? "No spend entered"
+      : profitable
+        ? "Profitable"
+        : "Not profitable";
+    const lines = [
+      "ROI Calculator — deal summary",
+      `Expected wager: ${wagerN > 0 ? formatCurrency(wagerN) : "—"}`,
+      `Withdraw cap: ${formatCurrency(capN)}`,
+      `LB contribution: ${formatCurrency(lbN)}`,
+      `Tip/Sponsor allowance: ${formatCurrency(tipN)}`,
+      `Frame length: ${hasFrame ? `${daysN} days` : "—"}`,
+      "",
+      `Generated value (wager × ${HOUSE_EDGE_PCT_LABEL}): ${formatCurrency(generatedValue)}`,
+      `Deal spend: ${formatCurrency(dealSpend)}`,
+      `Net: ${hasSpend || wagerN > 0 ? formatCurrency(net) : "—"}`,
+      `Rate of return: ${hasSpend ? formatRoR(rateOfReturn) : "—"}`,
+      `Break-even wager: ${hasSpend ? formatCurrency(breakEvenWager) : "—"}`,
+      `Verdict: ${verdict}`,
+    ];
+    navigator.clipboard
+      .writeText(lines.join("\n"))
+      .then(() => toast.success("Summary copied to clipboard"))
+      .catch(() => toast.error("Could not copy to clipboard"));
+  }, [
+    hasSpend,
+    profitable,
+    wagerN,
+    capN,
+    lbN,
+    tipN,
+    hasFrame,
+    daysN,
+    generatedValue,
+    dealSpend,
+    net,
+    rateOfReturn,
+    breakEvenWager,
+  ]);
 
   return (
     <TooltipProvider delay={150}>
-      <div className="space-y-6">
-        {/* ── 1. Deal Profitability ────────────────────────────────── */}
-        <section className="space-y-3">
-          <SectionHeading icon={Calculator} title="Deal Profitability" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            {/* Inputs */}
-            <div className="surface-sheen rounded-2xl border bg-card p-4 sm:p-5">
-              <p className="mb-3 text-xs text-muted-foreground">
-                One-off check: does a deal&apos;s generated value beat its total
-                spend? Value is wager ×{" "}
-                <span className="font-semibold text-foreground">7.5%</span>.
-              </p>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <FieldRow
-                  id="dp-wager"
-                  label="Wager"
-                  help="Total $ wagered through the creator's code under this deal. Generated value = wager × 7.5%."
-                  value={wager}
-                  onChange={setWager}
-                  placeholder="e.g. 200000"
-                  icon={TrendingUp}
-                  iconColor="text-emerald-500"
-                />
-                <FieldRow
-                  id="dp-cap"
-                  label="Max Withdraw Cap"
-                  help="The maximum the creator can withdraw under the deal — counted as deal spend (house cost)."
-                  value={maxWithdrawCap}
-                  onChange={setMaxWithdrawCap}
-                  placeholder="e.g. 5000"
-                  icon={Wallet}
-                  iconColor="text-rose-500"
-                />
-                <FieldRow
-                  id="dp-lb"
-                  label="LB Contribution"
-                  help={`Leaderboard contribution the HOUSE funds — the house pays ${LB_HOUSE_PCT_LABEL} of the prize pool (net prize × ${LB_HOUSE_PCT_LABEL}). Counted as deal spend.`}
-                  value={lbContribution}
-                  onChange={setLbContribution}
-                  placeholder="e.g. 2500"
-                  icon={Trophy}
-                  iconColor="text-rose-500"
-                />
-                <FieldRow
-                  id="dp-tip"
-                  label="Tip / Sponsor Allowance"
-                  help="House-funded tip + sponsorship allowance for the deal. Included in deal spend (owner-confirmed)."
-                  value={tipSponsorAllowance}
-                  onChange={setTipSponsorAllowance}
-                  placeholder="e.g. 1000"
-                  icon={Gift}
-                  iconColor="text-rose-500"
-                />
-              </div>
+      <div className="space-y-4">
+        <SectionHeading
+          icon={Calculator}
+          title="ROI Calculator"
+          action={
+            <div className="flex items-center gap-2">
+              <Button variant="outline" size="sm" onClick={handleReset}>
+                <RotateCcw className="size-3.5" />
+                Reset
+              </Button>
+              <Button variant="outline" size="sm" onClick={handleCopySummary}>
+                <Copy className="size-3.5" />
+                Copy summary
+              </Button>
             </div>
+          }
+        />
 
-            {/* Output */}
-            <div className="space-y-3">
-              <StatPanel
-                title="Result"
-                icon={Gauge}
-                accent={
-                  (dealSpend > 0
-                    ? dealProfitable
-                      ? "emerald"
-                      : "rose"
-                    : "blue") as AccentColor
-                }
-              >
-                <p
-                  className={cn(
-                    "text-3xl font-bold tracking-tight tabular-nums sm:text-4xl",
-                    dealSpend > 0
-                      ? dealProfitable
-                        ? "text-emerald-600 dark:text-emerald-400"
-                        : "text-rose-600 dark:text-rose-400"
-                      : "text-muted-foreground",
-                  )}
-                >
-                  {formatRoR(rateOfReturn)}
-                </p>
-                <p className="mb-2 text-xs text-muted-foreground">
-                  rate of return (generated value ÷ deal spend)
-                </p>
-                <div className="border-t pt-2">
-                  <PanelRow
-                    label="Generated Value (wager × 7.5%)"
-                    value={formatCurrency(generatedValue)}
-                    valueClassName="text-emerald-600 dark:text-emerald-400"
-                  />
-                  <PanelRow
-                    label="Deal Spend (total cost)"
-                    value={formatCurrency(dealSpend)}
-                    valueClassName="text-rose-600 dark:text-rose-400"
-                  />
-                  <PanelRow
-                    label="Net (value − spend)"
-                    value={formatCurrency(generatedValue - dealSpend)}
-                    valueClassName={cn(
-                      dealSpend > 0
-                        ? generatedValue - dealSpend >= 0
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          {/* ── Inputs: the deal, entered ONCE ─────────────────────── */}
+          <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+            <p className="mb-3 text-xs text-muted-foreground">
+              Enter the deal once — spend legs, the wager you expect it to
+              drive, and the frame length. Value is wager ×{" "}
+              <span className="font-semibold text-foreground">
+                {HOUSE_EDGE_PCT_LABEL}
+              </span>
+              ; weekly and daily views derive from the frame length.
+            </p>
+            <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
+              <FieldRow
+                id="deal-cap"
+                label="Withdraw Cap"
+                help="The maximum the creator can withdraw under the deal — counted as deal spend (house cost)."
+                value={cap}
+                onChange={setCap}
+                placeholder="e.g. 5000"
+                icon={Wallet}
+                iconColor="text-rose-500"
+                unit="$"
+              />
+              <FieldRow
+                id="deal-lb"
+                label="LB Contribution"
+                help={`Leaderboard contribution the HOUSE funds — the house pays ${LB_HOUSE_PCT_LABEL} of the prize pool (net prize × ${LB_HOUSE_PCT_LABEL}). Counted as deal spend.`}
+                value={lb}
+                onChange={setLb}
+                placeholder="e.g. 2500"
+                icon={Trophy}
+                iconColor="text-rose-500"
+                unit="$"
+              />
+              <FieldRow
+                id="deal-tip"
+                label="Tip / Sponsor Allowance"
+                help="House-funded tip + sponsorship allowance for the deal. Included in deal spend (owner-confirmed)."
+                value={tip}
+                onChange={setTip}
+                placeholder="e.g. 1000"
+                icon={Gift}
+                iconColor="text-rose-500"
+                unit="$"
+              />
+              <FieldRow
+                id="deal-wager"
+                label="Expected Wager"
+                help={`Total $ you expect wagered through the creator's code over the whole frame. Generated value = wager × ${HOUSE_EDGE_PCT_LABEL}.`}
+                value={wager}
+                onChange={setWager}
+                placeholder="e.g. 200000"
+                icon={TrendingUp}
+                iconColor="text-emerald-500"
+                unit="$"
+              />
+              <FieldRow
+                id="deal-days"
+                label="Frame Length"
+                help="How many days the deal frame runs (a weekly frame = 7, bi-weekly = 14). Used to derive the daily and weekly figures."
+                value={days}
+                onChange={setDays}
+                placeholder="e.g. 14"
+                icon={CalendarDays}
+                iconColor="text-blue-500"
+                unit="days"
+              />
+            </div>
+          </div>
+
+          {/* ── Outputs ────────────────────────────────────────────── */}
+          <div className="space-y-4">
+            {/* One verdict header — RoR + Net + pill, live. */}
+            <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p
+                    className={cn(
+                      "text-3xl font-bold tracking-tight tabular-nums sm:text-4xl",
+                      hasSpend
+                        ? profitable
                           ? "text-emerald-600 dark:text-emerald-400"
                           : "text-rose-600 dark:text-rose-400"
                         : "text-muted-foreground",
                     )}
-                  />
+                  >
+                    {hasSpend ? formatRoR(rateOfReturn) : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    rate of return (generated value ÷ deal spend)
+                  </p>
                 </div>
-              </StatPanel>
-              <VerdictBanner
-                profitable={dealProfitable}
-                hasSpend={dealSpend > 0}
-                ror={rateOfReturn}
-                label="this deal"
-              />
-            </div>
-          </div>
-        </section>
-
-        {/* ── 2. Performance Forecast ──────────────────────────────── */}
-        <section className="space-y-3">
-          <SectionHeading icon={CalendarDays} title="Performance Forecast" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="surface-sheen rounded-2xl border bg-card p-4 sm:p-5">
-              <p className="mb-3 text-xs text-muted-foreground">
-                Project run-rate value from wager over a number of days, then
-                annualize to a daily + weekly figure.
-              </p>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-2">
-                <FieldRow
-                  id="pf-wager"
-                  label="Wager over X days"
-                  help="Total $ wagered across the period you're forecasting. Generated value = this × 7.5%."
-                  value={wagerOverDays}
-                  onChange={setWagerOverDays}
-                  placeholder="e.g. 600000"
-                  icon={TrendingUp}
-                  iconColor="text-emerald-500"
+                {/* Verdict pill */}
+                {hasSpend ? (
+                  <span
+                    className={cn(
+                      "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold",
+                      profitable
+                        ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+                        : "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+                    )}
+                  >
+                    {profitable ? (
+                      <CheckCircle2 className="size-3.5" />
+                    ) : (
+                      <XCircle className="size-3.5" />
+                    )}
+                    {profitable ? "Profitable" : "Not profitable"}
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-blue-500/20 bg-blue-500/10 px-2.5 py-1 text-xs font-semibold text-blue-600 dark:text-blue-400">
+                    <Info className="size-3.5" />
+                    Enter spend to evaluate
+                  </span>
+                )}
+              </div>
+              <div className="mt-3 border-t pt-2">
+                <PanelRow
+                  label="Net (value − spend)"
+                  value={
+                    hasSpend || wagerN > 0 ? formatCurrency(net) : "—"
+                  }
+                  valueClassName={cn(
+                    hasSpend || wagerN > 0
+                      ? net >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground",
+                  )}
                 />
-                <FieldRow
-                  id="pf-days"
-                  label="X days"
-                  help="Number of days the wager above was generated over — used to derive the daily run-rate."
-                  value={days}
-                  onChange={setDays}
-                  placeholder="e.g. 30"
-                  icon={CalendarDays}
-                  iconColor="text-blue-500"
-                />
+                {/* Secondary weekly-basis line — only once a frame exists. */}
+                {hasFrame && (hasSpend || wagerN > 0) && (
+                  <p className="pt-1 text-xs text-muted-foreground">
+                    ≈ {formatCurrency(weeklyNet)} net per week over the{" "}
+                    {daysN}-day frame
+                  </p>
+                )}
               </div>
             </div>
 
-            <StatPanel title="Projected Value" icon={Sparkles} accent="emerald">
-              <p className="text-3xl font-bold tracking-tight tabular-nums text-emerald-600 dark:text-emerald-400 sm:text-4xl">
-                {formatCurrency(weeklyValue)}
+            {/* Generated value */}
+            <StatPanel title="Generated Value" icon={TrendingUp} accent="emerald">
+              <p
+                className={cn(
+                  "text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+                  wagerN > 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-muted-foreground",
+                )}
+              >
+                {wagerN > 0 ? formatCurrency(generatedValue) : "—"}
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                wager × {HOUSE_EDGE_PCT_LABEL} house value rate
+              </p>
+              <div className="border-t pt-2">
+                <PanelRow
+                  label="Expected wager"
+                  value={wagerN > 0 ? formatCurrency(wagerN) : "—"}
+                />
+                <PanelRow
+                  label={`Value rate (${HOUSE_EDGE_PCT_LABEL})`}
+                  value={
+                    wagerN > 0 ? formatCurrency(generatedValue) : "—"
+                  }
+                  valueClassName={
+                    wagerN > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : undefined
+                  }
+                />
+              </div>
+            </StatPanel>
+
+            {/* Deal spend legs */}
+            <StatPanel title="Deal Spend" icon={Coins} accent="rose">
+              <p
+                className={cn(
+                  "text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+                  hasSpend
+                    ? "text-rose-600 dark:text-rose-400"
+                    : "text-muted-foreground",
+                )}
+              >
+                {hasSpend ? formatCurrency(dealSpend) : "—"}
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                withdraw cap + LB contribution + tip/sponsor
+              </p>
+              <div className="border-t pt-2">
+                <PanelRow
+                  label="Withdraw cap"
+                  value={formatCurrency(capN)}
+                  valueClassName="text-rose-600 dark:text-rose-400"
+                />
+                <PanelRow
+                  label={`LB contribution (house ${LB_HOUSE_PCT_LABEL})`}
+                  value={formatCurrency(lbN)}
+                  valueClassName="text-rose-600 dark:text-rose-400"
+                />
+                <PanelRow
+                  label="Tip / sponsor allowance"
+                  value={formatCurrency(tipN)}
+                  valueClassName="text-rose-600 dark:text-rose-400"
+                />
+              </div>
+            </StatPanel>
+
+            {/* Break-even solver */}
+            <StatPanel title="Break-even Wager" icon={Crosshair} accent="amber">
+              <p
+                className={cn(
+                  "text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+                  hasSpend ? undefined : "text-muted-foreground",
+                )}
+              >
+                {hasSpend ? formatCurrency(breakEvenWager) : "—"}
+              </p>
+              <p className="mb-2 text-xs text-muted-foreground">
+                spend ÷ {HOUSE_EDGE_PCT_LABEL} — the same expected-wager
+                formula the Profitability page uses
+              </p>
+              <div className="border-t pt-2">
+                <PanelRow
+                  label="Vs entered wager"
+                  value={
+                    hasSpend && wagerN > 0
+                      ? `${wagerDelta >= 0 ? "+" : "−"}${formatCurrency(Math.abs(wagerDelta))}`
+                      : "—"
+                  }
+                  valueClassName={cn(
+                    hasSpend && wagerN > 0
+                      ? wagerDelta >= 0
+                        ? "text-emerald-600 dark:text-emerald-400"
+                        : "text-rose-600 dark:text-rose-400"
+                      : "text-muted-foreground",
+                  )}
+                />
+                {hasSpend && wagerN > 0 && (
+                  <p className="pt-1 text-xs text-muted-foreground">
+                    {wagerDelta >= 0
+                      ? "Entered wager clears break-even by this much."
+                      : "Entered wager falls short of break-even by this much."}
+                  </p>
+                )}
+              </div>
+            </StatPanel>
+
+            {/* Weekly / daily derived figures */}
+            <StatPanel title="Run-rate" icon={CalendarDays} accent="blue">
+              <p
+                className={cn(
+                  "text-2xl font-bold tracking-tight tabular-nums sm:text-3xl",
+                  hasFrame && wagerN > 0
+                    ? "text-emerald-600 dark:text-emerald-400"
+                    : "text-muted-foreground",
+                )}
+              >
+                {hasFrame && wagerN > 0 ? formatCurrency(weeklyValue) : "—"}
               </p>
               <p className="mb-2 text-xs text-muted-foreground">
                 projected weekly value
+                {hasFrame ? ` (derived from the ${daysN}-day frame)` : ""}
               </p>
               <div className="border-t pt-2">
                 <PanelRow
-                  label="Generated Value (wager × 7.5%)"
-                  value={formatCurrency(forecastGeneratedValue)}
-                  valueClassName="text-emerald-600 dark:text-emerald-400"
+                  label="Daily value"
+                  value={
+                    hasFrame && wagerN > 0 ? formatCurrency(dailyValue) : "—"
+                  }
+                  valueClassName={
+                    hasFrame && wagerN > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : undefined
+                  }
                 />
                 <PanelRow
-                  label={`Daily Value (÷ ${daysN > 0 ? daysN : "x"} days)`}
-                  value={daysN > 0 ? formatCurrency(dailyValue) : "—"}
-                  valueClassName="text-emerald-600 dark:text-emerald-400"
+                  label="Weekly value"
+                  value={
+                    hasFrame && wagerN > 0 ? formatCurrency(weeklyValue) : "—"
+                  }
+                  valueClassName={
+                    hasFrame && wagerN > 0
+                      ? "text-emerald-600 dark:text-emerald-400"
+                      : undefined
+                  }
                 />
                 <PanelRow
-                  label="Weekly Value (daily × 7)"
-                  value={daysN > 0 ? formatCurrency(weeklyValue) : "—"}
-                  valueClassName="text-emerald-600 dark:text-emerald-400"
+                  label="Daily spend"
+                  value={
+                    hasFrame && hasSpend ? formatCurrency(dailySpend) : "—"
+                  }
+                  valueClassName={
+                    hasFrame && hasSpend
+                      ? "text-rose-600 dark:text-rose-400"
+                      : undefined
+                  }
+                />
+                <PanelRow
+                  label="Weekly spend"
+                  value={
+                    hasFrame && hasSpend ? formatCurrency(weeklySpend) : "—"
+                  }
+                  valueClassName={
+                    hasFrame && hasSpend
+                      ? "text-rose-600 dark:text-rose-400"
+                      : undefined
+                  }
                 />
               </div>
             </StatPanel>
           </div>
-        </section>
-
-        {/* ── 3. Daily Spend ───────────────────────────────────────── */}
-        <section className="space-y-3">
-          <SectionHeading icon={Coins} title="Daily Spend" />
-          <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
-            <div className="surface-sheen rounded-2xl border bg-card p-4 sm:p-5">
-              <p className="mb-3 text-xs text-muted-foreground">
-                Turn a weekly spend budget into a per-day allowance. Max weekly
-                spend = weekly cap + weekly LB funding + weekly tip/sponsor.
-              </p>
-              <div className="grid grid-cols-1 gap-3.5 sm:grid-cols-3">
-                <FieldRow
-                  id="ds-cap"
-                  label="Weekly Cap"
-                  help="Weekly withdrawal cap the house funds for the creator."
-                  value={weeklyCap}
-                  onChange={setWeeklyCap}
-                  placeholder="e.g. 5000"
-                  icon={Wallet}
-                  iconColor="text-rose-500"
-                />
-                <FieldRow
-                  id="ds-lb"
-                  label="Weekly LB Funding"
-                  help={`Weekly leaderboard funding the house contributes — the house pays ${LB_HOUSE_PCT_LABEL} of the weekly prize pool (net prize × ${LB_HOUSE_PCT_LABEL}).`}
-                  value={weeklyLbFunding}
-                  onChange={setWeeklyLbFunding}
-                  placeholder="e.g. 2000"
-                  icon={Trophy}
-                  iconColor="text-rose-500"
-                />
-                <FieldRow
-                  id="ds-tip"
-                  label="Weekly Tip / Sponsor"
-                  help="Weekly house-funded tip + sponsorship allowance."
-                  value={weeklyTipSponsor}
-                  onChange={setWeeklyTipSponsor}
-                  placeholder="e.g. 700"
-                  icon={Gift}
-                  iconColor="text-rose-500"
-                />
-              </div>
-            </div>
-
-            <StatPanel title="Spend Budget" icon={Coins} accent="rose">
-              <p className="text-3xl font-bold tracking-tight tabular-nums text-rose-600 dark:text-rose-400 sm:text-4xl">
-                {formatCurrency(dailySpend)}
-              </p>
-              <p className="mb-2 text-xs text-muted-foreground">
-                daily spend (max weekly spend ÷ 7)
-              </p>
-              <div className="border-t pt-2">
-                <PanelRow
-                  label="Max Weekly Spend"
-                  value={formatCurrency(maxWeeklySpend)}
-                  valueClassName="text-rose-600 dark:text-rose-400"
-                />
-                <PanelRow
-                  label="Daily Spend (÷ 7)"
-                  value={formatCurrency(dailySpend)}
-                  valueClassName="text-rose-600 dark:text-rose-400"
-                />
-              </div>
-            </StatPanel>
-          </div>
-
-          {/* Forecast-vs-spend verdict: does the projected weekly value beat
-              the max weekly spend? Only meaningful once both a forecast and a
-              weekly spend are entered. */}
-          {(weeklyValue > 0 || maxWeeklySpend > 0) && (
-            <VerdictBanner
-              profitable={weeklyProfitable}
-              hasSpend={maxWeeklySpend > 0}
-              ror={weeklyRoR}
-              label="the weekly run-rate vs spend"
-            />
-          )}
-        </section>
+        </div>
       </div>
     </TooltipProvider>
   );

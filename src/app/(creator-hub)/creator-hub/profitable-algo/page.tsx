@@ -1,46 +1,56 @@
-import { Calculator } from "lucide-react";
-
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 
-import { ProfitableAlgoCalculator } from "./profitable-algo-calculator";
+import {
+  ProfitableAlgoCalculator,
+  type CalculatorInitialValues,
+} from "./profitable-algo-calculator";
 
-export const metadata = { title: "Profitable Algo · Creator Hub" };
+export const metadata = { title: "ROI Calculator · Creator Hub" };
 
 /**
- * Profitable Algo — Deal Profitability calculator (Creator Hub tool).
+ * ROI Calculator (Profitable Algo route) — deal profitability tool.
  *
- * A PURE calculator: no DB read, no MAIN/ADMIN query, no API. It evaluates
- * deal profitability from manager-typed inputs using the owner's exact math
- * (plan: iridescent-mixing-lecun.md, "Profitable Algo"):
+ * A PURE calculator: no DB read, no MAIN/ADMIN query, no API. It evaluates a
+ * single deal from manager-typed inputs using the canonical
+ * `@/lib/deal-economics` math (HOUSE_EDGE, LB_HOUSE_SHARE).
  *
- *   Generated Value = WAGER × 0.075
- *   Deal Spend      = MAX WITHDRAW CAP + LB CONTRIBUTION + TIP/SPONSOR ALLOWANCE
- *   Rate of Return  = Generated Value / Deal Spend   (profitable when > 1)
- *   + Performance Forecast (daily/weekly value) and Daily Spend budget.
- *
- * Because there's no data fetch, there's nothing to lazy-load here — the
- * whole tool is a single client island below the hero. ACCESS is gated to
- * `canAccessCreatorHub` (same boundary the Hub layout enforces; the page
- * adds the explicit server-side gate).
+ * The page opens directly with the calculator's SectionHeading — no hero
+ * (owner decision). Inputs mirror to `?wager=&cap=&lb=&tip=&days=` so a
+ * scenario is shareable; we parse them server-side here as initial state.
+ * ACCESS is gated to `canAccessCreatorHub` (same boundary the Hub layout
+ * enforces; the page adds the explicit server-side gate).
  */
-export default async function ProfitableAlgoPage() {
+export default async function ProfitableAlgoPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireCreatorHubPageAccess();
+  const sp = await searchParams;
+
+  // Only accept currency-ish strings (digits, dot, comma, $) — anything else
+  // is dropped so junk params can't land in the inputs. The client `num()`
+  // sanitizer still guards the math itself.
+  const pick = (key: string): string => {
+    const raw = sp[key];
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    if (typeof value !== "string") return "";
+    return /^[\d.,$\s]{1,20}$/.test(value) ? value : "";
+  };
+
+  const initial: CalculatorInitialValues = {
+    wager: pick("wager"),
+    cap: pick("cap"),
+    lb: pick("lb"),
+    tip: pick("tip"),
+    days: pick("days"),
+  };
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          icon={Calculator}
-          accent="emerald"
-          title="Profitable Algo"
-          subtitle="Deal profitability calculator · math-check a deal before you sign it"
-        />
-      </PageHero>
-
       <FadeIn>
-        <ProfitableAlgoCalculator />
+        <ProfitableAlgoCalculator initial={initial} />
       </FadeIn>
     </div>
   );
