@@ -7,6 +7,8 @@ const builderPagePath =
   "src/app/(pack-studio)/pack-studio/builder/page.tsx";
 const approvalPagePath =
   "src/app/(pack-studio)/pack-studio/new-packs/page.tsx";
+const approvalListPath =
+  "src/app/(pack-studio)/pack-studio/new-packs/review-list.tsx";
 const buildDraftsPagePath =
   "src/app/(pack-studio)/pack-studio/builder-drafts/page.tsx";
 const buildDraftsListPath =
@@ -166,6 +168,21 @@ test("New Packs lives only in the owner-only Packs System section", async () => 
   );
   assert.doesNotMatch(nav, /nav\.system\.new-packs|href:\s*"\/system\/new-packs"/);
   assert.match(appHosts, /segmentRoutes:\s*\[[\s\S]*?"new-packs"/);
+});
+
+test("New Packs shows submitted artwork and the player-facing risk bar", async () => {
+  const [approvalPage, approvalList] = await Promise.all([
+    readFile(approvalPagePath, "utf8"),
+    readFile(approvalListPath, "utf8"),
+  ]);
+
+  assert.match(
+    approvalPage,
+    /imageUrl:\s*request\.requestPayload\.imageUrl \?\? null/,
+  );
+  assert.match(approvalList, /<CardImage[\s\S]*?src=\{item\.imageUrl\}/);
+  assert.match(approvalList, /<PackRiskBarPreview/);
+  assert.match(approvalList, /\{riskScore\}\/100/);
 });
 
 test("server layouts rethrow Next render control flow instead of swallowing it", async () => {

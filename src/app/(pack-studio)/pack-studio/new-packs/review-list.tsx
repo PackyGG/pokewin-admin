@@ -19,6 +19,8 @@ import {
   approvePackCreationRequest,
   declinePackCreationRequestAction,
 } from "@/app/(admin)/packs/actions";
+import { PackRiskBarPreview } from "@/app/(pack-studio)/pack-studio/_components/pack-risk-bar-preview";
+import { CardImage } from "@/components/card-image";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -33,6 +35,7 @@ export type PackRequestReviewItem = {
   name: string;
   slug: string;
   requestedActive: boolean;
+  imageUrl: string | null;
   price: number;
   cardCount: number;
   difficulty: number;
@@ -130,6 +133,9 @@ export function PackRequestReviewList({
         const status = STATUS_SPEC[item.status];
         const approving = activeAction === `approve:${item.id}`;
         const declining = activeAction === `decline:${item.id}`;
+        const riskScore = Math.round(
+          Math.min(Math.max(item.difficulty, 0), 1) * 100,
+        );
         return (
           <article
             key={item.id}
@@ -139,59 +145,75 @@ export function PackRequestReviewList({
             )}
           >
             <div className="flex flex-col gap-4 lg:flex-row lg:items-center">
-              <div className="min-w-0 flex-1 space-y-2">
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="truncate text-sm font-semibold">{item.name}</h3>
-                  <Badge variant="outline" className={status.className}>
-                    {status.label}
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className={
-                      item.requestedActive
-                        ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
-                        : "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400"
-                    }
-                  >
-                    {item.requestedActive ? (
-                      <Rocket className="mr-1 size-3" />
-                    ) : (
-                      <Clock3 className="mr-1 size-3" />
-                    )}
-                    {item.requestedActive ? "Go live" : "Inactive draft"}
-                  </Badge>
-                </div>
+              <div className="flex min-w-0 flex-1 items-start gap-4">
+                <CardImage
+                  src={item.imageUrl}
+                  alt={`${item.name} pack artwork`}
+                  className="size-24 shrink-0 rounded-xl border border-border/70 bg-muted/20 ring-1 ring-black/5 sm:size-28"
+                />
 
-                <p className="text-xs text-muted-foreground">
-                  /{item.slug} · requested by {item.requesterUsername} ·{" "}
-                  {formatDateTime(item.createdAt)}
-                </p>
+                <div className="min-w-0 flex-1 space-y-3">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <h3 className="truncate text-sm font-semibold">{item.name}</h3>
+                    <Badge variant="outline" className={status.className}>
+                      {status.label}
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className={
+                        item.requestedActive
+                          ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                          : "border-blue-500/30 bg-blue-500/10 text-blue-600 dark:text-blue-400"
+                      }
+                    >
+                      {item.requestedActive ? (
+                        <Rocket className="mr-1 size-3" />
+                      ) : (
+                        <Clock3 className="mr-1 size-3" />
+                      )}
+                      {item.requestedActive ? "Go live" : "Inactive draft"}
+                    </Badge>
+                  </div>
 
-                <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                  <span>
-                    Price <strong>{formatCurrency(item.price)}</strong>
-                  </span>
-                  <span>
-                    Cards <strong>{item.cardCount}</strong>
-                  </span>
-                  <span>
-                    Edge <strong>{(item.previewEdge * 100).toFixed(2)}%</strong>
-                  </span>
-                  <span>
-                    Win rate{" "}
-                    <strong>{(item.previewWinRate * 100).toFixed(1)}%</strong>
-                  </span>
-                  <span>
-                    Risk bar <strong>{Math.round(item.difficulty * 100)}%</strong>
-                  </span>
-                </div>
-
-                {item.reviewerUsername && item.reviewedAt && (
                   <p className="text-xs text-muted-foreground">
-                    Reviewed by {item.reviewerUsername} ·{" "}
-                    {formatDateTime(item.reviewedAt)}
+                    /{item.slug} · requested by {item.requesterUsername} ·{" "}
+                    {formatDateTime(item.createdAt)}
                   </p>
-                )}
+
+                  <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                    <span>
+                      Price <strong>{formatCurrency(item.price)}</strong>
+                    </span>
+                    <span>
+                      Cards <strong>{item.cardCount}</strong>
+                    </span>
+                    <span>
+                      Edge <strong>{(item.previewEdge * 100).toFixed(2)}%</strong>
+                    </span>
+                    <span>
+                      Win rate{" "}
+                      <strong>{(item.previewWinRate * 100).toFixed(1)}%</strong>
+                    </span>
+                  </div>
+
+                  <div className="max-w-lg rounded-lg border border-border/60 bg-muted/20 p-3">
+                    <div className="mb-2 flex items-center justify-between gap-3 text-xs">
+                      <span className="font-medium">Player risk bar</span>
+                      <strong className="tabular-nums">{riskScore}/100</strong>
+                    </div>
+                    <PackRiskBarPreview
+                      difficulty={item.difficulty > 0 ? item.difficulty : null}
+                      showValue={false}
+                    />
+                  </div>
+
+                  {item.reviewerUsername && item.reviewedAt && (
+                    <p className="text-xs text-muted-foreground">
+                      Reviewed by {item.reviewerUsername} ·{" "}
+                      {formatDateTime(item.reviewedAt)}
+                    </p>
+                  )}
+                </div>
               </div>
 
               {item.status === "pending" ? (

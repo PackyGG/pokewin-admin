@@ -53,10 +53,13 @@ function hexToRgb(hex: string): string {
 
 export function PackRiskBarPreview({
   difficulty,
+  showValue = true,
   className,
 }: {
   /** The pack's on-site difficulty (0..1). null/0 → no bar shows on-site. */
   difficulty: number | null;
+  /** Hide the duplicate numeric value when the parent renders its own score. */
+  showValue?: boolean;
   className?: string;
 }) {
   const hasBar = typeof difficulty === "number" && difficulty > 0;
@@ -125,9 +128,11 @@ export function PackRiskBarPreview({
         <span className="font-semibold" style={{ color }}>
           {label}
         </span>
-        <span className="tabular-nums text-muted-foreground">
-          {Math.round(difficulty * 100)}%
-        </span>
+        {showValue ? (
+          <span className="tabular-nums text-muted-foreground">
+            {Math.round(difficulty * 100)}%
+          </span>
+        ) : null}
       </div>
     </div>
   );

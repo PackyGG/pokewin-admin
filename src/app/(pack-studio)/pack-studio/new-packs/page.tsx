@@ -90,6 +90,7 @@ async function QueueBody() {
             name: request.name,
             slug: request.slug,
             requestedActive: request.requestedActive,
+            imageUrl: request.requestPayload.imageUrl ?? null,
             price: request.requestPayload.price,
             cardCount: request.requestPayload.cards.length,
             difficulty: request.requestPayload.difficulty ?? 0,
