@@ -95,7 +95,8 @@ test("balance withdrawals do not require attached card assets", () => {
     assetValueUsd: 0,
     tracedAssetUsd: 0,
     assetCount: 0,
-    hasPayoutDestination: false,
+    hasPayoutDestination: true,
+    otherUsersAtDestination: 5,
   });
   assert.equal(result.riskScore, 0);
   assert.equal(result.verdict, "good");

@@ -103,6 +103,8 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
   const amount = Math.max(0, input.amountUsd);
   const method = input.method.toLowerCase();
   const usesAttachedAssets = method === "crypto" || method === "physical";
+  const usesPayoutDestination =
+    usesAttachedAssets && input.hasPayoutDestination;
   const grossCredits =
     input.depositsUsd + input.playReturnsUsd + input.rewardsUsd;
   const limitedPlayThreshold = Math.max(5, amount * 0.1);
@@ -277,7 +279,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     });
   }
 
-  if (input.otherUsersAtDestination > 0) {
+  if (usesPayoutDestination && input.otherUsersAtDestination > 0) {
     signals.push({
       key: "shared_destination",
       label: "Shared destination",
@@ -351,7 +353,7 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     );
     const score = scoreBreakdown[definition.key];
     const isNotApplicable =
-      definition.key === "network" && !input.hasPayoutDestination;
+      definition.key === "network" && !usesPayoutDestination;
     return {
       ...definition,
       status: isNotApplicable
@@ -918,10 +920,14 @@ export class WithdrawalRiskService {
         gameEvents: flow.gameEvents,
         minutesSinceLastDeposit: flow.minutesSinceLastDeposit,
         accountAgeDays: flow.accountAgeDays,
-        otherUsersAtDestination: request.destination_address
+        otherUsersAtDestination:
+          request.method.toLowerCase() !== "balance" &&
+          request.destination_address
           ? reuseByAddress.get(request.destination_address) ?? 0
           : 0,
-        hasPayoutDestination: Boolean(request.destination_address),
+        hasPayoutDestination:
+          request.method.toLowerCase() !== "balance" &&
+          Boolean(request.destination_address),
         requiresConfirmation: request.requires_confirmation,
         confirmationReason: request.confirmation_reason,
         borrowedVoucherUsd: sources
