@@ -35,6 +35,28 @@ test("mirror DB configuration fails closed and forces read-only sessions", () =>
   assert.doesNotMatch(source, /MIRROR_DEV_DB\s*\?\?\s*process\.env\.DEV_DATABASE_URL/);
 });
 
+test("PostgreSQL health fails closed when logical replication is stopped or stale", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "src/app/api/health/postgres/route.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /pg_subscription/);
+  assert.match(source, /pg_stat_subscription/);
+  assert.match(source, /pg_subscription_rel/);
+  assert.match(source, /status\.relid IS NULL/);
+  assert.match(source, /enabled_subscriptions > 0/);
+  assert.match(
+    source,
+    /running_subscriptions ===\s*replication\.enabled_subscriptions/,
+  );
+  assert.match(source, /replication\.not_ready_tables === 0/);
+  assert.match(source, /MAX_REPLICATION_MESSAGE_AGE_MS = 120_000/);
+  assert.match(source, /replicationHealthy: false/);
+  assert.match(source, /\{ status: 503 \}/);
+  assert.doesNotMatch(source, /await db\.execute\(sql`SELECT 1`\)/);
+});
+
 test("serverless mirror pools preserve shared role connection headroom", () => {
   const source = fs.readFileSync(path.join(repoRoot, "src/lib/db.ts"), "utf8");
   const warmRoute = fs.readFileSync(
