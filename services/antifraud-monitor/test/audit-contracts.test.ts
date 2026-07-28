@@ -9,7 +9,10 @@ import type pg from "pg";
 import type { WebSocket } from "ws";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
-import type { Config } from "../src/config.js";
+import {
+  assertDistinctDiscordWebhookUrls,
+  type Config,
+} from "../src/config.js";
 import { sameDecisionIdentity } from "../src/decision-idempotency.js";
 import { pollerStalledFor, type PollerHealthSnapshot } from "../src/poller-health.js";
 import {
@@ -195,6 +198,8 @@ const runtimeConfig: Config = {
     "https://discord.com/api/webhooks/hold-id/hold-token",
   FIAT_ALERT_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/fiat-id/fiat-token",
+  FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
+    "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
   FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
   FIAT_ALERT_DASHBOARD_URL:
@@ -254,6 +259,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   assert.equal(status.discord.webhookConfigured, true);
   assert.equal(status.discord.withdrawalHoldWebhookConfigured, true);
   assert.equal(status.discord.fiatProblemWebhookConfigured, true);
+  assert.equal(status.discord.fiatHighRiskWebhookConfigured, true);
   assert.equal(status.discord.fiatEmailBlacklistWebhookConfigured, true);
   assert.equal(status.discord.dashboardUrlConfigured, true);
   assert.equal(status.discord.supportRecipientIds.length, 3);
@@ -283,6 +289,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_ALERT_DISCORD_WEBHOOK_URL ?? "",
+    runtimeConfig.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_ALERT_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_DASHBOARD_URL,
@@ -291,6 +298,34 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   ]) {
     assert.equal(serialized.includes(secret), false);
   }
+});
+
+test("Discord routes must be distinct without exposing their values", () => {
+  const duplicate =
+    "https://discord.com/api/webhooks/same-id/same-token";
+  assert.throws(
+    () =>
+      assertDistinctDiscordWebhookUrls({
+        ANTIFRAUD_DISCORD_WEBHOOK_URL: duplicate,
+        FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: `${duplicate}?wait=true`,
+      }),
+    (error: unknown) => {
+      assert.ok(error instanceof Error);
+      assert.match(error.message, /must use distinct Discord webhooks/);
+      assert.equal(error.message.includes(duplicate), false);
+      return true;
+    },
+  );
+  assert.doesNotThrow(() =>
+    assertDistinctDiscordWebhookUrls({
+      ANTIFRAUD_DISCORD_WEBHOOK_URL:
+        "https://discord.com/api/webhooks/risk-id/risk-token",
+      FIAT_ALERT_DISCORD_WEBHOOK_URL:
+        "https://discord.com/api/webhooks/pending-id/pending-token",
+      FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
+        "https://discord.com/api/webhooks/high-id/high-token",
+    }),
+  );
 });
 
 test("operations config accepts read/admin tokens and rejects missing tokens", () => {

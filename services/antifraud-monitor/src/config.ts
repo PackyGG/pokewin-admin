@@ -11,6 +11,33 @@ const discordWebhookUrl = z.string().url().refine((value) => {
   );
 }, "must be an HTTPS Discord webhook URL");
 
+const DISCORD_WEBHOOK_KEYS = [
+  "ANTIFRAUD_DISCORD_WEBHOOK_URL",
+  "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL",
+  "FIAT_ALERT_DISCORD_WEBHOOK_URL",
+  "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL",
+  "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL",
+] as const;
+
+export function assertDistinctDiscordWebhookUrls(
+  config: Partial<Record<(typeof DISCORD_WEBHOOK_KEYS)[number], string>>,
+): void {
+  const configured = new Map<string, string>();
+  for (const key of DISCORD_WEBHOOK_KEYS) {
+    const value = config[key];
+    if (!value) continue;
+    const url = new URL(value);
+    const destination = `${url.origin}${url.pathname.replace(/\/+$/, "")}`;
+    const previousKey = configured.get(destination);
+    if (previousKey) {
+      throw new Error(
+        `Invalid configuration: ${key} and ${previousKey} must use distinct Discord webhooks`,
+      );
+    }
+    configured.set(destination, key);
+  }
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   TZ: z.string().min(1).default("UTC"),
@@ -38,6 +65,7 @@ const schema = z.object({
   ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
     discordWebhookUrl.optional(),
   FIAT_ALERT_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
+  FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
   FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
   FIAT_ALERT_DASHBOARD_URL: z
     .string()
@@ -81,6 +109,7 @@ export function loadConfig(): Config {
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {
     throw new Error("Invalid configuration: API_TOKEN and API_ADMIN_TOKEN must differ");
   }
+  assertDistinctDiscordWebhookUrls(config);
 
   const publicUrl = new URL(config.PUBLIC_BASE_URL);
   if (config.NODE_ENV === "production" && publicUrl.protocol !== "https:") {

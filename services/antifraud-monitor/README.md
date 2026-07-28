@@ -40,9 +40,11 @@ Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 `FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel for
 failed, review, dispute, refund, stalled checkout, stale pending, and failed
 provider-webhook alerts. Canonical high-risk deposits and deposits from
-fiat-locked accounts go independently to both this channel and the general
-`ANTIFRAUD_DISCORD_WEBHOOK_URL`, so one failed destination retries without
-duplicating or blocking the other.
+fiat-locked accounts remain on the general `ANTIFRAUD_DISCORD_WEBHOOK_URL`.
+Canonical high-risk deposits additionally use the separate
+`FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL`, so one failed destination retries without
+duplicating or blocking the other. All configured Discord webhook URLs must be
+distinct.
 Blacklisted signup or Whop checkout email-domain containment uses
 `FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL`. Automatic withdrawal holds and
 other account-containment alerts use

@@ -282,12 +282,14 @@ test("deposit cluster alerts aggregate evidence without duplicate account alerts
   );
 });
 
-test("the four-route mapping keeps high-risk fiat on both intended destinations", () => {
+test("the five-route mapping keeps pending and high-risk fiat separate", () => {
   const config = {
     FIAT_ALERT_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/fiat-id/fiat-token",
     ANTIFRAUD_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/risk-id/risk-token",
+    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
+      "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
     FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
   };
@@ -302,14 +304,18 @@ test("the four-route mapping keeps high-risk fiat on both intended destinations"
   );
   assert.deepEqual(
     fiatAlertDestinations("high_risk"),
-    ["antifraud_risk", "fiat_operations"],
+    ["antifraud_risk", "high_risk_supplemental"],
   );
   assert.deepEqual(
     fiatAlertDestinations("fiat_locked_account"),
-    ["antifraud_risk", "fiat_operations"],
+    ["antifraud_risk"],
   );
   assert.deepEqual(fiatAlertDestinations("failed"), ["fiat_operations"]);
 
+  assert.equal(
+    fiatAlertWebhookUrl(config, "high_risk_supplemental"),
+    config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL,
+  );
   assert.equal(
     fiatAlertWebhookUrl(config, "email_blacklist"),
     config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
@@ -357,7 +363,7 @@ test("high-risk destinations retry independently after partial failure", async (
     {
       ...failedIntent,
       problem_code: "high_risk" as const,
-      destination: "fiat_operations" as const,
+      destination: "high_risk_supplemental" as const,
       attempt_count: 0,
     },
   ];
@@ -387,6 +393,8 @@ test("high-risk destinations retry independently after partial failure", async (
       "https://discord.com/api/webhooks/fiat-id/fiat-token",
     ANTIFRAUD_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/risk-id/risk-token",
+    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
+      "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
     FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
     FIAT_ALERT_DASHBOARD_URL: FIAT_WORKSPACE_URL,
@@ -394,7 +402,7 @@ test("high-risk destinations retry independently after partial failure", async (
   const alerts = new FiatProblemAlerts(
     config,
     { antifraud, source: {} } as never,
-    { error() {} } as never,
+    { error() {}, info() {} } as never,
   );
   const originalFetch = globalThis.fetch;
   const fetchUrls: string[] = [];
@@ -419,7 +427,7 @@ test("high-risk destinations retry independently after partial failure", async (
 
   assert.equal(fetchUrls.length, 2);
   assert.match(fetchUrls[0] ?? "", /\/risk-id\//);
-  assert.match(fetchUrls[1] ?? "", /\/fiat-id\//);
+  assert.match(fetchUrls[1] ?? "", /\/high-risk-id\//);
   assert.deepEqual(
     updates.map((values) => ({
       destination: values[2],
@@ -433,7 +441,7 @@ test("high-risk destinations retry independently after partial failure", async (
         retrySeconds: 4,
       },
       {
-        destination: "fiat_operations",
+        destination: "high_risk_supplemental",
         delivered: true,
         retrySeconds: 2,
       },
@@ -464,6 +472,13 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
     new URL("../migrations/021_fiat_alert_destinations.sql", import.meta.url),
     "utf8",
   );
+  const splitMigration = await readFile(
+    new URL(
+      "../migrations/022_split_high_risk_fiat_destination.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
   assert.match(source, /FROM fiat_deposit_intents fdi/);
   assert.match(source, /JOIN user_feature_locks ufl ON ufl\.user_id = fdi\.user_id/);
@@ -490,9 +505,11 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /next_attempt_at/);
   assert.match(source, /delivery\.destination = 'antifraud_risk'/);
   assert.match(source, /delivery\.destination = 'fiat_operations'/);
+  assert.match(source, /delivery\.destination = 'high_risk_supplemental'/);
   assert.match(source, /delivery\.destination = 'email_blacklist'/);
   assert.match(source, /ANTIFRAUD_DISCORD_WEBHOOK_URL/);
   assert.match(source, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
+  assert.match(source, /FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL/);
   assert.match(source, /LIMIT 1/);
   assert.match(source, /discordRetryAfterSeconds/);
   assert.match(
@@ -508,6 +525,25 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
     /WHEN destination\.destination = 'email_blacklist' THEN now\(\)/,
   );
   assert.match(migration, /WHERE delivered_at IS NULL/);
+  assert.match(splitMigration, /DELETE FROM fiat_problem_alert_deliveries/);
+  assert.match(
+    splitMigration,
+    /alert\.problem_code IN \('high_risk', 'fiat_locked_account'\)/,
+  );
+  assert.equal(
+    splitMigration.match(
+      /d67b5118-9926-47bd-b58c-9203a15620be:high_risk/g,
+    )?.length,
+    2,
+  );
+  assert.match(
+    splitMigration,
+    /ON CONFLICT \(source_kind, source_id, destination\) DO NOTHING/,
+  );
+  assert.match(
+    splitMigration,
+    /WHERE alert\.problem_code = 'high_risk'/,
+  );
 
   const calls: Array<{ text: string; values: unknown[] }> = [];
   const pool = {

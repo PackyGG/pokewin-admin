@@ -62,6 +62,7 @@ type PendingFiatAlert = FiatProblem & {
 export const FIAT_ALERT_DESTINATIONS = [
   "antifraud_risk",
   "fiat_operations",
+  "high_risk_supplemental",
   "email_blacklist",
 ] as const;
 
@@ -71,6 +72,7 @@ export type FiatAlertDestination =
 type FiatAlertWebhookConfig = Pick<
   Config,
   | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
+  | "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"
   | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
   | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
 >;
@@ -639,11 +641,11 @@ export function fiatAlertDestinations(
   ) {
     return ["email_blacklist"];
   }
-  if (
-    problemCode === "high_risk" ||
-    problemCode === "fiat_locked_account"
-  ) {
-    return ["antifraud_risk", "fiat_operations"];
+  if (problemCode === "high_risk") {
+    return ["antifraud_risk", "high_risk_supplemental"];
+  }
+  if (problemCode === "fiat_locked_account") {
+    return ["antifraud_risk"];
   }
   return ["fiat_operations"];
 }
@@ -657,6 +659,8 @@ export function fiatAlertWebhookUrl(
       return config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
     case "fiat_operations":
       return config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+    case "high_risk_supplemental":
+      return config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL;
     case "email_blacklist":
       return config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
   }
@@ -828,10 +832,17 @@ export class FiatProblemAlerts {
 
           UNION ALL
 
+          SELECT 'high_risk_supplemental'::text
+          WHERE alert.problem_code = 'high_risk'
+
+          UNION ALL
+
           SELECT 'fiat_operations'::text
           WHERE alert.problem_code NOT IN (
             'blacklisted_email_domain',
-            'suspicious_deposit_cluster'
+            'suspicious_deposit_cluster',
+            'high_risk',
+            'fiat_locked_account'
           )
         ) AS destination
         ON CONFLICT (source_kind, source_id, destination) DO NOTHING
@@ -841,11 +852,14 @@ export class FiatProblemAlerts {
 
   private async deliver(): Promise<void> {
     const operationsWebhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+    const highRiskWebhookUrl =
+      this.config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL;
     const riskWebhookUrl = this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
     const blacklistWebhookUrl =
       this.config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
     if (
       !operationsWebhookUrl &&
+      !highRiskWebhookUrl &&
       !riskWebhookUrl &&
       !blacklistWebhookUrl
     ) {
@@ -885,6 +899,11 @@ export class FiatProblemAlerts {
               delivery.destination = 'fiat_operations'
               AND $3::boolean
             )
+            OR
+            (
+              delivery.destination = 'high_risk_supplemental'
+              AND $4::boolean
+            )
           )
         ORDER BY alert.occurred_at, delivery.destination
         LIMIT 1
@@ -893,6 +912,7 @@ export class FiatProblemAlerts {
         Boolean(blacklistWebhookUrl),
         Boolean(riskWebhookUrl),
         Boolean(operationsWebhookUrl),
+        Boolean(highRiskWebhookUrl),
       ],
     );
 
@@ -938,6 +958,16 @@ export class FiatProblemAlerts {
           retrySeconds,
         ],
       );
+      if (delivery.delivered) {
+        this.log.info(
+          {
+            sourceKind: problem.source_kind,
+            sourceId: problem.source_id,
+            destination: problem.destination,
+          },
+          "Fiat Discord alert delivered",
+        );
+      }
       await this.refreshLegacyDeliveryState(problem);
     }
   }

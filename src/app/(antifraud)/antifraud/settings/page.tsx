@@ -224,6 +224,14 @@ async function IntegrationSection() {
       note: "Dedicated destination for non-email account lock/ban containment, including automatic lifetime-deposit withdrawal holds.",
     },
     {
+      name: "High-risk fiat Discord webhook",
+      envs: ["FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"],
+      status: reportedStatus(
+        runtimeData?.discord.fiatHighRiskWebhookConfigured,
+      ),
+      note: "Dedicated supplemental destination for canonical high-risk fiat verdicts.",
+    },
+    {
       name: "Fiat problem Discord webhook",
       envs: ["FIAT_ALERT_DISCORD_WEBHOOK_URL"],
       status: reportedStatus(
