@@ -22,6 +22,7 @@ import type {
   PnlBreakdown,
   PaginatedTransactions,
   PaginatedInventory,
+  Transaction,
 } from "@/app/(admin)/users/[id]/user-tabs-types";
 import type { UserRewards } from "@/lib/queries/users";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
@@ -33,12 +34,85 @@ function ok<T>(data: T): Promise<SafeQueryResult<T>> {
   return Promise.resolve({ data, error: null });
 }
 
+const NOW_ISO = new Date().toISOString();
+
 const EMPTY_TX: PaginatedTransactions = {
   data: [],
   total: 0,
   page: 1,
   perPage: 10,
   totalPages: 0,
+};
+
+function fiatDepositFixture(
+  id: string,
+  whopCheckoutEmail: string | null,
+): Transaction {
+  return {
+    id,
+    type: "deposit",
+    amount: 100,
+    balanceBefore: 50,
+    balanceAfter: 150,
+    worthBefore: 50,
+    worthAfter: 150,
+    description: "Fiat deposit via Whop",
+    status: "completed",
+    gameSessionId: null,
+    packId: null,
+    packName: null,
+    cardsValue: null,
+    gameResult: null,
+    inventoryValue: 0,
+    soldCard: null,
+    cryptoAsset: null,
+    cryptoAmount: null,
+    exchangeRate: null,
+    blockchainTxHash: null,
+    sourceAddress: null,
+    destinationAddress: null,
+    depositAddressId: null,
+    failureReason: null,
+    metadata: null,
+    fireblocksTxId: null,
+    externalTxId: null,
+    whopCheckoutEmail,
+    createdAt: NOW_ISO,
+    updatedAt: NOW_ISO,
+    borrowPercentage: null,
+    borrowedAmountUsd: null,
+    sponsorshipPercentage: null,
+    battleId: null,
+    battleMode: null,
+    battlePending: null,
+    hasPassword: null,
+    battleWinnings: null,
+    battleOutcomePending: null,
+    upgraderResult: null,
+    upgraderWinnings: null,
+    upgraderTargetMultiplier: null,
+    upgraderTargetChance: null,
+    upgraderTargetChanceDerived: null,
+    upgraderHouseEdge: null,
+    syntheticKind: null,
+    doubleDownResult: null,
+    doubleDownAmount: null,
+    isInstantRakeback: null,
+  };
+}
+
+const FINANCIAL_TX: PaginatedTransactions = {
+  data: [
+    fiatDepositFixture(
+      "00000000-0000-4000-8000-000000000001",
+      "checkout@example.com",
+    ),
+    fiatDepositFixture("00000000-0000-4000-8000-000000000002", null),
+  ],
+  total: 2,
+  page: 1,
+  perPage: 10,
+  totalPages: 1,
 };
 
 const EMPTY_INVENTORY: PaginatedInventory = {
@@ -154,8 +228,6 @@ const REWARD_PACK_OPENS: UserRewardPackOpensResult = {
     },
   ],
 };
-
-const NOW_ISO = new Date().toISOString();
 
 const DATA: UserDetail = {
   user: {
@@ -312,7 +384,7 @@ export function UserDetailFixtureClient() {
       tagsSlot={null}
       pnlResultPromise={ok(PNL)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
-      financialTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
+      financialTxPromise={ok<PaginatedTransactions>(FINANCIAL_TX)}
       adjustmentsTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       rewardsPromise={ok<UserRewards>(REWARDS)}
       rewardPackOpensPromise={ok<UserRewardPackOpensResult>(REWARD_PACK_OPENS)}

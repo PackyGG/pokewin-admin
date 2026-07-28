@@ -1464,6 +1464,33 @@ function WatchButton({
 function RowMetadataChips({ tx }: { tx: Transaction }) {
   const chips: React.ReactNode[] = [];
 
+  // Fiat-only evidence, keyed server-side through the exact completed ledger
+  // id and Whop deposit-intent id. Never substitute the account email.
+  if (tx.type === "deposit" && tx.whopCheckoutEmail !== undefined) {
+    if (tx.whopCheckoutEmail) {
+      chips.push(
+        <AddressChip
+          key="whop-email"
+          label="Whop email"
+          value={tx.whopCheckoutEmail}
+        />,
+      );
+    } else {
+      chips.push(
+        <span
+          key="whop-email-unavailable"
+          className="inline-flex items-center gap-1 rounded border border-border bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
+          title="Whop did not provide a checkout email for this fiat deposit"
+        >
+          <span className="text-[9px] font-semibold uppercase tracking-wider opacity-70">
+            Whop email
+          </span>
+          Unavailable
+        </span>,
+      );
+    }
+  }
+
   // Crypto chain (e.g. ETH, BTC, SOL) — neutral identifier, not a money
   // value. Use a plain badge with no House-POV coloring.
   if (tx.cryptoAsset) {

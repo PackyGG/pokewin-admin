@@ -390,6 +390,21 @@ export function TransactionDetailModal({
       value: <span className="text-rose-400">{t.failureReason}</span>,
     });
   }
+  if (t.type === "deposit" && t.whopCheckoutEmail !== undefined) {
+    rows.push({
+      label: "Whop checkout email",
+      value: t.whopCheckoutEmail ? (
+        <span className="break-all">{t.whopCheckoutEmail}</span>
+      ) : (
+        <span
+          className="text-muted-foreground"
+          title="Whop did not provide an email for this checkout"
+        >
+          Unavailable
+        </span>
+      ),
+    });
+  }
   if (t.cryptoAsset) {
     rows.push({ label: "Crypto Asset", value: t.cryptoAsset });
   }

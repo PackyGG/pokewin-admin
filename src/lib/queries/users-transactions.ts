@@ -383,6 +383,65 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
   };
 }
 
+/**
+ * Resolve checkout emails only for fiat deposits on the current ledger page.
+ *
+ * The binding is strict in both directions:
+ *   ledger row -> fiat_deposit_intents.completed_ledger_id
+ *   intent id  -> payment.created metadata.deposit_intent_id
+ *
+ * No user-only, provider-id, or timestamp fallback is allowed, because those
+ * looser matches could attach another checkout's email to this row. A matched
+ * intent without a usable Whop email remains `null` for an honest unavailable
+ * state. An absent map entry is not a fiat deposit.
+ */
+async function fetchWhopCheckoutEmailsByLedgerId(
+  db: MainDrizzleDb,
+  userId: string,
+  ledgerIds: string[],
+): Promise<Map<string, string | null>> {
+  if (ledgerIds.length === 0) return new Map();
+
+  const result = await db.execute<{
+    ledger_id: string;
+    checkout_email: string | null;
+  }>(sql`
+    SELECT
+      i.completed_ledger_id::text AS ledger_id,
+      checkout.checkout_email
+    FROM fiat_deposit_intents i
+    JOIN unnest(${pgArrayParam(ledgerIds)}::uuid[]) requested(ledger_id)
+      ON requested.ledger_id = i.completed_ledger_id
+    LEFT JOIN LATERAL (
+      SELECT CASE
+        WHEN length(btrim(pwe.payload #>> '{data,user,email}')) <= 320
+          AND position('@' IN btrim(
+            pwe.payload #>> '{data,user,email}'
+          )) > 1
+        THEN btrim(pwe.payload #>> '{data,user,email}')
+        ELSE NULL
+      END AS checkout_email
+      FROM payment_webhook_events pwe
+      WHERE pwe.provider = 'whop'
+        AND pwe.event_type = 'payment.created'
+        AND NULLIF(
+          pwe.payload #>> '{data,metadata,deposit_intent_id}',
+          ''
+        ) = i.id::text
+      ORDER BY pwe.received_at DESC, pwe.id DESC
+      LIMIT 1
+    ) checkout ON TRUE
+    WHERE i.user_id = ${userId}
+  `);
+
+  return new Map(
+    result.rows.map((row) => [
+      row.ledger_id,
+      row.checkout_email?.trim() || null,
+    ]),
+  );
+}
+
 async function getUserFinancialTransactionsLight(
   db: MainDrizzleDb,
   filter: LedgerFilter,
@@ -413,6 +472,11 @@ async function getUserFinancialTransactionsLight(
     game_sessions_ledger_transactions_game_session_idTogame_sessions: null,
   }));
   const total = Number(totalResult.rows[0]?.total ?? 0);
+  const whopCheckoutEmails = await fetchWhopCheckoutEmailsByLedgerId(
+    db,
+    filter.userId,
+    transactions.filter((t) => t.type === "deposit").map((t) => t.id),
+  );
 
   // Instant-rakeback enrichment — flag which rakeback_claim rows on this page
   // were early-claimed (rakeback_claims.last_preclaim_at non-null), joined by
@@ -436,7 +500,15 @@ async function getUserFinancialTransactionsLight(
   }
 
   return {
-    data: transactions.map((t) => mapFinancialLedgerRow(t, instantRakebackIds)),
+    data: transactions.map((t) => {
+      const mapped = mapFinancialLedgerRow(t, instantRakebackIds);
+      return whopCheckoutEmails.has(t.id)
+        ? {
+            ...mapped,
+            whopCheckoutEmail: whopCheckoutEmails.get(t.id) ?? null,
+          }
+        : mapped;
+    }),
     total,
     page,
     perPage,

@@ -354,6 +354,12 @@ export type Transaction = {
   metadata: unknown;
   fireblocksTxId: string | null;
   externalTxId: string | null;
+  /**
+   * Email entered during the exact Whop checkout that completed this fiat
+   * deposit. `undefined` means this is not a matched fiat-deposit intent;
+   * `null` means it is a fiat deposit but Whop did not provide a usable email.
+   */
+  whopCheckoutEmail?: string | null;
   createdAt: string;
   updatedAt: string;
   /**
