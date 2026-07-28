@@ -515,19 +515,15 @@ export function fiatAlertWebhookUrl(
     Config,
     | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
     | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
-    | "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"
+    | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
   >,
   problemCode: FiatProblemCode,
 ): string | undefined {
   if (problemCode === "blacklisted_email_domain") {
-    return (
-      config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL ??
-      config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL ??
-      config.FIAT_ALERT_DISCORD_WEBHOOK_URL
-    );
+    return config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
   }
   if (isFiatRiskProblem(problemCode)) {
-    return config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL;
+    return config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
   }
   return config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
 }
@@ -675,7 +671,7 @@ export class FiatProblemAlerts {
   private async deliver(): Promise<void> {
     const operationsWebhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
     const riskWebhookUrl =
-      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL;
+      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
     const blacklistWebhookUrl = fiatAlertWebhookUrl(
       this.config,
       "blacklisted_email_domain",

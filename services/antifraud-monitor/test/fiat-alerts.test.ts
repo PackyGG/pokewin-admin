@@ -212,7 +212,7 @@ test("email blacklist alerts use their dedicated Discord destination", () => {
   const config = {
     FIAT_ALERT_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/fiat-id/fiat-token",
-    ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
+    ANTIFRAUD_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/risk-id/risk-token",
     FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
       "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
@@ -224,7 +224,11 @@ test("email blacklist alerts use their dedicated Discord destination", () => {
   );
   assert.equal(
     fiatAlertWebhookUrl(config, "high_risk"),
-    config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+    config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+  );
+  assert.equal(
+    fiatAlertWebhookUrl(config, "fiat_locked_account"),
+    config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
   );
   assert.equal(
     fiatAlertWebhookUrl(config, "failed"),
@@ -235,12 +239,12 @@ test("email blacklist alerts use their dedicated Discord destination", () => {
       {
         FIAT_ALERT_DISCORD_WEBHOOK_URL:
           config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-        ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
-          config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+        ANTIFRAUD_DISCORD_WEBHOOK_URL:
+          config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
       },
       "blacklisted_email_domain",
     ),
-    config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+    undefined,
   );
   assert.equal(
     fiatAlertWebhookUrl(
@@ -250,7 +254,7 @@ test("email blacklist alerts use their dedicated Discord destination", () => {
       },
       "blacklisted_email_domain",
     ),
-    config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+    undefined,
   );
 });
 
@@ -296,7 +300,8 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /next_attempt_at/);
   assert.match(source, /problem_code = ANY\(\$1::text\[\]\)/);
   assert.match(source, /problem_code <> ALL\(\$1::text\[\]\)/);
-  assert.match(source, /ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL/);
+  assert.match(source, /ANTIFRAUD_DISCORD_WEBHOOK_URL/);
+  assert.match(source, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
   assert.match(source, /LIMIT 1/);
   assert.match(source, /discordRetryAfterSeconds/);
   assert.match(migration, /PRIMARY KEY \(source_kind, source_id\)/);

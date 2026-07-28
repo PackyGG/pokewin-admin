@@ -172,6 +172,7 @@ export class MonitorEngine {
       this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
       this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
       this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+      this.config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
     ].filter(
       (secret): secret is string =>
         typeof secret === "string" && secret.length > 0,

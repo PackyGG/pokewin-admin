@@ -34,8 +34,9 @@ const schema = z.object({
     .default("https://fraud.packydash.com/monitor"),
   ANTIFRAUD_INGEST_URL: z.string().url(),
   ANTIFRAUD_INGEST_SECRET: z.string().min(32),
-  ANTIFRAUD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
-  ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
+  ANTIFRAUD_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
+  ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
+    discordWebhookUrl.optional(),
   FIAT_ALERT_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
   FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
   FIAT_ALERT_DASHBOARD_URL: z

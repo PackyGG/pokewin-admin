@@ -39,12 +39,14 @@ Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 
 `FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel for
 failed, review, dispute, refund, stalled checkout, stale pending, and failed
-provider-webhook alerts. Blocking and high-risk events use
-`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL`: automatic withdrawal holds,
-canonical high-risk deposits, deposits from fiat-locked accounts, and
-blacklisted signup or Whop checkout email domains. `FIAT_ALERT_DASHBOARD_URL`
-controls the alert button target and defaults to the Fiat Payments workspace.
-Ordinary customer-canceled checkouts are not alerted.
+provider-webhook alerts. Canonical high-risk deposits and deposits from
+fiat-locked accounts use the general `ANTIFRAUD_DISCORD_WEBHOOK_URL`.
+Blacklisted signup or Whop checkout email-domain containment uses
+`FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL`. Automatic withdrawal holds and
+other account-containment alerts use
+`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL`.
+`FIAT_ALERT_DASHBOARD_URL` controls the alert button target and defaults to the
+Fiat Payments workspace. Ordinary customer-canceled checkouts are not alerted.
 
 `ANTIFRAUD_INGEST_URL` and `ANTIFRAUD_INGEST_SECRET` configure the durable
 Admin-dashboard sink. Committed `risk_events` are delivered in signed batches;
@@ -53,11 +55,12 @@ Retries are idempotent because the risk-event id is the dashboard external id.
 Score-60 signup markers use this same stream to open Account Review cases.
 Neither value is returned by runtime status.
 
-`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL` is the dedicated destination
-for automatic lifetime-fiat withdrawal holds. Those alerts use the compiled
-standard support mentions, link directly to Account Review, and retry from the
-Antifraud database outbox until Discord accepts them. The URL is never returned
-by runtime status.
+`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL` is the dedicated containment
+destination for automatic lifetime-fiat withdrawal holds and future non-email
+account lock/ban alerts. Those alerts use the compiled standard support
+mentions, link directly to Account Review, and retry from the Antifraud
+database outbox until Discord accepts them. Webhook URLs are never returned by
+runtime status.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external

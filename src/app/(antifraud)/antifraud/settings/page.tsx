@@ -205,15 +205,23 @@ async function IntegrationSection() {
       name: "Discord alert webhook",
       envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
       status: reportedStatus(runtimeData?.discord.webhookConfigured),
-      note: "Authoritative webhook presence reported by the deployed monitor. Unset means every alert is dropped.",
+      note: "General signup, scoring, rule, and high-risk fiat alerts.",
     },
     {
-      name: "Fiat hold Discord webhook",
+      name: "Email-block Discord webhook",
+      envs: ["FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"],
+      status: reportedStatus(
+        runtimeData?.discord.fiatEmailBlacklistWebhookConfigured,
+      ),
+      note: "Dedicated destination for blacklisted signup and Whop checkout email-domain containment.",
+    },
+    {
+      name: "Account containment Discord webhook",
       envs: ["ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"],
       status: reportedStatus(
         runtimeData?.discord.withdrawalHoldWebhookConfigured,
       ),
-      note: "Dedicated destination for automatic lifetime-deposit withdrawal holds. Delivery retries until Discord accepts it.",
+      note: "Dedicated destination for non-email account lock/ban containment, including automatic lifetime-deposit withdrawal holds.",
     },
     {
       name: "Fiat problem Discord webhook",
@@ -221,7 +229,7 @@ async function IntegrationSection() {
       status: reportedStatus(
         runtimeData?.discord.fiatProblemWebhookConfigured,
       ),
-      note: "Dedicated destination for failed or abnormal fiat deposits and failed payment-webhook processing. Delivery retries until Discord accepts it.",
+      note: "Dedicated destination for failed, stale, disputed, refunded, or otherwise operational fiat problems.",
     },
   ];
 
