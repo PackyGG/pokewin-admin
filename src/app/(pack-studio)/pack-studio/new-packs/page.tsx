@@ -96,6 +96,7 @@ async function QueueBody() {
             difficulty: request.requestPayload.difficulty ?? 0,
             previewEdge: request.previewEdge,
             previewWinRate: request.previewWinRate,
+            previewMaxWin: request.previewMaxWin,
             createdPackId: request.createdPackId,
             createdAt: request.createdAt,
             reviewedAt: request.reviewedAt,

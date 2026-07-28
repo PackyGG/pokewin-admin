@@ -88,6 +88,7 @@ export type PackCreationRequest = {
   requestPayload: ParsedBuildPackInput;
   previewEdge: number;
   previewWinRate: number;
+  previewMaxWin: number | null;
   createdPackId: string | null;
   createdAt: string;
   reviewStartedAt: string | null;
@@ -106,6 +107,7 @@ type RawPackCreationRequest = {
   request_payload: unknown;
   preview_edge: string;
   preview_win_rate: string;
+  preview_max_win: string | null;
   created_pack_id: string | null;
   created_at: string;
   review_started_at: string | null;
@@ -140,6 +142,8 @@ function parseRequestRow(row: RawPackCreationRequest): PackCreationRequest {
     requestPayload: payload.data,
     previewEdge: Number(row.preview_edge),
     previewWinRate: Number(row.preview_win_rate),
+    previewMaxWin:
+      row.preview_max_win === null ? null : Number(row.preview_max_win),
     createdPackId: row.created_pack_id,
     createdAt: row.created_at,
     reviewStartedAt: row.review_started_at,
@@ -152,6 +156,7 @@ export async function enqueuePackCreationRequest(input: {
   payload: ParsedBuildPackInput;
   previewEdge: number;
   previewWinRate: number;
+  previewMaxWin: number;
 }): Promise<string> {
   try {
     const result = await adminDrizzle.execute<{ id: string }>(sql`
@@ -162,7 +167,8 @@ export async function enqueuePackCreationRequest(input: {
         requested_active,
         request_payload,
         preview_edge,
-        preview_win_rate
+        preview_win_rate,
+        preview_max_win
       )
       VALUES (
         ${input.requestedBy}::uuid,
@@ -171,7 +177,8 @@ export async function enqueuePackCreationRequest(input: {
         ${input.payload.activate === true},
         ${JSON.stringify(input.payload)}::jsonb,
         ${input.previewEdge},
-        ${input.previewWinRate}
+        ${input.previewWinRate},
+        ${input.previewMaxWin}
       )
       RETURNING id
     `);
@@ -203,6 +210,7 @@ export async function listPackCreationRequests(
       r.request_payload,
       r.preview_edge::text AS preview_edge,
       r.preview_win_rate::text AS preview_win_rate,
+      r.preview_max_win::text AS preview_max_win,
       r.created_pack_id,
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
@@ -250,6 +258,7 @@ export async function listPackBuildDrafts(input: {
       r.request_payload,
       r.preview_edge::text AS preview_edge,
       r.preview_win_rate::text AS preview_win_rate,
+      r.preview_max_win::text AS preview_max_win,
       r.created_pack_id,
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
@@ -285,6 +294,7 @@ export async function getPackBuildDraftForEdit(input: {
       r.request_payload,
       r.preview_edge::text AS preview_edge,
       r.preview_win_rate::text AS preview_win_rate,
+      r.preview_max_win::text AS preview_max_win,
       r.created_pack_id,
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
@@ -317,6 +327,7 @@ export async function updatePackBuildDraft(input: {
   payload: ParsedBuildPackInput;
   previewEdge: number;
   previewWinRate: number;
+  previewMaxWin: number;
 }): Promise<boolean> {
   try {
     const result = await adminDrizzle.execute<{ id: string }>(sql`
@@ -327,7 +338,8 @@ export async function updatePackBuildDraft(input: {
         requested_active = ${input.payload.activate === true},
         request_payload = ${JSON.stringify(input.payload)}::jsonb,
         preview_edge = ${input.previewEdge},
-        preview_win_rate = ${input.previewWinRate}
+        preview_win_rate = ${input.previewWinRate},
+        preview_max_win = ${input.previewMaxWin}
       WHERE id = ${input.requestId}::uuid
         AND status = 'pending'
         AND requested_active = false
@@ -474,6 +486,7 @@ export async function claimPackCreationRequest(
       claimed.request_payload,
       claimed.preview_edge::text AS preview_edge,
       claimed.preview_win_rate::text AS preview_win_rate,
+      claimed.preview_max_win::text AS preview_max_win,
       claimed.created_pack_id,
       claimed.created_at::text AS created_at,
       claimed.review_started_at::text AS review_started_at,

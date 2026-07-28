@@ -2751,7 +2751,10 @@ async function materializeApprovedPack(
 
 async function previewPackBuildRequest(
   input: ParsedBuildPackInput,
-): Promise<{ ok: true; edge: number; winRate: number } | { ok: false; error: string }> {
+): Promise<
+  | { ok: true; edge: number; winRate: number; maxWin: number }
+  | { ok: false; error: string }
+> {
   const db = await getPrimaryDrizzleDb();
   const existing = await db.execute<{ id: string }>(sql`
     SELECT id FROM packs WHERE slug = ${input.slug} LIMIT 1
@@ -2812,6 +2815,7 @@ async function previewPackBuildRequest(
     ok: true,
     edge: shaped.risk.edge,
     winRate: shaped.risk.winRate,
+    maxWin: shaped.risk.maxWin,
   };
 }
 
@@ -2875,6 +2879,7 @@ async function buildPackInner(
         payload: parsed.data,
         previewEdge: preview.edge,
         previewWinRate: preview.winRate,
+        previewMaxWin: preview.maxWin,
       });
   if (parsedDraftId?.success) {
     const updated = await updatePackBuildDraft({
@@ -2884,6 +2889,7 @@ async function buildPackInner(
       payload: parsed.data,
       previewEdge: preview.edge,
       previewWinRate: preview.winRate,
+      previewMaxWin: preview.maxWin,
     });
     if (!updated) {
       throw new Error(

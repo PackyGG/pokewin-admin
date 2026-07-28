@@ -42,6 +42,7 @@ export type PackRequestReviewItem = {
   difficulty: number;
   previewEdge: number;
   previewWinRate: number;
+  previewMaxWin: number | null;
   createdPackId: string | null;
   createdAt: string;
   reviewedAt: string | null;
@@ -213,6 +214,14 @@ export function PackRequestReviewList({
                     <span>
                       Win rate{" "}
                       <strong>{(item.previewWinRate * 100).toFixed(1)}%</strong>
+                    </span>
+                    <span>
+                      Max win{" "}
+                      <strong>
+                        {item.previewMaxWin === null
+                          ? "—"
+                          : formatCurrency(item.previewMaxWin)}
+                      </strong>
                     </span>
                   </div>
 

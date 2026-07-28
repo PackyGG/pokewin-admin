@@ -1580,6 +1580,7 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	review_started_at: timestamp({ withTimezone: true, mode: 'string' }),
 	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	preview_max_win: numeric({ precision: 20, scale:  2 }),
 }, (table) => [
 	uniqueIndex("pack_creation_requests_pending_slug_key").using("btree", sql`lower(slug)`).where(sql`(status = ANY (ARRAY['pending'::text, 'processing'::text]))`),
 	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
