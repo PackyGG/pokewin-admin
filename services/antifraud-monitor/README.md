@@ -37,9 +37,14 @@ It does not modify the Packy frontend or backend.
 
 Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 
-`FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel.
-`FIAT_ALERT_DASHBOARD_URL` controls its alert button target and defaults to the
-Fiat Payments workspace. Ordinary customer-canceled checkouts are not alerted.
+`FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel for
+failed, review, dispute, refund, stalled checkout, stale pending, and failed
+provider-webhook alerts. Blocking and high-risk events use
+`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL`: automatic withdrawal holds,
+canonical high-risk deposits, deposits from fiat-locked accounts, and
+blacklisted signup or Whop checkout email domains. `FIAT_ALERT_DASHBOARD_URL`
+controls the alert button target and defaults to the Fiat Payments workspace.
+Ordinary customer-canceled checkouts are not alerted.
 
 `ANTIFRAUD_INGEST_URL` and `ANTIFRAUD_INGEST_SECRET` configure the durable
 Admin-dashboard sink. Committed `risk_events` are delivered in signed batches;

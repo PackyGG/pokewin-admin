@@ -8,6 +8,7 @@ import {
   fetchFailedPaymentWebhooks,
   fetchHighRiskFiatProblems,
   fiatProblemTitle,
+  isFiatRiskProblem,
   type FiatProblem,
 } from "../src/fiat-alerts.js";
 
@@ -131,6 +132,20 @@ test("every monitored problem has explicit operator-facing copy", () => {
   );
 });
 
+test("only blocking and high-risk fiat problems use the risk webhook", () => {
+  assert.equal(isFiatRiskProblem("high_risk"), true);
+  assert.equal(isFiatRiskProblem("fiat_locked_account"), true);
+  assert.equal(isFiatRiskProblem("blacklisted_email_domain"), true);
+  assert.equal(isFiatRiskProblem("pending_stale"), false);
+  assert.equal(isFiatRiskProblem("checkout_creating_stale"), false);
+  assert.equal(isFiatRiskProblem("failed"), false);
+  assert.equal(isFiatRiskProblem("review"), false);
+  assert.equal(isFiatRiskProblem("disputed"), false);
+  assert.equal(isFiatRiskProblem("partially_refunded"), false);
+  assert.equal(isFiatRiskProblem("refunded"), false);
+  assert.equal(isFiatRiskProblem("webhook_failed"), false);
+});
+
 test("signup blacklist alerts identify the signup email", () => {
   const payload = buildFiatDiscordPayload(
     "https://fraud.packydash.com/antifraud/fiat-deposits",
@@ -201,6 +216,9 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /ON CONFLICT \(source_kind, source_id\) DO NOTHING/);
   assert.match(source, /discord_delivered_at IS NULL/);
   assert.match(source, /next_attempt_at/);
+  assert.match(source, /problem_code = ANY\(\$1::text\[\]\)/);
+  assert.match(source, /problem_code <> ALL\(\$1::text\[\]\)/);
+  assert.match(source, /ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL/);
   assert.match(source, /LIMIT 1/);
   assert.match(source, /discordRetryAfterSeconds/);
   assert.match(migration, /PRIMARY KEY \(source_kind, source_id\)/);

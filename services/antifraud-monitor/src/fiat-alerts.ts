@@ -26,6 +26,16 @@ export const FIAT_PROBLEM_CODES = [
 
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
 
+export const FIAT_RISK_PROBLEM_CODES = [
+  "high_risk",
+  "fiat_locked_account",
+  "blacklisted_email_domain",
+] as const satisfies readonly FiatProblemCode[];
+
+export function isFiatRiskProblem(code: FiatProblemCode): boolean {
+  return (FIAT_RISK_PROBLEM_CODES as readonly FiatProblemCode[]).includes(code);
+}
+
 export type FiatProblem = {
   source_kind: "deposit_intent" | "payment_webhook" | "signup";
   source_id: string;
@@ -627,8 +637,10 @@ export class FiatProblemAlerts {
   }
 
   private async deliver(): Promise<void> {
-    const webhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
-    if (!webhookUrl) return;
+    const operationsWebhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+    const riskWebhookUrl =
+      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL;
+    if (!operationsWebhookUrl && !riskWebhookUrl) return;
 
     const pending = await this.db.antifraud.query<PendingFiatAlert>(
       `
@@ -638,12 +650,26 @@ export class FiatProblemAlerts {
         FROM fiat_problem_alert_outbox
         WHERE discord_delivered_at IS NULL
           AND next_attempt_at <= now()
+          AND (
+            (problem_code = ANY($1::text[]) AND $2::boolean)
+            OR
+            (problem_code <> ALL($1::text[]) AND $3::boolean)
+          )
         ORDER BY occurred_at
         LIMIT 1
       `,
+      [
+        FIAT_RISK_PROBLEM_CODES,
+        Boolean(riskWebhookUrl),
+        Boolean(operationsWebhookUrl),
+      ],
     );
 
     for (const problem of pending.rows) {
+      const webhookUrl = isFiatRiskProblem(problem.problem_code)
+        ? riskWebhookUrl
+        : operationsWebhookUrl;
+      if (!webhookUrl) continue;
       const delivery = await this.send(webhookUrl, problem);
       const attempt = problem.attempt_count + 1;
       const retrySeconds =
