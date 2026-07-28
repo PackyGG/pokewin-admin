@@ -10,7 +10,7 @@ import type { WebSocket } from "ws";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
 import {
-  assertDistinctDiscordWebhookUrls,
+  assertHighRiskDiscordWebhookIsolation,
   type Config,
 } from "../src/config.js";
 import { sameDecisionIdentity } from "../src/decision-idempotency.js";
@@ -300,12 +300,12 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   }
 });
 
-test("Discord routes must be distinct without exposing their values", () => {
+test("high-risk Discord routes are isolated without exposing their values", () => {
   const duplicate =
     "https://discord.com/api/webhooks/same-id/same-token";
   assert.throws(
     () =>
-      assertDistinctDiscordWebhookUrls({
+      assertHighRiskDiscordWebhookIsolation({
         ANTIFRAUD_DISCORD_WEBHOOK_URL: duplicate,
         FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: `${duplicate}?wait=true`,
       }),
@@ -317,13 +317,23 @@ test("Discord routes must be distinct without exposing their values", () => {
     },
   );
   assert.doesNotThrow(() =>
-    assertDistinctDiscordWebhookUrls({
+    assertHighRiskDiscordWebhookIsolation({
       ANTIFRAUD_DISCORD_WEBHOOK_URL:
         "https://discord.com/api/webhooks/risk-id/risk-token",
       FIAT_ALERT_DISCORD_WEBHOOK_URL:
         "https://discord.com/api/webhooks/pending-id/pending-token",
       FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
         "https://discord.com/api/webhooks/high-id/high-token",
+    }),
+  );
+  assert.doesNotThrow(() =>
+    assertHighRiskDiscordWebhookIsolation({
+      ANTIFRAUD_DISCORD_WEBHOOK_URL:
+        "https://discord.com/api/webhooks/risk-id/risk-token",
+      FIAT_ALERT_DISCORD_WEBHOOK_URL:
+        "https://discord.com/api/webhooks/pending-id/pending-token",
+      FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
+        runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
     }),
   );
 });

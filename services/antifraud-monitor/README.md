@@ -43,8 +43,8 @@ provider-webhook alerts. Canonical high-risk deposits and deposits from
 fiat-locked accounts remain on the general `ANTIFRAUD_DISCORD_WEBHOOK_URL`.
 Canonical high-risk deposits additionally use the separate
 `FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL`, so one failed destination retries without
-duplicating or blocking the other. All configured Discord webhook URLs must be
-distinct.
+duplicating or blocking the other. The high-risk supplemental webhook must be
+distinct from both the general-risk and routine fiat-operations webhooks.
 Blacklisted signup or Whop checkout email-domain containment uses
 `FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL`. Automatic withdrawal holds and
 other account-containment alerts use
