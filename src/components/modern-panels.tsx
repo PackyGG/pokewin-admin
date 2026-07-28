@@ -284,6 +284,7 @@ export function KpiTile({
   icon: Icon,
   accent = "blue",
   action,
+  live = false,
   interactive = false,
 }: {
   label: string;
@@ -304,6 +305,13 @@ export function KpiTile({
    * /creators surfaces a per-creator breakdown popover here).
    */
   action?: React.ReactNode;
+  /**
+   * Renders a small pulsing emerald "live" dot next to the value — for
+   * tiles whose figure is a right-now count (e.g. "Live Now" on the
+   * Creator Hub dashboard). Reduced-motion safe: the ping halo is
+   * `motion-safe`-gated, the solid dot always shows.
+   */
+  live?: boolean;
   /**
    * Opt-in press feedback for tiles that are themselves clickable
    * (wrapped in a <Link> / <button> or rendered inside a clickable
@@ -357,11 +365,17 @@ export function KpiTile({
       </div>
       <p
         className={cn(
-          "mt-1.5 truncate text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
+          "mt-1.5 flex items-center gap-2 text-xl font-bold leading-tight tracking-tight tabular-nums sm:text-2xl",
           colors.text,
         )}
       >
-        {value}
+        <span className="truncate">{value}</span>
+        {live && (
+          <span className="relative flex size-2 shrink-0" aria-hidden>
+            <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
+            <span className="relative inline-flex size-2 rounded-full bg-emerald-500" />
+          </span>
+        )}
       </p>
       {sub && (
         // Bumped 11px → 12px (text-xs) so the sub line is readable
