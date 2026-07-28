@@ -16,9 +16,14 @@ test("Risky Locations is a manager-only System page with bounded duration contro
   const actions = read(
     "src/app/(antifraud)/antifraud/risky-locations/actions.ts",
   );
+  const hosts = read("src/lib/app-hosts.ts");
 
   assert.match(sidebar, /label: "Risky Locations"/);
   assert.match(sidebar, /href: "\/antifraud\/risky-locations"/);
+  assert.match(
+    hosts,
+    /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"risky-locations"/,
+  );
   assert.match(page, /requireAntifraudManagerPage/);
   assert.match(page, /<Suspense/);
   assert.match(actions, /requireAntifraudManager/);
