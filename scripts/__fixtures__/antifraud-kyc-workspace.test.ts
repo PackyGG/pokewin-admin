@@ -78,6 +78,10 @@ test("the KYC landing view defaults to all records", () => {
   assert.match(page, /all:\s*"KYC record history"/);
   assert.match(page, /No KYC checks are currently in progress/);
   assert.match(page, /completed historical cycles/);
+  assert.match(
+    page,
+    /Country:[\s\S]*?account\.countryCode\?\.toUpperCase\(\)\s*\?\?\s*"Unknown"/,
+  );
 });
 
 test("untouched default KYC rows stay out of the review queue and totals", () => {
