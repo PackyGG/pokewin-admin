@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 Keno navigation order:** Keno now appears in Overview directly below Fiat instead of under Content. TypeScript and task-scoped ESLint pass.
+
 - **2026-07-28 Keno configurable max bet:** Content → Keno → Configuration now reads and updates the live `keno_max_bet_usd` value through `GET/PUT /v1/admin/keno-config`, validates the backend's $0.25–$1,000 range, audit-logs changes, caches production reads, and hides the raw key from the generic Security editor. Production currently returns $20. Focused tests, all 268 guardrails, TypeScript, zero-warning ESLint, and the production build pass.
 
 - **2026-07-28 Account Review opener visibility:** `/antifraud/reviews` now identifies the staff member who opened each case instead of showing assignment state. Automatically ingested cases are labeled `Antifraud monitor`, and unresolved deleted staff identities fall back to `Unknown staff`. Focused ESLint and TypeScript pass.
