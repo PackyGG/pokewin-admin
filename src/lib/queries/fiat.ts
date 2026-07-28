@@ -5,6 +5,7 @@ import { sql } from "drizzle-orm";
 
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 
 export const FIAT_CACHE_TAG = "fiat-operations";
 
@@ -256,30 +257,35 @@ type RawConfigRow = {
 };
 
 async function computeFiatConfig(env: DbEnv): Promise<FiatConfigRow[]> {
-  const result = await readDrizzleForEnv(env).execute<RawConfigRow>(sql`
-    SELECT
-      key,
-      value,
-      description,
-      created_at::text,
-      updated_at::text
-    FROM site_config
-    WHERE key ILIKE ANY (ARRAY[
-            '%fiat%',
-            '%card%deposit%',
-            '%deposit%card%',
-            '%deposit%hold%',
-            '%hold%deposit%'
-          ])
-       OR description ILIKE ANY (ARRAY[
-            '%fiat%',
-            '%Whop%',
-            '%card%deposit%',
-            '%deposit%card%',
-            '%withdrawal-only account hold%'
-          ])
-    ORDER BY key
-  `);
+  const db = readDrizzleForEnv(env);
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<RawConfigRow>(sql`
+        SELECT
+          key,
+          value,
+          description,
+          created_at::text,
+          updated_at::text
+        FROM site_config
+        WHERE key ILIKE ANY (ARRAY[
+                '%fiat%',
+                '%card%deposit%',
+                '%deposit%card%',
+                '%deposit%hold%',
+                '%hold%deposit%'
+              ])
+           OR description ILIKE ANY (ARRAY[
+                '%fiat%',
+                '%Whop%',
+                '%card%deposit%',
+                '%deposit%card%',
+                '%withdrawal-only account hold%'
+              ])
+        ORDER BY key
+      `),
+    { context: "geo-blocking.fiat-config" },
+  );
 
   return result.rows.map((row) => ({
     key: row.key,

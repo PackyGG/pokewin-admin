@@ -15,6 +15,8 @@ import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today"
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDailyPnl } from "@/lib/queries/pnl";
+import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
+import { getFiatConfig } from "@/lib/queries/fiat";
 
 /**
  * PostgreSQL/cache keep-warm cron. A bare `SELECT 1` leaves the
@@ -81,6 +83,8 @@ export async function GET(request: Request): Promise<Response> {
   const warmed: Record<string, string> = {};
   try {
     const warmers: Array<[string, () => Promise<unknown>]> = [
+      ["geoBlockingRestrictions", () => getCountryRestrictions()],
+      ["fiatConfig", () => getFiatConfig()],
       ["costBreakdown", () => getCostBreakdownLifetimeCached()],
       ["hubWager", () => getInsightsHubWager()],
       ["dashboardStats30d", () => getDashboardStats("30d")],

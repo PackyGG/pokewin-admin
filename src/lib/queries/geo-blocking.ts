@@ -2,6 +2,7 @@ import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 
 export type CountryRestrictionRow = {
   countryCode: string;
@@ -36,24 +37,28 @@ async function computeCountryRestrictions(
   env: DbEnv,
 ): Promise<CountryRestrictionRow[]> {
   const db = readDrizzleForEnv(env);
-  const result = await db.execute<{
-    country_code: string;
-    physical_withdrawal: boolean;
-    digital_withdrawal: boolean;
-    gift_card_deposit: boolean;
-    promo_code_deposit: boolean;
-    blocked: boolean;
-    locked_deposits_crypto: string[];
-    locked_deposits_fiat: string[];
-    locked_withdrawals_crypto: string[];
-  }>(sql`
-    SELECT country_code, physical_withdrawal, digital_withdrawal,
-           gift_card_deposit, promo_code_deposit, blocked,
-           locked_deposits_crypto, locked_deposits_fiat,
-           locked_withdrawals_crypto
-    FROM country_restrictions
-    ORDER BY country_code ASC
-  `);
+  const result = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<{
+        country_code: string;
+        physical_withdrawal: boolean;
+        digital_withdrawal: boolean;
+        gift_card_deposit: boolean;
+        promo_code_deposit: boolean;
+        blocked: boolean;
+        locked_deposits_crypto: string[];
+        locked_deposits_fiat: string[];
+        locked_withdrawals_crypto: string[];
+      }>(sql`
+        SELECT country_code, physical_withdrawal, digital_withdrawal,
+               gift_card_deposit, promo_code_deposit, blocked,
+               locked_deposits_crypto, locked_deposits_fiat,
+               locked_withdrawals_crypto
+        FROM country_restrictions
+        ORDER BY country_code ASC
+      `),
+    { context: "geo-blocking.restrictions" },
+  );
   const rows = result.rows;
 
   return rows.map((c) => ({
