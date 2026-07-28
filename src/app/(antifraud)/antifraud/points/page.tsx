@@ -4,12 +4,14 @@ import {
   Clock3,
   Gauge,
   Radar,
+  RadioTower,
   ShieldAlert,
   Workflow,
 } from "lucide-react";
 
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import {
+  getAntifraudEventCatalog,
   getAntifraudScoringConfig,
   type AntifraudScoreDefinition,
   type AntifraudScoringConfig,
@@ -21,18 +23,33 @@ import {
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
+import { TabChips } from "@/components/ux";
 import { cn } from "@/lib/utils";
+import { FlowBuilder } from "../flows/flow-builder";
 import { ScoreWeightEditor } from "./score-weight-editor";
 import { AnalysisRuleEditor } from "./analysis-rule-editor";
 
 export const metadata = { title: "Risk Scoring · Antifraud" };
 
-export default async function AntifraudPointsPage() {
-  await requireAntifraudManagerPage();
+type RiskScoringTab = "scoring" | "flows";
 
-  // Shell-first: the hero + back affordance paint immediately, the monitor API
-  // read streams in behind the Suspense boundary. Container geometry matches
-  // the sibling antifraud pages (overview / reviews / settings): `space-y-6`.
+const RISK_SCORING_TABS = [
+  { value: "scoring", label: "Risk scoring" },
+  { value: "flows", label: "Point flows" },
+] as const;
+
+export default async function AntifraudPointsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  await requireAntifraudManagerPage();
+  const requestedTab = (await searchParams).tab;
+  const tab: RiskScoringTab =
+    requestedTab === "flows" ? "flows" : "scoring";
+
+  // Shell-first and active-tab-only: the selected tab is the only branch
+  // mounted, so its monitor API reads do not run until that tab is selected.
   return (
     <div className="space-y-6">
       <PageHero>
@@ -40,12 +57,22 @@ export default async function AntifraudPointsPage() {
           icon={Gauge}
           accent="cyan"
           title="Risk scoring"
-          subtitle="The live point values and thresholds used by the antifraud monitor"
+          subtitle="Manage live point values, thresholds, and event sequences"
         />
       </PageHero>
 
-      <Suspense fallback={<PointsSkeleton />}>
-        <ScoringDashboard />
+      <TabChips
+        items={RISK_SCORING_TABS}
+        current={tab}
+        paramKey="tab"
+        defaultValue="scoring"
+      />
+
+      <Suspense
+        key={tab}
+        fallback={tab === "flows" ? <FlowBuilderSkeleton /> : <PointsSkeleton />}
+      >
+        {tab === "flows" ? <FlowBuilderData /> : <ScoringDashboard />}
       </Suspense>
     </div>
   );
@@ -136,6 +163,28 @@ async function ScoringDashboard() {
         Existing case history keeps the values recorded when it occurred.
       </p>
     </div>
+  );
+}
+
+async function FlowBuilderData() {
+  const [scoring, events] = await Promise.all([
+    getAntifraudScoringConfig(),
+    getAntifraudEventCatalog(),
+  ]);
+  if (!scoring.configured || !events.configured) {
+    return <UnavailableWithIcon text="The monitor service is not configured." />;
+  }
+  if (scoring.error || events.error || !scoring.data) {
+    return (
+      <UnavailableWithIcon text="The flow builder could not load the live monitor configuration." />
+    );
+  }
+  return (
+    <FlowBuilder
+      initialRules={scoring.data.behaviorRules}
+      events={events.data}
+      monitorWindowSeconds={scoring.data.monitorDurationSeconds}
+    />
   );
 }
 
@@ -348,6 +397,15 @@ function Unavailable({ text }: { text: string }) {
   );
 }
 
+function UnavailableWithIcon({ text }: { text: string }) {
+  return (
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
+      <RadioTower className="mx-auto size-6 text-muted-foreground" aria-hidden />
+      <p className="mt-2 text-sm text-muted-foreground">{text}</p>
+    </div>
+  );
+}
+
 function PointsSkeleton() {
   return (
     <div className="space-y-5">
@@ -355,6 +413,19 @@ function PointsSkeleton() {
       <Skeleton className="h-20 rounded-lg" />
       <Skeleton className="h-52 rounded-lg" />
       <Skeleton className="h-52 rounded-lg" />
+    </div>
+  );
+}
+
+function FlowBuilderSkeleton() {
+  return (
+    <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
+      <Skeleton className="h-[520px] rounded-xl" />
+      <div className="space-y-4">
+        <Skeleton className="h-24 rounded-xl" />
+        <Skeleton className="h-72 rounded-xl" />
+        <Skeleton className="h-40 rounded-xl" />
+      </div>
     </div>
   );
 }
