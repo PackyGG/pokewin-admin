@@ -1,6 +1,6 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import {
   antifraud_review_notes,
@@ -8,6 +8,7 @@ import {
   antifraud_signals,
 } from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
+import { getProdPrimaryDrizzleDb } from "@/lib/db";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
@@ -44,8 +45,10 @@ import {
  *   • Unset secret = the endpoint is CLOSED (503), not open. A missing
  *     credential must never mean "accept anything".
  *
- * Writes ADMIN DB only. Nothing here touches the MAIN (prod game) DB — the
- * reviewed player is carried as a loose id string.
+ * Normally writes only the ADMIN DB. The dedicated
+ * `fiat_blacklisted_email_domain` signal is also an application-authorized
+ * containment command: after signature and payload validation it locks crypto
+ * and item withdrawals in MAIN before the signal is acknowledged.
  */
 
 export const runtime = "nodejs";
@@ -145,12 +148,18 @@ export async function POST(request: Request): Promise<Response> {
 
   for (const signal of signals) {
     try {
+      if (signal.kind === "fiat_blacklisted_email_domain") {
+        await lockBlacklistedCheckoutAccount(signal);
+      }
       const outcome = await ingestOne(signal);
       if (outcome === "duplicate") duplicates += 1;
       else {
         accepted += 1;
         if (outcome === "review_opened") reviewsOpened += 1;
-        if (shouldEscalateSignal(signal)) {
+        if (
+          shouldEscalateSignal(signal) &&
+          signal.kind !== "fiat_blacklisted_email_domain"
+        ) {
           notify.push(signal);
         }
       }
@@ -185,6 +194,74 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   return json({ ok: true, accepted, duplicates, reviewsOpened }, 200);
+}
+
+function blacklistDomainFromSignal(
+  signal: AntifraudSignalEvent,
+): string | null {
+  const value = signal.payload?.emailDomain;
+  if (typeof value !== "string") return null;
+  const domain = value.trim().toLowerCase();
+  return /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(domain) &&
+    domain.includes(".")
+    ? domain
+    : null;
+}
+
+async function lockBlacklistedCheckoutAccount(
+  signal: AntifraudSignalEvent,
+): Promise<void> {
+  const userId = signal.userId;
+  const domain = blacklistDomainFromSignal(signal);
+  if (!userId || !domain || signal.riskScore !== 100) {
+    throw new Error("Invalid blacklisted checkout containment signal");
+  }
+
+  const db = getProdPrimaryDrizzleDb();
+  const reason =
+    `Automatic fraud lock: Whop checkout used blacklisted email domain ${domain}`
+      .slice(0, 500);
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id,
+      user_id,
+      locked_withdrawals_crypto,
+      locked_withdrawals_items,
+      locked_withdrawals_at,
+      locked_withdrawals_by,
+      locked_withdrawals_reason,
+      created_at,
+      updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()},
+      u.id,
+      ARRAY['all']::text[],
+      TRUE,
+      NOW(),
+      NULL,
+      ${reason},
+      NOW(),
+      NOW()
+    FROM "user" u
+    WHERE u.id = ${userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  if (locked.rows.length === 0) {
+    throw new Error("Blacklisted checkout account no longer exists");
+  }
 }
 
 type IngestOutcome = "stored" | "review_opened" | "duplicate";

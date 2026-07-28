@@ -21,6 +21,7 @@ export const FIAT_PROBLEM_CODES = [
   "checkout_creating_stale",
   "pending_stale",
   "webhook_failed",
+  "blacklisted_email_domain",
 ] as const;
 
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
@@ -117,6 +118,8 @@ export function fiatProblemTitle(code: FiatProblemCode): string {
       return "Fiat deposit pending too long";
     case "webhook_failed":
       return "Fiat webhook processing failed";
+    case "blacklisted_email_domain":
+      return "Blacklisted checkout email blocked";
   }
 }
 
@@ -180,6 +183,22 @@ export function buildFiatDiscordPayload(
       inline: true,
     });
   }
+  const checkoutEmail = detail(details, "checkout_email");
+  if (checkoutEmail) {
+    fields.push({
+      name: "Whop checkout email",
+      value: clean(checkoutEmail),
+      inline: false,
+    });
+  }
+  const emailDomain = detail(details, "email_domain");
+  if (emailDomain) {
+    fields.push({
+      name: "Blacklisted domain",
+      value: clean(emailDomain),
+      inline: true,
+    });
+  }
   const reason =
     detail(details, "failure_reason") ??
     detail(details, "last_error") ??
@@ -195,7 +214,9 @@ export function buildFiatDiscordPayload(
 
   const url = new URL(dashboardUrl).toString();
   const description =
-    problem.problem_code === "high_risk"
+    problem.problem_code === "blacklisted_email_domain"
+      ? "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
+      : problem.problem_code === "high_risk"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
       : problem.problem_code === "fiat_locked_account"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} was created for an account with fiat deposits locked.`

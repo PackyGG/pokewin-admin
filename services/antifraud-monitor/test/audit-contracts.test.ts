@@ -332,6 +332,33 @@ test("operations config accepts read/admin tokens and rejects missing tokens", (
     ),
     true,
   );
+  assert.equal(
+    serviceRequestAuthorized(
+      "POST",
+      "/v1/fiat-email-domains",
+      runtimeConfig.API_TOKEN,
+      runtimeConfig,
+    ),
+    false,
+  );
+  assert.equal(
+    serviceRequestAuthorized(
+      "POST",
+      "/v1/fiat-email-domains",
+      runtimeConfig.API_ADMIN_TOKEN,
+      runtimeConfig,
+    ),
+    true,
+  );
+  assert.equal(
+    serviceRequestAuthorized(
+      "PUT",
+      "/v1/fiat-email-domains/00000000-0000-4000-8000-000000000000",
+      runtimeConfig.API_TOKEN,
+      runtimeConfig,
+    ),
+    false,
+  );
 });
 
 test("editable score migration seeds every runtime weight", async () => {

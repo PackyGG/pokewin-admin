@@ -16,6 +16,7 @@ import {
   FIAT_WITHDRAWAL_HOLD_STREAM,
   type FiatWithdrawalHold,
 } from "./fiat-withdrawal-holds.js";
+import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
@@ -98,6 +99,7 @@ export class MonitorEngine {
   private rulesCache: { at: number; rules: SequenceRule[] } | null = null;
   private readonly enrichment: EnrichmentService;
   private readonly discord: DiscordAlerts;
+  private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
   private readonly health = new PollerHealth();
 
@@ -111,11 +113,13 @@ export class MonitorEngine {
   ) {
     this.enrichment = new EnrichmentService(config);
     this.discord = new DiscordAlerts(config, log);
+    this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
   }
 
   async start(): Promise<void> {
     await this.ensureCursor();
+    await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
     await this.tick();
     this.timer = setInterval(
@@ -274,6 +278,9 @@ export class MonitorEngine {
       );
       await this.runPhase("signup-alerts", () =>
         this.deliverPendingSignupAlerts(),
+      );
+      await this.runPhase("fiat-email-domains", () =>
+        this.fiatEmailDomains.process(),
       );
       await this.runPhase("fiat-withdrawal-hold-alerts", () =>
         this.deliverPendingFiatWithdrawalHoldAlerts(),

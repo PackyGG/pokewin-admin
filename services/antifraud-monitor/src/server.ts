@@ -31,6 +31,7 @@ import {
   unavailableMonitorEvents,
 } from "./event-catalog.js";
 import { registerNetworkRoutes } from "./network-routes.js";
+import { registerFiatEmailDomainRoutes } from "./fiat-email-domain-routes.js";
 import { NetworkRiskService } from "./network-risk.js";
 import { pollerStalledFor } from "./poller-health.js";
 import { createPromiseCache } from "./promise-cache.js";
@@ -1119,6 +1120,7 @@ app.put("/v1/scoring/:key", {
 });
 
 await registerNetworkRoutes(app, db, networkRisk, config);
+await registerFiatEmailDomainRoutes(app, db);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
 

@@ -12,6 +12,7 @@ import {
   Gauge,
   GitFork,
   LayoutDashboard,
+  MailWarning,
   Megaphone,
   RadioTower,
   Settings,
@@ -87,6 +88,11 @@ const KYC_NAV: NavItem[] = [
  * Owner/admin-only antifraud settings.
  */
 const MANAGE_NAV: NavItem[] = [
+  {
+    label: "Email Blacklist",
+    href: "/antifraud/email-blacklist",
+    icon: MailWarning,
+  },
   { label: "Risk Scoring", href: "/antifraud/points", icon: Gauge },
   { label: "Point Flows", href: "/antifraud/flows", icon: Blocks },
   { label: "Events & Triggers", href: "/antifraud/events", icon: Activity },
@@ -312,7 +318,7 @@ export function AntifraudSidebar({
 
         {canManage && (
           <SidebarGroup className="px-2 py-1">
-            <SidebarGroupLabel>Manage</SidebarGroupLabel>
+            <SidebarGroupLabel>System</SidebarGroupLabel>
             <SidebarGroupContent>
               <NavMenu
                 items={MANAGE_NAV}

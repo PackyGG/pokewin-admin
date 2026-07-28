@@ -124,6 +124,10 @@ test("every monitored problem has explicit operator-facing copy", () => {
     fiatProblemTitle("webhook_failed"),
     "Fiat webhook processing failed",
   );
+  assert.equal(
+    fiatProblemTitle("blacklisted_email_domain"),
+    "Blacklisted checkout email blocked",
+  );
 });
 
 test("fiat alert ingestion is mirror-only, durable, and retryable", async () => {

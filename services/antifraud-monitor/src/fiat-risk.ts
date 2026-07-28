@@ -118,6 +118,13 @@ export type FiatTimelineEvent = {
   isCurrent: boolean;
 };
 
+export type BlacklistedCheckoutEmail = {
+  deposit_intent_id: string;
+  checkout_email: string;
+  domain: string;
+  lock_delivered_at: Date | null;
+};
+
 const GAME_WAGER_TYPES = [
   "pack_opening",
   "battle_bet",
@@ -701,6 +708,75 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
   };
 }
 
+export function applyBlacklistedCheckoutEmail(
+  scored: ReturnType<typeof scoreFiatDeposit>,
+  match: BlacklistedCheckoutEmail,
+): ReturnType<typeof scoreFiatDeposit> {
+  const signal: FiatSignal = {
+    key: "blacklisted_checkout_email_domain",
+    label: "Blacklisted checkout email",
+    detail:
+      `Whop checkout used ${match.checkout_email}; ${match.domain} is on the active email-domain blacklist.`,
+    points: 100,
+    tone: "bad",
+    category: "provider",
+  };
+  return {
+    ...scored,
+    riskScore: 100,
+    verdict: "bad",
+    recommendation:
+      "Keep crypto and item withdrawals locked and review the checkout identity.",
+    summary:
+      "Critical: the Whop checkout email matched an active blocked domain.",
+    signals: [
+      signal,
+      ...scored.signals.filter((entry) => entry.key !== signal.key),
+    ],
+    scoreBreakdown: {
+      ...scored.scoreBreakdown,
+      provider: 100,
+    },
+    flowChecks: scored.flowChecks.map((check) =>
+      check.key === "provider"
+        ? {
+            ...check,
+            status: "block" as const,
+            score: 100,
+            evidence: [
+              `Blocked checkout domain: ${match.domain}`,
+              match.lock_delivered_at
+                ? "Crypto and item withdrawal lock confirmed"
+                : "Automatic withdrawal lock is pending confirmation",
+              ...check.evidence,
+            ],
+          }
+        : check,
+    ),
+  };
+}
+
+async function loadBlacklistedCheckoutEmails(
+  antifraud: Pool,
+  intentIds: string[],
+): Promise<Map<string, BlacklistedCheckoutEmail>> {
+  if (intentIds.length === 0) return new Map();
+  const result = await antifraud.query<BlacklistedCheckoutEmail>(
+    `
+      SELECT DISTINCT ON (deposit_intent_id)
+        deposit_intent_id,
+        checkout_email,
+        domain,
+        lock_delivered_at
+      FROM fiat_email_domain_matches
+      WHERE deposit_intent_id = ANY($1::text[])
+      ORDER BY deposit_intent_id, occurred_at DESC
+    `,
+    [intentIds],
+  );
+  return new Map(result.rows.map((row) => [row.deposit_intent_id, row]));
+}
+
 type SourceFiatIntent = {
   id: string;
   user_id: string;
@@ -1215,6 +1291,10 @@ export class FiatRiskService {
       intents.map((intent) => intent.user_id),
     );
     const providers = await loadProviderEvidence(this.db.source, intents);
+    const blacklistedCheckoutEmails = await loadBlacklistedCheckoutEmails(
+      this.db.antifraud,
+      intents.map((intent) => intent.id),
+    );
 
     const assessments = intents.map((intent) => {
       const amountUsd = intent.credited_amount_cents / 100;
@@ -1255,7 +1335,7 @@ export class FiatRiskService {
         priorDisputedFiat: context?.prior_disputed_fiat ?? 0,
         priorRefundedFiat: context?.prior_refunded_fiat ?? 0,
       };
-      const scored = scoreFiatDeposit({
+      const baseScore = scoreFiatDeposit({
         status: intent.status,
         amountUsd,
         provider,
@@ -1263,6 +1343,10 @@ export class FiatRiskService {
         behavior,
         account,
       });
+      const blacklistedCheckoutEmail = blacklistedCheckoutEmails.get(intent.id);
+      const scored = blacklistedCheckoutEmail
+        ? applyBlacklistedCheckoutEmail(baseScore, blacklistedCheckoutEmail)
+        : baseScore;
       return {
         intent,
         occurredAt,
