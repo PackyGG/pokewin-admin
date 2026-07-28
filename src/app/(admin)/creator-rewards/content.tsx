@@ -68,14 +68,46 @@ import {
  * money the user LOST to us, so it reads EMERALD. Pending review is neutral.
  */
 
-type SubTab = "programs" | "requests";
+export type CreatorVipTab = "programs" | "requests";
+
+type SubTab = CreatorVipTab;
 
 export function CreatorVipContent({
   programs,
   claims,
+  initialTab,
+  creatorHrefBase = "/users",
+  userHrefBase = "/users",
+  claimsCap,
 }: {
   programs: CreatorRewardProgramWithStats[];
   claims: CreatorRewardClaimRow[];
+  /**
+   * Deep-link override for the initial tab (e.g. driven from `?tab=` by the
+   * Creator Hub surface). When absent, the original behavior applies: land on
+   * Requests if claims are waiting, otherwise Programs.
+   */
+  initialTab?: CreatorVipTab;
+  /**
+   * Base path for links to the CREATOR who owns a program (`{base}/{userId}`).
+   * Defaults to the admin `/users` profile; the Creator Hub passes
+   * `/creator-hub/creators` so its surface stays self-contained. A string, not
+   * a function — both consumers render this from Server Components, and
+   * function props don't cross the RSC boundary.
+   */
+  creatorHrefBase?: string;
+  /**
+   * Base path for links to the PLAYER a claim belongs to (`{base}/{userId}`).
+   * Split from `creatorHrefBase` because claimants are ordinary players, which
+   * the Hub has no page for — it keeps the `/users` default there.
+   */
+  userHrefBase?: string;
+  /**
+   * The fetch limit the caller used for `claims`. When exactly this many rows
+   * came back the list is almost certainly truncated, so the Requests panel
+   * says so instead of silently presenting a capped list as complete.
+   */
+  claimsCap?: number;
 }) {
   const pending = useMemo(
     () => claims.filter((c) => c.status === "pending"),
@@ -84,7 +116,7 @@ export function CreatorVipContent({
   // Land on whichever side needs attention — an operator opening this tab with
   // claims waiting almost certainly came to review them, not to read config.
   const [subTab, setSubTab] = useState<SubTab>(
-    pending.length > 0 ? "requests" : "programs",
+    initialTab ?? (pending.length > 0 ? "requests" : "programs"),
   );
 
   return (
@@ -130,9 +162,13 @@ export function CreatorVipContent({
       </div>
 
       {subTab === "programs" ? (
-        <ProgramsPanel programs={programs} />
+        <ProgramsPanel programs={programs} creatorHrefBase={creatorHrefBase} />
       ) : (
-        <RequestsPanel claims={claims} />
+        <RequestsPanel
+          claims={claims}
+          userHrefBase={userHrefBase}
+          claimsCap={claimsCap}
+        />
       )}
     </div>
   );
@@ -196,8 +232,10 @@ function describeTerms(program: CreatorRewardProgramWithStats) {
 
 function ProgramsPanel({
   programs,
+  creatorHrefBase,
 }: {
   programs: CreatorRewardProgramWithStats[];
+  creatorHrefBase: string;
 }) {
   const [createOpen, setCreateOpen] = useState(false);
 
@@ -229,7 +267,11 @@ function ProgramsPanel({
       ) : (
         <div className="space-y-2">
           {programs.map((p) => (
-            <ProgramRow key={p.id} program={p} />
+            <ProgramRow
+              key={p.id}
+              program={p}
+              creatorHrefBase={creatorHrefBase}
+            />
           ))}
         </div>
       )}
@@ -239,7 +281,13 @@ function ProgramsPanel({
   );
 }
 
-function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
+function ProgramRow({
+  program,
+  creatorHrefBase,
+}: {
+  program: CreatorRewardProgramWithStats;
+  creatorHrefBase: string;
+}) {
   const [isPending, startTransition] = useTransition();
   const [raiseOpen, setRaiseOpen] = useState(false);
 
@@ -300,7 +348,7 @@ function ProgramRow({ program }: { program: CreatorRewardProgramWithStats }) {
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <Link
-                href={`/users/${program.creatorUserId}`}
+                href={`${creatorHrefBase}/${program.creatorUserId}`}
                 className="truncate hover:text-foreground hover:underline"
                 title={`Open ${program.creatorUsername ?? program.creatorUserId}`}
               >
@@ -1053,7 +1101,15 @@ function CreateProgramDialog({
 
 /* ─────────────────────────── Requests ─────────────────────────── */
 
-function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
+function RequestsPanel({
+  claims,
+  userHrefBase,
+  claimsCap,
+}: {
+  claims: CreatorRewardClaimRow[];
+  userHrefBase: string;
+  claimsCap?: number;
+}) {
   const pending = claims.filter((c) => c.status === "pending");
   const reviewed = claims.filter((c) => c.status !== "pending");
 
@@ -1070,7 +1126,7 @@ function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
         ) : (
           <div className="space-y-2">
             {pending.map((c) => (
-              <ClaimRow key={c.id} claim={c} />
+              <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
             ))}
           </div>
         )}
@@ -1081,10 +1137,20 @@ function RequestsPanel({ claims }: { claims: CreatorRewardClaimRow[] }) {
           <SectionHeading icon={ShieldQuestion} title="Reviewed" />
           <div className="space-y-2">
             {reviewed.map((c) => (
-              <ClaimRow key={c.id} claim={c} />
+              <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
             ))}
           </div>
         </div>
+      )}
+
+      {/* Capped-list honesty: exactly hitting the fetch limit means older
+          claims exist but were cut off — say so rather than letting the list
+          read as the complete history. */}
+      {claimsCap != null && claims.length === claimsCap && (
+        <p className="text-xs text-muted-foreground">
+          Showing the {claimsCap} most recent claims — older ones aren&apos;t
+          listed here.
+        </p>
       )}
     </div>
   );
@@ -1144,7 +1210,13 @@ function Flag({
  * reason to look twice, and that has to be visible where the button is rather
  * than one page away.
  */
-function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
+function ClaimRow({
+  claim,
+  userHrefBase,
+}: {
+  claim: CreatorRewardClaimRow;
+  userHrefBase: string;
+}) {
   const [approveOpen, setApproveOpen] = useState(false);
   const [rejectOpen, setRejectOpen] = useState(false);
   const [reopenOpen, setReopenOpen] = useState(false);
@@ -1174,7 +1246,7 @@ function ClaimRow({ claim }: { claim: CreatorRewardClaimRow }) {
           <div className="min-w-0 space-y-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <Link
-                href={`/users/${claim.userId}`}
+                href={`${userHrefBase}/${claim.userId}`}
                 className="truncate font-medium outline-none hover:underline focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring"
                 title={displayName}
               >
