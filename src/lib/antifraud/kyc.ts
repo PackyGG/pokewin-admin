@@ -22,12 +22,10 @@ import { loadAdminIdentities } from "@/lib/antifraud/admin-identities";
 
 export const KYC_FILTERS = [
   "all",
-  "required",
-  "awaiting_review",
-  "provider_pending",
-  "approved",
-  "rejected",
-  "cleared",
+  "kyc_in_progress",
+  "review",
+  "finished",
+  "declined",
 ] as const;
 
 export type KycFilter = (typeof KYC_FILTERS)[number];
@@ -151,27 +149,25 @@ function integrationConfig(env: DbEnv): KycOperationalConfig {
 
 function statusCondition(filter: KycFilter): SQL | undefined {
   switch (filter) {
-    case "required":
-      return eq(user_kyc.kyc_required, true);
-    case "awaiting_review":
+    case "kyc_in_progress":
       return and(
         eq(user_kyc.kyc_required, true),
         eq(user_kyc.admin_decision, "pending"),
+        inArray(user_kyc.status, ["none", "pending", "on_hold"]),
       );
-    case "provider_pending":
-      return inArray(user_kyc.status, ["pending", "on_hold"]);
-    case "approved":
-      return eq(user_kyc.status, "approved");
-    case "rejected":
-      return or(
-        eq(user_kyc.status, "rejected"),
-        eq(user_kyc.admin_decision, "rejected"),
+    case "review":
+      return and(
+        eq(user_kyc.kyc_required, true),
+        eq(user_kyc.admin_decision, "pending"),
+        inArray(user_kyc.status, ["approved", "rejected"]),
       );
-    case "cleared":
+    case "finished":
       return and(
         eq(user_kyc.kyc_required, false),
         eq(user_kyc.admin_decision, "safe"),
       );
+    case "declined":
+      return eq(user_kyc.admin_decision, "rejected");
     default:
       return undefined;
   }

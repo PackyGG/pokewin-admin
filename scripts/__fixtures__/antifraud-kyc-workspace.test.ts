@@ -59,7 +59,7 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
   assert.doesNotMatch(page, /How KYC works here/);
-  assert.match(page, /Accounts currently requiring KYC/);
+  assert.match(page, /KYC in progress/);
   assert.match(page, /historical verification\s+records/);
   assert.match(page, /Ready for admin decision/);
   assert.doesNotMatch(page, /System details and webhook activity/);
@@ -68,15 +68,15 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.doesNotMatch(page, /<SystemDetails/);
 });
 
-test("the KYC landing view shows only accounts that currently require KYC", () => {
+test("the KYC landing view shows checks still in progress", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
 
   assert.match(
     page,
-    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"required"/,
+    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"kyc_in_progress"/,
   );
   assert.match(page, /all:\s*"KYC record history"/);
-  assert.match(page, /No accounts currently require KYC/);
+  assert.match(page, /No KYC checks are currently in progress/);
   assert.match(page, /completed historical cycles/);
 });
 
@@ -94,4 +94,38 @@ test("untouched default KYC rows stay out of the review queue and totals", () =>
   );
   assert.match(query, /verification_cycle\} > 0/);
   assert.match(query, /status\} <> 'none'/);
+});
+
+test("the KYC queue exposes only the five operational filters", () => {
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
+  const query = source("src/lib/antifraud/kyc.ts");
+  const labels = page.slice(
+    page.indexOf("const FILTER_LABELS"),
+    page.indexOf("const FILTER_TITLES"),
+  );
+
+  for (const label of [
+    "All",
+    "KYC in progress",
+    "Review",
+    "Finished",
+    "Declined",
+  ]) {
+    assert.match(labels, new RegExp(`\\b${label}\\b`));
+  }
+  for (const removed of [
+    "History",
+    "Withdrawals locked",
+    "Decision open",
+    "Waiting on Sumsub",
+    "Sumsub approved",
+    "Rejected / failed",
+    "Cleared by admin",
+  ]) {
+    assert.doesNotMatch(labels, new RegExp(removed));
+  }
+  assert.match(
+    query,
+    /export const KYC_FILTERS = \[[\s\S]*?"all"[\s\S]*?"kyc_in_progress"[\s\S]*?"review"[\s\S]*?"finished"[\s\S]*?"declined"[\s\S]*?\] as const/,
+  );
 });
