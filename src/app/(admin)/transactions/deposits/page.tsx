@@ -8,6 +8,7 @@ import {
   DatabaseZap,
   ListChecks,
   Receipt,
+  ShieldAlert,
 } from "lucide-react";
 import { getDepositTransactions } from "@/lib/queries/transactions";
 import { getCardPayments } from "@/lib/queries/card-payments";
@@ -36,10 +37,11 @@ import { FadeIn } from "@/components/fade-in";
 import { LinkPendingShell } from "@/components/ux";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
+import { FiatFraudTab } from "./fiat-fraud-tab";
 
 export const metadata = { title: "Transactions" };
 
-// Two-tab page: Deposits (the default) and Withdrawals share the same
+// Deposits, card payments, caught fiat fraud, and withdrawals share the same
 // "money flow" surface so admins only have one entry-point in the
 // sidebar for both. The withdrawals tab embeds the same query +
 // data-table + toolbar that the legacy /withdrawals page used; that
@@ -55,6 +57,11 @@ const TABS = [
     value: "card-payments",
     label: "Card Payments",
     icon: CreditCard,
+  },
+  {
+    value: "fiat-fraud",
+    label: "Fiat Fraud",
+    icon: ShieldAlert,
   },
   {
     value: "withdrawals",
@@ -75,9 +82,11 @@ export default async function TransactionsPage({
   const tab: TabValue =
     params.tab === "withdrawals"
       ? "withdrawals"
-      : params.tab === "card-payments"
-        ? "card-payments"
-        : "deposits";
+      : params.tab === "fiat-fraud"
+        ? "fiat-fraud"
+        : params.tab === "card-payments"
+          ? "card-payments"
+          : "deposits";
   const page = Number(params.page) || 1;
   const perPage = Number(params.perPage) || 20;
 
@@ -90,9 +99,11 @@ export default async function TransactionsPage({
           subtitle={
             tab === "card-payments"
               ? "Whop card-payment lifecycle, fees, and ledger reconciliation."
-              : tab === "deposits"
-              ? "All inbound deposit transactions across users."
-              : "All physical and crypto withdrawal requests — filter by status and method."
+              : tab === "fiat-fraud"
+                ? "Fraudulent fiat deposits caught by durable Antifraud signals."
+                : tab === "deposits"
+                  ? "All inbound deposit transactions across users."
+                  : "All physical and crypto withdrawal requests — filter by status and method."
           }
         />
       </PageHero>
@@ -151,6 +162,8 @@ export default async function TransactionsPage({
         <DepositsTab page={page} perPage={perPage} params={params} />
       ) : tab === "card-payments" ? (
         <CardPaymentsTab page={page} perPage={perPage} params={params} />
+      ) : tab === "fiat-fraud" ? (
+        <FiatFraudTab page={page} perPage={perPage} params={params} />
       ) : (
         <WithdrawalsTab page={page} perPage={perPage} params={params} />
       )}
