@@ -79,10 +79,18 @@ function createPool(
     // The server-side idle timeout is also essential on Vercel: an isolate can
     // freeze after the response before node-postgres finishes sending its
     // socket close, so PostgreSQL must reclaim that orphaned session itself.
+    // work_mem: the mirror server runs the PostgreSQL default of 4MB, which
+    // spilled ~98GB of sort/hash temp files and made analytics reads thrash
+    // disk instead of finishing in memory. 32MB per sort node across at most
+    // 30 role sessions stays well inside the host's memory while letting the
+    // dashboard aggregates complete without spilling.
+    // random_page_cost: the default of 4 models spinning disks; the mirror is
+    // SSD-backed, and 1.1 keeps the planner on the covering indexes instead
+    // of bailing to sequential scans it can't afford on this box.
     ...(isReadMirror
       ? {
           options:
-            "-c default_transaction_read_only=on -c TimeZone=UTC -c idle_session_timeout=5s",
+            "-c default_transaction_read_only=on -c TimeZone=UTC -c idle_session_timeout=5s -c work_mem=32MB -c random_page_cost=1.1",
         }
       : {}),
   });
