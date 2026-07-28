@@ -164,6 +164,36 @@ test("delivery advances only after every event is confirmed", async () => {
   );
 });
 
+test("successful containment delivery confirms the lock without mirror lag", async () => {
+  const containment: RiskEventRow = {
+    ...row,
+    event_type: "fiat_blacklisted_email_domain",
+    source_ref:
+      "blacklisted-signup:423e4567-e89b-42d3-a456-426614174000",
+  };
+  const fixture = deliveryPool([containment]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () =>
+      new Response(
+        JSON.stringify({ ok: true, accepted: 1, duplicates: 0 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("WITH confirmed_matches AS") &&
+      sql.includes("lock_delivered_at = COALESCE") &&
+      sql.includes("UPDATE fiat_problem_alert_outbox AS alert")
+    ),
+    true,
+  );
+});
+
 test("signed delivery batches stay bounded for containment writes", async () => {
   const fixture = deliveryPool([]);
   const delivery = new IngestDelivery(

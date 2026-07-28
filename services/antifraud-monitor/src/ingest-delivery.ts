@@ -73,6 +73,22 @@ function objectPayload(value: unknown): Record<string, unknown> {
     : { deliveryPayloadTruncated: true };
 }
 
+function blacklistedSourceEventIds(events: RiskEventRow[]): string[] {
+  const ids = new Set<string>();
+  for (const event of events) {
+    if (event.event_type !== "fiat_blacklisted_email_domain") continue;
+    const sourceRef = event.source_ref;
+    if (!sourceRef) continue;
+    for (const prefix of ["blacklisted-signup:", "blacklisted-checkout:"]) {
+      if (sourceRef.startsWith(prefix) && sourceRef.length > prefix.length) {
+        ids.add(sourceRef.slice(prefix.length));
+        break;
+      }
+    }
+  }
+  return [...ids];
+}
+
 export function signIngest(
   secret: string,
   timestamp: string,
@@ -233,6 +249,35 @@ export class IngestDelivery {
       if (result.ok !== true || confirmed !== events.rows.length) {
         throw new Error(
           `Dashboard ingest confirmed ${confirmed}/${events.rows.length} events`,
+        );
+      }
+
+      const lockedSourceEventIds = blacklistedSourceEventIds(events.rows);
+      if (lockedSourceEventIds.length > 0) {
+        await client.query(
+          `
+            WITH confirmed_matches AS (
+              UPDATE fiat_email_domain_matches
+              SET
+                lock_delivered_at = COALESCE(lock_delivered_at, now()),
+                next_attempt_at = now(),
+                last_error = NULL,
+                updated_at = now()
+              WHERE source_event_id = ANY($1::text[])
+              RETURNING source_event_id, match_source, domain
+            )
+            UPDATE fiat_problem_alert_outbox AS alert
+            SET next_attempt_at = now(), updated_at = now()
+            FROM confirmed_matches AS match
+            WHERE alert.source_kind = CASE
+                WHEN match.match_source = 'signup' THEN 'signup'
+                ELSE 'payment_webhook'
+              END
+              AND alert.source_id =
+                match.source_event_id || ':blacklisted_email_domain:' || match.domain
+              AND alert.discord_delivered_at IS NULL
+          `,
+          [lockedSourceEventIds],
         );
       }
 
