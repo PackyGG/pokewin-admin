@@ -35,6 +35,20 @@ import {
 } from "@/lib/fiat-jurisdiction-policy";
 
 const SITE_FIAT_LOCK_KEY = "locked_deposits_fiat";
+
+const ARRAY_RESTRICTION_COLUMNS = {
+  locked_deposits_crypto: country_restrictions.locked_deposits_crypto,
+  locked_deposits_fiat: country_restrictions.locked_deposits_fiat,
+  locked_withdrawals_crypto: country_restrictions.locked_withdrawals_crypto,
+} as const;
+
+const BOOLEAN_RESTRICTION_COLUMNS = {
+  physical_withdrawal: country_restrictions.physical_withdrawal,
+  digital_withdrawal: country_restrictions.digital_withdrawal,
+  gift_card_deposit: country_restrictions.gift_card_deposit,
+  promo_code_deposit: country_restrictions.promo_code_deposit,
+  blocked: country_restrictions.blocked,
+} as const;
 const WHOP_FIAT_DEPOSIT_LOCK_ALIASES = [
   LEGACY_FIAT_DEPOSIT_METHOD,
   ...WHOP_FIAT_DEPOSIT_LOCK_TOKENS,
@@ -118,17 +132,19 @@ export async function updateCountryRestrictionArray(
   countryCode: string,
   field: string,
   values: string[]
-): Promise<{ countryRestrictionsCacheReloaded: boolean }> {
+): Promise<{
+  countryRestrictionsCacheReloaded: boolean;
+  persistedValues: string[];
+}> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_update_country_restriction", "update country restrictions");
 
-  const validFields = [
-    "locked_deposits_crypto",
-    "locked_deposits_fiat",
-    "locked_withdrawals_crypto",
-  ];
-  if (!validFields.includes(field)) throw new Error("Invalid field");
+  if (!(field in ARRAY_RESTRICTION_COLUMNS)) throw new Error("Invalid field");
+  const persistedColumn =
+    ARRAY_RESTRICTION_COLUMNS[
+      field as keyof typeof ARRAY_RESTRICTION_COLUMNS
+    ];
 
   const normalizedValues =
     field === "locked_deposits_fiat"
@@ -167,7 +183,10 @@ export async function updateCountryRestrictionArray(
       updated_at: new Date().toISOString(),
     })
     .where(eq(country_restrictions.country_code, countryCode))
-    .returning({ country_code: country_restrictions.country_code });
+    .returning({
+      country_code: country_restrictions.country_code,
+      persisted_values: persistedColumn,
+    });
   if (!updated[0]) throw new Error("Country restriction not found");
 
   await createAdminAuditEvent({
@@ -184,6 +203,7 @@ export async function updateCountryRestrictionArray(
   return {
     countryRestrictionsCacheReloaded:
       countryRestrictionsCache[0]?.status === "fulfilled",
+    persistedValues: updated[0].persisted_values,
   };
 }
 
@@ -257,19 +277,19 @@ export async function toggleCountryRestriction(
   countryCode: string,
   field: string,
   value: boolean
-): Promise<{ countryRestrictionsCacheReloaded: boolean }> {
+): Promise<{
+  countryRestrictionsCacheReloaded: boolean;
+  persistedValue: boolean;
+}> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
   await requireCapability(session, "__can_toggle_country_restriction", "toggle country restrictions");
 
-  const validFields = [
-    "physical_withdrawal",
-    "digital_withdrawal",
-    "gift_card_deposit",
-    "promo_code_deposit",
-    "blocked",
-  ];
-  if (!validFields.includes(field)) throw new Error("Invalid field");
+  if (!(field in BOOLEAN_RESTRICTION_COLUMNS)) throw new Error("Invalid field");
+  const persistedColumn =
+    BOOLEAN_RESTRICTION_COLUMNS[
+      field as keyof typeof BOOLEAN_RESTRICTION_COLUMNS
+    ];
   if (isMandatoryFiatJurisdiction(countryCode)) {
     const weakensLegalPolicy =
       (field === "blocked" && !value) ||
@@ -301,7 +321,10 @@ export async function toggleCountryRestriction(
     .update(country_restrictions)
     .set(valuesToSet)
     .where(eq(country_restrictions.country_code, countryCode))
-    .returning({ country_code: country_restrictions.country_code });
+    .returning({
+      country_code: country_restrictions.country_code,
+      persisted_value: persistedColumn,
+    });
   if (!updated[0]) throw new Error("Country restriction not found");
 
   await createAdminAuditEvent({
@@ -318,6 +341,7 @@ export async function toggleCountryRestriction(
   return {
     countryRestrictionsCacheReloaded:
       countryRestrictionsCache[0]?.status === "fulfilled",
+    persistedValue: updated[0].persisted_value,
   };
 }
 

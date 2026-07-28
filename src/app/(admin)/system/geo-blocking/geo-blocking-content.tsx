@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import countries from "i18n-iso-countries";
@@ -61,6 +61,14 @@ import {
   isMandatoryFiatJurisdiction,
   MANDATORY_FIAT_JURISDICTION_CODES,
 } from "@/lib/fiat-jurisdiction-policy";
+import {
+  applyRestrictionValue,
+  reconcileConfirmedRestrictions,
+  rememberConfirmedRestriction,
+  type ConfirmedRestrictionOverrides,
+  type RestrictionProperty,
+  type RestrictionValue,
+} from "./restriction-state";
 
 countries.registerLocale(enLocale);
 
@@ -99,14 +107,15 @@ countries.registerLocale(enLocale);
  * expandable-detail table.
  *
  * Scroll-fix / per-row pending: unchanged from the prior version — every
- * toggle / multi-select updates a LOCAL optimistic copy of the rows in place
- * and runs its action WITHOUT a router.refresh() (the server stays source of
- * truth via each action's revalidatePath); `pendingCodes` tracks in-flight
- * country codes individually so only the row being edited disables.
+ * toggle / multi-select updates a LOCAL optimistic copy of the rows in place.
+ * The primary DB's `UPDATE ... RETURNING` value is retained across stale
+ * mirror/revalidation payloads until a fresh payload agrees with it.
+ * `pendingCodes` tracks in-flight country codes individually so only the row
+ * being edited disables.
  */
 
 // Map a boolean field key → the camelCase property on CountryRestrictionRow.
-const BOOL_PROP: Record<BooleanField, keyof CountryRestrictionRow> = {
+const BOOL_PROP: Record<BooleanField, RestrictionProperty> = {
   physical_withdrawal: "physicalWithdrawal",
   digital_withdrawal: "digitalWithdrawal",
   gift_card_deposit: "giftCardDeposit",
@@ -114,7 +123,7 @@ const BOOL_PROP: Record<BooleanField, keyof CountryRestrictionRow> = {
   blocked: "blocked",
 };
 
-const ARRAY_PROP: Record<ArrayField, keyof CountryRestrictionRow> = {
+const ARRAY_PROP: Record<ArrayField, RestrictionProperty> = {
   locked_deposits_crypto: "lockedDepositsCrypto",
   locked_deposits_fiat: "lockedDepositsFiat",
   locked_withdrawals_crypto: "lockedWithdrawalsCrypto",
@@ -220,7 +229,7 @@ export function GeoBlockingContent({
   siteLockedMethods: string[] | null;
 }) {
   const router = useRouter();
-  const [isPending, startTransition] = useTransition();
+  const [, startTransition] = useTransition();
   // Local optimistic copy of the rows — see the "Scroll-fix" note above.
   const [rows, setRows] = useState(countryRestrictions);
   const [search, setSearch] = useState("");
@@ -236,6 +245,9 @@ export function GeoBlockingContent({
   const [currentSiteLockedMethods, setCurrentSiteLockedMethods] = useState(
     siteLockedMethods,
   );
+  const confirmedOverridesRef = useRef<ConfirmedRestrictionOverrides>({});
+  const mutationRevisionRef = useRef(0);
+  const latestRevisionByCountryRef = useRef<Record<string, number>>({});
 
   async function handleReloadCache() {
     setReloadingCache(true);
@@ -392,20 +404,50 @@ export function GeoBlockingContent({
   }
 
   useEffect(() => {
-    if (isPending) return;
-    setRows(countryRestrictions);
+    const reconciled = reconcileConfirmedRestrictions(
+      countryRestrictions,
+      confirmedOverridesRef.current,
+    );
+    confirmedOverridesRef.current = reconciled.remainingOverrides;
+    setRows(reconciled.rows);
     setCurrentSiteLockedMethods(siteLockedMethods);
-  }, [countryRestrictions, isPending, siteLockedMethods]);
+  }, [countryRestrictions, siteLockedMethods]);
 
   function patchRow(
     countryCode: string,
-    prop: keyof CountryRestrictionRow,
-    value: boolean | string[],
+    prop: RestrictionProperty,
+    value: RestrictionValue,
   ) {
-    const patch = { [prop]: value } as Partial<CountryRestrictionRow>;
-    setRows((prev) =>
-      prev.map((r) => (r.countryCode === countryCode ? { ...r, ...patch } : r)),
+    setRows((prev) => applyRestrictionValue(prev, countryCode, prop, value));
+  }
+
+  function beginCountryMutation(countryCode: string): number {
+    const revision = mutationRevisionRef.current + 1;
+    mutationRevisionRef.current = revision;
+    latestRevisionByCountryRef.current[countryCode] = revision;
+    beginPending(countryCode);
+    return revision;
+  }
+
+  function isLatestCountryMutation(
+    countryCode: string,
+    revision: number,
+  ): boolean {
+    return latestRevisionByCountryRef.current[countryCode] === revision;
+  }
+
+  function confirmPersistedValue(
+    countryCode: string,
+    property: RestrictionProperty,
+    value: RestrictionValue,
+    revision: number,
+  ) {
+    if (!isLatestCountryMutation(countryCode, revision)) return;
+    confirmedOverridesRef.current = rememberConfirmedRestriction(
+      confirmedOverridesRef.current,
+      { countryCode, property, value, revision },
     );
+    patchRow(countryCode, property, value);
   }
 
   function handleToggle(countryCode: string, field: BooleanField, currentValue: boolean) {
@@ -423,10 +465,16 @@ export function GeoBlockingContent({
     } else {
       patchRow(countryCode, prop, next);
     }
-    beginPending(countryCode);
+    const revision = beginCountryMutation(countryCode);
     startTransition(async () => {
       try {
         const res = await toggleCountryRestriction(countryCode, field, next);
+        confirmPersistedValue(
+          countryCode,
+          prop,
+          res.persistedValue,
+          revision,
+        );
         if (res.countryRestrictionsCacheReloaded) {
           toast.success("Restriction updated");
         } else {
@@ -435,7 +483,9 @@ export function GeoBlockingContent({
             { duration: 12000 },
           );
         }
+        router.refresh();
       } catch (e) {
+        if (!isLatestCountryMutation(countryCode, revision)) return;
         if (previousRow) {
           setRows((current) =>
             current.map((row) =>
@@ -447,7 +497,9 @@ export function GeoBlockingContent({
         }
         toast.error(e instanceof Error ? e.message : "Failed");
       } finally {
-        endPending(countryCode);
+        if (isLatestCountryMutation(countryCode, revision)) {
+          endPending(countryCode);
+        }
       }
     });
   }
@@ -460,13 +512,19 @@ export function GeoBlockingContent({
   ) {
     const prop = ARRAY_PROP[field];
     patchRow(countryCode, prop, newValues);
-    beginPending(countryCode);
+    const revision = beginCountryMutation(countryCode);
     startTransition(async () => {
       try {
         const res = await updateCountryRestrictionArray(
           countryCode,
           field,
           newValues,
+        );
+        confirmPersistedValue(
+          countryCode,
+          prop,
+          res.persistedValues,
+          revision,
         );
         if (res.countryRestrictionsCacheReloaded) {
           toast.success("Restriction updated");
@@ -476,11 +534,15 @@ export function GeoBlockingContent({
             { duration: 12000 },
           );
         }
+        router.refresh();
       } catch (e) {
+        if (!isLatestCountryMutation(countryCode, revision)) return;
         patchRow(countryCode, prop, previousValues);
         toast.error(e instanceof Error ? e.message : "Failed");
       } finally {
-        endPending(countryCode);
+        if (isLatestCountryMutation(countryCode, revision)) {
+          endPending(countryCode);
+        }
       }
     });
   }
