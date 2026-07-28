@@ -428,12 +428,12 @@ export class FiatEmailDomainGuard {
         ) VALUES (
           $1, $2, 'blacklisted_email_domain', $3, $4,
           jsonb_build_object(
-            'provider_event_id', $5,
-            'intent_id', $6,
-            'provider_payment_id', $7,
-            'email', $8,
+            'provider_event_id', $5::text,
+            'intent_id', $6::text,
+            'provider_payment_id', $7::text,
+            'email', $8::text,
             'checkout_email', CASE WHEN $9::text = 'whop_checkout' THEN $8::text ELSE NULL END,
-            'email_domain', $10,
+            'email_domain', $10::text,
             'match_source', $9,
             'risk_score', 100,
             'status', 'withdrawals_locked'

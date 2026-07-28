@@ -124,6 +124,10 @@ test("a matching signup is durably queued for signed lock and fiat notification"
   );
   assert.equal(alert?.values?.[0], "signup");
   assert.match(alert?.sql ?? "", /'infinity'::timestamptz/);
+  assert.match(
+    alert?.sql ?? "",
+    /'email', \$8::text[\s\S]*'email_domain', \$10::text/,
+  );
   assert.equal(calls.at(-1)?.sql, "COMMIT");
 });
 
