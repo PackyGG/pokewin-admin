@@ -16,6 +16,10 @@ const geoUiSource = readFileSync(
   ),
   "utf8",
 );
+const geoQuerySource = readFileSync(
+  new URL("../../src/lib/queries/geo-blocking.ts", import.meta.url),
+  "utf8",
+);
 
 test("global physical switch changes only the physical location flag", () => {
   const action = actionsSource.match(
@@ -52,4 +56,9 @@ test("physical switch state and optimistic update cover every location row", () 
     geoUiSource,
     /onCheckedChange=\{handleGlobalPhysicalItemWithdrawals\}/,
   );
+});
+
+test("physical policy reads cannot reuse the retired pre-toggle cache snapshot", () => {
+  assert.match(geoQuerySource, /geo-blocking-restrictions-v2/);
+  assert.doesNotMatch(geoQuerySource, /geo-blocking-restrictions-v1/);
 });

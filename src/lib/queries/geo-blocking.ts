@@ -86,7 +86,9 @@ async function computeCountryRestrictions(
  */
 const cachedCountryRestrictions = unstable_cache(
   computeCountryRestrictions,
-  ["geo-blocking-restrictions-v1"],
+  // v2 intentionally retires the pre-physical-policy snapshot that was
+  // already present in Vercel's cross-deployment data cache.
+  ["geo-blocking-restrictions-v2"],
   { revalidate: 300, tags: [GEO_BLOCKING_CACHE_TAG] },
 );
 
