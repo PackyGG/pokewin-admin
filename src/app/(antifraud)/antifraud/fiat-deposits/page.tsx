@@ -32,12 +32,9 @@ import { formatCurrency } from "@/lib/utils/format";
 export const metadata = { title: "Fiat Deposits · Antifraud" };
 
 const STATUSES = [
-  "checkout_ready",
   "completed",
-  "failed",
-  "canceled",
-  "refunded",
   "partially_refunded",
+  "refunded",
   "disputed",
 ] as const;
 const VERDICTS = ["good", "review", "bad"] as const;
@@ -87,7 +84,7 @@ export default async function FiatDepositsPage({
           icon={Banknote}
           accent="cyan"
           title="Fiat deposit risk"
-          subtitle="Whop, 3DS, funding history, account links, and post-deposit money movement in one review"
+          subtitle="Paid Whop deposits only, with 3DS, funding history, account links, and post-deposit money movement"
         />
       </PageHero>
       <FiltersBar state={state} />
@@ -116,8 +113,10 @@ function FiltersBar({ state }: { state: Filters }) {
           <Filter label="Escalated" active={state.reviewStatus === "escalated"} state={state} reviewStatus="escalated" />
           <Filter label="All workflow" active={!state.reviewStatus} state={state} reviewStatus={null} />
           <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          <Filter label="Any payment" active={!state.status} state={state} status={null} />
+          <Filter label="All paid" active={!state.status} state={state} status={null} />
           <Filter label="Completed" active={state.status === "completed"} state={state} status="completed" />
+          <Filter label="Refunded" active={state.status === "refunded"} state={state} status="refunded" />
+          <Filter label="Partial refund" active={state.status === "partially_refunded"} state={state} status="partially_refunded" />
           <Filter label="Disputed" active={state.status === "disputed"} state={state} status="disputed" />
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/fiat-deposits">
@@ -189,7 +188,7 @@ async function FiatContent({ state }: { state: Filters }) {
     <div className="space-y-4">
       {result.summary && <Summary summary={result.summary} />}
       {result.data.length === 0 ? (
-        <Empty text="No fiat deposits match these filters." />
+        <Empty text="No paid fiat deposits match these filters." />
       ) : (
         <div className="space-y-3">
           {result.data.map((item) => (

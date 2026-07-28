@@ -150,3 +150,17 @@ test("assessment refresh excludes creators and protected users", async () => {
   assert.match(source, /prior_crypto_deposits/);
   assert.match(source, /payment_webhook_events/);
 });
+
+test("assessment refresh only loads paid fiat lifecycle states", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-risk.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /SETTLED_FIAT_STATUSES/);
+  assert.match(source, /"completed"/);
+  assert.match(source, /"partially_refunded"/);
+  assert.match(source, /"refunded"/);
+  assert.match(source, /"disputed"/);
+  assert.match(source, /fdi\.status::text=ANY/);
+  assert.doesNotMatch(source, /SETTLED_FIAT_STATUSES[\s\S]{0,200}"checkout_ready"/);
+});

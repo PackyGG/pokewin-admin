@@ -2,7 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { Databases } from "./db.js";
-import type { FiatRiskService } from "./fiat-risk.js";
+import {
+  SETTLED_FIAT_STATUSES,
+  type FiatRiskService,
+} from "./fiat-risk.js";
 
 const reviewStatuses = [
   "unreviewed",
@@ -15,7 +18,7 @@ const reviewStatuses = [
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
-  status: z.string().trim().min(1).max(50).optional(),
+  status: z.enum(SETTLED_FIAT_STATUSES).optional(),
   verdict: z.enum(["good", "review", "bad"]).optional(),
   reviewStatus: z.enum(reviewStatuses).optional(),
   search: z.string().trim().max(100).optional(),
@@ -154,6 +157,9 @@ export async function registerFiatRoutes(
     if (query.status) {
       values.push(query.status);
       conditions.push(`status=$${values.length}`);
+    } else {
+      values.push(SETTLED_FIAT_STATUSES);
+      conditions.push(`status=ANY($${values.length}::text[])`);
     }
     if (query.verdict) {
       values.push(query.verdict);
@@ -179,10 +185,15 @@ export async function registerFiatRoutes(
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const offset = (query.page - 1) * query.limit;
     const listValues = [...values, query.limit, offset];
-    const summaryValues: unknown[] = [];
-    const summaryWhere =
-      ignored.length > 0 ? "WHERE user_id<>ALL($1::text[])" : "";
-    if (ignored.length > 0) summaryValues.push(ignored);
+    const summaryValues: unknown[] = [SETTLED_FIAT_STATUSES];
+    const summaryConditions = ["status=ANY($1::text[])"];
+    if (ignored.length > 0) {
+      summaryValues.push(ignored);
+      summaryConditions.push(
+        `user_id<>ALL($${summaryValues.length}::text[])`,
+      );
+    }
+    const summaryWhere = `WHERE ${summaryConditions.join(" AND ")}`;
 
     const [rows, total, summary] = await Promise.all([
       db.antifraud.query(

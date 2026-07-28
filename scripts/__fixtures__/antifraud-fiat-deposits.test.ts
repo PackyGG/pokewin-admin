@@ -18,6 +18,8 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(sidebar, /Fiat Deposits/);
   assert.match(sidebar, /\/antifraud\/fiat-deposits/);
   assert.match(hosts, /"fiat-deposits"/);
+  assert.match(page, /All paid/);
+  assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
   assert.match(page, /Six-point flow/);
   assert.match(detail, /Money trail/);
@@ -40,7 +42,9 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   assert.match(api, /x-antifraud-excluded-users/);
   assert.match(routes, /userIsCreator/);
   assert.match(routes, /excluded\.has\(row\.user_id\)/);
+  assert.match(routes, /SETTLED_FIAT_STATUSES/);
   assert.match(service, /role::text,''\)<>'creator'/);
+  assert.match(service, /fdi\.status::text=ANY/);
   assert.match(service, /provider_evidence/);
   assert.match(migration, /fiat_deposit_review_events/);
   assert.match(migration, /idempotency_key uuid NOT NULL UNIQUE/);

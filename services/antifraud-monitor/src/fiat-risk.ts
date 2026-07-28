@@ -1055,11 +1055,20 @@ function contextBehavior(
   };
 }
 
+export const SETTLED_FIAT_STATUSES = [
+  "completed",
+  "partially_refunded",
+  "refunded",
+  "disputed",
+] as const;
+
+type SettledFiatStatus = (typeof SETTLED_FIAT_STATUSES)[number];
+
 export class FiatRiskService {
   constructor(private readonly db: Databases) {}
 
   async refresh(input: {
-    status?: string;
+    status?: SettledFiatStatus;
     search?: string;
     excludedUserIds?: string[];
     limit?: number;
@@ -1075,7 +1084,10 @@ export class FiatRiskService {
     }
     if (input.status) {
       values.push(input.status);
-      conditions.push(`fdi.status=$${values.length}`);
+      conditions.push(`fdi.status::text=$${values.length}`);
+    } else {
+      values.push(SETTLED_FIAT_STATUSES);
+      conditions.push(`fdi.status::text=ANY($${values.length}::text[])`);
     }
     if (input.search) {
       values.push(`%${input.search.toLowerCase()}%`);
