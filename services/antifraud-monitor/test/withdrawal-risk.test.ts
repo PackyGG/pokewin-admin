@@ -5,6 +5,7 @@ import test from "node:test";
 import { scoreWithdrawal } from "../src/withdrawal-risk.js";
 
 const safeInput = {
+  method: "physical",
   amountUsd: 100,
   assetValueUsd: 100,
   tracedAssetUsd: 100,
@@ -35,6 +36,28 @@ test("a reconciled, traceable withdrawal is good", () => {
     account: 0,
     network: 0,
   });
+});
+
+test("a balance withdrawal does not require attached assets", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    method: "balance",
+    amountUsd: 13.29,
+    assetValueUsd: 0,
+    tracedAssetUsd: 0,
+    assetCount: 0,
+  });
+  assert.equal(result.riskScore, 0);
+  assert.equal(result.verdict, "good");
+  assert.ok(
+    result.signals.some((signal) => signal.key === "balance_withdrawal"),
+  );
+  assert.ok(!result.signals.some((signal) => signal.key === "amount_mismatch"));
+  assert.ok(!result.signals.some((signal) => signal.key === "no_assets"));
+  assert.equal(
+    result.flowChecks.find((check) => check.key === "integrity")?.status,
+    "pass",
+  );
 });
 
 test("shared payout destinations make the withdrawal bad", () => {

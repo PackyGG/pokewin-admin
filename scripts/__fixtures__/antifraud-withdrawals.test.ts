@@ -35,10 +35,14 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
   const excludedUsers = read("src/lib/excluded-users/fetch.ts");
   assert.match(page, /listWithdrawalAssessments/);
   assert.match(page, /Review flow/);
+  assert.match(page, /Latest funding origin to this request/);
+  assert.doesNotMatch(page, /90-day money trail/);
   assert.match(detail, /Withdrawal review flow/);
-  assert.match(detail, /Withdrawal money trail/);
+  assert.match(detail, /How this withdrawal was funded/);
+  assert.match(detail, /only activity from the latest funding origin/);
   assert.match(detail, /Current withdrawal trail/);
-  assert.doesNotMatch(detail, /90-day money flow/);
+  assert.doesNotMatch(detail, /90-day/);
+  assert.match(detail, /No asset attachment required/);
   assert.match(detail, /WithdrawalReviewControls/);
   assert.doesNotMatch(detail, /redirect\(["']\/withdrawals/);
   assert.doesNotMatch(page, /@\/lib\/db/);
@@ -70,6 +74,8 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(risk, /COALESCE\(u\.role::text,''\)<>'creator'/);
   assert.match(risk, /latest_deposit/);
   assert.doesNotMatch(risk, /interval '90 days'/);
+  assert.match(risk, /input\.method !== "balance"/);
+  assert.match(risk, /balance_withdrawal/);
   assert.match(routes, /excludedUsersHeaderSchema/);
   assert.match(routes, /userIsCreator/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS withdrawal_assessments/);

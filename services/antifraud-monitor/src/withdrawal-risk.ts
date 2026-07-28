@@ -65,6 +65,7 @@ export type WithdrawalFlow = {
 };
 
 export type WithdrawalScoreInput = {
+  method: string;
   amountUsd: number;
   assetValueUsd: number;
   tracedAssetUsd: number;
@@ -89,60 +90,74 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
 } {
   const signals: WithdrawalSignal[] = [];
   const amount = Math.max(0, input.amountUsd);
-  const difference = Math.abs(input.assetValueUsd - amount);
-  const differenceRatio =
-    amount > 0 ? difference / amount : difference > 0 ? 1 : 0;
-  const tracedRatio =
-    input.assetValueUsd > 0 ? input.tracedAssetUsd / input.assetValueUsd : 0;
+  const usesAttachedAssets = input.method !== "balance";
 
-  if (difference <= Math.max(1, amount * 0.02)) {
+  if (!usesAttachedAssets) {
     signals.push({
-      key: "amount_reconciled",
-      label: "Amount reconciles",
+      key: "balance_withdrawal",
+      label: "Balance withdrawal",
       detail:
-        "The attached cards and vouchers reconcile with the requested value.",
+        "This payout comes from account balance, so card or voucher attachments are not expected.",
       points: 0,
       tone: "good",
       category: "integrity",
     });
   } else {
-    signals.push({
-      key: "amount_mismatch",
-      label: "Amount mismatch",
-      detail: `$${difference.toFixed(2)} of the request is not explained by its attached assets.`,
-      points: differenceRatio > 0.1 ? 45 : 25,
-      tone: differenceRatio > 0.1 ? "bad" : "warning",
-      category: "integrity",
-    });
-  }
+    const difference = Math.abs(input.assetValueUsd - amount);
+    const differenceRatio =
+      amount > 0 ? difference / amount : difference > 0 ? 1 : 0;
+    const tracedRatio =
+      input.assetValueUsd > 0 ? input.tracedAssetUsd / input.assetValueUsd : 0;
 
-  if (input.assetCount === 0) {
-    signals.push({
-      key: "no_assets",
-      label: "No attached assets",
-      detail: "The withdrawal has no card or voucher records to trace.",
-      points: 35,
-      tone: "bad",
-      category: "integrity",
-    });
-  } else if (tracedRatio >= 0.9) {
-    signals.push({
-      key: "source_traced",
-      label: "Source traced",
-      detail: `${Math.round(tracedRatio * 100)}% of the attached value has a known origin.`,
-      points: 0,
-      tone: "good",
-      category: "integrity",
-    });
-  } else {
-    signals.push({
-      key: "source_gap",
-      label: "Source gap",
-      detail: `${Math.round((1 - tracedRatio) * 100)}% of the attached value has no dependable origin.`,
-      points: tracedRatio < 0.5 ? 35 : 18,
-      tone: tracedRatio < 0.5 ? "bad" : "warning",
-      category: "integrity",
-    });
+    if (difference <= Math.max(1, amount * 0.02)) {
+      signals.push({
+        key: "amount_reconciled",
+        label: "Amount reconciles",
+        detail:
+          "The attached cards and vouchers reconcile with the requested value.",
+        points: 0,
+        tone: "good",
+        category: "integrity",
+      });
+    } else {
+      signals.push({
+        key: "amount_mismatch",
+        label: "Amount mismatch",
+        detail: `$${difference.toFixed(2)} of the request is not explained by its attached assets.`,
+        points: differenceRatio > 0.1 ? 45 : 25,
+        tone: differenceRatio > 0.1 ? "bad" : "warning",
+        category: "integrity",
+      });
+    }
+
+    if (input.assetCount === 0) {
+      signals.push({
+        key: "no_assets",
+        label: "No attached assets",
+        detail: "The withdrawal has no card or voucher records to trace.",
+        points: 35,
+        tone: "bad",
+        category: "integrity",
+      });
+    } else if (tracedRatio >= 0.9) {
+      signals.push({
+        key: "source_traced",
+        label: "Source traced",
+        detail: `${Math.round(tracedRatio * 100)}% of the attached value has a known origin.`,
+        points: 0,
+        tone: "good",
+        category: "integrity",
+      });
+    } else {
+      signals.push({
+        key: "source_gap",
+        label: "Source gap",
+        detail: `${Math.round((1 - tracedRatio) * 100)}% of the attached value has no dependable origin.`,
+        points: tracedRatio < 0.5 ? 35 : 18,
+        tone: tracedRatio < 0.5 ? "bad" : "warning",
+        category: "integrity",
+      });
+    }
   }
 
   if (
@@ -245,7 +260,9 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     .sort((a, b) => b.points - a.points)[0];
   const summary =
     primary?.detail ??
-    "The amount, asset origins, and recent funding activity reconcile.";
+    (usesAttachedAssets
+      ? "The amount, attached assets, funding trail, and account checks reconcile."
+      : "The balance funding trail and account checks did not raise a risk signal.");
   const scoreBreakdown: WithdrawalScoreBreakdown = {
     integrity: 0,
     funding: 0,
@@ -267,7 +284,9 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     {
       key: "integrity",
       label: "Request integrity",
-      description: "Reconcile the requested amount and every attached asset.",
+      description: usesAttachedAssets
+        ? "Reconcile the requested amount and every attached asset."
+        : "Confirm that this is a balance payout with no asset attachment required.",
     },
     {
       key: "funding",
@@ -937,6 +956,7 @@ export class WithdrawalRiskService {
         untracedAssetUsd: Math.max(0, assetValueUsd - tracedAssetUsd),
       };
       const scored = scoreWithdrawal({
+        method: request.method,
         amountUsd,
         assetValueUsd,
         tracedAssetUsd,
