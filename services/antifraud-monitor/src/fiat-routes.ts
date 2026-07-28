@@ -23,6 +23,11 @@ const querySchema = z.object({
   verdict: z.enum(["good", "review", "bad"]).optional(),
   reviewStatus: z.enum(reviewStatuses).optional(),
   search: z.string().trim().max(100).optional(),
+  excludeKycRequired: z
+    .enum(["true", "false"])
+    .transform((value) => value === "true")
+    .optional()
+    .default(false),
 });
 
 const reviewBodySchema = z
@@ -170,6 +175,11 @@ export async function registerFiatRoutes(
       values.push(query.reviewStatus);
       conditions.push(`review_status=$${values.length}`);
     }
+    if (query.excludeKycRequired) {
+      conditions.push(
+        `COALESCE((account_evidence->>'kycRequired')::boolean,false)=false`,
+      );
+    }
     if (query.search) {
       values.push(`%${query.search.toLowerCase()}%`);
       const generalSearchPosition = values.length;
@@ -197,6 +207,11 @@ export async function registerFiatRoutes(
     const listValues = [...values, query.limit, offset];
     const summaryValues: unknown[] = [FIAT_ASSESSMENT_STATUSES];
     const summaryConditions = ["status=ANY($1::text[])"];
+    if (query.excludeKycRequired) {
+      summaryConditions.push(
+        `COALESCE((account_evidence->>'kycRequired')::boolean,false)=false`,
+      );
+    }
     if (ignored.length > 0) {
       summaryValues.push(ignored);
       summaryConditions.push(

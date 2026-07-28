@@ -37,6 +37,14 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /Whop checkout:/);
   assert.match(page, /Payment option/);
   assert.match(page, /whopPaymentMethodLabel/);
+  assert.match(page, /Show KYC required/);
+  assert.match(page, /Hide KYC required/);
+  assert.match(page, /includeKycRequired: value\("includeKycRequired"\) === "true"/);
+  assert.match(
+    page,
+    /excludeKycRequired: !state\.includeKycRequired/,
+  );
+  assert.match(api, /params\.set\("excludeKycRequired", "true"\)/);
   assert.match(detail, /Payment option/);
   assert.match(detail, /whopPaymentMethodLabel/);
   assert.match(api, /checkoutEmail/);
@@ -93,6 +101,11 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   assert.match(service, /provider_evidence/);
   assert.match(routes, /provider_evidence->>'paymentMethodType'/);
   assert.match(routes, /normalizeWhopPaymentMethod\(query\.search\)/);
+  assert.match(routes, /excludeKycRequired: z/);
+  assert.match(
+    routes,
+    /COALESCE\(\(account_evidence->>'kycRequired'\)::boolean,false\)=false/,
+  );
   assert.match(alerts, /name: "Payment option"/);
   assert.match(alerts, /whopPaymentMethodLabel/);
   assert.match(migration, /fiat_deposit_review_events/);

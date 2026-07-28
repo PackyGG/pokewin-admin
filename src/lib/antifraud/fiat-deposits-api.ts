@@ -237,6 +237,7 @@ export async function listFiatAssessments(input: {
   verdict?: FiatVerdict;
   reviewStatus?: FiatReviewStatus;
   search?: string;
+  excludeKycRequired?: boolean;
 }) {
   const upstream = config();
   if (!upstream) {
@@ -256,6 +257,7 @@ export async function listFiatAssessments(input: {
   if (input.verdict) params.set("verdict", input.verdict);
   if (input.reviewStatus) params.set("reviewStatus", input.reviewStatus);
   if (input.search) params.set("search", input.search);
+  if (input.excludeKycRequired) params.set("excludeKycRequired", "true");
   try {
     const response = await fetch(
       `${upstream.baseUrl}/v1/fiat-deposits?${params}`,

@@ -6,6 +6,8 @@ import {
   ChevronRight,
   CircleAlert,
   CreditCard,
+  Eye,
+  EyeOff,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -57,6 +59,7 @@ type Filters = {
   verdict?: FiatVerdict;
   reviewStatus?: FiatReviewStatus;
   search: string;
+  includeKycRequired: boolean;
 };
 
 export default async function FiatDepositsPage({
@@ -82,6 +85,7 @@ export default async function FiatDepositsPage({
       ? (value("reviewStatus") as FiatReviewStatus)
       : undefined,
     search: value("search")?.trim().slice(0, 100) ?? "",
+    includeKycRequired: value("includeKycRequired") === "true",
   };
   return (
     <div className="space-y-6">
@@ -130,22 +134,48 @@ function FiltersBar({ state }: { state: Filters }) {
             <Filter label="Reconciliation failed" active={state.status === "paid_unreconciled"} state={state} status="paid_unreconciled" />
           </FilterGroup>
         </div>
-        <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/fiat-deposits">
-          {state.status && <input type="hidden" name="status" value={state.status} />}
-          {state.verdict && <input type="hidden" name="verdict" value={state.verdict} />}
-          {state.reviewStatus && <input type="hidden" name="reviewStatus" value={state.reviewStatus} />}
-          <Input
-            name="search"
-            defaultValue={state.search}
-            placeholder="User, email, payment, or ID"
-            maxLength={100}
-            aria-label="Search fiat deposits"
-            className="min-w-0 xl:w-72"
-          />
-          <Button type="submit" variant="outline" aria-label="Search">
-            <Search className="size-4" />
+        <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto">
+          <Button
+            variant={state.includeKycRequired ? "secondary" : "outline"}
+            render={
+              <HostLink
+                href={href({
+                  ...state,
+                  page: 1,
+                  includeKycRequired: !state.includeKycRequired,
+                })}
+              />
+            }
+          >
+            {state.includeKycRequired ? (
+              <EyeOff className="size-3.5" />
+            ) : (
+              <Eye className="size-3.5" />
+            )}
+            {state.includeKycRequired
+              ? "Hide KYC required"
+              : "Show KYC required"}
           </Button>
-        </form>
+          <form className="flex min-w-0 flex-1 gap-2" action="/antifraud/fiat-deposits">
+            {state.status && <input type="hidden" name="status" value={state.status} />}
+            {state.verdict && <input type="hidden" name="verdict" value={state.verdict} />}
+            {state.reviewStatus && <input type="hidden" name="reviewStatus" value={state.reviewStatus} />}
+            {state.includeKycRequired && (
+              <input type="hidden" name="includeKycRequired" value="true" />
+            )}
+            <Input
+              name="search"
+              defaultValue={state.search}
+              placeholder="User, email, payment, or ID"
+              maxLength={100}
+              aria-label="Search fiat deposits"
+              className="min-w-0 xl:w-72"
+            />
+            <Button type="submit" variant="outline" aria-label="Search">
+              <Search className="size-4" />
+            </Button>
+          </form>
+        </div>
       </div>
     </div>
   );
@@ -222,6 +252,7 @@ async function FiatContent({
     verdict: state.verdict,
     reviewStatus: state.reviewStatus,
     search: state.search || undefined,
+    excludeKycRequired: !state.includeKycRequired,
   });
   if (!result.configured) return <Empty text="The Antifraud monitor is not configured." />;
   if (result.error) return <Empty text="Fiat risk assessments could not be loaded." />;
@@ -535,6 +566,7 @@ function href(state: Filters) {
   if (state.verdict) params.set("verdict", state.verdict);
   if (state.reviewStatus) params.set("reviewStatus", state.reviewStatus);
   if (state.search) params.set("search", state.search);
+  if (state.includeKycRequired) params.set("includeKycRequired", "true");
   const query = params.toString();
   return `/antifraud/fiat-deposits${query ? `?${query}` : ""}`;
 }
