@@ -89,7 +89,7 @@ export type WithdrawalScoreInput = {
   borrowedVoucherUsd: number;
 };
 
-export const WITHDRAWAL_RISK_MODEL_VERSION = 2;
+export const WITHDRAWAL_RISK_MODEL_VERSION = 3;
 
 export function scoreWithdrawal(input: WithdrawalScoreInput): {
   riskScore: number;
