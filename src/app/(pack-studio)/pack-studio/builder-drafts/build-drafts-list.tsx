@@ -22,6 +22,7 @@ import { CardImage } from "@/components/card-image";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { uploadImageClient } from "@/lib/upload-image-client";
+import { isPackBuilderEdgeInRange } from "@/lib/packs/builder-edge";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
@@ -52,6 +53,12 @@ export function BuildDraftsList({
     if (!draft.imageUrl) {
       toast.error(
         "Add a pack image before requesting live approval. The draft is still saved.",
+      );
+      return;
+    }
+    if (!isPackBuilderEdgeInRange(draft.previewEdge)) {
+      toast.error(
+        "This saved build is outside the strict 10.95%–11.50% edge band and cannot be sent live.",
       );
       return;
     }
@@ -155,6 +162,9 @@ export function BuildDraftsList({
         const submitting = activeAction === `submit:${draft.id}`;
         const discarding = activeAction === `discard:${draft.id}`;
         const uploadingImage = activeAction === `image:${draft.id}`;
+        const edgeWithinProductionBand = isPackBuilderEdgeInRange(
+          draft.previewEdge,
+        );
         return (
           <article
             key={draft.id}
@@ -182,6 +192,14 @@ export function BuildDraftsList({
                         className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                       >
                         Image required for live
+                      </Badge>
+                    )}
+                    {!edgeWithinProductionBand && (
+                      <Badge
+                        variant="outline"
+                        className="border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                      >
+                        Edge outside 10.95%–11.50%
                       </Badge>
                     )}
                   </div>
@@ -253,7 +271,9 @@ export function BuildDraftsList({
                 </Button>
                 <Button
                   type="button"
-                  disabled={isPending || !draft.imageUrl}
+                  disabled={
+                    isPending || !draft.imageUrl || !edgeWithinProductionBand
+                  }
                   onClick={() => requestApproval(draft)}
                   className="gap-2"
                 >

@@ -109,7 +109,10 @@ import {
   type BuildPackInput,
   type ParsedBuildPackInput,
 } from "@/lib/packs/build-requests";
-import { getPackBuilderEdgeError } from "@/lib/packs/builder-edge";
+import {
+  getPackBuilderEdgeError,
+  getPackBuilderTicketTotalError,
+} from "@/lib/packs/builder-edge";
 
 const pack_tag = {
   pct1: "pct1",
@@ -2625,6 +2628,10 @@ async function materializeApprovedPack(
   if (edgeError) {
     return { ok: false, error: edgeError };
   }
+  const solvedTicketError = getPackBuilderTicketTotalError(shaped.weights);
+  if (solvedTicketError) {
+    return { ok: false, error: solvedTicketError };
+  }
 
   // Only real cards (a cardId) can be persisted into pack_cards. A value-only
   // slot can't be written — surface it rather than silently dropping it.
@@ -2659,6 +2666,12 @@ async function materializeApprovedPack(
       animation: s.animation,
       order: i,
     }));
+  const persistedTicketError = getPackBuilderTicketTotalError(
+    cardRows.map((row) => row.weight),
+  );
+  if (persistedTicketError) {
+    return { ok: false, error: persistedTicketError };
+  }
 
   const pack = await db.transaction(async (tx) => {
     const created = await insertBuiltPack(tx, {
@@ -2780,6 +2793,8 @@ async function previewPackBuildRequest(
   if ("error" in shaped) return { ok: false, error: shaped.error };
   const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
   if (edgeError) return { ok: false, error: edgeError };
+  const ticketError = getPackBuilderTicketTotalError(shaped.weights);
+  if (ticketError) return { ok: false, error: ticketError };
 
   const valueOnlyWithWeight = slots.some(
     (slot, index) => slot.cardId === null && shaped.weights[index]! > 0,

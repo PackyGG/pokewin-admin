@@ -5,9 +5,8 @@ import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
+  isPackBuilderEdgeInRange,
   PACK_BUILDER_EDGE_ERROR,
-  PACK_BUILDER_EDGE_MAX,
-  PACK_BUILDER_EDGE_MIN,
 } from "@/lib/packs/builder-edge";
 import { isPostgresError } from "@/lib/postgres-errors";
 
@@ -36,11 +35,9 @@ const storedBuildPackRequestSchema = z.object({
   activate: z.boolean().optional(),
   cards: z.array(buildPackCardSchema).min(1, "At least one card is required"),
   targets: z.object({
-    targetEdge: z
-      .number()
-      .min(PACK_BUILDER_EDGE_MIN, PACK_BUILDER_EDGE_ERROR)
-      .max(PACK_BUILDER_EDGE_MAX, PACK_BUILDER_EDGE_ERROR)
-      .optional(),
+    // Stored rows remain readable if the strict band changes later. Every new
+    // submission and final production write is checked by the super-refinement.
+    targetEdge: z.number().min(0).lt(1).optional(),
     targetWinRate: z.number().min(0).lt(1),
     maxWinCap: z.number().positive().optional(),
     floorRatioMin: z.number().positive().optional(),
@@ -50,6 +47,16 @@ const storedBuildPackRequestSchema = z.object({
 
 export const buildPackRequestSchema = storedBuildPackRequestSchema.superRefine(
   (request, context) => {
+    if (
+      request.targets.targetEdge !== undefined &&
+      !isPackBuilderEdgeInRange(request.targets.targetEdge)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["targets", "targetEdge"],
+        message: PACK_BUILDER_EDGE_ERROR,
+      });
+    }
     if (request.activate === true && !request.imageUrl) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

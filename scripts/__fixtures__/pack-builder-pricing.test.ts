@@ -7,20 +7,58 @@ import {
   hasExactBuilderOddsTotal,
   normalizeBuilderOdds,
 } from "../../src/app/(pack-studio)/pack-studio/builder/builder-pricing";
+import { shapeWeights } from "../../src/app/(admin)/insights/edge-calc/risk";
 import {
   clampPackBuilderEdge,
+  getPackBuilderTicketTotalError,
+  hasExactPackBuilderTicketTotal,
   isPackBuilderEdgeInRange,
   PACK_BUILDER_EDGE_MAX,
   PACK_BUILDER_EDGE_MIN,
+  PACK_BUILDER_TICKET_TOTAL_ERROR,
 } from "../../src/lib/packs/builder-edge";
 
-test("Pack Builder accepts only edges from 10.95% through 12.00%", () => {
+test("Pack Builder accepts only edges from 10.95% through 11.50%", () => {
   assert.equal(isPackBuilderEdgeInRange(PACK_BUILDER_EDGE_MIN), true);
   assert.equal(isPackBuilderEdgeInRange(PACK_BUILDER_EDGE_MAX), true);
   assert.equal(isPackBuilderEdgeInRange(0.109499), false);
-  assert.equal(isPackBuilderEdgeInRange(0.120001), false);
+  assert.equal(isPackBuilderEdgeInRange(0.115001), false);
   assert.equal(clampPackBuilderEdge(0.01), PACK_BUILDER_EDGE_MIN);
   assert.equal(clampPackBuilderEdge(0.5), PACK_BUILDER_EDGE_MAX);
+});
+
+test("Pack Builder production tickets must total exactly 100%", () => {
+  assert.equal(hasExactPackBuilderTicketTotal([250_000, 750_000]), true);
+  assert.equal(hasExactPackBuilderTicketTotal([250_000, 749_999]), false);
+  assert.equal(hasExactPackBuilderTicketTotal([250_000, 750_001]), false);
+  assert.equal(hasExactPackBuilderTicketTotal([500_000.5, 499_999.5]), false);
+  assert.equal(hasExactPackBuilderTicketTotal([1_000_000, -1, 1]), false);
+  assert.equal(
+    getPackBuilderTicketTotalError([500_000, 499_999]),
+    PACK_BUILDER_TICKET_TOTAL_ERROR,
+  );
+});
+
+test("Pack Builder solver output satisfies the exact production ticket law", () => {
+  const shaped = shapeWeights({
+    cards: [
+      { value: 0.1 },
+      { value: 0.5 },
+      { value: 1 },
+      { value: 3 },
+      { value: 7 },
+      { value: 12 },
+      { value: 25 },
+      { value: 80 },
+    ],
+    price: 10,
+    targetEdge: 0.11,
+    targetWinRate: 0.2,
+  });
+
+  assert.equal("weights" in shaped, true);
+  if (!("weights" in shaped)) return;
+  assert.equal(hasExactPackBuilderTicketTotal(shaped.weights), true);
 });
 
 test("Pack Builder seeds a new pool with equal-weight EV", () => {

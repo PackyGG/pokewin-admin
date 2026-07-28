@@ -163,9 +163,15 @@ test("live Pack Builder requests require artwork while saved drafts remain allow
   assert.match(buildDraftsPage, /imageUrl:\s*draft\.requestPayload\.imageUrl \?\? null/);
   assert.match(buildDraftsList, /updatePackBuildDraftImageAction/);
   assert.match(buildDraftsList, /Add image/);
-  assert.match(buildDraftsList, /disabled=\{isPending \|\| !draft\.imageUrl\}/);
+  assert.match(
+    buildDraftsList,
+    /isPending \|\| !draft\.imageUrl \|\| !edgeWithinProductionBand/,
+  );
   assert.match(approvalList, /Image required/);
-  assert.match(approvalList, /disabled=\{isPending \|\| !item\.imageUrl\}/);
+  assert.match(
+    approvalList,
+    /isPending \|\| !item\.imageUrl \|\| !edgeWithinProductionBand/,
+  );
 
   const materialize = actions.slice(
     actions.indexOf("async function materializeApprovedPack"),
@@ -204,18 +210,27 @@ test("Pack Builder preserves card color and animation through owner approval", a
   assert.match(materialize, /animation:\s*s\.animation/);
 });
 
-test("Pack Builder enforces the 10.95% to 12.00% edge band through approval", async () => {
-  const [actions, builderForm, buildRequests, builderEdge] = await Promise.all([
+test("Pack Builder production enforces exact tickets and the 10.95% to 11.50% edge band", async () => {
+  const [
+    actions,
+    builderForm,
+    buildDraftsList,
+    approvalList,
+    buildRequests,
+    builderEdge,
+  ] = await Promise.all([
     readFile(actionsPath, "utf8"),
     readFile(builderFormPath, "utf8"),
+    readFile(buildDraftsListPath, "utf8"),
+    readFile(approvalListPath, "utf8"),
     readFile(buildRequestsPath, "utf8"),
     readFile(builderEdgePath, "utf8"),
   ]);
 
   assert.match(builderEdge, /PACK_BUILDER_EDGE_MIN = 0\.1095/);
-  assert.match(builderEdge, /PACK_BUILDER_EDGE_MAX = 0\.12/);
-  assert.match(buildRequests, /\.min\(PACK_BUILDER_EDGE_MIN/);
-  assert.match(buildRequests, /\.max\(PACK_BUILDER_EDGE_MAX/);
+  assert.match(builderEdge, /PACK_BUILDER_EDGE_MAX = 0\.115/);
+  assert.match(builderEdge, /PACK_BUILDER_TICKET_TOTAL = 1_000_000/);
+  assert.match(buildRequests, /isPackBuilderEdgeInRange\(request\.targets\.targetEdge\)/);
   assert.match(builderForm, /clampPackBuilderEdge\(/);
   assert.match(builderForm, /isPackBuilderEdgeInRange\(/);
   assert.equal(
@@ -223,6 +238,17 @@ test("Pack Builder enforces the 10.95% to 12.00% edge band through approval", as
     2,
     "submission preview and owner materialization must both reject out-of-range edges",
   );
+  assert.equal(
+    actions.match(/getPackBuilderTicketTotalError\(/g)?.length,
+    3,
+    "submission preview, owner solve, and persisted rows must all require exact ticket mass",
+  );
+  assert.match(
+    actions,
+    /getPackBuilderTicketTotalError\(\s*cardRows\.map\(\(row\) => row\.weight\)/,
+  );
+  assert.match(buildDraftsList, /!edgeWithinProductionBand/);
+  assert.match(approvalList, /!edgeWithinProductionBand/);
 });
 
 test("Pack Approval Queue lives only in the owner-only Packs System section", async () => {

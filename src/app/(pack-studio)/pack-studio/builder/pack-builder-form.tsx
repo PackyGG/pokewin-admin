@@ -1027,7 +1027,7 @@ export function PackBuilderForm({
                   <span className="inline-flex items-center gap-1 rounded-md border border-rose-500/30 bg-rose-500/10 px-2 py-1 text-xs font-medium text-rose-600 dark:text-rose-400">
                     <AlertTriangle className="size-3.5" />
                     {!edgeWithinBuilderRange
-                      ? `Edge ${edgePct.toFixed(2)}% outside 10.95%–12.00%`
+                      ? `Edge ${edgePct.toFixed(2)}% outside ${(PACK_BUILDER_EDGE_MIN * 100).toFixed(2)}%–${(PACK_BUILDER_EDGE_MAX * 100).toFixed(2)}%`
                       : !edgeHealthy
                       ? `Edge ${edgePct.toFixed(2)}% below ${targetEdgePct.toFixed(2)}%`
                       : "Max win over cap"}

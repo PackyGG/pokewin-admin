@@ -25,6 +25,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { isPackBuilderEdgeInRange } from "@/lib/packs/builder-edge";
 import type { PackCreationRequestStatus } from "@/lib/packs/build-requests";
 
 export type PackRequestReviewItem = {
@@ -136,6 +137,9 @@ export function PackRequestReviewList({
         const riskScore = Math.round(
           Math.min(Math.max(item.difficulty, 0), 1) * 100,
         );
+        const edgeWithinProductionBand = isPackBuilderEdgeInRange(
+          item.previewEdge,
+        );
         return (
           <article
             key={item.id}
@@ -179,6 +183,14 @@ export function PackRequestReviewList({
                         className="border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
                       >
                         Image required
+                      </Badge>
+                    )}
+                    {!edgeWithinProductionBand && (
+                      <Badge
+                        variant="outline"
+                        className="border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+                      >
+                        Edge outside 10.95%–11.50%
                       </Badge>
                     )}
                   </div>
@@ -242,7 +254,9 @@ export function PackRequestReviewList({
                   </Button>
                   <Button
                     type="button"
-                    disabled={isPending || !item.imageUrl}
+                    disabled={
+                      isPending || !item.imageUrl || !edgeWithinProductionBand
+                    }
                     onClick={() => approve(item)}
                     className="gap-2"
                   >
@@ -251,7 +265,11 @@ export function PackRequestReviewList({
                     ) : (
                       <Check className="size-4" />
                     )}
-                    {item.imageUrl ? "Approve" : "Image required"}
+                    {!item.imageUrl
+                      ? "Image required"
+                      : edgeWithinProductionBand
+                        ? "Approve"
+                        : "Edge outside range"}
                   </Button>
                 </div>
               ) : item.createdPackId ? (
