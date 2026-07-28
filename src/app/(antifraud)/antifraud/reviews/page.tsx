@@ -1,6 +1,12 @@
 import { Suspense } from "react";
 import { HostLink } from "@/components/host-link";
-import { ArrowUp, CheckCircle2, ChevronRight, ShieldAlert } from "lucide-react";
+import {
+  ArrowUp,
+  CheckCircle2,
+  ChevronRight,
+  Eye,
+  ShieldAlert,
+} from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -316,13 +322,23 @@ async function QueueList({
                   </span>
                 </span>
               </HostLink>
-              <QuickReviewActions
-                reviewId={review.id}
-                targetUserId={review.targetUserId}
-                targetUsername={review.targetUsername}
-                status={review.status}
-                compact
-              />
+              <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+                <HostLink
+                  href={`/antifraud/reviews/${review.id}`}
+                  className="inline-flex h-7 items-center gap-1 rounded-lg border border-border bg-background px-2.5 text-[11px] font-medium transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                  aria-label={`Review ${review.targetUsername ?? review.targetUserId}`}
+                >
+                  <Eye className="size-3.5" />
+                  Review
+                </HostLink>
+                <QuickReviewActions
+                  reviewId={review.id}
+                  targetUserId={review.targetUserId}
+                  targetUsername={review.targetUsername}
+                  status={review.status}
+                  compact
+                />
+              </div>
             </li>
           ))}
         </ul>

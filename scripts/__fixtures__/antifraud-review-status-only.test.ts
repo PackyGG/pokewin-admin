@@ -30,4 +30,6 @@ test("Account Review exposes status workflow without severity controls", async (
   const filterBar = queue.slice(queue.indexOf("function FilterBar"));
   assert.doesNotMatch(hero, /OpenCaseDialog/);
   assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
+  assert.match(queue, />\s*Review\s*<\/HostLink>/);
+  assert.match(queue, /aria-label={`Review \$\{/);
 });
