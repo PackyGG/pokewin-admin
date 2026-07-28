@@ -9,6 +9,7 @@ import {
   inArray,
   isNotNull,
   isNull,
+  sql,
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import {
@@ -214,7 +215,14 @@ export async function listStaffNotifications(
 ): Promise<StaffNotificationRow[]> {
   try {
     const rows = await adminDrizzle.select().from(staff_notifications)
-      .where(eq(staff_notifications.admin_user_id, adminUserId))
+      .where(and(
+        eq(staff_notifications.admin_user_id, adminUserId),
+        sql`(
+          ${staff_notifications.kind} IS DISTINCT FROM 'fraud_alert'
+          OR ${staff_notifications.metadata}->>'kind'
+            IS DISTINCT FROM 'daily_reward_granted'
+        )`,
+      ))
       .orderBy(desc(staff_notifications.created_at))
       .limit(Math.min(Math.max(limit, 1), 50));
     return rows.map((row) => ({
@@ -243,6 +251,11 @@ export async function countUnreadStaffNotifications(
       .from(staff_notifications).where(and(
         eq(staff_notifications.admin_user_id, adminUserId),
         isNull(staff_notifications.read_at),
+        sql`(
+          ${staff_notifications.kind} IS DISTINCT FROM 'fraud_alert'
+          OR ${staff_notifications.metadata}->>'kind'
+            IS DISTINCT FROM 'daily_reward_granted'
+        )`,
       ));
     return row?.value ?? 0;
   } catch (err) {
@@ -308,6 +321,20 @@ export type NotifyStaffInput = {
   inAppOnly?: boolean;
 };
 
+const DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS = new Set([
+  "daily_reward_granted",
+]);
+
+export function isDisabledAutomatedStaffNotification(
+  input: Pick<NotifyStaffInput, "kind" | "metadata">,
+): boolean {
+  return (
+    input.kind === "fraud_alert" &&
+    typeof input.metadata?.kind === "string" &&
+    DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS.has(input.metadata.kind)
+  );
+}
+
 type ChannelRow = {
   admin_user_id: string;
   channel: string;
@@ -332,6 +359,8 @@ type PrefRow = {
  * row instead of propagating.
  */
 export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
+  if (isDisabledAutomatedStaffNotification(input)) return 0;
+
   const recipients = [...new Set(input.recipients.filter(Boolean))];
   if (recipients.length === 0) return 0;
 

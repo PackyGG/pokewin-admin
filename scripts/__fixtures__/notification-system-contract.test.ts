@@ -28,6 +28,23 @@ test("all four dashboard webapps use the shared header", () => {
   }
 });
 
+test("daily reward grants cannot enter the shared staff inbox", () => {
+  const notifications = source("src/lib/staff/notifications.ts");
+
+  assert.match(
+    notifications,
+    /DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS[\s\S]*"daily_reward_granted"/,
+  );
+  assert.match(
+    notifications,
+    /if \(isDisabledAutomatedStaffNotification\(input\)\) return 0;/,
+  );
+  assert.match(
+    notifications,
+    /IS DISTINCT FROM 'daily_reward_granted'/,
+  );
+});
+
 test("System navigation and the bell point to the notification handler", () => {
   const nav = source("src/lib/nav-config.ts");
   const bell = source("src/components/notification-bell.tsx");
