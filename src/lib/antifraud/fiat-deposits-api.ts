@@ -39,6 +39,13 @@ const checkSchema = z.object({
 const providerEvidenceSchema = z.object({
   eventType: z.string().nullable(),
   eventReceivedAt: z.string().nullable(),
+  checkoutEmail: z
+    .string()
+    .email()
+    .max(320)
+    .nullable()
+    .optional()
+    .default(null),
   threeDsVerified: z.boolean().nullable(),
   riskScore: z.number().nullable(),
   riskSignals: z.array(

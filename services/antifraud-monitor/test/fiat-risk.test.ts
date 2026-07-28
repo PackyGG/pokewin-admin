@@ -14,6 +14,7 @@ const safeInput: FiatScoreInput = {
   provider: {
     eventType: "payment.succeeded",
     eventReceivedAt: "2026-07-28T12:00:00.000Z",
+    checkoutEmail: "checkout@example.com",
     threeDsVerified: true,
     riskScore: 10,
     riskSignals: [],
@@ -114,6 +115,7 @@ test("Whop parsing allowlists risk evidence and strips payment identity", () => 
   const result = parseWhopEvidence(
     {
       data: {
+        user: { email: "buyer@checkout.example" },
         risk_score: 71,
         three_ds_verified: true,
         phone: "+1-secret",
@@ -131,6 +133,7 @@ test("Whop parsing allowlists risk evidence and strips payment identity", () => 
     "2026-07-28T12:00:00.000Z",
   );
   assert.equal(result.riskScore, 71);
+  assert.equal(result.checkoutEmail, "buyer@checkout.example");
   assert.equal(result.billingCountry, "US");
   assert.deepEqual(result.riskSignals.map((signal) => signal.key), [
     "prior_dispute_count",

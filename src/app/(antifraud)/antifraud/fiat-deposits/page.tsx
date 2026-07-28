@@ -314,6 +314,12 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           <div className="min-w-0">
             <p className="truncate font-semibold">{name}</p>
             <p className="truncate text-xs text-muted-foreground">{item.email ?? item.user_id}</p>
+            <p
+              className="truncate text-xs text-muted-foreground"
+              title={item.provider_evidence.checkoutEmail ?? undefined}
+            >
+              Whop checkout: {item.provider_evidence.checkoutEmail ?? "unavailable"}
+            </p>
           </div>
           <Badge
             variant="outline"

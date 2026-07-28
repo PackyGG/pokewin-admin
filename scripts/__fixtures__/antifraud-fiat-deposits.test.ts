@@ -15,6 +15,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   const detail = read(
     "src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
   );
+  const api = read("src/lib/antifraud/fiat-deposits-api.ts");
   assert.match(sidebar, /Fiat Deposits/);
   assert.match(sidebar, /\/antifraud\/fiat-deposits/);
   assert.match(hosts, /"fiat-deposits"/);
@@ -23,6 +24,8 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /Expected credit/);
   assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
+  assert.match(page, /Whop checkout:/);
+  assert.match(api, /checkoutEmail/);
   assert.match(page, /Six-point flow/);
   assert.match(page, /Risk score guide/);
   assert.match(page, /Good[\s\S]*0–29/);

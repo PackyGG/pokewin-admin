@@ -41,6 +41,7 @@ export type WhopRiskSignal = {
 export type FiatProviderEvidence = {
   eventType: string | null;
   eventReceivedAt: string | null;
+  checkoutEmail: string | null;
   threeDsVerified: boolean | null;
   riskScore: number | null;
   riskSignals: WhopRiskSignal[];
@@ -205,6 +206,14 @@ export function parseWhopEvidence(
   receivedAt: string | null,
 ): FiatProviderEvidence {
   const data = record(record(payload).data);
+  const checkoutUser = record(data.user);
+  const checkoutEmail =
+    typeof checkoutUser.email === "string" &&
+    checkoutUser.email.trim().length > 0 &&
+    checkoutUser.email.trim().length <= 320 &&
+    checkoutUser.email.includes("@")
+      ? checkoutUser.email.trim()
+      : null;
   const riskSignals = record(data.risk_signals);
   const signals = array(riskSignals.signals)
     .map((raw): WhopRiskSignal | null => {
@@ -228,6 +237,7 @@ export function parseWhopEvidence(
   return {
     eventType,
     eventReceivedAt: receivedAt,
+    checkoutEmail,
     threeDsVerified:
       typeof data.three_ds_verified === "boolean"
         ? data.three_ds_verified
@@ -1064,14 +1074,22 @@ async function loadProviderEvidence(
     const selected =
       rows.find((row) => row.event_type === "payment.succeeded") ?? rows[0];
     if (!selected) continue;
-    output.set(
-      intentId,
-      parseWhopEvidence(
-        selected.payload,
-        selected.event_type,
-        new Date(selected.received_at).toISOString(),
-      ),
+    const evidence = parseWhopEvidence(
+      selected.payload,
+      selected.event_type,
+      new Date(selected.received_at).toISOString(),
     );
+    evidence.checkoutEmail ??= rows
+      .map((row) =>
+        parseWhopEvidence(
+          row.payload,
+          row.event_type,
+          new Date(row.received_at).toISOString(),
+        ),
+      )
+      .find((candidate) => candidate.checkoutEmail !== null)
+      ?.checkoutEmail ?? null;
+    output.set(intentId, evidence);
   }
   return output;
 }
@@ -1079,6 +1097,7 @@ async function loadProviderEvidence(
 const EMPTY_PROVIDER: FiatProviderEvidence = {
   eventType: null,
   eventReceivedAt: null,
+  checkoutEmail: null,
   threeDsVerified: null,
   riskScore: null,
   riskSignals: [],
