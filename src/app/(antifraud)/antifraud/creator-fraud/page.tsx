@@ -1,9 +1,12 @@
 import { Suspense } from "react";
 import {
+  ArrowRight,
   ChevronLeft,
   ChevronRight,
   Search,
   ShieldAlert,
+  ShieldCheck,
+  TriangleAlert,
   UserRoundSearch,
 } from "lucide-react";
 
@@ -20,6 +23,7 @@ import {
   type CreatorWindow,
 } from "@/lib/antifraud/network-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { RiskScoreBar } from "../_components/risk-score-bar";
 import { ScanPoller } from "../networks/scan-poller";
@@ -57,36 +61,39 @@ export default async function CreatorFraudPage({
         />
       </PageHero>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          {WINDOWS.map((item) => (
-            <Button
-              key={item.key}
-              size="sm"
-              variant={item.key === window ? "default" : "outline"}
-              render={
-                <HostLink
-                  href={`/antifraud/creator-fraud?window=${item.key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
-                />
-              }
-            >
-              {item.label}
+      <div className="rounded-xl border border-border/70 bg-card p-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex flex-wrap gap-1.5">
+            {WINDOWS.map((item) => (
+              <Button
+                key={item.key}
+                size="sm"
+                variant={item.key === window ? "default" : "outline"}
+                render={
+                  <HostLink
+                    href={`/antifraud/creator-fraud?window=${item.key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
+                  />
+                }
+              >
+                {item.label}
+              </Button>
+            ))}
+          </div>
+          <form className="flex w-full gap-2 sm:w-auto" action="/antifraud/creator-fraud">
+            <input type="hidden" name="window" value={window} />
+            <Input
+              name="search"
+              defaultValue={search}
+              placeholder="Creator, ID, or code"
+              maxLength={100}
+              aria-label="Search creators"
+              className="min-w-0 sm:w-64"
+            />
+            <Button type="submit" variant="outline" aria-label="Search">
+              <Search className="size-4" />
             </Button>
-          ))}
+          </form>
         </div>
-        <form className="flex gap-2" action="/antifraud/creator-fraud">
-          <input type="hidden" name="window" value={window} />
-          <Input
-            name="search"
-            defaultValue={search}
-            placeholder="Creator, ID, or code"
-            maxLength={100}
-            aria-label="Search creators"
-          />
-          <Button type="submit" variant="outline">
-            <Search className="size-4" />
-          </Button>
-        </form>
       </div>
 
       <Suspense key={`${window}-${page}-${search}`} fallback={<CreatorFraudSkeleton />}>
@@ -117,29 +124,9 @@ async function CreatorFraudContent({
   }
   return (
     <div className="space-y-4">
-      <div className="hidden overflow-x-auto rounded-xl border border-border/70 bg-card lg:block">
-        <table className="w-full text-sm">
-          <thead className="border-b border-border/70 bg-muted/30 text-left text-xs text-muted-foreground">
-            <tr>
-              <th className="px-4 py-3 font-medium">Creator</th>
-              <th className="px-3 py-3 font-medium">Codes</th>
-              <th className="px-3 py-3 text-right font-medium">Referred</th>
-              <th className="px-3 py-3 text-right font-medium">Connected</th>
-              <th className="px-3 py-3 text-right font-medium">Deposits</th>
-              <th className="px-3 py-3 text-right font-medium">Wager</th>
-              <th className="min-w-40 px-4 py-3 font-medium">Risk</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/60">
-            {result.data.map((assessment) => (
-              <CreatorRow key={assessment.creator_user_id} assessment={assessment} window={window} />
-            ))}
-          </tbody>
-        </table>
-      </div>
-      <div className="space-y-3 lg:hidden">
+      <div className="space-y-3">
         {result.data.map((assessment) => (
-          <CreatorCard key={assessment.creator_user_id} assessment={assessment} window={window} />
+          <CreatorRow key={assessment.creator_user_id} assessment={assessment} window={window} />
         ))}
       </div>
       {result.pagination && (
@@ -182,93 +169,117 @@ function CreatorRow({
   window: CreatorWindow;
 }) {
   const metrics = creatorMetrics(assessment);
-  return (
-    <tr className="hover:bg-muted/20">
-      <td className="px-4 py-3">
-        <CreatorIdentity assessment={assessment} />
-      </td>
-      <td className="px-3 py-3">
-        <div className="flex max-w-52 flex-wrap gap-1">
-          {assessment.codes.slice(0, 3).map((code) => (
-            <Badge key={code} variant="outline" className="font-mono text-[10px]">
-              {code}
-            </Badge>
-          ))}
-          {assessment.codes.length > 3 && <Badge variant="outline">+{assessment.codes.length - 3}</Badge>}
-        </div>
-      </td>
-      <td className="px-3 py-3 text-right tabular-nums">{metrics.cohortSize}</td>
-      <td className="px-3 py-3 text-right tabular-nums">{metrics.connectedAccounts}</td>
-      <td className="px-3 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">
-        {formatCurrency(metrics.depositsUsd)}
-      </td>
-      <td className="px-3 py-3 text-right font-medium text-emerald-600 dark:text-emerald-400">
-        {formatCurrency(metrics.wagerUsd)}
-      </td>
-      <td className="px-4 py-3">
-        <HostLink href={`/antifraud/creator-fraud/${assessment.creator_user_id}?window=${window}`} className="block">
-          <div className="mb-1 flex justify-between text-xs">
-            <span className="capitalize">{assessment.severity}</span>
-            <span className="font-semibold tabular-nums">{assessment.score}/100</span>
-          </div>
-          <RiskScoreBar score={assessment.score} />
-        </HostLink>
-      </td>
-    </tr>
-  );
-}
-
-function CreatorCard({
-  assessment,
-  window,
-}: {
-  assessment: CreatorFraudAssessment;
-  window: CreatorWindow;
-}) {
-  const metrics = creatorMetrics(assessment);
-  return (
-    <HostLink
-      href={`/antifraud/creator-fraud/${assessment.creator_user_id}?window=${window}`}
-      className="block rounded-xl border border-border/70 bg-card p-4"
-    >
-      <CreatorIdentity assessment={assessment} />
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
-        <Mini label="Referred" value={String(metrics.cohortSize)} />
-        <Mini label="Connected" value={String(metrics.connectedAccounts)} />
-        <Mini label="Deposits" value={formatCurrency(metrics.depositsUsd)} />
-        <Mini label="Wager" value={formatCurrency(metrics.wagerUsd)} />
-      </div>
-      <div className="mt-3">
-        <div className="mb-1 flex justify-between text-xs">
-          <span className="capitalize">{assessment.severity}</span>
-          <span className="font-semibold">{assessment.score}/100</span>
-        </div>
-        <RiskScoreBar score={assessment.score} />
-      </div>
-    </HostLink>
-  );
-}
-
-function CreatorIdentity({ assessment }: { assessment: CreatorFraudAssessment }) {
+  const severity = severityStyle(assessment.score);
+  const SeverityIcon = severity.icon;
   const creator = assessment.creator;
   const name =
-    creator?.display_username ??
-    creator?.username ??
-    assessment.creator_user_id;
+    creator?.display_username ?? creator?.username ?? assessment.creator_user_id;
   return (
-    <div className="flex min-w-0 items-center gap-2.5">
-      <Avatar className="size-9">
-        {creator?.image && <AvatarImage src={creator.image} alt="" />}
-        <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
-      </Avatar>
-      <span className="min-w-0">
-        <span className="block truncate font-semibold">{name}</span>
-        <span className="block truncate text-xs text-muted-foreground">
-          {assessment.creator_user_id}
-        </span>
-      </span>
+    <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <Avatar className="size-10">
+            {creator?.image && <AvatarImage src={creator.image} alt="" />}
+            <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="truncate font-semibold">{name}</p>
+            <p className="truncate text-xs text-muted-foreground">
+              {assessment.creator_user_id}
+            </p>
+          </div>
+          <div className="flex max-w-56 flex-wrap gap-1">
+            {assessment.codes.slice(0, 3).map((code) => (
+              <Badge key={code} variant="outline" className="font-mono text-[10px]">
+                {code}
+              </Badge>
+            ))}
+            {assessment.codes.length > 3 && (
+              <Badge variant="outline">+{assessment.codes.length - 3}</Badge>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-3 xl:justify-end">
+          <RowStat label="Referred" value={metrics.cohortSize.toLocaleString()} />
+          <RowStat label="Connected" value={metrics.connectedAccounts.toLocaleString()} />
+          <RowStat
+            label="Deposits"
+            value={formatCurrency(metrics.depositsUsd)}
+            tone="text-emerald-600 dark:text-emerald-400"
+          />
+          <RowStat
+            label="Wager"
+            value={formatCurrency(metrics.wagerUsd)}
+            tone="text-emerald-600 dark:text-emerald-400"
+          />
+          <div className={cn("min-w-40 rounded-lg border px-3 py-2", severity.box)}>
+            <div className="mb-1.5 flex items-center justify-between gap-2">
+              <span className={cn("flex items-center gap-1.5 text-sm font-semibold capitalize", severity.text)}>
+                <SeverityIcon className="size-4" />
+                {assessment.severity}
+              </span>
+              <span className="text-xs font-semibold tabular-nums">
+                {assessment.score}/100
+              </span>
+            </div>
+            <RiskScoreBar score={assessment.score} />
+          </div>
+          <Button
+            size="sm"
+            render={
+              <HostLink
+                href={`/antifraud/creator-fraud/${assessment.creator_user_id}?window=${window}`}
+              />
+            }
+          >
+            Open assessment
+            <ArrowRight className="size-3.5" />
+          </Button>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function RowStat({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: string;
+  tone?: string;
+}) {
+  return (
+    <div className="min-w-20">
+      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className={cn("text-sm font-semibold tabular-nums", tone)}>{value}</p>
     </div>
   );
+}
+
+function severityStyle(score: number) {
+  if (score >= 60) {
+    return {
+      icon: ShieldAlert,
+      text: "text-rose-600 dark:text-rose-400",
+      box: "border-rose-500/25 bg-rose-500/5",
+    };
+  }
+  if (score >= 30) {
+    return {
+      icon: TriangleAlert,
+      text: "text-amber-600 dark:text-amber-400",
+      box: "border-amber-500/25 bg-amber-500/5",
+    };
+  }
+  return {
+    icon: ShieldCheck,
+    text: "text-emerald-600 dark:text-emerald-400",
+    box: "border-emerald-500/25 bg-emerald-500/5",
+  };
 }
 
 function creatorMetrics(assessment: CreatorFraudAssessment) {
@@ -288,15 +299,6 @@ function creatorListHref(window: CreatorWindow, page: number, search: string) {
   return `/antifraud/creator-fraud?window=${window}&page=${page}${search ? `&search=${encodeURIComponent(search)}` : ""}`;
 }
 
-function Mini({ label, value }: { label: string; value: string }) {
-  return (
-    <span className="rounded-md bg-muted/40 p-2">
-      <span className="block text-[10px] text-muted-foreground">{label}</span>
-      <span className="block font-semibold tabular-nums">{value}</span>
-    </span>
-  );
-}
-
 function Empty({ text, children }: { text: string; children?: React.ReactNode }) {
   return (
     <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
@@ -310,8 +312,9 @@ function Empty({ text, children }: { text: string; children?: React.ReactNode })
 function CreatorFraudSkeleton() {
   return (
     <div className="space-y-3">
-      <Skeleton className="h-16 rounded-lg" />
-      <Skeleton className="h-80 rounded-xl" />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-24 rounded-xl" />
+      ))}
     </div>
   );
 }

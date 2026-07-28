@@ -3,13 +3,22 @@ import { notFound } from "next/navigation";
 import {
   Activity,
   BadgeDollarSign,
+  Gauge,
+  ListChecks,
   Network,
   ShieldAlert,
+  UserRound,
   Users,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -19,12 +28,20 @@ import {
   type CreatorWindow,
 } from "@/lib/antifraud/network-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { formatCurrency } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
+import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { RiskScoreBar } from "../../_components/risk-score-bar";
 import { ScanPoller } from "../../networks/scan-poller";
 import { CreatorRescanButton } from "../creator-rescan-button";
 
 export const metadata = { title: "Affiliate Cohort Assessment · Antifraud" };
+
+const WINDOW_LABELS: Record<CreatorWindow, string> = {
+  "7d": "7-day window",
+  "30d": "30-day window",
+  "90d": "90-day window",
+  lifetime: "Lifetime window",
+};
 
 export default async function CreatorFraudDetailPage({
   params,
@@ -51,6 +68,20 @@ export default async function CreatorFraudDetailPage({
           accent="cyan"
           title="Affiliate cohort assessment"
           subtitle="Only referred-account networks and activity; creator account behavior is excluded"
+          backHref={`/antifraud/creator-fraud?window=${window}`}
+          action={
+            <>
+              <CreatorRescanButton creatorId={creatorId} window={window} />
+              <Button
+                size="sm"
+                variant="outline"
+                render={<HostLink href={`/users/${creatorId}`} />}
+              >
+                <UserRound className="size-4" />
+                User profile
+              </Button>
+            </>
+          }
         />
       </PageHero>
       <Suspense key={`${creatorId}-${window}`} fallback={<DetailSkeleton />}>
@@ -79,108 +110,217 @@ async function CreatorDetail({
   }
   const assessment = result.data;
   const metrics = readMetrics(assessment);
+  const creator = assessment.creator;
   const creatorName =
-    assessment.creator?.display_username ??
-    assessment.creator?.username ??
-    creatorId;
+    creator?.display_username ?? creator?.username ?? creatorId;
   return (
-    <div className="space-y-5">
-      <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="min-w-0">
-          <p className="truncate text-lg font-semibold">{creatorName}</p>
-          <div className="mt-1 flex flex-wrap gap-1">
+    <div className="space-y-6">
+      <div className="rounded-xl border bg-card p-4 sm:p-5">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 items-center gap-3">
+            <Avatar className="size-11">
+              {creator?.image && <AvatarImage src={creator.image} alt="" />}
+              <AvatarFallback>{creatorName.slice(0, 2).toUpperCase()}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0">
+              <h1 className="truncate text-lg font-semibold">{creatorName}</h1>
+              <p className="truncate text-xs text-muted-foreground">
+                {creator?.email ?? creatorId}
+              </p>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             {assessment.codes.map((code) => (
               <Badge key={code} variant="outline" className="font-mono">
                 {code}
               </Badge>
             ))}
-          </div>
-        </div>
-        <CreatorRescanButton creatorId={creatorId} window={window} />
-      </div>
-
-      <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border/70 bg-card lg:grid-cols-4">
-        <Metric icon={Users} label="Referred" value={String(metrics.cohortSize)} />
-        <Metric icon={Network} label="Mapped" value={String(metrics.connectedAccounts)} />
-        <Metric icon={BadgeDollarSign} label="Deposits" value={formatCurrency(metrics.depositsUsd)} tone="positive" />
-        <Metric icon={Activity} label="Wager" value={formatCurrency(metrics.wagerUsd)} tone="positive" />
-      </div>
-
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(280px,0.75fr)]">
-        <section className="rounded-xl border border-border/70 bg-card p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <span>
-              <span className="block text-sm font-semibold capitalize">
-                {assessment.severity} risk
-              </span>
-              <span className="block text-xs text-muted-foreground">
-                Raw {assessment.raw_score} points · displayed 0–100
-              </span>
-            </span>
-            <span className="text-xl font-bold tabular-nums">{assessment.score}</span>
-          </div>
-          <RiskScoreBar score={assessment.score} />
-          <div className="mt-4 grid grid-cols-3 gap-2">
-            <Breakdown label="Affiliate networks" value={assessment.breakdown.network} />
-            <Breakdown label="Signup patterns" value={assessment.breakdown.affiliate} />
-            <Breakdown label="Affiliate activity" value={assessment.breakdown.behavior} />
-          </div>
-        </section>
-
-        <section className="rounded-xl border border-border/70 bg-card p-4">
-          <p className="text-sm font-semibold">Network maps</p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Open complete account components detected among referred accounts.
-          </p>
-          {metrics.networkCount === 0 && metrics.networkRoots.length > 0 && (
-            <p className="mt-2 rounded-md bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-              Shared-IP groups were detected. Their graph scans are queued and
-              may still be building.
-            </p>
-          )}
-          <div className="mt-3 flex flex-wrap gap-2">
-            {metrics.networkRoots.length > 0 ? (
-              metrics.networkRoots.slice(0, 6).map((root) => (
-                <Button
-                  key={root}
-                  size="sm"
-                  variant="outline"
-                  render={<HostLink href={`/antifraud/networks?user=${encodeURIComponent(root)}`} />}
-                >
-                  <Network className="size-3.5" />
-                  {evidenceLabel(metrics, root)}
-                </Button>
-              ))
-            ) : (
-              <span className="text-xs text-muted-foreground">
-                No shared IP/device component has been recorded yet.
-              </span>
+            <SeverityBadge score={assessment.score} severity={assessment.severity} />
+            {assessment.partial && (
+              <Badge
+                variant="outline"
+                className="border-amber-500/30 text-amber-600 dark:text-amber-400"
+              >
+                Partial data
+              </Badge>
             )}
           </div>
-        </section>
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          {WINDOW_LABELS[window]} · assessed {formatRelative(assessment.assessed_at)}
+        </p>
       </div>
 
-      <section>
-        <h2 className="mb-2 text-sm font-semibold">Triggered checks</h2>
-        {assessment.signals.length > 0 ? (
-          <div className="space-y-2">
-            {assessment.signals.map((signal) => (
-              <div key={signal.key} className="grid gap-2 rounded-lg border border-border/70 bg-card p-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-                <span>
-                  <span className="block text-sm font-medium">{signal.title}</span>
-                  <span className="block text-xs text-muted-foreground">{signal.detail}</span>
-                  <SignalEvidence signalKey={signal.key} metrics={metrics} />
-                </span>
-                <Badge variant="outline" className="border-rose-500/25 text-rose-600 dark:text-rose-400">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <KpiTile
+          icon={Gauge}
+          accent={riskAccent(assessment.score)}
+          label="Cohort risk"
+          value={`${assessment.score}/100`}
+          sub={`${assessment.severity} · raw ${assessment.raw_score} points`}
+        />
+        <KpiTile
+          icon={Users}
+          accent="cyan"
+          label="Referred accounts"
+          value={metrics.cohortSize.toLocaleString()}
+          sub={`${metrics.connectedAccounts.toLocaleString()} mapped in networks`}
+        />
+        <KpiTile
+          icon={BadgeDollarSign}
+          accent="emerald"
+          label="Cohort deposits"
+          value={formatCurrency(metrics.depositsUsd)}
+          sub={`${formatCurrency(metrics.withdrawalsUsd)} withdrawn`}
+        />
+        <KpiTile
+          icon={Activity}
+          accent="emerald"
+          label="Cohort wager"
+          value={formatCurrency(metrics.wagerUsd)}
+          sub="gross wagered in window"
+        />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.7fr)]">
+        <div className="min-w-0 space-y-6">
+          <TriggeredChecks assessment={assessment} metrics={metrics} />
+        </div>
+        <aside className="min-w-0 space-y-5">
+          <RiskBreakdown assessment={assessment} />
+          <NetworkMaps metrics={metrics} />
+        </aside>
+      </div>
+    </div>
+  );
+}
+
+function TriggeredChecks({
+  assessment,
+  metrics,
+}: {
+  assessment: CreatorFraudAssessment;
+  metrics: CreatorMetrics;
+}) {
+  return (
+    <section className="space-y-3">
+      <SectionHeading
+        icon={ListChecks}
+        title={
+          <>
+            Triggered checks
+            <span className="text-xs font-normal text-muted-foreground">
+              affiliate-cohort signals in this window
+            </span>
+          </>
+        }
+      />
+      {assessment.signals.length > 0 ? (
+        <div className="space-y-2">
+          {assessment.signals.map((signal) => (
+            <div
+              key={signal.key}
+              className="rounded-xl border border-rose-500/25 bg-card p-4"
+            >
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <p className="text-sm font-semibold">{signal.title}</p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {signal.detail}
+                  </p>
+                </div>
+                <Badge
+                  variant="outline"
+                  className="shrink-0 border-rose-500/30 text-rose-600 dark:text-rose-400"
+                >
                   +{signal.points} pts
                 </Badge>
               </div>
-            ))}
+              <SignalEvidence signalKey={signal.key} metrics={metrics} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <Empty text="No affiliate-cohort checks triggered in this window." />
+      )}
+    </section>
+  );
+}
+
+function RiskBreakdown({ assessment }: { assessment: CreatorFraudAssessment }) {
+  const categories = [
+    { label: "Affiliate networks", value: assessment.breakdown.network },
+    { label: "Signup patterns", value: assessment.breakdown.affiliate },
+    { label: "Affiliate activity", value: assessment.breakdown.behavior },
+  ];
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center justify-between gap-2">
+        <span>
+          <span className="block text-sm font-semibold capitalize">
+            {assessment.severity} risk
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            Raw {assessment.raw_score} points · displayed 0–100
+          </span>
+        </span>
+        <span className="text-xl font-bold tabular-nums">{assessment.score}</span>
+      </div>
+      <div className="mt-3">
+        <RiskScoreBar score={assessment.score} />
+      </div>
+      <div className="mt-4 space-y-3">
+        {categories.map((category) => (
+          <div key={category.label}>
+            <div className="mb-1 flex justify-between text-xs">
+              <span className="text-muted-foreground">{category.label}</span>
+              <span className="font-semibold tabular-nums">{category.value}</span>
+            </div>
+            <RiskScoreBar score={category.value} />
           </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function NetworkMaps({ metrics }: { metrics: CreatorMetrics }) {
+  return (
+    <div className="rounded-xl border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <Network className="size-4 text-cyan-500" />
+        <p className="text-sm font-semibold">Network maps</p>
+      </div>
+      <p className="mt-1 text-xs text-muted-foreground">
+        Open complete account components detected among referred accounts.
+      </p>
+      {metrics.networkCount === 0 && metrics.networkRoots.length > 0 && (
+        <p className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
+          Shared-IP groups were detected. Their graph scans are queued and may
+          still be building.
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        {metrics.networkRoots.length > 0 ? (
+          metrics.networkRoots.slice(0, 6).map((root) => (
+            <Button
+              key={root}
+              size="sm"
+              variant="outline"
+              render={
+                <HostLink href={`/antifraud/networks?user=${encodeURIComponent(root)}`} />
+              }
+            >
+              <Network className="size-3.5" />
+              {evidenceLabel(metrics, root)}
+            </Button>
+          ))
         ) : (
-          <Empty text="No affiliate-cohort checks triggered in this window." />
+          <span className="text-xs text-muted-foreground">
+            No shared IP/device component has been recorded yet.
+          </span>
         )}
-      </section>
+      </div>
     </div>
   );
 }
@@ -290,7 +430,7 @@ function SignalEvidence({
   }
   if (signalKey === "creator_ggr_shortfall") {
     return (
-      <div className="mt-2 grid gap-1.5 text-[11px] sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         <EvidenceMetric label="Expected GGR" value={formatCurrency(metrics.expectedGgrUsd)} />
         <EvidenceMetric label="Deposits" value={formatCurrency(metrics.depositsUsd)} tone="positive" />
         <EvidenceMetric label="Withdrawals" value={formatCurrency(metrics.withdrawalsUsd)} tone="negative" />
@@ -311,14 +451,18 @@ function EvidenceGroups({
   emptyText: string;
 }) {
   if (groups.length === 0) {
-    return <span className="mt-2 block text-[11px] text-amber-600 dark:text-amber-400">{emptyText}</span>;
+    return (
+      <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+        {emptyText}
+      </p>
+    );
   }
   return (
-    <div className="mt-2 space-y-1.5">
+    <div className="mt-3 space-y-1.5">
       {groups.map((group, index) => (
         <div
           key={`${group.rootUserId}-${index}`}
-          className="flex flex-wrap items-center gap-1.5 rounded-md bg-muted/40 px-2 py-1.5 text-[11px]"
+          className="flex flex-wrap items-center gap-1.5 rounded-lg border border-border/60 bg-muted/20 px-2.5 py-2 text-[11px]"
         >
           <span className="font-medium">Group {index + 1}:</span>
           {group.members.map((member) => (
@@ -355,57 +499,48 @@ function EvidenceMetric({
   tone?: "positive" | "negative";
 }) {
   return (
-    <span className="rounded-md bg-muted/40 px-2 py-1.5">
-      <span className="block text-muted-foreground">{label}</span>
-      <span className={
-        tone === "positive"
-          ? "font-semibold text-emerald-600 dark:text-emerald-400"
-          : tone === "negative"
-            ? "font-semibold text-rose-600 dark:text-rose-400"
-            : "font-semibold"
-      }>
+    <div className="rounded-lg border bg-card p-3">
+      <p className="text-[11px] text-muted-foreground">{label}</p>
+      <p
+        className={cn(
+          "text-sm font-semibold tabular-nums",
+          tone === "positive" && "text-emerald-600 dark:text-emerald-400",
+          tone === "negative" && "text-rose-600 dark:text-rose-400",
+        )}
+      >
         {value}
-      </span>
-    </span>
-  );
-}
-
-function Metric({
-  icon: Icon,
-  label,
-  value,
-  tone,
-}: {
-  icon: typeof Users;
-  label: string;
-  value: string;
-  tone?: "positive";
-}) {
-  return (
-    <div className="flex items-center gap-2.5 border-border/70 p-3 [&:not(:last-child)]:border-r">
-      <Icon className="size-4 text-cyan-500" />
-      <span>
-        <span className="block text-[11px] text-muted-foreground">{label}</span>
-        <span className={tone === "positive" ? "block font-semibold text-emerald-600 dark:text-emerald-400" : "block font-semibold"}>
-          {value}
-        </span>
-      </span>
+      </p>
     </div>
   );
 }
 
-function Breakdown({ label, value }: { label: string; value: number }) {
+function SeverityBadge({ score, severity }: { score: number; severity: string }) {
   return (
-    <span className="rounded-md bg-muted/40 p-2 text-center">
-      <span className="block text-[10px] text-muted-foreground">{label}</span>
-      <span className="block text-sm font-semibold tabular-nums">{value}</span>
-    </span>
+    <Badge
+      variant="outline"
+      className={cn(
+        "capitalize",
+        score >= 60 && "border-rose-500/30 text-rose-600 dark:text-rose-400",
+        score >= 30 && score < 60 &&
+          "border-amber-500/30 text-amber-600 dark:text-amber-400",
+        score < 30 &&
+          "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+      )}
+    >
+      {severity} · {score}/100
+    </Badge>
   );
+}
+
+function riskAccent(score: number): "emerald" | "amber" | "rose" {
+  if (score >= 60) return "rose";
+  if (score >= 30) return "amber";
+  return "emerald";
 }
 
 function Empty({ text, children }: { text: string; children?: React.ReactNode }) {
   return (
-    <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-sm text-muted-foreground">
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center text-sm text-muted-foreground">
       {text}
       {children}
     </div>
@@ -414,9 +549,17 @@ function Empty({ text, children }: { text: string; children?: React.ReactNode })
 
 function DetailSkeleton() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-20 rounded-xl" />
-      <Skeleton className="h-72 rounded-xl" />
+    <div className="space-y-6">
+      <Skeleton className="h-24 rounded-xl" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
+        ))}
+      </div>
+      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.7fr)]">
+        <Skeleton className="h-72 rounded-xl" />
+        <Skeleton className="h-72 rounded-xl" />
+      </div>
     </div>
   );
 }
