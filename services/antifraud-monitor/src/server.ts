@@ -470,16 +470,24 @@ app.get("/v1/signups", async (request) => {
 });
 
 app.get("/v1/signups/unseen-count", async (request) => {
-  const query = z.object({
-    since: z.iso.datetime(),
-  }).parse(request.query);
+  const query = z
+    .object({
+      since: z.iso.datetime(),
+      until: z.iso.datetime(),
+    })
+    .refine(
+      ({ since, until }) => Date.parse(until) >= Date.parse(since),
+      { message: "until must not precede since" },
+    )
+    .parse(request.query);
   const result = await db.antifraud.query<{ count: number }>(
     `
       SELECT LEAST(COUNT(*), 100)::int AS count
       FROM subjects
       WHERE source_created_at > $1::timestamptz
+        AND source_created_at <= $2::timestamptz
     `,
-    [query.since],
+    [query.since, query.until],
   );
   return { data: { count: result.rows[0]?.count ?? 0 } };
 });

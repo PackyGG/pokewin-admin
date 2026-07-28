@@ -108,13 +108,17 @@ export async function listAntifraudSignups(
 
 export async function countAntifraudSignupsSince(
   since: Date,
+  checkedAt: Date,
 ): Promise<number | null> {
   const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
   const token = process.env.ANTIFRAUD_MONITOR_API_TOKEN;
   if (!baseUrl || !token) return null;
 
   try {
-    const query = new URLSearchParams({ since: since.toISOString() });
+    const query = new URLSearchParams({
+      since: since.toISOString(),
+      until: checkedAt.toISOString(),
+    });
     const response = await fetch(
       `${baseUrl}/v1/signups/unseen-count?${query.toString()}`,
       {

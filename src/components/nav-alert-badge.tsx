@@ -19,7 +19,7 @@ const EMPTY_COUNTS: NavAlertCounts = {
   signups: 0,
 };
 const POLL_MS = 60_000;
-const STORAGE_VERSION = "v1";
+const STORAGE_VERSION = "v2";
 
 function storageKey(viewerId: string, key: NavAlertKey): string {
   return `nav-alert-seen:${STORAGE_VERSION}:${viewerId}:${key}`;
@@ -30,6 +30,20 @@ function readSeenAt(viewerId: string, key: NavAlertKey): string | null {
   if (!value) return null;
   const parsed = Date.parse(value);
   return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+}
+
+function laterIso(current: string | null, candidate: string): string {
+  if (!current) return candidate;
+  return Date.parse(candidate) > Date.parse(current) ? candidate : current;
+}
+
+function advanceSeenAt(
+  viewerId: string,
+  key: NavAlertKey,
+  checkedAt: string,
+): void {
+  const next = laterIso(readSeenAt(viewerId, key), checkedAt);
+  writeBrowserStorage(storageKey(viewerId, key), next);
 }
 
 export function useNavAlertBadges({
@@ -46,10 +60,16 @@ export function useNavAlertBadges({
   enabled?: boolean;
 }) {
   const [counts, setCounts] = React.useState<NavAlertCounts>(EMPTY_COUNTS);
+  const checkedAtRef = React.useRef<string | null>(null);
+  const requestSequenceRef = React.useRef(0);
 
   const markSeen = React.useCallback(
     (key: NavAlertKey) => {
-      writeBrowserStorage(storageKey(viewerId, key), new Date().toISOString());
+      // A click invalidates an older in-flight response, preventing it from
+      // restoring a badge after the operator has opened the destination.
+      requestSequenceRef.current += 1;
+      const checkedAt = checkedAtRef.current;
+      if (checkedAt) advanceSeenAt(viewerId, key, checkedAt);
       setCounts((previous) =>
         previous[key] === 0 ? previous : { ...previous, [key]: 0 },
       );
@@ -59,15 +79,16 @@ export function useNavAlertBadges({
 
   const refresh = React.useCallback(async () => {
     if (!enabled) return;
+    const requestSequence = ++requestSequenceRef.current;
 
     const request: Partial<Record<NavAlertKey, string>> & {
       scope: "main" | "antifraud";
     } = { scope };
-    const now = new Date().toISOString();
+    const baselineKeys: NavAlertKey[] = [];
 
     for (const key of keys) {
       if (key === activeKey) {
-        writeBrowserStorage(storageKey(viewerId, key), now);
+        baselineKeys.push(key);
         continue;
       }
 
@@ -75,25 +96,24 @@ export function useNavAlertBadges({
       if (!seenAt) {
         // First use establishes a clean baseline. Historical rows should not
         // appear as hundreds of "new" items the moment this feature ships.
-        writeBrowserStorage(storageKey(viewerId, key), now);
+        baselineKeys.push(key);
         continue;
       }
       request[key] = seenAt;
     }
 
-    if (Object.keys(request).length === 1) {
-      if (activeKey) {
-        setCounts((previous) =>
-          previous[activeKey] === 0
-            ? previous
-            : { ...previous, [activeKey]: 0 },
-        );
-      }
-      return;
-    }
-
     try {
       const next = await fetchNavAlertCounts(request);
+      if (requestSequence !== requestSequenceRef.current) return;
+
+      checkedAtRef.current = laterIso(
+        checkedAtRef.current,
+        next.checkedAt,
+      );
+      for (const key of baselineKeys) {
+        advanceSeenAt(viewerId, key, next.checkedAt);
+      }
+
       setCounts((previous) => {
         let changed = false;
         const merged = { ...previous };
@@ -116,7 +136,19 @@ export function useNavAlertBadges({
   }, [activeKey, enabled, keys, scope, viewerId]);
 
   React.useEffect(() => {
+    requestSequenceRef.current += 1;
+    checkedAtRef.current = null;
+    setCounts(EMPTY_COUNTS);
+  }, [scope, viewerId]);
+
+  React.useEffect(() => {
+    if (activeKey) markSeen(activeKey);
+  }, [activeKey, markSeen]);
+
+  React.useEffect(() => {
     if (!enabled) {
+      requestSequenceRef.current += 1;
+      checkedAtRef.current = null;
       setCounts(EMPTY_COUNTS);
       return;
     }
@@ -138,17 +170,32 @@ export function useNavAlertBadges({
         disarm();
       }
     };
+    const relevantStorageKeys = new Set(
+      keys.map((key) => storageKey(viewerId, key)),
+    );
+    const onStorage = (event: StorageEvent) => {
+      if (
+        document.visibilityState === "visible" &&
+        event.key &&
+        relevantStorageKeys.has(event.key)
+      ) {
+        void refresh();
+      }
+    };
 
     if (document.visibilityState === "visible") {
       void refresh();
       arm();
     }
     document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("storage", onStorage);
     return () => {
+      requestSequenceRef.current += 1;
       disarm();
       document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("storage", onStorage);
     };
-  }, [enabled, refresh]);
+  }, [enabled, keys, refresh, viewerId]);
 
   return { counts, markSeen };
 }
