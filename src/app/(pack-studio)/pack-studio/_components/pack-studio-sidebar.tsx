@@ -62,7 +62,7 @@ const STUDIO_BUILD_NAV: StudioNavItem[] = [
   { label: "Cards", href: "/pack-studio/cards", icon: Layers3 },
   { label: "Pack Builder", href: "/pack-studio/builder", icon: Wand2 },
   {
-    label: "Build Drafts",
+    label: "Saved Builds",
     href: "/pack-studio/builder-drafts",
     icon: ClipboardEdit,
   },
@@ -74,7 +74,11 @@ const STUDIO_TUNE_NAV: StudioNavItem[] = [
 ];
 
 const STUDIO_SYSTEM_NAV: StudioNavItem[] = [
-  { label: "New Packs", href: "/pack-studio/new-packs", icon: PackageOpen },
+  {
+    label: "Approval Queue",
+    href: "/pack-studio/new-packs",
+    icon: PackageOpen,
+  },
 ];
 
 /**

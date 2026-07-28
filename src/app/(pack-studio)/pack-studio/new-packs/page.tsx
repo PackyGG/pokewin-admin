@@ -13,7 +13,7 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { listPackCreationRequests } from "@/lib/packs/build-requests";
 import { PackRequestReviewList } from "./review-list";
 
-export const metadata = { title: "New Packs" };
+export const metadata = { title: "Pack Approval Queue" };
 
 const QUERY_TIMEOUT_MS = 10_000;
 
@@ -26,7 +26,7 @@ export default async function NewPacksPage() {
         <PageHeroIdentity
           icon={PackageOpen}
           accent="purple"
-          title="New Packs"
+          title="Pack Approval Queue"
           subtitle="The final owner gate before a Pack Builder request can go live."
         />
       </PageHero>
@@ -79,7 +79,7 @@ async function QueueBody() {
         <SectionHeading icon={PackageOpen} title="Approval queue" />
         <p className="text-sm text-muted-foreground">
           Only live requests need approval. Saved inactive builds stay on the
-          separate Build Drafts page until a builder submits them here.
+          separate Saved Builds page until a builder submits them here.
         </p>
         <PackRequestReviewList
           requests={approvalRequests.map((request) => ({

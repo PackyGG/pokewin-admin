@@ -7,6 +7,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
 import { PackStudioOverviewContent } from "./_components/overview-content";
 
+export const metadata = { title: "Overview" };
+
 /**
  * Pack Studio — Overview. Read-only risk & compliance dashboard.
  *

@@ -28,6 +28,14 @@ import { ScrollToTopOnNav } from "../../(admin)/scroll-to-top-on-nav";
 import { PageTransition } from "@/components/page-transition";
 import { PackStudioSidebar } from "./_components/pack-studio-sidebar";
 
+export const metadata = {
+  title: {
+    default: "Pack Studio",
+    template: "%s · Pack Studio",
+  },
+  description: "Build, review, audit, and tune PackyGG packs.",
+};
+
 /**
  * Pack Studio layout — the dedicated route segment that renders Pack Studio
  * as an "app inside the app". It reuses the SAME shell geometry + providers

@@ -14,6 +14,8 @@ import { getTunedPackIds } from "./_queries/tuned-count";
 import { RetuneWorkspace } from "./_workspace/workspace";
 import { WorkspaceSkeleton } from "./loading";
 
+export const metadata = { title: "Retune Workspace" };
+
 /**
  * Retune V2 — ONE workspace replacing the four-brain swipe queue: a left
  * rail of every active pack seeded from the 60s-cached ADMIN risk snapshot

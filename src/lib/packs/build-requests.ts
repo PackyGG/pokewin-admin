@@ -201,10 +201,17 @@ export async function listPackCreationRequests(
  * Saved Pack Builder drafts. They reuse the existing ADMIN queue row shape,
  * but remain `requested_active = false` and never enter the owner review page.
  */
-export async function listPackBuildDrafts(
-  limit = 100,
-): Promise<PackCreationRequest[]> {
-  const boundedLimit = Math.max(1, Math.min(100, Math.trunc(limit)));
+export async function listPackBuildDrafts(input: {
+  limit?: number;
+  requestedBy?: string;
+} = {}): Promise<PackCreationRequest[]> {
+  const boundedLimit = Math.max(
+    1,
+    Math.min(100, Math.trunc(input.limit ?? 100)),
+  );
+  const requesterPredicate = input.requestedBy
+    ? sql`AND r.requested_by = ${input.requestedBy}::uuid`
+    : sql.empty();
   const result = await adminDrizzle.execute<RawPackCreationRequest>(sql`
     SELECT
       r.id,
@@ -227,6 +234,7 @@ export async function listPackBuildDrafts(
     LEFT JOIN admin_users reviewer ON reviewer.id = r.reviewed_by
     WHERE r.status = 'pending'
       AND r.requested_active = false
+      ${requesterPredicate}
     ORDER BY r.created_at DESC
     LIMIT ${boundedLimit}
   `);

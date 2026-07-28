@@ -12,21 +12,30 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { listPackBuildDrafts } from "@/lib/packs/build-requests";
 import { requirePackStudioPageAccess } from "@/lib/require-pack-studio-access";
+import { sessionHasRole } from "@/lib/dal";
+import { isOwner } from "@/lib/owners";
 import {
   BuildDraftsList,
   type PackBuildDraftItem,
 } from "./build-drafts-list";
 
-export const metadata = { title: "Build Drafts" };
+export const metadata = { title: "Saved Pack Builds" };
 
 const getCachedBuildDrafts = unstable_cache(
-  () => listPackBuildDrafts(100),
-  ["pack-build-drafts.v1"],
+  (requestedBy: string | null) =>
+    listPackBuildDrafts({
+      limit: 100,
+      requestedBy: requestedBy ?? undefined,
+    }),
+  ["pack-build-drafts.v2"],
   { revalidate: 30, tags: ["pack-build-drafts"] },
 );
 
 export default async function PackBuildDraftsPage() {
-  await requirePackStudioPageAccess();
+  const session = await requirePackStudioPageAccess();
+  const canManageAll =
+    isOwner(session) || sessionHasRole(session, "admin");
+  const requestedBy = canManageAll ? null : session.userId;
 
   return (
     <div className="space-y-6">
@@ -34,21 +43,29 @@ export default async function PackBuildDraftsPage() {
         <PageHeroIdentity
           icon={ClipboardList}
           accent="blue"
-          title="Build Drafts"
-          subtitle="Saved new-pack builds. No owner approval is needed until you request a live push."
+          title="Saved Pack Builds"
+          subtitle={
+            canManageAll
+              ? "Saved new-pack builds from every Pack Builder. Approval starts only when a live push is requested."
+              : "Your saved new-pack builds. Approval starts only when you request a live push."
+          }
         />
       </PageHero>
 
       <Suspense fallback={<BuildDraftsSkeleton />}>
-        <BuildDraftsBody />
+        <BuildDraftsBody requestedBy={requestedBy} />
       </Suspense>
     </div>
   );
 }
 
-async function BuildDraftsBody() {
+async function BuildDraftsBody({
+  requestedBy,
+}: {
+  requestedBy: string | null;
+}) {
   const { data: drafts } = await safeQuery(
-    () => getCachedBuildDrafts(),
+    () => getCachedBuildDrafts(requestedBy),
     [],
     "pack-studio.builder-drafts",
     10_000,

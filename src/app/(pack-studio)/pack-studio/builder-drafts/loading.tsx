@@ -10,7 +10,7 @@ export default function PackBuildDraftsLoading() {
         <PageHeroIdentity
           icon={ClipboardList}
           accent="blue"
-          title="Build Drafts"
+          title="Saved Pack Builds"
           subtitle="Saved new-pack builds. No owner approval is needed until you request a live push."
         />
       </PageHero>

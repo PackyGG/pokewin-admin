@@ -23,6 +23,8 @@ import { DoctorFilters } from "./doctor-filters";
 import { DoctorTable } from "./doctor-table";
 import { RepinCustomButton } from "./repin-custom-button";
 
+export const metadata = { title: "Pack Health" };
+
 /**
  * Pack Studio — Pack Doctor. Scored grid of every active cash pack's persisted
  * risk profile (`pack_risk_scores`, ADMIN DB) joined to live pack identity

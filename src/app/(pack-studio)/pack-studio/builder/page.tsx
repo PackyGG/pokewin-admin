@@ -21,6 +21,8 @@ import {
 import { safeQuery } from "@/lib/errors/safe-query";
 import { PackBuilderForm } from "./pack-builder-form";
 
+export const metadata = { title: "Pack Builder" };
+
 /**
  * Pack Studio — Pack Builder. Single-page design-a-pack flow gated by
  * `requirePackStudioPageAccess`. Shell-first: the hero paints immediately while

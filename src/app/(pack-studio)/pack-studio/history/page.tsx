@@ -26,6 +26,8 @@ import {
 } from "./history-timeline";
 import { HistoryPackFilter, type PackOption } from "./history-pack-filter";
 
+export const metadata = { title: "Pack Change History" };
+
 /**
  * Pack Studio — Change History + revert. Owner-only timeline of every captured
  * `pack_state_snapshots` row (ADMIN DB, newest first) joined to live pack

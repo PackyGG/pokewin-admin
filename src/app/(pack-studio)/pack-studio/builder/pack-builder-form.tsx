@@ -1078,7 +1078,7 @@ export function PackBuilderForm({
                 </AlertDialog>
 
                 {/* ADMIN-only saved build. It enters the owner queue only when
-                    a builder requests a live push from Build Drafts. */}
+                    a builder requests a live push from Saved Builds. */}
                 <Button
                   type="button"
                   variant="outline"
@@ -1091,8 +1091,8 @@ export function PackBuilderForm({
                 </Button>
               </div>
               <p className="text-center text-[11px] text-muted-foreground">
-                Saved drafts go straight to Build Drafts with no approval.
-                Only live requests enter System → New Packs.
+                Saved drafts go straight to Saved Builds with no approval.
+                Only live requests enter System → Approval Queue.
               </p>
             </>
           )}

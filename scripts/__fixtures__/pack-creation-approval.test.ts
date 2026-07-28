@@ -17,6 +17,8 @@ const sidebarPath =
   "src/app/(pack-studio)/pack-studio/_components/pack-studio-sidebar.tsx";
 const navPath = "src/lib/nav-config.ts";
 const appHostsPath = "src/lib/app-hosts.ts";
+const packStudioLayoutPath =
+  "src/app/(pack-studio)/pack-studio/layout.tsx";
 const migrationPath =
   "drizzle/admin/migrations/20260726_pack_creation_approval_queue.sql";
 const builderFormPath =
@@ -68,7 +70,7 @@ test("Pack Builder submissions queue before any approved MAIN write", async () =
   assert.match(migration, /pack_creation_requests_pending_slug_key/);
 });
 
-test("inactive Pack Builder saves land on Build Drafts without owner approval", async () => {
+test("inactive Pack Builder saves land on Saved Builds without owner approval", async () => {
   const [
     actions,
     builderForm,
@@ -92,13 +94,23 @@ test("inactive Pack Builder saves land on Build Drafts without owner approval", 
   assert.match(builderForm, /Save build draft/);
   assert.match(builderForm, /router\.push\(/);
   assert.match(builderForm, /\/pack-studio\/builder-drafts/);
-  assert.match(buildDraftsPage, /await requirePackStudioPageAccess\(\)/);
+  assert.match(
+    buildDraftsPage,
+    /const session = await requirePackStudioPageAccess\(\)/,
+  );
   assert.match(buildDraftsPage, /listPackBuildDrafts/);
+  assert.match(buildDraftsPage, /sessionHasRole\(session, "admin"\)/);
+  assert.match(buildDraftsPage, /const requestedBy = canManageAll \? null : session\.userId/);
+  assert.match(buildDraftsPage, /getCachedBuildDrafts\(requestedBy\)/);
   assert.match(buildRequests, /requested_active = false/);
+  assert.match(
+    buildRequests,
+    /AND r\.requested_by = \$\{input\.requestedBy\}::uuid/,
+  );
   assert.match(buildDraftsList, /Request live approval/);
   assert.match(buildDraftsList, /discardPackBuildDraftAction/);
   assert.match(approvalPage, /requests\.filter\(\(request\) => request\.requestedActive\)/);
-  assert.match(sidebar, /label:\s*"Build Drafts"[\s\S]*?\/pack-studio\/builder-drafts/);
+  assert.match(sidebar, /label:\s*"Saved Builds"[\s\S]*?\/pack-studio\/builder-drafts/);
   assert.match(appHosts, /"builder-drafts"/);
 
   const buildAction = actions.slice(
@@ -152,7 +164,7 @@ test("Pack Builder enforces the 10.95% to 12.00% edge band through approval", as
   );
 });
 
-test("New Packs lives only in the owner-only Packs System section", async () => {
+test("Pack Approval Queue lives only in the owner-only Packs System section", async () => {
   const [approvalPage, sidebar, nav, appHosts] = await Promise.all([
     readFile(approvalPagePath, "utf8"),
     readFile(sidebarPath, "utf8"),
@@ -161,7 +173,7 @@ test("New Packs lives only in the owner-only Packs System section", async () => 
   ]);
 
   assert.match(approvalPage, /await requireOwner\(\)/);
-  assert.match(sidebar, /label:\s*"New Packs".*\/pack-studio\/new-packs/);
+  assert.match(sidebar, /label:\s*"Approval Queue"[\s\S]*?\/pack-studio\/new-packs/);
   assert.match(
     sidebar,
     /\{isOwner\s*&&\s*\([\s\S]*?<SidebarGroupLabel>System<\/SidebarGroupLabel>/,
@@ -183,6 +195,21 @@ test("New Packs shows submitted artwork and the player-facing risk bar", async (
   assert.match(approvalList, /<CardImage[\s\S]*?src=\{item\.imageUrl\}/);
   assert.match(approvalList, /<PackRiskBarPreview/);
   assert.match(approvalList, /\{riskScore\}\/100/);
+});
+
+test("Pack Studio pages use descriptive Pack Studio browser titles", async () => {
+  const [layout, builderPage, buildDraftsPage, approvalPage] =
+    await Promise.all([
+      readFile(packStudioLayoutPath, "utf8"),
+      readFile(builderPagePath, "utf8"),
+      readFile(buildDraftsPagePath, "utf8"),
+      readFile(approvalPagePath, "utf8"),
+    ]);
+
+  assert.match(layout, /template:\s*"%s · Pack Studio"/);
+  assert.match(builderPage, /title:\s*"Pack Builder"/);
+  assert.match(buildDraftsPage, /title:\s*"Saved Pack Builds"/);
+  assert.match(approvalPage, /title:\s*"Pack Approval Queue"/);
 });
 
 test("server layouts rethrow Next render control flow instead of swallowing it", async () => {

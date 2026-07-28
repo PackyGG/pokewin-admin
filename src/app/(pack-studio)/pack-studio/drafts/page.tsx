@@ -25,6 +25,8 @@ import {
   DraftsTopActions,
 } from "./drafts-list";
 
+export const metadata = { title: "Pack Change Drafts" };
+
 /**
  * Pack Studio — DRAFTS. Every staged retune / edit / reprice lives here as an
  * admin-DB row that mirrors the existing live math. NO 2FA. NO MAIN write
