@@ -26,9 +26,11 @@ import {
   type FiatSummary,
   type FiatVerdict,
 } from "@/lib/antifraud/fiat-deposits-api";
+import { canManageAntifraud } from "@/lib/antifraud/access";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
+import { FiatKycAction } from "./fiat-kyc-action";
 
 export const metadata = { title: "Fiat Deposits · Antifraud" };
 
@@ -61,7 +63,8 @@ export default async function FiatDepositsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireAntifraudPageAccess();
+  const session = await requireAntifraudPageAccess();
+  const canManageKyc = canManageAntifraud(session);
   const params = await searchParams;
   const value = (key: string) =>
     typeof params[key] === "string" ? params[key] : undefined;
@@ -94,7 +97,7 @@ export default async function FiatDepositsPage({
         key={JSON.stringify(state)}
         fallback={<FiatListSkeleton />}
       >
-        <FiatContent state={state} />
+        <FiatContent state={state} canManageKyc={canManageKyc} />
       </Suspense>
     </div>
   );
@@ -205,7 +208,13 @@ function Filter({
   );
 }
 
-async function FiatContent({ state }: { state: Filters }) {
+async function FiatContent({
+  state,
+  canManageKyc,
+}: {
+  state: Filters;
+  canManageKyc: boolean;
+}) {
   const result = await listFiatAssessments({
     page: state.page,
     status: state.status,
@@ -223,7 +232,11 @@ async function FiatContent({ state }: { state: Filters }) {
       ) : (
         <div className="space-y-3">
           {result.data.map((item) => (
-            <FiatRow key={item.deposit_intent_id} item={item} />
+            <FiatRow
+              key={item.deposit_intent_id}
+              item={item}
+              canManageKyc={canManageKyc}
+            />
           ))}
         </div>
       )}
@@ -337,7 +350,13 @@ function FiatRiskScoreGuide() {
   );
 }
 
-function FiatRow({ item }: { item: FiatAssessment }) {
+function FiatRow({
+  item,
+  canManageKyc,
+}: {
+  item: FiatAssessment;
+  canManageKyc: boolean;
+}) {
   const style = verdictStyle(item.verdict);
   const VerdictIcon = style.icon;
   const name = item.username ?? item.user_id;
@@ -414,6 +433,14 @@ function FiatRow({ item }: { item: FiatAssessment }) {
               <span className="block text-[10px] text-muted-foreground">{item.risk_score}/100 risk</span>
             </span>
           </div>
+          {canManageKyc && (
+            <FiatKycAction
+              depositIntentId={item.deposit_intent_id}
+              userId={item.user_id}
+              accountLabel={name}
+              currentlyRequired={item.account_evidence.kycRequired}
+            />
+          )}
           <Button size="sm" render={<HostLink href={`/antifraud/fiat-deposits/${item.deposit_intent_id}`} />}>
             Open review <ArrowRight className="size-3.5" />
           </Button>

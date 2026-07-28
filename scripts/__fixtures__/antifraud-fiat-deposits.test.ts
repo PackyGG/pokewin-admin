@@ -16,6 +16,12 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
     "src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
   );
   const api = read("src/lib/antifraud/fiat-deposits-api.ts");
+  const actions = read(
+    "src/app/(antifraud)/antifraud/fiat-deposits/actions.ts",
+  );
+  const kycAction = read(
+    "src/app/(antifraud)/antifraud/fiat-deposits/fiat-kyc-action.tsx",
+  );
   assert.match(sidebar, /Fiat Deposits/);
   assert.match(sidebar, /\/antifraud\/fiat-deposits/);
   assert.match(hosts, /"fiat-deposits"/);
@@ -36,6 +42,23 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /Review[\s\S]*30–59/);
   assert.match(page, /High risk[\s\S]*60–100/);
   assert.match(page, /xl:grid-cols-5/);
+  assert.match(page, /canManageAntifraud\(session\)/);
+  assert.match(page, /<FiatKycAction/);
+  assert.match(kycAction, /requireFiatDepositKyc/);
+  assert.match(kycAction, /KYC is now required and withdrawals are locked/);
+  assert.match(kycAction, /const isRequired = required \|\| currentlyRequired/);
+  assert.match(kycAction, /result\.readbackConfirmed/);
+  assert.match(kycAction, /A Sumsub result never unlocks/);
+  assert.match(actions, /requireAntifraudManager\(/);
+  assert.match(actions, /assessment\.data\.assessment\.user_id !== parsed\.data\.userId/);
+  assert.match(actions, /getUserKyc\(/);
+  assert.match(actions, /current\.kycRequired/);
+  assert.match(actions, /requireUserKyc\(/);
+  assert.match(
+    actions,
+    /confirmed\.kycRequired[\s\S]*confirmed\.verificationCycle === verificationCycle/,
+  );
+  assert.match(actions, /source: "antifraud_fiat_deposits"/);
   assert.match(detail, /Money trail/);
   assert.match(detail, /Whop risk signals/);
   assert.doesNotMatch(detail, /redirect\(["']\/fiat/);
