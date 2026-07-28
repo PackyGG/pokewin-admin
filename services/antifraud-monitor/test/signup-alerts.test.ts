@@ -44,7 +44,9 @@ test("score-60 signup delivery uses durable independent sinks", async () => {
   assert.match(source, /INSERT INTO signup_alert_outbox/);
   assert.match(source, /INSERT INTO risk_events/);
   assert.match(source, /highRiskSignupMarker/);
-  assert.match(source, /title: "High-risk signup"/);
+  assert.match(source, /title: "High-risk signup detected"/);
+  assert.match(source, /severity: severity\(alert\.score\)/);
+  assert.match(source, /signals,/);
   assert.match(source, /deliverPendingSignupAlerts/);
   assert.match(migration, /CHECK \(score >= 60\)/);
   assert.match(migration, /FROM signup_assessments sa/);

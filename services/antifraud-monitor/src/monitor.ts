@@ -694,21 +694,17 @@ export class MonitorEngine {
       let discordDelivered = alert.discord_delivered_at !== null;
       const failures: string[] = [];
       if (!discordDelivered) {
-        const reasons = signals
-          .map((signal) => signal.title)
-          .slice(0, 3)
-          .join(", ");
         discordDelivered = await this.discord.send({
-          title: "High-risk signup",
+          title: "High-risk signup detected",
           description:
-            `Signup scored ${alert.score} points${
-              reasons ? ` (${reasons})` : ""
-            } and was added to Account Review.`,
+            "This account crossed the automated signup review threshold and needs a staff decision.",
           userId: alert.user_id,
           username: alert.username,
           caseId: alert.case_id ?? undefined,
           score: alert.score,
-          trigger: reasons ? `signup score 60+: ${reasons}` : "signup score 60+",
+          severity: severity(alert.score),
+          trigger: "Signup score reached 60+",
+          signals,
           occurredAt: alert.occurred_at,
         });
         if (!discordDelivered) failures.push("Discord delivery failed");
@@ -1352,7 +1348,10 @@ export class MonitorEngine {
         userId: session.user_id,
         caseId: session.case_id,
         score: nextScore,
+        scoreDelta: rule.score_delta,
+        severity: severity(nextScore),
         trigger: rule.key,
+        outcome: rule.action_type,
       });
     }
   }

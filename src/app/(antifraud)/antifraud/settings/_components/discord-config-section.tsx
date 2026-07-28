@@ -12,10 +12,12 @@ import { cn } from "@/lib/utils";
 /** Rows whose value is a compiled-in code fact; `null` = not determinable here. */
 const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: "Standard accent", value: "Discord blurple · #5865F2" },
-  { label: "Urgent accent", value: "Red · #EF4444" },
+  { label: "Review accent", value: "Amber | score 40-79" },
+  { label: "High accent", value: "Orange | score 80-119" },
+  { label: "Critical / urgent accent", value: "Red · #EF4444" },
   // Replaced with the monitor-reported presence state inside the component.
   { label: "Button destination", value: null },
-  { label: "Automatic trigger", value: "Matched antifraud rules" },
+  { label: "Automatic trigger", value: "Signup score 60+ or matched rule" },
   { label: "Urgent trigger", value: "Not defined yet" },
 ];
 
@@ -145,29 +147,44 @@ export async function DiscordConfigSection() {
                 Example alert
               </span>
               <p className="mt-2 text-sm font-semibold">
-                Rule matched: Example rule
+                High-risk signup detected
               </p>
               <p className="mt-1 text-xs text-muted-foreground">
-                A monitored account matched an antifraud rule and needs support
-                review.
+                This account crossed the automated signup review threshold and
+                needs a staff decision.
               </p>
-              <div className="mt-4 flex flex-wrap gap-4 text-[11px]">
+              <div className="mt-4 grid gap-3 text-[11px] sm:grid-cols-3">
+                <span>
+                  <span className="block text-muted-foreground">Account</span>
+                  <strong>review_me</strong>
+                  <code className="block font-mono text-[10px] text-muted-foreground">
+                    user-123
+                  </code>
+                </span>
                 <span>
                   <span className="block text-muted-foreground">Risk score</span>
-                  <strong>60</strong>
+                  <strong>60 points</strong>
+                  <span className="block text-amber-600 dark:text-amber-400">
+                    Medium risk
+                  </span>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">Trigger</span>
-                  <strong>example-rule</strong>
-                </span>
-                <span>
-                  <span className="block text-muted-foreground">Priority</span>
-                  <strong>Standard</strong>
+                  <strong>Signup score 60+</strong>
                 </span>
               </div>
-              <span className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-[#5865F2] px-3 text-xs font-semibold text-white">
+              <div className="mt-4 border-t border-border/60 pt-3">
+                <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                  Why it was flagged
+                </span>
+                <p className="mt-1 text-xs font-semibold">+60 | Shared device</p>
+                <p className="text-[11px] text-muted-foreground">
+                  Three accounts share this device.
+                </p>
+              </div>
+              <span className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-3 text-xs font-semibold text-white">
                 <ExternalLink className="size-3.5" />
-                Open Antifraud
+                Review case
               </span>
             </div>
           </div>
@@ -196,7 +213,7 @@ export async function DiscordConfigSection() {
       <div className="grid gap-4 lg:grid-cols-2">
         <RecipientList
           title="Always tag support"
-          description="Mentioned on every antifraud rule alert."
+          description="Mentioned on every signup and rule alert."
           ids={discord?.supportRecipientIds ?? null}
         />
         <RecipientList

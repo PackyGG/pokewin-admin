@@ -16,7 +16,17 @@ export const URGENT_USER_IDS = [
 ] as const;
 
 const SEND_TIMEOUT_MS = 5_000;
-const DISCORD_DESCRIPTION_LIMIT = 4_096;
+const DISCORD_DESCRIPTION_LIMIT = 1_200;
+const DISCORD_FIELD_LIMIT = 1_024;
+const MAX_SIGNAL_ROWS = 4;
+
+type AlertSeverity = "low" | "medium" | "high" | "critical";
+
+export type DiscordAlertSignal = {
+  title: string;
+  detail: string;
+  points: number;
+};
 
 export type DiscordAlert = {
   title: string;
@@ -26,7 +36,11 @@ export type DiscordAlert = {
   username?: string | null;
   caseId?: string;
   score?: number;
+  scoreDelta?: number;
+  severity?: AlertSeverity;
   trigger?: string;
+  outcome?: string;
+  signals?: readonly DiscordAlertSignal[];
   occurredAt?: Date;
 };
 
@@ -83,11 +97,72 @@ function clean(value: string, maxLength: number): string {
     .replace(/<@&(\d+)>/g, "role $1");
   return withoutMentions.length <= maxLength
     ? withoutMentions
-    : `${withoutMentions.slice(0, maxLength - 1)}…`;
+    : `${withoutMentions.slice(0, maxLength - 3)}...`;
 }
 
-function alertUrl(baseUrl: string): string {
-  return new URL(baseUrl).toString();
+function escapeMarkdown(
+  value: string,
+  maxLength = DISCORD_FIELD_LIMIT,
+): string {
+  const escaped = clean(value, maxLength).replace(
+    /([\\`*_{}[\]()#+\-.!|>~])/g,
+    "\\$1",
+  );
+  return clean(escaped, maxLength);
+}
+
+function inlineCode(value: string): string {
+  return `\`${clean(value, DISCORD_FIELD_LIMIT - 2).replace(/`/g, "'")}\``;
+}
+
+function alertUrl(baseUrl: string, caseId?: string): string {
+  const url = new URL(baseUrl);
+  if (!caseId) return url.toString();
+
+  const root = url.pathname.replace(/\/+$/, "");
+  url.pathname = `${root}/cases/${encodeURIComponent(caseId)}`;
+  return url.toString();
+}
+
+function severityLabel(severity: AlertSeverity): string {
+  return severity.charAt(0).toUpperCase() + severity.slice(1);
+}
+
+function humanize(value: string): string {
+  const normalized = value.trim().replace(/[_-]+/g, " ");
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+function riskColor(alert: DiscordAlert): number {
+  if (alert.urgent || alert.severity === "critical") return 0xed4245;
+  if (alert.severity === "high") return 0xf97316;
+  if (alert.severity === "medium") return 0xf59e0b;
+  return 0x5865f2;
+}
+
+function accountValue(alert: DiscordAlert): string {
+  const lines: string[] = [];
+  if (alert.username) lines.push(`**${escapeMarkdown(alert.username)}**`);
+  if (alert.userId) lines.push(`User ID ${inlineCode(alert.userId)}`);
+  return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
+}
+
+function signalValue(signals: readonly DiscordAlertSignal[]): string {
+  const ordered = [...signals]
+    .filter((signal) => signal.points !== 0)
+    .sort((left, right) => Math.abs(right.points) - Math.abs(left.points));
+  const visible = ordered.slice(0, MAX_SIGNAL_ROWS);
+  const lines = visible.map((signal) => {
+    const points = signal.points > 0 ? `+${signal.points}` : String(signal.points);
+    return `**${points} | ${escapeMarkdown(signal.title, 96)}**\n${escapeMarkdown(signal.detail, 120)}`;
+  });
+  const hidden = ordered.length - visible.length;
+  if (hidden > 0) {
+    lines.push(
+      `*+${hidden} more signal${hidden === 1 ? "" : "s"} in the case*`,
+    );
+  }
+  return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
 }
 
 export function buildDiscordAlertPayload(
@@ -98,38 +173,58 @@ export function buildDiscordAlertPayload(
     ...SUPPORT_USER_IDS,
     ...(alert.urgent ? URGENT_USER_IDS : []),
   ];
-  const url = alertUrl(dashboardUrl);
+  const url = alertUrl(dashboardUrl, alert.caseId);
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
 
   if (alert.username || alert.userId) {
     fields.push({
       name: "Account",
-      value: clean(
-        [alert.username, alert.userId].filter(Boolean).join(" · "),
-        1_024,
-      ),
+      value: accountValue(alert),
       inline: true,
     });
   }
   if (alert.score !== undefined) {
     fields.push({
       name: "Risk score",
-      value: String(alert.score),
+      value: alert.severity
+        ? `**${alert.score} points**\n${severityLabel(alert.severity)} risk`
+        : `**${alert.score} points**`,
       inline: true,
     });
   }
   if (alert.trigger) {
     fields.push({
       name: "Trigger",
-      value: clean(alert.trigger, 1_024),
+      value: escapeMarkdown(alert.trigger),
       inline: true,
+    });
+  }
+  if (alert.scoreDelta !== undefined) {
+    fields.push({
+      name: "Score change",
+      value: `**${alert.scoreDelta > 0 ? "+" : ""}${alert.scoreDelta} points**`,
+      inline: true,
+    });
+  }
+  if (alert.outcome) {
+    fields.push({
+      name: "Outcome",
+      value: escapeMarkdown(humanize(alert.outcome)),
+      inline: true,
+    });
+  }
+  if (alert.signals?.length) {
+    fields.push({
+      name: "Why it was flagged",
+      value: signalValue(alert.signals),
+      inline: false,
     });
   }
   if (alert.caseId) {
     fields.push({
-      name: "Case",
-      value: clean(alert.caseId, 1_024),
-      inline: true,
+      name: "Case ID",
+      value: inlineCode(alert.caseId),
+      inline: false,
     });
   }
 
@@ -142,12 +237,12 @@ export function buildDiscordAlertPayload(
         title: clean(alert.title, 256),
         description: clean(alert.description, DISCORD_DESCRIPTION_LIMIT),
         url,
-        color: alert.urgent ? 0xef4444 : 0x5865f2,
+        color: riskColor(alert),
         fields,
         footer: {
           text: alert.urgent
-            ? "URGENT · PackyGG Fraud"
-            : "PackyGG Fraud",
+            ? "URGENT | PackyGG Fraud"
+            : "Automated risk alert | PackyGG Fraud",
         },
         timestamp: (alert.occurredAt ?? new Date()).toISOString(),
       },
@@ -159,7 +254,7 @@ export function buildDiscordAlertPayload(
           {
             type: 2,
             style: 5,
-            label: "Open Antifraud",
+            label: alert.caseId ? "Review case" : "Open Antifraud",
             url,
           },
         ],
