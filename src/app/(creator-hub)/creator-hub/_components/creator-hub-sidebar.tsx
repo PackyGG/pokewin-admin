@@ -41,9 +41,11 @@ import { hrefFrom } from "@/lib/app-hosts";
  * identity: the Packy wordmark (same assets as the main sidebar), a
  * "Back to Admin" exit at the top, and its own nav list.
  *
- * Live nav: Dashboard, Creators, Leaderboards, Tips & Sponsors, Creator
- * Rewards, Socials Review, Profitability, ROI Calculator. The theme toggle
- * sits in the footer. Alerts live on the right rail dock.
+ * Live nav, sectioned (owner request 2026-07-29): Overview (Dashboard),
+ * Creators (Roster, Socials Review), Programs & Payouts (Leaderboards,
+ * Tips & Sponsors, Creator Rewards), Economics (Profitability, ROI
+ * Calculator). The theme toggle sits in the footer. Alerts live on the
+ * right rail dock.
  *
  * Removed 2026-07-23 (owner): All Sessions, Wager / Fraud Abusers and
  * Changelog — Changelog still exists in the main admin app
@@ -62,34 +64,69 @@ type HubNavItem = {
   icon: LucideIcon;
 };
 
-const HUB_NAV: HubNavItem[] = [
-  { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
-  { label: "Creators", href: "/creator-hub/creators", icon: Users },
-  { label: "Leaderboards", href: "/creator-hub/leaderboards", icon: Trophy },
+type HubNavGroup = {
+  label: string;
+  items: HubNavItem[];
+};
+
+/**
+ * Sectioned nav (owner request 2026-07-29): the flat "Workspace" list grew to
+ * 8 items, so the sidebar now groups them by job — mirroring the antifraud
+ * sidebar's sectioning. Route ownership is unchanged; this is purely nav
+ * structure.
+ */
+const HUB_NAV_GROUPS: HubNavGroup[] = [
   {
-    label: "Tips & Sponsors",
-    href: "/creator-hub/tips-sponsors",
-    icon: Gift,
+    label: "Overview",
+    items: [
+      { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
+    ],
   },
   {
-    label: "Creator Rewards",
-    href: "/creator-hub/rewards",
-    icon: Crown,
+    label: "Creators",
+    items: [
+      { label: "Roster", href: "/creator-hub/creators", icon: Users },
+      {
+        label: "Socials Review",
+        href: "/creator-hub/socials-review",
+        icon: ShieldCheck,
+      },
+    ],
   },
   {
-    label: "Socials Review",
-    href: "/creator-hub/socials-review",
-    icon: ShieldCheck,
+    label: "Programs & Payouts",
+    items: [
+      {
+        label: "Leaderboards",
+        href: "/creator-hub/leaderboards",
+        icon: Trophy,
+      },
+      {
+        label: "Tips & Sponsors",
+        href: "/creator-hub/tips-sponsors",
+        icon: Gift,
+      },
+      {
+        label: "Creator Rewards",
+        href: "/creator-hub/rewards",
+        icon: Crown,
+      },
+    ],
   },
   {
-    label: "Profitability",
-    href: "/creator-hub/profitability",
-    icon: TrendingUp,
-  },
-  {
-    label: "ROI Calculator",
-    href: "/creator-hub/profitable-algo",
-    icon: Calculator,
+    label: "Economics",
+    items: [
+      {
+        label: "Profitability",
+        href: "/creator-hub/profitability",
+        icon: TrendingUp,
+      },
+      {
+        label: "ROI Calculator",
+        href: "/creator-hub/profitable-algo",
+        icon: Calculator,
+      },
+    ],
   },
 ];
 
@@ -215,17 +252,19 @@ export function CreatorHubSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <HubNavMenu
-              items={HUB_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {HUB_NAV_GROUPS.map((group) => (
+          <SidebarGroup key={group.label} className="px-2 py-1">
+            <SidebarGroupLabel>{group.label}</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <HubNavMenu
+                items={group.items}
+                pathname={pathname}
+                onNavTap={handleNavTap}
+                toHref={toHref}
+              />
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">
