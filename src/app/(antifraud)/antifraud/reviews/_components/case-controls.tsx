@@ -34,8 +34,8 @@ import {
  *
  * Everything routes through the server actions in `../actions.ts`, which
  * re-verify workspace access, write an append-only note describing the change,
- * and mirror the important ones into `admin_audit_events`. Nothing here can
- * touch the player's actual account — that stays on the main dashboard.
+ * and mirror the important ones into `admin_audit_events`. Account mutations
+ * live in the separate quick-action strip above these workflow controls.
  */
 
 export function CaseControls({

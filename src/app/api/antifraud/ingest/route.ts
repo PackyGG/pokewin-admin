@@ -11,7 +11,7 @@ import { adminDrizzle } from "@/lib/drizzle";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
-  NOTIFY_SEVERITY_FLOOR,
+  shouldEscalateSignal,
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
 import { isPostgresError } from "@/lib/postgres-errors";
@@ -150,9 +150,7 @@ export async function POST(request: Request): Promise<Response> {
       else {
         accepted += 1;
         if (outcome === "review_opened") reviewsOpened += 1;
-        if (
-          SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR]
-        ) {
+        if (shouldEscalateSignal(signal)) {
           notify.push(signal);
         }
       }
@@ -215,7 +213,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
 
   const shouldOpenCase =
     Boolean(signal.userId) &&
-    SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR];
+    shouldEscalateSignal(signal);
 
   let reviewId: string | null = null;
   let opened = false;

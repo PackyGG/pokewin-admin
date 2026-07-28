@@ -22,6 +22,7 @@ import {
 } from "@/lib/antifraud/reviews";
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
+import { QuickReviewActions } from "./_components/quick-review-actions";
 
 export const metadata = { title: "Account Review" };
 
@@ -268,10 +269,13 @@ async function QueueList({
       ) : (
         <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           {reviews.map((review) => (
-            <li key={review.id}>
+            <li
+              key={review.id}
+              className="flex flex-col gap-2 px-3 py-3 sm:flex-row sm:items-center sm:gap-3 sm:px-4"
+            >
               <HostLink
                 href={`/antifraud/reviews/${review.id}`}
-                className="flex flex-col gap-2 px-3 py-3 outline-none transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+                className="flex min-w-0 flex-1 flex-col gap-2 rounded-md outline-none transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring sm:flex-row sm:items-center sm:gap-4"
               >
                 <span className="min-w-0 flex-1">
                   <span className="flex flex-wrap items-center gap-1.5">
@@ -316,6 +320,13 @@ async function QueueList({
                   </span>
                 </span>
               </HostLink>
+              <QuickReviewActions
+                reviewId={review.id}
+                targetUserId={review.targetUserId}
+                targetUsername={review.targetUsername}
+                status={review.status}
+                compact
+              />
             </li>
           ))}
         </ul>

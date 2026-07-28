@@ -21,6 +21,7 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { getReviewDetail } from "@/lib/antifraud/reviews";
 import { ReviewStatusBadge } from "../../_components/badges";
 import { CaseControls } from "../_components/case-controls";
+import { QuickReviewActions } from "../_components/quick-review-actions";
 import { listAssignableAnalysts } from "../actions";
 
 export const metadata = { title: "Case" };
@@ -31,10 +32,8 @@ export const metadata = { title: "Case" };
  * Left: the case itself — who it is about, why, which rules fired, and the full
  * append-only trail (analyst notes AND system entries). Right: the controls.
  *
- * The "open in the main dashboard" link is the ONLY route from here to an
- * action on the account: this workspace records verdicts, the main dashboard
- * performs the (separately audited) mutations. That is what keeps the prod game
- * DB read-only from here.
+ * Quick account actions are capability-gated and separately audited. The main
+ * dashboard link remains available for the complete account toolset.
  *
  * Shell-first: the back affordance paints immediately and the case streams in
  * behind its own Suspense boundary (loading.tsx renders the matching skeleton
@@ -152,8 +151,7 @@ async function CaseDetail({
             </p>
           )}
 
-          {/* The bridge to the surfaces that can actually act on the
-              account. Opens the main dashboard's user page. */}
+          {/* Bridge to the complete account surface. */}
           <HostLink
             href={`/users/${review.targetUserId}`}
             className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
@@ -249,6 +247,12 @@ async function CaseDetail({
       {/* ── Controls ───────────────────────────────────────────── */}
       <div className="space-y-4">
         <SectionHeading icon={User} title="Work this case" />
+        <QuickReviewActions
+          reviewId={review.id}
+          targetUserId={review.targetUserId}
+          targetUsername={review.targetUsername}
+          status={review.status}
+        />
         <CaseControls
           reviewId={review.id}
           status={review.status}

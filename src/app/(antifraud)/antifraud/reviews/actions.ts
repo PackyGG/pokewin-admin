@@ -1,10 +1,11 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   admin_audit_events,
   admin_users,
@@ -13,6 +14,10 @@ import {
   staff_profiles,
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireCapability } from "@/lib/require-capability";
+import { getPrimaryDrizzleDb } from "@/lib/db";
+import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
+import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { notifyStaff } from "@/lib/staff/notifications";
 import {
@@ -23,11 +28,9 @@ import {
 /**
  * Account-review mutations.
  *
- * WHAT THESE DO NOT DO: touch the MAIN (prod game) DB. A review is the fraud
- * team's working record — banning an account, adjusting a balance or wiping a
- * user still happens on the existing, separately-audited admin surfaces. That
- * boundary is deliberate: it keeps this whole workspace additive and keeps the
- * prod DB read-only, exactly as the project rules require.
+ * Most actions only touch the ADMIN review record. The explicit quick Ban and
+ * Lock withdrawals commands use the established MAIN mutation client, require
+ * the matching capability, and write the normal admin audit trail.
  *
  * Every action re-verifies workspace access (server actions run as their own
  * request), validates with Zod, writes an append-only note describing the
@@ -492,6 +495,185 @@ export async function updateReviewStatus(
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   revalidatePath("/antifraud");
   return { ok: true };
+}
+
+const quickAccountActionSchema = z.object({
+  reviewId: uuid,
+  action: z.enum(["fine", "ban", "lock_withdrawals"]),
+  expectedStatus: z.enum(REVIEW_STATUSES),
+  idempotencyKey: z.string().uuid("Invalid idempotency key"),
+});
+
+export type QuickReviewAccountAction =
+  z.infer<typeof quickAccountActionSchema>["action"];
+
+/**
+ * Account Review's deliberately small containment surface. The analyst clicks
+ * once, confirms once in the client, and this action performs the mutation
+ * without a second-factor prompt. Server-side workspace/capability checks,
+ * MAIN audit records, and the case trail remain mandatory.
+ */
+export async function runQuickReviewAccountAction(input: unknown): Promise<void> {
+  const session = await requireAntifraudAccess();
+  const parsed = quickAccountActionSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const { reviewId, action, expectedStatus, idempotencyKey } = parsed.data;
+
+  const [review] = await adminDrizzle
+    .select({
+      targetUserId: antifraud_reviews.target_user_id,
+      targetUsername: antifraud_reviews.target_username,
+      status: antifraud_reviews.status,
+      reason: antifraud_reviews.reason,
+    })
+    .from(antifraud_reviews)
+    .where(eq(antifraud_reviews.id, reviewId))
+    .limit(1);
+  if (!review) throw new Error("That case no longer exists");
+  if (review.status !== expectedStatus) throw new Error(STALE_CASE_MESSAGE);
+  if (isTerminalStatus(review.status)) {
+    throw new Error("This case is already closed.");
+  }
+
+  if (action === "fine") {
+    const result = await updateReviewStatus({
+      reviewId,
+      status: "cleared",
+      expectedStatus,
+      resolution: "Account marked fine from Account Review.",
+      idempotencyKey,
+    });
+    if (!result.ok) throw new Error(result.message);
+    return;
+  }
+
+  if (action === "ban") {
+    await requireCapability(session, "__can_ban_users", "ban users");
+    const db = await getPrimaryDrizzleDb();
+    const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+    const reason = `Antifraud review ${reviewId}: ${review.reason}`.slice(0, 500);
+
+    try {
+      await db.transaction(async (tx) => {
+        const updated = await tx.execute<{ id: string }>(sql`
+          UPDATE "user"
+          SET is_banned = TRUE,
+              banned_reason = ${reason},
+              banned_at = NOW(),
+              banned_by = ${issuerMainUserId},
+              updated_at = NOW()
+          WHERE id = ${review.targetUserId}
+          RETURNING id
+        `);
+        if (updated.rows.length === 0) throw new Error("User not found");
+        await tx.execute(
+          sql`DELETE FROM session WHERE "userId" = ${review.targetUserId}`,
+        );
+      });
+    } catch {
+      throw new Error("The account could not be banned. Nothing was hidden.");
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "account_banned",
+      targetUserId: review.targetUserId,
+      metadata: {
+        reason,
+        issuer_main_user_id: issuerMainUserId,
+        reviewId,
+        idempotencyKey,
+      },
+    });
+    revalidateTag("users-list");
+    revalidateTag("users-list-stats");
+    revalidateTag(userDetailTag(review.targetUserId));
+
+    const result = await updateReviewStatus({
+      reviewId,
+      status: "flagged",
+      expectedStatus,
+      resolution: "Account banned from Account Review.",
+      idempotencyKey,
+    });
+    if (!result.ok) throw new Error(result.message);
+    return;
+  }
+
+  await requireCapability(
+    session,
+    "__can_toggle_feature_locks",
+    "lock withdrawals",
+  );
+  const db = await getPrimaryDrizzleDb();
+  const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+  const lockReason = `Antifraud review ${reviewId}`;
+  try {
+    const locked = await db.execute<{ user_id: string }>(sql`
+      INSERT INTO user_feature_locks (
+        id,
+        user_id,
+        locked_withdrawals_crypto,
+        locked_withdrawals_items,
+        locked_withdrawals_at,
+        locked_withdrawals_by,
+        locked_withdrawals_reason,
+        created_at,
+        updated_at
+      )
+      SELECT
+        ${crypto.randomUUID()},
+        u.id,
+        ARRAY['all']::text[],
+        TRUE,
+        NOW(),
+        ${issuerMainUserId},
+        ${lockReason},
+        NOW(),
+        NOW()
+      FROM "user" u
+      WHERE u.id = ${review.targetUserId}
+      ON CONFLICT (user_id) DO UPDATE SET
+        locked_withdrawals_crypto = EXCLUDED.locked_withdrawals_crypto,
+        locked_withdrawals_items = EXCLUDED.locked_withdrawals_items,
+        locked_withdrawals_at = EXCLUDED.locked_withdrawals_at,
+        locked_withdrawals_by = EXCLUDED.locked_withdrawals_by,
+        locked_withdrawals_reason = EXCLUDED.locked_withdrawals_reason,
+        updated_at = NOW()
+      RETURNING user_id
+    `);
+    if (locked.rows.length === 0) throw new Error("User not found");
+  } catch {
+    throw new Error(
+      "Withdrawals could not be locked. The case was left unchanged.",
+    );
+  }
+
+  await Promise.all([
+    createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "antifraud_withdrawals_locked",
+      targetUserId: review.targetUserId,
+      metadata: {
+        reviewId,
+        idempotencyKey,
+        crypto: "all",
+        items: true,
+      },
+    }),
+    adminDrizzle.insert(antifraud_review_notes).values({
+      review_id: reviewId,
+      admin_user_id: session.userId,
+      kind: "action",
+      body: `Locked crypto and item withdrawals for ${
+        review.targetUsername ?? review.targetUserId
+      }.`,
+    }),
+  ]);
+
+  revalidateTag(userDetailTag(review.targetUserId));
+  revalidatePath("/antifraud/reviews");
+  revalidatePath(`/antifraud/reviews/${reviewId}`);
 }
 
 const assignSchema = z.object({

@@ -18,6 +18,8 @@ It does not modify the Packy frontend or backend.
 - Configurable three-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions
 - Signed, retry-safe delivery of committed risk events to the Admin dashboard
+- Durable Discord delivery for every score-60 signup, retried independently
+  from the signed Account Review event stream
 - Rate-limited HTTP API with separate read and admin-write credentials
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
@@ -31,6 +33,8 @@ Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 Admin-dashboard sink. Committed `risk_events` are delivered in signed batches;
 the delivery cursor advances only after the dashboard confirms every event.
 Retries are idempotent because the risk-event id is the dashboard external id.
+Score-60 signup markers use this same stream to open Account Review cases.
+Neither value is returned by runtime status.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external

@@ -103,3 +103,22 @@ export const SEVERITY_RANK: Record<AntifraudSeverity, number> = {
  * up in the queue without waking anybody.
  */
 export const NOTIFY_SEVERITY_FLOOR: AntifraudSeverity = "high";
+
+/** Signup scores at or above this value always need an account review. */
+export const SIGNUP_REVIEW_SCORE_FLOOR = 60;
+
+/**
+ * High-risk signup scores are an explicit queue contract. They must not depend
+ * on the broader severity bands (where 60 is still "medium").
+ */
+export function shouldEscalateSignal(
+  signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
+): boolean {
+  return (
+    (signal.kind === "high_risk_signup" &&
+      signal.riskScore !== null &&
+      signal.riskScore !== undefined &&
+      signal.riskScore >= SIGNUP_REVIEW_SCORE_FLOOR) ||
+    SEVERITY_RANK[signal.severity] >= SEVERITY_RANK[NOTIFY_SEVERITY_FLOOR]
+  );
+}

@@ -162,10 +162,10 @@ async function IntegrationSection() {
       name: "Signed ingest webhook",
       envs: ["ANTIFRAUD_INGEST_URL", "ANTIFRAUD_INGEST_SECRET"],
       status: ingestStatus,
-      note:
-        ingestStatus === "partial"
-          ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
-          : "Shared HMAC delivery from committed monitor risk events into the Admin review queue.",
+        note:
+          ingestStatus === "partial"
+            ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
+            : "Shared HMAC delivery from committed monitor risk events, including score-60 signups, into Account Review.",
     },
     {
       name: "Live monitor API",

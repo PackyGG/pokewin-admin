@@ -15,6 +15,10 @@ import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
+import {
+  HIGH_RISK_SIGNUP_SCORE,
+  highRiskSignupMarker,
+} from "./signup-alerts.js";
 import { parseFailedSignup } from "./signup-failure.js";
 import {
   fetchActivity,
@@ -248,6 +252,9 @@ export class MonitorEngine {
 
       const signupMetrics = await this.runPhase("signups", () =>
         this.scanSignups(),
+      );
+      await this.runPhase("signup-alerts", () =>
+        this.deliverPendingSignupAlerts(),
       );
       const activitiesProcessed = await this.runPhase("activity", () =>
         this.scanActiveSessions(),
@@ -547,8 +554,67 @@ export class MonitorEngine {
         `,
         [signup.id, score, severity(score), JSON.stringify(signals)],
       );
-      if (score >= this.config.MONITOR_START_SCORE) {
+      if (
+        score >= this.config.MONITOR_START_SCORE ||
+        score >= HIGH_RISK_SIGNUP_SCORE
+      ) {
         opened = await this.openMonitor(client, signup, signals, score);
+      }
+      if (score >= HIGH_RISK_SIGNUP_SCORE) {
+        if (!opened) throw new Error("High-risk signup did not open a case");
+        const marker = highRiskSignupMarker({
+          userId: signup.id,
+          caseId: opened.caseId,
+          score,
+          signals,
+        });
+        await client.query(
+          `
+            INSERT INTO signup_alert_outbox (
+              user_id, case_id, username, score, signals, occurred_at
+            ) VALUES ($1,$2,$3,$4,$5,$6)
+            ON CONFLICT (user_id) DO UPDATE SET
+              case_id = EXCLUDED.case_id,
+              username = EXCLUDED.username,
+              score = GREATEST(signup_alert_outbox.score, EXCLUDED.score),
+              signals = EXCLUDED.signals,
+              occurred_at = EXCLUDED.occurred_at,
+              updated_at = now()
+          `,
+          [
+            signup.id,
+            opened.caseId,
+            signup.username,
+            score,
+            JSON.stringify(signals),
+            signup.created_at,
+          ],
+        );
+        await client.query(
+          `
+            INSERT INTO risk_events (
+              case_id, session_id, user_id, event_type, source, source_ref,
+              score_delta, score_after, title, detail, payload, occurred_at
+            ) VALUES (
+              $1,$2,$3,$4,$5,$6,0,$7,$8,$9,$10::jsonb,$11
+            )
+            ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+            DO NOTHING
+          `,
+          [
+            opened.caseId,
+            opened.sessionId,
+            signup.id,
+            marker.eventType,
+            marker.source,
+            marker.sourceRef,
+            score,
+            marker.title,
+            marker.detail,
+            JSON.stringify(marker.payload),
+            signup.created_at,
+          ],
+        );
       }
       await this.advanceSignupCursor(client, signup);
       await client.query("COMMIT");
@@ -596,6 +662,98 @@ export class MonitorEngine {
       user_id: signup.id,
       current_score: score,
     });
+  }
+
+  private async deliverPendingSignupAlerts(): Promise<void> {
+    type PendingAlert = {
+      user_id: string;
+      case_id: string | null;
+      username: string | null;
+      score: number;
+      signals: unknown;
+      occurred_at: Date;
+      discord_delivered_at: Date | null;
+      attempt_count: number;
+    };
+
+    const pending = await this.db.antifraud.query<PendingAlert>(
+      `
+        SELECT
+          user_id, case_id, username, score, signals, occurred_at,
+          discord_delivered_at, attempt_count
+        FROM signup_alert_outbox
+        WHERE next_attempt_at <= now()
+          AND discord_delivered_at IS NULL
+        ORDER BY created_at
+        LIMIT 25
+      `,
+    );
+
+    for (const alert of pending.rows) {
+      const signals = storedSignals(alert.signals);
+      let discordDelivered = alert.discord_delivered_at !== null;
+      const failures: string[] = [];
+      if (!discordDelivered) {
+        const reasons = signals
+          .map((signal) => signal.title)
+          .slice(0, 3)
+          .join(", ");
+        discordDelivered = await this.discord.send({
+          title: "High-risk signup",
+          description:
+            `Signup scored ${alert.score} points${
+              reasons ? ` (${reasons})` : ""
+            } and was added to Account Review.`,
+          userId: alert.user_id,
+          username: alert.username,
+          caseId: alert.case_id ?? undefined,
+          score: alert.score,
+          trigger: reasons ? `signup score 60+: ${reasons}` : "signup score 60+",
+          occurredAt: alert.occurred_at,
+        });
+        if (!discordDelivered) failures.push("Discord delivery failed");
+      }
+
+      const attempt = alert.attempt_count + 1;
+      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
+      await this.db.antifraud.query(
+        `
+          UPDATE signup_alert_outbox
+          SET
+            discord_delivered_at = CASE
+              WHEN $2::boolean THEN COALESCE(discord_delivered_at, now())
+              ELSE discord_delivered_at
+            END,
+            attempt_count = $3,
+            next_attempt_at = CASE
+              WHEN $2::boolean THEN now()
+              ELSE now() + ($4::text || ' seconds')::interval
+            END,
+            last_error = $5,
+            updated_at = now()
+          WHERE user_id = $1
+        `,
+        [
+          alert.user_id,
+          discordDelivered,
+          attempt,
+          retrySeconds,
+          failures.length > 0 ? failures.join("; ") : null,
+        ],
+      );
+
+      if (failures.length > 0) {
+        this.log.warn(
+          {
+            userId: alert.user_id,
+            caseId: alert.case_id,
+            retrySeconds,
+            failures,
+          },
+          "High-risk signup alert remains pending",
+        );
+      }
+    }
   }
 
   private async cachedFingerprint(
