@@ -12,6 +12,7 @@ import {
   Globe,
   Layers,
   MapPin,
+  Package,
   Search,
   ShieldCheck,
 } from "lucide-react";
@@ -32,6 +33,7 @@ import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import {
   reloadCountryRestrictionsCache,
   setGlobalFiatDeposits,
+  setGlobalPhysicalItemWithdrawals,
   setMandatoryJurisdictionsGeoBlocked,
   toggleCountryRestriction,
   updateCountryRestrictionArray,
@@ -227,6 +229,7 @@ export function GeoBlockingContent({
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
   const [reloadingCache, setReloadingCache] = useState(false);
   const [globalFiatPending, setGlobalFiatPending] = useState(false);
+  const [globalPhysicalPending, setGlobalPhysicalPending] = useState(false);
   const [policyGeoPending, setPolicyGeoPending] = useState(false);
   const [policyListOpen, setPolicyListOpen] = useState(false);
   const [currentSiteLockedMethods, setCurrentSiteLockedMethods] = useState(
@@ -328,6 +331,41 @@ export function GeoBlockingContent({
         );
       } finally {
         setPolicyGeoPending(false);
+      }
+    });
+  }
+
+  function handleGlobalPhysicalItemWithdrawals(enabled: boolean) {
+    const previous = rows;
+    setRows((current) =>
+      current.map((row) => ({ ...row, physicalWithdrawal: enabled })),
+    );
+    setGlobalPhysicalPending(true);
+    startTransition(async () => {
+      try {
+        const res = await setGlobalPhysicalItemWithdrawals(enabled);
+        if (res.countryRestrictionsCacheReloaded) {
+          toast.success(
+            enabled
+              ? `Physical item withdrawals enabled across ${res.total} location entries`
+              : `Physical item withdrawals disabled across ${res.total} location entries`,
+          );
+        } else {
+          toast.warning(
+            "The physical-withdrawal policy was saved, but the backend cache did not reload. Use Reload cache before treating the change as live.",
+            { duration: 12000 },
+          );
+        }
+        router.refresh();
+      } catch (error) {
+        setRows(previous);
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "Failed to update physical item withdrawals",
+        );
+      } finally {
+        setGlobalPhysicalPending(false);
       }
     });
   }
@@ -450,6 +488,16 @@ export function GeoBlockingContent({
       ).length,
     [restrictionRows],
   );
+  const physicalAllowedCount = rows.filter(
+    (row) => row.physicalWithdrawal,
+  ).length;
+  const allPhysicalAllowed =
+    rows.length > 0 && physicalAllowedCount === rows.length;
+  const globalPhysicalCaption = allPhysicalAllowed
+    ? `Enabled across all ${rows.length} location rows`
+    : physicalAllowedCount === 0
+      ? `Disabled across all ${rows.length} location rows`
+      : `${physicalAllowedCount}/${rows.length} location rows enabled`;
   const allFiatAllowed =
     currentSiteLockedMethods !== null &&
     isGlobalFiatPolicyActive(currentSiteLockedMethods, rows);
@@ -590,10 +638,10 @@ export function GeoBlockingContent({
         />
       </div>
 
-      {/* The two global switches sit side by side as compact control rows, and
+      {/* The three global switches sit side by side as compact control rows, and
           the policy jurisdiction list is collapsed by default (owner,
           2026-07-28: the policy panel was too big and too text-heavy). */}
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-3">
         {/* Global fiat-deposit switch — flips locked_deposits_fiat for EVERY
             country + US state at once (bulk write). Optimistic; the per-row
             Fiat toggles in the tables reflect it immediately. */}
@@ -611,6 +659,26 @@ export function GeoBlockingContent({
             checked={allFiatAllowed}
             disabled={globalFiatPending || currentSiteLockedMethods === null}
             onCheckedChange={handleGlobalFiat}
+          />
+        </div>
+
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <Package className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium">
+                Physical item withdrawals — global
+              </div>
+              <div className="truncate text-xs text-muted-foreground">
+                {globalPhysicalCaption}
+              </div>
+            </div>
+          </div>
+          <Switch
+            checked={allPhysicalAllowed}
+            disabled={globalPhysicalPending || rows.length === 0}
+            onCheckedChange={handleGlobalPhysicalItemWithdrawals}
+            aria-label="Toggle physical item withdrawals globally"
           />
         </div>
 

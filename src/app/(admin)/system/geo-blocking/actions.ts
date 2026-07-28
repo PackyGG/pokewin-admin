@@ -454,6 +454,66 @@ export async function setGlobalFiatDeposits(
   };
 }
 
+/**
+ * Global physical-item withdrawal switch. This changes only the
+ * `country_restrictions.physical_withdrawal` availability flag for every
+ * existing location; it does not touch the broader `withdrawals_enabled`
+ * site-config key, crypto withdrawals, or balance withdrawals.
+ */
+export async function setGlobalPhysicalItemWithdrawals(
+  enabled: boolean,
+): Promise<{
+  changed: number;
+  total: number;
+  countryRestrictionsCacheReloaded: boolean;
+}> {
+  const db = await getPrimaryDrizzleDb();
+  const session = await requireAdmin();
+  await requireCapability(
+    session,
+    "__can_toggle_country_restriction",
+    "toggle physical item withdrawals",
+  );
+
+  const result = await db.execute<{ changed: number; total: number }>(sql`
+    WITH changed_rows AS (
+      UPDATE country_restrictions
+      SET
+        physical_withdrawal = ${enabled},
+        updated_at = NOW()
+      WHERE physical_withdrawal IS DISTINCT FROM ${enabled}
+      RETURNING 1
+    )
+    SELECT
+      (SELECT COUNT(*)::int FROM changed_rows) AS changed,
+      (SELECT COUNT(*)::int FROM country_restrictions) AS total
+  `);
+  const counts = result.rows[0] ?? { changed: 0, total: 0 };
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "country_restriction_updated",
+    metadata: {
+      action: "global_physical_item_withdrawals",
+      field: "physical_withdrawal",
+      enabled,
+      changed: counts.changed,
+      total: counts.total,
+    },
+  });
+
+  const countryRestrictionsCache = await Promise.allSettled([
+    backendApi.post("/admin/invalidate-country-restrictions-cache"),
+  ]);
+  revalidateTag(GEO_BLOCKING_CACHE_TAG);
+  revalidatePath("/system/geo-blocking");
+  return {
+    ...counts,
+    countryRestrictionsCacheReloaded:
+      countryRestrictionsCache[0]?.status === "fulfilled",
+  };
+}
+
 export async function setMandatoryJurisdictionsGeoBlocked(
   blocked: boolean,
 ): Promise<{
