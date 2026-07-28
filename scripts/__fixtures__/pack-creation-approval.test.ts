@@ -295,6 +295,21 @@ test("Pack Builder production enforces exact tickets and the 10.95% to 11.50% ed
   assert.match(approvalList, /!edgeWithinProductionBand/);
 });
 
+test("New Packs max win is the highest-priced item in the requested pool", async () => {
+  const actions = await readFile(actionsPath, "utf8");
+  const preview = actions.slice(
+    actions.indexOf("async function previewPackBuildRequest"),
+    actions.indexOf("/**\n * Validate a Pack Studio build"),
+  );
+
+  assert.match(
+    preview,
+    /const poolMaxWin = slots\.reduce\([\s\S]*?Math\.max\(highest, slot\.value\)/,
+  );
+  assert.match(preview, /maxWin:\s*poolMaxWin/);
+  assert.doesNotMatch(preview, /maxWin:\s*shaped\.risk\.maxWin/);
+});
+
 test("Pack Approval Queue lives only in the owner-only Packs System section", async () => {
   const [approvalPage, sidebar, nav, appHosts] = await Promise.all([
     readFile(approvalPagePath, "utf8"),

@@ -2811,11 +2811,16 @@ async function previewPackBuildRequest(
     };
   }
 
+  const poolMaxWin = slots.reduce(
+    (highest, slot) => Math.max(highest, slot.value),
+    0,
+  );
+
   return {
     ok: true,
     edge: shaped.risk.edge,
     winRate: shaped.risk.winRate,
-    maxWin: shaped.risk.maxWin,
+    maxWin: poolMaxWin,
   };
 }
 
