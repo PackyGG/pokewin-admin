@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useTransition } from "react";
+import { useTransition, type ReactNode } from "react";
 import { ArrowUpDown, LayoutGrid, List, Search } from "lucide-react";
 
 import { Input } from "@/components/ui/input";
@@ -25,34 +25,45 @@ import { useRosterView } from "./roster-view-context";
 import { AddCreatorDialogV2 } from "./add-creator-dialog-v2";
 
 /**
- * Creator Hub roster toolbar — instant search + sort dropdown + grid/list
- * toggle + Add Creator, on one responsive row.
+ * Creator Hub roster toolbar — the ONE controls row:
+ *
+ *   [tabs] … [period] [search] [sort] [view] [Add Creator]
+ *
+ * The tab switcher and period chips are composed in by the page as nodes
+ * (they carry their own client boundaries); everything wraps gracefully on
+ * narrow viewports (tabs on their own line, controls flow underneath).
  *
  *   • Search  — instant client-side filter over the already-fetched rows
  *               (RosterSearchProvider). Never refetches.
- *   • Sort    — drives `?sortBy=`; a new sort restarts at page 1 and is a
- *               `router.replace` (no history spam) inside a transition.
- *   • View    — grid / list, pure client presentation (RosterViewProvider).
- *   • Add     — the Add Creator dialog trigger. It used to sit alone in the
- *               page-top `PageHeroIdentity` action slot, where a single button
- *               cost a whole row plus the stack gap above the roster. Folded
- *               into this existing controls row it costs no extra height, and
- *               it sits next to the roster it adds to. Hidden on the Past tab
- *               (`?tab=past`) — you don't add a creator to the ex-roster.
- *
- * Client-safe: imports only UI primitives + the client-safe param enum/labels
- * + the two roster contexts + the (client) Add Creator dialog — no server
- * query-module value imports.
+ *   • Sort    — drives `?sortBy=`; `router.replace` inside a transition.
+ *               Only `wager_desc` is window-scoped, so its label carries the
+ *               active window ("Most wager (7d)"); every other sort is
+ *               lifetime.
+ *   • View    — grid / list (`?view=`), instant client presentation.
+ *   • Add     — the Add Creator dialog trigger. Hidden on the Past tab.
  */
-export function RosterToolbar() {
+export function RosterToolbar({
+  tabs,
+  period,
+  sortWindow,
+}: {
+  /** The tab switcher node (left-aligned). */
+  tabs?: ReactNode;
+  /** The period chips node (active tabs only). */
+  period?: ReactNode;
+  /** Short window label for the window-scoped wager sort, e.g. "7d". */
+  sortWindow?: string;
+}) {
   const searchParams = useSearchParams();
   const isPast = searchParams.get("tab") === "past";
 
   return (
-    <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-      <RosterSearchInput />
-      <div className="flex items-center gap-2">
-        <RosterSortControl />
+    <div className="flex flex-wrap items-center gap-2">
+      {tabs}
+      <div className="flex w-full min-w-0 flex-wrap items-center gap-2 lg:ml-auto lg:w-auto">
+        {period}
+        <RosterSearchInput />
+        <RosterSortControl sortWindow={sortWindow} />
         <RosterViewToggle />
         {!isPast && <AddCreatorDialogV2 />}
       </div>
@@ -63,12 +74,12 @@ export function RosterToolbar() {
 function RosterSearchInput() {
   const { query, setQuery } = useRosterSearch();
   return (
-    <div className="relative w-full sm:max-w-xs">
+    <div className="relative w-full min-w-0 sm:w-56">
       <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
       <Input
         value={query}
         onChange={(e) => setQuery(e.target.value)}
-        placeholder="Search by username, email, or code..."
+        placeholder="Search creators..."
         className="h-9 pl-9"
         aria-label="Search creators"
       />
@@ -76,7 +87,15 @@ function RosterSearchInput() {
   );
 }
 
-function RosterSortControl() {
+/** Label for a sort mode — only `wager_desc` is scoped to the window. */
+function sortLabel(mode: SortMode, sortWindow?: string): string {
+  if (mode === "wager_desc" && sortWindow) {
+    return `${ROSTER_SORT_LABELS[mode]} (${sortWindow})`;
+  }
+  return ROSTER_SORT_LABELS[mode];
+}
+
+function RosterSortControl({ sortWindow }: { sortWindow?: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
@@ -101,14 +120,14 @@ function RosterSortControl() {
 
   return (
     <Select value={current} onValueChange={handleChange} disabled={isPending}>
-      <SelectTrigger className="h-9 w-[170px] text-xs" aria-label="Sort creators">
+      <SelectTrigger className="h-9 w-[180px] text-xs" aria-label="Sort creators">
         <ArrowUpDown className="size-3.5 text-muted-foreground" />
-        <SelectValue>{ROSTER_SORT_LABELS[current]}</SelectValue>
+        <SelectValue>{sortLabel(current, sortWindow)}</SelectValue>
       </SelectTrigger>
       <SelectContent>
         {ROSTER_SORT_ORDER.map((mode) => (
           <SelectItem key={mode} value={mode}>
-            {ROSTER_SORT_LABELS[mode]}
+            {sortLabel(mode, sortWindow)}
           </SelectItem>
         ))}
       </SelectContent>

@@ -4,7 +4,6 @@ import { Coins, UserX, Zap } from "lucide-react";
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { Skeleton } from "@/components/ui/skeleton";
 import { DASHBOARD_PERIOD_LABELS } from "@/lib/queries/dashboard-period";
 
 import { parseRosterSearchParams } from "./_lib/roster-params";
@@ -18,6 +17,7 @@ import { RosterTabSwitch } from "./_components/roster-tab-switch";
 import { RosterGrid } from "./_components/roster-grid";
 import { RosterCard } from "./_components/roster-card";
 import { RosterError } from "./_components/roster-error";
+import { RosterListSkeleton } from "./_components/roster-skeletons";
 
 export const metadata = { title: "Creators · Creator Hub" };
 
@@ -31,13 +31,7 @@ export default async function CreatorHubRosterPage({
   const params = parseRosterSearchParams(await searchParams);
   const isPast = params.tab === "past";
   const isMultiplier = params.tab === "multiplier";
-  const windowLabel = DASHBOARD_PERIOD_LABELS[params.period];
 
-  // The page-top hero was dropped: `PageHeroIdentity` no longer renders a
-  // title/subtitle (owner removed that chrome), so it was a full row spent on
-  // one Add Creator button plus the stack gap above the roster. The button
-  // moved into `RosterToolbar`'s existing controls row, and the tab identity
-  // moved onto the section heading below — which actually renders.
   const rosterIcon = isPast ? UserX : isMultiplier ? Zap : Coins;
   const rosterTitle = isPast
     ? "Past Creators"
@@ -45,40 +39,43 @@ export default async function CreatorHubRosterPage({
       ? "Multiplier Creators"
       : "Fill Creators";
 
+  // Short window tag for the (only) window-scoped sort's label — every other
+  // sort is lifetime. Past tab wager is always lifetime.
+  const sortWindow = isPast
+    ? "lifetime"
+    : params.period === "all"
+      ? "all-time"
+      : params.period;
+
   return (
     <div className="space-y-6">
       <div className="space-y-3">
-        <SectionHeading
-          icon={rosterIcon}
-          title={rosterTitle}
-          action={
-            isPast ? (
-              <RosterTabSwitch />
-            ) : (
-              <div className="flex w-full min-w-0 flex-col items-stretch gap-2 sm:items-end lg:flex-row lg:flex-wrap lg:items-center">
-                <RosterTabSwitch />
-                <RosterPeriodControl current={params.period} />
-              </div>
-            )
-          }
-        />
+        <SectionHeading icon={rosterIcon} title={rosterTitle} />
         <RosterSearchProvider>
           <RosterViewProvider>
             <div className="space-y-4">
-              <RosterToolbar />
+              <RosterToolbar
+                tabs={<RosterTabSwitch />}
+                period={
+                  isPast ? null : (
+                    <RosterPeriodControl current={params.period} />
+                  )
+                }
+                sortWindow={sortWindow}
+              />
               <Suspense
                 key={
                   isPast
                     ? `past-${params.sortBy}`
                     : `${params.tab}-${params.sortBy}-${params.period}`
                 }
-                fallback={<RosterSkeleton />}
+                fallback={<RosterListSkeleton />}
               >
                 <RosterSection
                   tab={params.tab}
                   sortBy={params.sortBy}
                   period={params.period}
-                  windowLabel={windowLabel}
+                  view={params.view}
                 />
               </Suspense>
             </div>
@@ -93,12 +90,12 @@ async function RosterSection({
   tab,
   sortBy,
   period,
-  windowLabel,
+  view,
 }: {
   tab: ReturnType<typeof parseRosterSearchParams>["tab"];
   sortBy: ReturnType<typeof parseRosterSearchParams>["sortBy"];
   period: ReturnType<typeof parseRosterSearchParams>["period"];
-  windowLabel: string;
+  view: ReturnType<typeof parseRosterSearchParams>["view"];
 }) {
   const isPast = tab === "past";
   const { creators, rosterUnavailable } = isPast
@@ -109,43 +106,34 @@ async function RosterSection({
     return <RosterError />;
   }
 
+  // Merged into the grid's single meta line ("N creators · {caption}").
+  const windowLabel = DASHBOARD_PERIOD_LABELS[period];
+  const caption = isPast
+    ? "Lifetime wager, sign-ups, FTDs, and PnL for ex-creators. Windowed GGR is unavailable once the creator role is removed."
+    : `Wager + GGR scoped to ${windowLabel}. Sign-ups, FTDs, PnL, and deal value are lifetime.`;
+
+  // Server cards exist only when the grid actually renders — list view skips
+  // the build. (A client-side list → grid flip re-requests the RSC payload;
+  // the grid shows skeleton cards for that brief gap.)
   const wagerLabel = isPast ? "Lifetime wager" : "Wager";
-  const cardsById = Object.fromEntries(
-    creators.map((c) => [
-      c.id,
-      <RosterCard key={c.id} creator={c} wagerLabel={wagerLabel} />,
-    ]),
-  );
+  const cardsById =
+    view === "grid"
+      ? Object.fromEntries(
+          creators.map((c) => [
+            c.id,
+            <RosterCard key={c.id} creator={c} wagerLabel={wagerLabel} />,
+          ]),
+        )
+      : {};
 
   return (
-    <FadeIn className="space-y-2">
-      <p className="text-[11px] text-muted-foreground">
-        {isPast ? (
-          <>
-            Lifetime wager, sign-ups, FTDs, and PnL for ex-creators. Windowed
-            GGR is unavailable once the creator role is removed.
-          </>
-        ) : (
-          <>
-            Wager + GGR scoped to {windowLabel}. Sign-ups, FTDs, PnL, and deal
-            value are lifetime.
-          </>
-        )}
-      </p>
-      <RosterGrid creators={creators} cardsById={cardsById} isPast={isPast} />
+    <FadeIn>
+      <RosterGrid
+        creators={creators}
+        cardsById={cardsById}
+        isPast={isPast}
+        caption={caption}
+      />
     </FadeIn>
-  );
-}
-
-function RosterSkeleton() {
-  return (
-    <div className="space-y-2">
-      <Skeleton className="h-3 w-28" />
-      <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-56 rounded-2xl" />
-        ))}
-      </div>
-    </div>
   );
 }

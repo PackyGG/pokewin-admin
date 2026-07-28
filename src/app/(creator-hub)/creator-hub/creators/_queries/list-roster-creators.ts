@@ -19,6 +19,10 @@ import {
 } from "../../../../(admin)/creators/_queries/all-creators-net-pnl";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
 import { getDealValueByUser, type CreatorDealValue } from "./deal-value-by-user";
+import {
+  getChecklistProgressByUser,
+  type RosterChecklistProgress,
+} from "./checklist-progress-by-user";
 import { getMultiplierCreatorIds } from "../../../../(admin)/creators/_queries/multiplier-creator-count";
 import type { CreatorsTab } from "../../../../(admin)/creators/_lib/search-params";
 
@@ -76,6 +80,11 @@ export type RosterCreator = {
   lifetimePnlUsd: number | null;
   /** Composed full deal value (cap + LB×house% + tip + sponsor). null when none. */
   dealValue: CreatorDealValue | null;
+  /**
+   * Onboarding checklist progress (batched roster read). null when not
+   * enrolled, already complete, or the derivation failed — the pill hides.
+   */
+  checklist: RosterChecklistProgress | null;
   /** True on the Past tab — role-removed / canceled ex-creators. */
   isPastCreator?: boolean;
   /** Fill vs multiplier program (active tabs only). */
@@ -206,7 +215,7 @@ export async function listRosterCreators(
     )
     .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
 
-  const [codeWager, socials, netGgr, lifetimePnl, dealValues] =
+  const [codeWager, socials, netGgr, lifetimePnl, dealValues, checklistByUser] =
     await Promise.all([
       getCodeAndWagerByUser(ids).catch((err) => {
         console.error(
@@ -243,6 +252,13 @@ export async function listRosterCreators(
         );
         return new Map<string, CreatorDealValue>();
       }),
+      getChecklistProgressByUser(ids).catch((err) => {
+        console.error(
+          "[creator-hub roster] checklist progress fetch failed (pills hidden):",
+          err,
+        );
+        return {} as Record<string, RosterChecklistProgress>;
+      }),
     ]);
 
   const ggrByUser = new Map<string, CreatorNetGgrRow>(
@@ -275,6 +291,7 @@ export async function listRosterCreators(
       windowedGgrUsd: ggrRow ? ggrRow.ggr : null,
       lifetimePnlUsd: pnlByUser.has(c.id) ? pnlByUser.get(c.id)! : null,
       dealValue: dealValues.get(c.id) ?? null,
+      checklist: checklistByUser[c.id] ?? null,
       dealProgram: tab,
     };
   });

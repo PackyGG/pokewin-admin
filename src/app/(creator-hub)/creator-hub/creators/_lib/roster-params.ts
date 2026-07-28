@@ -105,6 +105,14 @@ export const ROSTER_DEFAULT_TAB: RosterTab = "fill";
 export type RosterActiveTab = Exclude<RosterTab, "past">;
 
 /**
+ * Grid / List render mode (`?view=`). Parsed on the server so the page only
+ * builds the server-rendered card set when the grid actually renders — list
+ * view skips the card build entirely.
+ */
+export type RosterViewMode = "grid" | "list";
+export const ROSTER_DEFAULT_VIEW: RosterViewMode = "grid";
+
+/**
  * Resolve a raw `?period=` value to a roster window. Unknown / unsupported
  * values fall back to the default. Shared by the server page parse and the
  * client period chips so the loaded window and the highlighted chip agree.
@@ -153,6 +161,14 @@ const RosterSearchParamsSchema = z.object({
     .string()
     .optional()
     .transform((v) => resolveRosterPeriod(v)),
+  /**
+   * Grid / List view. `grid` is the default (omitted from the URL). Parsed
+   * here so the server builds grid cards only when they will render.
+   */
+  view: z
+    .string()
+    .optional()
+    .transform((v): RosterViewMode => (v === "list" ? "list" : "grid")),
 });
 
 export type RosterSearchParams = z.infer<typeof RosterSearchParamsSchema>;

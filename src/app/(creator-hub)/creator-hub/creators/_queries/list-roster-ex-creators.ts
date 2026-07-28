@@ -96,6 +96,7 @@ export async function listRosterExCreators(
       windowedGgrUsd: null,
       lifetimePnlUsd: pnlByUser.has(c.id) ? pnlByUser.get(c.id)! : null,
       dealValue: null,
+      checklist: null,
       isPastCreator: true,
     };
   });

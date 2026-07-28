@@ -2,51 +2,60 @@
 
 import { useMemo, type ReactNode } from "react";
 import Link from "next/link";
-import { Users2 } from "lucide-react";
+import { MessageCircle, Users2 } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 
+import { HubEmptyState } from "../../_components/hub-notice";
 import type { RosterCreator } from "../_queries/list-roster-creators";
 import { useRosterSearch, matchesRosterSearch } from "./roster-search-context";
 import { useRosterView } from "./roster-view-context";
+import {
+  ChecklistPill,
+  CreatorHref,
+  DealStatusBadge,
+  ExCreatorBadge,
+  LiveDot,
+  PLATFORM_META,
+  initials,
+  signedHouseClass,
+} from "./roster-bits";
 
 /**
- * Creator Hub roster — card grid + compact table renderer.
+ * Creator Hub roster — card grid + dense table renderer.
  *
- * Grid cards are pre-rendered server components (`RosterCard`, with lazy
- * checklist badges) passed in via `cardsById` so each card can host its own
- * Suspense island. This client shell only filters + toggles layout.
+ * Grid cards are pre-rendered server components (`RosterCard`) passed in via
+ * `cardsById`; the server builds them ONLY when the parsed `?view=` is grid.
+ * This client shell filters + toggles layout. If the user flips list → grid
+ * before the grid RSC payload lands, missing cards render as skeletons for
+ * the brief transition.
+ *
+ * The single muted meta line merges the creator count with the page's
+ * window-scope caption (previously two separate lines).
  */
-
-function initials(name: string | null): string {
-  const clean = (name ?? "").trim();
-  if (!clean) return "?";
-  return clean.slice(0, 2).toUpperCase();
-}
-
-function signedHouseClass(value: number | null): string {
-  if (value == null || value === 0) return "text-muted-foreground";
-  return value > 0
-    ? "text-emerald-600 dark:text-emerald-400"
-    : "text-rose-600 dark:text-rose-400";
-}
-
-function CreatorHref(id: string): string {
-  return `/creator-hub/creators/${id}`;
-}
-
 export function RosterGrid({
   creators,
   cardsById,
   isPast = false,
+  caption,
 }: {
   creators: RosterCreator[];
-  /** Server-rendered `<RosterCard>` elements keyed by creator id (grid view). */
+  /** Server-rendered `<RosterCard>` elements keyed by creator id (grid view only). */
   cardsById: Record<string, ReactNode>;
   isPast?: boolean;
+  /** Scope caption merged into the meta line ("Wager + GGR scoped to …"). */
+  caption: string;
 }) {
   const { query } = useRosterSearch();
   const { view } = useRosterView();
@@ -58,9 +67,10 @@ export function RosterGrid({
 
   if (creators.length === 0) {
     return (
-      <EmptyState
+      <HubEmptyState
+        icon={Users2}
         title={isPast ? "No past creators" : "No creators yet"}
-        body={
+        sub={
           isPast
             ? "Ex-creators whose role was removed will appear here."
             : "Once you add creators they'll appear here as a searchable roster."
@@ -71,24 +81,32 @@ export function RosterGrid({
 
   if (filtered.length === 0) {
     return (
-      <EmptyState
+      <HubEmptyState
+        icon={Users2}
         title="No creators match your search"
-        body="Try a different username, email, or affiliate code."
+        sub="Try a different username, email, or affiliate code."
       />
     );
   }
 
+  const countText =
+    filtered.length === creators.length
+      ? `${creators.length} creator${creators.length === 1 ? "" : "s"}`
+      : `${filtered.length} of ${creators.length} creators`;
+
   return (
     <div className="space-y-2">
       <p className="text-[11px] text-muted-foreground">
-        {filtered.length === creators.length
-          ? `${creators.length} creator${creators.length === 1 ? "" : "s"}`
-          : `${filtered.length} of ${creators.length} creators`}
+        <span className="font-medium text-foreground/70">{countText}</span>
+        <span aria-hidden> · </span>
+        {caption}
       </p>
       {view === "grid" ? (
         <div className="grid grid-cols-1 gap-3 sm:gap-4 md:grid-cols-2 xl:grid-cols-3">
           {filtered.map((c) => (
-            <div key={c.id}>{cardsById[c.id]}</div>
+            <div key={c.id}>
+              {cardsById[c.id] ?? <Skeleton className="h-56 rounded-xl" />}
+            </div>
           ))}
         </div>
       ) : (
@@ -98,6 +116,11 @@ export function RosterGrid({
   );
 }
 
+/**
+ * List view — a true density mode with the same data the cards show:
+ * checklist pill, deal-status badge, and socials as compact icons, on the
+ * shared table primitives.
+ */
 function RosterTable({
   creators,
   isPast,
@@ -106,37 +129,34 @@ function RosterTable({
   isPast: boolean;
 }) {
   return (
-    <div className="overflow-x-auto rounded-2xl border">
-      <table className="w-full min-w-[800px] text-sm">
-        <thead>
-          <tr className="border-b bg-muted/40 text-left text-[11px] uppercase tracking-wider text-muted-foreground">
-            <th className="px-3 py-2 font-semibold">Creator</th>
-            <th className="px-3 py-2 font-semibold">Code</th>
-            <th className="px-3 py-2 text-right font-semibold">Sign-ups</th>
-            <th className="px-3 py-2 text-right font-semibold">FTDs</th>
-            <th className="px-3 py-2 text-right font-semibold">
+    <div className="rounded-xl border">
+      <Table className="min-w-[960px]">
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="px-3">Creator</TableHead>
+            <TableHead className="px-3">Code</TableHead>
+            <TableHead className="px-3">Socials</TableHead>
+            <TableHead className="px-3 text-right">Sign-ups</TableHead>
+            <TableHead className="px-3 text-right">FTDs</TableHead>
+            <TableHead className="px-3 text-right">
               {isPast ? "Lifetime wager" : "Wager"}
-            </th>
-            <th className="px-3 py-2 text-right font-semibold">GGR</th>
-            <th className="px-3 py-2 text-right font-semibold">PnL</th>
-            <th className="px-3 py-2 text-right font-semibold">Deal</th>
-          </tr>
-        </thead>
-        <tbody>
-          {creators.map((c) => {
-            return (
-            <tr
-              key={c.id}
-              className="border-b last:border-0 transition-colors hover:bg-accent/30"
-            >
-              <td className="px-3 py-2">
+            </TableHead>
+            <TableHead className="px-3 text-right">GGR</TableHead>
+            <TableHead className="px-3 text-right">PnL</TableHead>
+            <TableHead className="px-3 text-right">Deal</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {creators.map((c) => (
+            <TableRow key={c.id}>
+              <TableCell className="px-3">
                 <Link
                   href={CreatorHref(c.id)}
                   className="flex items-center gap-2.5 outline-none focus-visible:underline"
                 >
                   <Avatar className="size-7 shrink-0">
                     {c.image && <AvatarImage src={c.image} alt="" />}
-                    <AvatarFallback className="bg-pink-500/15 text-[10px] font-semibold text-pink-700 dark:text-pink-300">
+                    <AvatarFallback className="bg-muted text-[10px] font-semibold text-muted-foreground">
                       {initials(c.username)}
                     </AvatarFallback>
                   </Avatar>
@@ -146,10 +166,13 @@ function RosterTable({
                     </span>
                     {c.isPastCreator && <ExCreatorBadge />}
                     {c.isLive && <LiveDot />}
+                    {!c.isPastCreator && c.checklist && (
+                      <ChecklistPill progress={c.checklist} />
+                    )}
                   </span>
                 </Link>
-              </td>
-              <td className="px-3 py-2">
+              </TableCell>
+              <TableCell className="px-3">
                 {c.code ? (
                   <span className="font-mono text-[11px] text-muted-foreground">
                     {c.code}
@@ -157,74 +180,81 @@ function RosterTable({
                 ) : (
                   <span className="text-[11px] text-muted-foreground/60">—</span>
                 )}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              </TableCell>
+              <TableCell className="px-3">
+                {c.socials.length > 0 ? (
+                  <span className="flex items-center gap-1">
+                    {c.socials.map((s) => {
+                      const meta = PLATFORM_META[s.platform];
+                      const Icon = meta?.icon ?? MessageCircle;
+                      const label = `${meta?.label ?? s.platform}: ${s.username}`;
+                      return (
+                        <span
+                          key={s.id}
+                          className="inline-flex"
+                          title={label}
+                          aria-label={label}
+                        >
+                          <Icon
+                            className={cn(
+                              "size-3.5",
+                              meta?.glyphClass ?? "text-muted-foreground",
+                            )}
+                            aria-hidden
+                          />
+                        </span>
+                      );
+                    })}
+                  </span>
+                ) : (
+                  <span className="text-[11px] text-muted-foreground/60">—</span>
+                )}
+              </TableCell>
+              <TableCell className="px-3 text-right tabular-nums">
                 {formatNumber(c.signups)}
-              </td>
-              <td className="px-3 py-2 text-right tabular-nums">
+              </TableCell>
+              <TableCell className="px-3 text-right tabular-nums">
                 {formatNumber(c.ftds)}
-              </td>
-              <td className="px-3 py-2 text-right font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+              </TableCell>
+              <TableCell className="px-3 text-right font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
                 {formatCompactUsd(c.windowedWagerUsd)}
-              </td>
-              <td
+              </TableCell>
+              <TableCell
                 className={cn(
-                  "px-3 py-2 text-right font-medium tabular-nums",
+                  "px-3 text-right font-medium tabular-nums",
                   signedHouseClass(c.windowedGgrUsd),
                 )}
               >
                 {c.windowedGgrUsd != null
                   ? formatCompactUsd(c.windowedGgrUsd)
                   : "—"}
-              </td>
-              <td
+              </TableCell>
+              <TableCell
                 className={cn(
-                  "px-3 py-2 text-right font-medium tabular-nums",
+                  "px-3 text-right font-medium tabular-nums",
                   signedHouseClass(c.lifetimePnlUsd),
                 )}
               >
                 {c.lifetimePnlUsd != null
                   ? formatCompactUsd(c.lifetimePnlUsd)
                   : "—"}
-              </td>
-              <td className="px-3 py-2 text-right font-medium tabular-nums text-rose-600 dark:text-rose-400">
-                {c.dealValue ? formatCompactUsd(c.dealValue.dealValueUsd) : "—"}
-              </td>
-            </tr>
-            );
-          })}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function ExCreatorBadge() {
-  return (
-    <Badge
-      variant="outline"
-      className="h-5 shrink-0 border-purple-500/40 bg-purple-500/10 py-0 text-[10px] font-medium text-purple-600 dark:text-purple-400"
-    >
-      Ex-creator
-    </Badge>
-  );
-}
-
-function LiveDot() {
-  return (
-    <span
-      aria-hidden
-      className="inline-block size-2 shrink-0 rounded-full bg-emerald-500 shadow-[0_0_0_3px_rgba(52,211,153,0.25)] motion-safe:animate-pulse"
-    />
-  );
-}
-
-function EmptyState({ title, body }: { title: string; body: string }) {
-  return (
-    <div className="flex min-h-[220px] flex-col items-center justify-center gap-2 rounded-2xl border border-dashed py-12 text-center">
-      <Users2 className="size-6 text-muted-foreground/60" />
-      <p className="text-sm font-semibold">{title}</p>
-      <p className="max-w-xs text-xs text-muted-foreground">{body}</p>
+              </TableCell>
+              <TableCell className="px-3 text-right">
+                <span className="inline-flex items-center justify-end gap-1.5">
+                  {!c.isPastCreator && (
+                    <DealStatusBadge status={c.dealStatus} />
+                  )}
+                  <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                    {c.dealValue
+                      ? formatCompactUsd(c.dealValue.dealValueUsd)
+                      : "—"}
+                  </span>
+                </span>
+              </TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
     </div>
   );
 }

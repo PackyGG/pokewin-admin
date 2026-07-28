@@ -18,9 +18,12 @@ const TABS = [
  * Mirrors `/creators` on the admin dashboard. `fill` is the default and carries
  * no `?tab` param.
  *
- * Switching tabs drops `q`, `sortBy`, and `period` (different pools + defaults)
- * but preserves grid/list `view`.
+ * Switching tabs preserves `sortBy`, `period`, and grid/list `view` (rebuilt
+ * with `URLSearchParams`, not string concat) and drops only `q` (the instant
+ * filter doesn't carry across pools).
  */
+const PRESERVED_PARAMS = ["sortBy", "period", "view"] as const;
+
 export function RosterTabSwitch() {
   // Host-aware: `/creator-hub/creators` on the apex, `/creators` on
   // marketing.packydash.com — keeps tab switches a clean soft navigation
@@ -31,8 +34,16 @@ export function RosterTabSwitch() {
   const current =
     raw === "multiplier" ? "multiplier" : raw === "past" ? "past" : "fill";
 
-  const viewParam = searchParams.get("view");
-  const viewSuffix = viewParam === "list" ? "view=list" : "";
+  function hrefFor(value: (typeof TABS)[number]["value"]): string {
+    const params = new URLSearchParams();
+    if (value !== "fill") params.set("tab", value);
+    for (const key of PRESERVED_PARAMS) {
+      const v = searchParams.get(key);
+      if (v) params.set(key, v);
+    }
+    const qs = params.toString();
+    return qs ? `${rosterHref}?${qs}` : rosterHref;
+  }
 
   return (
     <div
@@ -42,13 +53,7 @@ export function RosterTabSwitch() {
     >
       {TABS.map(({ value, label, Icon }) => {
         const active = current === value;
-        const baseHref =
-          value === "fill" ? rosterHref : `${rosterHref}?tab=${value}`;
-        const href = viewSuffix
-          ? value === "fill"
-            ? `${rosterHref}?${viewSuffix}`
-            : `${baseHref}&${viewSuffix}`
-          : baseHref;
+        const href = hrefFor(value);
         return (
           <Link
             key={value}
