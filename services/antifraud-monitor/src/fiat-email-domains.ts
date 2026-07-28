@@ -8,7 +8,7 @@ import type { Signup } from "./types.js";
 
 const STREAM = "fiat_email_domains";
 const GMAIL_PATTERN_STREAM = "fiat_gmail_dot_patterns";
-const DEPOSIT_CLUSTER_STREAM = "fiat_suspicious_deposit_clusters";
+const DEPOSIT_CLUSTER_STREAM = "fiat_suspicious_deposit_clusters_v2";
 const BATCH_SIZE = 100;
 const CLUSTER_WINDOW_MINUTES = 30;
 const CLUSTER_MIN_MEMBERS = 3;

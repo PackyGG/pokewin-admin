@@ -252,6 +252,13 @@ test("blacklist matches are durable before signed lock delivery", async () => {
     ),
     "utf8",
   );
+  const clusterReplayV2Migration = await readFile(
+    new URL(
+      "../migrations/024_replay_suspicious_deposit_clusters_v2.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
   assert.match(source, /INSERT INTO fiat_email_domain_matches/);
   assert.match(source, /INSERT INTO fiat_problem_alert_outbox/);
@@ -273,6 +280,11 @@ test("blacklist matches are durable before signed lock delivery", async () => {
     clusterReplayMigration,
     /interval '7 days'[\s\S]*fiat_suspicious_deposit_clusters[\s\S]*NOT EXISTS[\s\S]*suspicious_deposit_cluster/,
   );
+  assert.match(
+    clusterReplayV2Migration,
+    /fiat_suspicious_deposit_clusters_v2[\s\S]*interval '7 days'[\s\S]*NOT EXISTS[\s\S]*suspicious_deposit_cluster/,
+  );
+  assert.match(source, /fiat_suspicious_deposit_clusters_v2/);
   assert.match(source, /cluster_source_event_ids/);
   assert.match(
     source,
