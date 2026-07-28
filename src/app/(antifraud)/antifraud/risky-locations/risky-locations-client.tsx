@@ -1,13 +1,33 @@
 "use client";
 
 import { useMemo, useState, useTransition } from "react";
-import { Loader2, MapPinPlus, Save, ShieldCheck } from "lucide-react";
+import {
+  Check,
+  ChevronsUpDown,
+  Loader2,
+  MapPinPlus,
+  Save,
+  ShieldCheck,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
+import { cn } from "@/lib/utils";
 import type { RiskyLocation } from "@/lib/antifraud/risky-locations-api";
 import { addRiskyLocation, setRiskyLocation } from "./actions";
 
@@ -28,6 +48,7 @@ export function RiskyLocationsClient({
 }) {
   const [locations, setLocations] = useState(initialLocations);
   const [countryCode, setCountryCode] = useState("");
+  const [countryOpen, setCountryOpen] = useState(false);
   const [duration, setDuration] = useState(60);
   const [draftDurations, setDraftDurations] = useState<Record<string, number>>(
     Object.fromEntries(
@@ -141,22 +162,64 @@ export function RiskyLocationsClient({
         </div>
         <div className="space-y-2">
           <Label htmlFor="risky-country">Country</Label>
-          <select
-            id="risky-country"
-            value={countryCode}
-            onChange={(event) => setCountryCode(event.target.value)}
-            disabled={isPending}
-            className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50"
-          >
-            <option value="">Choose a country</option>
-            {countries
-              .filter((country) => !configuredCodes.has(country.code))
-              .map((country) => (
-                <option key={country.code} value={country.code}>
-                  {flag(country.code)} {country.name}
-                </option>
-              ))}
-          </select>
+          <Popover open={countryOpen} onOpenChange={setCountryOpen}>
+            <PopoverTrigger
+              render={
+                <Button
+                  id="risky-country"
+                  type="button"
+                  variant="outline"
+                  disabled={isPending}
+                  className="h-9 w-full justify-between text-left font-normal"
+                />
+              }
+            >
+              {countryCode ? (
+                <span className="truncate">
+                  {flag(countryCode)}{" "}
+                  {countryNames.get(countryCode) ?? countryCode}
+                </span>
+              ) : (
+                <span className="text-muted-foreground">Choose a country</span>
+              )}
+              <ChevronsUpDown className="ml-1 size-3 shrink-0 opacity-50" />
+            </PopoverTrigger>
+            <PopoverContent
+              className="w-[var(--anchor-width)] min-w-64 p-0"
+              align="start"
+            >
+              <Command>
+                <CommandInput placeholder="Search countries..." />
+                <CommandList>
+                  <CommandEmpty>No country found.</CommandEmpty>
+                  {countries
+                    .filter((country) => !configuredCodes.has(country.code))
+                    .map((country) => (
+                      <CommandItem
+                        key={country.code}
+                        value={`${country.name} ${country.code}`}
+                        onSelect={() => {
+                          setCountryCode(country.code);
+                          setCountryOpen(false);
+                        }}
+                      >
+                        <span className="truncate">
+                          {flag(country.code)} {country.name}
+                        </span>
+                        <Check
+                          className={cn(
+                            "ml-auto size-4",
+                            countryCode === country.code
+                              ? "opacity-100"
+                              : "opacity-0",
+                          )}
+                        />
+                      </CommandItem>
+                    ))}
+                </CommandList>
+              </Command>
+            </PopoverContent>
+          </Popover>
         </div>
         <div className="space-y-2">
           <Label htmlFor="risky-duration">Monitor time (minutes)</Label>
