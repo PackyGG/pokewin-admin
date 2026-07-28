@@ -42,12 +42,13 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
     "utf8",
   );
 
-  assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
+  assert.match(source, /max:\s*isReadMirror\s*\?\s*1\s*:\s*3/);
+  assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*1\s*:\s*Infinity/);
   assert.match(
     source,
     /idleTimeoutMillis:\s*isReadMirror\s*\?\s*5_000\s*:\s*10_000/,
   );
-  assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
+  assert.match(warmRoute, /Array\.from\(\{ length: 1 \}/);
 });
 
 test("mirror index failures expose safe, actionable connection diagnostics", () => {

@@ -52,11 +52,12 @@ function createPool(
     application_name: `pokewin-admin-main-${env}-${access}`,
     min: 0,
     // The production mirror role is capped at 30 sessions and is shared with
-    // Antifraud. A wide per-instance pool multiplied across Vercel isolates
-    // exhausted that role. Two slots still match the app's bounded read
-    // concurrency while preserving headroom across warm serverless instances.
-    // Primary pools remain at three for mutation flows and consistency reads.
-    max: isReadMirror ? 2 : 3,
+    // Antifraud. Even a small persistent pool multiplies across frozen Vercel
+    // isolates, so mirror reads use one slot and retire it after every checkout
+    // instead of retaining idle sessions. Primary pools remain at three for
+    // mutation flows and consistency reads.
+    max: isReadMirror ? 1 : 3,
+    maxUses: isReadMirror ? 1 : Infinity,
     idleTimeoutMillis: isReadMirror ? 5_000 : 10_000,
     // A queued read must be allowed to outlive the longest statement already
     // occupying a slot. The old 10s acquire budget guaranteed false pool

@@ -10,9 +10,10 @@ DDL/DML against either primary. This supersedes older blanket read-only wording
 below.
 
 The production mirror role `fraud_app` has a 30-session limit shared by the
-dashboard and Antifraud reader. Dashboard mirror pools are capped at two
-connections per serverless instance and release idle sessions after five
-seconds; the primary mutation pool remains capped at three. Do not widen the
+dashboard and Antifraud reader. Dashboard mirror pools use one connection per
+serverless instance and retire it after every checkout so frozen instances do
+not retain idle sessions; the five-second idle timeout is a secondary backstop.
+The primary mutation pool remains capped at three. Do not widen or persist the
 mirror pool without first increasing role capacity or putting a transaction
 pooler in front of it.
 

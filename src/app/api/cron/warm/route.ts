@@ -22,7 +22,7 @@ import { getFiatConfig } from "@/lib/queries/fiat";
  * PostgreSQL/cache keep-warm cron. A bare `SELECT 1` leaves the
  * `unstable_cache` entries cold: after a
  * 60s/300s cache expiry a burst of concurrent admin loads re-runs the heavy
- * Postgres aggregates all at once and stampedes the small (max:2) mirror
+ * Postgres aggregates all at once and stampedes the single-slot mirror
  * pool. So we also CALL the same cached entry-point functions the pages call
  * — populating the SAME cache keys — so the next real request reads warm.
  *
@@ -75,8 +75,8 @@ export async function GET(request: Request): Promise<Response> {
 
   // Heavy-cache keep-warm — refresh the hottest shared `unstable_cache`
   // aggregates so a burst of concurrent admin loads after a cache expiry
-  // reads warm cache instead of re-stampeding the max:2 mirror pool.
-  // All read-only; each runs independently under a two-worker concurrency
+  // reads warm cache instead of re-stampeding the single-slot mirror pool.
+  // All read-only; each runs independently under a one-worker concurrency
   // cap matching the per-instance mirror pool. Ordered
   // heaviest-first (the
   // stampede drivers) to make best use of the maxDuration = 30s budget.
@@ -99,7 +99,7 @@ export async function GET(request: Request): Promise<Response> {
     ];
     const settled: PromiseSettledResult<string>[] = new Array(warmers.length);
     let nextIndex = 0;
-    const workers = Array.from({ length: 2 }, async () => {
+    const workers = Array.from({ length: 1 }, async () => {
       while (nextIndex < warmers.length) {
         const index = nextIndex++;
         const [label, fn] = warmers[index];
