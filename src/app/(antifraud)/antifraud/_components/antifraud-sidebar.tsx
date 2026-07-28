@@ -13,6 +13,7 @@ import {
   GitFork,
   LayoutDashboard,
   MailWarning,
+  MapPinned,
   Megaphone,
   RadioTower,
   Settings,
@@ -88,6 +89,11 @@ const KYC_NAV: NavItem[] = [
  * Owner/admin-only antifraud settings.
  */
 const MANAGE_NAV: NavItem[] = [
+  {
+    label: "Risky Locations",
+    href: "/antifraud/risky-locations",
+    icon: MapPinned,
+  },
   {
     label: "Email Blacklist",
     href: "/antifraud/email-blacklist",

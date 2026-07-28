@@ -21,6 +21,7 @@ import { FiatProblemAlerts } from "./fiat-alerts.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
+import { RiskyLocationStore } from "./risky-locations.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
@@ -101,6 +102,7 @@ export class MonitorEngine {
   private readonly discord: DiscordAlerts;
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
+  readonly riskyLocations: RiskyLocationStore;
   private readonly health = new PollerHealth();
 
   constructor(
@@ -115,6 +117,7 @@ export class MonitorEngine {
     this.discord = new DiscordAlerts(config, log);
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
+    this.riskyLocations = new RiskyLocationStore(db);
   }
 
   async start(): Promise<void> {
@@ -562,10 +565,23 @@ export class MonitorEngine {
     prepared: PreparedSignup,
   ): Promise<void> {
     const { context, fingerprint, proxycheck, weights } = prepared;
+    const locationPolicy = await this.riskyLocations.forCountry(
+      signup.country_code,
+    );
     const signals = [
       ...baseSignupSignals(signup, context, weights),
       ...fingerprint.signals,
       ...proxycheck.signals,
+      ...(locationPolicy
+        ? [
+            {
+              key: "risky_location_monitor",
+              title: "Risky signup location",
+              detail: `${locationPolicy.countryCode} signups are monitored for ${locationPolicy.monitorDurationSeconds / 60} minutes`,
+              points: 0,
+            },
+          ]
+        : []),
     ];
     const score = Math.max(
       0,
@@ -573,7 +589,11 @@ export class MonitorEngine {
     );
 
     const client = await this.db.antifraud.connect();
-    let opened: { caseId: string; sessionId: string } | null = null;
+    let opened: {
+      caseId: string;
+      sessionId: string;
+      durationSeconds: number;
+    } | null = null;
     try {
       await client.query("BEGIN");
       await client.query(
@@ -590,10 +610,23 @@ export class MonitorEngine {
         [signup.id, score, severity(score), JSON.stringify(signals)],
       );
       if (
+        locationPolicy ||
         score >= this.config.MONITOR_START_SCORE ||
         score >= HIGH_RISK_SIGNUP_SCORE
       ) {
-        opened = await this.openMonitor(client, signup, signals, score);
+        const durationSeconds =
+          locationPolicy?.monitorDurationSeconds ??
+          this.config.MONITOR_DURATION_SECONDS;
+        opened = {
+          ...(await this.openMonitor(
+            client,
+            signup,
+            signals,
+            score,
+            durationSeconds,
+          )),
+          durationSeconds,
+        };
       }
       if (score >= HIGH_RISK_SIGNUP_SCORE) {
         if (!opened) throw new Error("High-risk signup did not open a case");
@@ -688,7 +721,7 @@ export class MonitorEngine {
       username: signup.username,
       score,
       severity: severity(score),
-      durationSeconds: this.config.MONITOR_DURATION_SECONDS,
+      durationSeconds: opened.durationSeconds,
       signals,
     });
     await this.evaluateRules({
@@ -1152,6 +1185,7 @@ export class MonitorEngine {
     signup: Signup,
     signals: Signal[],
     score: number,
+    durationSeconds: number,
   ): Promise<{ caseId: string; sessionId: string }> {
     const caseResult = await client.query<{ id: string }>(
         `
@@ -1197,7 +1231,7 @@ export class MonitorEngine {
         [
           caseId,
           signup.id,
-          this.config.MONITOR_DURATION_SECONDS,
+          durationSeconds,
           score,
           signup.created_at,
         ],
