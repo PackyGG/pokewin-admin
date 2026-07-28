@@ -1,5 +1,6 @@
 import { Suspense } from "react";
-import { LayoutDashboard, LineChart } from "lucide-react";
+import Link from "next/link";
+import { Activity, Gauge, LayoutDashboard, LineChart } from "lucide-react";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -31,6 +32,7 @@ import { RewardCreatorCostsTodayCard } from "./reward-creator-costs-today-card";
 import { UpgraderDoubleDownTodayCard } from "./upgrader-double-down-today-card";
 import { FiatTodayCard } from "./fiat-today-card";
 import { AutoRefresh } from "./auto-refresh";
+import { LiveIndicator } from "./live-indicator";
 import {
   WagerChart,
   WagerAttributionChart,
@@ -71,8 +73,22 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and trends."
+          action={<LiveIndicator />}
         />
       </PageHero>
+
+      <SectionHeading
+        icon={Activity}
+        title="Today"
+        action={
+          <Link
+            href="/analytics"
+            className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+          >
+            Full analytics →
+          </Link>
+        }
+      />
 
       {/* TODAY BOXES — P&L Today · Reward + Creators Costs (merged) ·
           Upgrader + Double Down (merged), in that order, at the top.
@@ -124,16 +140,19 @@ export default async function DashboardPage() {
           window via the toggle next to each title. Streams behind its own Suspense
           so the today-window aggregate never blocks the 3 cost cards above;
           the skeleton mirrors the single 4-up period strip. */}
-      <Suspense
-        fallback={
-          <SkeletonKpiStrip
-            count={4}
-            className="sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4"
-          />
-        }
-      >
-        <DashboardKpiBoxes />
-      </Suspense>
+      <div className="space-y-3">
+        <SectionHeading icon={Gauge} title="Key metrics" />
+        <Suspense
+          fallback={
+            <SkeletonKpiStrip
+              count={4}
+              className="sm:grid-cols-2 md:grid-cols-2 xl:grid-cols-4"
+            />
+          }
+        >
+          <DashboardKpiBoxes />
+        </Suspense>
+      </div>
 
       {/* Charts. Three-up at lg+ but stacks to a single column on
           phones so each chart keeps a readable height (Recharts crushes
