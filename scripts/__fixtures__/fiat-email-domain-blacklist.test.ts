@@ -47,6 +47,10 @@ test("blacklisted signup and Whop signals lock MAIN only through signed ingest",
   assert.match(monitor, /gmail_dot_fragmentation/);
   assert.match(monitor, /suspiciousGmailClusterCandidate/);
   assert.match(monitor, /suspicious_deposit_cluster/);
+  assert.match(monitor, /account_identity/);
+  assert.match(monitor, /data,user,id/);
+  assert.match(monitor, /payment_identity/);
+  assert.doesNotMatch(monitor, /card_last4 ~ '\^\[0-9\]\{4\}\$'/);
   assert.match(monitor, /cluster_source_event_ids/);
   assert.match(monitor, /interval '30 minutes'/);
   assert.match(monitor, /provider_payment_id/);

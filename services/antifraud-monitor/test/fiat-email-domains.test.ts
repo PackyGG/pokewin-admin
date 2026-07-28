@@ -73,8 +73,9 @@ function clusterMember(
     username: `user${index}`,
     checkout_email: email,
     payment_method_type: "card",
+    account_identity: `whop-user-${index}`,
     currency: "EUR",
-    payment_identity: `card:visa:370${index}`,
+    payment_identity: `payment-${index}`,
     requested_amount_cents: 1847,
     occurred_at: new Date(
       `2026-07-28T12:${String(index * 5).padStart(2, "0")}:00.000Z`,
@@ -95,7 +96,9 @@ test("same-amount suspicious deposits form a cluster only with distinct identiti
   const supplied = [
     clusterMember(1, "margenebrombergguidet.t.if.i.v.z.c@gmail.com"),
     clusterMember(2, "giecphangqua.nh.ghun.g@gmail.com"),
-    clusterMember(3, "carmenw.oods29.7.1@gmail.com"),
+    clusterMember(3, "carmenw.oods29.7.1@gmail.com", {
+      user_id: "user-2",
+    }),
   ];
   assert.equal(
     suspiciousGmailClusterCandidate(supplied[0]?.checkout_email ?? "")?.type,
@@ -121,6 +124,7 @@ test("same-amount suspicious deposits form a cluster only with distinct identiti
     source_event_id: `repeat-${index}`,
     provider_payment_id: `repeat-payment-${index}`,
     user_id: "same-user",
+    account_identity: "same-whop-user",
   }));
   assert.equal(
     qualifyingDepositClusterMembers(clusterCandidate(repeatedAccount)),
@@ -129,7 +133,7 @@ test("same-amount suspicious deposits form a cluster only with distinct identiti
 
   const repeatedPaymentIdentity = supplied.map((member) => ({
     ...member,
-    payment_identity: "card:visa:3705",
+    payment_identity: "same-provider-payment",
   }));
   assert.equal(
     qualifyingDepositClusterMembers(
@@ -160,7 +164,8 @@ test("deposit-cluster polling is bounded and conjunctive", async () => {
   assert.match(calls[0]?.sql ?? "", /interval '30 minutes'/);
   assert.match(calls[0]?.sql ?? "", /provider_payment_id/);
   assert.match(calls[0]?.sql ?? "", /payment_identity/);
-  assert.match(calls[0]?.sql ?? "", /card_last4 ~ '\^\[0-9\]\{4\}\$'/);
+  assert.match(calls[0]?.sql ?? "", /data,user,id/);
+  assert.doesNotMatch(calls[0]?.sql ?? "", /card_last4 ~/);
   assert.match(calls[0]?.sql ?? "", /fdi\.user_id/);
   assert.match(calls[0]?.sql ?? "", /gmail\.com/);
   assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
@@ -240,6 +245,13 @@ test("blacklist matches are durable before signed lock delivery", async () => {
     new URL("../migrations/022_suspicious_deposit_clusters.sql", import.meta.url),
     "utf8",
   );
+  const clusterReplayMigration = await readFile(
+    new URL(
+      "../migrations/023_replay_suspicious_deposit_clusters.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
   assert.match(source, /INSERT INTO fiat_email_domain_matches/);
   assert.match(source, /INSERT INTO fiat_problem_alert_outbox/);
@@ -257,6 +269,10 @@ test("blacklist matches are durable before signed lock delivery", async () => {
   assert.match(migration, /WHERE lock_delivered_at IS NULL/);
   assert.match(patternMigration, /ADD COLUMN IF NOT EXISTS match_type/);
   assert.match(clusterMigration, /suspicious_deposit_cluster/);
+  assert.match(
+    clusterReplayMigration,
+    /interval '7 days'[\s\S]*fiat_suspicious_deposit_clusters[\s\S]*NOT EXISTS[\s\S]*suspicious_deposit_cluster/,
+  );
   assert.match(source, /cluster_source_event_ids/);
   assert.match(
     source,

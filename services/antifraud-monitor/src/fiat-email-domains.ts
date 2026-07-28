@@ -26,6 +26,7 @@ export type CheckoutEmailEvent = {
 };
 
 export type DepositClusterMember = CheckoutEmailEvent & {
+  account_identity: string;
   currency: string;
   payment_identity: string;
   requested_amount_cents: number;
@@ -328,6 +329,7 @@ function parseDepositClusterMember(value: unknown): DepositClusterMember | null 
     "provider_payment_id",
     "user_id",
     "checkout_email",
+    "account_identity",
     "currency",
     "payment_identity",
   ] as const;
@@ -353,6 +355,7 @@ function parseDepositClusterMember(value: unknown): DepositClusterMember | null 
       typeof row.payment_method_type === "string"
         ? row.payment_method_type
         : null,
+    account_identity: String(row.account_identity).trim().toLowerCase(),
     currency: String(row.currency).trim().toUpperCase(),
     payment_identity: String(row.payment_identity).trim().toLowerCase(),
     requested_amount_cents: amount,
@@ -381,21 +384,11 @@ export async function fetchSuspiciousDepositClusterCandidates(
             NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
             'card'
           ) AS payment_method_type,
+          lower(NULLIF(pwe.payload #>> '{data,user,id}', ''))
+            AS account_identity,
           upper(fdi.currency) AS currency,
-          lower(concat_ws(
-            ':',
-            COALESCE(
-              NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
-              NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
-              'card'
-            ),
-            COALESCE(
-              NULLIF(fdi.provider_metadata ->> 'card_brand', ''),
-              NULLIF(pwe.payload #>> '{data,card_brand}', ''),
-              'unknown'
-            ),
-            payment.card_last4
-          )) AS payment_identity,
+          lower(NULLIF(pwe.payload #>> '{data,id}', ''))
+            AS payment_identity,
           fdi.requested_amount_cents,
           pwe.received_at AS occurred_at
         FROM payment_webhook_events pwe
@@ -404,28 +397,11 @@ export async function fetchSuspiciousDepositClusterCandidates(
             pwe.payload #>> '{data,metadata,deposit_intent_id}', ''
           )
         LEFT JOIN "user" u ON u.id = fdi.user_id
-        CROSS JOIN LATERAL (
-          SELECT COALESCE(
-            NULLIF(fdi.provider_metadata ->> 'card_last4', ''),
-            NULLIF(
-              fdi.provider_metadata -> 'payment' ->> 'card_last4', ''
-            ),
-            NULLIF(
-              fdi.provider_metadata -> 'data' ->> 'card_last4', ''
-            ),
-            NULLIF(
-              fdi.provider_metadata -> 'data' -> 'payment'
-                ->> 'card_last4', ''
-            ),
-            NULLIF(pwe.payload #>> '{data,card_last4}', ''),
-            NULLIF(pwe.payload #>> '{data,payment,card_last4}', '')
-          ) AS card_last4
-        ) AS payment
         WHERE pwe.provider = 'whop'
           AND pwe.event_type = 'payment.created'
           AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND NULLIF(pwe.payload #>> '{data,user,id}', '') IS NOT NULL
           AND fdi.user_id IS NOT NULL
-          AND payment.card_last4 ~ '^[0-9]{4}$'
           AND fdi.requested_amount_cents > 0
           AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
           AND lower(btrim(split_part(
@@ -467,21 +443,11 @@ export async function fetchSuspiciousDepositClusterCandidates(
             NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
             'card'
           ) AS payment_method_type,
+          lower(NULLIF(pwe.payload #>> '{data,user,id}', ''))
+            AS account_identity,
           upper(fdi.currency) AS currency,
-          lower(concat_ws(
-            ':',
-            COALESCE(
-              NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
-              NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
-              'card'
-            ),
-            COALESCE(
-              NULLIF(fdi.provider_metadata ->> 'card_brand', ''),
-              NULLIF(pwe.payload #>> '{data,card_brand}', ''),
-              'unknown'
-            ),
-            payment.card_last4
-          )) AS payment_identity,
+          lower(NULLIF(pwe.payload #>> '{data,id}', ''))
+            AS payment_identity,
           fdi.requested_amount_cents,
           pwe.received_at AS occurred_at
         FROM payment_webhook_events pwe
@@ -490,31 +456,14 @@ export async function fetchSuspiciousDepositClusterCandidates(
             pwe.payload #>> '{data,metadata,deposit_intent_id}', ''
           )
         LEFT JOIN "user" u ON u.id = fdi.user_id
-        CROSS JOIN LATERAL (
-          SELECT COALESCE(
-            NULLIF(fdi.provider_metadata ->> 'card_last4', ''),
-            NULLIF(
-              fdi.provider_metadata -> 'payment' ->> 'card_last4', ''
-            ),
-            NULLIF(
-              fdi.provider_metadata -> 'data' ->> 'card_last4', ''
-            ),
-            NULLIF(
-              fdi.provider_metadata -> 'data' -> 'payment'
-                ->> 'card_last4', ''
-            ),
-            NULLIF(pwe.payload #>> '{data,card_last4}', ''),
-            NULLIF(pwe.payload #>> '{data,payment,card_last4}', '')
-          ) AS card_last4
-        ) AS payment
         CROSS JOIN bounds b
         WHERE b.from_at IS NOT NULL
           AND pwe.provider = 'whop'
           AND pwe.event_type = 'payment.created'
           AND pwe.received_at BETWEEN b.from_at AND b.through_at
           AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND NULLIF(pwe.payload #>> '{data,user,id}', '') IS NOT NULL
           AND fdi.user_id IS NOT NULL
-          AND payment.card_last4 ~ '^[0-9]{4}$'
           AND fdi.requested_amount_cents > 0
           AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
           AND lower(btrim(split_part(
@@ -545,6 +494,7 @@ export async function fetchSuspiciousDepositClusterCandidates(
               'username', p.username,
               'checkout_email', p.checkout_email,
               'payment_method_type', p.payment_method_type,
+              'account_identity', p.account_identity,
               'currency', p.currency,
               'payment_identity', p.payment_identity,
               'requested_amount_cents', p.requested_amount_cents,
@@ -602,13 +552,15 @@ export function qualifyingDepositClusterMembers(
       left.source_event_id.localeCompare(right.source_event_id),
   );
   if (members.length < CLUSTER_MIN_MEMBERS) return null;
-  const users = new Set(members.map((member) => member.user_id));
+  const accounts = new Set(
+    members.map((member) => member.account_identity),
+  );
   const payments = new Set(
     members.map((member) => member.payment_identity),
   );
   const emails = new Set(members.map((member) => member.checkout_email));
   if (
-    users.size < CLUSTER_MIN_MEMBERS ||
+    accounts.size < CLUSTER_MIN_MEMBERS ||
     payments.size < CLUSTER_MIN_MEMBERS ||
     emails.size < CLUSTER_MIN_MEMBERS
   ) {
@@ -860,8 +812,15 @@ export class FiatEmailDomainGuard {
       for (const candidate of candidates) {
         const members = qualifyingDepositClusterMembers(candidate);
         if (!members) continue;
+        const accountCount = new Set(
+          members.map((member) => member.account_identity),
+        ).size;
+        const paymentCount = new Set(
+          members.map((member) => member.payment_identity),
+        ).size;
         const reason =
-          `${members.length} distinct Whop accounts and payment identities ` +
+          `${accountCount} distinct Whop accounts and ${paymentCount} ` +
+          `distinct payments ` +
           `used unusual Gmail aliases for ${candidate.requested_amount_cents} ` +
           `${candidate.currency} cents within ${CLUSTER_WINDOW_MINUTES} minutes`;
         for (const member of members) {
@@ -959,16 +918,14 @@ export class FiatEmailDomainGuard {
               currency: candidate.currency,
               amount_cents: candidate.requested_amount_cents,
               cluster_member_count: members.length,
-              cluster_account_count: new Set(
-                members.map((member) => member.user_id),
-              ).size,
-              cluster_payment_count: new Set(
-                members.map((member) => member.payment_identity),
-              ).size,
+              cluster_account_count: accountCount,
+              cluster_payment_count: paymentCount,
               cluster_window_minutes: CLUSTER_WINDOW_MINUTES,
-              cluster_emails: members.map(
-                (member) => member.checkout_email,
-              ),
+              cluster_emails: [
+                ...new Set(
+                  members.map((member) => member.checkout_email),
+                ),
+              ],
               cluster_source_event_ids: members.map(
                 (member) => member.source_event_id,
               ),
