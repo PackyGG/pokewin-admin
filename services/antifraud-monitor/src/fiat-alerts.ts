@@ -1,0 +1,536 @@
+import type { FastifyBaseLogger } from "fastify";
+import type pg from "pg";
+
+import type { Config } from "./config.js";
+import type { Databases } from "./db.js";
+
+const CURSOR_STREAM = "fiat-problems";
+const BATCH_SIZE = 100;
+const SEND_TIMEOUT_MS = 5_000;
+const UTC = "AT TIME ZONE 'UTC'";
+
+export const FIAT_PROBLEM_CODES = [
+  "failed",
+  "review",
+  "disputed",
+  "partially_refunded",
+  "refunded",
+  "checkout_creating_stale",
+  "pending_stale",
+  "webhook_failed",
+] as const;
+
+export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
+
+export type FiatProblem = {
+  source_kind: "deposit_intent" | "payment_webhook";
+  source_id: string;
+  problem_code: FiatProblemCode;
+  user_id: string | null;
+  username: string | null;
+  details: Record<string, unknown>;
+  occurred_at: Date;
+};
+
+type PendingFiatAlert = FiatProblem & {
+  attempt_count: number;
+};
+
+type DiscordPayload = {
+  username: string;
+  content: string;
+  allowed_mentions: { parse: [] };
+  embeds: Array<{
+    title: string;
+    description: string;
+    url: string;
+    color: number;
+    fields: Array<{ name: string; value: string; inline: boolean }>;
+    footer: { text: string };
+    timestamp: string;
+  }>;
+  components: Array<{
+    type: 1;
+    components: Array<{
+      type: 2;
+      style: 5;
+      label: string;
+      url: string;
+    }>;
+  }>;
+};
+
+function clean(value: unknown, maxLength = 1_024): string {
+  const text = String(value ?? "")
+    .replace(/@everyone/gi, "everyone")
+    .replace(/@here/gi, "here")
+    .replace(/<@!?(\d+)>/g, "user $1")
+    .replace(/<@&(\d+)>/g, "role $1")
+    .trim();
+  if (text.length === 0) return "Not provided";
+  return text.length <= maxLength
+    ? text
+    : `${text.slice(0, maxLength - 1)}…`;
+}
+
+function detail(
+  details: Record<string, unknown>,
+  key: string,
+): string | null {
+  const value = details[key];
+  return value === null || value === undefined || value === ""
+    ? null
+    : String(value);
+}
+
+function formatUsdCents(value: unknown): string | null {
+  const cents = Number(value);
+  if (!Number.isInteger(cents) || cents < 0) return null;
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+  }).format(cents / 100);
+}
+
+export function fiatProblemTitle(code: FiatProblemCode): string {
+  switch (code) {
+    case "failed":
+      return "Fiat deposit failed";
+    case "review":
+      return "Fiat deposit needs review";
+    case "disputed":
+      return "Fiat deposit disputed";
+    case "partially_refunded":
+      return "Fiat deposit partially refunded";
+    case "refunded":
+      return "Fiat deposit refunded";
+    case "checkout_creating_stale":
+      return "Fiat checkout creation stalled";
+    case "pending_stale":
+      return "Fiat deposit pending too long";
+    case "webhook_failed":
+      return "Fiat webhook processing failed";
+  }
+}
+
+export function buildFiatDiscordPayload(
+  dashboardUrl: string,
+  problem: FiatProblem,
+): DiscordPayload {
+  const details = problem.details;
+  const amount = formatUsdCents(details.credited_amount_cents);
+  const fields: DiscordPayload["embeds"][number]["fields"] = [];
+
+  if (problem.username || problem.user_id) {
+    fields.push({
+      name: "Account",
+      value: clean(
+        [problem.username, problem.user_id].filter(Boolean).join(" · "),
+      ),
+      inline: true,
+    });
+  }
+  if (amount) {
+    fields.push({ name: "Credit amount", value: amount, inline: true });
+  }
+  const status = detail(details, "status");
+  if (status) {
+    fields.push({ name: "Status", value: clean(status), inline: true });
+  }
+  const providerStatus = detail(details, "provider_payment_status");
+  if (providerStatus) {
+    fields.push({
+      name: "Provider status",
+      value: clean(providerStatus),
+      inline: true,
+    });
+  }
+  const eventType = detail(details, "event_type");
+  if (eventType) {
+    fields.push({
+      name: "Webhook event",
+      value: clean(eventType),
+      inline: true,
+    });
+  }
+  const attempts = detail(details, "attempt_count");
+  if (attempts) {
+    fields.push({ name: "Attempts", value: clean(attempts), inline: true });
+  }
+  const reason =
+    detail(details, "failure_reason") ?? detail(details, "last_error");
+  if (reason) {
+    fields.push({
+      name: "Failure detail",
+      value: clean(reason),
+      inline: false,
+    });
+  }
+
+  const url = new URL(dashboardUrl).toString();
+  const description =
+    problem.source_kind === "deposit_intent"
+      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} requires attention.`
+      : `Whop payment webhook ${clean(details.provider_event_id ?? problem.source_id, 256)} could not be processed.`;
+
+  return {
+    username: "PackyGG Fiat",
+    content: "",
+    allowed_mentions: { parse: [] },
+    embeds: [
+      {
+        title: fiatProblemTitle(problem.problem_code),
+        description,
+        url,
+        color:
+          problem.problem_code === "review" ||
+          problem.problem_code === "pending_stale"
+            ? 0xf59e0b
+            : 0xef4444,
+        fields,
+        footer: { text: "PackyGG Fiat Operations" },
+        timestamp: problem.occurred_at.toISOString(),
+      },
+    ],
+    components: [
+      {
+        type: 1,
+        components: [
+          {
+            type: 2,
+            style: 5,
+            label: "Open Fiat Operations",
+            url,
+          },
+        ],
+      },
+    ],
+  };
+}
+
+export async function fetchFiatProblems(
+  source: pg.Pool,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = BATCH_SIZE,
+): Promise<FiatProblem[]> {
+  const result = await source.query<FiatProblem>(
+    `
+      WITH candidates AS (
+        SELECT
+          'deposit_intent'::text AS source_kind,
+          fdi.id::text || ':' ||
+            CASE
+              WHEN fdi.status = 'checkout_creating'
+                THEN 'checkout_creating_stale'
+              WHEN fdi.status = 'pending' THEN 'pending_stale'
+              ELSE fdi.status
+            END AS source_id,
+          CASE
+            WHEN fdi.status = 'checkout_creating'
+              THEN 'checkout_creating_stale'
+            WHEN fdi.status = 'pending' THEN 'pending_stale'
+            ELSE fdi.status
+          END AS problem_code,
+          fdi.user_id,
+          COALESCE(u.display_username, u.username) AS username,
+          jsonb_build_object(
+            'intent_id', fdi.id::text,
+            'provider', fdi.provider,
+            'status', fdi.status,
+            'currency', fdi.currency,
+            'requested_amount_cents', fdi.requested_amount_cents,
+            'credited_amount_cents', fdi.credited_amount_cents,
+            'actual_customer_total_cents', fdi.actual_customer_total_cents,
+            'provider_payment_status', fdi.provider_payment_status,
+            'provider_checkout_id', fdi.provider_checkout_id,
+            'provider_payment_id', fdi.provider_payment_id,
+            'failure_reason', fdi.failure_reason
+          ) AS details,
+          CASE
+            WHEN fdi.status = 'checkout_creating'
+              THEN fdi.updated_at + interval '15 minutes'
+            WHEN fdi.status = 'pending'
+              THEN fdi.updated_at + interval '60 minutes'
+            ELSE fdi.updated_at
+          END ${UTC} AS occurred_at
+        FROM fiat_deposit_intents fdi
+        LEFT JOIN "user" u ON u.id = fdi.user_id
+        WHERE fdi.status IN (
+          'failed',
+          'review',
+          'disputed',
+          'partially_refunded',
+          'refunded',
+          'checkout_creating',
+          'pending'
+        )
+
+      )
+      SELECT
+        source_kind,
+        source_id,
+        problem_code,
+        user_id,
+        username,
+        details,
+        occurred_at
+      FROM candidates
+      WHERE (occurred_at, source_id) >
+        (date_trunc('milliseconds', $1::timestamptz ${UTC}), $2::text)
+        AND occurred_at <= now() ${UTC}
+      ORDER BY occurred_at, source_id
+      LIMIT $3
+    `,
+    [cursor.occurredAt, cursor.sourceId, limit],
+  );
+  return result.rows;
+}
+
+export async function fetchFailedPaymentWebhooks(
+  source: pg.Pool,
+  limit = 1_000,
+): Promise<FiatProblem[]> {
+  const result = await source.query<FiatProblem>(
+    `
+      SELECT
+        'payment_webhook'::text AS source_kind,
+        pwe.id::text || ':webhook_failed' AS source_id,
+        'webhook_failed'::text AS problem_code,
+        fdi.user_id,
+        COALESCE(u.display_username, u.username) AS username,
+        jsonb_build_object(
+          'webhook_event_id', pwe.id::text,
+          'provider_event_id', pwe.provider_event_id,
+          'provider_resource_id', pwe.provider_resource_id,
+          'event_type', pwe.event_type,
+          'status', pwe.processing_status,
+          'attempt_count', pwe.attempt_count,
+          'last_error', pwe.last_error,
+          'intent_id', fdi.id::text,
+          'credited_amount_cents', fdi.credited_amount_cents
+        ) AS details,
+        pwe.received_at ${UTC} AS occurred_at
+      FROM payment_webhook_events pwe
+      LEFT JOIN LATERAL (
+        SELECT
+          candidate.id,
+          candidate.user_id,
+          candidate.credited_amount_cents
+        FROM fiat_deposit_intents candidate
+        WHERE candidate.provider_payment_id = pwe.provider_resource_id
+           OR candidate.provider_checkout_id = pwe.provider_resource_id
+        ORDER BY
+          CASE
+            WHEN candidate.provider_payment_id = pwe.provider_resource_id
+              THEN 0
+            ELSE 1
+          END
+        LIMIT 1
+      ) fdi ON true
+      LEFT JOIN "user" u ON u.id = fdi.user_id
+      WHERE pwe.processing_status = 'failed'
+        AND pwe.received_at >= (now() ${UTC}) - interval '30 days'
+      ORDER BY pwe.received_at DESC, pwe.id
+      LIMIT $1
+    `,
+    [limit],
+  );
+  return result.rows;
+}
+
+export class FiatProblemAlerts {
+  constructor(
+    private readonly config: Config,
+    private readonly db: Databases,
+    private readonly log: FastifyBaseLogger,
+  ) {}
+
+  async ensureCursor(): Promise<void> {
+    await this.db.antifraud.query(
+      `
+        INSERT INTO source_cursors(stream, occurred_at, source_id)
+        VALUES ($1, now() - interval '2 minutes', '')
+        ON CONFLICT (stream) DO NOTHING
+      `,
+      [CURSOR_STREAM],
+    );
+  }
+
+  async process(): Promise<void> {
+    await this.capture();
+    await this.deliver();
+  }
+
+  private async capture(): Promise<void> {
+    const failedWebhooks = await fetchFailedPaymentWebhooks(this.db.source);
+    if (failedWebhooks.length > 0) {
+      await this.storeProblems(failedWebhooks);
+    }
+
+    for (;;) {
+      const cursor = await this.db.antifraud.query<{
+        occurred_at: Date;
+        source_id: string;
+      }>(
+        `
+          SELECT occurred_at, source_id
+          FROM source_cursors
+          WHERE stream = $1
+        `,
+        [CURSOR_STREAM],
+      );
+      const row = cursor.rows[0];
+      if (!row) throw new Error("Fiat problem cursor is missing");
+
+      const problems = await fetchFiatProblems(
+        this.db.source,
+        { occurredAt: row.occurred_at, sourceId: row.source_id },
+      );
+      if (problems.length === 0) return;
+
+      await this.storeProblems(problems);
+      const last = problems.at(-1);
+      if (!last) throw new Error("Fiat problem batch was empty");
+      await this.db.antifraud.query(
+        `
+          UPDATE source_cursors
+          SET occurred_at = $2, source_id = $3, updated_at = now()
+          WHERE stream = $1
+        `,
+        [CURSOR_STREAM, last.occurred_at, last.source_id],
+      );
+
+      if (problems.length < BATCH_SIZE) return;
+    }
+  }
+
+  private async storeProblems(problems: readonly FiatProblem[]): Promise<void> {
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      for (const problem of problems) {
+        await client.query(
+          `
+            INSERT INTO fiat_problem_alert_outbox (
+              source_kind, source_id, problem_code, user_id, username,
+              details, occurred_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7)
+            ON CONFLICT (source_kind, source_id) DO NOTHING
+          `,
+          [
+            problem.source_kind,
+            problem.source_id,
+            problem.problem_code,
+            problem.user_id,
+            problem.username,
+            problem.details,
+            problem.occurred_at,
+          ],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async deliver(): Promise<void> {
+    const webhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
+    if (!webhookUrl) return;
+
+    const pending = await this.db.antifraud.query<PendingFiatAlert>(
+      `
+        SELECT
+          source_kind, source_id, problem_code, user_id, username, details,
+          occurred_at, attempt_count
+        FROM fiat_problem_alert_outbox
+        WHERE discord_delivered_at IS NULL
+          AND next_attempt_at <= now()
+        ORDER BY occurred_at
+        LIMIT 25
+      `,
+    );
+
+    for (const problem of pending.rows) {
+      const delivered = await this.send(webhookUrl, problem);
+      const attempt = problem.attempt_count + 1;
+      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
+      await this.db.antifraud.query(
+        `
+          UPDATE fiat_problem_alert_outbox
+          SET
+            discord_delivered_at = CASE
+              WHEN $3::boolean THEN COALESCE(discord_delivered_at, now())
+              ELSE discord_delivered_at
+            END,
+            attempt_count = $4,
+            next_attempt_at = CASE
+              WHEN $3::boolean THEN now()
+              ELSE now() + ($5::text || ' seconds')::interval
+            END,
+            last_error = CASE
+              WHEN $3::boolean THEN NULL
+              ELSE 'Discord delivery failed'
+            END,
+            updated_at = now()
+          WHERE source_kind = $1 AND source_id = $2
+        `,
+        [
+          problem.source_kind,
+          problem.source_id,
+          delivered,
+          attempt,
+          retrySeconds,
+        ],
+      );
+    }
+  }
+
+  private async send(
+    webhookUrl: string,
+    problem: FiatProblem,
+  ): Promise<boolean> {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
+    try {
+      const deliveryUrl = new URL(webhookUrl);
+      deliveryUrl.searchParams.set("with_components", "true");
+      const response = await fetch(deliveryUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(
+          buildFiatDiscordPayload(
+            this.config.FIAT_ALERT_DASHBOARD_URL,
+            problem,
+          ),
+        ),
+        signal: controller.signal,
+      });
+      if (!response.ok) {
+        this.log.error(
+          {
+            status: response.status,
+            sourceKind: problem.source_kind,
+            sourceId: problem.source_id,
+          },
+          "Fiat Discord alert delivery failed",
+        );
+      }
+      return response.ok;
+    } catch {
+      this.log.error(
+        {
+          sourceKind: problem.source_kind,
+          sourceId: problem.source_id,
+        },
+        "Fiat Discord alert delivery failed",
+      );
+      return false;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}

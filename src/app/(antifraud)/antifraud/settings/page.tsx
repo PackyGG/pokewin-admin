@@ -215,6 +215,14 @@ async function IntegrationSection() {
       ),
       note: "Dedicated destination for automatic lifetime-deposit withdrawal holds. Delivery retries until Discord accepts it.",
     },
+    {
+      name: "Fiat problem Discord webhook",
+      envs: ["FIAT_ALERT_DISCORD_WEBHOOK_URL"],
+      status: reportedStatus(
+        runtimeData?.discord.fiatProblemWebhookConfigured,
+      ),
+      note: "Dedicated destination for failed or abnormal fiat deposits and failed payment-webhook processing. Delivery retries until Discord accepts it.",
+    },
   ];
 
   return (

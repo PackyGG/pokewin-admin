@@ -1,5 +1,16 @@
 import { z } from "zod";
 
+const discordWebhookUrl = z.string().url().refine((value) => {
+  const url = new URL(value);
+  return (
+    url.protocol === "https:" &&
+    !url.username &&
+    !url.password &&
+    (url.hostname === "discord.com" || url.hostname === "discordapp.com") &&
+    url.pathname.startsWith("/api/webhooks/")
+  );
+}, "must be an HTTPS Discord webhook URL");
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   TZ: z.string().min(1).default("UTC"),
@@ -25,6 +36,11 @@ const schema = z.object({
   ANTIFRAUD_INGEST_SECRET: z.string().min(32),
   ANTIFRAUD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
   ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
+  FIAT_ALERT_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
+  FIAT_ALERT_DASHBOARD_URL: z
+    .string()
+    .url()
+    .default("https://admin.packydash.com/fiat?tab=payments"),
   ALLOWED_ORIGINS: z.string().min(1),
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(300),
   API_WRITE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),

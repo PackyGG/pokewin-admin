@@ -84,6 +84,7 @@ const SECRET_VALUES = [
   config.ANTIFRAUD_INGEST_SECRET,
   config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
   config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+  config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
 ].filter(
   (value): value is string =>
     typeof value === "string" && value.length >= 8,

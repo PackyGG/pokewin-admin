@@ -23,6 +23,9 @@ It does not modify the Packy frontend or backend.
 - Incremental detection of automatic lifetime-fiat withdrawal holds, with
   independent durable delivery to Account Review and a dedicated Discord
   webhook
+- Durable Discord alerts for failed, review, disputed, refunded, stalled, and
+  long-pending fiat deposits plus failed payment-webhook processing. Detection
+  reads only the MAIN mirror and delivery retries from the Antifraud database.
 - Rate-limited HTTP API with separate read and admin-write credentials
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
@@ -31,6 +34,10 @@ It does not modify the Packy frontend or backend.
 - `GET /v1/top-rain` for the top rain winners
 
 Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
+
+`FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel.
+`FIAT_ALERT_DASHBOARD_URL` controls its alert button target and defaults to the
+Fiat Payments workspace. Ordinary customer-canceled checkouts are not alerted.
 
 `ANTIFRAUD_INGEST_URL` and `ANTIFRAUD_INGEST_SECRET` configure the durable
 Admin-dashboard sink. Committed `risk_events` are delivered in signed batches;

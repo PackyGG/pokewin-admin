@@ -76,6 +76,7 @@ const runtimeConfigSchema = z.object({
   discord: z.object({
     webhookConfigured: z.boolean(),
     withdrawalHoldWebhookConfigured: z.boolean().default(false),
+    fiatProblemWebhookConfigured: z.boolean().default(false),
     dashboardUrlConfigured: z.boolean(),
     supportRecipientIds: z.array(z.string()),
     urgentRecipientIds: z.array(z.string()),
