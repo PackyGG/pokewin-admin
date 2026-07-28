@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import {
   ChevronLeft,
   ChevronRight,
+  Clock3,
   Fingerprint,
   MapPin,
   Network,
@@ -160,9 +161,6 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
               <p className="truncate text-xs text-muted-foreground">
                 {signup.email ?? signup.user_id}
               </p>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">
-                {formatDate(signup.source_created_at)}
-              </p>
             </div>
             <div className="w-36 shrink-0 sm:w-40">
               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -172,6 +170,24 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
                 </span>
               </div>
               <RiskScoreBar score={signup.score} />
+            </div>
+          </div>
+
+          <div
+            className="ml-[52px] flex w-fit max-w-[calc(100%-52px)] items-center gap-2 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-2"
+            title={`Signed up ${formatDate(signup.source_created_at)}`}
+          >
+            <Clock3 className="size-4 shrink-0 text-cyan-600 dark:text-cyan-400" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-cyan-700/80 dark:text-cyan-300/80">
+                Signed up
+              </p>
+              <p className="text-sm font-semibold text-cyan-700 dark:text-cyan-300">
+                {formatSignupAge(signup.source_created_at)}
+              </p>
+              <p className="truncate text-[10px] text-muted-foreground">
+                {formatDate(signup.source_created_at)}
+              </p>
             </div>
           </div>
 
@@ -398,4 +414,27 @@ function formatDate(value: string) {
     timeStyle: "short",
     timeZone: "Europe/Berlin",
   }).format(new Date(value));
+}
+
+function formatSignupAge(value: string, now = Date.now()): string {
+  const createdAt = new Date(value).getTime();
+  if (!Number.isFinite(createdAt)) return "Unknown";
+
+  const elapsedSeconds = Math.max(0, Math.floor((now - createdAt) / 1_000));
+  if (elapsedSeconds < 60) return "Just now";
+
+  const minutes = Math.floor(elapsedSeconds / 60);
+  if (minutes < 60) return `${minutes} min ago`;
+
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours} hr ago`;
+
+  const days = Math.floor(hours / 24);
+  if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
+
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months} mo ago`;
+
+  const years = Math.floor(days / 365);
+  return `${years} ${years === 1 ? "yr" : "yrs"} ago`;
 }
