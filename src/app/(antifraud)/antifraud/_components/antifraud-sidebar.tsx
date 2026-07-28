@@ -38,6 +38,11 @@ import { LinkPending } from "@/components/ux";
 import { AppSwitcher, type AppSwitcherAccess } from "@/components/app-switcher";
 import { useAppHost } from "@/lib/use-app-host";
 import { hrefFrom } from "@/lib/app-hosts";
+import {
+  NavAlertBadge,
+  useNavAlertBadges,
+  type NavAlertKey,
+} from "@/components/nav-alert-badge";
 
 /**
  * Antifraud sidebar — the swapped nav rendered by the Antifraud layout INSTEAD
@@ -62,6 +67,7 @@ const WORKSPACE_NAV: NavItem[] = [
   { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
+const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
 
 const NETWORK_NAV: NavItem[] = [
   { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
@@ -92,11 +98,15 @@ function NavMenu({
   items,
   pathname,
   onNavTap,
+  alertCounts,
+  onAlertSeen,
   toHref,
 }: {
   items: NavItem[];
   pathname: string;
   onNavTap: () => void;
+  alertCounts?: Partial<Record<NavAlertKey, number>>;
+  onAlertSeen?: (key: NavAlertKey) => void;
   /**
    * Canonical path → the href for the current host. On fraud.packydash.com the
    * `/antifraud` prefix is stripped, which BOTH keeps the URL clean and keeps
@@ -121,14 +131,26 @@ function NavMenu({
         const Icon = item.icon;
         const href = toHref(item.href);
         const isActive = href === activeHref;
+        const alertKey: NavAlertKey | undefined =
+          item.href === "/antifraud/fiat-deposits"
+            ? "fiat"
+            : item.href === "/antifraud/signups"
+              ? "signups"
+              : item.href === "/antifraud/reviews"
+                ? "reviews"
+                : undefined;
+        const alertCount = alertKey ? (alertCounts?.[alertKey] ?? 0) : 0;
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
               render={<Link href={href} />}
-              onClick={onNavTap}
-              className="h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
+              onClick={() => {
+                if (alertKey) onAlertSeen?.(alertKey);
+                onNavTap();
+              }}
+              className="relative h-11 md:h-9 group-data-[collapsible=icon]:h-8!"
             >
               <Icon
                 className={cn(
@@ -139,8 +161,12 @@ function NavMenu({
               <span>{item.label}</span>
               <LinkPending
                 size={13}
-                className="ml-auto shrink-0 group-data-[collapsible=icon]:hidden"
+                className={cn(
+                  "shrink-0 group-data-[collapsible=icon]:hidden",
+                  alertCount === 0 && "ml-auto",
+                )}
               />
+              <NavAlertBadge count={alertCount} />
             </SidebarMenuButton>
           </SidebarMenuItem>
         );
@@ -150,9 +176,11 @@ function NavMenu({
 }
 
 export function AntifraudSidebar({
+  viewerId,
   canManage = false,
   access = { creatorHub: false, packStudio: false, antifraud: true },
 }: {
+  viewerId: string;
   /** Owner / admin — reveals the authoring + settings group. */
   canManage?: boolean;
   /** Server-computed workspace entitlement for the footer switcher. */
@@ -165,6 +193,24 @@ export function AntifraudSidebar({
   // HostLink (a bare /dashboard here would be rewritten into this segment).
   const appHost = useAppHost();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
+  const signupsHref = toHref("/antifraud/signups");
+  const reviewsHref = toHref("/antifraud/reviews");
+  const fiatHref = toHref("/antifraud/fiat-deposits");
+  const activeAlertKey: NavAlertKey | undefined =
+    pathname === signupsHref || pathname.startsWith(signupsHref + "/")
+      ? "signups"
+      : pathname === reviewsHref || pathname.startsWith(reviewsHref + "/")
+        ? "reviews"
+        : pathname === fiatHref || pathname.startsWith(fiatHref + "/")
+          ? "fiat"
+          : undefined;
+  const { counts: navAlertCounts, markSeen: markNavAlertSeen } =
+    useNavAlertBadges({
+      keys: ANTIFRAUD_NAV_ALERT_KEYS,
+      viewerId,
+      scope: "antifraud",
+      activeKey: activeAlertKey,
+    });
 
   // Close the mobile drawer on a navigation tap (same UX the other sidebars
   // apply — otherwise the new page renders behind the still-open sheet).
@@ -219,6 +265,8 @@ export function AntifraudSidebar({
               items={WORKSPACE_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
+              alertCounts={navAlertCounts}
+              onAlertSeen={markNavAlertSeen}
               toHref={toHref}
             />
           </SidebarGroupContent>
@@ -231,6 +279,8 @@ export function AntifraudSidebar({
               items={TRANSACTION_NAV}
               pathname={pathname}
               onNavTap={handleNavTap}
+              alertCounts={navAlertCounts}
+              onAlertSeen={markNavAlertSeen}
               toHref={toHref}
             />
           </SidebarGroupContent>

@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 navigation unseen badges:** Main Fiat plus Antifraud Fiat Deposits, Signups, and Account Review now show per-staff unseen counts from visible-tab 60-second polling and clear on visit. Counts cover completed fiat deposits, new signup subjects, and new review cases; they are capped at 99+, bounded to 30 days, backed by indexed read-only queries, and preserve the last known badge through transient failures. All 273 dashboard guardrails, TypeScript, zero-warning ESLint, the production build, and all 95 monitor checks pass.
+
 - **2026-07-28 Keno navigation order:** Keno now appears in Overview directly below Fiat instead of under Content. TypeScript and task-scoped ESLint pass.
 
 - **2026-07-28 Keno configurable max bet:** Content → Keno → Configuration now reads and updates the live `keno_max_bet_usd` value through `GET/PUT /v1/admin/keno-config`, validates the backend's $0.25–$1,000 range, audit-logs changes, caches production reads, and hides the raw key from the generic Security editor. Production currently returns $20. Focused tests, all 268 guardrails, TypeScript, zero-warning ESLint, and the production build pass.

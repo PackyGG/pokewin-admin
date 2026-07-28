@@ -56,6 +56,12 @@ const responseSchema = z.object({
   }),
 });
 
+const countResponseSchema = z.object({
+  data: z.object({
+    count: z.number().int().nonnegative(),
+  }),
+});
+
 export type AntifraudSignup = z.infer<typeof signupSchema>;
 export type AntifraudSignupsResponse = z.infer<typeof responseSchema>;
 
@@ -97,5 +103,35 @@ export async function listAntifraudSignups(
   } catch (error) {
     console.error("[antifraud-monitor] signups failed:", error);
     return { configured: true, data: null, error: true };
+  }
+}
+
+export async function countAntifraudSignupsSince(
+  since: Date,
+): Promise<number | null> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_TOKEN;
+  if (!baseUrl || !token) return null;
+
+  try {
+    const query = new URLSearchParams({ since: since.toISOString() });
+    const response = await fetch(
+      `${baseUrl}/v1/signups/unseen-count?${query.toString()}`,
+      {
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    return countResponseSchema.parse(await response.json()).data.count;
+  } catch (error) {
+    console.error("[antifraud-monitor] signup unseen count failed:", error);
+    return null;
   }
 }

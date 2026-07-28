@@ -243,7 +243,11 @@ export default async function AntifraudLayout({
         </Suspense>
         {/* The swapped nav â€” Antifraud's own sidebar replaces AppSidebar.
             `canManage` (owner/admin) reveals antifraud settings. */}
-        <AntifraudSidebar canManage={canManage} access={appAccess} />
+        <AntifraudSidebar
+          viewerId={session.userId}
+          canManage={canManage}
+          access={appAccess}
+        />
         <SidebarInset className="min-w-0">
           {dbEnv === "dev" && <DevDbBanner />}
           <AdminHeader

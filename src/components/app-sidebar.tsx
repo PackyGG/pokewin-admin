@@ -97,6 +97,10 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { AppSwitcher } from "@/components/app-switcher";
 import { getSidebarFooterItems, getSidebarGroups } from "@/lib/nav-config";
 import { LinkPending } from "@/components/ux";
+import {
+  NavAlertBadge,
+  useNavAlertBadges,
+} from "@/components/nav-alert-badge";
 
 const ICONS: Record<string, LucideIcon> = {
   Activity,
@@ -228,6 +232,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
 
 const STORAGE_KEY = "sidebar-collapsed-groups";
 const NAV_GROUP_LABELS = new Set(NAV_GROUPS.map((group) => group.label));
+const MAIN_NAV_ALERT_KEYS = ["fiat"] as const;
 
 function useCollapsedGroups(activeGroupLabel: string | undefined) {
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() => {
@@ -275,6 +280,7 @@ function useCollapsedGroups(activeGroupLabel: string | undefined) {
 }
 
 export function AppSidebar({
+  viewerId,
   role,
   roles,
   allowedPages,
@@ -285,6 +291,7 @@ export function AppSidebar({
   canEnterAntifraud = false,
   isOwner = false,
 }: {
+  viewerId: string;
   role: string;
   // Full effective role set (defaults to [role] for legacy single-role).
   // Used for the admin bypass + the creator-only group so a multi-role
@@ -399,6 +406,19 @@ export function AppSidebar({
       })),
   [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, dedicatedPackBuilder]);
 
+  const fiatVisible = groupsWithVisibility.some((group) =>
+    group.visibleItems.some((item) => item.href === "/fiat"),
+  );
+  const fiatIsActive = pathname === "/fiat" || pathname.startsWith("/fiat/");
+  const { counts: navAlertCounts, markSeen: markNavAlertSeen } =
+    useNavAlertBadges({
+      keys: MAIN_NAV_ALERT_KEYS,
+      viewerId,
+      scope: "main",
+      activeKey: fiatIsActive ? "fiat" : undefined,
+      enabled: fiatVisible,
+    });
+
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>
       group.visibleItems.some(
@@ -477,6 +497,8 @@ export function AppSidebar({
                     !visibleItems.some(
                       (other) => other.href !== item.href && pathname.startsWith(other.href)
                     ));
+                const alertCount =
+                  item.href === "/fiat" ? navAlertCounts.fiat : 0;
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
@@ -488,7 +510,10 @@ export function AppSidebar({
                       aria-current={isActive ? "page" : undefined}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
-                      onClick={handleNavTap}
+                      onClick={() => {
+                        if (item.href === "/fiat") markNavAlertSeen("fiat");
+                        handleNavTap();
+                      }}
                       // 44px tap target inside the mobile drawer; falls
                       // back to the compact 36px height on md+ where
                       // density matters more than tap area. group-data
@@ -535,7 +560,7 @@ export function AppSidebar({
                         size={13}
                         className={cn(
                           "shrink-0 group-data-[collapsible=icon]:hidden",
-                          !item.isNew && "ml-auto",
+                          !item.isNew && alertCount === 0 && "ml-auto",
                         )}
                       />
                       {item.isNew && (
@@ -543,6 +568,7 @@ export function AppSidebar({
                           New
                         </span>
                       )}
+                      <NavAlertBadge count={alertCount} />
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 );

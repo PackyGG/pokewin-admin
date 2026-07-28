@@ -469,6 +469,21 @@ app.get("/v1/signups", async (request) => {
   };
 });
 
+app.get("/v1/signups/unseen-count", async (request) => {
+  const query = z.object({
+    since: z.iso.datetime(),
+  }).parse(request.query);
+  const result = await db.antifraud.query<{ count: number }>(
+    `
+      SELECT LEAST(COUNT(*), 100)::int AS count
+      FROM subjects
+      WHERE source_created_at > $1::timestamptz
+    `,
+    [query.since],
+  );
+  return { data: { count: result.rows[0]?.count ?? 0 } };
+});
+
 app.get("/v1/cases", async (request) => {
   const query = z.object({
     status: z.enum([

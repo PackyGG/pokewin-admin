@@ -320,6 +320,7 @@ export default async function AdminLayout({
           <TopProgressBar />
         </Suspense>
         <AppSidebar
+          viewerId={session.userId}
           role={session.role}
           roles={session.roles ?? [session.role]}
           allowedPages={allowedPages}
