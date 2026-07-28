@@ -2,7 +2,10 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
 import type { Databases } from "./db.js";
-import type { WithdrawalRiskService } from "./withdrawal-risk.js";
+import {
+  WITHDRAWAL_RISK_MODEL_VERSION,
+  type WithdrawalRiskService,
+} from "./withdrawal-risk.js";
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -143,8 +146,8 @@ export async function registerWithdrawalRoutes(
       ...new Set([...excluded, ...(await creatorUserIdsForAssessments(db))]),
     ];
 
-    const conditions: string[] = [];
-    const values: unknown[] = [];
+    const conditions: string[] = ["model_version=$1"];
+    const values: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
     if (!usesAssessmentFilter) {
       values.push(refreshed.ids);
       conditions.push(`withdrawal_id=ANY($${values.length}::uuid[])`);
@@ -176,10 +179,13 @@ export async function registerWithdrawalRoutes(
     const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
     const offset = usesAssessmentFilter ? (query.page - 1) * query.limit : 0;
     values.push(query.limit, offset);
-    const summaryValues: unknown[] = [];
-    const summaryWhere =
-      ignoredUserIds.length > 0 ? `WHERE user_id<>ALL($1::text[])` : "";
-    if (ignoredUserIds.length > 0) summaryValues.push(ignoredUserIds);
+    const summaryValues: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
+    const summaryConditions = ["model_version=$1"];
+    if (ignoredUserIds.length > 0) {
+      summaryValues.push(ignoredUserIds);
+      summaryConditions.push(`user_id<>ALL($2::text[])`);
+    }
+    const summaryWhere = `WHERE ${summaryConditions.join(" AND ")}`;
     const [rows, total, summary] = await Promise.all([
       db.antifraud.query(
         `
@@ -189,7 +195,7 @@ export async function registerWithdrawalRoutes(
                  source_breakdown, score_breakdown, flow_checks,
                  review_status, review_decision, reviewed_by,
                  reviewed_by_username, review_note, review_started_at,
-                 reviewed_at, assessed_at
+                 reviewed_at, model_version, assessed_at
           FROM withdrawal_assessments
           ${where}
           ORDER BY requested_at DESC, withdrawal_id DESC
@@ -272,7 +278,7 @@ export async function registerWithdrawalRoutes(
                  source_breakdown, score_breakdown, flow_checks,
                  review_status, review_decision, reviewed_by,
                  reviewed_by_username, review_note, review_started_at,
-                 reviewed_at, assessed_at
+                 reviewed_at, model_version, assessed_at
           FROM withdrawal_assessments
           WHERE withdrawal_id=$1
         `,

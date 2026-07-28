@@ -1,14 +1,11 @@
 import { Suspense } from "react";
 import {
-  Activity,
   AlertTriangle,
-  ArrowDownToLine,
   ArrowRight,
   ArrowUpFromLine,
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  ListChecks,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -291,10 +288,10 @@ function SummaryCards({
   };
 }) {
   const cards = [
-    { label: "Unreviewed", value: summary.unreviewed.toLocaleString(), icon: WalletCards, tone: "text-cyan-600 dark:text-cyan-400" },
-    { label: "In review", value: summary.in_review.toLocaleString(), icon: ListChecks, tone: "text-amber-600 dark:text-amber-400" },
-    { label: "Escalated", value: summary.escalated.toLocaleString(), icon: AlertTriangle, tone: "text-orange-600 dark:text-orange-400" },
-    { label: "Block recommended", value: summary.block_recommended.toLocaleString(), icon: ShieldAlert, tone: "text-rose-600 dark:text-rose-400" },
+    { label: "Analyzed", value: summary.total.toLocaleString(), icon: WalletCards, tone: "text-cyan-600 dark:text-cyan-400" },
+    { label: "No signal", value: summary.good.toLocaleString(), icon: ShieldCheck, tone: "text-emerald-600 dark:text-emerald-400" },
+    { label: "Needs review", value: summary.review.toLocaleString(), icon: AlertTriangle, tone: "text-amber-600 dark:text-amber-400" },
+    { label: "High risk", value: summary.bad.toLocaleString(), icon: ShieldAlert, tone: "text-rose-600 dark:text-rose-400" },
   ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -348,7 +345,7 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
           </div>
           <div className="min-w-28 text-right">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Withdrawal</p>
-            <p className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            <p className="text-lg font-semibold tabular-nums">
               {formatCurrency(withdrawal.amount_usd)}
             </p>
           </div>
@@ -399,10 +396,12 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
                       "rounded-lg border px-2.5 py-2 text-xs",
                       check.status === "pass" &&
                         "border-emerald-500/25 bg-emerald-500/5",
-                      check.status === "review" &&
+                      check.status === "watch" &&
                         "border-amber-500/25 bg-amber-500/5",
-                      check.status === "block" &&
+                      check.status === "alert" &&
                         "border-rose-500/25 bg-rose-500/5",
+                      check.status === "not_applicable" &&
+                        "border-border/60 bg-muted/20",
                     )}
                   >
                     <span className="block text-[10px] text-muted-foreground">
@@ -414,37 +413,37 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
               </div>
             </div>
           )}
-          {withdrawal.method !== "balance" && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Attached asset origins
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {withdrawal.source_breakdown.length ? (
-                  withdrawal.source_breakdown.map((source) => (
-                    <span
-                      key={source.key}
-                      className={cn(
-                        "rounded-lg border px-2.5 py-1.5 text-xs",
-                        source.traceable
-                          ? "border-cyan-500/20 bg-cyan-500/5"
-                          : "border-amber-500/30 bg-amber-500/5",
-                      )}
-                    >
-                      <span className="font-medium">{source.label}</span>
-                      <span className="ml-1 text-muted-foreground">
-                        {source.count} · {formatCurrency(source.valueUsd)}
-                      </span>
+          <div>
+            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+              Exact withdrawal sources
+            </p>
+            <div className="flex flex-wrap gap-2">
+              {withdrawal.source_breakdown.length ? (
+                withdrawal.source_breakdown.map((source) => (
+                  <span
+                    key={source.key}
+                    className={cn(
+                      "rounded-lg border px-2.5 py-1.5 text-xs",
+                      source.traceable
+                        ? "border-cyan-500/20 bg-cyan-500/5"
+                        : "border-amber-500/30 bg-amber-500/5",
+                    )}
+                  >
+                    <span className="font-medium">{source.label}</span>
+                    <span className="ml-1 text-muted-foreground">
+                      {source.count} · {formatCurrency(source.valueUsd)}
                     </span>
-                  ))
-                ) : (
-                  <span className="text-xs text-muted-foreground">
-                    This asset-based withdrawal has no attached source records.
                   </span>
-                )}
-              </div>
+                ))
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  {withdrawal.method === "balance"
+                    ? "Balance request — attached card or voucher records are not expected."
+                    : "No attached source records were found."}
+                </span>
+              )}
             </div>
-          )}
+          </div>
         </div>
 
         <div className={cn("rounded-xl border p-3.5", verdict.box)}>
@@ -484,63 +483,37 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
 
 function MoneyFlow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
   const flow = withdrawal.flow;
+  const metrics = [
+    { label: "Cash deposits", value: flow.depositsUsd },
+    { label: "Gross wagered", value: flow.wageredUsd },
+    { label: "Play returns / sales", value: flow.playReturnsUsd },
+    { label: "Rewards / credits", value: flow.rewardsUsd },
+  ];
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Funding trail
+          90-day account activity
         </p>
         <span className="text-[10px] text-muted-foreground">
-          Latest funding origin to this request
+          {flow.gameEvents.toLocaleString()} play events · gross totals, not a
+          balance reconciliation
         </span>
       </div>
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3">
-          <div className="flex items-center gap-2 text-cyan-700 dark:text-cyan-300">
-            <ArrowDownToLine className="size-4" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide">
-              1. Funding origin
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {metrics.map((metric) => (
+          <div
+            key={metric.label}
+            className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
+          >
+            <span className="block text-[10px] text-muted-foreground">
+              {metric.label}
+            </span>
+            <span className="block text-sm font-semibold tabular-nums">
+              {formatCurrency(metric.value)}
             </span>
           </div>
-          <p className="mt-2 text-sm font-semibold">{flow.originLabel}</p>
-          <p className="text-xs tabular-nums text-muted-foreground">
-            {flow.originAt
-              ? formatCurrency(flow.originAmountUsd)
-              : "No completed funding source found"}
-          </p>
-        </div>
-        <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
-          <div className="flex items-center gap-2">
-            <Activity className="size-4 text-amber-600 dark:text-amber-400" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-              2. Activity after funding
-            </span>
-          </div>
-          <p className="mt-2 text-sm font-semibold">
-            {flow.gameEvents} game event{flow.gameEvents === 1 ? "" : "s"}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            Lost {formatCurrency(flow.gameLossesUsd)} · won{" "}
-            {formatCurrency(flow.gameWinsUsd)} · rewards{" "}
-            {formatCurrency(flow.rewardsUsd)}
-          </p>
-        </div>
-        <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
-          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
-            <ArrowUpFromLine className="size-4" />
-            <span className="text-[10px] font-semibold uppercase tracking-wide">
-              3. Withdrawal
-            </span>
-          </div>
-          <p className="mt-2 text-sm font-semibold tabular-nums">
-            {formatCurrency(flow.withdrawalUsd)}
-          </p>
-          <p className="text-xs text-muted-foreground">
-            {withdrawal.method === "balance"
-              ? "Paid from account balance"
-              : `${withdrawal.asset_count} attached asset${withdrawal.asset_count === 1 ? "" : "s"}`}
-          </p>
-        </div>
+        ))}
       </div>
     </div>
   );

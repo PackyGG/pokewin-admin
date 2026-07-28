@@ -9,6 +9,7 @@ import {
   Clock3,
   Fingerprint,
   Gauge,
+  Gift,
   History,
   ListChecks,
   Network,
@@ -16,6 +17,7 @@ import {
   ShieldCheck,
   TriangleAlert,
   UserRound,
+  WalletCards,
 } from "lucide-react";
 import { z } from "zod";
 
@@ -58,9 +60,7 @@ export default async function WithdrawalReviewPage({
   const result = await getWithdrawalAssessment(id);
   if (result.notFound) notFound();
   if (!result.configured) {
-    return (
-      <Unavailable text="The Antifraud monitor service is not configured." />
-    );
+    return <Unavailable text="The Antifraud monitor service is not configured." />;
   }
   if (result.error || !result.data) {
     return <Unavailable text="This withdrawal review could not be loaded." />;
@@ -72,7 +72,7 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
   const withdrawal = detail.assessment;
   const name = withdrawal.username ?? withdrawal.user_id;
   const failedChecks = withdrawal.flow_checks.filter(
-    (check) => check.status !== "pass",
+    (check) => check.status === "watch" || check.status === "alert",
   ).length;
   return (
     <div className="space-y-6">
@@ -135,19 +135,19 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiTile
           icon={ArrowUpFromLine}
-          accent="rose"
+          accent="cyan"
           label="Withdrawal"
           value={formatCurrency(withdrawal.amount_usd)}
           sub={
             withdrawal.method === "balance"
-              ? "paid from account balance"
-              : `${withdrawal.asset_count} attached asset${withdrawal.asset_count === 1 ? "" : "s"}`
+              ? "ledger-based assessment"
+              : `${withdrawal.asset_count} attached assets`
           }
         />
         <KpiTile
           icon={Gauge}
           accent={riskAccent(withdrawal.risk_score)}
-          label="Automated risk"
+          label="Behavior risk"
           value={`${withdrawal.risk_score}/100`}
           sub={withdrawal.verdict}
         />
@@ -156,9 +156,7 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
           accent={failedChecks === 0 ? "emerald" : "amber"}
           label="Flow checks"
           value={`${withdrawal.flow_checks.length - failedChecks}/${withdrawal.flow_checks.length}`}
-          sub={
-            failedChecks === 0 ? "all passed" : `${failedChecks} need attention`
-          }
+          sub={failedChecks === 0 ? "all passed" : `${failedChecks} need attention`}
         />
         <KpiTile
           icon={Clock3}
@@ -175,9 +173,9 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
 
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.7fr)]">
         <div className="min-w-0 space-y-6">
+          <FlowChecks withdrawal={withdrawal} />
           <MoneyTrail withdrawal={withdrawal} />
           <BehaviorTimeline detail={detail} />
-          <FlowChecks withdrawal={withdrawal} />
           <SourceEvidence withdrawal={withdrawal} />
         </div>
         <aside className="min-w-0 space-y-5">
@@ -271,26 +269,36 @@ function FlowChecks({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
 
 function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
   const flow = withdrawal.flow;
-  const totals = [
+  const steps = [
     {
-      label: "Deposited in trail",
+      label: "Cash deposits",
       value: flow.depositsUsd,
+      icon: ArrowDownToLine,
       tone: "text-emerald-600 dark:text-emerald-400",
     },
     {
-      label: "Game losses",
-      value: flow.gameLossesUsd,
-      tone: "text-emerald-600 dark:text-emerald-400",
+      label: "Gross wagered",
+      value: flow.wageredUsd,
+      icon: Activity,
+      tone: "text-foreground",
     },
     {
-      label: "Game wins",
-      value: flow.gameWinsUsd,
-      tone: "text-rose-600 dark:text-rose-400",
+      label: "Play returns / sales",
+      value: flow.playReturnsUsd,
+      icon: WalletCards,
+      tone: "text-foreground",
     },
     {
-      label: "Rewards",
+      label: "Rewards / credits",
       value: flow.rewardsUsd,
-      tone: "text-rose-600 dark:text-rose-400",
+      icon: Gift,
+      tone: "text-foreground",
+    },
+    {
+      label: "Withdrawal",
+      value: flow.withdrawalUsd,
+      icon: ArrowUpFromLine,
+      tone: "text-foreground",
     },
   ];
   return (
@@ -299,98 +307,45 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
         icon={CircleDollarSign}
         title={
           <>
-            How this withdrawal was funded
+            90-day account activity
             <span className="text-xs font-normal text-muted-foreground">
-              only activity from the latest funding origin to this request
+              {flow.gameEvents.toLocaleString()} play events · gross totals,
+              not a balance reconciliation
             </span>
           </>
         }
       />
-      <div className="grid gap-2 sm:grid-cols-3">
-        <div className="rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-4">
-          <div className="flex items-center gap-2 text-cyan-700 dark:text-cyan-300">
-            <ArrowDownToLine className="size-4" />
-            <span className="text-[11px] font-semibold uppercase tracking-wide">
-              1. Funding origin
-            </span>
-          </div>
-          <p className="mt-3 font-semibold">{flow.originLabel}</p>
-          {flow.originAt ? (
-            <>
-              <p className="mt-1 text-lg font-semibold tabular-nums">
-                {formatCurrency(flow.originAmountUsd)}
+      <div className="grid gap-2 sm:grid-cols-5">
+        {steps.map((step) => {
+          const Icon = step.icon;
+          return (
+            <div key={step.label} className="rounded-lg border bg-card p-3">
+              <Icon className={cn("size-4", step.tone)} />
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                {step.label}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {formatDateTime(flow.originAt)}
+              <p className={cn("text-sm font-semibold tabular-nums", step.tone)}>
+                {formatCurrency(step.value)}
               </p>
-            </>
-          ) : (
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              No completed funding source was found before this request.
-            </p>
-          )}
-        </div>
-        <div className="rounded-xl border bg-card p-4">
-          <div className="flex items-center gap-2 text-amber-700 dark:text-amber-300">
-            <Activity className="size-4" />
-            <span className="text-[11px] font-semibold uppercase tracking-wide">
-              2. Activity after funding
-            </span>
-          </div>
-          <p className="mt-3 font-semibold">
-            {flow.gameEvents} game event{flow.gameEvents === 1 ? "" : "s"}
-          </p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Lost {formatCurrency(flow.gameLossesUsd)} · won{" "}
-            {formatCurrency(flow.gameWinsUsd)} · received{" "}
-            {formatCurrency(flow.rewardsUsd)} in rewards
-          </p>
-        </div>
-        <div className="rounded-xl border border-rose-500/20 bg-rose-500/5 p-4">
-          <div className="flex items-center gap-2 text-rose-700 dark:text-rose-300">
-            <ArrowUpFromLine className="size-4" />
-            <span className="text-[11px] font-semibold uppercase tracking-wide">
-              3. Withdrawal requested
-            </span>
-          </div>
-          <p className="mt-3 text-lg font-semibold tabular-nums">
-            {formatCurrency(flow.withdrawalUsd)}
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {formatDateTime(withdrawal.requested_at)}
-          </p>
-        </div>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-4">
-        {totals.map((total) => (
-          <div key={total.label} className="rounded-lg border bg-card px-3 py-2">
-            <p className="text-[10px] text-muted-foreground">{total.label}</p>
-            <p
-              className={cn("text-sm font-semibold tabular-nums", total.tone)}
-            >
-              {formatCurrency(total.value)}
-            </p>
-          </div>
-        ))}
+            </div>
+          );
+        })}
       </div>
     </section>
   );
 }
 
 function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
-  const events =
-    detail.timeline.length <= 40
-      ? detail.timeline
-      : [detail.timeline[0], ...detail.timeline.slice(-39)];
+  const events = detail.timeline.slice(0, 40);
   return (
     <section className="space-y-3">
       <SectionHeading
         icon={History}
         title={
           <>
-            Current withdrawal trail
+            Behavior timeline
             <span className="text-xs font-normal text-muted-foreground">
-              {events.length} linked events from origin to request
+              latest {events.length} relevant events
             </span>
           </>
         }
@@ -416,19 +371,9 @@ function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-start justify-between gap-2">
                 <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <p className="truncate text-sm font-medium capitalize">
-                      {event.label}
-                    </p>
-                    {event.isOrigin && (
-                      <Badge
-                        variant="outline"
-                        className="border-cyan-500/30 text-[10px] text-cyan-700 dark:text-cyan-300"
-                      >
-                        Origin
-                      </Badge>
-                    )}
-                  </div>
+                  <p className="truncate text-sm font-medium capitalize">
+                    {event.label}
+                  </p>
                   {event.detail && (
                     <p className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
                       {event.detail}
@@ -464,37 +409,21 @@ function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
 }
 
 function SourceEvidence({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
-  const isBalanceWithdrawal = withdrawal.method === "balance";
   return (
     <section className="space-y-3">
       <SectionHeading
         icon={Fingerprint}
         title={
           <>
-            Attached assets
+            Exact asset origins
             <span className="text-xs font-normal text-muted-foreground">
-              {isBalanceWithdrawal
-                ? "not used for balance withdrawals"
-                : "cards and vouchers included in this request"}
+              cards and vouchers attached to this request
             </span>
           </>
         }
       />
       <div className="grid gap-2 sm:grid-cols-2">
-        {isBalanceWithdrawal ? (
-          <div className="flex items-start gap-3 rounded-lg border border-emerald-500/20 bg-emerald-500/5 p-4 sm:col-span-2">
-            <CircleCheck className="mt-0.5 size-4 shrink-0 text-emerald-500" />
-            <div>
-              <p className="text-xs font-semibold">
-                No asset attachment required
-              </p>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                This withdrawal is paid from account balance. Missing card or
-                voucher records are expected and do not add risk.
-              </p>
-            </div>
-          </div>
-        ) : withdrawal.source_breakdown.length > 0 ? (
+        {withdrawal.source_breakdown.length > 0 ? (
           withdrawal.source_breakdown.map((source) => (
             <div
               key={source.key}
@@ -520,9 +449,10 @@ function SourceEvidence({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
             </div>
           ))
         ) : (
-          <div className="rounded-lg border border-dashed border-amber-500/30 bg-amber-500/5 p-4 text-xs text-muted-foreground sm:col-span-2">
-            This asset-based withdrawal has no attached card or voucher source
-            records.
+          <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground sm:col-span-2">
+            {withdrawal.method === "balance"
+              ? "This balance withdrawal is assessed from the account ledger. Attached cards or vouchers are not expected."
+              : "No attached source records were found for this asset withdrawal."}
           </div>
         )}
       </div>
@@ -666,18 +596,21 @@ function riskAccent(score: number): "emerald" | "amber" | "rose" {
   return "emerald";
 }
 
-function checkStyle(status: "pass" | "review" | "block") {
+function checkStyle(
+  status: "pass" | "watch" | "alert" | "not_applicable",
+) {
   if (status === "pass") {
     return {
       icon: CircleCheck,
       border: "border-emerald-500/20",
       circle:
         "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-      badge: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
+      badge:
+        "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
       dot: "bg-emerald-500",
     };
   }
-  if (status === "block") {
+  if (status === "alert") {
     return {
       icon: ShieldAlert,
       border: "border-rose-500/25",
@@ -685,6 +618,15 @@ function checkStyle(status: "pass" | "review" | "block") {
         "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
       badge: "border-rose-500/30 text-rose-600 dark:text-rose-400",
       dot: "bg-rose-500",
+    };
+  }
+  if (status === "not_applicable") {
+    return {
+      icon: CircleCheck,
+      border: "border-border/60",
+      circle: "border-border bg-muted text-muted-foreground",
+      badge: "border-border text-muted-foreground",
+      dot: "bg-muted-foreground",
     };
   }
   return {

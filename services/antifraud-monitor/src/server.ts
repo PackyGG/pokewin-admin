@@ -134,7 +134,7 @@ const db = createDatabases(config);
 const live = new LiveBus(config.REDIS_URL, app.log);
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
-const withdrawalRisk = new WithdrawalRiskService(db);
+const withdrawalRisk = new WithdrawalRiskService(db, app.log);
 const fiatRisk = new FiatRiskService(db);
 const ingestDelivery = new IngestDelivery(
   config,
@@ -1118,6 +1118,7 @@ app.setErrorHandler((error, request, reply) => {
 });
 
 app.addHook("onClose", async () => {
+  withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
   await networkRisk.stop();
@@ -1137,4 +1138,5 @@ await live.start();
 await ingestDelivery.start();
 await engine.start();
 await networkRisk.start();
+withdrawalRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });

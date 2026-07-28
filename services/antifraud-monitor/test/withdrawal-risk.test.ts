@@ -1,32 +1,33 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { scoreWithdrawal } from "../src/withdrawal-risk.js";
 
 const safeInput = {
-  method: "physical",
+  method: "crypto",
   amountUsd: 100,
   assetValueUsd: 100,
   tracedAssetUsd: 100,
   assetCount: 2,
   depositsUsd: 100,
-  gameWinsUsd: 140,
-  gameLossesUsd: 120,
+  playReturnsUsd: 140,
+  wageredUsd: 120,
   rewardsUsd: 0,
   gameEvents: 12,
   minutesSinceLastDeposit: 1_440,
   accountAgeDays: 200,
   otherUsersAtDestination: 0,
+  hasPayoutDestination: true,
+  requiresConfirmation: false,
+  confirmationReason: null,
+  borrowedVoucherUsd: 0,
 };
 
 test("a reconciled, traceable withdrawal is good", () => {
   const result = scoreWithdrawal(safeInput);
   assert.equal(result.riskScore, 0);
   assert.equal(result.verdict, "good");
-  assert.ok(
-    result.signals.some((signal) => signal.key === "amount_reconciled"),
-  );
+  assert.ok(result.signals.some((signal) => signal.key === "amount_reconciled"));
   assert.ok(result.signals.some((signal) => signal.key === "source_traced"));
   assert.ok(result.flowChecks.every((check) => check.status === "pass"));
   assert.deepEqual(result.scoreBreakdown, {
@@ -36,28 +37,6 @@ test("a reconciled, traceable withdrawal is good", () => {
     account: 0,
     network: 0,
   });
-});
-
-test("a balance withdrawal does not require attached assets", () => {
-  const result = scoreWithdrawal({
-    ...safeInput,
-    method: "balance",
-    amountUsd: 13.29,
-    assetValueUsd: 0,
-    tracedAssetUsd: 0,
-    assetCount: 0,
-  });
-  assert.equal(result.riskScore, 0);
-  assert.equal(result.verdict, "good");
-  assert.ok(
-    result.signals.some((signal) => signal.key === "balance_withdrawal"),
-  );
-  assert.ok(!result.signals.some((signal) => signal.key === "amount_mismatch"));
-  assert.ok(!result.signals.some((signal) => signal.key === "no_assets"));
-  assert.equal(
-    result.flowChecks.find((check) => check.key === "integrity")?.status,
-    "pass",
-  );
 });
 
 test("shared payout destinations make the withdrawal bad", () => {
@@ -71,25 +50,25 @@ test("shared payout destinations make the withdrawal bad", () => {
   assert.equal(result.scoreBreakdown.network, 70);
   assert.equal(
     result.flowChecks.find((check) => check.key === "network")?.status,
-    "block",
+    "alert",
   );
 });
 
-test("rapid no-play cash-out is escalated", () => {
+test("rapid low-play cash-out on a new account is escalated", () => {
   const result = scoreWithdrawal({
     ...safeInput,
     amountUsd: 250,
     assetValueUsd: 250,
     tracedAssetUsd: 250,
-    gameWinsUsd: 0,
-    gameLossesUsd: 0,
+    playReturnsUsd: 0,
+    wageredUsd: 0,
     gameEvents: 0,
     minutesSinceLastDeposit: 15,
+    accountAgeDays: 0.5,
   });
   assert.equal(result.verdict, "bad");
   assert.ok(result.riskScore >= 60);
   assert.ok(result.signals.some((signal) => signal.key === "rapid_cashout"));
-  assert.ok(result.signals.some((signal) => signal.key === "no_gameplay"));
   assert.ok(result.scoreBreakdown.behavior >= 40);
 });
 
@@ -105,20 +84,52 @@ test("untraceable and mismatched assets surface both evidence gaps", () => {
   assert.ok(result.signals.some((signal) => signal.key === "source_gap"));
   assert.equal(
     result.flowChecks.find((check) => check.key === "integrity")?.status,
-    "block",
+    "alert",
   );
 });
 
-test("withdrawal assessments exclude protected users and use a request-specific trail", async () => {
-  const source = await readFile(
-    new URL("../src/withdrawal-risk.ts", import.meta.url),
-    "utf8",
+test("balance withdrawals do not require attached card assets", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    method: "balance",
+    assetValueUsd: 0,
+    tracedAssetUsd: 0,
+    assetCount: 0,
+    hasPayoutDestination: false,
+  });
+  assert.equal(result.riskScore, 0);
+  assert.equal(result.verdict, "good");
+  assert.ok(
+    result.signals.some((signal) => signal.key === "balance_ledger_coverage"),
   );
-  assert.match(source, /COALESCE\(u\.role::text,''\)<>'creator'/);
-  assert.match(source, /'creator'<>ALL\(COALESCE\(u\.roles::text\[\]/);
-  assert.match(source, /cwr\.user_id<>ALL\(\$\$\{values\.length\}::text\[\]\)/);
-  assert.match(source, /WITH latest_deposit AS/);
-  assert.match(source, /latest_other AS/);
-  assert.match(source, /result\.rows\.reverse\(\)/);
-  assert.doesNotMatch(source, /interval '90 days'/);
+  assert.ok(!result.signals.some((signal) => signal.key === "missing_assets"));
+  assert.equal(
+    result.flowChecks.find((check) => check.key === "network")?.status,
+    "not_applicable",
+  );
+});
+
+test("asset withdrawals with no attached assets are bad", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    assetValueUsd: 0,
+    tracedAssetUsd: 0,
+    assetCount: 0,
+  });
+  assert.equal(result.riskScore, 60);
+  assert.equal(result.verdict, "bad");
+  assert.ok(result.signals.some((signal) => signal.key === "missing_assets"));
+});
+
+test("borrow-mode voucher provenance is visible but not treated as fraud", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    borrowedVoucherUsd: 75,
+  });
+  const signal = result.signals.find(
+    (candidate) => candidate.key === "borrowed_voucher",
+  );
+  assert.equal(signal?.points, 0);
+  assert.equal(signal?.tone, "neutral");
+  assert.equal(result.verdict, "good");
 });

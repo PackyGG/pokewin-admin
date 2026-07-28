@@ -21,7 +21,13 @@ const flowCheckSchema = z.object({
   key: z.enum(["integrity", "funding", "behavior", "account", "network"]),
   label: z.string(),
   description: z.string(),
-  status: z.enum(["pass", "review", "block"]),
+  status: z
+    .enum(["pass", "watch", "alert", "not_applicable", "review", "block"])
+    .transform((status) => {
+      if (status === "review") return "watch" as const;
+      if (status === "block") return "alert" as const;
+      return status;
+    }),
   score: z.number(),
   evidence: z.array(z.string()),
 });
@@ -50,6 +56,9 @@ const flowSchema = z.object({
   depositsUsd: z.number(),
   gameWinsUsd: z.number(),
   gameLossesUsd: z.number(),
+  playReturnsUsd: z.number().default(0),
+  wageredUsd: z.number().default(0),
+  grossCreditsUsd: z.number().default(0),
   rewardsUsd: z.number(),
   withdrawalUsd: z.number(),
   gameEvents: z.number(),
@@ -57,6 +66,10 @@ const flowSchema = z.object({
   accountAgeDays: z.number(),
   tracedAssetUsd: z.number(),
   untracedAssetUsd: z.number(),
+  coverageKind: z
+    .enum(["balance_ledger", "attached_assets"])
+    .default("attached_assets"),
+  modelVersion: z.number().int().default(1),
 });
 
 const sourceSchema = z.object({
@@ -92,6 +105,7 @@ const withdrawalSchema = z.object({
     network: 0,
   }),
   flow_checks: z.array(flowCheckSchema).default([]),
+  model_version: z.number().int().default(1),
   review_status: reviewStatusSchema.default("unreviewed"),
   review_decision: z.string().nullable().default(null),
   reviewed_by: z.string().nullable().default(null),

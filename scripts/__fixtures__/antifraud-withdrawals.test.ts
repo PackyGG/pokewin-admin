@@ -35,14 +35,12 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
   const excludedUsers = read("src/lib/excluded-users/fetch.ts");
   assert.match(page, /listWithdrawalAssessments/);
   assert.match(page, /Review flow/);
-  assert.match(page, /Latest funding origin to this request/);
-  assert.doesNotMatch(page, /90-day money trail/);
+  assert.match(page, /90-day account activity/);
+  assert.match(page, /Gross wagered/);
   assert.match(detail, /Withdrawal review flow/);
-  assert.match(detail, /How this withdrawal was funded/);
-  assert.match(detail, /only activity from the latest funding origin/);
-  assert.match(detail, /Current withdrawal trail/);
-  assert.doesNotMatch(detail, /90-day/);
-  assert.match(detail, /No asset attachment required/);
+  assert.match(detail, /90-day account activity/);
+  assert.match(detail, /gross totals/);
+  assert.match(detail, /ledger-based assessment/);
   assert.match(detail, /WithdrawalReviewControls/);
   assert.doesNotMatch(detail, /redirect\(["']\/withdrawals/);
   assert.doesNotMatch(page, /@\/lib\/db/);
@@ -67,15 +65,18 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   const workflowMigration = read(
     "services/antifraud-monitor/migrations/010_withdrawal_review_workflow.sql",
   );
+  const v2Migration = read(
+    "services/antifraud-monitor/migrations/015_withdrawal_risk_v2.sql",
+  );
   assert.match(database, /default_transaction_read_only=on/);
   assert.match(risk, /INSERT INTO withdrawal_assessments/);
   assert.match(risk, /loadTimeline/);
   assert.match(risk, /flowChecks/);
   assert.match(risk, /COALESCE\(u\.role::text,''\)<>'creator'/);
-  assert.match(risk, /latest_deposit/);
-  assert.doesNotMatch(risk, /interval '90 days'/);
-  assert.match(risk, /input\.method !== "balance"/);
-  assert.match(risk, /balance_withdrawal/);
+  assert.match(risk, /interval '90 days'/);
+  assert.match(risk, /balance_ledger_coverage/);
+  assert.match(risk, /balance_after::numeric/);
+  assert.match(risk, /voucher_pack_borrow/);
   assert.match(routes, /excludedUsersHeaderSchema/);
   assert.match(routes, /userIsCreator/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS withdrawal_assessments/);
@@ -83,4 +84,5 @@ test("the monitor service keeps the source pool read-only and persists assessmen
     workflowMigration,
     /CREATE TABLE IF NOT EXISTS withdrawal_review_events/,
   );
+  assert.match(v2Migration, /model_version/);
 });
