@@ -10,6 +10,7 @@ import {
   Search,
   ShieldAlert,
   TriangleAlert,
+  UserRound,
 } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -415,6 +416,16 @@ function CaseRow({ review }: { review: ReviewListItem }) {
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
+            <HostLink
+              href={`/users/${review.targetUserId}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-label={`Open profile of ${review.targetUsername ?? review.targetUserId} in a new tab`}
+            >
+              <UserRound className="size-3.5" />
+              Profile
+            </HostLink>
             <HostLink
               href={`/antifraud/reviews/${review.id}`}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"

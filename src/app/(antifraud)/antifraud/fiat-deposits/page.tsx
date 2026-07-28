@@ -360,7 +360,9 @@ function FiatRow({ item }: { item: FiatAssessment }) {
               <p className="truncate font-semibold">{name}</p>
               <HostLink
                 href={`/users/${item.user_id}`}
-                aria-label="Open user profile"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="Open user profile in a new tab"
                 title="User profile"
                 className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
               >
@@ -389,6 +391,9 @@ function FiatRow({ item }: { item: FiatAssessment }) {
               ? "Paid · reconciliation failed"
               : item.status.replaceAll("_", " ")}
           </Badge>
+          <Badge variant="secondary" className="shrink-0 capitalize">
+            {item.review_status.replaceAll("_", " ")}
+          </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 xl:justify-end">
           <div className="min-w-24 text-right">
@@ -414,7 +419,7 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           </Button>
         </div>
       </div>
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border/60 pt-3 text-xs">
+      <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-3 xl:grid-cols-6">
         <Fact
           label="Six-point flow"
           value={`${passed}/${item.flow_checks.length} pass`}
@@ -448,13 +453,7 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           label="Whop checkout:"
           value={item.provider_evidence.checkoutEmail ?? "unavailable"}
         />
-        <Badge variant="secondary" className="ml-auto shrink-0 capitalize">
-          {item.review_status.replaceAll("_", " ")}
-        </Badge>
       </div>
-      <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
-        {item.recommendation} — {item.summary}
-      </p>
     </article>
   );
 }
@@ -469,17 +468,23 @@ function Fact({
   alert?: boolean;
 }) {
   return (
-    <span className="inline-flex max-w-72 items-baseline gap-1.5">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span
+    <div
+      className={cn(
+        "rounded-lg border border-border/60 bg-muted/20 p-2.5",
+        alert && "border-amber-500/30",
+      )}
+    >
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+      <p
         className={cn(
-          "truncate font-medium tabular-nums",
+          "mt-0.5 truncate text-xs font-medium tabular-nums",
           alert && "text-amber-600 dark:text-amber-400",
         )}
+        title={value}
       >
         {value}
-      </span>
-    </span>
+      </p>
+    </div>
   );
 }
 
