@@ -9,10 +9,11 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  UserRound,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -102,24 +103,28 @@ export default async function FiatDepositsPage({
 function FiltersBar({ state }: { state: Filters }) {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          <Filter label="All risk" active={!state.verdict} state={state} verdict={null} />
-          <Filter label="Good" active={state.verdict === "good"} state={state} verdict="good" />
-          <Filter label="Review" active={state.verdict === "review"} state={state} verdict="review" />
-          <Filter label="High risk" active={state.verdict === "bad"} state={state} verdict="bad" />
-          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          <Filter label="Unreviewed" active={state.reviewStatus === "unreviewed"} state={state} reviewStatus="unreviewed" />
-          <Filter label="In review" active={state.reviewStatus === "in_review"} state={state} reviewStatus="in_review" />
-          <Filter label="Escalated" active={state.reviewStatus === "escalated"} state={state} reviewStatus="escalated" />
-          <Filter label="All workflow" active={!state.reviewStatus} state={state} reviewStatus={null} />
-          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          <Filter label="All paid" active={!state.status} state={state} status={null} />
-          <Filter label="Completed" active={state.status === "completed"} state={state} status="completed" />
-          <Filter label="Refunded" active={state.status === "refunded"} state={state} status="refunded" />
-          <Filter label="Partial refund" active={state.status === "partially_refunded"} state={state} status="partially_refunded" />
-          <Filter label="Disputed" active={state.status === "disputed"} state={state} status="disputed" />
-          <Filter label="Reconciliation failed" active={state.status === "paid_unreconciled"} state={state} status="paid_unreconciled" />
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+          <FilterGroup label="Risk">
+            <Filter label="All" active={!state.verdict} state={state} verdict={null} />
+            <Filter label="Good" active={state.verdict === "good"} state={state} verdict="good" />
+            <Filter label="Review" active={state.verdict === "review"} state={state} verdict="review" />
+            <Filter label="High risk" active={state.verdict === "bad"} state={state} verdict="bad" />
+          </FilterGroup>
+          <FilterGroup label="Workflow">
+            <Filter label="All" active={!state.reviewStatus} state={state} reviewStatus={null} />
+            <Filter label="Unreviewed" active={state.reviewStatus === "unreviewed"} state={state} reviewStatus="unreviewed" />
+            <Filter label="In review" active={state.reviewStatus === "in_review"} state={state} reviewStatus="in_review" />
+            <Filter label="Escalated" active={state.reviewStatus === "escalated"} state={state} reviewStatus="escalated" />
+          </FilterGroup>
+          <FilterGroup label="Payment status">
+            <Filter label="All paid" active={!state.status} state={state} status={null} />
+            <Filter label="Completed" active={state.status === "completed"} state={state} status="completed" />
+            <Filter label="Refunded" active={state.status === "refunded"} state={state} status="refunded" />
+            <Filter label="Partial refund" active={state.status === "partially_refunded"} state={state} status="partially_refunded" />
+            <Filter label="Disputed" active={state.status === "disputed"} state={state} status="disputed" />
+            <Filter label="Reconciliation failed" active={state.status === "paid_unreconciled"} state={state} status="paid_unreconciled" />
+          </FilterGroup>
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/fiat-deposits">
           {state.status && <input type="hidden" name="status" value={state.status} />}
@@ -137,6 +142,25 @@ function FiltersBar({ state }: { state: Filters }) {
             <Search className="size-4" />
           </Button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+        {children}
       </div>
     </div>
   );
@@ -166,13 +190,18 @@ function Filter({
       reviewStatus === null ? undefined : reviewStatus ?? state.reviewStatus,
   };
   return (
-    <Button
-      size="sm"
-      variant={active ? "default" : "outline"}
-      render={<HostLink href={href(next)} />}
+    <HostLink
+      href={href(next)}
+      aria-current={active ? "true" : undefined}
+      className={cn(
+        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+        active
+          ? "border border-border/70 bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
     >
       {label}
-    </Button>
+    </HostLink>
   );
 }
 
@@ -229,24 +258,36 @@ async function FiatContent({ state }: { state: Filters }) {
 }
 
 function Summary({ summary }: { summary: FiatSummary }) {
-  const cards = [
-    { label: "Unreviewed", value: summary.unreviewed, sub: `${summary.total} assessed`, icon: CreditCard, tone: "text-cyan-500" },
-    { label: "High risk", value: summary.bad, sub: `${summary.hold_recommended} holds advised`, icon: ShieldAlert, tone: "text-rose-500" },
-    { label: "Provider flags", value: summary.provider_high_risk + summary.three_ds_failed, sub: `${summary.disputed} disputed`, icon: CircleAlert, tone: "text-amber-500" },
-    { label: "Assessed volume", value: formatCurrency(summary.amount_usd), sub: `${summary.good} low risk`, icon: Banknote, tone: "text-emerald-500" },
-  ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      {cards.map(({ label, value, sub, icon: Icon, tone }) => (
-        <div key={label} className="rounded-xl border border-border/70 bg-card p-4">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-medium text-muted-foreground">{label}</span>
-            <Icon className={cn("size-4", tone)} />
-          </div>
-          <p className="mt-2 text-2xl font-semibold tabular-nums">{value}</p>
-          <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>
-        </div>
-      ))}
+      <KpiTile
+        icon={CreditCard}
+        accent="cyan"
+        label="Unreviewed"
+        value={summary.unreviewed.toLocaleString()}
+        sub={`${summary.total} assessed`}
+      />
+      <KpiTile
+        icon={ShieldAlert}
+        accent="rose"
+        label="High risk"
+        value={summary.bad.toLocaleString()}
+        sub={`${summary.hold_recommended} holds advised`}
+      />
+      <KpiTile
+        icon={CircleAlert}
+        accent="amber"
+        label="Provider flags"
+        value={(summary.provider_high_risk + summary.three_ds_failed).toLocaleString()}
+        sub={`${summary.disputed} disputed`}
+      />
+      <KpiTile
+        icon={Banknote}
+        accent="emerald"
+        label="Assessed volume"
+        value={formatCurrency(summary.amount_usd)}
+        sub={`${summary.good} low risk`}
+      />
       <FiatRiskScoreGuide />
     </div>
   );
@@ -301,24 +342,33 @@ function FiatRow({ item }: { item: FiatAssessment }) {
   const VerdictIcon = style.icon;
   const name = item.username ?? item.user_id;
   const funding = item.funding_evidence;
-  const behavior = item.behavior_evidence;
   const unreconciled = item.status === "paid_unreconciled";
+  const flagged = item.flow_checks.filter(
+    (check) => check.status !== "pass",
+  );
+  const passed = item.flow_checks.length - flagged.length;
   return (
-    <article className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
-      <div className="flex flex-col gap-4 border-b border-border/60 p-4 xl:flex-row xl:items-center xl:justify-between">
+    <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar className="size-10">
             {item.avatar_url && <AvatarImage src={item.avatar_url} alt="" />}
             <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate font-semibold">{name}</p>
-            <p className="truncate text-xs text-muted-foreground">{item.email ?? item.user_id}</p>
-            <p
-              className="truncate text-xs text-muted-foreground"
-              title={item.provider_evidence.checkoutEmail ?? undefined}
-            >
-              Whop checkout: {item.provider_evidence.checkoutEmail ?? "unavailable"}
+            <div className="flex items-center gap-1.5">
+              <p className="truncate font-semibold">{name}</p>
+              <HostLink
+                href={`/users/${item.user_id}`}
+                aria-label="Open user profile"
+                title="User profile"
+                className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <UserRound className="size-3.5" />
+              </HostLink>
+            </div>
+            <p className="truncate text-xs text-muted-foreground">
+              {item.email ?? item.user_id}
             </p>
             <p className="mt-0.5 text-[11px] text-muted-foreground">
               Country:{" "}
@@ -330,7 +380,7 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           <Badge
             variant="outline"
             className={cn(
-              "capitalize",
+              "shrink-0 capitalize",
               unreconciled &&
                 "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
             )}
@@ -341,17 +391,16 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 xl:justify-end">
-          <div>
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
-              {unreconciled ? "Whop paid" : "Deposited"}
-            </p>
-            <p className="text-sm font-medium tabular-nums">{formatDate(item.occurred_at)}</p>
-          </div>
           <div className="min-w-24 text-right">
             <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
               {unreconciled ? "Expected credit" : "Credited"}
             </p>
-            <p className="text-lg font-semibold tabular-nums">{formatCurrency(item.credited_amount_usd)}</p>
+            <p className="text-lg font-semibold tabular-nums">
+              {formatCurrency(item.credited_amount_usd)}
+            </p>
+            <p className="text-[10px] tabular-nums text-muted-foreground">
+              {formatDate(item.occurred_at)}
+            </p>
           </div>
           <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", style.box)}>
             <VerdictIcon className={cn("size-5", style.text)} />
@@ -365,51 +414,72 @@ function FiatRow({ item }: { item: FiatAssessment }) {
           </Button>
         </div>
       </div>
-      <div className="grid gap-4 p-4 xl:grid-cols-[1.25fr_1fr_1fr]">
-        <div>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Decision</p>
-          <p className="mt-1 text-sm font-medium">{item.recommendation}</p>
-          <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.summary}</p>
-        </div>
-        <div className="grid grid-cols-2 gap-2 text-xs">
-          <Metric label="Whop score" value={item.provider_risk_score === null ? "No result" : `${item.provider_risk_score}/100`} />
-          <Metric label="3DS" value={item.three_ds_verified === true ? "Verified" : item.three_ds_verified === false ? "Not verified" : "Pending"} />
-          <Metric label="Prior crypto" value={`${funding.priorCryptoDeposits} · ${formatCurrency(funding.priorCryptoUsd)}`} />
-          <Metric label="Prior fiat" value={`${funding.priorFiatDeposits} · ${formatCurrency(funding.priorFiatUsd)}`} />
-        </div>
-        <div>
-          <div className="mb-2 flex items-center justify-between">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">Six-point flow</p>
-            <Badge variant="secondary" className="capitalize">{item.review_status.replaceAll("_", " ")}</Badge>
-          </div>
-          <div className="grid grid-cols-3 gap-1.5">
-            {item.flow_checks.map((check) => (
-              <div key={check.key} className={cn(
-                "rounded-md border px-2 py-1.5 text-[10px]",
-                check.status === "pass" && "border-emerald-500/25 bg-emerald-500/5",
-                check.status === "review" && "border-amber-500/25 bg-amber-500/5",
-                check.status === "block" && "border-rose-500/25 bg-rose-500/5",
-              )}>
-                <span className="block truncate font-medium">{check.label}</span>
-                <span className="text-muted-foreground">{check.score} pts</span>
-              </div>
-            ))}
-          </div>
-          <p className="mt-2 text-[11px] text-muted-foreground">
-            {behavior.withdrawalRequests} later withdrawals · {(behavior.playthroughRatio * 100).toFixed(0)}% play-through
-          </p>
-        </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border/60 pt-3 text-xs">
+        <Fact
+          label="Six-point flow"
+          value={`${passed}/${item.flow_checks.length} pass`}
+          alert={flagged.length > 0}
+        />
+        <Fact
+          label="Whop score"
+          value={item.provider_risk_score === null ? "No result" : `${item.provider_risk_score}/100`}
+          alert={item.provider_risk_score !== null && item.provider_risk_score >= 60}
+        />
+        <Fact
+          label="3DS"
+          value={
+            item.three_ds_verified === true
+              ? "Verified"
+              : item.three_ds_verified === false
+                ? "Not verified"
+                : "Pending"
+          }
+          alert={item.three_ds_verified === false}
+        />
+        <Fact
+          label="Prior crypto"
+          value={`${funding.priorCryptoDeposits} · ${formatCurrency(funding.priorCryptoUsd)}`}
+        />
+        <Fact
+          label="Prior fiat"
+          value={`${funding.priorFiatDeposits} · ${formatCurrency(funding.priorFiatUsd)}`}
+        />
+        <Fact
+          label="Whop checkout:"
+          value={item.provider_evidence.checkoutEmail ?? "unavailable"}
+        />
+        <Badge variant="secondary" className="ml-auto shrink-0 capitalize">
+          {item.review_status.replaceAll("_", " ")}
+        </Badge>
       </div>
+      <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
+        {item.recommendation} — {item.summary}
+      </p>
     </article>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function Fact({
+  label,
+  value,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  alert?: boolean;
+}) {
   return (
-    <div className="rounded-lg border border-border/60 bg-muted/20 p-2.5">
-      <span className="block text-[10px] text-muted-foreground">{label}</span>
-      <span className="mt-0.5 block truncate font-medium">{value}</span>
-    </div>
+    <span className="inline-flex max-w-72 items-baseline gap-1.5">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "truncate font-medium tabular-nums",
+          alert && "text-amber-600 dark:text-amber-400",
+        )}
+      >
+        {value}
+      </span>
+    </span>
   );
 }
 
@@ -449,7 +519,7 @@ function FiatListSkeleton() {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
         {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}
       </div>
-      {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-56 rounded-xl" />)}
+      {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-36 rounded-xl" />)}
     </div>
   );
 }

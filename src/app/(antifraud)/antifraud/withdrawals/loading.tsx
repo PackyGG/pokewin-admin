@@ -14,13 +14,15 @@ export default function WithdrawalsLoading() {
           subtitle="Trace every payout back to its deposits, play, wins, and rewards"
         />
       </PageHero>
+      <Skeleton className="h-20 rounded-xl" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-12 rounded-xl" />
-      <Skeleton className="h-80 rounded-xl" />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-36 rounded-xl" />
+      ))}
     </div>
   );
 }

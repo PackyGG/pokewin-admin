@@ -3,18 +3,18 @@ import {
   AlertTriangle,
   ArrowRight,
   ArrowUpFromLine,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Search,
   ShieldAlert,
   ShieldCheck,
+  UserRound,
   UserRoundSearch,
   WalletCards,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -113,42 +113,46 @@ export default async function WithdrawalsPage({
 function Filters({ state }: { state: FilterState }) {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap gap-1.5">
-          <FilterButton label="All risk" active={!state.verdict} state={state} verdict={null} />
-          <FilterButton label="Good" active={state.verdict === "good"} state={state} verdict="good" />
-          <FilterButton label="Review" active={state.verdict === "review"} state={state} verdict="review" />
-          <FilterButton label="Bad" active={state.verdict === "bad"} state={state} verdict="bad" />
-          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          <FilterButton
-            label="Unreviewed"
-            active={state.reviewStatus === "unreviewed"}
-            state={state}
-            reviewStatus="unreviewed"
-          />
-          <FilterButton
-            label="In review"
-            active={state.reviewStatus === "in_review"}
-            state={state}
-            reviewStatus="in_review"
-          />
-          <FilterButton
-            label="Escalated"
-            active={state.reviewStatus === "escalated"}
-            state={state}
-            reviewStatus="escalated"
-          />
-          <FilterButton
-            label="All workflow"
-            active={!state.reviewStatus}
-            state={state}
-            reviewStatus={null}
-          />
-          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          <FilterButton label="Any status" active={!state.status} state={state} status={null} />
-          <FilterButton label="Pending" active={state.status === "pending"} state={state} status="pending" />
-          <FilterButton label="Processing" active={state.status === "processing"} state={state} status="processing" />
-          <FilterButton label="Completed" active={state.status === "completed"} state={state} status="completed" />
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+          <FilterGroup label="Risk">
+            <FilterButton label="All" active={!state.verdict} state={state} verdict={null} />
+            <FilterButton label="Good" active={state.verdict === "good"} state={state} verdict="good" />
+            <FilterButton label="Review" active={state.verdict === "review"} state={state} verdict="review" />
+            <FilterButton label="Bad" active={state.verdict === "bad"} state={state} verdict="bad" />
+          </FilterGroup>
+          <FilterGroup label="Workflow">
+            <FilterButton
+              label="All"
+              active={!state.reviewStatus}
+              state={state}
+              reviewStatus={null}
+            />
+            <FilterButton
+              label="Unreviewed"
+              active={state.reviewStatus === "unreviewed"}
+              state={state}
+              reviewStatus="unreviewed"
+            />
+            <FilterButton
+              label="In review"
+              active={state.reviewStatus === "in_review"}
+              state={state}
+              reviewStatus="in_review"
+            />
+            <FilterButton
+              label="Escalated"
+              active={state.reviewStatus === "escalated"}
+              state={state}
+              reviewStatus="escalated"
+            />
+          </FilterGroup>
+          <FilterGroup label="Payout status">
+            <FilterButton label="Any" active={!state.status} state={state} status={null} />
+            <FilterButton label="Pending" active={state.status === "pending"} state={state} status="pending" />
+            <FilterButton label="Processing" active={state.status === "processing"} state={state} status="processing" />
+            <FilterButton label="Completed" active={state.status === "completed"} state={state} status="completed" />
+          </FilterGroup>
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/withdrawals">
           {state.status && <input type="hidden" name="status" value={state.status} />}
@@ -168,6 +172,25 @@ function Filters({ state }: { state: FilterState }) {
             <Search className="size-4" />
           </Button>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function FilterGroup({
+  label,
+  children,
+}: {
+  label: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div>
+      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5">
+        {children}
       </div>
     </div>
   );
@@ -197,13 +220,18 @@ function FilterButton({
       reviewStatus === null ? undefined : reviewStatus ?? state.reviewStatus,
   };
   return (
-    <Button
-      size="sm"
-      variant={active ? "default" : "outline"}
-      render={<HostLink href={withdrawalHref(next)} />}
+    <HostLink
+      href={withdrawalHref(next)}
+      aria-current={active ? "true" : undefined}
+      className={cn(
+        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
+        active
+          ? "border border-border/70 bg-background text-foreground shadow-sm"
+          : "text-muted-foreground hover:text-foreground",
+      )}
     >
       {label}
-    </Button>
+    </HostLink>
   );
 }
 
@@ -287,26 +315,36 @@ function SummaryCards({
     amount_usd: number;
   };
 }) {
-  const cards = [
-    { label: "Analyzed", value: summary.total.toLocaleString(), icon: WalletCards, tone: "text-cyan-600 dark:text-cyan-400" },
-    { label: "No signal", value: summary.good.toLocaleString(), icon: ShieldCheck, tone: "text-emerald-600 dark:text-emerald-400" },
-    { label: "Needs review", value: summary.review.toLocaleString(), icon: AlertTriangle, tone: "text-amber-600 dark:text-amber-400" },
-    { label: "High risk", value: summary.bad.toLocaleString(), icon: ShieldAlert, tone: "text-rose-600 dark:text-rose-400" },
-  ];
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {cards.map((card) => {
-        const Icon = card.icon;
-        return (
-          <div key={card.label} className="rounded-xl border border-border/70 bg-card p-4">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-medium text-muted-foreground">{card.label}</span>
-              <Icon className={cn("size-4", card.tone)} />
-            </div>
-            <p className="mt-2 text-2xl font-semibold tabular-nums">{card.value}</p>
-          </div>
-        );
-      })}
+      <KpiTile
+        icon={WalletCards}
+        accent="cyan"
+        label="Analyzed"
+        value={summary.total.toLocaleString()}
+        sub={`${formatCurrency(summary.amount_usd)} requested`}
+      />
+      <KpiTile
+        icon={ShieldCheck}
+        accent="emerald"
+        label="No signal"
+        value={summary.good.toLocaleString()}
+        sub={`${summary.unreviewed.toLocaleString()} unreviewed`}
+      />
+      <KpiTile
+        icon={AlertTriangle}
+        accent="amber"
+        label="Needs review"
+        value={summary.review.toLocaleString()}
+        sub={`${summary.escalated.toLocaleString()} escalated`}
+      />
+      <KpiTile
+        icon={ShieldAlert}
+        accent="rose"
+        label="High risk"
+        value={summary.bad.toLocaleString()}
+        sub={`${summary.block_recommended.toLocaleString()} blocks advised`}
+      />
     </div>
   );
 }
@@ -315,38 +353,57 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
   const name = withdrawal.username ?? withdrawal.user_id;
   const verdict = verdictStyle(withdrawal.verdict);
   const VerdictIcon = verdict.icon;
+  const flow = withdrawal.flow;
+  const flagged = withdrawal.flow_checks.filter(
+    (check) => check.status === "watch" || check.status === "alert",
+  );
+  const scored = withdrawal.flow_checks.filter(
+    (check) => check.status !== "not_applicable",
+  );
+  const traceableSources = withdrawal.source_breakdown.filter(
+    (source) => source.traceable,
+  ).length;
   return (
-    <article className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
-      <div className="flex flex-col gap-4 border-b border-border/60 p-4 lg:flex-row lg:items-center lg:justify-between">
+    <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <Avatar className="size-10">
             {withdrawal.avatar_url && <AvatarImage src={withdrawal.avatar_url} alt="" />}
             <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
           </Avatar>
           <div className="min-w-0">
-            <p className="truncate font-semibold">{name}</p>
+            <div className="flex items-center gap-1.5">
+              <p className="truncate font-semibold">{name}</p>
+              <HostLink
+                href={`/users/${withdrawal.user_id}`}
+                aria-label="Open user profile"
+                title="User profile"
+                className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+              >
+                <UserRound className="size-3.5" />
+              </HostLink>
+            </div>
             <p className="truncate text-xs text-muted-foreground">
               {withdrawal.email ?? withdrawal.user_id}
             </p>
           </div>
-          <Badge variant="outline" className="capitalize">
+          <Badge variant="outline" className="shrink-0 capitalize">
             {withdrawal.status}
           </Badge>
-          <Badge variant="secondary" className="capitalize">
+          <Badge variant="secondary" className="shrink-0 capitalize">
             {withdrawal.method}
           </Badge>
         </div>
         <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-          <div>
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Requested</p>
-            <p className="text-sm font-medium tabular-nums">
-              {formatDate(withdrawal.requested_at)}
-            </p>
-          </div>
           <div className="min-w-28 text-right">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">Withdrawal</p>
+            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+              Withdrawal
+            </p>
             <p className="text-lg font-semibold tabular-nums">
               {formatCurrency(withdrawal.amount_usd)}
+            </p>
+            <p className="text-[10px] tabular-nums text-muted-foreground">
+              {formatDate(withdrawal.requested_at)}
             </p>
           </div>
           <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", verdict.box)}>
@@ -369,7 +426,7 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
                 />
               }
             >
-              Review flow
+              Open review
               <ArrowRight className="size-3.5" />
             </Button>
           ) : (
@@ -380,142 +437,69 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
         </div>
       </div>
 
-      <div className="grid gap-5 p-4 xl:grid-cols-[minmax(0,1.65fr)_minmax(260px,0.75fr)]">
-        <div className="space-y-4">
-          <MoneyFlow withdrawal={withdrawal} />
-          {withdrawal.flow_checks.length > 0 && (
-            <div>
-              <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-                Review flow
-              </p>
-              <div className="grid gap-2 sm:grid-cols-5">
-                {withdrawal.flow_checks.map((check, index) => (
-                  <div
-                    key={check.key}
-                    className={cn(
-                      "rounded-lg border px-2.5 py-2 text-xs",
-                      check.status === "pass" &&
-                        "border-emerald-500/25 bg-emerald-500/5",
-                      check.status === "watch" &&
-                        "border-amber-500/25 bg-amber-500/5",
-                      check.status === "alert" &&
-                        "border-rose-500/25 bg-rose-500/5",
-                      check.status === "not_applicable" &&
-                        "border-border/60 bg-muted/20",
-                    )}
-                  >
-                    <span className="block text-[10px] text-muted-foreground">
-                      {index + 1}. {check.status}
-                    </span>
-                    <span className="mt-0.5 block font-medium">{check.label}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div>
-            <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-              Exact withdrawal sources
-            </p>
-            <div className="flex flex-wrap gap-2">
-              {withdrawal.source_breakdown.length ? (
-                withdrawal.source_breakdown.map((source) => (
-                  <span
-                    key={source.key}
-                    className={cn(
-                      "rounded-lg border px-2.5 py-1.5 text-xs",
-                      source.traceable
-                        ? "border-cyan-500/20 bg-cyan-500/5"
-                        : "border-amber-500/30 bg-amber-500/5",
-                    )}
-                  >
-                    <span className="font-medium">{source.label}</span>
-                    <span className="ml-1 text-muted-foreground">
-                      {source.count} · {formatCurrency(source.valueUsd)}
-                    </span>
-                  </span>
-                ))
-              ) : (
-                <span className="text-xs text-muted-foreground">
-                  {withdrawal.method === "balance"
-                    ? "Balance request — attached card or voucher records are not expected."
-                    : "No attached source records were found."}
-                </span>
-              )}
-            </div>
-          </div>
-        </div>
-
-        <div className={cn("rounded-xl border p-3.5", verdict.box)}>
-          <div className="flex items-start gap-2">
-            <VerdictIcon className={cn("mt-0.5 size-5 shrink-0", verdict.text)} />
-            <div>
-              <p className="text-sm font-semibold">Assessment</p>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                {withdrawal.summary}
-              </p>
-            </div>
-          </div>
-          <div className="mt-3 space-y-2">
-            {withdrawal.signals.slice(0, 4).map((signal) => (
-              <div key={signal.key} className="flex items-start justify-between gap-2 text-xs">
-                <span>
-                  <span className="font-medium">{signal.label}</span>
-                  <span className="block text-[11px] leading-4 text-muted-foreground">
-                    {signal.detail}
-                  </span>
-                </span>
-                {signal.points > 0 ? (
-                  <Badge variant="outline" className="shrink-0 tabular-nums">
-                    +{signal.points}
-                  </Badge>
-                ) : (
-                  <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-500" />
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
+      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border/60 pt-3 text-xs">
+        {withdrawal.flow_checks.length > 0 && (
+          <Fact
+            label="Review flow"
+            value={`${scored.length - flagged.length}/${scored.length} pass`}
+            alert={flagged.length > 0}
+          />
+        )}
+        <Fact
+          label="90-day account activity"
+          value={`${formatCurrency(flow.depositsUsd)} deposits`}
+        />
+        <Fact label="Gross wagered" value={formatCurrency(flow.wageredUsd)} />
+        <Fact
+          label="Rewards / credits"
+          value={formatCurrency(flow.rewardsUsd)}
+        />
+        <Fact
+          label="Sources"
+          value={
+            withdrawal.source_breakdown.length
+              ? `${traceableSources}/${withdrawal.source_breakdown.length} traceable`
+              : withdrawal.method === "balance"
+                ? "Balance request"
+                : "None attached"
+          }
+          alert={
+            withdrawal.source_breakdown.length > 0 &&
+            traceableSources < withdrawal.source_breakdown.length
+          }
+        />
+        <Badge variant="secondary" className="ml-auto shrink-0 capitalize">
+          {withdrawal.review_status.replaceAll("_", " ")}
+        </Badge>
       </div>
+      <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
+        {withdrawal.summary}
+      </p>
     </article>
   );
 }
 
-function MoneyFlow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
-  const flow = withdrawal.flow;
-  const metrics = [
-    { label: "Cash deposits", value: flow.depositsUsd },
-    { label: "Gross wagered", value: flow.wageredUsd },
-    { label: "Play returns / sales", value: flow.playReturnsUsd },
-    { label: "Rewards / credits", value: flow.rewardsUsd },
-  ];
+function Fact({
+  label,
+  value,
+  alert = false,
+}: {
+  label: string;
+  value: string;
+  alert?: boolean;
+}) {
   return (
-    <div>
-      <div className="mb-2 flex items-center justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
-          90-day account activity
-        </p>
-        <span className="text-[10px] text-muted-foreground">
-          {flow.gameEvents.toLocaleString()} play events · gross totals, not a
-          balance reconciliation
-        </span>
-      </div>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        {metrics.map((metric) => (
-          <div
-            key={metric.label}
-            className="rounded-lg border border-border/60 bg-muted/20 px-3 py-2"
-          >
-            <span className="block text-[10px] text-muted-foreground">
-              {metric.label}
-            </span>
-            <span className="block text-sm font-semibold tabular-nums">
-              {formatCurrency(metric.value)}
-            </span>
-          </div>
-        ))}
-      </div>
-    </div>
+    <span className="inline-flex max-w-72 items-baseline gap-1.5">
+      <span className="shrink-0 text-muted-foreground">{label}</span>
+      <span
+        className={cn(
+          "truncate font-medium tabular-nums",
+          alert && "text-amber-600 dark:text-amber-400",
+        )}
+      >
+        {value}
+      </span>
+    </span>
   );
 }
 
@@ -579,8 +563,9 @@ function WithdrawalListSkeleton() {
           <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-72 rounded-xl" />
-      <Skeleton className="h-72 rounded-xl" />
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-36 rounded-xl" />
+      ))}
     </div>
   );
 }
