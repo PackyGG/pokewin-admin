@@ -94,8 +94,10 @@ function valuesEqual(left: RestrictionValue, right: RestrictionValue): boolean {
  * primary already returned from `UPDATE ... RETURNING`.
  *
  * A revalidation can reach the read mirror before replication catches up.
- * Keep the primary-confirmed value in the UI until a later payload matches it,
- * then retire the override so future external changes can flow through.
+ * Keep the primary-confirmed value in the UI for its short, tab-scoped lifetime.
+ * A single agreeing payload is not enough to retire it because a subsequent
+ * hard reload can be served by another lagging reader. The serialized override
+ * expires after CONFIRMED_RESTRICTIONS_MAX_AGE_MS.
  */
 export function reconcileConfirmedRestrictions(
   incomingRows: CountryRestrictionRow[],
@@ -118,6 +120,7 @@ export function reconcileConfirmedRestrictions(
 
     const incomingValue = incoming[override.property] as RestrictionValue;
     if (valuesEqual(incomingValue, override.value)) {
+      remainingOverrides[key] = override;
       continue;
     }
 

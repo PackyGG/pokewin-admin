@@ -3,7 +3,6 @@ import test from "node:test";
 
 import {
   applyMandatoryJurisdictionPolicy,
-  applyGlobalFiatPolicy,
   CRYPTO_RESTRICTION_TOKENS,
   FIAT_JURISDICTION_POLICY,
   hasAllWhopFiatDepositLocks,
@@ -123,24 +122,19 @@ test("Whop helpers move card and wallet locks as one policy", () => {
   assert.ok(!hasAllWhopFiatDepositLocks(["credit_card"]));
 });
 
-test("global enablement opens ordinary locations and locks every policy row", () => {
-  const input = [
-    restriction("DE", ["fiat", "paypal"]),
-    ...MANDATORY_FIAT_JURISDICTION_CODES.map((code) =>
-      restriction(code, ["fiat"]),
-    ),
+test("global enablement is independent from per-location fiat overrides", () => {
+  const manualOverrides = [
+    restriction("DE", ["credit_card"]),
+    restriction("FR"),
   ];
-  const enabled = applyGlobalFiatPolicy(input, true);
-  const ordinary = enabled.find((row) => row.countryCode === "DE");
 
-  assert.deepEqual(ordinary?.lockedDepositsFiat, ["paypal"]);
+  assert.ok(isGlobalFiatPolicyActive([], manualOverrides));
   assert.ok(
-    enabled
-      .filter((row) => row.countryCode !== "DE")
-      .every(isMandatoryJurisdictionPolicyEnforced),
+    !isGlobalFiatPolicyActive(["credit_card"], [
+      restriction("DE"),
+      restriction("FR"),
+    ]),
   );
-  assert.ok(isGlobalFiatPolicyActive([], enabled));
-  assert.ok(!isGlobalFiatPolicyActive(["credit_card"], enabled));
 });
 
 test("mandatory policy closes every independently enforced direct route", () => {
@@ -162,18 +156,4 @@ test("mandatory policy closes every independently enforced direct route", () => 
   assert.ok(isMandatoryJurisdictionPolicyEnforced(enforced));
   const ordinary = restriction("DE");
   assert.equal(applyMandatoryJurisdictionPolicy(ordinary), ordinary);
-});
-
-test("global disablement locks every row and incomplete policy is never active", () => {
-  const disabled = applyGlobalFiatPolicy(
-    [restriction("DE"), restriction("US-CA")],
-    false,
-  );
-  assert.ok(
-    disabled.every((row) =>
-      hasAllWhopFiatDepositLocks(row.lockedDepositsFiat),
-    ),
-  );
-  assert.ok(!isGlobalFiatPolicyActive([], disabled));
-  assert.ok(!isGlobalFiatPolicyActive([], [restriction("DE")]));
 });

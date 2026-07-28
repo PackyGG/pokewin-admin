@@ -88,7 +88,7 @@ test("primary-confirmed fiat value survives stale transition props until readbac
     freshReadback.rows[0].lockedDepositsFiat,
     freshReadbackRows[0].lockedDepositsFiat,
   );
-  assert.deepEqual(freshReadback.remainingOverrides, {});
+  assert.equal(Object.keys(freshReadback.remainingOverrides).length, 1);
 
   overrides = rememberConfirmedRestriction(
     freshReadback.remainingOverrides,
@@ -114,7 +114,7 @@ test("primary-confirmed fiat value survives stale transition props until readbac
     staleReverseTransition.remainingOverrides,
   );
   assert.deepEqual(freshReverseReadback.rows[0].lockedDepositsFiat, []);
-  assert.deepEqual(freshReverseReadback.remainingOverrides, {});
+  assert.equal(Object.keys(freshReverseReadback.remainingOverrides).length, 1);
 });
 
 test("an actual rejected mutation rolls the optimistic value back without a confirmed override", async () => {
@@ -179,6 +179,19 @@ test("the component wires authoritative readback, stale-prop reconciliation, ref
   assert.match(componentSource, /router\.refresh\(\)/);
   assert.match(actionSource, /persisted_values:\s*persistedColumn/);
   assert.match(actionSource, /persistedValues:\s*updated\[0\]\.persisted_values/);
+
+  const globalActionStart = actionSource.indexOf(
+    "export async function setGlobalFiatDeposits",
+  );
+  const globalActionEnd = actionSource.indexOf(
+    "export async function setGlobalPhysicalItemWithdrawals",
+    globalActionStart,
+  );
+  const globalAction = actionSource.slice(globalActionStart, globalActionEnd);
+  assert.match(globalAction, /\.update\(site_config\)/);
+  assert.doesNotMatch(globalAction, /\.update\(country_restrictions\)/);
+  assert.doesNotMatch(globalAction, /UPDATE country_restrictions/);
+  assert.doesNotMatch(componentSource, /applyGlobalFiatPolicy/);
 });
 
 test("expired or malformed persisted confirmations fail closed", () => {

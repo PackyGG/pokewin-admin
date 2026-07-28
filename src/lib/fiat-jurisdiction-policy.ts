@@ -260,26 +260,7 @@ export function applyGlobalFiatPolicy(
 
 export function isGlobalFiatPolicyActive(
   siteLockedMethods: readonly string[],
-  rows: readonly CountryRestrictionRow[],
+  _rows: readonly CountryRestrictionRow[],
 ): boolean {
-  if (hasAnyWhopFiatDepositLock(siteLockedMethods)) return false;
-
-  const rowsByCode = new Map(rows.map((row) => [row.countryCode, row]));
-  if (
-    MANDATORY_FIAT_JURISDICTION_CODES.some(
-      (code) =>
-        !rowsByCode.has(code) ||
-        !hasAllWhopFiatDepositLocks(
-          rowsByCode.get(code)?.lockedDepositsFiat ?? [],
-        ),
-    )
-  ) {
-    return false;
-  }
-
-  return rows.every(
-    (row) =>
-      isMandatoryFiatJurisdiction(row.countryCode) ||
-      !hasAnyWhopFiatDepositLock(row.lockedDepositsFiat),
-  );
+  return !hasAnyWhopFiatDepositLock(siteLockedMethods);
 }

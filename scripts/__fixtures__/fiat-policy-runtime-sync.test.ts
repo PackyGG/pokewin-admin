@@ -24,17 +24,25 @@ const fiatUiSource = readFileSync(
   "utf8",
 );
 
-test("global fiat policy reports both backend cache reload results", () => {
+test("global fiat gate reloads only site config and never country restrictions", () => {
+  const start = actionsSource.indexOf(
+    "export async function setGlobalFiatDeposits",
+  );
+  const end = actionsSource.indexOf(
+    "export async function setGlobalPhysicalItemWithdrawals",
+    start,
+  );
+  const globalAction = actionsSource.slice(start, end);
+
   assert.match(
-    actionsSource,
+    globalAction,
     /backendApi\.post\("\/admin\/refresh-site-config"\)/,
   );
-  assert.match(
-    actionsSource,
-    /backendApi\.post\("\/admin\/invalidate-country-restrictions-cache"\)/,
-  );
-  assert.match(actionsSource, /siteConfigCacheReloaded:/);
-  assert.match(actionsSource, /countryRestrictionsCacheReloaded:/);
+  assert.doesNotMatch(globalAction, /invalidate-country-restrictions-cache/);
+  assert.match(globalAction, /siteConfigCacheReloaded:/);
+  assert.doesNotMatch(globalAction, /countryRestrictionsCacheReloaded:/);
+  assert.doesNotMatch(globalAction, /\.update\(country_restrictions\)/);
+  assert.doesNotMatch(globalAction, /UPDATE country_restrictions/);
 });
 
 test("operator UI never calls a saved policy live when cache reload failed", () => {

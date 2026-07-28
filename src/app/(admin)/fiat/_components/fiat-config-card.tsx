@@ -20,7 +20,6 @@ import { Spinner } from "@/components/ux";
 import type { FiatConfigRow } from "@/lib/queries/fiat";
 import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 import {
-  applyGlobalFiatPolicy,
   FIAT_JURISDICTION_POLICY,
   hasAllWhopFiatDepositLocks,
   isGlobalFiatPolicyActive,
@@ -105,34 +104,26 @@ export function FiatConfigCard({
   ).length;
 
   function handleGlobalCardDeposits(allowed: boolean) {
-    const previousRows = restrictionRows;
     const previousMethods = lockedMethods;
-    setRestrictionRows((current) =>
-      applyGlobalFiatPolicy(current, allowed),
-    );
     setGlobalPending(true);
     startTransition(async () => {
       try {
         const result = await setGlobalFiatDeposits(allowed);
         setLockedMethods(result.lockedMethods);
-        if (
-          result.siteConfigCacheReloaded &&
-          result.countryRestrictionsCacheReloaded
-        ) {
+        if (result.siteConfigCacheReloaded) {
           toast.success(
             allowed
-              ? `Whop fiat enabled globally with ${result.protected} required exclusions`
+              ? "Whop fiat enabled globally"
               : "Whop fiat disabled site-wide",
           );
         } else {
           toast.warning(
-            "The database policy was saved, but the backend cache did not fully reload. Open Geo Blocking and use Reload cache before treating the change as live.",
+            "The global fiat gate was saved, but the backend cache did not reload. Open Geo Blocking and use Reload cache before treating the change as live.",
             { duration: 12000 },
           );
         }
         router.refresh();
       } catch (error) {
-        setRestrictionRows(previousRows);
         setLockedMethods(previousMethods);
         toast.error(
           error instanceof Error

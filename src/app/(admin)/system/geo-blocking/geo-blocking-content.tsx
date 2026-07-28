@@ -51,10 +51,8 @@ import type { CountryRestrictionRow } from "@/lib/queries/geo-blocking";
 import { isUsStateCode, usStateName } from "./us-states";
 import {
   applyMandatoryJurisdictionPolicy,
-  applyGlobalFiatPolicy,
   fiatJurisdictionName,
   FIAT_JURISDICTION_POLICY,
-  hasAllWhopFiatDepositLocks,
   hasAnyWhopFiatDepositLock,
   isGlobalFiatPolicyActive,
   isMandatoryJurisdictionPolicyEnforced,
@@ -289,36 +287,28 @@ export function GeoBlockingContent({
     }
   }
 
-  // Global card-deposit switch. Enabling opens non-policy rows while preserving
-  // every mandatory exclusion; disabling locks every row. The server action
-  // also moves the site-wide lock in the same transaction.
+  // Global card-deposit gate. Per-location overrides are independent.
   function handleGlobalFiat(allowed: boolean) {
-    const previous = rows;
     const previousSiteLocks = currentSiteLockedMethods;
-    setRows((current) => applyGlobalFiatPolicy(current, allowed));
     setGlobalFiatPending(true);
     startTransition(async () => {
       try {
         const res = await setGlobalFiatDeposits(allowed);
         setCurrentSiteLockedMethods(res.lockedMethods);
-        if (
-          res.siteConfigCacheReloaded &&
-          res.countryRestrictionsCacheReloaded
-        ) {
+        if (res.siteConfigCacheReloaded) {
           toast.success(
             allowed
-              ? `Whop fiat enabled outside ${res.protected} required exclusions`
-              : `Whop fiat disabled across ${res.affected} location entries`,
+              ? "Whop fiat enabled globally"
+              : "Whop fiat disabled globally",
           );
         } else {
           toast.warning(
-            "The database policy was saved, but the backend cache did not fully reload. Use Reload cache before treating the change as live.",
+            "The global fiat gate was saved, but the backend cache did not reload. Use Reload cache before treating the change as live.",
             { duration: 12000 },
           );
         }
         router.refresh();
       } catch (e) {
-        setRows(previous);
         setCurrentSiteLockedMethods(previousSiteLocks);
         toast.error(
           e instanceof Error ? e.message : "Failed to update fiat deposits",
@@ -439,7 +429,6 @@ export function GeoBlockingContent({
       confirmedOverridesRef.current,
     );
     confirmedOverridesRef.current = reconciled.remainingOverrides;
-    persistConfirmedRestrictions(reconciled.remainingOverrides);
     setRows(reconciled.rows);
     setCurrentSiteLockedMethods(siteLockedMethods);
   }, [countryRestrictions, siteLockedMethods]);
@@ -637,10 +626,7 @@ export function GeoBlockingContent({
     isGlobalFiatPolicyActive(currentSiteLockedMethods, rows);
   // Card deposits off site-wide ⇒ every row carries the fiat lock, so it is a
   // baseline, not a per-location restriction. See ./restrictions-table.tsx.
-  const fiatLockIsBaseline = !allFiatAllowed;
-  const policyFiatLocked = policyRows.filter((row) =>
-    hasAllWhopFiatDepositLocks(row.lockedDepositsFiat),
-  ).length;
+  const fiatLockIsBaseline = false;
   const policyFullyEnforced = rows.filter(
     isMandatoryJurisdictionPolicyEnforced,
   ).length;
@@ -650,8 +636,8 @@ export function GeoBlockingContent({
     currentSiteLockedMethods === null
       ? "Site lock configuration could not be loaded"
       : allFiatAllowed
-        ? `Enabled globally with ${policyFiatLocked} required exclusions`
-        : `${fiatDisabledCount} location rows currently lock card deposits`;
+        ? `Enabled globally · ${fiatDisabledCount} manual location exclusions`
+        : `Disabled globally · ${fiatDisabledCount} manual location exclusions`;
 
   const buckets = useMemo(() => {
     const blocked: RestrictionRowData[] = [];
@@ -777,9 +763,7 @@ export function GeoBlockingContent({
           the policy jurisdiction list is collapsed by default (owner,
           2026-07-28: the policy panel was too big and too text-heavy). */}
       <div className="grid gap-3 lg:grid-cols-3">
-        {/* Global fiat-deposit switch — flips locked_deposits_fiat for EVERY
-            country + US state at once (bulk write). Optimistic; the per-row
-            Fiat toggles in the tables reflect it immediately. */}
+        {/* Global fiat-deposit gate. It never rewrites per-location overrides. */}
         <div className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
           <div className="flex min-w-0 items-center gap-2.5">
             <CreditCard className="size-4 shrink-0 text-muted-foreground" />

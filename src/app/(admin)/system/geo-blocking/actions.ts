@@ -395,29 +395,15 @@ export async function reloadCountryRestrictionsCache(): Promise<{
   return { requestedEnv, resolvedEnv };
 }
 
-/**
- * Global Whop-fiat switch. Enabling removes the site-wide card/wallet locks,
- * opens every non-policy location, and keeps all mandatory jurisdictions
- * locked. Disabling locks the site and every location. The site_config row and
- * location rows move atomically, and legacy aliases are normalized away.
- */
+/** Global Whop-fiat gate. Per-location overrides are independent. */
 export async function setGlobalFiatDeposits(
   allowed: boolean,
 ): Promise<{
-  affected: number;
-  protected: number;
-  seeded: number;
   lockedMethods: string[];
   siteConfigCacheReloaded: boolean;
-  countryRestrictionsCacheReloaded: boolean;
 }> {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
-  await requireCapability(
-    session,
-    "__can_update_country_restriction",
-    "update country restrictions",
-  );
   await requireCapability(
     session,
     "__can_upsert_site_config",
@@ -451,66 +437,7 @@ export async function setGlobalFiatDeposits(
       })
       .where(eq(site_config.key, SITE_FIAT_LOCK_KEY));
 
-    const inserted = await tx
-      .insert(country_restrictions)
-      .values(
-        MANDATORY_FIAT_JURISDICTION_CODES.map((country_code) => ({
-          country_code,
-        })),
-      )
-      .onConflictDoNothing()
-      .returning({ country_code: country_restrictions.country_code });
-
-    const updated = allowed
-      ? await tx.execute<{ country_code: string }>(sql`
-          UPDATE country_restrictions
-          SET
-            locked_deposits_fiat = CASE
-              WHEN country_code = ANY(
-                ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
-              )
-                THEN ${normalizedWhopFiatLocksSql(true)}
-              ELSE ${normalizedWhopFiatLocksSql(false)}
-            END,
-            updated_at = NOW()
-          RETURNING country_code
-        `)
-      : await tx.execute<{ country_code: string }>(sql`
-          UPDATE country_restrictions
-          SET
-            locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
-            updated_at = NOW()
-          RETURNING country_code
-        `);
-
-    // The 33-row legal policy is broader than the Whop method lock. Reassert
-    // every independently enforced route restriction whenever this adjacent
-    // global control runs so old/partial rows cannot survive unnoticed.
-    await tx.execute(sql`
-      UPDATE country_restrictions
-      SET
-        blocked = true,
-        physical_withdrawal = false,
-        digital_withdrawal = false,
-        gift_card_deposit = false,
-        promo_code_deposit = false,
-        locked_deposits_crypto =
-          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
-        locked_deposits_fiat = ${normalizedWhopFiatLocksSql(true)},
-        locked_withdrawals_crypto =
-          ${pgArrayParam(CRYPTO_RESTRICTION_TOKENS)}::text[],
-        updated_at = NOW()
-      WHERE country_code = ANY(
-        ${pgArrayParam(MANDATORY_FIAT_JURISDICTION_CODES)}::text[]
-      )
-    `);
-
-    return {
-      affected: updated.rows.length,
-      protected: MANDATORY_FIAT_JURISDICTION_CODES.length,
-      seeded: inserted.length,
-      lockedMethods: nextSiteLocks,
-    };
+    return { lockedMethods: nextSiteLocks };
   });
 
   await createAdminAuditEvent({
@@ -519,24 +446,17 @@ export async function setGlobalFiatDeposits(
     metadata: {
       action: "global_fiat_deposits",
       allowed,
-      affected: result.affected,
-      protected: result.protected,
-      seeded: result.seeded,
       method: CREDIT_CARD_DEPOSIT_METHOD,
     },
   });
 
-  const [siteConfigCache, countryRestrictionsCache] =
-    await Promise.allSettled([
-      backendApi.post("/admin/refresh-site-config"),
-      backendApi.post("/admin/invalidate-country-restrictions-cache"),
-    ]);
+  const siteConfigCache = await Promise.allSettled([
+    backendApi.post("/admin/refresh-site-config"),
+  ]);
   revalidateFiatPolicyPages();
   return {
     ...result,
-    siteConfigCacheReloaded: siteConfigCache.status === "fulfilled",
-    countryRestrictionsCacheReloaded:
-      countryRestrictionsCache.status === "fulfilled",
+    siteConfigCacheReloaded: siteConfigCache[0]?.status === "fulfilled",
   };
 }
 
