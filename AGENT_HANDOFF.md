@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 fiat risk score guide:** `/antifraud/fiat-deposits` now has a fifth summary card with a segmented score bar and the exact assessment bands: 0-29 Good, 30-59 Review, and 60-100 High risk. The loading state matches the five-card layout. Focused fixtures, all 237 guardrails, TypeScript, zero-warning ESLint, diff check, and the production build pass.
+
 - **2026-07-28 signed Antifraud ingest delivery:** `antifraud-monitor` now delivers committed `risk_events` to the Admin dashboard's `/api/antifraud/ingest` route in HMAC-signed batches of at most 50. A dedicated Antifraud-DB cursor advances only after every event is accepted or confirmed as a duplicate; event ids make crash retries idempotent, a PostgreSQL advisory lock keeps multiple replicas single-sender, and transient failures back off without blocking the monitor poller. The Settings page reports both receiver and sender configuration instead of treating a receiver-only secret as healthy. Monitor TypeScript/build and 80 tests pass; dashboard TypeScript, zero-warning ESLint, all 237 guardrails, and the production build pass.
 
 - **2026-07-28 signup age visibility:** every account row on `fraud.packydash.com/signups` has a prominent cyan `Signed up` box with compact elapsed time (`40 min ago`, `3 hr ago`, etc.) and the exact Europe/Berlin timestamp underneath. The focused fixture, all 238 dashboard guardrails, TypeScript, and scoped zero-warning ESLint pass.

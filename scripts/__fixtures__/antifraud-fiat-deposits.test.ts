@@ -22,6 +22,11 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
   assert.match(page, /Six-point flow/);
+  assert.match(page, /Risk score guide/);
+  assert.match(page, /Good[\s\S]*0–29/);
+  assert.match(page, /Review[\s\S]*30–59/);
+  assert.match(page, /High risk[\s\S]*60–100/);
+  assert.match(page, /xl:grid-cols-5/);
   assert.match(detail, /Money trail/);
   assert.match(detail, /Whop risk signals/);
   assert.doesNotMatch(detail, /redirect\(["']\/fiat/);

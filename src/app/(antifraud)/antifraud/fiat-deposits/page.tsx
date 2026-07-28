@@ -234,7 +234,7 @@ function Summary({ summary }: { summary: FiatSummary }) {
     { label: "Assessed volume", value: formatCurrency(summary.amount_usd), sub: `${summary.good} low risk`, icon: Banknote, tone: "text-emerald-500" },
   ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
       {cards.map(({ label, value, sub, icon: Icon, tone }) => (
         <div key={label} className="rounded-xl border border-border/70 bg-card p-4">
           <div className="flex items-center justify-between">
@@ -245,6 +245,51 @@ function Summary({ summary }: { summary: FiatSummary }) {
           <p className="mt-1 text-[11px] text-muted-foreground">{sub}</p>
         </div>
       ))}
+      <FiatRiskScoreGuide />
+    </div>
+  );
+}
+
+function FiatRiskScoreGuide() {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card p-4">
+      <div className="flex items-center justify-between">
+        <span className="text-xs font-medium text-muted-foreground">
+          Risk score guide
+        </span>
+        <ShieldCheck className="size-4 text-violet-500" />
+      </div>
+      <div
+        className="mt-4"
+        role="img"
+        aria-label="Risk score guide: 0 to 29 is good, 30 to 59 needs review, and 60 to 100 is high risk"
+      >
+        <div className="flex h-2.5 overflow-hidden rounded-full">
+          <span className="w-[30%] bg-emerald-500" aria-hidden />
+          <span className="w-[30%] bg-amber-400" aria-hidden />
+          <span className="w-[40%] bg-rose-500" aria-hidden />
+        </div>
+        <div className="mt-2 grid grid-cols-[3fr_3fr_4fr] text-[9px] font-semibold leading-tight">
+          <span className="text-emerald-600 dark:text-emerald-400">
+            Good
+            <span className="block font-normal text-muted-foreground">
+              0–29
+            </span>
+          </span>
+          <span className="text-center text-amber-600 dark:text-amber-400">
+            Review
+            <span className="block font-normal text-muted-foreground">
+              30–59
+            </span>
+          </span>
+          <span className="text-right text-rose-600 dark:text-rose-400">
+            High risk
+            <span className="block font-normal text-muted-foreground">
+              60–100
+            </span>
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -371,8 +416,8 @@ function Empty({ text }: { text: string }) {
 function FiatListSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}
       </div>
       {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-56 rounded-xl" />)}
     </div>
