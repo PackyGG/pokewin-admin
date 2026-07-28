@@ -50,11 +50,13 @@ export function discordRuntimeStatus(config: Pick<
   | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
   | "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"
   | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
+  | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
   | "ANTIFRAUD_DASHBOARD_URL"
 >): {
   webhookConfigured: boolean;
   withdrawalHoldWebhookConfigured: boolean;
   fiatProblemWebhookConfigured: boolean;
+  fiatEmailBlacklistWebhookConfigured: boolean;
   dashboardUrlConfigured: boolean;
   supportRecipientIds: readonly string[];
   urgentRecipientIds: readonly string[];
@@ -66,6 +68,9 @@ export function discordRuntimeStatus(config: Pick<
     ),
     fiatProblemWebhookConfigured: Boolean(
       config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+    ),
+    fiatEmailBlacklistWebhookConfigured: Boolean(
+      config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
     ),
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
     supportRecipientIds: SUPPORT_USER_IDS,

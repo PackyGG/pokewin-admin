@@ -7,6 +7,7 @@ import {
   discordRetryAfterSeconds,
   fetchFailedPaymentWebhooks,
   fetchHighRiskFiatProblems,
+  fiatAlertWebhookUrl,
   fiatProblemTitle,
   isFiatRiskProblem,
   type FiatProblem,
@@ -205,6 +206,52 @@ test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
     "gmail.com",
   );
   assert.doesNotMatch(JSON.stringify(payload), /Blacklisted domain/);
+});
+
+test("email blacklist alerts use their dedicated Discord destination", () => {
+  const config = {
+    FIAT_ALERT_DISCORD_WEBHOOK_URL:
+      "https://discord.com/api/webhooks/fiat-id/fiat-token",
+    ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
+      "https://discord.com/api/webhooks/risk-id/risk-token",
+    FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
+      "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
+  };
+
+  assert.equal(
+    fiatAlertWebhookUrl(config, "blacklisted_email_domain"),
+    config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
+  );
+  assert.equal(
+    fiatAlertWebhookUrl(config, "high_risk"),
+    config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+  );
+  assert.equal(
+    fiatAlertWebhookUrl(config, "failed"),
+    config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+  );
+  assert.equal(
+    fiatAlertWebhookUrl(
+      {
+        FIAT_ALERT_DISCORD_WEBHOOK_URL:
+          config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+        ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
+          config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+      },
+      "blacklisted_email_domain",
+    ),
+    config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+  );
+  assert.equal(
+    fiatAlertWebhookUrl(
+      {
+        FIAT_ALERT_DISCORD_WEBHOOK_URL:
+          config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+      },
+      "blacklisted_email_domain",
+    ),
+    config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+  );
 });
 
 test("fiat Discord delivery honors bounded retry-after headers", () => {

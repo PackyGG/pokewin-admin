@@ -195,6 +195,8 @@ const runtimeConfig: Config = {
     "https://discord.com/api/webhooks/hold-id/hold-token",
   FIAT_ALERT_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/fiat-id/fiat-token",
+  FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
+    "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
   FIAT_ALERT_DASHBOARD_URL:
     "https://admin.packydash.com/fiat?tab=payments",
   ALLOWED_ORIGINS: "https://fraud.packydash.com",
@@ -252,6 +254,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   assert.equal(status.discord.webhookConfigured, true);
   assert.equal(status.discord.withdrawalHoldWebhookConfigured, true);
   assert.equal(status.discord.fiatProblemWebhookConfigured, true);
+  assert.equal(status.discord.fiatEmailBlacklistWebhookConfigured, true);
   assert.equal(status.discord.dashboardUrlConfigured, true);
   assert.equal(status.discord.supportRecipientIds.length, 3);
   assert.equal(status.discord.urgentRecipientIds.length, 4);
@@ -280,6 +283,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_ALERT_DISCORD_WEBHOOK_URL ?? "",
+    runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_ALERT_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_INGEST_URL,

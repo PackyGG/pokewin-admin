@@ -37,6 +37,7 @@ const schema = z.object({
   ANTIFRAUD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
   ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
   FIAT_ALERT_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
+  FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL: discordWebhookUrl.optional(),
   FIAT_ALERT_DASHBOARD_URL: z
     .string()
     .url()

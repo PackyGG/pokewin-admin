@@ -63,3 +63,17 @@ test("Fraud Fiat deposits force blacklist matches to the critical score", () => 
   assert.match(risk, /verdict: "bad"/);
   assert.match(risk, /Keep crypto and item withdrawals locked/);
 });
+
+test("email blacklist alerts have a dedicated Discord destination", () => {
+  const config = read("services/antifraud-monitor/src/config.ts");
+  const alerts = read("services/antifraud-monitor/src/fiat-alerts.ts");
+  const server = read("services/antifraud-monitor/src/server.ts");
+
+  assert.match(config, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
+  assert.match(alerts, /problemCode === "blacklisted_email_domain"/);
+  assert.match(
+    alerts,
+    /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL \?\?[\s\S]*FIAT_ALERT_DISCORD_WEBHOOK_URL/,
+  );
+  assert.match(server, /config\.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
+});
