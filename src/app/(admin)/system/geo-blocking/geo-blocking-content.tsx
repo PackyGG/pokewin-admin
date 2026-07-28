@@ -17,7 +17,6 @@ import {
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import {
   reloadCountryRestrictionsCache,
-  seedMissingCountryRestrictions,
   setGlobalFiatDeposits,
   setMandatoryJurisdictionsGeoBlocked,
   toggleCountryRestriction,
@@ -212,7 +211,6 @@ export function GeoBlockingContent({
   const [restriction, setRestriction] = useState<RestrictionFilter>("all");
   // In-flight country codes — see the "Per-row pending" note above.
   const [pendingCodes, setPendingCodes] = useState<Set<string>>(new Set());
-  const [seeding, setSeeding] = useState(false);
   const [reloadingCache, setReloadingCache] = useState(false);
   const [globalFiatPending, setGlobalFiatPending] = useState(false);
   const [policyGeoPending, setPolicyGeoPending] = useState(false);
@@ -239,22 +237,6 @@ export function GeoBlockingContent({
       toast.error(e instanceof Error ? e.message : "Failed to reload cache");
     } finally {
       setReloadingCache(false);
-    }
-  }
-
-  async function handleSeed() {
-    setSeeding(true);
-    try {
-      const res = await seedMissingCountryRestrictions();
-      toast.success(
-        res.seeded === 0
-          ? `All ${res.total} countries already present`
-          : `Seeded ${res.seeded} missing ${res.seeded === 1 ? "country" : "countries"} (${res.total} total)`,
-      );
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to seed countries");
-    } finally {
-      setSeeding(false);
     }
   }
 
@@ -728,18 +710,6 @@ export function GeoBlockingContent({
             title="Force the game backend to reload its country-restriction cache now instead of waiting for the ~1h TTL. Reports which env (prod/dev) was reloaded."
           >
             {reloadingCache ? "Reloading…" : "Reload cache"}
-          </Button>
-          {/* One-time backfill: add a row for every ISO country missing one (item withdrawal
-              off baseline) so all countries are present + editable. Idempotent — safe to
-              re-run; writes the prod game DB. */}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleSeed}
-            disabled={seeding}
-            title="Add a country_restrictions row for every ISO country missing one (item/physical withdrawal off), so every country is editable here."
-          >
-            {seeding ? "Seeding…" : "Seed missing countries"}
           </Button>
         </div>
       </div>
