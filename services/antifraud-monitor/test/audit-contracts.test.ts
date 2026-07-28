@@ -22,6 +22,12 @@ import {
   STREAM_ID_PATTERN,
 } from "../src/live.js";
 import { processOrderedBatch } from "../src/ordered-ingestion.js";
+import {
+  notificationRouteStatuses,
+  notificationRoutesForFiatProblem,
+  notificationWebhookUrl,
+  signedIngestTarget,
+} from "../src/notification-routes.js";
 import { createPromiseCache } from "../src/promise-cache.js";
 import { caseDecisionSchema } from "../src/request-schemas.js";
 import { sameRuleUpdateIdentity } from "../src/rule-idempotency.js";
@@ -300,6 +306,75 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   }
 });
 
+test("notification registry owns every producer route and missing state", async () => {
+  const routes = notificationRouteStatuses({
+    ANTIFRAUD_DISCORD_WEBHOOK_URL:
+      runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+    ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: undefined,
+    FIAT_ALERT_DISCORD_WEBHOOK_URL:
+      runtimeConfig.FIAT_ALERT_DISCORD_WEBHOOK_URL,
+    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: undefined,
+    FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
+      runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
+    ANTIFRAUD_INGEST_URL: runtimeConfig.ANTIFRAUD_INGEST_URL,
+    ANTIFRAUD_INGEST_SECRET: undefined,
+  });
+  assert.deepEqual(
+    routes.map((route) => [route.label, route.configured]),
+    [
+      ["Antifraud risk", true],
+      ["Fiat operations", true],
+      ["High-risk fiat supplemental", false],
+      ["Email containment", true],
+      ["Withdrawal holds", false],
+      ["Signed dashboard ingest", false],
+    ],
+  );
+  for (const route of routes) {
+    assert.deepEqual(Object.keys(route).sort(), [
+      "configured",
+      "eventFamilies",
+      "label",
+      "purpose",
+    ]);
+    assert.ok(route.label.length > 0);
+    assert.ok(route.purpose.length > 0);
+    assert.ok(route.eventFamilies.length > 0);
+  }
+
+  assert.deepEqual(notificationRoutesForFiatProblem("high_risk"), [
+    "antifraud_risk",
+    "high_risk_supplemental",
+  ]);
+  assert.deepEqual(
+    notificationRoutesForFiatProblem("blacklisted_email_domain"),
+    ["email_blacklist"],
+  );
+  assert.deepEqual(notificationRoutesForFiatProblem("failed"), [
+    "fiat_operations",
+  ]);
+  assert.equal(
+    notificationWebhookUrl(runtimeConfig, "withdrawal_hold"),
+    runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+  );
+  assert.deepEqual(signedIngestTarget(runtimeConfig), {
+    url: runtimeConfig.ANTIFRAUD_INGEST_URL,
+    secret: runtimeConfig.ANTIFRAUD_INGEST_SECRET,
+  });
+
+  const srcUrl = new URL("../src/", import.meta.url);
+  const producerContracts = [
+    ["discord.ts", "notificationWebhookUrl"],
+    ["fiat-alerts.ts", "notificationRoutesForFiatProblem"],
+    ["ingest-delivery.ts", "signedIngestTarget"],
+    ["server.ts", "notificationRouteStatuses"],
+  ] as const;
+  for (const [file, helper] of producerContracts) {
+    const source = await readFile(new URL(file, srcUrl), "utf8");
+    assert.match(source, new RegExp(`\\b${helper}\\b`));
+  }
+});
+
 test("high-risk Discord routes are isolated without exposing their values", () => {
   const duplicate =
     "https://discord.com/api/webhooks/same-id/same-token";
@@ -408,6 +483,24 @@ test("operations config accepts read/admin tokens and rejects missing tokens", (
     ),
     false,
   );
+});
+
+test("notification route status accepts read/admin tokens and rejects missing tokens", () => {
+  const path = "/v1/operations/notifications";
+  assert.equal(
+    serviceRequestAuthorized("GET", path, runtimeConfig.API_TOKEN, runtimeConfig),
+    true,
+  );
+  assert.equal(
+    serviceRequestAuthorized(
+      "GET",
+      path,
+      runtimeConfig.API_ADMIN_TOKEN,
+      runtimeConfig,
+    ),
+    true,
+  );
+  assert.equal(serviceRequestAuthorized("GET", path, "", runtimeConfig), false);
 });
 
 test("editable score migration seeds every runtime weight", async () => {

@@ -18,6 +18,7 @@ import {
   Settings,
   ShieldAlert,
   UserRoundSearch,
+  Webhook,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -82,6 +83,10 @@ const TRANSACTION_NAV: NavItem[] = [
 
 const KYC_NAV: NavItem[] = [
   { label: "Home", href: "/antifraud/kyc", icon: Fingerprint },
+];
+
+const NOTIFICATION_NAV: NavItem[] = [
+  { label: "Webhooks", href: "/antifraud/webhooks", icon: Webhook },
 ];
 
 /**
@@ -321,17 +326,30 @@ export function AntifraudSidebar({
         </SidebarGroup>
 
         {canManage && (
-          <SidebarGroup className="px-2 py-1">
-            <SidebarGroupLabel>System</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <NavMenu
-                items={MANAGE_NAV}
-                pathname={pathname}
-                onNavTap={handleNavTap}
-                toHref={toHref}
-              />
-            </SidebarGroupContent>
-          </SidebarGroup>
+          <>
+            <SidebarGroup className="px-2 py-1">
+              <SidebarGroupLabel>Notifications</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <NavMenu
+                  items={NOTIFICATION_NAV}
+                  pathname={pathname}
+                  onNavTap={handleNavTap}
+                  toHref={toHref}
+                />
+              </SidebarGroupContent>
+            </SidebarGroup>
+            <SidebarGroup className="px-2 py-1">
+              <SidebarGroupLabel>System</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <NavMenu
+                  items={MANAGE_NAV}
+                  pathname={pathname}
+                  onNavTap={handleNavTap}
+                  toHref={toHref}
+                />
+              </SidebarGroupContent>
+            </SidebarGroup>
+          </>
         )}
       </SidebarContent>
 

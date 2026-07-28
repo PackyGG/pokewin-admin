@@ -3,6 +3,11 @@ import type pg from "pg";
 
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
+import {
+  notificationRoutesForFiatProblem,
+  notificationWebhookUrl,
+  type FiatNotificationRouteKey,
+} from "./notification-routes.js";
 import { whopPaymentMethodLabel } from "./whop-payment-method.js";
 
 const CURSOR_STREAM = "fiat-problems";
@@ -35,11 +40,6 @@ export const FIAT_RISK_PROBLEM_CODES = [
   "suspicious_deposit_cluster",
 ] as const satisfies readonly FiatProblemCode[];
 
-const FIAT_EMAIL_RISK_PROBLEM_CODES = [
-  "blacklisted_email_domain",
-  "suspicious_deposit_cluster",
-] as const satisfies readonly FiatProblemCode[];
-
 export function isFiatRiskProblem(code: FiatProblemCode): boolean {
   return (FIAT_RISK_PROBLEM_CODES as readonly FiatProblemCode[]).includes(code);
 }
@@ -67,7 +67,10 @@ export const FIAT_ALERT_DESTINATIONS = [
 ] as const;
 
 export type FiatAlertDestination =
-  (typeof FIAT_ALERT_DESTINATIONS)[number];
+  Extract<
+    FiatNotificationRouteKey,
+    (typeof FIAT_ALERT_DESTINATIONS)[number]
+  >;
 
 type FiatAlertWebhookConfig = Pick<
   Config,
@@ -634,36 +637,14 @@ export async function fetchHighRiskFiatProblems(
 export function fiatAlertDestinations(
   problemCode: FiatProblemCode,
 ): readonly FiatAlertDestination[] {
-  if (
-    (FIAT_EMAIL_RISK_PROBLEM_CODES as readonly FiatProblemCode[]).includes(
-      problemCode,
-    )
-  ) {
-    return ["email_blacklist"];
-  }
-  if (problemCode === "high_risk") {
-    return ["antifraud_risk", "high_risk_supplemental"];
-  }
-  if (problemCode === "fiat_locked_account") {
-    return ["antifraud_risk"];
-  }
-  return ["fiat_operations"];
+  return notificationRoutesForFiatProblem(problemCode);
 }
 
 export function fiatAlertWebhookUrl(
   config: FiatAlertWebhookConfig,
   destination: FiatAlertDestination,
 ): string | undefined {
-  switch (destination) {
-    case "antifraud_risk":
-      return config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
-    case "fiat_operations":
-      return config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
-    case "high_risk_supplemental":
-      return config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL;
-    case "email_blacklist":
-      return config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
-  }
+  return notificationWebhookUrl(config, destination);
 }
 
 export class FiatProblemAlerts {

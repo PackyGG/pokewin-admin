@@ -101,6 +101,21 @@ const runtimeConfigSchema = z.object({
 
 export type AntifraudRuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 
+const notificationRoutesSchema = z.object({
+  routes: z.array(
+    z.object({
+      label: z.string(),
+      purpose: z.string(),
+      eventFamilies: z.array(z.string()),
+      configured: z.boolean(),
+    }),
+  ),
+});
+
+export type AntifraudNotificationRoutes = z.infer<
+  typeof notificationRoutesSchema
+>;
+
 /** Read/ticket token — everything except the decision write. */
 function readToken(): { baseUrl?: string; token?: string } {
   return {
@@ -137,6 +152,38 @@ export const getAntifraudRuntimeConfig = cache(async (): Promise<{
     return { configured: true, data: payload.data, error: false };
   } catch {
     console.error("[antifraud-monitor] runtime config request failed");
+    return { configured: true, data: null, error: true };
+  }
+});
+
+export const getAntifraudNotificationRoutes = cache(async (): Promise<{
+  configured: boolean;
+  data: AntifraudNotificationRoutes | null;
+  error: boolean;
+}> => {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: null, error: false };
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/operations/notifications`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    const payload = z
+      .object({ data: notificationRoutesSchema })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch {
+    console.error("[antifraud-monitor] notification routes request failed");
     return { configured: true, data: null, error: true };
   }
 });

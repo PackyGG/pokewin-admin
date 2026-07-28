@@ -1,6 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
+import { notificationWebhookUrl } from "./notification-routes.js";
 
 export const SUPPORT_USER_IDS = [
   "1302882250391818311",
@@ -295,14 +296,14 @@ export class DiscordAlerts {
 
   async send(alert: DiscordAlert): Promise<boolean> {
     return this.sendTo(
-      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+      notificationWebhookUrl(this.config, "antifraud_risk"),
       alert,
     );
   }
 
   async sendWithdrawalHold(alert: DiscordAlert): Promise<boolean> {
     return this.sendTo(
-      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+      notificationWebhookUrl(this.config, "withdrawal_hold"),
       alert,
     );
   }

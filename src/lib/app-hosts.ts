@@ -161,6 +161,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "staff",
       "profile",
       "notifications",
+      "webhooks",
       "settings",
     ],
     landing: "/antifraud",

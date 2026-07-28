@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
 
 import type { Config } from "./config.js";
+import { signedIngestTarget } from "./notification-routes.js";
 import { severity } from "./scoring.js";
 
 const CURSOR = "admin-dashboard";
@@ -271,17 +272,21 @@ export class IngestDelivery {
   }
 
   private async deliverEvents(events: RiskEventRow[]): Promise<void> {
+    const target = signedIngestTarget(this.config);
+    if (!target) {
+      throw new Error("Dashboard ingest is not configured");
+    }
     const rawBody = JSON.stringify({
       events: events.map(ingestEvent),
     });
     const timestamp = String(Date.now());
-    const response = await this.send(this.config.ANTIFRAUD_INGEST_URL, {
+    const response = await this.send(target.url, {
       method: "POST",
       headers: {
         "content-type": "application/json",
         "x-antifraud-timestamp": timestamp,
         "x-antifraud-signature": signIngest(
-          this.config.ANTIFRAUD_INGEST_SECRET,
+          target.secret,
           timestamp,
           rawBody,
         ),

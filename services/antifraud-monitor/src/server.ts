@@ -47,6 +47,7 @@ import {
   type StoredRuleUpdateIdentity,
 } from "./rule-idempotency.js";
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
+import { notificationRouteStatuses } from "./notification-routes.js";
 import { registerFiatRoutes } from "./fiat-routes.js";
 import { FiatRiskService } from "./fiat-risk.js";
 import { IngestDelivery } from "./ingest-delivery.js";
@@ -341,6 +342,12 @@ app.get("/v1/operations/poller", async () => ({
  */
 app.get("/v1/operations/config", async () => ({
   data: sanitizedRuntimeConfig(config, allowedOrigins.size),
+}));
+
+app.get("/v1/operations/notifications", async () => ({
+  data: {
+    routes: notificationRouteStatuses(config),
+  },
 }));
 
 app.get("/v1/monitors/live", async () => {
