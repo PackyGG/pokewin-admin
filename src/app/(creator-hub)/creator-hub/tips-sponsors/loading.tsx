@@ -1,15 +1,10 @@
-import { Skeleton } from "@/components/ui/skeleton";
+import { TipsSponsorsSkeleton } from "./_components/tips-sponsors-skeleton";
 
+/**
+ * Route-level loading state — renders the SAME skeleton module the page's
+ * Suspense fallbacks compose, so the placeholder always mirrors the real
+ * section structure (headline strip → reconciliation → chart → ranklist).
+ */
 export default function TipsSponsorsLoading() {
-  return (
-    <div className="space-y-6">
-      <Skeleton className="h-24 w-full rounded-2xl" />
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-[88px] rounded-2xl" />
-        ))}
-      </div>
-      <Skeleton className="h-[340px] rounded-2xl" />
-    </div>
-  );
+  return <TipsSponsorsSkeleton />;
 }

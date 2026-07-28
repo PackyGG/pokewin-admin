@@ -2,34 +2,41 @@ import { Suspense } from "react";
 import {
   Gift,
   HeartHandshake,
-  Layers,
+  LineChart as LineChartIcon,
   ListOrdered,
   Receipt,
-  Tv,
-  Users,
+  Scale,
 } from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   parseDashboardPeriod,
   DASHBOARD_PERIOD_LABELS,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 
-import { HubKpiBox } from "../_components/hub-kpi-box";
 import { HubKpiInfoPopover } from "../_components/hub-kpi-info-popover";
+import { HubNotice } from "../_components/hub-notice";
 import { HubPeriodSelector } from "../_components/hub-period-selector";
-import { getTipsSponsorsOverview } from "./_queries/tips-sponsors-data";
+import {
+  getTipsSponsorsLedgerOverview,
+  getTipsSponsorsSessionsOverview,
+  SPONSOR_TYPE,
+  TIP_TYPE,
+} from "./_queries/tips-sponsors-data";
 import { TipsSponsorsChart } from "./_components/tips-sponsors-chart";
 import { CreatorSpendRanklist } from "./_components/creator-spend-ranklist";
+import {
+  ChartSkeleton,
+  HeadlineLifetimeTileSkeleton,
+  HeadlineSessionTilesSkeleton,
+  RanklistSkeleton,
+  ReconciliationSkeleton,
+} from "./_components/tips-sponsors-skeleton";
 
 export const metadata = { title: "Tips & Sponsors · Creator Hub" };
 
@@ -37,8 +44,10 @@ export const metadata = { title: "Tips & Sponsors · Creator Hub" };
  * Creator Hub — Tips & Sponsors.
  *
  * House-funded tips + battle sponsorships creators hand out from the fill
- * program pool. Surfaces windowed + lifetime totals, ledger txn counts,
- * session-derived per-creator breakdown, and a 30-day daily trend.
+ * program pool. Two independent streams: the ledger leg (window Σ, lifetime,
+ * 30-day trend — fast SQL) and the session leg (per-creator backend fan-out)
+ * each render behind their own Suspense boundary, so the SQL KPIs never wait
+ * on the slow roster walk.
  */
 export default async function CreatorHubTipsSponsorsPage({
   searchParams,
@@ -52,151 +61,276 @@ export default async function CreatorHubTipsSponsorsPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={Gift}
-            accent="rose"
-            title="Tips & Sponsors"
-            subtitle={`House-funded creator giveaways · ${windowLabel}`}
-          />
-          <HubPeriodSelector current={period} />
-        </div>
-      </PageHero>
-
-      <Suspense key={period} fallback={<TipsSponsorsSkeleton />}>
-        <TipsSponsorsSection period={period} />
-      </Suspense>
-    </div>
-  );
-}
-
-async function TipsSponsorsSection({ period }: { period: DashboardPeriod }) {
-  const data = await getTipsSponsorsOverview(period);
-  const { sessionsWindow, ledgerWindow, lifetime } = data;
-
-  return (
-    <FadeIn className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        <HubKpiBox
-          label="Session spend"
+      {/* Headline — page opener carries the identity (PageHeroIdentity renders
+          no titles by owner decision) and the period selector. */}
+      <div className="space-y-3">
+        <SectionHeading
           icon={Gift}
-          accent="rose"
-          value={formatCurrency(sessionsWindow.totalUsd)}
-          sub="tips + sponsors (sessions)"
-          info={
-            <HubKpiInfoPopover
-              title="Session spend"
-              description="Authoritative total from backend session counters — sums tips_spent_this_session_usd + sponsorship_spent_this_session_usd across all creators in the selected window."
-            />
-          }
+          title="Tips & Sponsors"
+          action={<HubPeriodSelector current={period} />}
         />
-        <HubKpiBox
-          label="Tips"
-          icon={HeartHandshake}
-          accent="rose"
-          value={formatCurrency(sessionsWindow.tipsUsd)}
-          sub="creator_fill_spend_tip"
-        />
-        <HubKpiBox
-          label="Sponsors"
-          icon={Layers}
-          accent="rose"
-          value={formatCurrency(sessionsWindow.sponsorUsd)}
-          sub="creator_fill_spend_battle"
-        />
-        <HubKpiBox
-          label="Sessions w/ spend"
-          icon={Tv}
-          accent="blue"
-          value={formatNumber(sessionsWindow.sessionsWithSpend)}
-          sub={
-            sessionsWindow.activeSessionsWithSpend > 0
-              ? `${formatNumber(sessionsWindow.activeSessionsWithSpend)} live now`
-              : "with tips or sponsors"
-          }
-        />
-        <HubKpiBox
-          label="Creators w/ spend"
-          icon={Users}
-          accent="blue"
-          value={formatNumber(sessionsWindow.creatorsWithSpend)}
-          sub="in this window"
-        />
-        <HubKpiBox
-          label="Lifetime total"
-          icon={Receipt}
-          accent="rose"
-          value={formatCurrency(lifetime.totalUsd)}
-          sub={`${formatCurrency(lifetime.tipsUsd)} tips · ${formatCurrency(lifetime.sponsorUsd)} sponsors`}
-        />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+          <Suspense
+            key={`headline-sessions-${period}`}
+            fallback={<HeadlineSessionTilesSkeleton />}
+          >
+            <HeadlineSessionTiles period={period} windowLabel={windowLabel} />
+          </Suspense>
+          <Suspense
+            key={`headline-ledger-${period}`}
+            fallback={<HeadlineLifetimeTileSkeleton />}
+          >
+            <HeadlineLifetimeTile period={period} />
+          </Suspense>
+        </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-3">
-        <HubKpiBox
-          label="Ledger window"
-          icon={Receipt}
-          accent="rose"
-          value={formatCurrency(ledgerWindow.totalUsd)}
-          sub={`${formatNumber(ledgerWindow.tipTxnCount + ledgerWindow.sponsorTxnCount)} txns`}
-          info={
-            <HubKpiInfoPopover
-              title="Ledger window"
-              description="Σ |amount| over creator_fill_spend_tip + creator_fill_spend_battle in the selected window. May read $0 when ledger enum rows are not populated yet — session spend is authoritative."
-            />
-          }
-        />
-        <HubKpiBox
-          label="Ledger tips"
-          icon={HeartHandshake}
-          accent="rose"
-          value={formatCurrency(ledgerWindow.tipsUsd)}
-          sub={`${formatNumber(ledgerWindow.tipTxnCount)} txns`}
-        />
-        <HubKpiBox
-          label="Ledger sponsors"
-          icon={Layers}
-          accent="rose"
-          value={formatCurrency(ledgerWindow.sponsorUsd)}
-          sub={`${formatNumber(ledgerWindow.sponsorTxnCount)} txns`}
-        />
+      {/* Reconciliation — session counters vs ledger window, with an explicit
+          delta (needs both legs; the ledger read is cached + fast). */}
+      <div className="space-y-3">
+        <SectionHeading icon={Scale} title="Reconciliation" />
+        <Suspense
+          key={`reconciliation-${period}`}
+          fallback={<ReconciliationSkeleton />}
+        >
+          <ReconciliationRow period={period} windowLabel={windowLabel} />
+        </Suspense>
       </div>
 
-      <TipsSponsorsChart data={data.chart30d} />
+      {/* Breakdown — fixed 30-day trend + per-creator ranklist. */}
+      <div className="space-y-3">
+        <SectionHeading icon={LineChartIcon} title="Daily spend" />
+        <Suspense key={`chart-${period}`} fallback={<ChartSkeleton />}>
+          <ChartSection period={period} />
+        </Suspense>
+      </div>
 
       <div className="space-y-3">
         <SectionHeading
           icon={ListOrdered}
           title="By creator — session spend in window"
         />
-        <CreatorSpendRanklist
-          rows={data.byCreator}
-          backendUnavailable={data.backendUnavailable}
-        />
+        <Suspense key={`ranklist-${period}`} fallback={<RanklistSkeleton />}>
+          <RanklistSection period={period} />
+        </Suspense>
       </div>
+    </div>
+  );
+}
+
+// ─── Stream B: session leg (backend fan-out) ─────────────────────
+
+async function HeadlineSessionTiles({
+  period,
+  windowLabel,
+}: {
+  period: DashboardPeriod;
+  windowLabel: string;
+}) {
+  const { sessionsWindow } = await getTipsSponsorsSessionsOverview(period);
+
+  return (
+    <>
+      <KpiTile
+        label="Session spend"
+        icon={Gift}
+        accent="rose"
+        value={formatCurrency(sessionsWindow.totalUsd)}
+        sub={`${formatNumber(sessionsWindow.sessionsWithSpend)} sessions · ${formatNumber(sessionsWindow.creatorsWithSpend)} creators · ${windowLabel}`}
+        live={sessionsWindow.activeSessionsWithSpend > 0}
+        action={
+          <HubKpiInfoPopover
+            title="Session spend"
+            description="Authoritative total from backend session counters — sums tips_spent_this_session_usd + sponsorship_spent_this_session_usd across all creators in the selected window."
+            lines={[
+              {
+                label: "Sessions with spend",
+                value: formatNumber(sessionsWindow.sessionsWithSpend),
+                tone: "muted",
+              },
+              {
+                label: "Live sessions with spend",
+                value: formatNumber(sessionsWindow.activeSessionsWithSpend),
+                tone: "muted",
+              },
+              {
+                label: "Creators with spend",
+                value: formatNumber(sessionsWindow.creatorsWithSpend),
+                tone: "muted",
+              },
+            ]}
+          />
+        }
+      />
+      <KpiTile
+        label="Tips vs sponsors"
+        icon={HeartHandshake}
+        accent="rose"
+        value={formatCurrency(sessionsWindow.tipsUsd)}
+        sub={`tips · ${formatCurrency(sessionsWindow.sponsorUsd)} sponsors`}
+        action={
+          <HubKpiInfoPopover
+            title="Tips vs sponsors"
+            description="Session-derived split of house-funded creator giveaways in the selected window."
+            lines={[
+              {
+                label: `House tips · ${TIP_TYPE}`,
+                value: formatCurrency(sessionsWindow.tipsUsd),
+                tone: "rose",
+              },
+              {
+                label: `Battle sponsorships · ${SPONSOR_TYPE}`,
+                value: formatCurrency(sessionsWindow.sponsorUsd),
+                tone: "rose",
+              },
+            ]}
+            footer={{
+              label: "Total",
+              value: formatCurrency(sessionsWindow.totalUsd),
+              tone: "rose",
+            }}
+          />
+        }
+      />
+    </>
+  );
+}
+
+async function RanklistSection({ period }: { period: DashboardPeriod }) {
+  const { byCreator, backendUnavailable } =
+    await getTipsSponsorsSessionsOverview(period);
+
+  return (
+    <FadeIn>
+      <CreatorSpendRanklist
+        rows={byCreator}
+        backendUnavailable={backendUnavailable}
+      />
     </FadeIn>
   );
 }
 
-function TipsSponsorsSkeleton() {
+// ─── Stream A: ledger leg (fast SQL) ─────────────────────────────
+
+async function HeadlineLifetimeTile({ period }: { period: DashboardPeriod }) {
+  const { lifetime } = await getTipsSponsorsLedgerOverview(period);
+
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <Skeleton key={i} className="h-[88px] rounded-2xl" />
-        ))}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <Skeleton key={i} className="h-[88px] rounded-2xl" />
-        ))}
-      </div>
-      <Skeleton className="h-[340px] rounded-2xl" />
-      <div className="space-y-2.5">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <Skeleton key={i} className="h-[72px] rounded-xl" />
-        ))}
-      </div>
+    <KpiTile
+      label="Lifetime total"
+      icon={Receipt}
+      accent="rose"
+      value={formatCurrency(lifetime.totalUsd)}
+      sub={`${formatCurrency(lifetime.tipsUsd)} tips · ${formatCurrency(lifetime.sponsorUsd)} sponsors`}
+    />
+  );
+}
+
+async function ChartSection({ period }: { period: DashboardPeriod }) {
+  const { chart30d } = await getTipsSponsorsLedgerOverview(period);
+  return <TipsSponsorsChart data={chart30d} />;
+}
+
+// ─── Reconciliation (both legs) ──────────────────────────────────
+
+async function ReconciliationRow({
+  period,
+  windowLabel,
+}: {
+  period: DashboardPeriod;
+  windowLabel: string;
+}) {
+  const [{ ledgerWindow }, { sessionsWindow, backendUnavailable }] =
+    await Promise.all([
+      getTipsSponsorsLedgerOverview(period),
+      getTipsSponsorsSessionsOverview(period),
+    ]);
+
+  if (backendUnavailable) {
+    return (
+      <HubNotice tone="amber" title="Session counters unavailable">
+        The backend session API is unreachable, so the session-vs-ledger
+        comparison can&apos;t be computed. Ledger window ({windowLabel}):{" "}
+        {formatCurrency(ledgerWindow.totalUsd)} across{" "}
+        {formatNumber(ledgerWindow.tipTxnCount + ledgerWindow.sponsorTxnCount)}{" "}
+        txns.
+      </HubNotice>
+    );
+  }
+
+  // Ledger reads ~$0 while sessions carry spend → the ledger enum rows are
+  // not populated yet. Say so instead of showing two silently contradicting
+  // numbers.
+  if (ledgerWindow.totalUsd < 0.01 && sessionsWindow.totalUsd >= 0.01) {
+    return (
+      <HubNotice
+        tone="amber"
+        icon={Scale}
+        title="Ledger enum rows not populated yet — session counters are authoritative"
+      >
+        Sessions report {formatCurrency(sessionsWindow.totalUsd)} of tips +
+        sponsor spend in the selected window ({windowLabel}), but the ledger
+        carries no house-tip or battle-sponsorship rows for it yet.
+      </HubNotice>
+    );
+  }
+
+  const delta = sessionsWindow.totalUsd - ledgerWindow.totalUsd;
+  const deltaIsZero = Math.abs(delta) < 0.01;
+
+  return (
+    <div className="grid grid-cols-1 gap-px overflow-hidden rounded-xl border bg-border sm:grid-cols-3">
+      <ReconCell
+        label="Session spend"
+        value={formatCurrency(sessionsWindow.totalUsd)}
+        sub={`backend counters · ${windowLabel}`}
+        valueClassName="text-rose-600 dark:text-rose-400"
+      />
+      <ReconCell
+        label="Ledger window"
+        value={formatCurrency(ledgerWindow.totalUsd)}
+        sub={`${formatNumber(ledgerWindow.tipTxnCount + ledgerWindow.sponsorTxnCount)} txns · ${windowLabel}`}
+        valueClassName="text-rose-600 dark:text-rose-400"
+      />
+      <ReconCell
+        label="Delta (session − ledger)"
+        value={`${delta >= 0 ? "+" : "−"}${formatCurrency(Math.abs(delta))}`}
+        sub={deltaIsZero ? "sources agree" : "sources disagree"}
+        valueClassName={
+          deltaIsZero
+            ? "text-muted-foreground"
+            : "text-amber-600 dark:text-amber-400"
+        }
+      />
+    </div>
+  );
+}
+
+function ReconCell({
+  label,
+  value,
+  sub,
+  valueClassName,
+}: {
+  label: string;
+  value: string;
+  sub: string;
+  valueClassName?: string;
+}) {
+  return (
+    <div className="bg-card px-4 py-3">
+      <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+        {label}
+      </p>
+      <p
+        className={cn(
+          "mt-1 text-lg font-bold leading-tight tracking-tight tabular-nums",
+          valueClassName,
+        )}
+      >
+        {value}
+      </p>
+      <p className="mt-0.5 text-[11px] text-muted-foreground">{sub}</p>
     </div>
   );
 }

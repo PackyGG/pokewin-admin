@@ -18,7 +18,6 @@ import {
   getCachedCreatorRoster,
   getCachedCreatorSessions,
 } from "@/lib/cache/creator-backend-cache";
-import { hubPeriodToInterval } from "../../_queries/hub-period-sql";
 import { getTipsSponsorSpend } from "../../../../(admin)/creators/_queries/tips-sponsor-spend";
 
 /** One creator's tips + sponsor spend (session-derived — authoritative totals). */
@@ -56,25 +55,52 @@ export type TipsSponsorChartRow = {
   sponsors: number;
 };
 
-export type TipsSponsorsOverview = {
+/**
+ * Fast leg — pure SQL against MAIN (ledger window Σ, lifetime Σ, fixed
+ * 30-day daily trend). Streams in its own Suspense boundary ahead of the
+ * per-creator backend fan-out.
+ */
+export type TipsSponsorsLedgerOverview = {
   period: DashboardPeriod;
   /** Ledger Σ in the selected window (`type::text` enum-safe). */
   ledgerWindow: TipsSponsorWindowStats;
   /** Lifetime ledger Σ (same legs as /creators KPI tile). */
   lifetime: TipsSponsorWindowStats;
+  /** Fixed 30-day daily trend (ledger). */
+  chart30d: TipsSponsorChartRow[];
+};
+
+/**
+ * Slow leg — backend session fan-out (roster walk + per-creator session
+ * sums). Streams behind its own Suspense boundary so the SQL KPIs above
+ * never wait on it.
+ */
+export type TipsSponsorsSessionsOverview = {
+  period: DashboardPeriod;
   /** Session-derived Σ in the selected window (authoritative when ledger is sparse). */
   sessionsWindow: TipsSponsorSessionStats;
   /** Per-creator breakdown in the selected window, ranked by total spend. */
   byCreator: CreatorTipsSponsorRow[];
-  /** Fixed 30-day daily trend (ledger). */
-  chart30d: TipsSponsorChartRow[];
   backendUnavailable: boolean;
 };
 
 const CREATOR_CONCURRENCY = 6;
 
-const TIP_TYPE = "creator_fill_spend_tip";
-const SPONSOR_TYPE = "creator_fill_spend_battle";
+export const TIP_TYPE = "creator_fill_spend_tip";
+export const SPONSOR_TYPE = "creator_fill_spend_battle";
+
+/**
+ * ONE window source for both legs (task: reconcile the cutoffs). The
+ * ledger SQL used to filter with `NOW() - INTERVAL '…'` (DB clock) while
+ * the session fan-out compared against `periodToCutoff` (app clock) — two
+ * clocks evaluated at different instants. Both legs now derive their
+ * cutoff from this single `periodToCutoff` value; the ledger query binds
+ * it as a `$1::timestamptz` parameter instead of computing its own.
+ * "all" stays unbounded on both legs (unchanged behavior).
+ */
+function windowCutoff(period: DashboardPeriod): Date | null {
+  return period === "all" ? null : periodToCutoff(period, new Date());
+}
 
 function emptyWindowStats(): TipsSponsorWindowStats {
   return {
@@ -99,9 +125,10 @@ function sessionSpend(session: CreatorSessionResponse): {
 }
 
 async function queryLedgerWindow(
-  sinceSql: string | null,
+  since: Date | null,
 ): Promise<TipsSponsorWindowStats> {
-  const sinceClause = sinceSql ? `AND lt.created_at >= ${sinceSql}` : "";
+  const sinceClause = since ? `AND lt.created_at >= $1::timestamptz` : "";
+  const values = since ? [since.toISOString()] : [];
 
   const rows = await queryMainRows<
     { type: string; total: string | null; count: string }[]
@@ -114,6 +141,7 @@ async function queryLedgerWindow(
         AND lt.type::text IN ('${TIP_TYPE}', '${SPONSOR_TYPE}')
         ${sinceClause}
       GROUP BY lt.type::text`,
+    ...values,
   );
 
   const stats = emptyWindowStats();
@@ -236,17 +264,14 @@ async function mapPool<T, R>(
   return out;
 }
 
-async function computeTipsSponsorsOverview(
+async function computeTipsSponsorsLedger(
   period: DashboardPeriod,
-): Promise<TipsSponsorsOverview> {
-  return withTiming("creator-hub.tipsSponsors", async () => {
-    const interval = hubPeriodToInterval(period);
-    const sinceSql =
-      period === "all" ? null : `NOW() - INTERVAL '${interval}'`;
-    const sinceDate = period === "all" ? null : periodToCutoff(period, new Date());
+): Promise<TipsSponsorsLedgerOverview> {
+  return withTiming("creator-hub.tipsSponsors.ledger", async () => {
+    const since = windowCutoff(period);
 
     const [ledgerWindow, lifetimeRaw, chart30d] = await Promise.all([
-      queryLedgerWindow(sinceSql),
+      queryLedgerWindow(since),
       getTipsSponsorSpend(),
       queryChart30d(),
     ]);
@@ -258,6 +283,16 @@ async function computeTipsSponsorsOverview(
       tipTxnCount: 0,
       sponsorTxnCount: 0,
     };
+
+    return { period, ledgerWindow, lifetime, chart30d };
+  });
+}
+
+async function computeTipsSponsorsSessions(
+  period: DashboardPeriod,
+): Promise<TipsSponsorsSessionsOverview> {
+  return withTiming("creator-hub.tipsSponsors.sessions", async () => {
+    const sinceDate = windowCutoff(period);
 
     let backendUnavailable = false;
     let byCreator: CreatorTipsSponsorRow[] = [];
@@ -311,26 +346,33 @@ async function computeTipsSponsorsOverview(
       }
     }
 
-    return {
-      period,
-      ledgerWindow,
-      lifetime,
-      sessionsWindow,
-      byCreator,
-      chart30d,
-      backendUnavailable,
-    };
+    return { period, sessionsWindow, byCreator, backendUnavailable };
   });
 }
 
-const cachedTipsSponsorsOverview = unstable_cache(
-  computeTipsSponsorsOverview,
-  ["creator-hub-tips-sponsors-v1"],
+// Same revalidate/tag semantics the combined "creator-hub-tips-sponsors-v1"
+// cache carried, split per leg so the fast SQL stream never waits on (or
+// shares an entry with) the backend fan-out.
+const cachedTipsSponsorsLedger = unstable_cache(
+  computeTipsSponsorsLedger,
+  ["creator-hub-tips-sponsors-ledger-v1"],
   { revalidate: 120, tags: ["creator-hub"] },
 );
 
-export async function getTipsSponsorsOverview(
+const cachedTipsSponsorsSessions = unstable_cache(
+  computeTipsSponsorsSessions,
+  ["creator-hub-tips-sponsors-sessions-v1"],
+  { revalidate: 120, tags: ["creator-hub"] },
+);
+
+export async function getTipsSponsorsLedgerOverview(
   period: DashboardPeriod,
-): Promise<TipsSponsorsOverview> {
-  return cachedTipsSponsorsOverview(period);
+): Promise<TipsSponsorsLedgerOverview> {
+  return cachedTipsSponsorsLedger(period);
+}
+
+export async function getTipsSponsorsSessionsOverview(
+  period: DashboardPeriod,
+): Promise<TipsSponsorsSessionsOverview> {
+  return cachedTipsSponsorsSessions(period);
 }

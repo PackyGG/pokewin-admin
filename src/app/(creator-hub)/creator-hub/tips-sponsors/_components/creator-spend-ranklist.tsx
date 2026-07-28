@@ -3,12 +3,17 @@ import { Gift, Tv, User } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { HubEmptyState, HubNotice } from "../../_components/hub-notice";
 import { BackendUnavailableHint } from "../../../../(admin)/creators/_components/backend-unavailable-hint";
 
 import type { CreatorTipsSponsorRow } from "../_queries/tips-sponsors-data";
 
 /**
  * Per-creator tips + sponsor spend ranklist (session-derived totals).
+ * Flat panel: `bg-card` + hairline border, `rounded-xl` (panel step of the
+ * radius scale), no glow/gradient. Rows keep the Live pill and link through
+ * to `/creator-hub/creators/{id}`.
  */
 export function CreatorSpendRanklist({
   rows,
@@ -19,36 +24,29 @@ export function CreatorSpendRanklist({
 }) {
   if (backendUnavailable) {
     return (
-      <div className="flex flex-col items-center gap-2 rounded-2xl border border-dashed bg-card p-6 text-center">
-        <p className="text-sm font-semibold">Creator session data unavailable</p>
-        <p className="max-w-md text-xs text-muted-foreground">
+      <HubNotice tone="amber" title="Creator session data unavailable">
+        <p>
           The packy.gg backend is unreachable, so per-creator tips and sponsor
-          totals cannot load. Ledger figures above may still reflect the database.
+          totals cannot load. Ledger figures above may still reflect the
+          database.
         </p>
         <BackendUnavailableHint text="Backend session API unavailable — per-creator breakdown deferred." />
-      </div>
+      </HubNotice>
     );
   }
 
   if (rows.length === 0) {
     return (
-      <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed py-12 text-center">
-        <div className="flex size-10 items-center justify-center rounded-full bg-muted">
-          <Gift className="size-4 text-muted-foreground" />
-        </div>
-        <div className="space-y-1">
-          <p className="text-sm font-semibold">No tips or sponsors in this window</p>
-          <p className="max-w-sm text-xs text-muted-foreground">
-            Creators haven&apos;t spent from the house-funded tips/sponsor pool
-            during the selected period.
-          </p>
-        </div>
-      </div>
+      <HubEmptyState
+        icon={Gift}
+        title="No tips or sponsors in this window"
+        sub="Creators haven't spent from the house-funded tips/sponsor pool during the selected period."
+      />
     );
   }
 
   return (
-    <div className="overflow-hidden rounded-2xl border bg-card">
+    <div className="overflow-hidden rounded-xl border bg-card">
       <div className="grid grid-cols-[auto_1fr_repeat(4,minmax(0,auto))] gap-x-3 gap-y-0 border-b bg-muted/30 px-4 py-2.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground max-sm:hidden">
         <span>#</span>
         <span>Creator</span>
@@ -68,18 +66,16 @@ export function CreatorSpendRanklist({
                 {i + 1}
               </span>
               <span className="flex min-w-0 items-center gap-2.5">
-                {row.image ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
-                    src={row.image}
-                    alt=""
-                    className="size-8 shrink-0 rounded-full object-cover ring-1 ring-border"
-                  />
-                ) : (
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-full bg-muted ring-1 ring-border">
-                    <User className="size-4 text-muted-foreground" />
-                  </span>
-                )}
+                <Avatar>
+                  {row.image && <AvatarImage src={row.image} alt="" />}
+                  <AvatarFallback>
+                    {row.username ? (
+                      row.username.slice(0, 2).toUpperCase()
+                    ) : (
+                      <User className="size-4" aria-hidden />
+                    )}
+                  </AvatarFallback>
+                </Avatar>
                 <span className="min-w-0">
                   <span className="flex items-center gap-1.5">
                     <span className="truncate text-sm font-semibold">
