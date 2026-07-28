@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
 
 import type { Databases } from "./db.js";
+import type { Signup } from "./types.js";
 
 const STREAM = "fiat_email_domains";
 const BATCH_SIZE = 100;
@@ -23,6 +24,11 @@ type PendingMatch = Omit<CheckoutEmailEvent, "user_id"> & {
   user_id: string;
   domain: string;
   attempt_count: number;
+  match_source: "whop_checkout" | "signup";
+};
+
+type EmailDomainMatchEvent = CheckoutEmailEvent & {
+  match_source: "whop_checkout" | "signup";
 };
 
 export function normalizeEmailDomain(value: string): string | null {
@@ -137,6 +143,56 @@ export class FiatEmailDomainGuard {
     await this.confirmLocks();
   }
 
+  async persistSignupMatch(
+    client: pg.PoolClient,
+    signup: Signup,
+  ): Promise<boolean> {
+    if (!signup.email) return false;
+    const domain = domainFromEmail(signup.email);
+    if (!domain) return false;
+    const active = await client.query<{ active: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM fiat_email_domain_blacklist
+          WHERE enabled AND domain = $1
+        ) AS active
+      `,
+      [domain],
+    );
+    if (active.rows[0]?.active !== true) return false;
+    return this.persistMatch(
+      client,
+      {
+        match_source: "signup",
+        source_event_id: `signup:${signup.id}`,
+        provider_event_id: `signup:${signup.id}`,
+        deposit_intent_id: null,
+        provider_payment_id: null,
+        user_id: signup.id,
+        username: signup.username,
+        checkout_email: signup.email.trim().toLowerCase(),
+        occurred_at: signup.created_at,
+      },
+      domain,
+    );
+  }
+
+  async captureSignup(signup: Signup): Promise<boolean> {
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      const matched = await this.persistSignupMatch(client, signup);
+      await client.query("COMMIT");
+      return matched;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async activeDomains(): Promise<Set<string>> {
     const result = await this.db.antifraud.query<{ domain: string }>(
       "SELECT domain FROM fiat_email_domain_blacklist WHERE enabled",
@@ -168,7 +224,11 @@ export class FiatEmailDomainGuard {
       for (const event of events) {
         const domain = domainFromEmail(event.checkout_email);
         if (domain && event.user_id && active.has(domain)) {
-          await this.persistMatch(client, event, domain);
+          await this.persistMatch(
+            client,
+            { ...event, match_source: "whop_checkout" },
+            domain,
+          );
         }
       }
       const last = events.at(-1);
@@ -223,7 +283,11 @@ export class FiatEmailDomainGuard {
       await client.query("BEGIN");
       for (const event of events) {
         if (event.user_id) {
-          await this.persistMatch(client, event, current.domain);
+          await this.persistMatch(
+            client,
+            { ...event, match_source: "whop_checkout" },
+            current.domain,
+          );
         }
       }
       const last = events.at(-1);
@@ -258,21 +322,22 @@ export class FiatEmailDomainGuard {
 
   private async persistMatch(
     client: pg.PoolClient,
-    event: CheckoutEmailEvent,
+    event: EmailDomainMatchEvent,
     domain: string,
-  ): Promise<void> {
+  ): Promise<boolean> {
     const inserted = await client.query<{ id: string }>(
       `
         INSERT INTO fiat_email_domain_matches (
-          source_event_id, provider_event_id, deposit_intent_id,
+          source_event_id, match_source, provider_event_id, deposit_intent_id,
           provider_payment_id, user_id, username, checkout_email, domain,
           occurred_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         ON CONFLICT (source_event_id) DO NOTHING
         RETURNING id
       `,
       [
         event.source_event_id,
+        event.match_source,
         event.provider_event_id,
         event.deposit_intent_id,
         event.provider_payment_id,
@@ -283,7 +348,21 @@ export class FiatEmailDomainGuard {
         event.occurred_at,
       ],
     );
-    if (inserted.rows.length === 0) return;
+    if (inserted.rows.length === 0) return false;
+
+    const isSignup = event.match_source === "signup";
+    const eventType = "fiat_blacklisted_email_domain";
+    const eventSource = isSignup ? "signup" : "whop_checkout";
+    const eventRef = isSignup
+      ? `blacklisted-signup:${event.source_event_id}`
+      : `blacklisted-checkout:${event.source_event_id}`;
+    const title = isSignup
+      ? "Blacklisted signup email"
+      : "Blacklisted Whop checkout email";
+    const detail = isSignup
+      ? `Signup used blacklisted email domain ${domain}. Crypto and item withdrawals must be locked automatically.`
+      : `Whop checkout used blacklisted email domain ${domain}. Crypto and item withdrawals must be locked automatically.`;
+    const alertSource = isSignup ? "signup" : "payment_webhook";
 
     await client.query(
       `
@@ -303,30 +382,36 @@ export class FiatEmailDomainGuard {
           title, detail, payload, occurred_at
         ) VALUES (
           $1,
-          'fiat_blacklisted_email_domain',
-          'whop_checkout',
           $2,
+          $3,
+          $4,
           0,
           100,
-          'Blacklisted Whop checkout email',
-          $3,
+          $5,
+          $6,
           jsonb_build_object(
-            'checkoutEmail', $4::text,
-            'emailDomain', $5::text,
-            'depositIntentId', $6::text,
-            'providerPaymentId', $7::text,
-            'providerEventId', $8::text
+            'email', $7::text,
+            'checkoutEmail', CASE WHEN $8::text = 'whop_checkout' THEN $7::text ELSE NULL END,
+            'emailDomain', $9::text,
+            'matchSource', $8::text,
+            'depositIntentId', $10::text,
+            'providerPaymentId', $11::text,
+            'providerEventId', $12::text
           ),
-          $9
+          $13
         )
         ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
         DO NOTHING
       `,
       [
         event.user_id,
-        `blacklisted-checkout:${event.source_event_id}`,
-        `Whop checkout used blacklisted email domain ${domain}. Crypto and item withdrawals must be locked automatically.`,
+        eventType,
+        eventSource,
+        eventRef,
+        title,
+        detail,
         event.checkout_email,
+        event.match_source,
         domain,
         event.deposit_intent_id,
         event.provider_payment_id,
@@ -341,21 +426,24 @@ export class FiatEmailDomainGuard {
           source_kind, source_id, problem_code, user_id, username, details,
           occurred_at, next_attempt_at
         ) VALUES (
-          'payment_webhook', $1, 'blacklisted_email_domain', $2, $3,
+          $1, $2, 'blacklisted_email_domain', $3, $4,
           jsonb_build_object(
-            'provider_event_id', $4,
-            'intent_id', $5,
-            'provider_payment_id', $6,
-            'checkout_email', $7,
-            'email_domain', $8,
+            'provider_event_id', $5,
+            'intent_id', $6,
+            'provider_payment_id', $7,
+            'email', $8,
+            'checkout_email', CASE WHEN $9::text = 'whop_checkout' THEN $8::text ELSE NULL END,
+            'email_domain', $10,
+            'match_source', $9,
             'risk_score', 100,
             'status', 'withdrawals_locked'
           ),
-          $9, 'infinity'::timestamptz
+          $11, 'infinity'::timestamptz
         )
         ON CONFLICT (source_kind, source_id) DO NOTHING
       `,
       [
+        alertSource,
         `${event.source_event_id}:blacklisted_email_domain:${domain}`,
         event.user_id,
         event.username,
@@ -363,17 +451,19 @@ export class FiatEmailDomainGuard {
         event.deposit_intent_id,
         event.provider_payment_id,
         event.checkout_email,
+        event.match_source,
         domain,
         event.occurred_at,
       ],
     );
+    return true;
   }
 
   private async confirmLocks(): Promise<void> {
     const pending = await this.db.antifraud.query<PendingMatch>(
       `
         SELECT
-          source_event_id, provider_event_id, deposit_intent_id,
+          source_event_id, match_source, provider_event_id, deposit_intent_id,
           provider_payment_id, user_id, username, checkout_email, domain,
           occurred_at, attempt_count
         FROM fiat_email_domain_matches
@@ -431,12 +521,13 @@ export class FiatEmailDomainGuard {
             `
               UPDATE fiat_problem_alert_outbox
               SET next_attempt_at = now(), updated_at = now()
-              WHERE source_kind = 'payment_webhook'
+              WHERE source_kind = $2
                 AND source_id = $1
                 AND discord_delivered_at IS NULL
             `,
             [
               `${match.source_event_id}:blacklisted_email_domain:${match.domain}`,
+              match.match_source === "signup" ? "signup" : "payment_webhook",
             ],
           );
         }
@@ -454,7 +545,7 @@ export class FiatEmailDomainGuard {
             domain: match.domain,
             retrySeconds,
           },
-          "Blacklisted Whop email match is waiting for withdrawal-lock confirmation",
+          "Blacklisted email-domain match is waiting for withdrawal-lock confirmation",
         );
       }
     }

@@ -13,14 +13,12 @@ import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 
 const createSchema = z.object({
   domain: z.string().trim().min(1).max(253),
-  reason: z.string().trim().min(3).max(500),
   idempotencyKey: z.string().uuid(),
 });
 
 const updateSchema = z.object({
   id: z.string().uuid(),
   enabled: z.boolean(),
-  reason: z.string().trim().min(3).max(500),
   idempotencyKey: z.string().uuid(),
 });
 
@@ -48,7 +46,6 @@ export async function addFiatEmailDomain(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
-        reason: saved.reason,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });
@@ -78,7 +75,6 @@ export async function setFiatEmailDomainState(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
-        reason: saved.reason,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });

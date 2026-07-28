@@ -27,7 +27,7 @@ export const FIAT_PROBLEM_CODES = [
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
 
 export type FiatProblem = {
-  source_kind: "deposit_intent" | "payment_webhook";
+  source_kind: "deposit_intent" | "payment_webhook" | "signup";
   source_id: string;
   problem_code: FiatProblemCode;
   user_id: string | null;
@@ -119,7 +119,7 @@ export function fiatProblemTitle(code: FiatProblemCode): string {
     case "webhook_failed":
       return "Fiat webhook processing failed";
     case "blacklisted_email_domain":
-      return "Blacklisted checkout email blocked";
+      return "Blacklisted email domain blocked";
   }
 }
 
@@ -191,6 +191,15 @@ export function buildFiatDiscordPayload(
       inline: false,
     });
   }
+  const signupEmail =
+    problem.source_kind === "signup" ? detail(details, "email") : null;
+  if (signupEmail) {
+    fields.push({
+      name: "Signup email",
+      value: clean(signupEmail),
+      inline: false,
+    });
+  }
   const emailDomain = detail(details, "email_domain");
   if (emailDomain) {
     fields.push({
@@ -215,7 +224,9 @@ export function buildFiatDiscordPayload(
   const url = new URL(dashboardUrl).toString();
   const description =
     problem.problem_code === "blacklisted_email_domain"
-      ? "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
+      ? problem.source_kind === "signup"
+        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
+        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
       : problem.problem_code === "high_risk"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
       : problem.problem_code === "fiat_locked_account"

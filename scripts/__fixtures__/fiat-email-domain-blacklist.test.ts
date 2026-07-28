@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Fraud System owns the manager-only checkout email blacklist", () => {
+test("Fraud System owns the manager-only email blacklist without a reason field", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -24,9 +24,13 @@ test("Fraud System owns the manager-only checkout email blacklist", () => {
   assert.match(page, /requireAntifraudManagerPage/);
   assert.match(actions, /requireAntifraudManager/);
   assert.match(actions, /fiat_email_domain_blacklisted/);
+  const client = read(
+    "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
+  );
+  assert.doesNotMatch(client, /blacklist-reason|<Textarea|rule\.reason/);
 });
 
-test("blacklisted Whop checkout signals lock MAIN only through signed ingest", () => {
+test("blacklisted signup and Whop signals lock MAIN only through signed ingest", () => {
   const monitor = read(
     "services/antifraud-monitor/src/fiat-email-domains.ts",
   );
@@ -34,6 +38,8 @@ test("blacklisted Whop checkout signals lock MAIN only through signed ingest", (
 
   assert.match(monitor, /INSERT INTO risk_events/);
   assert.match(monitor, /fiat_blacklisted_email_domain/);
+  assert.match(monitor, /persistSignupMatch/);
+  assert.match(monitor, /match_source: "signup"/);
   assert.doesNotMatch(monitor, /UPDATE user_feature_locks/);
   assert.match(ingest, /getProdPrimaryDrizzleDb/);
   assert.match(ingest, /ARRAY\['all'\]::text\[\]/);

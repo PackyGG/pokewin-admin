@@ -539,6 +539,9 @@ export class MonitorEngine {
     // The assessment/case/session/events/cursor transaction follows only after
     // enrichment is durably cached.
     await this.upsertSubject(signup);
+    // Capture containment before external enrichment. Provider failures must
+    // never delay a blacklisted signup's withdrawal lock.
+    await this.fiatEmailDomains.captureSignup(signup);
     const [context, weights] = await Promise.all([
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),

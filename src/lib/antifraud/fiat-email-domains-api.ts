@@ -87,7 +87,6 @@ export async function listFiatEmailDomains(): Promise<{
 
 export async function createFiatEmailDomain(input: {
   domain: string;
-  reason: string;
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
@@ -105,7 +104,7 @@ export async function createFiatEmailDomain(input: {
     throw new Error("That email domain is already on the blacklist.");
   }
   if (response.status === 400) {
-    throw new Error("Enter a valid email domain and reason.");
+    throw new Error("Enter a valid email domain.");
   }
   if (response.status === 401 || response.status === 403) {
     throw new Error("The monitor rejected the blacklist credentials.");
@@ -121,7 +120,6 @@ export async function createFiatEmailDomain(input: {
 export async function updateFiatEmailDomain(input: {
   id: string;
   enabled: boolean;
-  reason: string;
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
@@ -132,7 +130,6 @@ export async function updateFiatEmailDomain(input: {
       method: "PUT",
       body: JSON.stringify({
         enabled: input.enabled,
-        reason: input.reason,
         idempotencyKey: input.idempotencyKey,
         actorId: input.actorId,
         actorUsername: input.actorUsername,

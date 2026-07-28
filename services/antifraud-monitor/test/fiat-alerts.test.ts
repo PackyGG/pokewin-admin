@@ -126,8 +126,38 @@ test("every monitored problem has explicit operator-facing copy", () => {
   );
   assert.equal(
     fiatProblemTitle("blacklisted_email_domain"),
-    "Blacklisted checkout email blocked",
+    "Blacklisted email domain blocked",
   );
+});
+
+test("signup blacklist alerts identify the signup email", () => {
+  const payload = buildFiatDiscordPayload(
+    "https://fraud.packydash.com/antifraud/fiat-deposits",
+    {
+      source_kind: "signup",
+      source_id: "signup:user-1:blacklisted_email_domain:stolas.org",
+      problem_code: "blacklisted_email_domain",
+      user_id: "user-1",
+      username: "test-user",
+      details: {
+        email: "person@stolas.org",
+        email_domain: "stolas.org",
+        match_source: "signup",
+        risk_score: 100,
+        status: "withdrawals_locked",
+      },
+      occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+    },
+  );
+
+  assert.match(payload.embeds[0]?.description ?? "", /new signup/);
+  assert.equal(
+    payload.embeds[0]?.fields.find((field) => field.name === "Signup email")
+      ?.value,
+    "person@stolas.org",
+  );
+  assert.doesNotMatch(JSON.stringify(payload), /Whop checkout email/);
+  assert.deepEqual(payload.allowed_mentions, { parse: [] });
 });
 
 test("fiat alert ingestion is mirror-only, durable, and retryable", async () => {

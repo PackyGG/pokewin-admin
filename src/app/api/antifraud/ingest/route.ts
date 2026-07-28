@@ -149,7 +149,7 @@ export async function POST(request: Request): Promise<Response> {
   for (const signal of signals) {
     try {
       if (signal.kind === "fiat_blacklisted_email_domain") {
-        await lockBlacklistedCheckoutAccount(signal);
+        await lockBlacklistedEmailDomainAccount(signal);
       }
       const outcome = await ingestOne(signal);
       if (outcome === "duplicate") duplicates += 1;
@@ -208,18 +208,20 @@ function blacklistDomainFromSignal(
     : null;
 }
 
-async function lockBlacklistedCheckoutAccount(
+async function lockBlacklistedEmailDomainAccount(
   signal: AntifraudSignalEvent,
 ): Promise<void> {
   const userId = signal.userId;
   const domain = blacklistDomainFromSignal(signal);
   if (!userId || !domain || signal.riskScore !== 100) {
-    throw new Error("Invalid blacklisted checkout containment signal");
+    throw new Error("Invalid blacklisted email-domain containment signal");
   }
 
   const db = getProdPrimaryDrizzleDb();
+  const source =
+    signal.payload?.matchSource === "signup" ? "signup" : "Whop checkout";
   const reason =
-    `Automatic fraud lock: Whop checkout used blacklisted email domain ${domain}`
+    `Automatic fraud lock: ${source} used blacklisted email domain ${domain}`
       .slice(0, 500);
   const locked = await db.execute<{ user_id: string }>(sql`
     INSERT INTO user_feature_locks (
@@ -260,7 +262,7 @@ async function lockBlacklistedCheckoutAccount(
     RETURNING user_id
   `);
   if (locked.rows.length === 0) {
-    throw new Error("Blacklisted checkout account no longer exists");
+    throw new Error("Blacklisted email-domain account no longer exists");
   }
 }
 

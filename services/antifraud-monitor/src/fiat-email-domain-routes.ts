@@ -12,13 +12,13 @@ const actorSchema = z.object({
 
 const createSchema = actorSchema.extend({
   domain: z.string().trim().min(1).max(253),
-  reason: z.string().trim().min(3).max(500),
 });
 
 const updateSchema = actorSchema.extend({
   enabled: z.boolean(),
-  reason: z.string().trim().min(3).max(500),
 });
+
+const SYSTEM_REASON = "Email domain blacklisted by staff";
 
 type RuleRow = {
   id: string;
@@ -126,7 +126,7 @@ export async function registerFiatEmailDomainRoutes(
           priorAudit.action !== "created" ||
           priorAudit.actor_id !== parsed.data.actorId ||
           priorAudit.after_state.domain !== domain ||
-          priorAudit.after_state.reason !== parsed.data.reason ||
+          priorAudit.after_state.reason !== SYSTEM_REASON ||
           priorAudit.after_state.enabled !== true
         ) {
           await client.query("ROLLBACK");
@@ -143,7 +143,7 @@ export async function registerFiatEmailDomainRoutes(
             ON CONFLICT (lower(domain)) DO NOTHING
             RETURNING id
           `,
-          [domain, parsed.data.reason, parsed.data.actorId],
+          [domain, SYSTEM_REASON, parsed.data.actorId],
         );
         ruleId = inserted.rows[0]?.id ?? null;
         if (!ruleId) {
@@ -153,7 +153,7 @@ export async function registerFiatEmailDomainRoutes(
         const state = {
           id: ruleId,
           domain,
-          reason: parsed.data.reason,
+          reason: SYSTEM_REASON,
           enabled: true,
         };
         await client.query(
@@ -220,7 +220,6 @@ export async function registerFiatEmailDomainRoutes(
           priorAudit.rule_id !== params.data.id ||
           priorAudit.action !== "updated" ||
           priorAudit.actor_id !== parsed.data.actorId ||
-          priorAudit.after_state.reason !== parsed.data.reason ||
           priorAudit.after_state.enabled !== parsed.data.enabled
         ) {
           await client.query("ROLLBACK");
@@ -252,8 +251,7 @@ export async function registerFiatEmailDomainRoutes(
             UPDATE fiat_email_domain_blacklist
             SET
               enabled = $2,
-              reason = $3,
-              updated_by = $4,
+              updated_by = $3,
               backfill_received_at = CASE
                 WHEN NOT enabled AND $2::boolean THEN 'epoch'::timestamptz
                 ELSE backfill_received_at
@@ -272,7 +270,6 @@ export async function registerFiatEmailDomainRoutes(
           [
             params.data.id,
             parsed.data.enabled,
-            parsed.data.reason,
             parsed.data.actorId,
           ],
         );
@@ -291,7 +288,6 @@ export async function registerFiatEmailDomainRoutes(
             current,
             {
               ...current,
-              reason: parsed.data.reason,
               enabled: parsed.data.enabled,
             },
           ],

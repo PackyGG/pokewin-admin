@@ -9,7 +9,6 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { FiatEmailDomainRule } from "@/lib/antifraud/fiat-email-domains-api";
 import { formatRelative } from "@/lib/utils/format";
 import {
@@ -25,22 +24,19 @@ export function EmailBlacklistClient({
   const router = useRouter();
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
-  const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function addDomain(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const submittedDomain = domain.trim();
-    const submittedReason = reason.trim();
-    if (!submittedDomain || submittedReason.length < 3) {
-      toast.error("Enter an email domain and a clear reason.");
+    if (!submittedDomain) {
+      toast.error("Enter an email domain.");
       return;
     }
     startTransition(async () => {
       try {
         const saved = await addFiatEmailDomain({
           domain: submittedDomain,
-          reason: submittedReason,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) => [
@@ -48,7 +44,6 @@ export function EmailBlacklistClient({
           ...current.filter((rule) => rule.id !== saved.id),
         ]);
         setDomain("");
-        setReason("");
         toast.success(`${saved.domain} is now blocked.`);
         router.refresh();
       } catch (error) {
@@ -65,7 +60,6 @@ export function EmailBlacklistClient({
         const saved = await setFiatEmailDomainState({
           id: rule.id,
           enabled: !rule.enabled,
-          reason: rule.reason,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) =>
@@ -99,8 +93,8 @@ export function EmailBlacklistClient({
             Add blocked domain
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            Exact domain matches from Whop checkout emails receive a critical
-            score of 100 and an automatic crypto and item withdrawal lock.
+            Exact domain matches from new signups and Whop checkout emails
+            receive an automatic crypto and item withdrawal lock.
           </p>
         </div>
         <div className="space-y-2">
@@ -112,17 +106,6 @@ export function EmailBlacklistClient({
             placeholder="stolas.org"
             autoComplete="off"
             spellCheck={false}
-            disabled={isPending}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="blacklist-reason">Reason</Label>
-          <Textarea
-            id="blacklist-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Why checkouts from this domain require containment"
-            maxLength={500}
             disabled={isPending}
           />
         </div>
@@ -140,12 +123,12 @@ export function EmailBlacklistClient({
         <div className="border-b px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldCheck className="size-4 text-cyan-500" />
-            Checkout email rules
+            Email domain rules
           </h2>
         </div>
         {rules.length === 0 ? (
           <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            No checkout email domains are blacklisted.
+            No email domains are blacklisted.
           </p>
         ) : (
           <div className="divide-y">
@@ -178,9 +161,6 @@ export function EmailBlacklistClient({
                       </Badge>
                     )}
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {rule.reason}
-                  </p>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {rule.affectedUsers} affected users · {rule.matchCount} matches
                     {rule.pendingLocks > 0

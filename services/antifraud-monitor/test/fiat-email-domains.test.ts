@@ -6,6 +6,7 @@ import type pg from "pg";
 
 import {
   domainFromEmail,
+  FiatEmailDomainGuard,
   fetchCheckoutEmailEvents,
   normalizeEmailDomain,
 } from "../src/fiat-email-domains.js";
@@ -13,6 +14,7 @@ import {
   applyBlacklistedCheckoutEmail,
   scoreFiatDeposit,
 } from "../src/fiat-risk.js";
+import type { Signup } from "../src/types.js";
 
 test("email-domain matching is exact and normalized", () => {
   assert.equal(normalizeEmailDomain("@Stolas.ORG"), "stolas.org");
@@ -74,6 +76,55 @@ test("blacklist matches are durable before signed lock delivery", async () => {
   assert.match(migration, /fiat_email_domain_blacklist_audit/);
   assert.match(migration, /idempotency_key uuid NOT NULL UNIQUE/);
   assert.match(migration, /WHERE lock_delivered_at IS NULL/);
+});
+
+test("a matching signup is durably queued for signed lock and fiat notification", async () => {
+  const calls: Array<{ sql: string; values?: unknown[] }> = [];
+  const client = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      if (/SELECT EXISTS/.test(sql)) return { rows: [{ active: true }] };
+      if (/INSERT INTO fiat_email_domain_matches/.test(sql)) {
+        return { rows: [{ id: "match-1" }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const guard = new FiatEmailDomainGuard(
+    {
+      antifraud: {
+        connect: async () => client,
+      },
+    } as never,
+    { warn() {} } as never,
+  );
+  const signup = {
+    id: "user-1",
+    username: "new-user",
+    email: " Person@Stolas.ORG ",
+    created_at: new Date("2026-07-28T12:00:00.000Z"),
+  } as Signup;
+
+  assert.equal(await guard.captureSignup(signup), true);
+  const match = calls.find(({ sql }) =>
+    /INSERT INTO fiat_email_domain_matches/.test(sql),
+  );
+  assert.equal(match?.values?.[0], "signup:user-1");
+  assert.equal(match?.values?.[1], "signup");
+  assert.equal(match?.values?.[7], "person@stolas.org");
+
+  const risk = calls.find(({ sql }) => /INSERT INTO risk_events/.test(sql));
+  assert.equal(risk?.values?.[1], "fiat_blacklisted_email_domain");
+  assert.equal(risk?.values?.[2], "signup");
+  assert.equal(risk?.values?.[7], "signup");
+
+  const alert = calls.find(({ sql }) =>
+    /INSERT INTO fiat_problem_alert_outbox/.test(sql),
+  );
+  assert.equal(alert?.values?.[0], "signup");
+  assert.match(alert?.sql ?? "", /'infinity'::timestamptz/);
+  assert.equal(calls.at(-1)?.sql, "COMMIT");
 });
 
 test("blacklist mutations bind idempotency to actor and exact state", async () => {
