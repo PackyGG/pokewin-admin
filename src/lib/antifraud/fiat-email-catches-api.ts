@@ -4,9 +4,9 @@ import { z } from "zod";
 
 const fiatEmailCatchSchema = z.object({
   id: z.string().uuid(),
-  userId: z.string().uuid(),
+  userId: z.string().trim().min(1).max(200),
   username: z.string().nullable(),
-  depositIntentId: z.string().uuid().nullable(),
+  depositIntentId: z.string().trim().min(1).max(200).nullable(),
   checkoutEmail: z.string(),
   domain: z.string(),
   riskType: z.enum([

@@ -29,6 +29,11 @@ test("Fiat Fraud reads durable caught history with server-side controls", () => 
   );
 
   assert.match(api, /\/v1\/fiat-email-catches/);
+  assert.match(api, /userId: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(200\)/);
+  assert.match(
+    api,
+    /depositIntentId: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(200\)\.nullable\(\)/,
+  );
   assert.match(api, /page: String/);
   assert.match(api, /limit: String/);
   assert.match(api, /pagination: z\.object/);
