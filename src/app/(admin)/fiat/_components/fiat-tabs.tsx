@@ -63,8 +63,9 @@ export async function FiatOverviewTab() {
       {result.error && <QueryNotice />}
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiTile
-          label="Completed credit"
-          value={formatCurrency(data.completedCreditUsd)}
+          label="Gross customer credit"
+          value={formatCurrency(data.grossCreditedUsd)}
+          sub="Completed ledger credits"
           icon={DollarSign}
           accent="emerald"
         />
@@ -102,8 +103,16 @@ export async function FiatOverviewTab() {
                 value={formatCurrency(data.customerPaidUsd)}
               />
               <Control
-                label="Balance credited"
-                value={formatCurrency(data.completedCreditUsd)}
+                label="Gross balance credited"
+                value={formatCurrency(data.grossCreditedUsd)}
+              />
+              <Control
+                label="Refunded or disputed credit"
+                value={`−${formatCurrency(data.reversedCreditUsd)}`}
+              />
+              <Control
+                label="Net retained credit"
+                value={formatCurrency(data.netRetainedCreditUsd)}
               />
               <Control
                 label="Provider net"
@@ -114,9 +123,9 @@ export async function FiatOverviewTab() {
                 value={formatCurrency(data.providerFeesUsd)}
               />
               <Control
-                label="Provider net minus credited"
+                label="Provider net minus retained credit"
                 value={formatCurrency(
-                  data.providerNetUsd - data.completedCreditUsd,
+                  data.providerNetUsd - data.netRetainedCreditUsd,
                 )}
               />
             </CardContent>

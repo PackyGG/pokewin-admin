@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
+import { fiatRefundCreditCentsSql } from "./fiat-refund-credits";
 
 export const FIAT_CACHE_TAG = "fiat-operations";
 
@@ -21,7 +22,9 @@ export type FiatOverview = {
   failed: number;
   refunded: number;
   disputed: number;
-  completedCreditUsd: number;
+  grossCreditedUsd: number;
+  reversedCreditUsd: number;
+  netRetainedCreditUsd: number;
   customerPaidUsd: number;
   providerNetUsd: number;
   providerFeesUsd: number;
@@ -48,7 +51,9 @@ export const EMPTY_FIAT_OVERVIEW: FiatOverview = {
   failed: 0,
   refunded: 0,
   disputed: 0,
-  completedCreditUsd: 0,
+  grossCreditedUsd: 0,
+  reversedCreditUsd: 0,
+  netRetainedCreditUsd: 0,
   customerPaidUsd: 0,
   providerNetUsd: 0,
   providerFeesUsd: 0,
@@ -75,7 +80,9 @@ type RawOverview = {
   failed: string;
   refunded: string;
   disputed: string;
-  completed_credit_cents: string;
+  gross_credited_cents: string;
+  reversed_credit_cents: string;
+  net_retained_credit_cents: string;
   customer_paid_cents: string;
   provider_net_cents: string;
   provider_fees_cents: string;
@@ -126,33 +133,64 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
         COUNT(*)::text AS intents,
         COUNT(DISTINCT user_id)::text AS customers,
         COUNT(*) FILTER (WHERE status = 'checkout_ready')::text AS checkout_ready,
-        COUNT(*) FILTER (WHERE status = 'completed')::text AS completed,
         COUNT(*) FILTER (WHERE status = 'review')::text AS review,
         COUNT(*) FILTER (WHERE status = 'failed')::text AS failed,
         COUNT(*) FILTER (
           WHERE status IN ('refunded', 'partially_refunded')
         )::text AS refunded,
         COUNT(*) FILTER (WHERE status = 'disputed')::text AS disputed,
-        COALESCE(SUM(credited_amount_cents) FILTER (
-          WHERE status = 'completed'
-        ), 0)::text AS completed_credit_cents,
-        COALESCE(SUM(actual_customer_total_cents) FILTER (
-          WHERE status = 'completed'
-        ), 0)::text AS customer_paid_cents,
-        COALESCE(SUM(provider_net_amount_cents) FILTER (
-          WHERE status = 'completed'
-        ), 0)::text AS provider_net_cents,
         COUNT(*) FILTER (
           WHERE created_at >=
             (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
         )::text AS last_24_hours_intents,
-        COALESCE(SUM(credited_amount_cents) FILTER (
-          WHERE status = 'completed'
-            AND completed_at >=
-              (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
-        ), 0)::text AS last_24_hours_completed_cents,
         MAX(created_at)::text AS latest_intent_at
-      FROM fiat_deposit_intents
+      FROM fiat_deposit_intents i
+      WHERE i.user_id IN (
+        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+      )
+    ),
+    credited_ledgers AS (
+      SELECT
+        lt.id,
+        lt.amount::numeric AS credited_usd,
+        lt.created_at AS credited_at,
+        MAX(i.actual_customer_total_cents) AS customer_paid_cents,
+        MAX(i.provider_net_amount_cents) AS provider_net_cents,
+        MAX(
+          CASE
+            WHEN i.status IN ('refunded', 'disputed')
+              THEN lt.amount::numeric * 100
+            WHEN i.status = 'partially_refunded'
+              THEN ${sql.raw(fiatRefundCreditCentsSql("i"))}
+            ELSE 0::numeric
+          END
+        ) AS reversed_credit_cents
+      FROM fiat_deposit_intents i
+      INNER JOIN ledger_transactions lt
+        ON lt.id = i.completed_ledger_id
+       AND lt.type = 'deposit'
+       AND lt.status = 'completed'
+      WHERE i.user_id IN (
+        SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+      )
+      GROUP BY lt.id, lt.amount, lt.created_at
+    ),
+    credit_stats AS (
+      SELECT
+        COUNT(*)::text AS completed,
+        COALESCE(SUM(credited_usd) * 100, 0)::text AS gross_credited_cents,
+        COALESCE(SUM(reversed_credit_cents), 0)::text AS reversed_credit_cents,
+        COALESCE(
+          SUM(credited_usd) * 100 - SUM(reversed_credit_cents),
+          0
+        )::text AS net_retained_credit_cents,
+        COALESCE(SUM(customer_paid_cents), 0)::text AS customer_paid_cents,
+        COALESCE(SUM(provider_net_cents), 0)::text AS provider_net_cents,
+        COALESCE(SUM(credited_usd) FILTER (
+          WHERE credited_at >=
+            (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '24 hours'
+        ) * 100, 0)::text AS last_24_hours_completed_cents
+      FROM credited_ledgers
     ),
     webhook_stats AS (
       SELECT
@@ -176,9 +214,18 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
           AND value ~ '^[[:space:]]*\\['
       ) AS locked_methods,
       i.*,
+      c.*,
       (
-        SELECT COALESCE(SUM(amount_cents), 0)::text
-        FROM payment_provider_fees
+        SELECT COALESCE(SUM(pf.amount_cents), 0)::text
+        FROM payment_provider_fees pf
+        INNER JOIN fiat_deposit_intents i ON i.id = pf.deposit_intent_id
+        INNER JOIN ledger_transactions lt
+          ON lt.id = i.completed_ledger_id
+         AND lt.type = 'deposit'
+         AND lt.status = 'completed'
+        WHERE i.user_id IN (
+          SELECT id FROM "user" WHERE role NOT IN ('admin', 'support')
+        )
       ) AS provider_fees_cents,
       w.*,
       (
@@ -197,6 +244,7 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
         WHERE kyc_required
       ) AS kyc_required_users
     FROM intent_stats i
+    CROSS JOIN credit_stats c
     CROSS JOIN webhook_stats w
       `),
     { context: "fiat.overview" },
@@ -219,7 +267,9 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
     failed: number(row.failed),
     refunded: number(row.refunded),
     disputed: number(row.disputed),
-    completedCreditUsd: number(row.completed_credit_cents) / 100,
+    grossCreditedUsd: number(row.gross_credited_cents) / 100,
+    reversedCreditUsd: number(row.reversed_credit_cents) / 100,
+    netRetainedCreditUsd: number(row.net_retained_credit_cents) / 100,
     customerPaidUsd: number(row.customer_paid_cents) / 100,
     providerNetUsd: number(row.provider_net_cents) / 100,
     providerFeesUsd: number(row.provider_fees_cents) / 100,
@@ -237,7 +287,7 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
 
 const cachedFiatOverview = unstable_cache(
   computeFiatOverview,
-  ["fiat-overview-v1"],
+  ["fiat-overview-v2"],
   { revalidate: 60, tags: [FIAT_CACHE_TAG] },
 );
 
