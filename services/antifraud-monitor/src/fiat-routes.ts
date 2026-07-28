@@ -6,6 +6,7 @@ import {
   FIAT_ASSESSMENT_STATUSES,
   type FiatRiskService,
 } from "./fiat-risk.js";
+import { normalizeWhopPaymentMethod } from "./whop-payment-method.js";
 
 const reviewStatuses = [
   "unreviewed",
@@ -171,11 +172,20 @@ export async function registerFiatRoutes(
     }
     if (query.search) {
       values.push(`%${query.search.toLowerCase()}%`);
+      const generalSearchPosition = values.length;
+      values.push(
+        `%${normalizeWhopPaymentMethod(query.search) ?? query.search.toLowerCase()}%`,
+      );
+      const paymentMethodSearchPosition = values.length;
       conditions.push(`(
-        lower(deposit_intent_id::text) LIKE $${values.length}
-        OR lower(user_id) LIKE $${values.length}
-        OR lower(COALESCE(username,'')) LIKE $${values.length}
-        OR lower(COALESCE(email,'')) LIKE $${values.length}
+        lower(deposit_intent_id::text) LIKE $${generalSearchPosition}
+        OR lower(user_id) LIKE $${generalSearchPosition}
+        OR lower(COALESCE(username,'')) LIKE $${generalSearchPosition}
+        OR lower(COALESCE(email,'')) LIKE $${generalSearchPosition}
+        OR lower(COALESCE(
+          provider_evidence->>'paymentMethodType',
+          ''
+        )) LIKE $${paymentMethodSearchPosition}
       )`);
     }
     if (ignored.length > 0) {

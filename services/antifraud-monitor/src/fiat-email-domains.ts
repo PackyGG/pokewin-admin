@@ -18,10 +18,14 @@ export type CheckoutEmailEvent = {
   user_id: string | null;
   username: string | null;
   checkout_email: string;
+  payment_method_type: string | null;
   occurred_at: Date;
 };
 
-type PendingMatch = Omit<CheckoutEmailEvent, "user_id"> & {
+type PendingMatch = Omit<
+  CheckoutEmailEvent,
+  "user_id" | "payment_method_type"
+> & {
   user_id: string;
   domain: string;
   match_type: CheckoutEmailRiskType;
@@ -131,6 +135,10 @@ export async function fetchCheckoutEmailEvents(
             AS metadata_user_id,
           NULLIF(pwe.payload #>> '{data,id}', '') AS provider_payment_id,
           lower(btrim(pwe.payload #>> '{data,user,email}')) AS checkout_email,
+          COALESCE(
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+            NULLIF(pwe.payload #>> '{data,payment,payment_method_type}', '')
+          ) AS payment_method_type,
           pwe.received_at AS occurred_at
         FROM payment_webhook_events pwe
         WHERE pwe.provider = 'whop'
@@ -153,6 +161,14 @@ export async function fetchCheckoutEmailEvents(
         COALESCE(fdi.user_id, e.metadata_user_id) AS user_id,
         u.username,
         e.checkout_email,
+        COALESCE(
+          e.payment_method_type,
+          NULLIF(fdi.provider_metadata->>'payment_method_type', ''),
+          NULLIF(
+            fdi.provider_metadata->'payment'->>'payment_method_type',
+            ''
+          )
+        ) AS payment_method_type,
         e.occurred_at
       FROM events e
       LEFT JOIN fiat_deposit_intents fdi
@@ -183,6 +199,10 @@ export async function fetchSuspiciousGmailEvents(
             AS metadata_user_id,
           NULLIF(pwe.payload #>> '{data,id}', '') AS provider_payment_id,
           lower(btrim(pwe.payload #>> '{data,user,email}')) AS checkout_email,
+          COALESCE(
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+            NULLIF(pwe.payload #>> '{data,payment,payment_method_type}', '')
+          ) AS payment_method_type,
           pwe.received_at AS occurred_at
         FROM payment_webhook_events pwe
         WHERE pwe.provider = 'whop'
@@ -210,6 +230,14 @@ export async function fetchSuspiciousGmailEvents(
         COALESCE(fdi.user_id, e.metadata_user_id) AS user_id,
         u.username,
         e.checkout_email,
+        COALESCE(
+          e.payment_method_type,
+          NULLIF(fdi.provider_metadata->>'payment_method_type', ''),
+          NULLIF(
+            fdi.provider_metadata->'payment'->>'payment_method_type',
+            ''
+          )
+        ) AS payment_method_type,
         e.occurred_at
       FROM events e
       LEFT JOIN fiat_deposit_intents fdi
@@ -292,6 +320,7 @@ export class FiatEmailDomainGuard {
         user_id: signup.id,
         username: signup.username,
         checkout_email: signup.email.trim().toLowerCase(),
+        payment_method_type: null,
         occurred_at: signup.created_at,
       },
       risk,
@@ -589,9 +618,10 @@ export class FiatEmailDomainGuard {
             'emailRiskReason', $11::text,
             'depositIntentId', $12::text,
             'providerPaymentId', $13::text,
-            'providerEventId', $14::text
+            'providerEventId', $14::text,
+            'paymentMethodType', $15::text
           ),
-          $15
+          $16
         )
         ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
         DO NOTHING
@@ -611,6 +641,7 @@ export class FiatEmailDomainGuard {
         event.deposit_intent_id,
         event.provider_payment_id,
         event.provider_event_id,
+        event.payment_method_type,
         event.occurred_at,
       ],
     );
@@ -632,10 +663,11 @@ export class FiatEmailDomainGuard {
             'match_source', $9,
             'email_risk_type', $11::text,
             'email_risk_reason', $12::text,
+            'payment_method_type', $13::text,
             'risk_score', 100,
             'status', 'withdrawals_locked'
           ),
-          $13, 'infinity'::timestamptz
+          $14, 'infinity'::timestamptz
         )
         ON CONFLICT (source_kind, source_id) DO NOTHING
       `,
@@ -652,6 +684,7 @@ export class FiatEmailDomainGuard {
         risk.domain,
         risk.type,
         risk.reason,
+        event.payment_method_type,
         event.occurred_at,
       ],
     );

@@ -29,6 +29,7 @@ const failedIntent: FiatProblem = {
     status: "failed",
     credited_amount_cents: 12550,
     provider_payment_status: "failed",
+    payment_method_type: "apple",
     failure_reason: "@here <@123456789012345678>",
   },
   occurred_at: new Date("2026-07-28T12:00:00.000Z"),
@@ -57,6 +58,12 @@ test("fiat problem payload is safe, useful, and has no Discord mentions", () => 
   );
   assert.doesNotMatch(JSON.stringify(payload), /<@/);
   assert.match(JSON.stringify(payload), /\$125\.50/);
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "Payment option",
+    )?.value,
+    "Apple Pay",
+  );
 });
 
 test("locked-account deposit alerts expose the active fiat lock", () => {
@@ -88,6 +95,12 @@ test("locked-account deposit alerts expose the active fiat lock", () => {
     "credit_card",
   );
   assert.match(JSON.stringify(payload), /High account risk/);
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "Payment option",
+    )?.value,
+    "Unknown",
+  );
 });
 
 test("canonical bad fiat assessments use the same dedicated webhook payload", () => {
@@ -402,6 +415,8 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /fda\.verdict = 'bad'/);
   assert.match(source, /HIGH_RISK_CURSOR_STREAM/);
   assert.match(source, /FROM payment_webhook_events pwe/);
+  assert.match(source, /'payment_method_type'/);
+  assert.match(source, /provider_evidence->>'paymentMethodType'/);
   assert.match(source, /received_at >= .*interval '30 days'/s);
   assert.match(source, /checkout_creating_stale/);
   assert.match(source, /pending_stale/);
@@ -448,6 +463,7 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   assert.equal(calls[0]?.values[0], 250);
   assert.match(calls[0]?.text ?? "", /processing_status = 'failed'/);
+  assert.match(calls[0]?.text ?? "", /payment_method_type/);
 
   const riskCalls: Array<{ text: string; values: unknown[] }> = [];
   const riskPool = {

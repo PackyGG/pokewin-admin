@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 
 import type { Databases } from "./db.js";
+import { whopPaymentMethodFromPayload } from "./whop-payment-method.js";
 
 export type FiatVerdict = "good" | "review" | "bad";
 export type FiatRiskCategory =
@@ -252,12 +253,7 @@ export function parseWhopEvidence(
       typeof record(data.billing_address).country === "string"
         ? String(record(data.billing_address).country).slice(0, 8)
         : null,
-    paymentMethodType:
-      typeof data.payment_method_type === "string"
-        ? data.payment_method_type.slice(0, 40)
-        : typeof record(data.payment_method).payment_method_type === "string"
-          ? String(record(data.payment_method).payment_method_type).slice(0, 40)
-          : null,
+    paymentMethodType: whopPaymentMethodFromPayload(payload),
   };
 }
 

@@ -3,6 +3,7 @@ import type pg from "pg";
 
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
+import { whopPaymentMethodLabel } from "./whop-payment-method.js";
 
 const CURSOR_STREAM = "fiat-problems";
 const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
@@ -191,6 +192,13 @@ export function buildFiatDiscordPayload(
       inline: true,
     });
   }
+  if (problem.source_kind !== "signup") {
+    fields.push({
+      name: "Payment option",
+      value: whopPaymentMethodLabel(details.payment_method_type),
+      inline: true,
+    });
+  }
   const eventType = detail(details, "event_type");
   if (eventType) {
     fields.push({
@@ -345,6 +353,12 @@ export async function fetchFiatProblems(
             'provider_payment_status', fdi.provider_payment_status,
             'provider_checkout_id', fdi.provider_checkout_id,
             'provider_payment_id', fdi.provider_payment_id,
+            'payment_method_type', COALESCE(
+              fdi.provider_metadata->>'payment_method_type',
+              fdi.provider_metadata->'payment'->>'payment_method_type',
+              fdi.provider_metadata->'data'->>'payment_method_type',
+              fdi.provider_metadata->'data'->'payment'->>'payment_method_type'
+            ),
             'locked_deposits_fiat',
               array_to_string(ufl.locked_deposits_fiat, ', '),
             'locked_deposits_at', ufl.locked_deposits_at,
@@ -390,6 +404,12 @@ export async function fetchFiatProblems(
             'provider_payment_status', fdi.provider_payment_status,
             'provider_checkout_id', fdi.provider_checkout_id,
             'provider_payment_id', fdi.provider_payment_id,
+            'payment_method_type', COALESCE(
+              fdi.provider_metadata->>'payment_method_type',
+              fdi.provider_metadata->'payment'->>'payment_method_type',
+              fdi.provider_metadata->'data'->>'payment_method_type',
+              fdi.provider_metadata->'data'->'payment'->>'payment_method_type'
+            ),
             'failure_reason', fdi.failure_reason
           ) AS details,
           CASE
@@ -453,7 +473,13 @@ export async function fetchFailedPaymentWebhooks(
           'attempt_count', pwe.attempt_count,
           'last_error', pwe.last_error,
           'intent_id', fdi.id::text,
-          'credited_amount_cents', fdi.credited_amount_cents
+          'credited_amount_cents', fdi.credited_amount_cents,
+          'payment_method_type', COALESCE(
+            pwe.payload->>'payment_method_type',
+            pwe.payload->'payment'->>'payment_method_type',
+            pwe.payload->'data'->>'payment_method_type',
+            pwe.payload->'data'->'payment'->>'payment_method_type'
+          )
         ) AS details,
         pwe.received_at ${UTC} AS occurred_at
       FROM payment_webhook_events pwe
@@ -506,6 +532,8 @@ export async function fetchHighRiskFiatProblems(
             round(fda.credited_amount_usd * 100)::bigint,
           'provider_payment_status', fda.provider_payment_status,
           'provider_risk_score', fda.provider_risk_score,
+          'payment_method_type',
+            fda.provider_evidence->>'paymentMethodType',
           'risk_score', fda.risk_score,
           'verdict', fda.verdict,
           'recommendation', fda.recommendation,

@@ -33,5 +33,5 @@ test("falls back across provider metadata and webhook payloads", () => {
     { type: "cashapp", cardBrand: null, cardLast4: null },
   );
   assert.equal(whopPaymentMethodLabel("google_pay"), "Google Pay");
-  assert.equal(whopPaymentMethodLabel(null), "Whop payment");
+  assert.equal(whopPaymentMethodLabel(null), "Unknown");
 });

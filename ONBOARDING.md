@@ -199,6 +199,7 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 ### Whop payment methods and Antifraud
 
 - Whop `payment_method_type`, card brand, and last four are normalized from `fiat_deposit_intents.provider_metadata`; payment detail may fall back to the stored webhook payload. Known method labels include Card, Apple Pay, Google Pay, and Cash App.
+- Staff payment-method coverage includes Admin card-payment list/detail, Antifraud live activity and Fiat Deposits list/detail, Fiat Deposit search, and all fiat Discord alerts. If Whop provides no supported payment-method evidence, render `Unknown`; never infer a wallet from unrelated payload fields.
 - Apple Pay receives 80% of the configured positive `fiat_deposit` Antifraud weight, rounded to the nearest whole point. Other methods, non-positive fiat weights, and non-fiat events are unchanged. This is a risk-weight adjustment, never an allowlist or containment bypass.
 
 ---

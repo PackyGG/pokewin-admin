@@ -5,6 +5,8 @@ import test from "node:test";
 import {
   adjustFiatRiskForPaymentMethod,
   normalizeWhopPaymentMethod,
+  whopPaymentMethodFromPayload,
+  whopPaymentMethodLabel,
 } from "../src/whop-payment-method.js";
 
 test("normalizes Whop wallet names", () => {
@@ -12,6 +14,21 @@ test("normalizes Whop wallet names", () => {
   assert.equal(normalizeWhopPaymentMethod("Google Pay"), "google_pay");
   assert.equal(normalizeWhopPaymentMethod("cash_app"), "cashapp");
   assert.equal(normalizeWhopPaymentMethod("card"), "card");
+});
+
+test("extracts and labels nested Whop payment options without inference", () => {
+  assert.equal(
+    whopPaymentMethodFromPayload({
+      data: { payment: { payment_method_type: "apple" } },
+    }),
+    "apple_pay",
+  );
+  assert.equal(whopPaymentMethodLabel("apple_pay"), "Apple Pay");
+  assert.equal(whopPaymentMethodLabel("google_pay"), "Google Pay");
+  assert.equal(whopPaymentMethodLabel("cashapp"), "Cash App");
+  assert.equal(whopPaymentMethodLabel("card"), "Card");
+  assert.equal(whopPaymentMethodLabel(null), "Unknown");
+  assert.equal(whopPaymentMethodFromPayload({ data: { card: {} } }), null);
 });
 
 test("Apple Pay reduces positive fiat risk by 20 percent", () => {

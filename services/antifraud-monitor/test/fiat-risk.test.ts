@@ -120,6 +120,7 @@ test("Whop parsing allowlists risk evidence and strips payment identity", () => 
         three_ds_verified: true,
         phone: "+1-secret",
         card: { last4: "1234" },
+        payment: { payment_method_type: "Apple Pay" },
         billing_address: { country: "US", line_1: "secret street" },
         risk_signals: {
           signals: [
@@ -135,6 +136,7 @@ test("Whop parsing allowlists risk evidence and strips payment identity", () => 
   assert.equal(result.riskScore, 71);
   assert.equal(result.checkoutEmail, "buyer@checkout.example");
   assert.equal(result.billingCountry, "US");
+  assert.equal(result.paymentMethodType, "apple_pay");
   assert.deepEqual(result.riskSignals.map((signal) => signal.key), [
     "prior_dispute_count",
   ]);

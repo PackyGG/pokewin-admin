@@ -41,6 +41,7 @@ import {
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
+import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
 import { FiatReviewControls } from "./review-controls";
 
 export const metadata = { title: "Fiat Deposit Review · Antifraud" };
@@ -482,8 +483,8 @@ function ProviderEvidence({ item }: { item: FiatAssessment }) {
       alert: provider.disputeCount > 0,
     },
     {
-      label: "Payment method",
-      value: provider.paymentMethodType ?? "Not supplied",
+      label: "Payment option",
+      value: whopPaymentMethodLabel(provider.paymentMethodType),
     },
     {
       label: "Billing country",

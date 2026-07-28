@@ -99,6 +99,7 @@ test("checkout email polling uses Whop payment.created metadata and a tuple curs
   assert.match(calls[0]?.sql ?? "", /data,user,email/);
   assert.match(calls[0]?.sql ?? "", /data,metadata,internal_user_id/);
   assert.match(calls[0]?.sql ?? "", /data,metadata,deposit_intent_id/);
+  assert.match(calls[0]?.sql ?? "", /payment_method_type/);
   assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
   assert.deepEqual(calls[0]?.values, [
     occurredAt,
@@ -124,6 +125,7 @@ test("blacklist matches are durable before signed lock delivery", async () => {
 
   assert.match(source, /INSERT INTO fiat_email_domain_matches/);
   assert.match(source, /INSERT INTO fiat_problem_alert_outbox/);
+  assert.match(source, /'payment_method_type'/);
   assert.match(source, /'infinity'::timestamptz/);
   assert.match(source, /if \(delivered\)[\s\S]*UPDATE fiat_problem_alert_outbox/);
   assert.match(source, /fiat_blacklisted_email_domain/);

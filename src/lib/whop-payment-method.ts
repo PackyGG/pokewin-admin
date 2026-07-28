@@ -80,6 +80,6 @@ export function whopPaymentMethodLabel(type: string | null): string {
         ? type
             .replaceAll("_", " ")
             .replace(/\b\w/g, (letter) => letter.toUpperCase())
-        : "Whop payment";
+        : "Unknown";
   }
 }

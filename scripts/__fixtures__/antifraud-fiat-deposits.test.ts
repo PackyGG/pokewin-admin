@@ -35,6 +35,10 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
   assert.match(page, /Whop checkout:/);
+  assert.match(page, /Payment option/);
+  assert.match(page, /whopPaymentMethodLabel/);
+  assert.match(detail, /Payment option/);
+  assert.match(detail, /whopPaymentMethodLabel/);
   assert.match(api, /checkoutEmail/);
   assert.match(page, /Six-point flow/);
   assert.match(page, /Risk score guide/);
@@ -72,6 +76,9 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   const service = read(
     "services/antifraud-monitor/src/fiat-risk.ts",
   );
+  const alerts = read(
+    "services/antifraud-monitor/src/fiat-alerts.ts",
+  );
   const migration = read(
     "services/antifraud-monitor/migrations/012_fiat_deposit_assessments.sql",
   );
@@ -84,6 +91,10 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   assert.match(service, /payment_reconciliation_failed/);
   assert.match(service, /event_type='payment\.succeeded'/);
   assert.match(service, /provider_evidence/);
+  assert.match(routes, /provider_evidence->>'paymentMethodType'/);
+  assert.match(routes, /normalizeWhopPaymentMethod\(query\.search\)/);
+  assert.match(alerts, /name: "Payment option"/);
+  assert.match(alerts, /whopPaymentMethodLabel/);
   assert.match(migration, /fiat_deposit_review_events/);
   assert.match(migration, /idempotency_key uuid NOT NULL UNIQUE/);
 });

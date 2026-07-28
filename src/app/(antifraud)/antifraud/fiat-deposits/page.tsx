@@ -30,6 +30,7 @@ import { canManageAntifraud } from "@/lib/antifraud/access";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
+import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
 import { FiatKycAction } from "./fiat-kyc-action";
 
 export const metadata = { title: "Fiat Deposits · Antifraud" };
@@ -446,7 +447,7 @@ function FiatRow({
           </Button>
         </div>
       </div>
-      <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-3 xl:grid-cols-6">
+      <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-3 xl:grid-cols-7">
         <Fact
           label="Six-point flow"
           value={`${passed}/${item.flow_checks.length} pass`}
@@ -467,6 +468,12 @@ function FiatRow({
                 : "Pending"
           }
           alert={item.three_ds_verified === false}
+        />
+        <Fact
+          label="Payment option"
+          value={whopPaymentMethodLabel(
+            item.provider_evidence.paymentMethodType,
+          )}
         />
         <Fact
           label="Prior crypto"
