@@ -22,6 +22,7 @@ import { getReviewDetail } from "@/lib/antifraud/reviews";
 import { ReviewStatusBadge } from "../../_components/badges";
 import { CaseControls } from "../_components/case-controls";
 import { QuickReviewActions } from "../_components/quick-review-actions";
+import { ReviewSignalBadge } from "../_components/review-signal-badge";
 import { listAssignableAnalysts } from "../actions";
 
 export const metadata = { title: "Case" };
@@ -112,12 +113,7 @@ async function CaseDetail({
           {review.signals.length > 0 && (
             <div className="flex flex-wrap gap-1">
               {review.signals.map((signal) => (
-                <span
-                  key={signal}
-                  className="rounded-sm border border-border/60 bg-muted/40 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                >
-                  {signal}
-                </span>
+                <ReviewSignalBadge key={signal} signal={signal} />
               ))}
             </div>
           )}
@@ -180,9 +176,7 @@ async function CaseDetail({
                 >
                   <span className="min-w-0 flex-1">
                     <span className="flex flex-wrap items-center gap-1.5">
-                      <span className="truncate text-xs font-semibold">
-                        {signal.kind}
-                      </span>
+                      <ReviewSignalBadge signal={signal.kind} />
                       {signal.riskScore != null && (
                         <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                           risk {signal.riskScore}

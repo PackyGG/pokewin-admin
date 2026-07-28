@@ -23,6 +23,7 @@ import {
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { QuickReviewActions } from "./_components/quick-review-actions";
+import { ReviewSignalBadge } from "./_components/review-signal-badge";
 
 export const metadata = { title: "Account Review" };
 
@@ -295,12 +296,7 @@ async function QueueList({
                   {review.signals.length > 0 && (
                     <span className="mt-1 flex flex-wrap gap-1">
                       {review.signals.slice(0, 4).map((signal) => (
-                        <span
-                          key={signal}
-                          className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                        >
-                          {signal}
-                        </span>
+                        <ReviewSignalBadge key={signal} signal={signal} />
                       ))}
                     </span>
                   )}
