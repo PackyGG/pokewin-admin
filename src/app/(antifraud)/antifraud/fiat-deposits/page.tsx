@@ -320,6 +320,12 @@ function FiatRow({ item }: { item: FiatAssessment }) {
             >
               Whop checkout: {item.provider_evidence.checkoutEmail ?? "unavailable"}
             </p>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">
+              Country:{" "}
+              <span className="font-medium text-foreground">
+                {item.account_evidence.countryCode?.toUpperCase() ?? "Unknown"}
+              </span>
+            </p>
           </div>
           <Badge
             variant="outline"

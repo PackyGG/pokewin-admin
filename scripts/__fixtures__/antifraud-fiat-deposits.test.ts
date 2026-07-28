@@ -22,6 +22,10 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /All paid/);
   assert.match(page, /Paid · reconciliation failed/);
   assert.match(page, /Expected credit/);
+  assert.match(
+    page,
+    /Country:[\s\S]*?item\.account_evidence\.countryCode\?\.toUpperCase\(\)\s*\?\?\s*"Unknown"/,
+  );
   assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
   assert.match(page, /Whop checkout:/);
