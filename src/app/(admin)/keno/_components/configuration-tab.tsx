@@ -17,11 +17,13 @@ import {
   getCachedRakebackWagerWeights,
   getCachedWagerRequirementDefaults,
 } from "../../security/_cached-reads";
+import { getCachedKenoConfig } from "../_cached-reads";
 import {
   getKenoRtp,
   KENO_DRAW_COUNT,
   KENO_GRID_SIZE,
-  KENO_MAX_BET_USD,
+  KENO_DEFAULT_MAX_BET_USD,
+  KENO_MAX_CONFIGURABLE_BET_USD,
   KENO_MAX_PICKS,
   KENO_MIN_BET_USD,
   KENO_MIN_PICKS,
@@ -34,13 +36,16 @@ export async function KenoConfigurationTab({
 }: {
   canEdit: boolean;
 }) {
-  const [wagerResult, leaderboardResult, rakebackResult] =
+  const [kenoConfigResult, wagerResult, leaderboardResult, rakebackResult] =
     await Promise.allSettled([
+      getCachedKenoConfig(),
       getCachedWagerRequirementDefaults(),
       getCachedLeaderboardWagerWeights(),
       getCachedRakebackWagerWeights(),
     ]);
 
+  const kenoConfig =
+    kenoConfigResult.status === "fulfilled" ? kenoConfigResult.value : null;
   const wagerDefaults =
     wagerResult.status === "fulfilled" ? wagerResult.value : null;
   const leaderboardWeights =
@@ -64,11 +69,12 @@ export async function KenoConfigurationTab({
           title="System configuration"
           action={
             <Badge variant="outline" className="font-normal">
-              3 live settings · {canEdit ? "Editing enabled" : "Read only"}
+              4 live settings · {canEdit ? "Editing enabled" : "Read only"}
             </Badge>
           }
         />
         <KenoSettingsCard
+          kenoConfig={kenoConfig}
           wagerDefaults={wagerDefaults}
           leaderboardWeights={leaderboardWeights}
           rakebackWeights={rakebackWeights}
@@ -96,10 +102,17 @@ export async function KenoConfigurationTab({
               value={`$${KENO_MIN_BET_USD.toFixed(2)}`}
             />
             <PanelRow
-              label="Maximum bet"
-              value={`$${KENO_MAX_BET_USD.toLocaleString("en-US", { minimumFractionDigits: 2 })}`}
+              label="Current maximum"
+              value={
+                kenoConfig
+                  ? `$${kenoConfig.max_bet_usd.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                  : "Unavailable"
+              }
             />
-            <PanelRow label="Settlement" value="Immediate" />
+            <PanelRow
+              label="Default / allowed cap"
+              value={`$${KENO_DEFAULT_MAX_BET_USD.toFixed(2)} / $${KENO_MAX_CONFIGURABLE_BET_USD.toLocaleString("en-US")}`}
+            />
           </StatPanel>
           <StatPanel title="Risk" icon={ShieldCheck} accent="cyan">
             <PanelRow label="Low" value="Frequent returns" />
@@ -116,11 +129,10 @@ export async function KenoConfigurationTab({
           </StatPanel>
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
-          These rules and payout curves are compile-time backend constants.
-          They are shown here for operational reference but require a backend
-          release to change. The three settings above are the complete active
-          database-backed Keno configuration formerly shown on the System /
-          Security page.
+          The grid, draws, picks, minimum bet, risk modes, and payout curves
+          are compile-time backend constants. The current maximum bet and
+          three wager weights above are database-backed and change through the
+          backend admin API.
         </p>
       </section>
 

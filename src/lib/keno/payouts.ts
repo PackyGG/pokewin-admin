@@ -16,7 +16,8 @@ export const KENO_DRAW_COUNT = 10;
 export const KENO_MIN_PICKS = 1;
 export const KENO_MAX_PICKS = 10;
 export const KENO_MIN_BET_USD = 0.25;
-export const KENO_MAX_BET_USD = 1_000;
+export const KENO_DEFAULT_MAX_BET_USD = 20;
+export const KENO_MAX_CONFIGURABLE_BET_USD = 1_000;
 
 export const KENO_RISK_MODES = ["low", "medium", "high"] as const;
 export type KenoRiskMode = (typeof KENO_RISK_MODES)[number];

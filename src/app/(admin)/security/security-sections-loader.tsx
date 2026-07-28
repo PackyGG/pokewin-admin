@@ -21,6 +21,7 @@ import { RETIRED_SHARD_SITE_CONFIG_KEYS } from "./retired-shard-keys";
 import { DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS } from "./deposit-bonus-config-keys";
 import { REWARD_EXPIRY_SITE_CONFIG_KEYS } from "./reward-expiry-keys";
 import { TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS } from "./telegram-notifications-keys";
+import { KENO_SITE_CONFIG_KEYS } from "../keno/config-keys";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
@@ -92,6 +93,7 @@ export async function SecuritySectionsLoader() {
     ...DEPOSIT_BONUS_CONFIG_SITE_CONFIG_KEYS,
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
     ...TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS,
+    ...KENO_SITE_CONFIG_KEYS,
   ]);
   const config = allConfig.filter((row) => !movedKeys.has(row.key));
   const hasMovedKeys = allConfig.some((row) =>

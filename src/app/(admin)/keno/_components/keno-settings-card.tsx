@@ -18,41 +18,44 @@ import { Spinner } from "@/components/ux";
 import { updateWagerRequirementDefaultsAction } from "../../security/wager-requirement-actions";
 import { updateLeaderboardWagerWeightsAction } from "../../security/leaderboard-wager-weights-actions";
 import { updateRakebackWagerWeightsAction } from "../../security/rakeback-wager-weights-actions";
+import { updateKenoConfigAction } from "../actions";
+import type { KenoConfig } from "@/lib/backend-api/keno-config";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
 import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wager-weights";
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
+import {
+  KENO_DEFAULT_MAX_BET_USD,
+  KENO_MAX_CONFIGURABLE_BET_USD,
+  KENO_MIN_BET_USD,
+} from "@/lib/keno/payouts";
 
 /**
  * Every admin-editable keno setting, in one place.
  *
- * Keno's three live weights live in three different backend endpoints
- * (withdrawal requirement / leaderboards / rakeback). This card consolidates
- * those destinations in the dedicated Content → Keno workspace.
+ * Keno's maximum bet and three live weights are exposed by four backend
+ * admin endpoints. This card consolidates them in the dedicated Content →
+ * Keno workspace.
  *
- * It is the sole editor for the three Keno keys. The destination-oriented
- * cards on /security deliberately do not carry a Keno field, so each key has
- * exactly one editable surface.
+ * It is the sole editor for all four Keno keys. The destination-oriented
+ * cards and generic site_config table on /security deliberately omit them,
+ * so each key has exactly one editable surface.
  *
  * Saving reuses the established security server actions, so auth, the audit
  * event, and cache revalidation keep the same production contract — one audit
  * record per key group, recording that group's real old → new.
  *
- * NOT shown, because they are not configurable: the grid (40), draw count
- * (10), pick range (1–10), bet range ($0.25–$1000), the three risk modes and
- * the payout tables are compile-time constants in the backend
- * (src/utils/keno.ts) with no site_config backing and no admin endpoint —
- * changing them is a backend deploy. The shard weight
- * (shard_wager_weight_keno_bps) is omitted too: the shard surface was retired
- * site-wide, so it is filtered out of /security entirely.
+ * The minimum bet, grid, draw count, pick range, risk modes and payout tables
+ * remain compile-time backend constants. The shard weight
+ * (shard_wager_weight_keno_bps) is omitted because Shards are retired.
  */
 
 const BPS_PER_X = 10000;
 const MAX_BPS = 1_000_000;
 
-type FieldKey = "withdrawal" | "leaderboard" | "rakeback";
+type WeightFieldKey = "withdrawal" | "leaderboard" | "rakeback";
 
 const FIELDS: {
-  key: FieldKey;
+  key: WeightFieldKey;
   label: string;
   configKey: string;
   help: React.ReactNode;
@@ -98,11 +101,13 @@ function bpsToX(bps: number | undefined): string {
 }
 
 export function KenoSettingsCard({
+  kenoConfig,
   wagerDefaults,
   leaderboardWeights,
   rakebackWeights,
   canEdit,
 }: {
+  kenoConfig: KenoConfig | null;
   wagerDefaults: WagerRequirementDefaults | null;
   leaderboardWeights: LeaderboardWagerWeights | null;
   rakebackWeights: RakebackWagerWeights | null;
@@ -114,24 +119,33 @@ export function KenoSettingsCard({
   // objects. Re-baselined in place after a successful save so the card
   // reflects what persisted WITHOUT a router.refresh() (no scroll jump) —
   // same contract as the destination-oriented cards.
-  const [baseline, setBaseline] = useState<Record<FieldKey, number | undefined>>(
-    () => ({
+  const [weightBaseline, setWeightBaseline] = useState<
+    Record<WeightFieldKey, number | undefined>
+  >(() => ({
       withdrawal: wagerDefaults?.wager_weight_keno_bps,
       leaderboard: leaderboardWeights?.keno_bps,
       rakeback: rakebackWeights?.keno_bps,
-    }),
-  );
+    }));
 
-  const [values, setValues] = useState<Record<FieldKey, string>>(() => ({
+  const [weightValues, setWeightValues] = useState<
+    Record<WeightFieldKey, string>
+  >(() => ({
     withdrawal: bpsToX(wagerDefaults?.wager_weight_keno_bps),
     leaderboard: bpsToX(leaderboardWeights?.keno_bps),
     rakeback: bpsToX(rakebackWeights?.keno_bps),
   }));
+  const [maxBetBaseline, setMaxBetBaseline] = useState<number | undefined>(
+    () => kenoConfig?.max_bet_usd,
+  );
+  const [maxBetValue, setMaxBetValue] = useState(
+    () => kenoConfig?.max_bet_usd.toString() ?? "",
+  );
 
-  // All three reads failed (or the backend predates keno weights entirely) —
+  // All four reads failed (or the backend predates Keno config entirely) —
   // there is nothing meaningful to edit, so degrade to a notice rather than
-  // rendering three dead inputs. Mirrors the per-game cards' `!initial` branch.
+  // rendering dead inputs. Mirrors the per-game cards' `!initial` branch.
   const anyAvailable =
+    kenoConfig !== null ||
     wagerDefaults !== null ||
     leaderboardWeights !== null ||
     rakebackWeights !== null;
@@ -144,7 +158,7 @@ export function KenoSettingsCard({
             Keno system configuration
           </CardTitle>
           <CardDescription>
-            Every admin-editable keno weight, in one place.
+            Every admin-editable Keno setting, in one place.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -153,9 +167,9 @@ export function KenoSettingsCard({
             <div className="space-y-1">
               <p className="font-medium">Backend not reachable</p>
               <p className="text-amber-600/80 dark:text-amber-400/80">
-                None of the wager-weight endpoints responded, so the current
-                keno weights are unknown. This card becomes editable once the
-                backend is reachable again.
+                None of the Keno configuration endpoints responded, so the
+                current values are unknown. This card becomes editable once
+                the backend is reachable again.
               </p>
             </div>
           </div>
@@ -165,10 +179,10 @@ export function KenoSettingsCard({
   }
 
   const handleSave = () => {
-    const changed: Partial<Record<FieldKey, number>> = {};
+    const changedWeights: Partial<Record<WeightFieldKey, number>> = {};
 
     for (const f of FIELDS) {
-      const raw = values[f.key].trim();
+      const raw = weightValues[f.key].trim();
       if (raw === "") continue; // empty → leave unchanged
       const x = Number(raw);
       if (!Number.isFinite(x) || x < 0) {
@@ -176,12 +190,38 @@ export function KenoSettingsCard({
         return;
       }
       const bps = Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)));
-      if (bps !== baseline[f.key]) {
-        changed[f.key] = bps;
+      if (bps !== weightBaseline[f.key]) {
+        changedWeights[f.key] = bps;
       }
     }
 
-    if (Object.keys(changed).length === 0) {
+    let changedMaxBet: number | undefined;
+    if (maxBetBaseline !== undefined) {
+      const raw = maxBetValue.trim();
+      if (raw === "") {
+        toast.error("Maximum bet is required");
+        return;
+      }
+      const parsed = Number(raw);
+      if (
+        !Number.isFinite(parsed) ||
+        parsed < KENO_MIN_BET_USD ||
+        parsed > KENO_MAX_CONFIGURABLE_BET_USD
+      ) {
+        toast.error(
+          `Maximum bet must be between $${KENO_MIN_BET_USD.toFixed(2)} and $${KENO_MAX_CONFIGURABLE_BET_USD.toLocaleString("en-US")}`,
+        );
+        return;
+      }
+      if (parsed !== maxBetBaseline) {
+        changedMaxBet = parsed;
+      }
+    }
+
+    if (
+      changedMaxBet === undefined &&
+      Object.keys(changedWeights).length === 0
+    ) {
       toast.info("No changes to save");
       return;
     }
@@ -193,44 +233,58 @@ export function KenoSettingsCard({
       // site_config on the same backend and each re-reads for its audit, so
       // serialising keeps those read-then-write pairs from interleaving.
       const failures: string[] = [];
-      const saved = { ...baseline };
+      const savedWeights = { ...weightBaseline };
+      let savedMaxBet = maxBetBaseline;
 
-      if (changed.withdrawal !== undefined) {
-        const r = await updateWagerRequirementDefaultsAction({
-          wager_weight_keno_bps: changed.withdrawal,
+      if (changedMaxBet !== undefined) {
+        const result = await updateKenoConfigAction({
+          max_bet_usd: changedMaxBet,
         });
-        if (r.success) saved.withdrawal = r.data.wager_weight_keno_bps;
-        else failures.push(`Withdrawal requirement: ${r.error}`);
+        if (result.success) savedMaxBet = result.data.max_bet_usd;
+        else failures.push(`Maximum bet: ${result.error}`);
       }
 
-      if (changed.leaderboard !== undefined) {
-        const r = await updateLeaderboardWagerWeightsAction({
-          keno_bps: changed.leaderboard,
+      if (changedWeights.withdrawal !== undefined) {
+        const r = await updateWagerRequirementDefaultsAction({
+          wager_weight_keno_bps: changedWeights.withdrawal,
         });
-        if (r.success) saved.leaderboard = r.data.keno_bps;
+        if (r.success) {
+          savedWeights.withdrawal = r.data.wager_weight_keno_bps;
+        } else {
+          failures.push(`Withdrawal requirement: ${r.error}`);
+        }
+      }
+
+      if (changedWeights.leaderboard !== undefined) {
+        const r = await updateLeaderboardWagerWeightsAction({
+          keno_bps: changedWeights.leaderboard,
+        });
+        if (r.success) savedWeights.leaderboard = r.data.keno_bps;
         else failures.push(`Leaderboard: ${r.error}`);
       }
 
-      if (changed.rakeback !== undefined) {
+      if (changedWeights.rakeback !== undefined) {
         const r = await updateRakebackWagerWeightsAction({
-          keno_bps: changed.rakeback,
+          keno_bps: changedWeights.rakeback,
         });
-        if (r.success) saved.rakeback = r.data.keno_bps;
+        if (r.success) savedWeights.rakeback = r.data.keno_bps;
         else failures.push(`Rakeback: ${r.error}`);
       }
 
       // Re-baseline to what actually persisted, including on a partial
       // failure — a field that saved must not stay flagged as dirty just
       // because a sibling field failed.
-      setBaseline(saved);
-      setValues({
-        withdrawal: bpsToX(saved.withdrawal),
-        leaderboard: bpsToX(saved.leaderboard),
-        rakeback: bpsToX(saved.rakeback),
+      setMaxBetBaseline(savedMaxBet);
+      setMaxBetValue(savedMaxBet?.toString() ?? "");
+      setWeightBaseline(savedWeights);
+      setWeightValues({
+        withdrawal: bpsToX(savedWeights.withdrawal),
+        leaderboard: bpsToX(savedWeights.leaderboard),
+        rakeback: bpsToX(savedWeights.rakeback),
       });
 
       if (failures.length === 0) {
-        toast.success("Keno weights updated");
+        toast.success("Keno configuration updated");
       } else {
         toast.error(failures.join(" · "));
       }
@@ -244,12 +298,12 @@ export function KenoSettingsCard({
           <CardTitle className="text-sm font-medium">
             Keno system configuration
           </CardTitle>
-          <Badge variant="secondary">All 3 active settings</Badge>
+          <Badge variant="secondary">All 4 active settings</Badge>
         </div>
         <CardDescription>
-          The complete live Keno configuration moved from the System /
-          Security page. Values are multipliers (1× = 10000 bps). Saving
-          writes through the same backend endpoints and audit trail as before.
+          Maximum bet plus every Keno wager weight. Weight values are
+          multipliers (1× = 10000 bps). All saves go through the backend admin
+          API and the admin audit trail.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -260,21 +314,62 @@ export function KenoSettingsCard({
             at bet time — changes apply to future keno bets only and never
             re-price existing progress or standings. The rakeback weight is
             live: it also re-prices still-unclaimed periods, but never settled
-            claims. Keno&apos;s grid, pick range, bet limits and payout tables
-            are fixed in the backend and are not editable here.
+            claims. The maximum bet applies immediately to new games. Existing
+            games and settled results are unchanged.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Maximum bet</p>
+              <code className="block truncate text-[10px] text-muted-foreground">
+                keno_max_bet_usd
+              </code>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="keno-max-bet">USD per game</Label>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                Default ${KENO_DEFAULT_MAX_BET_USD.toFixed(2)}
+              </span>
+            </div>
+            <Input
+              id="keno-max-bet"
+              type="number"
+              step="0.01"
+              min={KENO_MIN_BET_USD}
+              max={KENO_MAX_CONFIGURABLE_BET_USD}
+              value={maxBetValue}
+              onChange={(event) => setMaxBetValue(event.target.value)}
+              disabled={
+                isPending || maxBetBaseline === undefined || !canEdit
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {maxBetBaseline === undefined ? (
+                <span className="text-amber-600 dark:text-amber-400">
+                  Current value unavailable — the Keno config endpoint
+                  didn&apos;t respond.
+                </span>
+              ) : (
+                <>
+                  Allowed range ${KENO_MIN_BET_USD.toFixed(2)}–$
+                  {KENO_MAX_CONFIGURABLE_BET_USD.toLocaleString("en-US")}.
+                  Applies immediately to future games.
+                </>
+              )}
+            </p>
+          </div>
+
           {FIELDS.map((f) => {
-            const raw = values[f.key].trim();
+            const raw = weightValues[f.key].trim();
             const x = raw === "" ? null : Number(raw);
             const bpsHint =
               x !== null && Number.isFinite(x) && x >= 0
                 ? `= ${Math.min(MAX_BPS, Math.max(0, Math.round(x * BPS_PER_X)))} bps`
                 : "= — bps";
             // A single endpoint being down shouldn't block the other two.
-            const unavailable = baseline[f.key] === undefined;
+            const unavailable = weightBaseline[f.key] === undefined;
             return (
               <div
                 key={f.key}
@@ -297,9 +392,12 @@ export function KenoSettingsCard({
                   type="number"
                   step="0.05"
                   min="0"
-                  value={values[f.key]}
+                  value={weightValues[f.key]}
                   onChange={(e) =>
-                    setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                    setWeightValues((prev) => ({
+                      ...prev,
+                      [f.key]: e.target.value,
+                    }))
                   }
                   disabled={isPending || unavailable || !canEdit}
                 />
