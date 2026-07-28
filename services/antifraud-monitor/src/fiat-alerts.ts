@@ -10,6 +10,7 @@ const SEND_TIMEOUT_MS = 5_000;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export const FIAT_PROBLEM_CODES = [
+  "fiat_locked_account",
   "failed",
   "review",
   "disputed",
@@ -94,6 +95,8 @@ function formatUsdCents(value: unknown): string | null {
 
 export function fiatProblemTitle(code: FiatProblemCode): string {
   switch (code) {
+    case "fiat_locked_account":
+      return "High-risk fiat deposit from locked account";
     case "failed":
       return "Fiat deposit failed";
     case "review":
@@ -157,8 +160,18 @@ export function buildFiatDiscordPayload(
   if (attempts) {
     fields.push({ name: "Attempts", value: clean(attempts), inline: true });
   }
+  const lockedMethods = detail(details, "locked_deposits_fiat");
+  if (lockedMethods) {
+    fields.push({
+      name: "Fiat deposit lock",
+      value: clean(lockedMethods),
+      inline: true,
+    });
+  }
   const reason =
-    detail(details, "failure_reason") ?? detail(details, "last_error");
+    detail(details, "failure_reason") ??
+    detail(details, "last_error") ??
+    detail(details, "locked_deposits_reason");
   if (reason) {
     fields.push({
       name: "Failure detail",
@@ -169,7 +182,9 @@ export function buildFiatDiscordPayload(
 
   const url = new URL(dashboardUrl).toString();
   const description =
-    problem.source_kind === "deposit_intent"
+    problem.problem_code === "fiat_locked_account"
+      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} was created for an account with fiat deposits locked.`
+      : problem.source_kind === "deposit_intent"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} requires attention.`
       : `Whop payment webhook ${clean(details.provider_event_id ?? problem.source_id, 256)} could not be processed.`;
 
@@ -216,6 +231,40 @@ export async function fetchFiatProblems(
   const result = await source.query<FiatProblem>(
     `
       WITH candidates AS (
+        SELECT
+          'deposit_intent'::text AS source_kind,
+          fdi.id::text || ':fiat_locked_account' AS source_id,
+          'fiat_locked_account'::text AS problem_code,
+          fdi.user_id,
+          COALESCE(u.display_username, u.username) AS username,
+          jsonb_build_object(
+            'intent_id', fdi.id::text,
+            'provider', fdi.provider,
+            'status', fdi.status,
+            'currency', fdi.currency,
+            'requested_amount_cents', fdi.requested_amount_cents,
+            'credited_amount_cents', fdi.credited_amount_cents,
+            'actual_customer_total_cents', fdi.actual_customer_total_cents,
+            'provider_payment_status', fdi.provider_payment_status,
+            'provider_checkout_id', fdi.provider_checkout_id,
+            'provider_payment_id', fdi.provider_payment_id,
+            'locked_deposits_fiat',
+              array_to_string(ufl.locked_deposits_fiat, ', '),
+            'locked_deposits_at', ufl.locked_deposits_at,
+            'locked_deposits_reason', ufl.locked_deposits_reason
+          ) AS details,
+          fdi.created_at ${UTC} AS occurred_at
+        FROM fiat_deposit_intents fdi
+        JOIN user_feature_locks ufl ON ufl.user_id = fdi.user_id
+        LEFT JOIN "user" u ON u.id = fdi.user_id
+        WHERE cardinality(ufl.locked_deposits_fiat) > 0
+          AND (
+            ufl.locked_deposits_at IS NULL
+            OR ufl.locked_deposits_at <= fdi.created_at
+          )
+
+        UNION ALL
+
         SELECT
           'deposit_intent'::text AS source_kind,
           fdi.id::text || ':' ||

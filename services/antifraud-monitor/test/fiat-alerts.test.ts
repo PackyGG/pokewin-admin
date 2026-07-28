@@ -49,7 +49,42 @@ test("fiat problem payload is safe, useful, and has no Discord mentions", () => 
   assert.match(JSON.stringify(payload), /\$125\.50/);
 });
 
+test("locked-account deposit alerts expose the active fiat lock", () => {
+  const payload = buildFiatDiscordPayload(
+    "https://admin.packydash.com/fiat?tab=payments",
+    {
+      ...failedIntent,
+      source_id: "intent-2:fiat_locked_account",
+      problem_code: "fiat_locked_account",
+      details: {
+        intent_id: "intent-2",
+        status: "completed",
+        credited_amount_cents: 50_000,
+        locked_deposits_fiat: "credit_card",
+        locked_deposits_reason: "High account risk",
+      },
+    },
+  );
+
+  assert.equal(
+    payload.embeds[0]?.title,
+    "High-risk fiat deposit from locked account",
+  );
+  assert.match(payload.embeds[0]?.description ?? "", /fiat deposits locked/);
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "Fiat deposit lock",
+    )?.value,
+    "credit_card",
+  );
+  assert.match(JSON.stringify(payload), /High account risk/);
+});
+
 test("every monitored problem has explicit operator-facing copy", () => {
+  assert.equal(
+    fiatProblemTitle("fiat_locked_account"),
+    "High-risk fiat deposit from locked account",
+  );
   assert.equal(fiatProblemTitle("review"), "Fiat deposit needs review");
   assert.equal(
     fiatProblemTitle("checkout_creating_stale"),
@@ -72,6 +107,10 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
 
   assert.match(source, /FROM fiat_deposit_intents fdi/);
+  assert.match(source, /JOIN user_feature_locks ufl ON ufl\.user_id = fdi\.user_id/);
+  assert.match(source, /cardinality\(ufl\.locked_deposits_fiat\) > 0/);
+  assert.match(source, /ufl\.locked_deposits_at <= fdi\.created_at/);
+  assert.match(source, /fiat_locked_account/);
   assert.match(source, /FROM payment_webhook_events pwe/);
   assert.match(source, /received_at >= .*interval '30 days'/s);
   assert.match(source, /checkout_creating_stale/);

@@ -23,9 +23,10 @@ It does not modify the Packy frontend or backend.
 - Incremental detection of automatic lifetime-fiat withdrawal holds, with
   independent durable delivery to Account Review and a dedicated Discord
   webhook
-- Durable Discord alerts for failed, review, disputed, refunded, stalled, and
-  long-pending fiat deposits plus failed payment-webhook processing. Detection
-  reads only the MAIN mirror and delivery retries from the Antifraud database.
+- Durable Discord alerts for fiat intents created while the account's fiat
+  deposits are locked, plus failed, review, disputed, refunded, stalled, and
+  long-pending deposits and failed payment-webhook processing. Detection reads
+  only the MAIN mirror and delivery retries from the Antifraud database.
 - Rate-limited HTTP API with separate read and admin-write credentials
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
