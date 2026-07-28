@@ -13,6 +13,7 @@ import { safeQueryOrNull, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-quer
 import { getCardPaymentDetail } from "@/lib/queries/card-payments";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { isUuid } from "@/lib/utils/ids";
+import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
 
 export const metadata = { title: "Card Payment Detail" };
 
@@ -84,6 +85,18 @@ async function CardPaymentDetailBody({ intentId }: { intentId: string }) {
             <InfoRow label="User"><Link href={`/users/${data.userId}`} className="hover:underline">{data.username ?? data.email ?? data.userId}</Link></InfoRow>
             <InfoRow label="Requested">{usd(data.requestedAmountCents)}</InfoRow>
             <InfoRow label="Currency">{data.currency}</InfoRow>
+            <InfoRow label="Payment method">
+              <span>
+                {whopPaymentMethodLabel(data.paymentMethodType)}
+                {data.paymentMethodType === "apple_pay" && (
+                  <span className="ml-1 text-xs text-emerald-600 dark:text-emerald-400">
+                    · 20% lower antifraud weight
+                  </span>
+                )}
+              </span>
+            </InfoRow>
+            {data.cardBrand && <InfoRow label="Card brand">{data.cardBrand.toUpperCase()}</InfoRow>}
+            {data.cardLast4 && <InfoRow label="Card ending">•••• {data.cardLast4}</InfoRow>}
             <InfoRow label="Checkout ID"><CodeValue value={data.providerCheckoutId} /></InfoRow>
             <InfoRow label="Payment ID"><CodeValue value={data.providerPaymentId} /></InfoRow>
             <InfoRow label="Idempotency key"><CodeValue value={data.clientIdempotencyKey} /></InfoRow>

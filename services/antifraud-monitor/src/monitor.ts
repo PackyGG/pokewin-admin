@@ -37,6 +37,7 @@ import {
   type SourceActivity,
 } from "./source.js";
 import type { ActiveSession, Signal, Signup } from "./types.js";
+import { adjustFiatRiskForPaymentMethod } from "./whop-payment-method.js";
 
 export function storedSignals(value: unknown): Signal[] {
   let parsed = value;
@@ -1353,7 +1354,11 @@ export class MonitorEngine {
     activity: SourceActivity,
     weights: ScoreWeights,
   ): number {
-    return activityScoreFor(activity.event_type, weights);
+    return adjustFiatRiskForPaymentMethod(
+      activity.event_type,
+      activity.payload,
+      activityScoreFor(activity.event_type, weights),
+    );
   }
 
   private async recordActivityBatch(

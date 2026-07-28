@@ -5,6 +5,7 @@ import {
   queryRows,
   sql,
 } from "@/lib/queries/insights-rewards/_drizzle-query";
+import { whopPaymentMethodInfo } from "@/lib/whop-payment-method";
 
 export const CARD_PAYMENT_STATUSES = [
   "created",
@@ -45,6 +46,9 @@ export type CardPaymentListItem = {
   providerPaymentStatus: string | null;
   providerCheckoutId: string | null;
   providerPaymentId: string | null;
+  paymentMethodType: string | null;
+  cardBrand: string | null;
+  cardLast4: string | null;
   completedLedgerId: string | null;
   failureReason: string | null;
   paidAt: string | null;
@@ -120,12 +124,12 @@ type RawListRow = {
   completed_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+  provider_metadata: unknown;
 };
 
 type RawDetailRow = RawListRow & {
   client_idempotency_key: string;
   pricing_metadata: unknown;
-  provider_metadata: unknown;
   ledger_amount: string | null;
   ledger_balance_before: string | null;
   ledger_balance_after: string | null;
@@ -142,6 +146,7 @@ function asIso(value: Date | string | null): string | null {
 }
 
 function mapListRow(row: RawListRow): CardPaymentListItem {
+  const paymentMethod = whopPaymentMethodInfo(row.provider_metadata);
   return {
     id: row.id,
     userId: row.user_id,
@@ -158,6 +163,9 @@ function mapListRow(row: RawListRow): CardPaymentListItem {
     providerPaymentStatus: row.provider_payment_status,
     providerCheckoutId: row.provider_checkout_id,
     providerPaymentId: row.provider_payment_id,
+    paymentMethodType: paymentMethod.type,
+    cardBrand: paymentMethod.cardBrand,
+    cardLast4: paymentMethod.cardLast4,
     completedLedgerId: row.completed_ledger_id,
     failureReason: row.failure_reason,
     paidAt: asIso(row.paid_at),
@@ -210,6 +218,7 @@ export async function getCardPayments(
         i.provider_payment_status,
         i.provider_checkout_id,
         i.provider_payment_id,
+        i.provider_metadata,
         i.completed_ledger_id::text AS completed_ledger_id,
         i.failure_reason,
         i.paid_at,
@@ -266,6 +275,7 @@ export async function getCardPaymentDetail(
       i.provider_payment_status,
       i.provider_checkout_id,
       i.provider_payment_id,
+      i.provider_metadata,
       i.completed_ledger_id::text AS completed_ledger_id,
       i.failure_reason,
       i.paid_at,
@@ -274,7 +284,6 @@ export async function getCardPaymentDetail(
       i.updated_at,
       i.client_idempotency_key,
       i.pricing_metadata,
-      i.provider_metadata,
       lt.amount::text AS ledger_amount,
       lt.balance_before::text AS ledger_balance_before,
       lt.balance_after::text AS ledger_balance_after,
@@ -354,11 +363,31 @@ export async function getCardPaymentDetail(
     rawPayload: fee.raw_payload,
   }));
 
+  const webhookEvents = webhookRows.map((event) => ({
+    id: event.id,
+    providerEventId: event.provider_event_id,
+    eventType: event.event_type,
+    providerResourceId: event.provider_resource_id,
+    processingStatus: event.processing_status,
+    attemptCount: Number(event.attempt_count),
+    lastError: event.last_error,
+    receivedAt: asIso(event.received_at)!,
+    processedAt: asIso(event.processed_at),
+    payload: event.payload,
+  }));
+  const paymentMethod = whopPaymentMethodInfo(
+    row.provider_metadata,
+    ...webhookRows.map((event) => event.payload),
+  );
+
   return {
     ...mapListRow({
       ...row,
       fee_amount_cents: String(fees.reduce((sum, fee) => sum + fee.amountCents, 0)),
     }),
+    paymentMethodType: paymentMethod.type,
+    cardBrand: paymentMethod.cardBrand,
+    cardLast4: paymentMethod.cardLast4,
     clientIdempotencyKey: row.client_idempotency_key,
     pricingMetadata: row.pricing_metadata,
     providerMetadata: row.provider_metadata,
@@ -368,17 +397,6 @@ export async function getCardPaymentDetail(
     ledgerStatus: row.ledger_status,
     ledgerDescription: row.ledger_description,
     fees,
-    webhookEvents: webhookRows.map((event) => ({
-      id: event.id,
-      providerEventId: event.provider_event_id,
-      eventType: event.event_type,
-      providerResourceId: event.provider_resource_id,
-      processingStatus: event.processing_status,
-      attemptCount: Number(event.attempt_count),
-      lastError: event.last_error,
-      receivedAt: asIso(event.received_at)!,
-      processedAt: asIso(event.processed_at),
-      payload: event.payload,
-    })),
+    webhookEvents,
   };
 }

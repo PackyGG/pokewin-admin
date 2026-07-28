@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/table";
 import type { CardPaymentListItem } from "@/lib/queries/card-payments";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
 
 const STATUS_CLASSES: Record<string, string> = {
   completed:
@@ -61,6 +62,14 @@ function StatusBadge({ status }: { status: string }) {
   );
 }
 
+function paymentMethodLabel(payment: CardPaymentListItem): string {
+  const method = whopPaymentMethodLabel(payment.paymentMethodType);
+  const card = [payment.cardBrand?.toUpperCase(), payment.cardLast4 && `•••• ${payment.cardLast4}`]
+    .filter(Boolean)
+    .join(" · ");
+  return card ? `${method} · ${card}` : method;
+}
+
 const columns: ColumnDef<CardPaymentListItem>[] = [
   {
     accessorKey: "username",
@@ -77,6 +86,20 @@ const columns: ColumnDef<CardPaymentListItem>[] = [
         <p className="max-w-48 truncate font-mono text-[10px] text-muted-foreground">
           {row.original.userId}
         </p>
+      </div>
+    ),
+  },
+  {
+    accessorKey: "paymentMethodType",
+    header: "Payment method",
+    cell: ({ row }) => (
+      <div className="min-w-32">
+        <p className="text-xs font-medium">{paymentMethodLabel(row.original)}</p>
+        {row.original.paymentMethodType === "apple_pay" && (
+          <p className="text-[10px] text-emerald-600 dark:text-emerald-400">
+            20% lower antifraud weight
+          </p>
+        )}
       </div>
     ),
   },
@@ -170,7 +193,7 @@ function CardPaymentMobileCard({ payment }: { payment: CardPaymentListItem }) {
             <StatusBadge status={payment.status} />
           </div>
         }
-        footer={formatRelative(payment.createdAt)}
+        footer={`${paymentMethodLabel(payment)} | ${formatRelative(payment.createdAt)}`}
         showChevron
       />
     </Link>

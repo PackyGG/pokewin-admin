@@ -292,7 +292,20 @@ export async function fetchSessionActivity(
         END AS event_type,
         'ledger' AS source,
         lt.id::text AS source_ref,
-        initcap(replace(lt.type::text, '_', ' ')) AS title,
+        CASE
+          WHEN fdi.id IS NOT NULL AND whop.payment_method_type IS NOT NULL
+            THEN 'Fiat deposit · ' ||
+              CASE whop.payment_method_type
+                WHEN 'apple' THEN 'Apple Pay'
+                WHEN 'apple_pay' THEN 'Apple Pay'
+                WHEN 'google_pay' THEN 'Google Pay'
+                WHEN 'cashapp' THEN 'Cash App'
+                WHEN 'cash_app' THEN 'Cash App'
+                WHEN 'card' THEN 'Card'
+                ELSE initcap(replace(whop.payment_method_type, '_', ' '))
+              END
+          ELSE initcap(replace(lt.type::text, '_', ' '))
+        END AS title,
         lt.description AS detail,
         lt.created_at ${UTC} AS occurred_at,
         jsonb_build_object(
@@ -307,10 +320,34 @@ export async function fetchSessionActivity(
           'fiat_currency', fdi.currency,
           'fiat_status', fdi.status,
           'fiat_requested_amount_cents', fdi.requested_amount_cents,
-          'fiat_credited_amount_cents', fdi.credited_amount_cents
+          'fiat_credited_amount_cents', fdi.credited_amount_cents,
+          'fiat_payment_method_type', whop.payment_method_type,
+          'fiat_card_brand', whop.card_brand,
+          'fiat_card_last4', whop.card_last4
         ) AS payload
       FROM ledger_transactions lt
       LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id = lt.id
+      LEFT JOIN LATERAL (
+        SELECT
+          NULLIF(COALESCE(
+            fdi.provider_metadata->>'payment_method_type',
+            fdi.provider_metadata->'payment'->>'payment_method_type',
+            fdi.provider_metadata->'data'->>'payment_method_type',
+            fdi.provider_metadata->'data'->'payment'->>'payment_method_type'
+          ), '') AS payment_method_type,
+          NULLIF(COALESCE(
+            fdi.provider_metadata->>'card_brand',
+            fdi.provider_metadata->'payment'->>'card_brand',
+            fdi.provider_metadata->'data'->>'card_brand',
+            fdi.provider_metadata->'data'->'payment'->>'card_brand'
+          ), '') AS card_brand,
+          NULLIF(COALESCE(
+            fdi.provider_metadata->>'card_last4',
+            fdi.provider_metadata->'payment'->>'card_last4',
+            fdi.provider_metadata->'data'->>'card_last4',
+            fdi.provider_metadata->'data'->'payment'->>'card_last4'
+          ), '') AS card_last4
+      ) whop ON fdi.id IS NOT NULL
       WHERE lt.user_id = $1
         AND lt.created_at >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')

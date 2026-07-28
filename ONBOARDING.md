@@ -196,6 +196,11 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - Windowed reports recognize the reversal at the intent's refund update time; lifetime and transaction-linked reports subtract it from the original credited total. Completed-deposit counts and immutable transaction history remain event counts/gross records.
 - All reporting SQL must use `src/lib/queries/fiat-refund-credits.ts`; do not reimplement partial-refund metadata parsing per surface.
 
+### Whop payment methods and Antifraud
+
+- Whop `payment_method_type`, card brand, and last four are normalized from `fiat_deposit_intents.provider_metadata`; payment detail may fall back to the stored webhook payload. Known method labels include Card, Apple Pay, Google Pay, and Cash App.
+- Apple Pay receives 80% of the configured positive `fiat_deposit` Antifraud weight, rounded to the nearest whole point. Other methods, non-positive fiat weights, and non-fiat events are unchanged. This is a risk-weight adjustment, never an allowlist or containment bypass.
+
 ---
 
 ## 7. ⚠️ GOTCHAS / HARD-WON LESSONS (incident log)

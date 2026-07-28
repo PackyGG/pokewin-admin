@@ -404,7 +404,7 @@ export function activityScoreDefinitions(
       key: "fiat_deposit",
       title: "Fiat deposit",
       description:
-        "A reversible fiat/card deposit by an already-monitored signup raises payment-risk attention.",
+        "A reversible fiat/card deposit by an already-monitored signup raises payment-risk attention. Apple Pay receives 20% less weight.",
       options: [option(weights, "fiat_deposit", "Recorded")],
     },
     {
