@@ -8,7 +8,10 @@ import type { Signup } from "./types.js";
 
 const STREAM = "fiat_email_domains";
 const GMAIL_PATTERN_STREAM = "fiat_gmail_dot_patterns";
+const DEPOSIT_CLUSTER_STREAM = "fiat_suspicious_deposit_clusters";
 const BATCH_SIZE = 100;
+const CLUSTER_WINDOW_MINUTES = 30;
+const CLUSTER_MIN_MEMBERS = 3;
 
 export type CheckoutEmailEvent = {
   source_event_id: string;
@@ -22,10 +25,17 @@ export type CheckoutEmailEvent = {
   occurred_at: Date;
 };
 
-type PendingMatch = Omit<
-  CheckoutEmailEvent,
-  "user_id" | "payment_method_type"
-> & {
+export type DepositClusterMember = CheckoutEmailEvent & {
+  currency: string;
+  payment_identity: string;
+  requested_amount_cents: number;
+};
+
+export type DepositClusterCandidate = DepositClusterMember & {
+  cluster_members: DepositClusterMember[];
+};
+
+type PendingMatch = Omit<CheckoutEmailEvent, "user_id"> & {
   user_id: string;
   domain: string;
   match_type: CheckoutEmailRiskType;
@@ -39,7 +49,8 @@ type EmailDomainMatchEvent = CheckoutEmailEvent & {
 
 export type CheckoutEmailRiskType =
   | "blacklisted_domain"
-  | "gmail_dot_fragmentation";
+  | "gmail_dot_fragmentation"
+  | "suspicious_deposit_cluster";
 
 export type CheckoutEmailRisk = {
   type: CheckoutEmailRiskType;
@@ -114,6 +125,46 @@ export function suspiciousGmailDotPattern(
     domain,
     reason:
       "Gmail local part contains four or more dot-separated segments and multiple one- or two-character fragments",
+  };
+}
+
+export function suspiciousGmailClusterCandidate(
+  value: string,
+): CheckoutEmailRisk | null {
+  const email = value.trim().toLowerCase();
+  const at = email.lastIndexOf("@");
+  if (at <= 0 || at === email.length - 1) return null;
+  const domain = normalizeEmailDomain(email.slice(at + 1));
+  if (domain !== "gmail.com" && domain !== "googlemail.com") return null;
+
+  const local = email.slice(0, at).split("+", 1)[0] ?? "";
+  const segments = local.split(".");
+  if (
+    segments.length < 3 ||
+    segments.some((segment) => !/^[a-z0-9]+$/.test(segment))
+  ) {
+    return null;
+  }
+  const compactLength = segments.reduce(
+    (length, segment) => length + segment.length,
+    0,
+  );
+  const shortFragments = segments.filter(
+    (segment) => segment.length <= 2,
+  ).length;
+  if (
+    compactLength < 12 ||
+    shortFragments < 1 ||
+    (segments.length < 4 && shortFragments < 2)
+  ) {
+    return null;
+  }
+
+  return {
+    type: "suspicious_deposit_cluster",
+    domain,
+    reason:
+      "Gmail local part has an unusual fragmented structure and belongs to a coordinated same-amount deposit cluster",
   };
 }
 
@@ -251,6 +302,321 @@ export async function fetchSuspiciousGmailEvents(
   return result.rows;
 }
 
+type RawDepositClusterCandidate = Omit<
+  DepositClusterCandidate,
+  "cluster_members" | "requested_amount_cents"
+> & {
+  requested_amount_cents: number | string;
+  cluster_members: unknown;
+};
+
+function parseDepositClusterMember(value: unknown): DepositClusterMember | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const row = value as Record<string, unknown>;
+  const occurredAt = new Date(String(row.occurred_at ?? ""));
+  const amount = Number(row.requested_amount_cents);
+  if (
+    !Number.isSafeInteger(amount) ||
+    amount <= 0 ||
+    Number.isNaN(occurredAt.getTime())
+  ) {
+    return null;
+  }
+  const required = [
+    "source_event_id",
+    "provider_event_id",
+    "provider_payment_id",
+    "user_id",
+    "checkout_email",
+    "currency",
+    "payment_identity",
+  ] as const;
+  if (
+    required.some(
+      (key) => typeof row[key] !== "string" || row[key].trim().length === 0,
+    )
+  ) {
+    return null;
+  }
+  return {
+    source_event_id: String(row.source_event_id),
+    provider_event_id: String(row.provider_event_id),
+    deposit_intent_id:
+      typeof row.deposit_intent_id === "string"
+        ? row.deposit_intent_id
+        : null,
+    provider_payment_id: String(row.provider_payment_id),
+    user_id: String(row.user_id),
+    username: typeof row.username === "string" ? row.username : null,
+    checkout_email: String(row.checkout_email).trim().toLowerCase(),
+    payment_method_type:
+      typeof row.payment_method_type === "string"
+        ? row.payment_method_type
+        : null,
+    currency: String(row.currency).trim().toUpperCase(),
+    payment_identity: String(row.payment_identity).trim().toLowerCase(),
+    requested_amount_cents: amount,
+    occurred_at: occurredAt,
+  };
+}
+
+export async function fetchSuspiciousDepositClusterCandidates(
+  source: pg.Pool,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = BATCH_SIZE,
+): Promise<DepositClusterCandidate[]> {
+  const result = await source.query<RawDepositClusterCandidate>(
+    `
+      WITH new_candidates AS (
+        SELECT
+          pwe.id::text AS source_event_id,
+          pwe.provider_event_id,
+          fdi.id::text AS deposit_intent_id,
+          NULLIF(pwe.payload #>> '{data,id}', '') AS provider_payment_id,
+          fdi.user_id,
+          u.username,
+          lower(btrim(pwe.payload #>> '{data,user,email}')) AS checkout_email,
+          COALESCE(
+            NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+            'card'
+          ) AS payment_method_type,
+          upper(fdi.currency) AS currency,
+          lower(concat_ws(
+            ':',
+            COALESCE(
+              NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
+              NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+              'card'
+            ),
+            COALESCE(
+              NULLIF(fdi.provider_metadata ->> 'card_brand', ''),
+              NULLIF(pwe.payload #>> '{data,card_brand}', ''),
+              'unknown'
+            ),
+            payment.card_last4
+          )) AS payment_identity,
+          fdi.requested_amount_cents,
+          pwe.received_at AS occurred_at
+        FROM payment_webhook_events pwe
+        JOIN fiat_deposit_intents fdi
+          ON fdi.id::text = NULLIF(
+            pwe.payload #>> '{data,metadata,deposit_intent_id}', ''
+          )
+        LEFT JOIN "user" u ON u.id = fdi.user_id
+        CROSS JOIN LATERAL (
+          SELECT COALESCE(
+            NULLIF(fdi.provider_metadata ->> 'card_last4', ''),
+            NULLIF(
+              fdi.provider_metadata -> 'payment' ->> 'card_last4', ''
+            ),
+            NULLIF(
+              fdi.provider_metadata -> 'data' ->> 'card_last4', ''
+            ),
+            NULLIF(
+              fdi.provider_metadata -> 'data' -> 'payment'
+                ->> 'card_last4', ''
+            ),
+            NULLIF(pwe.payload #>> '{data,card_last4}', ''),
+            NULLIF(pwe.payload #>> '{data,payment,card_last4}', '')
+          ) AS card_last4
+        ) AS payment
+        WHERE pwe.provider = 'whop'
+          AND pwe.event_type = 'payment.created'
+          AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND fdi.user_id IS NOT NULL
+          AND payment.card_last4 ~ '^[0-9]{4}$'
+          AND fdi.requested_amount_cents > 0
+          AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
+          AND lower(btrim(split_part(
+            pwe.payload #>> '{data,user,email}', '@', 2
+          ))) IN ('gmail.com', 'googlemail.com')
+          AND (
+            length(split_part(
+              pwe.payload #>> '{data,user,email}', '@', 1
+            ))
+            - length(replace(split_part(
+              pwe.payload #>> '{data,user,email}', '@', 1
+            ), '.', ''))
+          ) >= 2
+          AND length(replace(split_part(
+            pwe.payload #>> '{data,user,email}', '@', 1
+          ), '.', '')) >= 12
+          AND (pwe.received_at, pwe.id::text) >
+            ($1::timestamptz, $2::text)
+        ORDER BY pwe.received_at, pwe.id::text
+        LIMIT $3
+      ),
+      bounds AS (
+        SELECT
+          min(occurred_at) - interval '30 minutes' AS from_at,
+          max(occurred_at) AS through_at
+        FROM new_candidates
+      ),
+      candidate_pool AS (
+        SELECT
+          pwe.id::text AS source_event_id,
+          pwe.provider_event_id,
+          fdi.id::text AS deposit_intent_id,
+          NULLIF(pwe.payload #>> '{data,id}', '') AS provider_payment_id,
+          fdi.user_id,
+          u.username,
+          lower(btrim(pwe.payload #>> '{data,user,email}')) AS checkout_email,
+          COALESCE(
+            NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+            'card'
+          ) AS payment_method_type,
+          upper(fdi.currency) AS currency,
+          lower(concat_ws(
+            ':',
+            COALESCE(
+              NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
+              NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
+              'card'
+            ),
+            COALESCE(
+              NULLIF(fdi.provider_metadata ->> 'card_brand', ''),
+              NULLIF(pwe.payload #>> '{data,card_brand}', ''),
+              'unknown'
+            ),
+            payment.card_last4
+          )) AS payment_identity,
+          fdi.requested_amount_cents,
+          pwe.received_at AS occurred_at
+        FROM payment_webhook_events pwe
+        JOIN fiat_deposit_intents fdi
+          ON fdi.id::text = NULLIF(
+            pwe.payload #>> '{data,metadata,deposit_intent_id}', ''
+          )
+        LEFT JOIN "user" u ON u.id = fdi.user_id
+        CROSS JOIN LATERAL (
+          SELECT COALESCE(
+            NULLIF(fdi.provider_metadata ->> 'card_last4', ''),
+            NULLIF(
+              fdi.provider_metadata -> 'payment' ->> 'card_last4', ''
+            ),
+            NULLIF(
+              fdi.provider_metadata -> 'data' ->> 'card_last4', ''
+            ),
+            NULLIF(
+              fdi.provider_metadata -> 'data' -> 'payment'
+                ->> 'card_last4', ''
+            ),
+            NULLIF(pwe.payload #>> '{data,card_last4}', ''),
+            NULLIF(pwe.payload #>> '{data,payment,card_last4}', '')
+          ) AS card_last4
+        ) AS payment
+        CROSS JOIN bounds b
+        WHERE b.from_at IS NOT NULL
+          AND pwe.provider = 'whop'
+          AND pwe.event_type = 'payment.created'
+          AND pwe.received_at BETWEEN b.from_at AND b.through_at
+          AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND fdi.user_id IS NOT NULL
+          AND payment.card_last4 ~ '^[0-9]{4}$'
+          AND fdi.requested_amount_cents > 0
+          AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
+          AND lower(btrim(split_part(
+            pwe.payload #>> '{data,user,email}', '@', 2
+          ))) IN ('gmail.com', 'googlemail.com')
+          AND (
+            length(split_part(
+              pwe.payload #>> '{data,user,email}', '@', 1
+            ))
+            - length(replace(split_part(
+              pwe.payload #>> '{data,user,email}', '@', 1
+            ), '.', ''))
+          ) >= 2
+          AND length(replace(split_part(
+            pwe.payload #>> '{data,user,email}', '@', 1
+          ), '.', '')) >= 12
+      )
+      SELECT
+        n.*,
+        COALESCE((
+          SELECT jsonb_agg(
+            jsonb_build_object(
+              'source_event_id', p.source_event_id,
+              'provider_event_id', p.provider_event_id,
+              'deposit_intent_id', p.deposit_intent_id,
+              'provider_payment_id', p.provider_payment_id,
+              'user_id', p.user_id,
+              'username', p.username,
+              'checkout_email', p.checkout_email,
+              'payment_method_type', p.payment_method_type,
+              'currency', p.currency,
+              'payment_identity', p.payment_identity,
+              'requested_amount_cents', p.requested_amount_cents,
+              'occurred_at', p.occurred_at
+            )
+            ORDER BY p.occurred_at, p.source_event_id
+          )
+          FROM candidate_pool p
+          WHERE p.currency = n.currency
+            AND p.requested_amount_cents = n.requested_amount_cents
+            AND p.occurred_at BETWEEN
+              n.occurred_at - interval '30 minutes'
+              AND n.occurred_at
+        ), '[]'::jsonb) AS cluster_members
+      FROM new_candidates n
+      ORDER BY n.occurred_at, n.source_event_id
+    `,
+    [cursor.occurredAt, cursor.sourceId, limit],
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    requested_amount_cents: Number(row.requested_amount_cents),
+    cluster_members: Array.isArray(row.cluster_members)
+      ? row.cluster_members
+          .map(parseDepositClusterMember)
+          .filter((member): member is DepositClusterMember => member !== null)
+      : [],
+  }));
+}
+
+export function qualifyingDepositClusterMembers(
+  candidate: DepositClusterCandidate,
+): DepositClusterMember[] | null {
+  const fromAt =
+    candidate.occurred_at.getTime() - CLUSTER_WINDOW_MINUTES * 60_000;
+  const unique = new Map<string, DepositClusterMember>();
+  for (const member of candidate.cluster_members) {
+    const occurredAt = member.occurred_at.getTime();
+    if (
+      member.currency !== candidate.currency ||
+      member.requested_amount_cents !== candidate.requested_amount_cents ||
+      occurredAt < fromAt ||
+      occurredAt > candidate.occurred_at.getTime() ||
+      !member.user_id ||
+      !member.provider_payment_id ||
+      !suspiciousGmailClusterCandidate(member.checkout_email)
+    ) {
+      continue;
+    }
+    unique.set(member.source_event_id, member);
+  }
+  const members = [...unique.values()].sort(
+    (left, right) =>
+      left.occurred_at.getTime() - right.occurred_at.getTime() ||
+      left.source_event_id.localeCompare(right.source_event_id),
+  );
+  if (members.length < CLUSTER_MIN_MEMBERS) return null;
+  const users = new Set(members.map((member) => member.user_id));
+  const payments = new Set(
+    members.map((member) => member.payment_identity),
+  );
+  const emails = new Set(members.map((member) => member.checkout_email));
+  if (
+    users.size < CLUSTER_MIN_MEMBERS ||
+    payments.size < CLUSTER_MIN_MEMBERS ||
+    emails.size < CLUSTER_MIN_MEMBERS
+  ) {
+    return null;
+  }
+  return members;
+}
+
 export class FiatEmailDomainGuard {
   constructor(
     private readonly db: Databases,
@@ -274,13 +640,23 @@ export class FiatEmailDomainGuard {
       `,
       [GMAIL_PATTERN_STREAM],
     );
+    await this.db.antifraud.query(
+      `
+        INSERT INTO source_cursors(stream, occurred_at, source_id)
+        VALUES ($1, now() - interval '7 days', '')
+        ON CONFLICT (stream) DO NOTHING
+      `,
+      [DEPOSIT_CLUSTER_STREAM],
+    );
   }
 
   async process(): Promise<void> {
     await this.captureNewEvents();
     await this.backfillSuspiciousGmailPatterns();
+    await this.captureSuspiciousDepositClusters();
     await this.backfillOneDomain();
     await this.confirmLocks();
+    await this.releaseConfirmedClusterAlerts();
   }
 
   async persistSignupMatch(
@@ -460,6 +836,172 @@ export class FiatEmailDomainGuard {
     }
   }
 
+  private async captureSuspiciousDepositClusters(): Promise<void> {
+    const cursor = await this.db.antifraud.query<{
+      occurred_at: Date;
+      source_id: string;
+    }>(
+      "SELECT occurred_at, source_id FROM source_cursors WHERE stream = $1",
+      [DEPOSIT_CLUSTER_STREAM],
+    );
+    const current = cursor.rows[0];
+    if (!current) throw new Error("Fiat deposit-cluster cursor is missing");
+
+    const candidates = await fetchSuspiciousDepositClusterCandidates(
+      this.db.source,
+      {
+        occurredAt: current.occurred_at,
+        sourceId: current.source_id,
+      },
+    );
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      for (const candidate of candidates) {
+        const members = qualifyingDepositClusterMembers(candidate);
+        if (!members) continue;
+        const reason =
+          `${members.length} distinct Whop accounts and payment identities ` +
+          `used unusual Gmail aliases for ${candidate.requested_amount_cents} ` +
+          `${candidate.currency} cents within ${CLUSTER_WINDOW_MINUTES} minutes`;
+        for (const member of members) {
+          await this.persistMatch(
+            client,
+            { ...member, match_source: "whop_checkout" },
+            {
+              type: "suspicious_deposit_cluster",
+              domain: domainFromEmail(member.checkout_email) ?? "gmail.com",
+              reason,
+            },
+          );
+          await client.query(
+            `
+              UPDATE fiat_email_domain_matches
+              SET match_type = 'suspicious_deposit_cluster',
+                  updated_at = now()
+              WHERE source_event_id = $1
+                AND match_type = 'gmail_dot_fragmentation'
+            `,
+            [member.source_event_id],
+          );
+        }
+        await client.query(
+          `
+            DELETE FROM fiat_problem_alert_outbox
+            WHERE problem_code = 'blacklisted_email_domain'
+              AND discord_delivered_at IS NULL
+              AND details ->> 'email_risk_type' =
+                'gmail_dot_fragmentation'
+              AND source_id = ANY($1::text[])
+          `,
+          [
+            members.map(
+              (member) =>
+                `${member.source_event_id}:blacklisted_email_domain:` +
+                `${domainFromEmail(member.checkout_email) ?? "gmail.com"}`,
+            ),
+          ],
+        );
+
+        const existingAlert = await client.query<{ source_id: string }>(
+          `
+            SELECT source_id
+            FROM fiat_problem_alert_outbox
+            WHERE problem_code = 'suspicious_deposit_cluster'
+              AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                  details -> 'cluster_source_event_ids'
+                ) AS prior(source_event_id)
+                WHERE prior.source_event_id = ANY($1::text[])
+              )
+              AND occurred_at BETWEEN
+                $2::timestamptz - interval '30 minutes'
+                AND $2::timestamptz
+            ORDER BY occurred_at DESC
+            LIMIT 1
+          `,
+          [
+            members.map((member) => member.source_event_id),
+            candidate.occurred_at,
+          ],
+        );
+        if (existingAlert.rows.length > 0) continue;
+
+        await client.query(
+          `
+            INSERT INTO fiat_problem_alert_outbox (
+              source_kind, source_id, problem_code, user_id, username,
+              details, occurred_at, next_attempt_at
+            ) VALUES (
+              'payment_webhook',
+              $1,
+              'suspicious_deposit_cluster',
+              $2,
+              $3,
+              $4::jsonb,
+              $5,
+              'infinity'::timestamptz
+            )
+            ON CONFLICT (source_kind, source_id) DO NOTHING
+          `,
+          [
+            `deposit-cluster:${candidate.source_event_id}`,
+            candidate.user_id,
+            candidate.username,
+            {
+              provider_event_id: candidate.provider_event_id,
+              intent_id: candidate.deposit_intent_id,
+              email_risk_type: "suspicious_deposit_cluster",
+              email_risk_reason: reason,
+              risk_score: 100,
+              status: "withdrawals_locked",
+              currency: candidate.currency,
+              amount_cents: candidate.requested_amount_cents,
+              cluster_member_count: members.length,
+              cluster_account_count: new Set(
+                members.map((member) => member.user_id),
+              ).size,
+              cluster_payment_count: new Set(
+                members.map((member) => member.payment_identity),
+              ).size,
+              cluster_window_minutes: CLUSTER_WINDOW_MINUTES,
+              cluster_emails: members.map(
+                (member) => member.checkout_email,
+              ),
+              cluster_source_event_ids: members.map(
+                (member) => member.source_event_id,
+              ),
+            },
+            candidate.occurred_at,
+          ],
+        );
+      }
+      const last = candidates.at(-1);
+      await client.query(
+        `
+          UPDATE source_cursors
+          SET
+            occurred_at = COALESCE($2, GREATEST(occurred_at, now())),
+            source_id = COALESCE($3, ''),
+            updated_at = now()
+          WHERE stream = $1
+        `,
+        [
+          DEPOSIT_CLUSTER_STREAM,
+          last?.occurred_at ?? null,
+          last?.source_event_id ?? null,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async backfillOneDomain(): Promise<void> {
     const rule = await this.db.antifraud.query<{
       id: string;
@@ -572,14 +1114,19 @@ export class FiatEmailDomainGuard {
       ? `blacklisted-signup:${event.source_event_id}`
       : `blacklisted-checkout:${event.source_event_id}`;
     const patternMatch = risk.type === "gmail_dot_fragmentation";
-    const title = patternMatch
+    const clusterMatch = risk.type === "suspicious_deposit_cluster";
+    const title = clusterMatch
+      ? "Suspicious Whop deposit cluster member"
+      : patternMatch
       ? isSignup
         ? "Suspicious dot-fragmented signup email"
         : "Suspicious dot-fragmented Whop email"
       : isSignup
       ? "Blacklisted signup email"
       : "Blacklisted Whop checkout email";
-    const detail = patternMatch
+    const detail = clusterMatch
+      ? "Whop checkout belongs to a same-amount cluster with distinct accounts, payment identities, and unusual Gmail aliases. Crypto and item withdrawals must be locked automatically."
+      : patternMatch
       ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked automatically.`
       : `${isSignup ? "Signup" : "Whop checkout"} used blacklisted email domain ${risk.domain}. Crypto and item withdrawals must be locked automatically.`;
     const alertSource = isSignup ? "signup" : "payment_webhook";
@@ -646,48 +1193,50 @@ export class FiatEmailDomainGuard {
       ],
     );
 
-    await client.query(
-      `
-        INSERT INTO fiat_problem_alert_outbox (
-          source_kind, source_id, problem_code, user_id, username, details,
-          occurred_at, next_attempt_at
-        ) VALUES (
-          $1, $2, 'blacklisted_email_domain', $3, $4,
-          jsonb_build_object(
-            'provider_event_id', $5::text,
-            'intent_id', $6::text,
-            'provider_payment_id', $7::text,
-            'email', $8::text,
-            'checkout_email', CASE WHEN $9::text = 'whop_checkout' THEN $8::text ELSE NULL END,
-            'email_domain', $10::text,
-            'match_source', $9,
-            'email_risk_type', $11::text,
-            'email_risk_reason', $12::text,
-            'payment_method_type', $13::text,
-            'risk_score', 100,
-            'status', 'withdrawals_locked'
-          ),
-          $14, 'infinity'::timestamptz
-        )
-        ON CONFLICT (source_kind, source_id) DO NOTHING
-      `,
-      [
-        alertSource,
-        `${event.source_event_id}:blacklisted_email_domain:${risk.domain}`,
-        event.user_id,
-        event.username,
-        event.provider_event_id,
-        event.deposit_intent_id,
-        event.provider_payment_id,
-        event.checkout_email,
-        event.match_source,
-        risk.domain,
-        risk.type,
-        risk.reason,
-        event.payment_method_type,
-        event.occurred_at,
-      ],
-    );
+    if (!clusterMatch) {
+      await client.query(
+        `
+          INSERT INTO fiat_problem_alert_outbox (
+            source_kind, source_id, problem_code, user_id, username, details,
+            occurred_at, next_attempt_at
+          ) VALUES (
+            $1, $2, 'blacklisted_email_domain', $3, $4,
+            jsonb_build_object(
+              'provider_event_id', $5::text,
+              'intent_id', $6::text,
+              'provider_payment_id', $7::text,
+              'email', $8::text,
+              'checkout_email', CASE WHEN $9::text = 'whop_checkout' THEN $8::text ELSE NULL END,
+              'email_domain', $10::text,
+              'match_source', $9,
+              'email_risk_type', $11::text,
+              'email_risk_reason', $12::text,
+              'payment_method_type', $13::text,
+              'risk_score', 100,
+              'status', 'withdrawals_locked'
+            ),
+            $14, 'infinity'::timestamptz
+          )
+          ON CONFLICT (source_kind, source_id) DO NOTHING
+        `,
+        [
+          alertSource,
+          `${event.source_event_id}:blacklisted_email_domain:${risk.domain}`,
+          event.user_id,
+          event.username,
+          event.provider_event_id,
+          event.deposit_intent_id,
+          event.provider_payment_id,
+          event.checkout_email,
+          event.match_source,
+          risk.domain,
+          risk.type,
+          risk.reason,
+          event.payment_method_type,
+          event.occurred_at,
+        ],
+      );
+    }
     return true;
   }
 
@@ -781,5 +1330,33 @@ export class FiatEmailDomainGuard {
         );
       }
     }
+  }
+
+  private async releaseConfirmedClusterAlerts(): Promise<void> {
+    await this.db.antifraud.query(
+      `
+        UPDATE fiat_problem_alert_outbox AS alert
+        SET next_attempt_at = now(), updated_at = now()
+        WHERE alert.problem_code = 'suspicious_deposit_cluster'
+          AND alert.discord_delivered_at IS NULL
+          AND alert.next_attempt_at = 'infinity'::timestamptz
+          AND jsonb_typeof(
+            alert.details -> 'cluster_source_event_ids'
+          ) = 'array'
+          AND jsonb_array_length(
+            alert.details -> 'cluster_source_event_ids'
+          ) >= 3
+          AND NOT EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(
+              alert.details -> 'cluster_source_event_ids'
+            ) AS member(source_event_id)
+            LEFT JOIN fiat_email_domain_matches AS matched
+              ON matched.source_event_id = member.source_event_id
+            WHERE matched.source_event_id IS NULL
+              OR matched.lock_delivered_at IS NULL
+          )
+      `,
+    );
   }
 }

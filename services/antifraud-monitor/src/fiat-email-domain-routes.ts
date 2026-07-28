@@ -18,6 +18,21 @@ const updateSchema = actorSchema.extend({
   enabled: z.boolean(),
 });
 
+const catchHistoryQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).max(10_000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  riskType: z
+    .enum([
+      "blacklisted_domain",
+      "gmail_dot_fragmentation",
+      "suspicious_deposit_cluster",
+    ])
+    .optional(),
+  source: z.enum(["whop_checkout", "signup"]).optional(),
+  lockStatus: z.enum(["locked", "pending"]).optional(),
+  search: z.string().trim().max(100).optional(),
+});
+
 const SYSTEM_REASON = "Email domain blacklisted by staff";
 
 type RuleRow = {
@@ -307,6 +322,97 @@ export async function registerFiatEmailDomainRoutes(
     return { data: { ...serializeRule(row), idempotent } };
   });
 
+  app.get("/v1/fiat-email-catches", async (request) => {
+    const query = catchHistoryQuerySchema.parse(request.query);
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (query.riskType) {
+      values.push(query.riskType);
+      conditions.push(`match_type = $${values.length}`);
+    }
+    if (query.source) {
+      values.push(query.source);
+      conditions.push(`match_source = $${values.length}`);
+    }
+    if (query.lockStatus) {
+      conditions.push(
+        query.lockStatus === "locked"
+          ? "lock_delivered_at IS NOT NULL"
+          : "lock_delivered_at IS NULL",
+      );
+    }
+    if (query.search) {
+      values.push(`%${query.search.toLowerCase()}%`);
+      conditions.push(`(
+        lower(user_id) LIKE $${values.length}
+        OR lower(COALESCE(username, '')) LIKE $${values.length}
+        OR lower(checkout_email) LIKE $${values.length}
+        OR lower(COALESCE(deposit_intent_id, '')) LIKE $${values.length}
+      )`);
+    }
+    const where = conditions.length > 0
+      ? `WHERE ${conditions.join(" AND ")}`
+      : "";
+    const offset = (query.page - 1) * query.limit;
+    const listValues = [...values, query.limit, offset];
+    const [rows, total] = await Promise.all([
+      db.antifraud.query<{
+        id: string;
+        user_id: string;
+        username: string | null;
+        deposit_intent_id: string | null;
+        checkout_email: string;
+        domain: string;
+        match_type:
+          | "blacklisted_domain"
+          | "gmail_dot_fragmentation"
+          | "suspicious_deposit_cluster";
+        match_source: "whop_checkout" | "signup";
+        lock_delivered_at: Date | null;
+        occurred_at: Date;
+      }>(
+        `
+          SELECT
+            id, user_id, username, deposit_intent_id, checkout_email, domain,
+            match_type, match_source, lock_delivered_at, occurred_at
+          FROM fiat_email_domain_matches
+          ${where}
+          ORDER BY occurred_at DESC, id DESC
+          LIMIT $${listValues.length - 1}
+          OFFSET $${listValues.length}
+        `,
+        listValues,
+      ),
+      db.antifraud.query<{ count: number }>(
+        `SELECT count(*)::int AS count
+         FROM fiat_email_domain_matches
+         ${where}`,
+        values,
+      ),
+    ]);
+    const count = total.rows[0]?.count ?? 0;
+    return {
+      data: rows.rows.map((row) => ({
+        id: row.id,
+        userId: row.user_id,
+        username: row.username,
+        depositIntentId: row.deposit_intent_id,
+        checkoutEmail: row.checkout_email,
+        domain: row.domain,
+        riskType: row.match_type,
+        source: row.match_source,
+        withdrawalsLocked: row.lock_delivered_at !== null,
+        occurredAt: row.occurred_at.toISOString(),
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total: count,
+        pages: Math.max(1, Math.ceil(count / query.limit)),
+      },
+    };
+  });
+
   app.get("/v1/fiat-email-domain-matches", async (request, reply) => {
     const query = z
       .object({ intentIds: z.string().max(10_000) })
@@ -326,7 +432,10 @@ export async function registerFiatEmailDomainRoutes(
       deposit_intent_id: string;
       checkout_email: string;
       domain: string;
-      match_type: "blacklisted_domain" | "gmail_dot_fragmentation";
+      match_type:
+        | "blacklisted_domain"
+        | "gmail_dot_fragmentation"
+        | "suspicious_deposit_cluster";
       occurred_at: Date;
       lock_delivered_at: Date | null;
     }>(

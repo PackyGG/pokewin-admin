@@ -23,6 +23,7 @@ export const FIAT_PROBLEM_CODES = [
   "pending_stale",
   "webhook_failed",
   "blacklisted_email_domain",
+  "suspicious_deposit_cluster",
 ] as const;
 
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
@@ -31,6 +32,12 @@ export const FIAT_RISK_PROBLEM_CODES = [
   "high_risk",
   "fiat_locked_account",
   "blacklisted_email_domain",
+  "suspicious_deposit_cluster",
+] as const satisfies readonly FiatProblemCode[];
+
+const FIAT_EMAIL_RISK_PROBLEM_CODES = [
+  "blacklisted_email_domain",
+  "suspicious_deposit_cluster",
 ] as const satisfies readonly FiatProblemCode[];
 
 export function isFiatRiskProblem(code: FiatProblemCode): boolean {
@@ -133,6 +140,29 @@ function formatUsdCents(value: unknown): string | null {
   }).format(cents / 100);
 }
 
+function formatCurrencyCents(
+  value: unknown,
+  currencyValue: unknown,
+): string | null {
+  const cents = Number(value);
+  const currency = String(currencyValue ?? "").trim().toUpperCase();
+  if (
+    !Number.isSafeInteger(cents) ||
+    cents <= 0 ||
+    !/^[A-Z]{3}$/.test(currency)
+  ) {
+    return null;
+  }
+  try {
+    return new Intl.NumberFormat("en-US", {
+      style: "currency",
+      currency,
+    }).format(cents / 100);
+  } catch {
+    return `${(cents / 100).toFixed(2)} ${currency}`;
+  }
+}
+
 export function fiatProblemTitle(code: FiatProblemCode): string {
   switch (code) {
     case "high_risk":
@@ -157,6 +187,8 @@ export function fiatProblemTitle(code: FiatProblemCode): string {
       return "Fiat webhook processing failed";
     case "blacklisted_email_domain":
       return "Blacklisted email domain blocked";
+    case "suspicious_deposit_cluster":
+      return "Suspicious Whop deposit cluster blocked";
   }
 }
 
@@ -262,6 +294,46 @@ export function buildFiatDiscordPayload(
       inline: false,
     });
   }
+  const clusterAmount = formatCurrencyCents(
+    details.amount_cents,
+    details.currency,
+  );
+  if (clusterAmount) {
+    fields.push({
+      name: "Shared deposit amount",
+      value: clusterAmount,
+      inline: true,
+    });
+  }
+  const clusterMembers = detail(details, "cluster_member_count");
+  const clusterAccounts = detail(details, "cluster_account_count");
+  const clusterPayments = detail(details, "cluster_payment_count");
+  if (clusterMembers || clusterAccounts || clusterPayments) {
+    fields.push({
+      name: "Cluster evidence",
+      value: clean(
+        `${clusterMembers ?? "?"} events / ` +
+          `${clusterAccounts ?? "?"} accounts / ` +
+          `${clusterPayments ?? "?"} payment identities`,
+      ),
+      inline: false,
+    });
+  }
+  const clusterWindow = detail(details, "cluster_window_minutes");
+  if (clusterWindow) {
+    fields.push({
+      name: "Time window",
+      value: `${clean(clusterWindow)} minutes`,
+      inline: true,
+    });
+  }
+  if (Array.isArray(details.cluster_emails)) {
+    fields.push({
+      name: "Cluster checkout emails",
+      value: clean(details.cluster_emails.join("\n")),
+      inline: false,
+    });
+  }
   const reason =
     detail(details, "failure_reason") ??
     detail(details, "last_error") ??
@@ -277,7 +349,9 @@ export function buildFiatDiscordPayload(
 
   const url = new URL(dashboardUrl).toString();
   const description =
-    problem.problem_code === "blacklisted_email_domain"
+    problem.problem_code === "suspicious_deposit_cluster"
+      ? "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
+      : problem.problem_code === "blacklisted_email_domain"
       ? patternMatch
         ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked."
         : problem.source_kind === "signup"
@@ -558,7 +632,11 @@ export async function fetchHighRiskFiatProblems(
 export function fiatAlertDestinations(
   problemCode: FiatProblemCode,
 ): readonly FiatAlertDestination[] {
-  if (problemCode === "blacklisted_email_domain") {
+  if (
+    (FIAT_EMAIL_RISK_PROBLEM_CODES as readonly FiatProblemCode[]).includes(
+      problemCode,
+    )
+  ) {
     return ["email_blacklist"];
   }
   if (
@@ -738,7 +816,10 @@ export class FiatProblemAlerts {
         FROM fiat_problem_alert_outbox AS alert
         CROSS JOIN LATERAL (
           SELECT 'email_blacklist'::text AS destination
-          WHERE alert.problem_code = 'blacklisted_email_domain'
+          WHERE alert.problem_code IN (
+            'blacklisted_email_domain',
+            'suspicious_deposit_cluster'
+          )
 
           UNION ALL
 
@@ -748,7 +829,10 @@ export class FiatProblemAlerts {
           UNION ALL
 
           SELECT 'fiat_operations'::text
-          WHERE alert.problem_code <> 'blacklisted_email_domain'
+          WHERE alert.problem_code NOT IN (
+            'blacklisted_email_domain',
+            'suspicious_deposit_cluster'
+          )
         ) AS destination
         ON CONFLICT (source_kind, source_id, destination) DO NOTHING
       `,

@@ -45,6 +45,11 @@ test("blacklisted signup and Whop signals lock MAIN only through signed ingest",
   assert.match(monitor, /persistSignupMatch/);
   assert.match(monitor, /suspiciousGmailDotPattern/);
   assert.match(monitor, /gmail_dot_fragmentation/);
+  assert.match(monitor, /suspiciousGmailClusterCandidate/);
+  assert.match(monitor, /suspicious_deposit_cluster/);
+  assert.match(monitor, /cluster_source_event_ids/);
+  assert.match(monitor, /interval '30 minutes'/);
+  assert.match(monitor, /provider_payment_id/);
   assert.match(monitor, /match_source: "signup"/);
   assert.doesNotMatch(monitor, /UPDATE user_feature_locks/);
   assert.match(ingest, /getProdPrimaryDrizzleDb/);
@@ -52,6 +57,7 @@ test("blacklisted signup and Whop signals lock MAIN only through signed ingest",
   assert.match(ingest, /locked_withdrawals_items = TRUE/);
   assert.match(ingest, /signal\.riskScore !== 100/);
   assert.match(ingest, /suspicious dot-fragmented Gmail address/);
+  assert.match(ingest, /suspicious coordinated deposit cluster/);
 });
 
 test("Fraud Fiat deposits force blacklist matches to the critical score", () => {
@@ -59,6 +65,7 @@ test("Fraud Fiat deposits force blacklist matches to the critical score", () => 
 
   assert.match(risk, /blacklisted_checkout_email_domain/);
   assert.match(risk, /suspicious_checkout_email_pattern/);
+  assert.match(risk, /suspicious_deposit_cluster/);
   assert.match(risk, /riskScore: 100/);
   assert.match(risk, /verdict: "bad"/);
   assert.match(risk, /Keep crypto and item withdrawals locked/);
@@ -70,7 +77,8 @@ test("email blacklist alerts have a dedicated Discord destination", () => {
   const server = read("services/antifraud-monitor/src/server.ts");
 
   assert.match(config, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
-  assert.match(alerts, /problemCode === "blacklisted_email_domain"/);
+  assert.match(alerts, /FIAT_EMAIL_RISK_PROBLEM_CODES/);
+  assert.match(alerts, /suspicious_deposit_cluster/);
   assert.match(
     alerts,
     /return config\.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/,

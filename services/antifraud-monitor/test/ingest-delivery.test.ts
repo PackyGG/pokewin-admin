@@ -208,6 +208,54 @@ test("successful containment delivery confirms the lock without mirror lag", asy
   );
 });
 
+test("cluster containment retries a failed direct lock and confirms recovery", async () => {
+  const containment: RiskEventRow = {
+    ...row,
+    event_type: "fiat_blacklisted_email_domain",
+    source_ref: "blacklisted-checkout:cluster-event-1",
+    payload: {
+      emailDomain: "gmail.com",
+      emailRiskType: "suspicious_deposit_cluster",
+      matchSource: "whop_checkout",
+    },
+  };
+  const fixture = deliveryPool([containment]);
+  let attempt = 0;
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () => {
+      attempt += 1;
+      return attempt === 1
+        ? new Response("unavailable", { status: 503 })
+        : new Response(
+            JSON.stringify({ ok: true, accepted: 1, duplicates: 0 }),
+            { status: 200, headers: { "content-type": "application/json" } },
+          );
+    },
+  );
+
+  await assert.rejects(
+    delivery.flushOnce(),
+    /Dashboard ingest returned HTTP 503/,
+  );
+  assert.equal(
+    fixture.queries.some((sql) => sql.includes("WITH confirmed_matches AS")),
+    false,
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(attempt, 2);
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("WITH confirmed_matches AS") &&
+      sql.includes("lock_delivered_at = COALESCE")
+    ),
+    true,
+  );
+});
+
 test("signed delivery batches stay bounded for containment writes", async () => {
   const fixture = deliveryPool([]);
   const delivery = new IngestDelivery(

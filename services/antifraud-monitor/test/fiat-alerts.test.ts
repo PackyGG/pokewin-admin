@@ -156,6 +156,7 @@ test("only blocking and high-risk fiat problems use the risk webhook", () => {
   assert.equal(isFiatRiskProblem("high_risk"), true);
   assert.equal(isFiatRiskProblem("fiat_locked_account"), true);
   assert.equal(isFiatRiskProblem("blacklisted_email_domain"), true);
+  assert.equal(isFiatRiskProblem("suspicious_deposit_cluster"), true);
   assert.equal(isFiatRiskProblem("pending_stale"), false);
   assert.equal(isFiatRiskProblem("checkout_creating_stale"), false);
   assert.equal(isFiatRiskProblem("failed"), false);
@@ -227,6 +228,60 @@ test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
   assert.doesNotMatch(JSON.stringify(payload), /Blacklisted domain/);
 });
 
+test("deposit cluster alerts aggregate evidence without duplicate account alerts", () => {
+  const payload = buildFiatDiscordPayload(
+    "https://fraud.packydash.com/antifraud/fiat-deposits",
+    {
+      source_kind: "payment_webhook",
+      source_id: "deposit-cluster:event-3",
+      problem_code: "suspicious_deposit_cluster",
+      user_id: "user-3",
+      username: "user3",
+      details: {
+        currency: "EUR",
+        amount_cents: 1847,
+        cluster_member_count: 3,
+        cluster_account_count: 3,
+        cluster_payment_count: 3,
+        cluster_window_minutes: 30,
+        cluster_emails: [
+          "margenebrombergguidet.t.if.i.v.z.c@gmail.com",
+          "giecphangqua.nh.ghun.g@gmail.com",
+          "carmenw.oods29.7.1@gmail.com",
+        ],
+        email_risk_type: "suspicious_deposit_cluster",
+        risk_score: 100,
+        status: "withdrawals_locked",
+      },
+      occurred_at: new Date("2026-07-28T12:15:00.000Z"),
+    },
+  );
+
+  assert.equal(
+    payload.embeds[0]?.title,
+    "Suspicious Whop deposit cluster blocked",
+  );
+  assert.match(payload.embeds[0]?.description ?? "", /distinct accounts/);
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "Shared deposit amount",
+    )?.value,
+    "€18.47",
+  );
+  assert.match(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "Cluster evidence",
+    )?.value ?? "",
+    /3 events.*3 accounts.*3 payment identities/,
+  );
+  assert.equal(
+    payload.embeds[0]?.fields.filter(
+      (field) => field.name === "Cluster checkout emails",
+    ).length,
+    1,
+  );
+});
+
 test("the four-route mapping keeps high-risk fiat on both intended destinations", () => {
   const config = {
     FIAT_ALERT_DISCORD_WEBHOOK_URL:
@@ -239,6 +294,10 @@ test("the four-route mapping keeps high-risk fiat on both intended destinations"
 
   assert.deepEqual(
     fiatAlertDestinations("blacklisted_email_domain"),
+    ["email_blacklist"],
+  );
+  assert.deepEqual(
+    fiatAlertDestinations("suspicious_deposit_cluster"),
     ["email_blacklist"],
   );
   assert.deepEqual(

@@ -124,7 +124,10 @@ export type BlacklistedCheckoutEmail = {
   deposit_intent_id: string;
   checkout_email: string;
   domain: string;
-  match_type: "blacklisted_domain" | "gmail_dot_fragmentation";
+  match_type:
+    | "blacklisted_domain"
+    | "gmail_dot_fragmentation"
+    | "suspicious_deposit_cluster";
   lock_delivered_at: Date | null;
 };
 
@@ -720,14 +723,21 @@ export function applyBlacklistedCheckoutEmail(
   match: BlacklistedCheckoutEmail,
 ): ReturnType<typeof scoreFiatDeposit> {
   const patternMatch = match.match_type === "gmail_dot_fragmentation";
+  const clusterMatch = match.match_type === "suspicious_deposit_cluster";
   const signal: FiatSignal = {
-    key: patternMatch
+    key: clusterMatch
+      ? "suspicious_deposit_cluster"
+      : patternMatch
       ? "suspicious_checkout_email_pattern"
       : "blacklisted_checkout_email_domain",
-    label: patternMatch
+    label: clusterMatch
+      ? "Suspicious deposit cluster"
+      : patternMatch
       ? "Suspicious checkout email"
       : "Blacklisted checkout email",
-    detail: patternMatch
+    detail: clusterMatch
+      ? `Whop checkout used ${match.checkout_email} inside a coordinated same-amount cluster with distinct accounts and payment identities.`
+      : patternMatch
       ? `Whop checkout used ${match.checkout_email}; its Gmail local part is heavily dot-fragmented.`
       : `Whop checkout used ${match.checkout_email}; ${match.domain} is on the active email-domain blacklist.`,
     points: 100,
@@ -740,7 +750,9 @@ export function applyBlacklistedCheckoutEmail(
     verdict: "bad",
     recommendation:
       "Keep crypto and item withdrawals locked and review the checkout identity.",
-    summary: patternMatch
+    summary: clusterMatch
+      ? "Critical: the Whop checkout belongs to a suspicious coordinated deposit cluster."
+      : patternMatch
       ? "Critical: the Whop checkout email matched the dot-fragmentation fraud pattern."
       : "Critical: the Whop checkout email matched an active blocked domain.",
     signals: [
@@ -758,7 +770,9 @@ export function applyBlacklistedCheckoutEmail(
             status: "block" as const,
             score: 100,
             evidence: [
-              patternMatch
+              clusterMatch
+                ? "Blocked deposit cluster: same amount, short window, distinct accounts and payment identities, unusual Gmail aliases"
+                : patternMatch
                 ? "Blocked checkout pattern: dot-fragmented Gmail"
                 : `Blocked checkout domain: ${match.domain}`,
               match.lock_delivered_at

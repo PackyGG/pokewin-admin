@@ -222,8 +222,12 @@ async function lockBlacklistedEmailDomainAccount(
     signal.payload?.matchSource === "signup" ? "signup" : "Whop checkout";
   const patternMatch =
     signal.payload?.emailRiskType === "gmail_dot_fragmentation";
+  const clusterMatch =
+    signal.payload?.emailRiskType === "suspicious_deposit_cluster";
   const reason =
-    (patternMatch
+    (clusterMatch
+      ? `Automatic fraud lock: ${source} belonged to a suspicious coordinated deposit cluster (${domain})`
+      : patternMatch
       ? `Automatic fraud lock: ${source} used a suspicious dot-fragmented Gmail address (${domain})`
       : `Automatic fraud lock: ${source} used blacklisted email domain ${domain}`)
       .slice(0, 500);

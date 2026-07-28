@@ -21,7 +21,11 @@ const matchSchema = z.object({
   intentId: z.string().uuid(),
   checkoutEmail: z.string(),
   domain: z.string(),
-  riskType: z.enum(["blacklisted_domain", "gmail_dot_fragmentation"]),
+  riskType: z.enum([
+    "blacklisted_domain",
+    "gmail_dot_fragmentation",
+    "suspicious_deposit_cluster",
+  ]),
   riskScore: z.literal(100),
   severity: z.literal("critical"),
   withdrawalsLocked: z.boolean(),
