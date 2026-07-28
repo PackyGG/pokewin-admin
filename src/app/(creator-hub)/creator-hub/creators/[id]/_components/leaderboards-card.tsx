@@ -17,13 +17,16 @@ import {
 import { getLeaderboardSponsorshipMap } from "../../../../../(admin)/creators/_queries/leaderboard-sponsorship";
 import {
   getLeaderboardsPreviewCached,
-  type LeaderboardApprovalStatus,
   type LeaderboardPreviewRow,
-  type LeaderboardTimeStatus,
 } from "../_queries/leaderboards-preview";
 import { getPreviousLeaderboardsCached } from "../_queries/previous-leaderboards";
 import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
 import { PreviousLeaderboardsDialog } from "./previous-leaderboards-dialog";
+import { HubNotice } from "../../../_components/hub-notice";
+import {
+  LEADERBOARD_APPROVAL_COLORS,
+  LEADERBOARD_TIME_COLORS,
+} from "./status-badges";
 
 /**
  * Affiliate Leaderboards card (right half of the Overview "Deal | Affiliate
@@ -43,21 +46,6 @@ import { PreviousLeaderboardsDialog } from "./previous-leaderboards-dialog";
  * omitting the chips. Streamed in its own Suspense boundary from the
  * Overview tab.
  */
-
-const APPROVAL_COLORS: Record<LeaderboardApprovalStatus, string> = {
-  pending:
-    "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  approved:
-    "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  rejected: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
-};
-
-const TIME_COLORS: Record<LeaderboardTimeStatus, string> = {
-  upcoming: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  active:
-    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  ended: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-};
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
   // Stay inside the Hub: its own Leaderboards route is the manager-facing
@@ -181,13 +169,10 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
       <Card size="sm">
         <CardContent className="space-y-3">
           {chipGaps.length > 0 && (
-            <div className="flex items-start gap-2 rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-muted-foreground">
-              <Info className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
-              <span>
-                {chipGaps.join(" and ")} couldn&apos;t load this time — the
-                board list still renders. Refresh to retry.
-              </span>
-            </div>
+            <HubNotice tone="amber" icon={Info} dashed>
+              {chipGaps.join(" and ")} couldn&apos;t load this time — the
+              board list still renders. Refresh to retry.
+            </HubNotice>
           )}
 
           {/* Realized house cost (sponsored-% weighted) → rose. */}
@@ -264,14 +249,17 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                       variant="outline"
                       className={cn(
                         "text-[10px]",
-                        APPROVAL_COLORS[r.approval_status],
+                        LEADERBOARD_APPROVAL_COLORS[r.approval_status],
                       )}
                     >
                       {r.approval_status}
                     </Badge>
                     <Badge
                       variant="outline"
-                      className={cn("text-[10px]", TIME_COLORS[r.time_status])}
+                      className={cn(
+                        "text-[10px]",
+                        LEADERBOARD_TIME_COLORS[r.time_status],
+                      )}
                     >
                       {r.time_status}
                     </Badge>

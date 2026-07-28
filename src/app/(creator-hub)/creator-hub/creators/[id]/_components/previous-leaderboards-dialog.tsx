@@ -18,8 +18,12 @@ import { EmptyState } from "@/components/empty-state";
 import { formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
-type ApprovalStatus = "pending" | "approved" | "rejected";
-type TimeStatus = "upcoming" | "active" | "ended";
+import {
+  LEADERBOARD_APPROVAL_COLORS,
+  LEADERBOARD_TIME_COLORS,
+  type LeaderboardApprovalStatus,
+  type LeaderboardTimeStatus,
+} from "./status-badges";
 
 export type PreviousLeaderboardItem = {
   id: string;
@@ -28,24 +32,8 @@ export type PreviousLeaderboardItem = {
   is_sponsored: boolean;
   start_date: string;
   end_date: string;
-  approval_status: ApprovalStatus;
-  time_status: TimeStatus;
-};
-
-const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
-  pending:
-    "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  approved:
-    "bg-green-500/15 text-green-600 dark:text-green-400 border-green-500/30",
-  rejected: "bg-red-500/15 text-red-600 dark:text-red-400 border-red-500/30",
-};
-
-const TIME_COLORS: Record<TimeStatus, string> = {
-  upcoming:
-    "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  active:
-    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  ended: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
+  approval_status: LeaderboardApprovalStatus;
+  time_status: LeaderboardTimeStatus;
 };
 
 /**
@@ -120,14 +108,17 @@ export function PreviousLeaderboardsDialog({
                     variant="outline"
                     className={cn(
                       "text-[10px]",
-                      APPROVAL_COLORS[r.approval_status],
+                      LEADERBOARD_APPROVAL_COLORS[r.approval_status],
                     )}
                   >
                     {r.approval_status}
                   </Badge>
                   <Badge
                     variant="outline"
-                    className={cn("text-[10px]", TIME_COLORS[r.time_status])}
+                    className={cn(
+                      "text-[10px]",
+                      LEADERBOARD_TIME_COLORS[r.time_status],
+                    )}
                   >
                     {r.time_status}
                   </Badge>

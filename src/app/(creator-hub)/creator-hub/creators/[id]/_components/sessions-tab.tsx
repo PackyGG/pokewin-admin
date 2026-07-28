@@ -11,6 +11,7 @@ import {
 } from "lucide-react";
 
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
@@ -71,21 +72,19 @@ export async function SessionsTab({
     return (
       <FadeIn className="space-y-5">
         <SessionsHeading />
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-          <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
-          <div>
-            <div className="font-medium text-amber-500">
-              {timedOut
-                ? "Sessions are taking too long to load"
-                : "Sessions failed to load"}
-            </div>
-            <div className="mt-0.5 text-muted-foreground">
-              {timedOut
-                ? "The session list timed out. Refresh to retry — the rest of the page is unaffected."
-                : "The session list failed to load — the backend may be unreachable. Refresh to retry; the rest of the page is unaffected."}
-            </div>
-          </div>
-        </div>
+        <HubNotice
+          tone="amber"
+          icon={Info}
+          title={
+            timedOut
+              ? "Sessions are taking too long to load"
+              : "Sessions failed to load"
+          }
+        >
+          {timedOut
+            ? "The session list timed out. Refresh to retry — the rest of the page is unaffected."
+            : "The session list failed to load — the backend may be unreachable. Refresh to retry; the rest of the page is unaffected."}
+        </HubNotice>
       </FadeIn>
     );
   }
@@ -136,8 +135,10 @@ export async function SessionsTab({
     <FadeIn className="space-y-5 sm:space-y-6">
       <SessionsHeading total={data.total} />
 
-      {/* KPI strip — session counts + lifetime fill economics + the per-spec
-          tip + sponsorship spend, all house-POV. */}
+      {/* KPI strip — the session count is the creator's TRUE total; the four
+          money tiles are sums over the LOADED PAGE only (the backend read is
+          paginated), so their sub-lines say "this page" — honest scoping
+          instead of implying lifetime figures. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         <KpiTile
           label="Sessions"
@@ -145,7 +146,7 @@ export async function SessionsTab({
           sub={
             summary.activeCount > 0
               ? `${formatNumber(summary.activeCount)} live now`
-              : "All ended"
+              : "None live on this page"
           }
           icon={BarChart3}
           accent="blue"
@@ -153,41 +154,38 @@ export async function SessionsTab({
         <KpiTile
           label="Fill loaded"
           value={formatCurrency(summary.loadedUsd)}
-          sub="House-provided"
+          sub="House-provided · this page"
           icon={Wallet}
           accent="rose"
         />
         <KpiTile
           label="Converted out"
           value={formatCurrency(summary.convertedUsd)}
-          sub="Paid to creator"
+          sub="Paid to creator · this page"
           icon={Radio}
           accent="rose"
         />
         <KpiTile
           label="Tips"
           value={formatCurrency(summary.tipsUsd)}
-          sub="House-funded"
+          sub="House-funded · this page"
           icon={Gift}
           accent="rose"
         />
         <KpiTile
           label="Sponsorship"
           value={formatCurrency(summary.sponsorUsd)}
-          sub="House-funded"
+          sub="House-funded · this page"
           icon={Gift}
           accent="rose"
         />
       </div>
 
       {data.metaDegraded && (
-        <div className="flex items-start gap-2 rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] text-muted-foreground">
-          <Info className="mt-0.5 size-3.5 shrink-0 text-amber-500" />
-          <span>
-            VOD links couldn&apos;t be loaded this time (the session list still
-            renders). Editing a VOD link will still save.
-          </span>
-        </div>
+        <HubNotice tone="amber" icon={Info} dashed>
+          VOD links couldn&apos;t be loaded this time (the session list still
+          renders). Editing a VOD link will still save.
+        </HubNotice>
       )}
 
       <Card size="sm" className="overflow-hidden p-0">
@@ -353,7 +351,7 @@ export function SessionsTabSkeleton() {
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
         {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+          <Skeleton key={i} className="h-20 w-full rounded-lg" />
         ))}
       </div>
       <Card size="sm" className="space-y-2 p-4">

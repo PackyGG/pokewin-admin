@@ -1,5 +1,4 @@
-import Link from "next/link";
-import { ExternalLink, HandCoins } from "lucide-react";
+import { HandCoins } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -15,9 +14,8 @@ import { cn } from "@/lib/utils";
 import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 import { NewDealDialog } from "./new-deal-dialog";
-import { TerminateDealDialog } from "./terminate-deal-dialog";
-import { EditDealDialog } from "./edit-deal-dialog";
-import { PreviousDealsDialog } from "./previous-deals-dialog";
+import { DealActionsMenu } from "./deal-actions-menu";
+import { DEAL_STATUS_COLORS } from "./status-badges";
 
 /**
  * Deal card (left half of the Overview "Deal | Affiliate Leaderboards" row).
@@ -27,23 +25,13 @@ import { PreviousDealsDialog } from "./previous-deals-dialog";
  * cap (used / total), conversion rate, tip + sponsor caps, leaderboard
  * allowances. Picks the active deal if one exists, else the most recent.
  *
- * "New Deal" opens the hub-native create dialog (reuses admin server
- * actions). Nothing fabricated: a creator with no deal
- * shows a clean empty state; a backend outage shows a degraded note.
+ * Actions: "New Deal" (primary, opens the hub-native create dialog) + a
+ * compact overflow menu holding Edit terms / Previous deals / Terminate
+ * (typed confirmation). Nothing fabricated: a creator with no deal shows a
+ * clean empty state; a backend outage shows a degraded note.
  *
  * Streamed in its own Suspense boundary from the Overview tab.
  */
-
-const STATUS_COLORS: Record<string, string> = {
-  active:
-    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  scheduled:
-    "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  completed:
-    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-  terminated:
-    "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-};
 
 function num(v: string | null | undefined): number {
   const n = Number(v);
@@ -69,8 +57,15 @@ function DealTerm({
   );
 }
 
-export async function DealCard({ userId }: { userId: string }) {
-  const manageDealsHref = `/creator-hub/creators/${userId}`;
+export async function DealCard({
+  userId,
+  username = null,
+}: {
+  userId: string;
+  /** Creator username (from the page header) — used by the terminate
+   *  dialog's typed confirmation; null when the header degraded. */
+  username?: string | null;
+}) {
   const heading = (
     <SectionHeading
       icon={HandCoins}
@@ -142,15 +137,14 @@ export async function DealCard({ userId }: { userId: string }) {
         icon={HandCoins}
         title="Deal"
         action={
-          <div className="flex flex-wrap items-center gap-2">
-            {previousDeals.length > 0 && (
-              <PreviousDealsDialog deals={previousDeals} />
-            )}
-            {activeDeal && <EditDealDialog userId={userId} deal={activeDeal} />}
-            {activeDeal && (
-              <TerminateDealDialog userId={userId} dealId={activeDeal.id} />
-            )}
+          <div className="flex items-center gap-2">
             <NewDealDialog userId={userId} />
+            <DealActionsMenu
+              userId={userId}
+              username={username}
+              activeDeal={activeDeal}
+              previousDeals={previousDeals}
+            />
           </div>
         }
       />
@@ -162,7 +156,7 @@ export async function DealCard({ userId }: { userId: string }) {
                 variant="outline"
                 className={cn(
                   "text-[10px] capitalize",
-                  STATUS_COLORS[deal.status],
+                  DEAL_STATUS_COLORS[deal.status],
                 )}
               >
                 {deal.status}
@@ -238,14 +232,6 @@ export async function DealCard({ userId }: { userId: string }) {
               </span>
             )}
           </div>
-
-          <Link
-            href={manageDealsHref}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            Manage deals
-            <ExternalLink className="size-3.5" />
-          </Link>
         </CardContent>
       </Card>
     </div>

@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Card } from "@/components/ui/card";
 import {
   Avatar,
@@ -54,13 +55,7 @@ import {
  * scan runs solely when the Risk tab is opened (never preloaded). It reads
  * MAIN/prod read-only (cached + timeout-guarded inside the query).
  */
-export async function RiskTab({
-  userId,
-}: {
-  userId: string;
-  /** The creator's primary code — context only; attribution is by user id. */
-  code?: string | null;
-}) {
+export async function RiskTab({ userId }: { userId: string }) {
   // 60s budget — the cold scan mirrors the creator-PnL scan's cost and warms
   // a 5-min cache; a slow first load completes rather than getting cut off.
   const { data, kind } = await safeQueryOrNull(
@@ -75,21 +70,19 @@ export async function RiskTab({
     return (
       <FadeIn className="space-y-5">
         <RiskHeading />
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-          <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
-          <div>
-            <div className="font-medium text-amber-500">
-              {timedOut
-                ? "Risk scan is taking too long to load"
-                : "Risk scan failed to load"}
-            </div>
-            <div className="mt-0.5 text-muted-foreground">
-              {timedOut
-                ? "The expected-vs-actual P&L scan over this creator's referred users timed out. Refresh to retry — the rest of the page is unaffected."
-                : "The expected-vs-actual P&L scan over this creator's referred users failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
-            </div>
-          </div>
-        </div>
+        <HubNotice
+          tone="amber"
+          icon={Info}
+          title={
+            timedOut
+              ? "Risk scan is taking too long to load"
+              : "Risk scan failed to load"
+          }
+        >
+          {timedOut
+            ? "The expected-vs-actual P&L scan over this creator's referred users timed out. Refresh to retry — the rest of the page is unaffected."
+            : "The expected-vs-actual P&L scan over this creator's referred users failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
+        </HubNotice>
       </FadeIn>
     );
   }
@@ -185,17 +178,14 @@ function UpgraderSignalBox({ data }: { data: RiskData }) {
     // Honest data-gap state — never fabricated. On prod today this is the
     // "upgrader not live" case verified read-only.
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-dashed border-border bg-muted/30 p-4 text-sm">
-        <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-        <div className="space-y-0.5">
-          <div className="font-medium">
-            High-win-chance upgrader signal — not available
-          </div>
-          <p className="text-xs text-muted-foreground">
-            {sig.unavailableReason}
-          </p>
-        </div>
-      </div>
+      <HubNotice
+        tone="muted"
+        icon={Info}
+        dashed
+        title="High-win-chance upgrader signal — not available"
+      >
+        {sig.unavailableReason}
+      </HubNotice>
     );
   }
 
@@ -450,8 +440,7 @@ function RiskBadge({ user }: { user: RiskUserRow }) {
 
 function MethodologyNote({ data }: { data: RiskData }) {
   return (
-    <div className="flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-      <Info className="mt-0.5 size-3.5 shrink-0" />
+    <HubNotice tone="muted" icon={Info} dashed>
       <span>
         <span className="font-medium text-foreground/80">How this works.</span>{" "}
         For each referred user under this creator&apos;s code we compute the{" "}
@@ -481,7 +470,7 @@ function MethodologyNote({ data }: { data: RiskData }) {
           </>
         )}
       </span>
-    </div>
+    </HubNotice>
   );
 }
 

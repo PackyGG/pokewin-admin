@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { KpiTile } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
@@ -42,39 +43,33 @@ export function OverviewKpiStrip({
   if (!profile) {
     const timedOut = failureKind === "timeout";
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-        <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
-        <div>
-          <div className="font-medium text-amber-500">
-            {timedOut
-              ? "Creator metrics are taking too long to load"
-              : "Creator metrics failed to load"}
-          </div>
-          <div className="mt-0.5 text-muted-foreground">
-            {timedOut
-              ? "The acquisition + wager aggregate timed out. Refresh to retry — the rest of the page is unaffected."
-              : "The acquisition + wager aggregate failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
-          </div>
-        </div>
-      </div>
+      <HubNotice
+        tone="amber"
+        icon={Info}
+        title={
+          timedOut
+            ? "Creator metrics are taking too long to load"
+            : "Creator metrics failed to load"
+        }
+      >
+        {timedOut
+          ? "The acquisition + wager aggregate timed out. Refresh to retry — the rest of the page is unaffected."
+          : "The acquisition + wager aggregate failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
+      </HubNotice>
     );
   }
 
   return (
     <div className="space-y-3 sm:space-y-4">
       {!profile.hasAffiliateAccount && (
-        <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-          <Info className="size-4 mt-0.5 text-amber-500 shrink-0" />
-          <div>
-            <div className="font-medium text-amber-500">
-              This user has no affiliate account yet
-            </div>
-            <div className="mt-0.5 text-muted-foreground">
-              Not yet provisioned as a creator — code, click, and signup
-              metrics will appear empty.
-            </div>
-          </div>
-        </div>
+        <HubNotice
+          tone="amber"
+          icon={Info}
+          title="This user has no affiliate account yet"
+        >
+          Not yet provisioned as a creator — code, click, and signup metrics
+          will appear empty.
+        </HubNotice>
       )}
 
       <div className="grid grid-cols-2 gap-2.5 sm:gap-3 sm:grid-cols-3 lg:grid-cols-6">

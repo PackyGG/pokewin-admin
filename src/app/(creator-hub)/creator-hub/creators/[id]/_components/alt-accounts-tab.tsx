@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { SectionHeading, KpiTile } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Card } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
 import { FadeIn } from "@/components/fade-in";
@@ -85,7 +86,7 @@ async function AltAccountsContent({ userId }: { userId: string }) {
     // Truthful band copy — a hard failure must not masquerade as "slow".
     const timedOut = kind === "timeout";
     return (
-      <NoticeBanner
+      <HubNotice
         tone="amber"
         icon={Info}
         title={
@@ -93,23 +94,20 @@ async function AltAccountsContent({ userId }: { userId: string }) {
             ? "Alt-account scan is taking too long to load"
             : "Alt-account scan failed to load"
         }
-        body={
-          timedOut
-            ? "The cohort correlation scan timed out. Refresh to retry — the rest of the page is unaffected."
-            : "The cohort correlation scan failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."
-        }
-      />
+      >
+        {timedOut
+          ? "The cohort correlation scan timed out. Refresh to retry — the rest of the page is unaffected."
+          : "The cohort correlation scan failed — its data is unavailable right now. Refresh to retry; the rest of the page is unaffected."}
+      </HubNotice>
     );
   }
 
   if (data.codes.length === 0) {
     return (
-      <NoticeBanner
-        tone="muted"
-        icon={Info}
-        title="No affiliate code on this creator"
-        body="This creator has no affiliate code yet, so there's no referred-user cohort to analyse for alts."
-      />
+      <HubNotice tone="muted" icon={Info} title="No affiliate code on this creator">
+        This creator has no affiliate code yet, so there&apos;s no
+        referred-user cohort to analyse for alts.
+      </HubNotice>
     );
   }
 
@@ -426,93 +424,53 @@ function AllClearBanner({
   cohortSize: number;
   partial: boolean;
 }) {
+  // HubNotice has no emerald tone (it's a degraded/info primitive), but the
+  // alt tab's house convention reserves emerald for the true all-clear —
+  // overlay it via className on the shared chassis rather than keeping a
+  // bespoke banner.
   return (
-    <NoticeBanner
-      tone={partial ? "amber" : "emerald"}
+    <HubNotice
+      tone={partial ? "amber" : "muted"}
       icon={partial ? Info : ShieldCheck}
+      className={
+        partial
+          ? undefined
+          : "border-emerald-500/30 bg-emerald-500/5 text-emerald-700 dark:text-emerald-300"
+      }
       title={
         partial
           ? "No alt clusters in the signals we could read"
           : "No suspected alt clusters"
       }
-      body={
-        partial
-          ? `Across the ${cohortSize} referred user${cohortSize === 1 ? "" : "s"} analysed, none shared the signals that loaded successfully. Some signals degraded (see the notice above), so this is a lower bound — re-run after a refresh.`
-          : `None of the ${cohortSize} referred user${cohortSize === 1 ? "" : "s"} under this creator's code share an IP, subnet, device, deposit wallet, deposit-timing, or identical-deposit signal. No self-boost pattern detected.`
-      }
-    />
+    >
+      {partial
+        ? `Across the ${cohortSize} referred user${cohortSize === 1 ? "" : "s"} analysed, none shared the signals that loaded successfully. Some signals degraded (see the notice above), so this is a lower bound — re-run after a refresh.`
+        : `None of the ${cohortSize} referred user${cohortSize === 1 ? "" : "s"} under this creator's code share an IP, subnet, device, deposit wallet, deposit-timing, or identical-deposit signal. No self-boost pattern detected.`}
+    </HubNotice>
   );
 }
 
 function DataGapNotice({ data }: { data: AltAccountsData }) {
   return (
-    <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-      <div className="flex items-start gap-3">
-        <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
-        <div className="min-w-0 space-y-1.5">
-          <div className="text-sm font-medium text-amber-600 dark:text-amber-400">
-            Some signals are unavailable on this database — results are a lower
-            bound
-          </div>
-          <ul className="space-y-1 text-sm text-muted-foreground">
-            {data.gaps.map((g) => (
-              <li key={g.kind} className="flex gap-1.5">
-                <span className="mt-1 size-1 shrink-0 rounded-full bg-amber-500/60" />
-                <span>
-                  <span className="font-medium text-foreground/80">
-                    {g.label}:
-                  </span>{" "}
-                  {g.reason}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NoticeBanner({
-  tone,
-  icon: Icon,
-  title,
-  body,
-}: {
-  tone: "emerald" | "amber" | "muted";
-  icon: React.ElementType;
-  title: string;
-  body: string;
-}) {
-  const toneClass =
-    tone === "emerald"
-      ? "border-emerald-500/30 bg-emerald-500/5"
-      : tone === "amber"
-        ? "border-amber-500/30 bg-amber-500/5"
-        : "border-border bg-muted/30";
-  const iconClass =
-    tone === "emerald"
-      ? "text-emerald-500"
-      : tone === "amber"
-        ? "text-amber-500"
-        : "text-muted-foreground";
-  const titleClass =
-    tone === "emerald"
-      ? "text-emerald-600 dark:text-emerald-400"
-      : tone === "amber"
-        ? "text-amber-600 dark:text-amber-400"
-        : "text-foreground";
-
-  return (
-    <div className={cn("rounded-xl border p-4", toneClass)}>
-      <div className="flex items-start gap-3">
-        <Icon className={cn("mt-0.5 size-4 shrink-0", iconClass)} />
-        <div className="min-w-0">
-          <div className={cn("text-sm font-medium", titleClass)}>{title}</div>
-          <div className="mt-0.5 text-sm text-muted-foreground">{body}</div>
-        </div>
-      </div>
-    </div>
+    <HubNotice
+      tone="amber"
+      icon={Info}
+      title="Some signals are unavailable on this database — results are a lower bound"
+    >
+      <ul className="space-y-1">
+        {data.gaps.map((g) => (
+          <li key={g.kind} className="flex gap-1.5">
+            <span className="mt-1 size-1 shrink-0 rounded-full bg-amber-500/60" />
+            <span>
+              <span className="font-medium text-foreground/80">
+                {g.label}:
+              </span>{" "}
+              {g.reason}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </HubNotice>
   );
 }
 

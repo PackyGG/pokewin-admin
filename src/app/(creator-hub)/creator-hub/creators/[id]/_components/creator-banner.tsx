@@ -1,8 +1,9 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { ArrowLeft, Info, Shield, Star } from "lucide-react";
+import { ArrowLeft, Info, Shield } from "lucide-react";
 
 import { PageHero } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
@@ -92,20 +93,12 @@ export function CreatorBanner({
                 </span>
               </Link>
             </div>
-            <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-sm">
-              <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
-              <div>
-                <span className="font-medium text-amber-500">
-                  Identity couldn&apos;t load
-                </span>
-                <span className="ml-1.5 text-muted-foreground">
-                  {timedOut
-                    ? "The header lookup timed out — refresh to retry."
-                    : "The header lookup failed — refresh to retry."}{" "}
-                  The tabs below still work.
-                </span>
-              </div>
-            </div>
+            <HubNotice tone="amber" icon={Info} title="Identity couldn't load">
+              {timedOut
+                ? "The header lookup timed out — refresh to retry."
+                : "The header lookup failed — refresh to retry."}{" "}
+              The tabs below still work.
+            </HubNotice>
             <Suspense
               fallback={
                 <span className="inline-flex items-center rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
@@ -148,10 +141,6 @@ export function CreatorBanner({
             {initials}
           </AvatarFallback>
         </Avatar>
-        <div className="hidden sm:flex size-11 items-center justify-center rounded-xl bg-pink-500/10 shrink-0">
-          <Star className="size-5 text-pink-500" />
-        </div>
-
         <div className="flex-1 min-w-0 space-y-2">
           <div className="flex min-w-0 items-center gap-2 flex-wrap">
             <Link

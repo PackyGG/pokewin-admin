@@ -7,6 +7,7 @@ import {
 } from "@/components/modern-panels";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { HubNotice } from "../../../_components/hub-notice";
 
 import { getCreatorNetData } from "../_queries/overview-data";
 
@@ -70,17 +71,14 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
     !showMultiplierPayout &&
     !showMultiplierFill;
 
-  // Truthful failure wording: a timed-out P&L scan ("taking too long",
-  // likely completes + warms the cache on its own) is NOT the same as a
-  // thrown one ("failed").
+  // Partial-failure messaging is deliberately reduced to ONE place: the
+  // small status line under the hero (plus the "≤" prefix on the hero
+  // itself). The (i) hover always explains the math; the footer explainer
+  // stays static. Truthful wording still distinguishes a timed-out scan
+  // ("taking too long") from a thrown one ("failed").
   const revenueTimedOut = net.revenueKind === "timeout";
-  const heroTitle = !revenueLoaded
-    ? revenueTimedOut
-      ? "Net unavailable — the affiliate P&L is taking too long (timed out). Refresh to retry; the cost breakdown below is still shown."
-      : "Net unavailable — the affiliate P&L failed to load. Net = affiliates made us − house cost; the cost breakdown below is still shown."
-    : net.partial
-      ? "Partial — a cost source failed to load, so the house cost is a lower bound and this net is an upper bound."
-      : "Affiliates made us − house cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned.";
+  const heroTitle =
+    "Affiliates made us − house cost. Positive (emerald) = this creator was profitable for the house; negative (rose) = he cost more than his affiliates earned.";
 
   return (
     <StatPanel title="Creator Net (P&L)" icon={Scale} accent={heroAccent}>
@@ -141,7 +139,7 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
           }
         />
         <PanelRow
-          label={net.partial ? "House cost (≥, partial)" : "House cost"}
+          label="House cost"
           value={houseCost === 0 ? "—" : `−${formatCurrency(houseCost)}`}
           valueClassName={
             houseCost > 0 ? "text-rose-600 dark:text-rose-400" : undefined
@@ -235,29 +233,14 @@ export async function CreatorNetPanel({ userId }: { userId: string }) {
         )}
       </div>
 
-      <div className="mt-4 flex items-start gap-2 rounded-md border border-dashed border-border bg-muted/30 px-3 py-2 text-[11px] text-muted-foreground">
-        <Info className="size-3.5 shrink-0 mt-0.5" />
-        <span>
-          Net = what this creator&apos;s affiliates earned the house (cohort
-          deposits − card withdrawals, capped 365d) minus the house cost spent
-          ON the creator: approved-leaderboard prizes (net of escrow, weighted
-          by sponsored %), fill-deal payout vouchers, house-funded
-          tips/sponsor, and — for multiplier deals — multiplier payouts + net
-          multiplier fill. Excludes affiliate commission.
-          {!revenueLoaded && (
-            <>
-              {" "}
-              {revenueTimedOut
-                ? "The affiliate-P&L scan timed out (it may have completed in the background and warmed the cache — refresh to retry), so the net is unavailable; the cost breakdown is still shown."
-                : "The affiliate-P&L figure failed to load right now, so the net is unavailable; the cost breakdown is still shown."}
-            </>
-          )}
-          {revenueLoaded && net.partial && (
-            <> A cost source failed to load, so the house cost is a lower bound
-            and the net shown is an upper bound.</>
-          )}
-        </span>
-      </div>
+      <HubNotice tone="muted" icon={Info} dashed className="mt-4">
+        Net = what this creator&apos;s affiliates earned the house (cohort
+        deposits − card withdrawals, capped 365d) minus the house cost spent
+        ON the creator: approved-leaderboard prizes (net of escrow, weighted
+        by sponsored %), fill-deal payout vouchers, house-funded
+        tips/sponsor, and — for multiplier deals — multiplier payouts + net
+        multiplier fill. Excludes affiliate commission.
+      </HubNotice>
     </StatPanel>
   );
 }

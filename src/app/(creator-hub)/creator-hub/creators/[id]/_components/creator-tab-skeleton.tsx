@@ -18,8 +18,9 @@ export function CreatorTabSkeleton() {
         <Skeleton className="h-5 w-48" />
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+        {/* KpiTile chassis = rounded-lg (flat tile standard) */}
         {[0, 1, 2, 3, 4].map((i) => (
-          <Skeleton key={i} className="h-20 w-full rounded-xl" />
+          <Skeleton key={i} className="h-20 w-full rounded-lg" />
         ))}
       </div>
       <Skeleton className="h-16 w-full rounded-lg" />

@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { History } from "lucide-react";
 
 import {
@@ -9,23 +8,13 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 
-const STATUS_COLORS: Record<string, string> = {
-  active:
-    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  scheduled: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  completed:
-    "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-  terminated:
-    "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-};
+import { DEAL_STATUS_COLORS } from "./status-badges";
 
 function num(v: string | null | undefined): number {
   const n = Number(v);
@@ -37,23 +26,24 @@ function num(v: string | null | undefined): number {
  *
  * Read-only list of the creator's PAST deals (completed / terminated — ended
  * by any means), so a manager can review prior terms without leaving the
- * creator page. Receives only serializable deal records.
+ * creator page. Receives only serializable deal records. Controlled by the
+ * deal actions overflow menu (no own trigger).
  */
-export function PreviousDealsDialog({ deals }: { deals: CreatorDealResponse[] }) {
-  const [open, setOpen] = useState(false);
-
+export function PreviousDealsDialog({
+  deals,
+  open,
+  onOpenChange,
+}: {
+  deals: CreatorDealResponse[];
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const sorted = [...deals].sort((a, b) =>
     b.created_at.localeCompare(a.created_at),
   );
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button variant="outline" size="sm" />}>
-        <History className="mr-1 size-3.5" />
-        Previous deals
-        <span className="ml-1 text-muted-foreground">({deals.length})</span>
-      </DialogTrigger>
-
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -76,7 +66,10 @@ export function PreviousDealsDialog({ deals }: { deals: CreatorDealResponse[] })
                   <div className="flex items-center gap-2">
                     <Badge
                       variant="outline"
-                      className={cn("text-[10px] capitalize", STATUS_COLORS[deal.status])}
+                      className={cn(
+                        "text-[10px] capitalize",
+                        DEAL_STATUS_COLORS[deal.status],
+                      )}
                     >
                       {deal.status}
                     </Badge>

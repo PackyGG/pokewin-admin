@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
+import { HubNotice } from "../../../_components/hub-notice";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -74,18 +75,10 @@ async function CreatorMetadataTabContent({ userId }: { userId: string }) {
 
   if (error) {
     return (
-      <div className="flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
-        <Info className="mt-0.5 size-4 shrink-0 text-amber-500" />
-        <div>
-          <div className="font-medium text-amber-500">
-            Creator metadata couldn&apos;t load
-          </div>
-          <div className="mt-0.5 text-muted-foreground">
-            The identity / codes lookup failed or timed out. Refresh to
-            retry — the rest of the page is unaffected.
-          </div>
-        </div>
-      </div>
+      <HubNotice tone="amber" icon={Info} title="Creator metadata couldn't load">
+        The identity / codes lookup failed or timed out. Refresh to retry —
+        the rest of the page is unaffected.
+      </HubNotice>
     );
   }
 
@@ -109,17 +102,14 @@ async function CreatorMetadataTabContent({ userId }: { userId: string }) {
       {/* Visible gap chips — one per best-effort leg that failed this load,
           so a degraded section is never mistaken for "no data". */}
       {meta.gaps.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 rounded-md border border-dashed border-amber-500/30 bg-amber-500/5 px-3 py-2">
-          <Info className="size-3.5 shrink-0 text-amber-500" />
-          <span className="text-[11px] text-muted-foreground">
-            Partial load — refresh to retry:
-          </span>
+        <HubNotice tone="amber" icon={Info} dashed>
+          <span className="mr-1.5">Partial load — refresh to retry:</span>
           {meta.gaps.map((gap) => (
-            <Badge key={gap} variant="outline" className="text-[10px]">
+            <Badge key={gap} variant="outline" className="mr-1 text-[10px]">
               {gap}
             </Badge>
           ))}
-        </div>
+        </HubNotice>
       )}
 
       {/* ── Identity + account metadata ───────────────────────────────── */}

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Ban } from "lucide-react";
@@ -13,7 +13,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,33 +25,60 @@ import { terminateCreatorDeal } from "../../../../../(admin)/creators/backend-ac
 type Props = {
   userId: string;
   dealId: string;
+  /** Creator username — accepted as the typed confirmation (besides
+   *  "TERMINATE"); null when the header lookup degraded. */
+  username: string | null;
+  /** Controlled — opened from the deal overflow menu (no own trigger). */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
 };
 
 /**
  * Creator Hub — "Terminate deal" confirmation dialog.
  *
  * Ends the creator's CURRENT ACTIVE deal via the existing
- * `terminateCreatorDeal` server action. Destructive → guarded behind an
- * explicit confirm, with an optional reason (audited) and an opt-in toggle
- * to also force-end a live stream session tied to the deal.
+ * `terminateCreatorDeal` server action. Destructive → guarded behind a
+ * TYPED confirmation (the creator's username, or the literal "TERMINATE"),
+ * with an optional reason (audited) and an opt-in toggle to also force-end
+ * a live stream session tied to the deal. Controlled by the deal actions
+ * overflow menu.
  */
-export function TerminateDealDialog({ userId, dealId }: Props) {
+export function TerminateDealDialog({
+  userId,
+  dealId,
+  username,
+  open,
+  onOpenChange,
+}: Props) {
   const router = useRouter();
-  const [open, setOpen] = useState(false);
   const [reason, setReason] = useState("");
+  const [confirmText, setConfirmText] = useState("");
   const [forceEnd, setForceEnd] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  function onOpenChange(next: boolean) {
-    if (pending) return;
-    setOpen(next);
-    if (next) {
+  // Reset the form each time the dialog opens.
+  useEffect(() => {
+    if (open) {
       setReason("");
+      setConfirmText("");
       setForceEnd(false);
     }
+  }, [open]);
+
+  const typed = confirmText.trim();
+  const confirmed =
+    typed === "TERMINATE" ||
+    (username != null &&
+      username.length > 0 &&
+      typed.toLowerCase() === username.toLowerCase());
+
+  function handleOpenChange(next: boolean) {
+    if (pending) return;
+    onOpenChange(next);
   }
 
   function handleConfirm() {
+    if (!confirmed) return;
     startTransition(async () => {
       try {
         await terminateCreatorDeal(userId, dealId, {
@@ -60,7 +86,7 @@ export function TerminateDealDialog({ userId, dealId }: Props) {
           force_end_active_session: forceEnd,
         });
         toast.success("Deal terminated");
-        setOpen(false);
+        onOpenChange(false);
         router.refresh();
       } catch (err) {
         toast.error(
@@ -71,20 +97,7 @@ export function TerminateDealDialog({ userId, dealId }: Props) {
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogTrigger
-        render={
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-rose-500/30 text-rose-600 hover:bg-rose-500/10 hover:text-rose-600 dark:text-rose-400"
-          />
-        }
-      >
-        <Ban className="mr-1 size-3.5" />
-        Terminate
-      </DialogTrigger>
-
+    <Dialog open={open} onOpenChange={handleOpenChange}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
@@ -125,6 +138,26 @@ export function TerminateDealDialog({ userId, dealId }: Props) {
               disabled={pending}
             />
           </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="terminate-confirm">
+              Type{" "}
+              {username ? (
+                <>
+                  <span className="font-mono">{username}</span> or{" "}
+                </>
+              ) : null}
+              <span className="font-mono">TERMINATE</span> to confirm
+            </Label>
+            <Input
+              id="terminate-confirm"
+              value={confirmText}
+              onChange={(e) => setConfirmText(e.target.value)}
+              placeholder={username ?? "TERMINATE"}
+              autoComplete="off"
+              disabled={pending}
+            />
+          </div>
         </div>
 
         <DialogFooter>
@@ -135,7 +168,7 @@ export function TerminateDealDialog({ userId, dealId }: Props) {
             type="button"
             variant="destructive"
             onClick={handleConfirm}
-            disabled={pending}
+            disabled={pending || !confirmed}
             className="gap-1.5"
           >
             {pending ? <Spinner size={14} /> : <Ban className="size-4" />}

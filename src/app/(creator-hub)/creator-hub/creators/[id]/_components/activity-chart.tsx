@@ -9,9 +9,9 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-  Legend,
 } from "recharts";
 import { Activity } from "lucide-react";
+import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
 
@@ -19,13 +19,19 @@ import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
  * Overview activity chart — bucketed wager / deposits / GGR for the creator's
  * attributed cohort over the selected window.
  *
- * House-POV colors:
- *   • Wager + Deposits = money INTO the house → emerald / teal.
- *   • GGR = net gaming margin (house up when positive) → emerald family;
- *     negative buckets read as house-down in the tooltip (rose hint).
+ * Series colors come from the THEME chart tokens (`--chart-*`) so the three
+ * lines are visually distinguishable in every theme (the old hardcoded
+ * near-identical green hexes were not). The headline chips above keep the
+ * house-POV money colors and double as the legend (no recharts `<Legend>`).
  *
  * Client component (recharts needs the browser); props are serializable.
  */
+
+const SERIES_COLORS = {
+  wager: "var(--chart-2)",
+  deposits: "var(--chart-3)",
+  ggr: "var(--chart-1)",
+} as const;
 
 export type ActivityPoint = {
   label: string;
@@ -62,7 +68,7 @@ export function ActivityChart({
   const ggrGrad = React.useId();
 
   return (
-    <div className="rounded-2xl border bg-card p-4 sm:p-5">
+    <Card size="sm" className="block gap-0 p-4 sm:p-5">
       <div className="mb-3 flex items-center justify-between gap-2">
         <span className="flex items-center gap-2 text-sm font-semibold">
           <Activity className="size-4 text-emerald-500" />
@@ -101,16 +107,40 @@ export function ActivityChart({
             >
               <defs>
                 <linearGradient id={wagerGrad} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#34d399" stopOpacity={0.28} />
-                  <stop offset="100%" stopColor="#34d399" stopOpacity={0} />
+                  <stop
+                    offset="0%"
+                    stopColor={SERIES_COLORS.wager}
+                    stopOpacity={0.28}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={SERIES_COLORS.wager}
+                    stopOpacity={0}
+                  />
                 </linearGradient>
                 <linearGradient id={depositsGrad} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#2dd4bf" stopOpacity={0.24} />
-                  <stop offset="100%" stopColor="#2dd4bf" stopOpacity={0} />
+                  <stop
+                    offset="0%"
+                    stopColor={SERIES_COLORS.deposits}
+                    stopOpacity={0.24}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={SERIES_COLORS.deposits}
+                    stopOpacity={0}
+                  />
                 </linearGradient>
                 <linearGradient id={ggrGrad} x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stopColor="#10b981" stopOpacity={0.22} />
-                  <stop offset="100%" stopColor="#10b981" stopOpacity={0} />
+                  <stop
+                    offset="0%"
+                    stopColor={SERIES_COLORS.ggr}
+                    stopOpacity={0.22}
+                  />
+                  <stop
+                    offset="100%"
+                    stopColor={SERIES_COLORS.ggr}
+                    stopOpacity={0}
+                  />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -149,12 +179,11 @@ export function ActivityChart({
                   String(name),
                 ]}
               />
-              <Legend wrapperStyle={{ fontSize: 11 }} />
               <Area
                 type="monotone"
                 dataKey="wagerUsd"
                 name="Wager"
-                stroke="#34d399"
+                stroke={SERIES_COLORS.wager}
                 strokeWidth={2}
                 fill={`url(#${wagerGrad})`}
                 animationDuration={700}
@@ -164,7 +193,7 @@ export function ActivityChart({
                 type="monotone"
                 dataKey="depositsUsd"
                 name="Deposits"
-                stroke="#2dd4bf"
+                stroke={SERIES_COLORS.deposits}
                 strokeWidth={2}
                 fill={`url(#${depositsGrad})`}
                 animationDuration={700}
@@ -174,7 +203,7 @@ export function ActivityChart({
                 type="monotone"
                 dataKey="ggrUsd"
                 name="GGR"
-                stroke="#10b981"
+                stroke={SERIES_COLORS.ggr}
                 strokeWidth={2}
                 fill={`url(#${ggrGrad})`}
                 animationDuration={700}
@@ -195,6 +224,6 @@ export function ActivityChart({
           </div>
         )}
       </div>
-    </div>
+    </Card>
   );
 }

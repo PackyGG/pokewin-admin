@@ -95,8 +95,8 @@ export default async function CreatorHubCreatorDetailPage({
 
   const { id } = await params;
   const sp = await searchParams;
-  // Coerce to a navigable tab (unknown / "Soon" / missing → Overview), so a
-  // stale URL never mounts a tab that isn't wired this wave.
+  // Coerce to a navigable tab (unknown / missing → Overview), so a stale
+  // URL never mounts a tab that doesn't exist.
   const tab = parseTab(sp.tab);
   // Sessions pagination is URL-driven (`?sessionsPage=`) — server-side and
   // bounded, only meaningful on the sessions tab (other tabs ignore it).
@@ -110,8 +110,8 @@ export default async function CreatorHubCreatorDetailPage({
   // into the error boundary. Now only a CONFIRMED unknown id 404s
   // (`!header && !headerError`); a failed/timed-out lookup renders the
   // degraded banner (user id + amber band) and still mounts the tab bar +
-  // active tab — every tab only needs `userId`, and RiskTab already handles
-  // an empty `code`. One failing leg never blanks the page.
+  // active tab — every tab only needs `userId`. One failing leg never
+  // blanks the page.
   const {
     data: header,
     error: headerError,
@@ -143,12 +143,13 @@ export default async function CreatorHubCreatorDetailPage({
         {tab === "overview" && (
           <OverviewTab
             userId={id}
+            username={header?.username ?? null}
             activityPeriod={parseCreatorActivityPeriod(sp.activityPeriod)}
           />
         )}
         {tab === "creator" && <CreatorMetadataTab userId={id} />}
         {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
-        {tab === "risk" && <RiskTab userId={id} code={header?.code ?? ""} />}
+        {tab === "risk" && <RiskTab userId={id} />}
         {tab === "alts" && <AltAccountsTab userId={id} />}
       </Suspense>
     </div>

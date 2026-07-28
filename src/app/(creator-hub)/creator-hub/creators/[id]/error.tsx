@@ -5,6 +5,7 @@ import Link from "next/link";
 import { AlertTriangle, ArrowLeft, RotateCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { HubNotice } from "../../_components/hub-notice";
 
 /**
  * Segment-level error boundary for `/creator-hub/creators/[id]`.
@@ -58,14 +59,12 @@ export default function CreatorHubCreatorDetailError({
         </div>
       </div>
 
-      <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
-        <p className="text-xs text-muted-foreground">
-          One of the detail queries (KPI aggregate, P&amp;L, a tab body)
-          threw or the backend API was unreachable. If &quot;Try again&quot;
-          keeps failing the issue is upstream — the server logs carry the
-          full stack under the digest above.
-        </p>
-      </div>
+      <HubNotice tone="amber">
+        One of the detail queries (KPI aggregate, P&amp;L, a tab body) threw
+        or the backend API was unreachable. If &quot;Try again&quot; keeps
+        failing the issue is upstream — the server logs carry the full stack
+        under the digest above.
+      </HubNotice>
 
       <div className="flex items-center gap-2">
         <Button type="button" variant="default" size="sm" onClick={reset}>

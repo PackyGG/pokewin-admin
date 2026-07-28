@@ -16,13 +16,17 @@ import { Spinner } from "@/components/ux";
 /**
  * Creator detail tab bar.
  *
- * Tab set: Overview · Creator · Sessions · Risk · Forecast · Cohorts & LTV ·
- * Alt Accounts.
+ * Tab set: Overview · Creator · Sessions · Risk · Alt Accounts.
  *
- * ALL tabs are NAVIGABLE (drive the active tab via `?tab=`): the page reads it
- * and mounts ONLY that tab's component lazily in a keyed Suspense boundary, so
- * a non-active tab never fetches its data (active-tab-only / never-preload).
+ * All tabs drive the active tab via `?tab=`: the page reads it and mounts
+ * ONLY that tab's component lazily in a keyed Suspense boundary, so a
+ * non-active tab never fetches its data (active-tab-only / never-preload).
  * Overview is the default for a missing/unknown `?tab=`.
+ *
+ * Switching tabs PRESERVES the other URL params (`?activityPeriod=`,
+ * `?sessionsPage=`) instead of rebuilding the query from scratch — a period
+ * or page you picked survives a round-trip through another tab (non-owning
+ * tabs simply ignore them; nothing 404s or misleads).
  *
  * Navigation uses the dashboard's `useTransition` + `router.replace(...,
  * { scroll: false })` mechanic (not a plain `<Link>`): the transition keeps the
@@ -36,15 +40,13 @@ type CreatorTab = {
   key: string;
   label: string;
   icon: LucideIcon;
-  /** Placeholder (future wave) — rendered disabled, never navigates. */
-  soon?: boolean;
 };
 
 /**
- * Tab keys that are navigable this wave. Kept private to this client component
- * (the server `page.tsx` mirrors the same set inline — a server import of a
- * value from this Client Component would throw at render). Order matters — it's
- * the on-screen left→right order of the live chips.
+ * Navigable tab keys. Kept private to this client component (the server
+ * `page.tsx` mirrors the same set inline — a server import of a value from
+ * this Client Component would throw at render). Order matters — it's the
+ * on-screen left→right order of the chips.
  */
 const NAV_TABS = [
   "overview",
@@ -56,8 +58,7 @@ const NAV_TABS = [
 
 /**
  * Coerce an arbitrary `?tab=` value to a navigable tab key, falling back to
- * Overview, so the highlighted chip always matches what the page renders (a
- * stale/unknown/"Soon" tab → Overview).
+ * Overview, so the highlighted chip always matches what the page renders.
  */
 function currentTabFrom(value: string | null): string {
   return (NAV_TABS as readonly string[]).includes(value ?? "") ? (value as string) : "overview";
@@ -79,9 +80,10 @@ export function CreatorTabBar() {
   const [isPending, startTransition] = useTransition();
 
   function hrefFor(tab: string): string {
-    // Tab is the only URL slice this page uses; rebuild from scratch so no
-    // stale param leaks across tabs.
-    const p = new URLSearchParams();
+    // Preserve the existing params (activityPeriod, sessionsPage, …) and
+    // swap only the tab — non-owning tabs ignore what isn't theirs, so
+    // nothing goes stale or misleads.
+    const p = new URLSearchParams(searchParams.toString());
     p.set("tab", tab);
     return `${pathname}?${p.toString()}`;
   }
@@ -101,27 +103,7 @@ export function CreatorTabBar() {
     >
       {TABS.map((tab) => {
         const Icon = tab.icon;
-        const isActive = !tab.soon && tab.key === current;
-
-        // "Soon" tabs are inert placeholders (no navigation).
-        if (tab.soon) {
-          return (
-            <div
-              key={tab.key}
-              role="tab"
-              aria-selected={false}
-              aria-disabled
-              title={`${tab.label} — coming in the next wave`}
-              className="inline-flex shrink-0 cursor-default items-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium text-muted-foreground/70"
-            >
-              <Icon className="size-4 text-muted-foreground/60" />
-              <span>{tab.label}</span>
-              <span className="ml-0.5 rounded-sm bg-muted px-1 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">
-                Soon
-              </span>
-            </div>
-          );
-        }
+        const isActive = tab.key === current;
 
         return (
           <button
