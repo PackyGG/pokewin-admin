@@ -331,20 +331,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   {
-    id: "nav.keno",
-    group: "Overview",
-    label: "Keno",
-    href: "/keno",
-    pageKey: "/keno",
-    icon: "Dices",
-    description: "Keno performance, configuration, odds, and payout evidence",
-    keywords: ["keno", "odds", "payout", "risk", "wager", "rtp", "ggr"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-
-  {
     // Creator Analytics — palette-only (no sidebar link).
     id: "nav.creators.analytics",
     group: "Overview",
@@ -403,6 +389,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     isNew: true,
     inSidebar: true,
     inPalette: false,
+  },
+  {
+    id: "nav.keno",
+    group: "Content",
+    label: "Keno",
+    href: "/keno",
+    pageKey: "/keno",
+    icon: "Dices",
+    description: "Keno performance, configuration, odds, and payout evidence",
+    keywords: ["keno", "odds", "payout", "risk", "wager", "rtp", "ggr"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
   },
   // ── Transactions (merged into Content) ─────────────────────────────────
   // Owner: "merge each catalog + its matching transactions page into ONE page
