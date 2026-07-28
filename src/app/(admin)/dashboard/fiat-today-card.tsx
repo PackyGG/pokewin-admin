@@ -1,94 +1,114 @@
 "use client";
 
+import Link from "next/link";
 import {
-  CreditCard,
-  RotateCcw,
-  ShieldAlert,
+  AlertTriangle,
   CircleDollarSign,
+  CreditCard,
+  ShieldAlert,
+  WalletCards,
 } from "lucide-react";
 
 import { AnimatedNumber } from "@/components/animated-number";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatNumber } from "@/lib/utils/format";
+import type {
+  DashboardFiatException,
+  DashboardFiatMetrics,
+} from "@/lib/queries/dashboard-fiat";
 
-export type FiatTodayCardData = {
-  grossCreditedUsd: number;
-  refundCreditsUsd: number;
-  netCreditedUsd: number;
-  providerFeesUsd: number;
-  paymentCount: number;
-  refundCount: number;
-  partialRefundCount: number;
-  unresolvedPartialRefundCount: number;
-  reviewCount: number;
-  disputeCount: number;
-};
+export type FiatTodayCardData = DashboardFiatMetrics;
 
 export function FiatTodayCard({ data }: { data: FiatTodayCardData }) {
-  const netPositive = data.netCreditedUsd >= 0;
-
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <CardTitle className="inline-flex items-center gap-1 text-card-title text-muted-foreground">
-            Fiat payments
+            Whop fiat payments
           </CardTitle>
-          <span className="text-tiny text-muted-foreground">Today</span>
+          <span className="text-tiny text-muted-foreground">Today · UTC</span>
         </div>
         <CreditCard className="size-4 shrink-0 text-blue-400" />
       </CardHeader>
       <CardContent className="space-y-3">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Net credited
+            Provider net paid
           </p>
-          <div
-            className={
-              netPositive
-                ? "text-stat-value truncate text-emerald-400"
-                : "text-stat-value truncate text-rose-400"
-            }
-          >
-            {netPositive ? "+" : "−"}
-            <AnimatedNumber
-              value={Math.abs(data.netCreditedUsd)}
-              format="currency"
-            />
+          <div className="text-stat-value truncate text-emerald-400">
+            <AnimatedNumber value={data.providerNetPaidUsd} format="currency" />
           </div>
           <p className="text-[11px] leading-snug text-muted-foreground">
-            Gross credits minus refunds processed today.
+            Whop paid_at since 00:00 UTC. Net is gross USD equivalent minus
+            provider fees.
           </p>
         </div>
 
         <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
           <FiatChip
             icon={CircleDollarSign}
-            label="Paid"
-            value={data.grossCreditedUsd}
-            count={`${formatNumber(data.paymentCount)} payments`}
+            label="Gross paid"
+            value={data.providerGrossPaidUsd}
+            count={`${formatNumber(data.providerPaymentCount)} provider payments`}
             tone="emerald"
           />
           <FiatChip
-            icon={RotateCcw}
-            label="Refunded"
-            value={data.refundCreditsUsd}
-            count={`${formatNumber(data.refundCount)} refunds`}
-            tone="rose"
+            icon={WalletCards}
+            label="Balance credited"
+            value={data.grossCreditedUsd}
+            count={`${formatNumber(data.creditedPaymentCount)} completed credits`}
+            tone="blue"
           />
         </div>
 
+        {data.uncreditedExceptionCount > 0 && (
+          <details className="rounded-md border border-amber-500/20 bg-amber-500/5 px-2 py-1.5">
+            <summary className="cursor-pointer list-none text-[11px] font-semibold text-amber-600 dark:text-amber-400">
+              <span className="inline-flex items-center gap-1">
+                <AlertTriangle className="size-3 shrink-0" />
+                {formatNumber(data.uncreditedExceptionCount)} paid beyond
+                settlement grace ·{" "}
+                <AnimatedNumber
+                  value={data.uncreditedExceptionGrossUsd}
+                  format="currency"
+                />
+              </span>
+            </summary>
+            <p className="mt-1 text-[11px] leading-snug text-muted-foreground">
+              Read-only alert. Refunded, disputed, canceled, staff, duplicate,
+              fresh, and alternate-linked credits are excluded.
+            </p>
+            <div className="mt-1.5 flex flex-wrap gap-1">
+              {data.uncreditedExceptions.map((exception) => (
+                <ExceptionLink
+                  key={exception.intentId}
+                  exception={exception}
+                />
+              ))}
+            </div>
+          </details>
+        )}
+
         <div className="border-t border-border/50 pt-2">
           <div className="grid grid-cols-3 gap-2 text-[11px]">
-            <Status label="Fees" value={`$${data.providerFeesUsd.toFixed(2)}`} />
-            <Status label="Review" value={formatNumber(data.reviewCount)} />
+            <Status
+              label="Whop fees"
+              value={`$${data.providerFeesUsd.toFixed(2)}`}
+            />
+            <Status
+              label="Refunded"
+              value={`$${data.refundCreditsUsd.toFixed(2)}`}
+            />
             <Status label="Disputes" value={formatNumber(data.disputeCount)} />
           </div>
-          {data.partialRefundCount > 0 && (
+          {(data.partialRefundCount > 0 || data.reviewCount > 0) && (
             <p className="mt-2 flex items-start gap-1 text-[11px] leading-snug text-muted-foreground">
               <ShieldAlert className="mt-0.5 size-3 shrink-0 text-amber-400" />
-              {formatNumber(data.partialRefundCount)} partial refund
-              {data.partialRefundCount === 1 ? "" : "s"}
+              {formatNumber(data.reviewCount)} in review
+              {data.partialRefundCount > 0
+                ? ` · ${formatNumber(data.partialRefundCount)} partial refund${data.partialRefundCount === 1 ? "" : "s"}`
+                : ""}
               {data.unresolvedPartialRefundCount > 0
                 ? ` · ${formatNumber(data.unresolvedPartialRefundCount)} missing an amount`
                 : ""}
@@ -97,6 +117,22 @@ export function FiatTodayCard({ data }: { data: FiatTodayCardData }) {
         </div>
       </CardContent>
     </Card>
+  );
+}
+
+function ExceptionLink({
+  exception,
+}: {
+  exception: DashboardFiatException;
+}) {
+  return (
+    <Link
+      href={`/transactions/card-payments/${exception.intentId}`}
+      className="rounded border border-amber-500/20 bg-background/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-amber-700 hover:underline dark:text-amber-300"
+      title={`Open exact fiat intent ${exception.intentId}`}
+    >
+      {exception.intentId.slice(0, 8)} · ${exception.grossPaidUsd.toFixed(2)}
+    </Link>
   );
 }
 
@@ -111,17 +147,19 @@ function FiatChip({
   label: string;
   value: number;
   count: string;
-  tone: "emerald" | "rose";
+  tone: "emerald" | "blue";
 }) {
   const color =
     tone === "emerald"
       ? "text-emerald-600 dark:text-emerald-400"
-      : "text-rose-600 dark:text-rose-400";
+      : "text-blue-600 dark:text-blue-400";
   const border =
-    tone === "emerald" ? "border-emerald-500/15" : "border-rose-500/15";
+    tone === "emerald" ? "border-emerald-500/15" : "border-blue-500/15";
 
   return (
-    <div className={`min-w-0 rounded-md border bg-background/40 px-2 py-1.5 ${border}`}>
+    <div
+      className={`min-w-0 rounded-md border bg-background/40 px-2 py-1.5 ${border}`}
+    >
       <p className="flex items-center gap-1 truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
         <Icon className={`size-3 shrink-0 ${color}`} />
         {label}

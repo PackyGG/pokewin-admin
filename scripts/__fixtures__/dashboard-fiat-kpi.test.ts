@@ -32,6 +32,14 @@ const canonicalPnl = fs.readFileSync(
   path.join(root, "src/lib/queries/pnl.ts"),
   "utf8",
 );
+const card = fs.readFileSync(
+  path.join(root, "src/app/(admin)/dashboard/fiat-today-card.tsx"),
+  "utf8",
+);
+const kpis = fs.readFileSync(
+  path.join(root, "src/app/(admin)/dashboard/dashboard-kpi-section.tsx"),
+  "utf8",
+);
 
 test("dashboard top row includes a fourth streamed Fiat payments card", () => {
   assert.match(page, /xl:grid-cols-4/);
@@ -47,8 +55,56 @@ test("fiat refund math handles full and proportional partial reversals", () => {
   assert.match(refundContract, /refunded_amount_cents/);
   assert.match(refundContract, /refunded_amount/);
   assert.match(refundContract, /actual_customer_total_cents::numeric/);
-  assert.match(query, /fiatRefundCreditCentsSql\(\)/);
+  assert.match(query, /fiatRefundCreditCentsSql\("i"\)/);
   assert.match(query, /unresolved_partial_refund_count/);
+});
+
+test("Whop paid volume uses provider lifecycle, timestamp, USD, and payment dedupe", () => {
+  assert.match(query, /event_type = 'payment\.succeeded'/);
+  assert.match(query, /payload #>> '\{data,status\}' = 'paid'/);
+  assert.match(query, /provider_paid_at >= \$1/);
+  assert.match(query, /provider_paid_at <= CURRENT_TIMESTAMP/);
+  assert.match(query, /DISTINCT ON \(payment_id\)/);
+  assert.match(query, /payload #>> '\{data,usd_total\}'/);
+  assert.match(query, /amount_after_fees/);
+  assert.match(query, /gross_paid_usd \* amount_after_fees \/ charged_total/);
+});
+
+test("credited fiat remains an authoritative distinct completed ledger metric", () => {
+  assert.match(query, /credited_ledgers AS/);
+  assert.match(query, /SELECT DISTINCT ON \(lt\.id\)/);
+  assert.match(query, /lt\.type = 'deposit'/);
+  assert.match(query, /lt\.status = 'completed'/);
+  assert.match(query, /lt\.created_at >= \$1/);
+  assert.match(query, /u\.role NOT IN \('admin', 'support'\)/);
+  assert.doesNotMatch(query, /getExcludedUserIds|BlacklistedSqlFromIds/);
+  assert.doesNotMatch(query, /role NOT IN \('admin', 'support', 'creator'\)/);
+});
+
+test("paid-but-uncredited alert applies grace, lifecycle, staff, and alternate joins", () => {
+  assert.match(query, /FIAT_SETTLEMENT_GRACE_MINUTES = 15/);
+  assert.match(query, /provider_payment_id = paid\.payment_id/);
+  assert.match(query, /provider_payment_id = paid\.provider_resource_id/);
+  assert.match(query, /i\.id::text = paid\.metadata_intent_id/);
+  assert.match(query, /lt\.id = paid\.completed_ledger_id/);
+  assert.match(
+    query,
+    /'canceled', 'partially_refunded', 'refunded', 'disputed'/,
+  );
+  assert.match(query, /u\.role NOT IN \('admin', 'support'\)/);
+  assert.match(card, /Read-only alert/);
+  assert.match(card, /transactions\/card-payments/);
+});
+
+test("dashboard labels keep combined ledger credits separate from Whop paid", () => {
+  assert.match(card, /Provider net paid/);
+  assert.match(card, /Gross paid/);
+  assert.match(card, /Balance credited/);
+  assert.match(card, /paid_at since 00:00 UTC/);
+  assert.match(kpis, /Balance credits \/ Withdrawals/);
+  assert.match(kpis, /Completed credits/);
+  assert.match(kpis, /Fiat \+ crypto ledger credits, not Whop provider volume/);
+  assert.doesNotMatch(kpis, /Net deposits/);
 });
 
 test("refund credits reduce canonical deposit and P&L numbers exactly once", () => {

@@ -448,7 +448,7 @@ export function DashboardKpiSection({
           const depositsPositive = p.deposits >= 0;
           return (
             <KpiPanel
-              title="Deposits / Withdrawals"
+              title="Balance credits / Withdrawals"
               tint="blue"
               headerRight={
                 <WindowToggle
@@ -470,7 +470,7 @@ export function DashboardKpiSection({
                           : "text-rose-600 dark:text-rose-400",
                       )}
                     >
-                      Net deposits
+                      Completed credits
                     </p>
                     <span
                       className={cn(
@@ -480,7 +480,7 @@ export function DashboardKpiSection({
                           : "bg-rose-500/15 text-rose-600 dark:text-rose-400",
                       )}
                     >
-                      {formatNumber(p.depositCount)} paid
+                      {formatNumber(p.depositCount)} tx
                       {p.fiatRefundCount > 0
                         ? ` · ${formatNumber(p.fiatRefundCount)} refunded`
                         : ""}
@@ -496,6 +496,9 @@ export function DashboardKpiSection({
                   >
                     <AnimatedNumber value={p.deposits} format="currency" />
                   </div>
+                  <p className="text-[11px] leading-snug text-muted-foreground">
+                    Fiat + crypto ledger credits, not Whop provider volume.
+                  </p>
                   {p.fiatRefunds > 0 && (
                     <p className="text-[11px] leading-snug text-rose-600 dark:text-rose-400">
                       {formatNumber(p.fiatRefundCount)} fiat refund
