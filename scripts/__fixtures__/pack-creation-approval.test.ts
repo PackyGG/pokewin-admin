@@ -23,6 +23,8 @@ const migrationPath =
   "drizzle/admin/migrations/20260726_pack_creation_approval_queue.sql";
 const builderFormPath =
   "src/app/(pack-studio)/pack-studio/builder/pack-builder-form.tsx";
+const builderDraftDataPath =
+  "src/app/(pack-studio)/pack-studio/builder/draft-data.ts";
 const buildRequestsPath = "src/lib/packs/build-requests.ts";
 const builderEdgePath = "src/lib/packs/builder-edge.ts";
 const serverLayoutPaths = [
@@ -155,7 +157,14 @@ test("live Pack Builder requests require artwork while saved drafts remain allow
   assert.match(buildRequests, /"missing_image"/);
   assert.match(buildRequests, /updatePackBuildDraftImage/);
 
-  assert.match(builderForm, /const canRequestLive = canSubmit && imageFile !== null/);
+  assert.match(
+    builderForm,
+    /canSubmit && \(imageFile !== null \|\| imagePreview !== null\)/,
+  );
+  assert.match(
+    builderForm,
+    /activate && imageFile === null && imagePreview === null/,
+  );
   assert.match(builderForm, /disabled=\{!canRequestLive\}/);
   assert.match(builderForm, /Optional for saved drafts/);
   assert.match(builderForm, /handleSubmit\(false\)/);
@@ -186,6 +195,41 @@ test("live Pack Builder requests require artwork while saved drafts remain allow
     actions.indexOf("export async function declinePackCreationRequestAction"),
   );
   assert.match(approval, /if \(!result\.ok\) \{[\s\S]*?releasePackCreationRequest/);
+});
+
+test("saved Pack Builder drafts can be edited in place", async () => {
+  const [
+    actions,
+    builderPage,
+    builderForm,
+    buildDraftsList,
+    buildRequests,
+    draftData,
+  ] = await Promise.all([
+    readFile(actionsPath, "utf8"),
+    readFile(builderPagePath, "utf8"),
+    readFile(builderFormPath, "utf8"),
+    readFile(buildDraftsListPath, "utf8"),
+    readFile(buildRequestsPath, "utf8"),
+    readFile(builderDraftDataPath, "utf8"),
+  ]);
+
+  assert.match(buildDraftsList, /Edit build/);
+  assert.match(buildDraftsList, /\/pack-studio\/builder\?draft=/);
+  assert.match(builderPage, /searchParams:\s*Promise/);
+  assert.match(builderPage, /loadPackBuilderDraft/);
+  assert.match(builderForm, /initialDraft/);
+  assert.match(builderForm, /Update build draft/);
+  assert.match(actions, /updatePackBuildDraft/);
+  assert.match(actions, /pack_build_draft_updated/);
+  assert.match(buildRequests, /export async function getPackBuildDraftForEdit/);
+  assert.match(buildRequests, /export async function updatePackBuildDraft/);
+  assert.match(
+    buildRequests,
+    /requested_by = \$\{input\.actorId\}::uuid[\s\S]*?OR \$\{input\.canManageAll\}/,
+  );
+  assert.match(draftData, /WHERE id = ANY/);
+  assert.match(draftData, /getReadDrizzleDb/);
 });
 
 test("Pack Builder preserves card color and animation through owner approval", async () => {

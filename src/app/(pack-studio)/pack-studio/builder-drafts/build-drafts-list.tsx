@@ -7,6 +7,7 @@ import {
   ClipboardList,
   ImageUp,
   Loader2,
+  Pencil,
   Rocket,
   Trash2,
   Wand2,
@@ -255,6 +256,16 @@ export function BuildDraftsList({
                     }}
                   />
                 </label>
+                <Link
+                  href={`/pack-studio/builder?draft=${encodeURIComponent(draft.id)}`}
+                  className={cn(
+                    buttonVariants({ variant: "outline" }),
+                    "gap-2",
+                  )}
+                >
+                  <Pencil className="size-4" />
+                  Edit build
+                </Link>
                 <Button
                   type="button"
                   variant="outline"

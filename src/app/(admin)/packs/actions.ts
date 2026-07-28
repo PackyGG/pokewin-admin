@@ -106,6 +106,7 @@ import {
   declinePackCreationRequest,
   enqueuePackCreationRequest,
   releasePackCreationRequest,
+  updatePackBuildDraft,
   type BuildPackInput,
   type ParsedBuildPackInput,
 } from "@/lib/packs/build-requests";
@@ -2819,9 +2820,12 @@ async function previewPackBuildRequest(
  * This action never mutates MAIN. Inactive builds are saved drafts; live
  * requests appear in System → New Packs for one owner decision.
  */
-export async function buildPack(input: BuildPackInput): Promise<BuildPackResult> {
+export async function buildPack(
+  input: BuildPackInput,
+  draftId?: string,
+): Promise<BuildPackResult> {
   try {
-    return await buildPackInner(input);
+    return await buildPackInner(input, draftId);
   } catch (error) {
     // Next masks thrown Server Action messages in production. Keep expected
     // builder refusals as typed data so the form can show the real problem.
@@ -2836,7 +2840,10 @@ export async function buildPack(input: BuildPackInput): Promise<BuildPackResult>
   }
 }
 
-async function buildPackInner(input: BuildPackInput): Promise<BuildPackResult> {
+async function buildPackInner(
+  input: BuildPackInput,
+  draftId?: string,
+): Promise<BuildPackResult> {
   const session = await requirePackStudioAccess(
     "The pack builder is restricted to authorized operators.",
   );
@@ -2852,24 +2859,50 @@ async function buildPackInner(input: BuildPackInput): Promise<BuildPackResult> {
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid pack input");
   }
+  const parsedDraftId = draftId
+    ? z.string().uuid().safeParse(draftId)
+    : null;
+  if (parsedDraftId && !parsedDraftId.success) {
+    throw new Error("Invalid build draft id");
+  }
   const preview = await previewPackBuildRequest(parsed.data);
   if (!preview.ok) return preview;
 
-  const requestId = await enqueuePackCreationRequest({
-    requestedBy: session.userId,
-    payload: parsed.data,
-    previewEdge: preview.edge,
-    previewWinRate: preview.winRate,
-  });
+  const requestId = parsedDraftId?.success
+    ? parsedDraftId.data
+    : await enqueuePackCreationRequest({
+        requestedBy: session.userId,
+        payload: parsed.data,
+        previewEdge: preview.edge,
+        previewWinRate: preview.winRate,
+      });
+  if (parsedDraftId?.success) {
+    const updated = await updatePackBuildDraft({
+      requestId,
+      actorId: session.userId,
+      canManageAll: sessionIsOwner(session) || sessionIsAdmin(session),
+      payload: parsed.data,
+      previewEdge: preview.edge,
+      previewWinRate: preview.winRate,
+    });
+    if (!updated) {
+      throw new Error(
+        "This build draft is no longer available or belongs to another builder.",
+      );
+    }
+  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType:
       parsed.data.activate === true
         ? "pack_creation_requested"
-        : "pack_build_draft_saved",
+        : parsedDraftId?.success
+          ? "pack_build_draft_updated"
+          : "pack_build_draft_saved",
     metadata: {
       request_id: requestId,
+      updated: parsedDraftId?.success ?? false,
       name: parsed.data.name,
       slug: parsed.data.slug,
       requested_active: parsed.data.activate === true,

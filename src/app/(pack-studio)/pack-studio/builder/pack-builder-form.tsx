@@ -88,6 +88,7 @@ import {
   normalizeBuilderOdds,
 } from "./builder-pricing";
 import type { BuilderCardItem } from "./actions";
+import type { PackBuilderInitialDraft } from "./draft-types";
 
 /**
  * Pack-Studio Builder — single-page design-a-pack flow.
@@ -241,6 +242,7 @@ export function PackBuilderForm({
   maxMultCeiling,
   edgeCurve,
   canBuild,
+  initialDraft,
 }: {
   sets: { id: string; name: string }[];
   rarities: string[];
@@ -252,38 +254,65 @@ export function PackBuilderForm({
   edgeCurve: EdgeCurveConfig;
   /** True when the viewer can save a build draft or request live approval. */
   canBuild: boolean;
+  /** Existing ADMIN-only saved build when the form is opened in edit mode. */
+  initialDraft: PackBuilderInitialDraft | null;
 }) {
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
   const appHost = useAppHost();
 
   // ── Identity ──────────────────────────────────────────────────────
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugManual, setSlugManual] = useState(false);
-  const [price, setPrice] = useState("");
-  const [autoPrice, setAutoPrice] = useState(true);
+  const [name, setName] = useState(initialDraft?.name ?? "");
+  const [slug, setSlug] = useState(initialDraft?.slug ?? "");
+  const [slugManual, setSlugManual] = useState(initialDraft !== null);
+  const [price, setPrice] = useState(
+    initialDraft ? String(initialDraft.price) : "",
+  );
+  const [autoPrice, setAutoPrice] = useState(initialDraft === null);
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const [imagePreview, setImagePreview] = useState<string | null>(
+    initialDraft?.imageUrl ?? null,
+  );
 
   // ── Pool ──────────────────────────────────────────────────────────
-  const [cards, setCards] = useState<PoolCard[]>([]);
+  const [cards, setCards] = useState<PoolCard[]>(() =>
+    (initialDraft?.cards ?? []).map((card) => ({
+      ...card,
+      odds: 0,
+      autoOdds: true,
+    })),
+  );
 
   // ── Dials ─────────────────────────────────────────────────────────
-  const [winRatePct, setWinRatePct] = useState(20); // % (slider) → 0.20
-  const [capEnabled, setCapEnabled] = useState(true);
-  const [maxWinCap, setMaxWinCap] = useState(String(defaultMaxWinCap));
-  const [nearMissPct, setNearMissPct] = useState(10); // % → 0.10
-  const [spiciness, setSpiciness] = useState<Spiciness>("balanced");
-  const [customEdgeEnabled, setCustomEdgeEnabled] = useState(false);
+  const [winRatePct, setWinRatePct] = useState(
+    (initialDraft?.targets.targetWinRate ?? 0.2) * 100,
+  ); // % (slider) → ratio
+  const [capEnabled, setCapEnabled] = useState(
+    initialDraft ? initialDraft.targets.maxWinCap !== null : true,
+  );
+  const [maxWinCap, setMaxWinCap] = useState(
+    String(initialDraft?.targets.maxWinCap ?? defaultMaxWinCap),
+  );
+  const [nearMissPct, setNearMissPct] = useState(
+    (initialDraft?.targets.nearMissMin ?? 0.1) * 100,
+  ); // % → ratio
+  const [spiciness, setSpiciness] = useState<Spiciness>(
+    initialDraft?.targets.floorRatioMin != null ? "calmer" : "balanced",
+  );
+  const [customEdgeEnabled, setCustomEdgeEnabled] = useState(
+    initialDraft?.targets.targetEdge != null,
+  );
   const [customEdgePct, setCustomEdgePct] = useState(
-    (clampPackBuilderEdge(edgeCurve.edgeFloor) * 100).toFixed(2),
+    (
+      (initialDraft?.targets.targetEdge ??
+        clampPackBuilderEdge(edgeCurve.edgeFloor)) * 100
+    ).toFixed(2),
   );
   // Player-facing risk level (0..1) — the on-site `difficulty` dial. Manual,
   // NOT derived from the CV tier (they are different measures). Defaults to 0
   // so, like the create/edit pack forms, an untouched pack ships `difficulty:
   // null` (no on-site bar) until the operator sets a level.
-  const [difficulty, setDifficulty] = useState(0);
+  const [difficulty, setDifficulty] = useState(initialDraft?.difficulty ?? 0);
   // Controlled so the confirm can be closed explicitly on push (the shared
   // AlertDialogAction is a plain button, not a Close — it wouldn't auto-close
   // on the error path otherwise).
@@ -508,13 +537,14 @@ export function PackBuilderForm({
     edgeWithinBuilderRange &&
     !shapeError &&
     Boolean(shapeOk);
-  const canRequestLive = canSubmit && imageFile !== null;
+  const canRequestLive =
+    canSubmit && (imageFile !== null || imagePreview !== null);
 
   // `activate:true` requests a live push. `false` saves an ADMIN-only draft.
   // Neither path changes MAIN at submission time.
   function handleSubmit(activate: boolean) {
     if (!canSubmit) return;
-    if (activate && !imageFile) {
+    if (activate && imageFile === null && imagePreview === null) {
       toast.error(
         "Add a pack image before requesting a live push. Drafts can be saved without one.",
       );
@@ -522,7 +552,10 @@ export function PackBuilderForm({
     }
     startTransition(async () => {
       try {
-        let imageUrl: string | undefined;
+        let imageUrl =
+          imagePreview && !imagePreview.startsWith("blob:")
+            ? imagePreview
+            : undefined;
         if (imageFile) {
           imageUrl = await uploadImageClient(imageFile, "/packs");
         }
@@ -530,8 +563,10 @@ export function PackBuilderForm({
         const result = await buildPack({
           name: name.trim(),
           slug: slug.trim(),
+          description: initialDraft?.description ?? undefined,
           imageUrl,
           price: packPrice,
+          cardsPerOpen: initialDraft?.cardsPerOpen ?? undefined,
           difficulty,
           activate,
           cards: cards.map((c) => ({
@@ -548,7 +583,7 @@ export function PackBuilderForm({
             floorRatioMin,
             nearMissMin,
           },
-        });
+        }, initialDraft?.id);
 
         if (!result.ok) {
           toast.error(result.error);
@@ -557,11 +592,18 @@ export function PackBuilderForm({
 
         if (result.requestedActive) {
           toast.success(
-            `Live push requested · owner approval required · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+            `${initialDraft ? "Build updated and live push requested" : "Live push requested"} · owner approval required · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
           );
+          if (initialDraft) {
+            router.push(
+              appHost
+                ? hrefFrom(appHost, "/pack-studio/builder-drafts")
+                : "/pack-studio/builder-drafts",
+            );
+          }
         } else {
           toast.success(
-            `Build draft saved · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
+            `Build draft ${initialDraft ? "updated" : "saved"} · edge ${(result.edge * 100).toFixed(2)}% · win-rate ${(result.winRate * 100).toFixed(1)}%`,
           );
           router.push(
             appHost
@@ -577,6 +619,15 @@ export function PackBuilderForm({
 
   return (
     <div className="space-y-6">
+      {initialDraft && (
+        <div className="flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-600 dark:text-blue-400">
+          <Save className="mt-0.5 size-4 shrink-0" />
+          <p>
+            Editing saved build <strong>{initialDraft.name}</strong>. Saving
+            updates this draft in place.
+          </p>
+        </div>
+      )}
       {!canBuild && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-600 dark:text-amber-400">
           <ShieldCheck className="mt-0.5 size-4 shrink-0" />
@@ -1060,8 +1111,9 @@ export function PackBuilderForm({
                     <AlertDialogHeader>
                       <AlertDialogTitle>Request owner approval?</AlertDialogTitle>
                       <AlertDialogDescription>
-                        &ldquo;{name.trim() || "This pack"}&rdquo; will be sent
-                        to the owner queue with a request to go live at{" "}
+                        &ldquo;{name.trim() || "This pack"}&rdquo; will be{" "}
+                        {initialDraft ? "updated and sent" : "sent"} to the owner
+                        queue with a request to go live at{" "}
                         {formatCurrency(packPrice)}. Nothing is created or shown
                         to players until an owner clicks Approve. House edge{" "}
                         {edgePct.toFixed(2)}% ·
@@ -1106,7 +1158,11 @@ export function PackBuilderForm({
                   className="w-full gap-2"
                 >
                   <Save className="size-4" />
-                  {isPending ? "Saving…" : "Save build draft"}
+                  {isPending
+                    ? "Saving…"
+                    : initialDraft
+                      ? "Update build draft"
+                      : "Save build draft"}
                 </Button>
               </div>
               <p className="text-center text-[11px] text-muted-foreground">
