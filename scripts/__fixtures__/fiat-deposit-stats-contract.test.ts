@@ -84,6 +84,17 @@ test("dashboard and analytics surfaces stay wired to inclusive aggregates", () =
   assert.match(analyticsCosts, /getRealizedPnlSnapshot\(\)/);
 });
 
+test("dashboard cash-flow copy describes fiat and crypto deposits", () => {
+  const todayCard = source(
+    "src/app/(admin)/dashboard/today-pnl-stat-card.tsx",
+  );
+  const charts = source("src/app/(admin)/dashboard/charts.tsx");
+
+  assert.match(todayCard, /completed fiat \+ crypto deposits/);
+  assert.match(charts, /completed fiat \+ crypto inflow/);
+  assert.doesNotMatch(charts, /(?:actual|raw) crypto (?:inflow|cash flow)/);
+});
+
 test("lifetime PnL reads credited deposit balances, not payment attempts", () => {
   const realizedPnl = source("src/lib/queries/_realized-pnl.ts");
 

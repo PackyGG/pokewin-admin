@@ -918,7 +918,7 @@ function CashPnlTooltip({
 }
 
 /**
- * Daily Cash P&L (30 days) — visualizes the per-day raw crypto cash flow
+ * Daily Cash P&L (30 days) — visualizes the per-day raw fiat + crypto cash flow
  * (deposits − withdrawals) via the bars, House-POV per-bar colored (emerald
  * when we actually made real crypto money that day, rose when more cash
  * flowed out than in, muted on zero-flow days). The hover ALSO carries the
@@ -953,7 +953,7 @@ export function CashPnlChart({
           Daily Cash P&amp;L (30 days)
         </CardTitle>
         <CardDescription className="text-xs">
-          Deposits − withdrawals per day. Green = actual crypto inflow.
+          Deposits − withdrawals per day. Green = completed fiat + crypto inflow.
         </CardDescription>
       </CardHeader>
       <CardContent>
