@@ -357,9 +357,24 @@ export function DashboardKpiSection({
     return today;
   };
   const modeFor = (boxId: string): DashboardKpiWindow => modes[boxId] ?? "today";
+  const retainedSnapshot = [today, ...(h24 ? [h24] : [])].find(
+    (snapshot) =>
+      Date.parse(snapshot.servedAtIso) - Date.parse(snapshot.capturedAtIso) >
+      60_000,
+  );
 
   return (
     <div className="space-y-6">
+      {retainedSnapshot && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Showing last confirmed KPI data from{" "}
+          {new Date(retainedSnapshot.capturedAtIso)
+            .toISOString()
+            .slice(0, 16)
+            .replace("T", " ")}{" "}
+          UTC while live refresh recovers.
+        </p>
+      )}
       {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
           Wager (Total + Organic merged), Deposits/Withdrawals (merged into
           one single tile), the Crypto Fee counter (anchored monotonic
@@ -389,27 +404,32 @@ export function DashboardKpiSection({
                 />
               }
               footer={
-                /* Packs / Battles / Upgrader split of the TOTAL wager.
-                   Negative inline margin only at sm+ where the panel has
-                   the room for it; at <sm (320–375px) keep it at 0 so the
-                   chips don't get clipped at the right edge of the card. */
-                <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
-                  <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
-                  <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
-                  <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
-                </div>
+                p.wagerAvailable ? (
+                  <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
+                    <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
+                    <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
+                    <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
+                  </div>
+                ) : undefined
               }
             >
-              {/* Two headline figures side by side: total wager + organic
-                  wager. Each labelled so neither number is ambiguous. */}
-              <div className="grid grid-cols-2 gap-3">
-                <DualHero label="Total" value={p.wager} />
-                <DualHero
-                  label="Organic"
-                  value={p.wagerOrganic}
-                  hint="no creator-code users"
-                />
-              </div>
+              {p.wagerAvailable ? (
+                <div className="grid grid-cols-2 gap-3">
+                  <DualHero label="Total" value={p.wager} />
+                  <DualHero
+                    label="Organic"
+                    value={p.wagerOrganic}
+                    hint="no creator-code users"
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="text-stat-value text-muted-foreground/70">—</div>
+                  <p className="text-tiny text-muted-foreground">
+                    Live wager data is retrying automatically.
+                  </p>
+                </>
+              )}
             </KpiPanel>
           );
         })()}
@@ -437,11 +457,8 @@ export function DashboardKpiSection({
                 />
               }
             >
-              {/* Two compact halves stacked to fit one single-size tile.
-                  Each half: uppercase label + emerald/rose count chip on the
-                  header row, hero $ value below. A hairline divider keeps the
-                  two legs visually distinct without a second card. */}
-              <div className="space-y-2.5">
+              {p.cashflowAvailable ? (
+                <div className="space-y-2.5">
                 <div className="min-w-0">
                   <div className="flex items-center justify-between gap-2">
                     <p className="text-[11px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
@@ -469,7 +486,15 @@ export function DashboardKpiSection({
                     <AnimatedNumber value={p.withdrawals} format="currency" />
                   </div>
                 </div>
-              </div>
+                </div>
+              ) : (
+                <>
+                  <div className="text-stat-value text-muted-foreground/70">—</div>
+                  <p className="text-tiny text-muted-foreground">
+                    Live cash-flow data is retrying automatically.
+                  </p>
+                </>
+              )}
             </KpiPanel>
           );
         })()}

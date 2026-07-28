@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import { LayoutDashboard, LineChart } from "lucide-react";
-import { getDashboardStats } from "@/lib/queries/dashboard";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -18,7 +17,14 @@ import {
   DashboardKpiSection,
   type CryptoFeeKpi,
 } from "./dashboard-kpi-section";
-import { buildKpiWindowPayload } from "./kpi-window-data";
+import {
+  buildKpiWindowPayload,
+  emptyKpiWindowPayload,
+} from "./kpi-window-data";
+import {
+  emptyDashboardTrendSeries,
+  getScopedDashboardTrendSeries,
+} from "@/lib/queries/dashboard-trend-series";
 import { TodayPnlStatCard } from "./today-pnl-stat-card";
 import { RewardCreatorCostsTodayCard } from "./reward-creator-costs-today-card";
 import { UpgraderDoubleDownTodayCard } from "./upgrader-double-down-today-card";
@@ -41,6 +47,7 @@ import {
   ChartRowSkeleton,
   TodayTileSkeleton,
 } from "./dashboard-skeletons";
+import { runWithConcurrency } from "@/lib/promise-pool";
 
 export const metadata = { title: "Dashboard" };
 
@@ -201,7 +208,7 @@ async function DashboardKpiBoxes() {
     // Period-bound box values + GGR legs for the eager "today" window.
     safeQuery(
       () => buildKpiWindowPayload("today"),
-      null,
+      emptyKpiWindowPayload("today"),
       "dashboard.kpiToday",
       REWARD_QUERY_TIMEOUT_MS,
     ),
@@ -216,16 +223,6 @@ async function DashboardKpiBoxes() {
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
-  if (payloadResult.error || !payloadResult.data) {
-    return (
-      <TileErrorFallback
-        label="Platform KPIs"
-        hint="A metrics query failed while loading the KPI boxes — other sections still rendered. Refresh to retry."
-        kind={payloadResult.kind ?? undefined}
-        size="panel"
-      />
-    );
-  }
   const today = payloadResult.data;
 
   // Crypto Fee box payload. A failed/degraded read (cryptoFeeResult.data ===
@@ -388,7 +385,7 @@ async function DashboardTodayPnl() {
       voucherChange={data.voucherChange}
       dayLabel={dayLabel}
       ggr={
-        ggrPayload
+        ggrPayload?.ggrAvailable && ggrPayload.cashflowAvailable
           ? {
               value: ggrPayload.ggr,
               cashGgr: ggrPayload.cashGgr,
@@ -421,36 +418,42 @@ async function DashboardTodayPnl() {
  * down to a fallback — a half-rendered merged card would look broken.
  */
 async function DashboardRewardAndCreatorCostsToday() {
-  const [rewardResult, creatorsResult, pnlResult, rakebackSameDayResult] = await Promise.all([
-    safeQuery(
-      () => getRewardCostsToday(),
-      null,
-      "dashboard.rewardCostsToday",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getCreatorCostsToday(),
-      null,
-      "dashboard.creatorCostsToday",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getAffiliateReferredPnlToday(),
-      null,
-      "dashboard.affiliateReferredPnlToday",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    // Independent overlay figure for the "Rakeback claims" chip — a failed/
-    // slow scan only drops the sub-line (passed as null), it never takes
-    // the merged tile down (same posture as the affiliate-referred P&L
-    // corner indicator above).
-    safeQuery(
-      () => getRakebackFromTodayWager(),
-      null,
-      "dashboard.rakebackFromTodayWager",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const [rewardResult, creatorsResult, pnlResult, rakebackSameDayResult] =
+    await runWithConcurrency(
+      [
+        () =>
+          safeQuery(
+            () => getRewardCostsToday(),
+            null,
+            "dashboard.rewardCostsToday",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+        () =>
+          safeQuery(
+            () => getCreatorCostsToday(),
+            null,
+            "dashboard.creatorCostsToday",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+        () =>
+          safeQuery(
+            () => getAffiliateReferredPnlToday(),
+            null,
+            "dashboard.affiliateReferredPnlToday",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+        // Independent overlay figure for the "Rakeback claims" chip — a
+        // failed/slow scan only drops the sub-line (passed as null).
+        () =>
+          safeQuery(
+            () => getRakebackFromTodayWager(),
+            null,
+            "dashboard.rakebackFromTodayWager",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+      ] as const,
+      2,
+    );
   if (
     rewardResult.error ||
     !rewardResult.data ||
@@ -519,29 +522,18 @@ async function DashboardRewardAndCreatorCostsToday() {
  * now fills the slot the removed Daily P&L chart occupied here.
  */
 async function DashboardCharts() {
-  // getDashboardStats backs the wager/deposit/ftds/signup/attribution/
-  // depositor charts. Always 30-day daily buckets — NOT tied to any global
-  // period selector. Wrapped in safeQuery so a throw degrades to a fallback
-  // instead of escaping to the route error boundary (which would
-  // white-screen the whole dashboard — the failure mode this page hit in
-  // prod). getDailyPnl is intentionally NOT awaited here — the Cash P&L cell
-  // owns its own fetch + Suspense below so it can stream independently.
+  // Load only the six chart series this section renders. The former
+  // getDashboardStats path also ran every scalar KPI/activity query, creating
+  // a large cold-cache connection burst for data this section never used.
+  // The scoped trend loader keeps a shared last-known-good snapshot and
+  // isolates its query legs, so one transient mirror failure cannot replace
+  // the entire Trends section with one error panel.
   const statsResult = await safeQuery(
-    () => getDashboardStats(DASHBOARD_CHART_PERIOD),
-    null,
+    () => getScopedDashboardTrendSeries(DASHBOARD_CHART_PERIOD),
+    emptyDashboardTrendSeries(DASHBOARD_CHART_PERIOD),
     "dashboard.charts",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  if (statsResult.error || !statsResult.data) {
-    return (
-      <TileErrorFallback
-        label="Trends"
-        hint="A metrics query failed while loading the trend charts — other sections still rendered. Refresh to retry."
-        kind={statsResult.kind ?? undefined}
-        size="panel"
-      />
-    );
-  }
   const stats = statsResult.data;
   // Merge the signups + FTD series for the combined Signups & FTDs chart.
   // Both arrays come back date-padded by the dashboard chart helpers
@@ -561,15 +553,39 @@ async function DashboardCharts() {
   });
   return (
     <FadeIn className="space-y-3 sm:space-y-4">
+      {Date.parse(stats.servedAtIso) - Date.parse(stats.capturedAtIso) >
+        60_000 && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          Showing the last confirmed trend snapshot from{" "}
+          {new Date(stats.capturedAtIso).toISOString().slice(0, 16).replace("T", " ")} UTC while
+          live refresh recovers.
+        </p>
+      )}
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
-        <WagerChart data={stats.dailyWagers} />
-        <DepositsChart data={stats.dailyDeposits} />
-        <SignupsChart data={signupsAndFtdsSeries} />
+        {stats.availability.wagers ? (
+          <WagerChart data={stats.dailyWagers} />
+        ) : (
+          <TrendTileUnavailable label="Wagers" />
+        )}
+        {stats.availability.deposits ? (
+          <DepositsChart data={stats.dailyDeposits} />
+        ) : (
+          <TrendTileUnavailable label="Deposits" />
+        )}
+        {stats.availability.signups && stats.availability.ftds ? (
+          <SignupsChart data={signupsAndFtdsSeries} />
+        ) : (
+          <TrendTileUnavailable label="Signups & FTDs" />
+        )}
       </div>
       <div className="grid gap-3 sm:gap-4 md:grid-cols-2 lg:grid-cols-3">
         {/* Wager Attribution — cached-stats, paints immediately without
             waiting on the Cash P&L lifetime scan beside it. */}
-        <WagerAttributionChart data={stats.dailyWagerAttribution} />
+        {stats.availability.wagerAttribution ? (
+          <WagerAttributionChart data={stats.dailyWagerAttribution} />
+        ) : (
+          <TrendTileUnavailable label="Wager attribution" />
+        )}
         {/* Daily Cash P&L — its own nested Suspense so the heavy
             getDailyPnl lifetime scan streams independently of the
             cached-stats charts beside it. Not period-keyed (getDailyPnl is
@@ -579,9 +595,23 @@ async function DashboardCharts() {
         >
           <DashboardCashPnlChart />
         </Suspense>
-        <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+        {stats.availability.activeDepositors ? (
+          <ActiveDepositorsChart data={stats.dailyActiveDepositors} />
+        ) : (
+          <TrendTileUnavailable label="Active depositors" />
+        )}
       </div>
     </FadeIn>
+  );
+}
+
+function TrendTileUnavailable({ label }: { label: string }) {
+  return (
+    <TileErrorFallback
+      label={label}
+      hint="Live data is temporarily unavailable. The next automatic refresh retries this chart."
+      size="panel"
+    />
   );
 }
 

@@ -1,9 +1,21 @@
 import "server-only";
 
-import { unstable_cache } from "next/cache";
 import { readDrizzleForEnv } from "@/lib/db";
 import { queryRows } from "@/lib/drizzle-query";
-import { type DbEnv } from "@/lib/db-env";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import {
+  buildCacheKey,
+  cacheGetOrSetStale,
+  hashString,
+} from "@/lib/cache/redis";
+import {
+  REWARD_QUERY_TIMEOUT_MS,
+  safeQuery,
+  withTimeout,
+} from "@/lib/errors/safe-query";
+import { runWithConcurrency } from "@/lib/promise-pool";
+import { blacklistNotInClause } from "./_blacklist";
 import { type DashboardPeriod } from "./dashboard-period";
 import {
   dashboardChartBucketExpr,
@@ -27,6 +39,16 @@ export type DashboardTrendSeries = {
   dailyActiveDepositors: { date: string; count: number }[];
   dailyWagerAttribution: { date: string; organic: number; creatorCoded: number }[];
   chartHourlyBuckets: boolean;
+  capturedAtIso: string;
+  servedAtIso: string;
+  availability: {
+    wagers: boolean;
+    deposits: boolean;
+    signups: boolean;
+    ftds: boolean;
+    activeDepositors: boolean;
+    wagerAttribution: boolean;
+  };
 };
 
 type LedgerBucketRow = {
@@ -104,20 +126,27 @@ async function fetchTrendSeriesPg(
   const bucketUser = dashboardChartBucketExpr("created_at", period);
   const bucketFtd = dashboardChartBucketExpr("fd.created_at", period);
 
-  const upgProbe = await queryRows<{ exists: string | null }[]>(
-    db,
-    `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+  const upgProbe = await safeQuery(
+    () =>
+      queryRows<{ exists: string | null }[]>(
+        db,
+        `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+      ),
+    [],
+    "dashboard.trends.upgraderProbe",
+    REWARD_QUERY_TIMEOUT_MS,
   );
-  const hasUpgrader = upgProbe[0]?.exists != null;
+  const hasUpgrader = upgProbe.data[0]?.exists != null;
 
   const [
-    ledgerRows,
-    upgraderRows,
-    signupRows,
-    attributionRows,
-    ftdRows,
-  ] = await Promise.all([
-    queryRows<LedgerBucketRow[]>(db, `
+    ledgerResult,
+    upgraderResult,
+    signupResult,
+    attributionResult,
+    ftdResult,
+  ] = await runWithConcurrency([
+    () => safeQuery(
+      () => queryRows<LedgerBucketRow[]>(db, `
       SELECT ${bucketLedger} AS bucket,
              COALESCE(SUM(CASE WHEN type::text = 'pack_opening'
                                THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs,
@@ -136,9 +165,14 @@ async function fetchTrendSeriesPg(
          )
        GROUP BY 1
        ORDER BY 1`, cutoff),
+      [],
+      "dashboard.trends.ledger",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
 
-    hasUpgrader
-      ? queryRows<UpgraderBucketRow[]>(db, `
+    () => safeQuery(
+      () => hasUpgrader
+        ? queryRows<UpgraderBucketRow[]>(db, `
           SELECT ${bucketUpg} AS bucket,
                  COALESCE(SUM(bet_amount::numeric), 0)::text AS upgrader
             FROM upgrader_games
@@ -149,13 +183,18 @@ async function fetchTrendSeriesPg(
              )
            GROUP BY 1
            ORDER BY 1`, cutoff)
-      : Promise.resolve([] as UpgraderBucketRow[]),
+        : Promise.resolve([] as UpgraderBucketRow[]),
+      [],
+      "dashboard.trends.upgrader",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
 
     // Bot-prevention drop (`is_locked = true` with `locked_reason = 'bot prevention'`):
     // the signup pipeline locks automated registrations server-side. Jun 11 had
     // 4,141 of 4,205 same-day signups locked as bots — without this filter the
     // chart shows the raw spike instead of the ~75/day real-customer baseline.
-    queryRows<CountBucketRow[]>(db, `
+    () => safeQuery(
+      () => queryRows<CountBucketRow[]>(db, `
       SELECT ${bucketUser} AS bucket, COUNT(*)::text AS value
         FROM "user"
        WHERE created_at >= $1
@@ -163,8 +202,13 @@ async function fetchTrendSeriesPg(
          AND is_locked = false
        GROUP BY 1
        ORDER BY 1`, cutoff),
+      [],
+      "dashboard.trends.signups",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
 
-    queryRows<AttributionBucketRow[]>(db, `
+    () => safeQuery(
+      () => queryRows<AttributionBucketRow[]>(db, `
       WITH customers AS (
         SELECT u.id,
                EXISTS (
@@ -184,8 +228,13 @@ async function fetchTrendSeriesPg(
          AND lt.created_at >= $1
        GROUP BY 1
        ORDER BY 1`, cutoff),
+      [],
+      "dashboard.trends.attribution",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
 
-    queryRows<FtdBucketRow[]>(db, `
+    () => safeQuery(
+      () => queryRows<FtdBucketRow[]>(db, `
       WITH first_deposits AS (
         SELECT DISTINCT ON (user_id)
                user_id, amount::numeric AS amount, created_at
@@ -204,7 +253,17 @@ async function fetchTrendSeriesPg(
        WHERE fd.created_at >= $1
        GROUP BY 1
        ORDER BY 1`, cutoff),
-  ]);
+      [],
+      "dashboard.trends.ftds",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ] as const, 2);
+
+  const ledgerRows = ledgerResult.data;
+  const upgraderRows = upgraderResult.data;
+  const signupRows = signupResult.data;
+  const attributionRows = attributionResult.data;
+  const ftdRows = ftdResult.data;
 
   const ledgerMerged = mergeLedgerRows(ledgerRows, upgraderRows, period);
 
@@ -245,6 +304,19 @@ async function fetchTrendSeriesPg(
     dailyFtds,
     dailyWagerAttribution,
     chartHourlyBuckets: dashboardChartHourlyBuckets(period),
+    capturedAtIso: new Date().toISOString(),
+    servedAtIso: new Date().toISOString(),
+    availability: {
+      wagers:
+        ledgerResult.error === null &&
+        upgProbe.error === null &&
+        upgraderResult.error === null,
+      deposits: ledgerResult.error === null,
+      signups: signupResult.error === null,
+      ftds: ftdResult.error === null,
+      activeDepositors: ledgerResult.error === null,
+      wagerAttribution: attributionResult.error === null,
+    },
   };
 }
 
@@ -257,21 +329,83 @@ async function fetchDashboardTrendSeriesInner(
   return fetchTrendSeriesPg(period, blacklistIdNotIn, env);
 }
 
-const cachedDashboardTrendSeries = unstable_cache(
-  fetchDashboardTrendSeriesInner,
-  ["dashboard-trend-series-v1"],
-  { revalidate: 60, tags: ["dashboard-activity"] },
-);
+export function emptyDashboardTrendSeries(
+  period: DashboardPeriod,
+): DashboardTrendSeries {
+  const nowIso = new Date().toISOString();
+  return {
+    dailyWagers: padDashboardWagerSeries([], period),
+    dailyDeposits: padDashboardDepositSeries([], period),
+    dailySignups: padDashboardCountSeries([], period),
+    dailyFtds: padDashboardFtdSeries([], period),
+    dailyActiveDepositors: padDashboardCountSeries([], period),
+    dailyWagerAttribution: padDashboardAttributionSeries([], period),
+    chartHourlyBuckets: dashboardChartHourlyBuckets(period),
+    capturedAtIso: nowIso,
+    servedAtIso: nowIso,
+    availability: {
+      wagers: false,
+      deposits: false,
+      signups: false,
+      ftds: false,
+      activeDepositors: false,
+      wagerAttribution: false,
+    },
+  };
+}
 
-export function getDashboardTrendSeries(
+export async function getDashboardTrendSeries(
   period: DashboardPeriod,
   blacklistIdNotIn: string,
   env: DbEnv,
 ): Promise<DashboardTrendSeries> {
-  // The env-scoped Drizzle client bypasses cross-request cache on dev so charts
-  // match the toggled DB (same pattern as cachedWindowMetricsForPeriod).
   if (env !== "prod") {
     return fetchDashboardTrendSeriesInner(period, blacklistIdNotIn, env);
   }
-  return cachedDashboardTrendSeries(period, blacklistIdNotIn, env);
+
+  let partial: DashboardTrendSeries | null = null;
+  try {
+    const key = buildCacheKey("dashboard-trends-v2", [
+      env,
+      period,
+      hashString(blacklistIdNotIn),
+    ]);
+    const snapshot = await cacheGetOrSetStale(
+      key,
+      60,
+      24 * 60 * 60,
+      async () => {
+        partial = await withTimeout(
+          () =>
+            fetchDashboardTrendSeriesInner(
+              period,
+              blacklistIdNotIn,
+              env,
+            ),
+          10_000,
+        );
+        if (Object.values(partial.availability).some((available) => !available)) {
+          throw new Error("dashboard trend snapshot was incomplete");
+        }
+        return partial;
+      },
+    );
+    return { ...snapshot, servedAtIso: new Date().toISOString() };
+  } catch {
+    return partial ?? emptyDashboardTrendSeries(period);
+  }
+}
+
+export async function getScopedDashboardTrendSeries(
+  period: DashboardPeriod,
+): Promise<DashboardTrendSeries> {
+  const [env, excluded] = await Promise.all([
+    readDbEnv(),
+    getExcludedUserIds(),
+  ]);
+  return getDashboardTrendSeries(
+    period,
+    blacklistNotInClause("id", excluded),
+    env,
+  );
 }

@@ -11,9 +11,17 @@ import {
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
 import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
 import { getDashboardKenoMetrics } from "@/lib/queries/dashboard-keno";
+import { readDbEnv } from "@/lib/db-env";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import {
+  buildCacheKey,
+  cacheGetOrSetStale,
+  hashString,
+} from "@/lib/cache/redis";
 import {
   REWARD_QUERY_TIMEOUT_MS,
   safeQuery,
+  withTimeout,
 } from "@/lib/errors/safe-query";
 
 /**
@@ -38,6 +46,14 @@ export type KpiWindowPayload = {
   window: DashboardKpiWindow;
   /** Friendly label for the window (e.g. "Today" / "Last 24h"). */
   windowLabel: string;
+  /** When the underlying snapshot was successfully computed. */
+  capturedAtIso: string;
+  /** When this request served it; a gap means last-known-good data is shown. */
+  servedAtIso: string;
+  /** Per-box truthfulness flags for cold-start failures without retained data. */
+  wagerAvailable: boolean;
+  cashflowAvailable: boolean;
+  ggrAvailable: boolean;
 
   // ---- Period-bound box values ----
   /**
@@ -102,8 +118,13 @@ export type KpiWindowPayload = {
 async function computeKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
-  const [stats, ggrBreakdown, depositFundedGgr] = await Promise.all([
-    getDashboardKpiStats(window),
+  const [statsResult, ggrBreakdown, depositFundedGgr] = await Promise.all([
+    safeQuery(
+      () => getDashboardKpiStats(window),
+      null,
+      "dashboard.kpiStats",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     getGgrBreakdownForKpiWindow(window).catch(() => ({
       wagers: [],
       payouts: [],
@@ -117,9 +138,15 @@ async function computeKpiWindowPayload(
     // so the tile never goes blank on a transient error.
     getDepositFundedGgrForWindow(window).catch(() => null),
   ]);
+  const stats = statsResult.data;
 
-  const [cashflow, kenoResult] = await Promise.all([
-    getDashboardCashflowFromPostgres(window),
+  const [cashflowResult, kenoResult] = await Promise.all([
+    safeQuery(
+      () => getDashboardCashflowFromPostgres(window),
+      null,
+      "dashboard.cashflow",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
     // Keno is an independent, small aggregate. Keep a stale/missing
     // `keno_games` relation from blanking the other dashboard KPI boxes while
     // still reporting the failure through the standard safe-query path.
@@ -130,6 +157,7 @@ async function computeKpiWindowPayload(
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
+  const cashflow = cashflowResult.data;
   const keno = kenoResult.data;
 
   // The shared aggregate above produces the GGR and wager boxes. Cash-flow
@@ -154,20 +182,32 @@ async function computeKpiWindowPayload(
   // (`deposits − withdrawals`) is kept as a SECONDARY figure inside the
   // popover so an operator can still see net cash kept (crypto-flow
   // tracking) without leaving the tile, but it is no longer the headline.
-  const cashGgr = cashflow.deposits - cashflow.withdrawals;
+  const cashGgr = cashflow
+    ? cashflow.deposits - cashflow.withdrawals
+    : 0;
+  const capturedAtIso = new Date().toISOString();
 
   return {
     window,
-    windowLabel: stats.periodLabel,
-    ggr: depositFundedGgr ?? stats.ggr,
+    windowLabel: stats?.periodLabel ?? (window === "today" ? "Today" : "Last 24h"),
+    capturedAtIso,
+    servedAtIso: capturedAtIso,
+    wagerAvailable: stats !== null,
+    cashflowAvailable: cashflow !== null,
+    ggrAvailable: depositFundedGgr !== null || stats !== null,
+    ggr: depositFundedGgr ?? stats?.ggr ?? 0,
     cashGgr,
-    wager: stats.wagers,
-    wagerBreakdown: stats.wagersBreakdown,
-    wagerOrganic: stats.wagersOrganic,
-    deposits: cashflow.deposits,
-    depositCount: cashflow.depositCount,
-    withdrawals: cashflow.withdrawals,
-    withdrawalCount: cashflow.withdrawalCount,
+    wager: stats?.wagers ?? 0,
+    wagerBreakdown: stats?.wagersBreakdown ?? {
+      packs: 0,
+      battles: 0,
+      upgrader: 0,
+    },
+    wagerOrganic: stats?.wagersOrganic ?? 0,
+    deposits: cashflow?.deposits ?? 0,
+    depositCount: cashflow?.depositCount ?? 0,
+    withdrawals: cashflow?.withdrawals ?? 0,
+    withdrawalCount: cashflow?.withdrawalCount ?? 0,
     keno: keno
       ? { available: true, ...keno }
       : {
@@ -183,10 +223,92 @@ async function computeKpiWindowPayload(
   };
 }
 
+export function emptyKpiWindowPayload(
+  window: DashboardKpiWindow,
+): KpiWindowPayload {
+  const nowIso = new Date().toISOString();
+  return {
+    window,
+    windowLabel: window === "today" ? "Today" : "Last 24h",
+    capturedAtIso: nowIso,
+    servedAtIso: nowIso,
+    wagerAvailable: false,
+    cashflowAvailable: false,
+    ggrAvailable: false,
+    ggr: 0,
+    cashGgr: 0,
+    wager: 0,
+    wagerBreakdown: { packs: 0, battles: 0, upgrader: 0 },
+    wagerOrganic: 0,
+    deposits: 0,
+    depositCount: 0,
+    withdrawals: 0,
+    withdrawalCount: 0,
+    keno: {
+      available: false,
+      games: 0,
+      players: 0,
+      wager: 0,
+      payout: 0,
+      profit: 0,
+      edgePct: 0,
+    },
+    ggrBreakdown: {
+      wagers: [],
+      payouts: [],
+      wagersTotal: 0,
+      payoutsTotal: 0,
+      ggr: 0,
+    },
+  };
+}
+
+async function buildResilientKpiWindowPayload(
+  window: DashboardKpiWindow,
+): Promise<KpiWindowPayload> {
+  let partial: KpiWindowPayload | null = null;
+  try {
+    const [env, excluded] = await Promise.all([
+      readDbEnv(),
+      getExcludedUserIds(),
+    ]);
+    if (env !== "prod") {
+      return computeKpiWindowPayload(window);
+    }
+
+    const scopeKey = hashString([...excluded].sort().join(","));
+    const key = buildCacheKey("dashboard-kpi-v3", [env, window, scopeKey]);
+    const payload = await cacheGetOrSetStale(
+      key,
+      60,
+      24 * 60 * 60,
+      async () => {
+        partial = await withTimeout(
+          () => computeKpiWindowPayload(window),
+          10_000,
+        );
+        // A partial cold result remains useful when no snapshot exists, but it
+        // must never replace a complete last-known-good snapshot.
+        if (
+          !partial.wagerAvailable ||
+          !partial.cashflowAvailable ||
+          !partial.keno.available
+        ) {
+          throw new Error("dashboard KPI core metrics were incomplete");
+        }
+        return partial;
+      },
+    );
+    return { ...payload, servedAtIso: new Date().toISOString() };
+  } catch {
+    return partial ?? emptyKpiWindowPayload(window);
+  }
+}
+
 /**
  * Request-local dedupe for the shared "today" payload. The dashboard renders
  * it in both the KPI strip and the P&L tile; without React cache both
  * Suspense branches independently assemble the same payload on a cold render.
  * Cross-request freshness remains governed by the underlying tagged caches.
  */
-export const buildKpiWindowPayload = cache(computeKpiWindowPayload);
+export const buildKpiWindowPayload = cache(buildResilientKpiWindowPayload);
