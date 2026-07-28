@@ -21,6 +21,8 @@ const schema = z.object({
     .string()
     .url()
     .default("https://fraud.packydash.com/monitor"),
+  ANTIFRAUD_INGEST_URL: z.string().url(),
+  ANTIFRAUD_INGEST_SECRET: z.string().min(32),
   ANTIFRAUD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
   ALLOWED_ORIGINS: z.string().min(1),
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(300),
@@ -64,6 +66,16 @@ export function loadConfig(): Config {
   const publicUrl = new URL(config.PUBLIC_BASE_URL);
   if (config.NODE_ENV === "production" && publicUrl.protocol !== "https:") {
     throw new Error("Invalid configuration: PUBLIC_BASE_URL must use HTTPS in production");
+  }
+  const ingestUrl = new URL(config.ANTIFRAUD_INGEST_URL);
+  if (
+    ingestUrl.username ||
+    ingestUrl.password ||
+    (config.NODE_ENV === "production" && ingestUrl.protocol !== "https:")
+  ) {
+    throw new Error(
+      "Invalid configuration: ANTIFRAUD_INGEST_URL must be credential-free and use HTTPS in production",
+    );
   }
 
   for (const rawOrigin of config.ALLOWED_ORIGINS.split(",")) {

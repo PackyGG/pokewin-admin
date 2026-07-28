@@ -16,6 +16,10 @@ export function sanitizedRuntimeConfig(
     adminTokenConfigured: boolean;
     exactOriginsConfigured: boolean;
   };
+  ingest: {
+    endpointConfigured: boolean;
+    secretConfigured: boolean;
+  };
 } {
   return {
     discord: discordRuntimeStatus(config),
@@ -28,6 +32,10 @@ export function sanitizedRuntimeConfig(
       readTokenConfigured: Boolean(config.API_TOKEN),
       adminTokenConfigured: Boolean(config.API_ADMIN_TOKEN),
       exactOriginsConfigured: exactOriginCount > 0,
+    },
+    ingest: {
+      endpointConfigured: Boolean(config.ANTIFRAUD_INGEST_URL),
+      secretConfigured: Boolean(config.ANTIFRAUD_INGEST_SECRET),
     },
   };
 }

@@ -89,6 +89,10 @@ const runtimeConfigSchema = z.object({
     adminTokenConfigured: z.boolean(),
     exactOriginsConfigured: z.boolean(),
   }),
+  ingest: z.object({
+    endpointConfigured: z.boolean(),
+    secretConfigured: z.boolean(),
+  }),
 });
 
 export type AntifraudRuntimeConfig = z.infer<typeof runtimeConfigSchema>;

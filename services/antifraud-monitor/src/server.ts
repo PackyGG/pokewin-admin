@@ -47,6 +47,7 @@ import {
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import { registerFiatRoutes } from "./fiat-routes.js";
 import { FiatRiskService } from "./fiat-risk.js";
+import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
   isScoreWeightKey,
@@ -80,6 +81,7 @@ const SECRET_VALUES = [
   config.SOURCE_DATABASE_URL,
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
+  config.ANTIFRAUD_INGEST_SECRET,
   config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
 ].filter(
   (value): value is string =>
@@ -134,6 +136,11 @@ const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
 const withdrawalRisk = new WithdrawalRiskService(db);
 const fiatRisk = new FiatRiskService(db);
+const ingestDelivery = new IngestDelivery(
+  config,
+  db.antifraud,
+  app.log,
+);
 const engine = new MonitorEngine(
   config,
   db,
@@ -1111,6 +1118,7 @@ app.setErrorHandler((error, request, reply) => {
 });
 
 app.addHook("onClose", async () => {
+  await ingestDelivery.stop();
   await engine.stop();
   await networkRisk.stop();
   await live.close();
@@ -1126,6 +1134,7 @@ if (!isDisposableEmailListLoaded()) {
 // Fail the boot when the live channel cannot be subscribed: a green service
 // publishing into a channel with zero subscribers is silently broken.
 await live.start();
+await ingestDelivery.start();
 await engine.start();
 await networkRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });

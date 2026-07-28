@@ -138,6 +138,19 @@ async function IntegrationSection() {
         ? "partial"
         : "missing"
     : "unknown";
+  const receiverIngestConfigured = Boolean(
+    process.env.ANTIFRAUD_INGEST_SECRET,
+  );
+  const senderIngestValues = runtimeData
+    ? Object.values(runtimeData.ingest)
+    : undefined;
+  const ingestStatus: IntegrationStatus = senderIngestValues
+    ? receiverIngestConfigured && senderIngestValues.every(Boolean)
+      ? "ready"
+      : receiverIngestConfigured || senderIngestValues.some(Boolean)
+        ? "partial"
+        : "missing"
+    : "unknown";
 
   const integrations: Array<{
     name: string;
@@ -147,9 +160,12 @@ async function IntegrationSection() {
   }> = [
     {
       name: "Signed ingest webhook",
-      envs: ["ANTIFRAUD_INGEST_SECRET"],
-      status: process.env.ANTIFRAUD_INGEST_SECRET ? "ready" : "missing",
-      note: "Shared HMAC secret for POST /api/antifraud/ingest. Until it is set the endpoint refuses everything.",
+      envs: ["ANTIFRAUD_INGEST_URL", "ANTIFRAUD_INGEST_SECRET"],
+      status: ingestStatus,
+      note:
+        ingestStatus === "partial"
+          ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
+          : "Shared HMAC delivery from committed monitor risk events into the Admin review queue.",
     },
     {
       name: "Live monitor API",

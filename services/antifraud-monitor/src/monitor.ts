@@ -145,6 +145,7 @@ export class MonitorEngine {
       this.config.SOURCE_DATABASE_URL,
       this.config.ANTIFRAUD_DATABASE_URL,
       this.config.REDIS_URL,
+      this.config.ANTIFRAUD_INGEST_SECRET,
       this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
     ].filter(
       (secret): secret is string =>

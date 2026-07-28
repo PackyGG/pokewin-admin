@@ -186,6 +186,9 @@ const runtimeConfig: Config = {
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   PUBLIC_BASE_URL: "https://monitor.example.com",
   ANTIFRAUD_DASHBOARD_URL: "https://fraud.packydash.com/monitor",
+  ANTIFRAUD_INGEST_URL:
+    "https://fraud.packydash.com/api/antifraud/ingest",
+  ANTIFRAUD_INGEST_SECRET: "ingest-secret-that-is-at-least-32-characters",
   ANTIFRAUD_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/secret-id/secret-token",
   ALLOWED_ORIGINS: "https://fraud.packydash.com",
@@ -254,6 +257,10 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     adminTokenConfigured: true,
     exactOriginsConfigured: true,
   });
+  assert.deepEqual(status.ingest, {
+    endpointConfigured: true,
+    secretConfigured: true,
+  });
   for (const secret of [
     runtimeConfig.SOURCE_DATABASE_URL,
     runtimeConfig.ANTIFRAUD_DATABASE_URL,
@@ -264,6 +271,8 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.API_ADMIN_TOKEN,
     runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.ANTIFRAUD_DASHBOARD_URL,
+    runtimeConfig.ANTIFRAUD_INGEST_URL,
+    runtimeConfig.ANTIFRAUD_INGEST_SECRET,
   ]) {
     assert.equal(serialized.includes(secret), false);
   }
