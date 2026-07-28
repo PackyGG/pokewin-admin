@@ -5,8 +5,22 @@ import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
-import { Ban, CreditCard, Globe, Layers, MapPin, Search, ShieldCheck } from "lucide-react";
+import {
+  Ban,
+  ChevronRight,
+  CreditCard,
+  Globe,
+  Layers,
+  MapPin,
+  Search,
+  ShieldCheck,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import {
   Select,
   SelectContent,
@@ -214,6 +228,7 @@ export function GeoBlockingContent({
   const [reloadingCache, setReloadingCache] = useState(false);
   const [globalFiatPending, setGlobalFiatPending] = useState(false);
   const [policyGeoPending, setPolicyGeoPending] = useState(false);
+  const [policyListOpen, setPolicyListOpen] = useState(false);
   const [currentSiteLockedMethods, setCurrentSiteLockedMethods] = useState(
     siteLockedMethods,
   );
@@ -575,85 +590,78 @@ export function GeoBlockingContent({
         />
       </div>
 
-      {/* Global fiat-deposit switch — flips locked_deposits_fiat for EVERY
-          country + US state at once (bulk write). Optimistic; the per-row Fiat
-          toggles in the tables reflect it immediately. */}
-      <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
-        <div className="flex items-center gap-2.5">
-          <CreditCard className="size-4 text-muted-foreground" />
-          <div>
-            <div className="text-sm font-medium">
-              Whop fiat deposits - global
+      {/* The two global switches sit side by side as compact control rows, and
+          the policy jurisdiction list is collapsed by default (owner,
+          2026-07-28: the policy panel was too big and too text-heavy). */}
+      <div className="grid gap-3 lg:grid-cols-2">
+        {/* Global fiat-deposit switch — flips locked_deposits_fiat for EVERY
+            country + US state at once (bulk write). Optimistic; the per-row
+            Fiat toggles in the tables reflect it immediately. */}
+        <div className="flex items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+          <div className="flex min-w-0 items-center gap-2.5">
+            <CreditCard className="size-4 shrink-0 text-muted-foreground" />
+            <div className="min-w-0">
+              <div className="text-sm font-medium">Whop fiat deposits — global</div>
+              <div className="truncate text-xs text-muted-foreground">
+                {globalFiatCaption}
+              </div>
             </div>
-            <div className="text-xs text-muted-foreground">{globalFiatCaption}</div>
           </div>
-        </div>
-        <div className="flex items-center gap-2">
-          <span
-            className={`text-xs font-medium ${
-              allFiatAllowed
-                ? "text-muted-foreground"
-                : "text-rose-600 dark:text-rose-400"
-            }`}
-          >
-            {allFiatAllowed ? "Enabled with exclusions" : "Disabled / mixed"}
-          </span>
           <Switch
             checked={allFiatAllowed}
-            disabled={
-              globalFiatPending || currentSiteLockedMethods === null
-            }
+            disabled={globalFiatPending || currentSiteLockedMethods === null}
             onCheckedChange={handleGlobalFiat}
           />
         </div>
-      </div>
 
-      <div className="rounded-xl border bg-card px-4 py-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div className="flex items-center gap-2.5">
-            <Ban className="size-4 text-muted-foreground" />
-            <div>
-              <div className="text-sm font-medium">
-                Fully geo-block policy jurisdictions
-              </div>
-              <div className="text-xs text-muted-foreground">
-                {policyGeoBlocked} of{" "}
-                {MANDATORY_FIAT_JURISDICTION_CODES.length} are fully blocked.
-                Their card-deposit locks remain mandatory either way.
+        <div className="rounded-xl border bg-card px-4 py-3">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <Ban className="size-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0">
+                <div className="text-sm font-medium">
+                  Geo-block policy jurisdictions
+                </div>
+                <div className="truncate text-xs text-muted-foreground">
+                  {policyGeoBlocked}/{MANDATORY_FIAT_JURISDICTION_CODES.length}{" "}
+                  blocked · fiat locks always on
+                </div>
               </div>
             </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <span
-              className={`text-xs font-medium ${
-                allPolicyGeoBlocked
-                  ? "text-rose-600 dark:text-rose-400"
-                  : "text-muted-foreground"
-              }`}
-            >
-              {allPolicyGeoBlocked ? "Fully blocked" : "Not fully blocked"}
-            </span>
             <Switch
               checked={allPolicyGeoBlocked}
               disabled={policyGeoPending}
               onCheckedChange={handlePolicyGeoBlock}
             />
           </div>
+          <Collapsible open={policyListOpen} onOpenChange={setPolicyListOpen}>
+            <CollapsibleTrigger className="mt-2 flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground">
+              <ChevronRight
+                className={`size-3.5 transition-transform ${policyListOpen ? "rotate-90" : ""}`}
+              />
+              {policyListOpen ? "Hide" : "Show"} jurisdiction list
+            </CollapsibleTrigger>
+            <CollapsibleContent className="mt-2 space-y-2">
+              {FIAT_JURISDICTION_POLICY.map((group) => (
+                <div key={group.key}>
+                  <div className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+                    {group.label} ({group.jurisdictions.length})
+                  </div>
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {group.jurisdictions.map((item) => (
+                      <span
+                        key={item.code}
+                        className="rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground"
+                      >
+                        {item.name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </CollapsibleContent>
+          </Collapsible>
         </div>
-        <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {FIAT_JURISDICTION_POLICY.map((group) => (
-            <div key={group.key} className="rounded-lg border px-3 py-2">
-              <div className="text-xs font-medium">{group.label}</div>
-              <div className="mt-1 text-xs text-muted-foreground">
-                {group.jurisdictions.map((item) => item.name).join(", ")}
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="mt-3 text-xs text-muted-foreground">
-          Ukraine subdivision enforcement is live. The four region rows use
-          the same runtime restriction path as countries and US states.
-        </p>
       </div>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
