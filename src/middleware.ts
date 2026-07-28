@@ -119,6 +119,29 @@ export async function middleware(request: NextRequest) {
     const dedicatedPackBuilder =
       !owner && isDedicatedPackBuilder(sessionRoles);
 
+    // Fiat Fraud moved from the Admin Transactions tabs to the Fraud
+    // workspace. Resolve this retired cross-host deep link at the HTTP layer:
+    // an App Router redirect emitted from the page's RSC response can make
+    // React attempt a cross-origin RSC navigation first and crash with #310.
+    // Preserve every existing filter/pagination value, dropping only the
+    // retired tab selector.
+    if (
+      appHost?.basePath === null &&
+      pathname === "/transactions/deposits" &&
+      request.nextUrl.searchParams.get("tab") === "fiat-fraud"
+    ) {
+      const fraudHost = APP_HOSTS.find(
+        (entry) => entry.basePath === "/antifraud",
+      );
+      if (fraudHost) {
+        const url = new URL(`https://${fraudHost.host}/fiat-fraud`);
+        request.nextUrl.searchParams.forEach((value, key) => {
+          if (key !== "tab") url.searchParams.append(key, value);
+        });
+        return NextResponse.redirect(url, 308);
+      }
+    }
+
     // Dedicated Pack Builders may use Pack Studio plus only the Packs, Cards,
     // and Sets route families in the normal dashboard. Enforce this before a
     // page or server action renders; the DB-fresh page/capability gates remain

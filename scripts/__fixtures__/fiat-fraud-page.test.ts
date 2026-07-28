@@ -24,12 +24,57 @@ test("Fraud Transactions owns the permission-gated canonical Fiat Fraud page", (
 
 test("The retired Admin deep link redirects to Fraud with query state intact", () => {
   const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
+  const middleware = read("src/middleware.ts");
   assert.match(adminPage, /firstValue\("tab"\) === "fiat-fraud"/);
   assert.match(adminPage, /absoluteOriginForBasePath\("\/antifraud"\)/);
   assert.match(adminPage, /new URL\(\s*"\/fiat-fraud"/);
   assert.match(adminPage, /key === "tab"/);
   assert.match(adminPage, /destination\.searchParams\.append\(key, value\)/);
   assert.match(adminPage, /redirect\(destination\.toString\(\)\)/);
+  assert.match(middleware, /pathname === "\/transactions\/deposits"/);
+  assert.match(
+    middleware,
+    /searchParams\.get\("tab"\) === "fiat-fraud"/,
+  );
+  assert.match(middleware, /entry\.basePath === "\/antifraud"/);
+  assert.match(middleware, /key !== "tab"/);
+  assert.match(middleware, /NextResponse\.redirect\(url, 308\)/);
+});
+
+test("The retired Admin URL returns an HTTP redirect before any page mounts", async () => {
+  process.env.SESSION_SECRET ??=
+    "fiat-fraud-route-regression-only-secret-32-bytes";
+  const [{ NextRequest }, { encrypt }, { middleware }] = await Promise.all([
+    import("next/server"),
+    import("../../src/lib/session"),
+    import("../../src/middleware"),
+  ]);
+  const token = await encrypt({
+    userId: "route-regression",
+    role: "admin",
+    roles: ["admin"],
+    email: "route-regression@packy.gg",
+    username: "route-regression",
+    isOwner: false,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  const request = new NextRequest(
+    "https://packydash.com/transactions/deposits?tab=fiat-fraud&page=2&perPage=10&riskType=suspicious_deposit_cluster&source=whop_checkout&lockStatus=locked&search=route-regression",
+    {
+      headers: {
+        cookie: `admin_session=${token}`,
+        host: "packydash.com",
+      },
+    },
+  );
+
+  const response = await middleware(request);
+  assert.equal(response.status, 308);
+  assert.equal(
+    response.headers.get("location"),
+    "https://fraud.packydash.com/fiat-fraud?page=2&perPage=10&riskType=suspicious_deposit_cluster&source=whop_checkout&lockStatus=locked&search=route-regression",
+  );
+  assert.equal(response.headers.get("x-middleware-rewrite"), null);
 });
 
 test("Fiat Fraud reads durable caught history with server-side controls", () => {
