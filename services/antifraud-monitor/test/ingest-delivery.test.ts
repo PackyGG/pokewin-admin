@@ -188,6 +188,7 @@ test("successful containment delivery confirms the lock without mirror lag", asy
     fixture.queries.some((sql) =>
       sql.includes("WITH confirmed_matches AS") &&
       sql.includes("lock_delivered_at = COALESCE") &&
+      sql.includes("(event.recorded_at, event.id) <= ($1, $2::uuid)") &&
       sql.includes("UPDATE fiat_problem_alert_outbox AS alert")
     ),
     true,
