@@ -191,6 +191,8 @@ const runtimeConfig: Config = {
   ANTIFRAUD_INGEST_SECRET: "ingest-secret-that-is-at-least-32-characters",
   ANTIFRAUD_DISCORD_WEBHOOK_URL:
     "https://discord.com/api/webhooks/secret-id/secret-token",
+  ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
+    "https://discord.com/api/webhooks/hold-id/hold-token",
   ALLOWED_ORIGINS: "https://fraud.packydash.com",
   API_RATE_LIMIT_PER_MINUTE: 300,
   API_WRITE_RATE_LIMIT_PER_MINUTE: 30,
@@ -244,6 +246,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   const serialized = JSON.stringify(status);
 
   assert.equal(status.discord.webhookConfigured, true);
+  assert.equal(status.discord.withdrawalHoldWebhookConfigured, true);
   assert.equal(status.discord.dashboardUrlConfigured, true);
   assert.equal(status.discord.supportRecipientIds.length, 3);
   assert.equal(status.discord.urgentRecipientIds.length, 4);
@@ -270,6 +273,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.API_TOKEN,
     runtimeConfig.API_ADMIN_TOKEN,
     runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL ?? "",
+    runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.ANTIFRAUD_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_INGEST_URL,
     runtimeConfig.ANTIFRAUD_INGEST_SECRET,

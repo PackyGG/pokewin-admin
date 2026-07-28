@@ -24,6 +24,7 @@ const schema = z.object({
   ANTIFRAUD_INGEST_URL: z.string().url(),
   ANTIFRAUD_INGEST_SECRET: z.string().min(32),
   ANTIFRAUD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
+  ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: z.string().url().optional(),
   ALLOWED_ORIGINS: z.string().min(1),
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(300),
   API_WRITE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),

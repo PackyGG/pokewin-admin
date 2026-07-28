@@ -201,3 +201,20 @@ test("long evidence stays inside Discord field limits", () => {
     /more signals in the case/,
   );
 });
+
+test("an alert can link directly to Account Review", () => {
+  const payload = buildDiscordAlertPayload(
+    "https://fraud.packydash.com/monitor",
+    {
+      title: "Automatic fiat withdrawal hold",
+      description: "The account needs review.",
+      url: "https://fraud.packydash.com/antifraud/reviews",
+    },
+  );
+
+  assert.equal(
+    payload.components[0]?.components[0]?.url,
+    "https://fraud.packydash.com/antifraud/reviews",
+  );
+  assert.deepEqual(payload.allowed_mentions.users, supportIds);
+});

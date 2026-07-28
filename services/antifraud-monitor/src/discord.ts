@@ -42,20 +42,26 @@ export type DiscordAlert = {
   outcome?: string;
   signals?: readonly DiscordAlertSignal[];
   occurredAt?: Date;
+  url?: string;
 };
 
 export function discordRuntimeStatus(config: Pick<
   Config,
   | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
+  | "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"
   | "ANTIFRAUD_DASHBOARD_URL"
 >): {
   webhookConfigured: boolean;
+  withdrawalHoldWebhookConfigured: boolean;
   dashboardUrlConfigured: boolean;
   supportRecipientIds: readonly string[];
   urgentRecipientIds: readonly string[];
 } {
   return {
     webhookConfigured: Boolean(config.ANTIFRAUD_DISCORD_WEBHOOK_URL),
+    withdrawalHoldWebhookConfigured: Boolean(
+      config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+    ),
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
     supportRecipientIds: SUPPORT_USER_IDS,
     urgentRecipientIds: URGENT_USER_IDS,
@@ -173,7 +179,10 @@ export function buildDiscordAlertPayload(
     ...SUPPORT_USER_IDS,
     ...(alert.urgent ? URGENT_USER_IDS : []),
   ];
-  const url = alertUrl(dashboardUrl, alert.caseId);
+  const url = alertUrl(
+    alert.url ?? dashboardUrl,
+    alert.url ? undefined : alert.caseId,
+  );
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
 
   if (alert.username || alert.userId) {
@@ -270,7 +279,23 @@ export class DiscordAlerts {
   ) {}
 
   async send(alert: DiscordAlert): Promise<boolean> {
-    const webhookUrl = this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
+    return this.sendTo(
+      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+      alert,
+    );
+  }
+
+  async sendWithdrawalHold(alert: DiscordAlert): Promise<boolean> {
+    return this.sendTo(
+      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
+      alert,
+    );
+  }
+
+  private async sendTo(
+    webhookUrl: string | undefined,
+    alert: DiscordAlert,
+  ): Promise<boolean> {
     if (!webhookUrl) return false;
 
     const controller = new AbortController();

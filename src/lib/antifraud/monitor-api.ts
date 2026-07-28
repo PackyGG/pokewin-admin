@@ -75,6 +75,7 @@ const UPSTREAM_TIMEOUT_MS = 8_000;
 const runtimeConfigSchema = z.object({
   discord: z.object({
     webhookConfigured: z.boolean(),
+    withdrawalHoldWebhookConfigured: z.boolean().default(false),
     dashboardUrlConfigured: z.boolean(),
     supportRecipientIds: z.array(z.string()),
     urgentRecipientIds: z.array(z.string()),

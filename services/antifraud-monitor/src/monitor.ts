@@ -9,6 +9,13 @@ import {
   reweightFingerprintSignals,
   type EnrichmentResult,
 } from "./enrichment.js";
+import {
+  fetchFiatWithdrawalHolds,
+  fiatWithdrawalHoldMarker,
+  FIAT_WITHDRAWAL_HOLD_SCORE,
+  FIAT_WITHDRAWAL_HOLD_STREAM,
+  type FiatWithdrawalHold,
+} from "./fiat-withdrawal-holds.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
@@ -151,6 +158,7 @@ export class MonitorEngine {
       this.config.REDIS_URL,
       this.config.ANTIFRAUD_INGEST_SECRET,
       this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
+      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
     ].filter(
       (secret): secret is string =>
         typeof secret === "string" && secret.length > 0,
@@ -209,9 +217,12 @@ export class MonitorEngine {
     await this.db.antifraud.query(
       `
         INSERT INTO source_cursors(stream, occurred_at, source_id)
-        VALUES ('signups', now() - interval '2 minutes', '')
+        VALUES
+          ('signups', now() - interval '2 minutes', ''),
+          ($1, now() - interval '10 minutes', '')
         ON CONFLICT (stream) DO NOTHING
       `,
+      [FIAT_WITHDRAWAL_HOLD_STREAM],
     );
   }
 
@@ -253,8 +264,14 @@ export class MonitorEngine {
       const signupMetrics = await this.runPhase("signups", () =>
         this.scanSignups(),
       );
+      await this.runPhase("fiat-withdrawal-holds", () =>
+        this.scanFiatWithdrawalHolds(),
+      );
       await this.runPhase("signup-alerts", () =>
         this.deliverPendingSignupAlerts(),
+      );
+      await this.runPhase("fiat-withdrawal-hold-alerts", () =>
+        this.deliverPendingFiatWithdrawalHoldAlerts(),
       );
       const activitiesProcessed = await this.runPhase("activity", () =>
         this.scanActiveSessions(),
@@ -747,6 +764,193 @@ export class MonitorEngine {
             failures,
           },
           "High-risk signup alert remains pending",
+        );
+      }
+    }
+  }
+
+  private async scanFiatWithdrawalHolds(): Promise<void> {
+    const cursor = await this.db.antifraud.query<{
+      occurred_at: Date;
+      source_id: string;
+    }>(
+      "SELECT occurred_at, source_id FROM source_cursors WHERE stream = $1",
+      [FIAT_WITHDRAWAL_HOLD_STREAM],
+    );
+    const current = cursor.rows[0];
+    if (!current) {
+      throw new Error("Fiat withdrawal hold cursor is missing");
+    }
+
+    let latestAt = current.occurred_at;
+    let latestId = current.source_id;
+    for (
+      let batch = 0;
+      batch < this.config.POLL_MAX_SIGNUP_BATCHES;
+      batch += 1
+    ) {
+      const holds = await fetchFiatWithdrawalHolds(
+        this.db.source,
+        { occurredAt: latestAt, sourceId: latestId },
+        this.config.POLL_SIGNUP_BATCH_SIZE,
+      );
+      if (holds.length === 0) break;
+
+      for (const hold of holds) {
+        await this.persistFiatWithdrawalHold(hold);
+      }
+
+      const last = holds.at(-1);
+      if (!last) break;
+      latestAt = last.locked_at;
+      latestId = last.user_id;
+      if (holds.length < this.config.POLL_SIGNUP_BATCH_SIZE) break;
+    }
+  }
+
+  private async persistFiatWithdrawalHold(
+    hold: FiatWithdrawalHold,
+  ): Promise<void> {
+    const marker = fiatWithdrawalHoldMarker(hold);
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          INSERT INTO subjects (
+            user_id, username, source_created_at
+          ) VALUES ($1,$2,$3)
+          ON CONFLICT (user_id) DO UPDATE SET
+            username = COALESCE(EXCLUDED.username, subjects.username),
+            updated_at = now()
+        `,
+        [hold.user_id, hold.username, hold.source_created_at],
+      );
+      await client.query(
+        `
+          INSERT INTO fiat_withdrawal_hold_alert_outbox (
+            source_ref, user_id, username, reason, occurred_at
+          ) VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (source_ref) DO NOTHING
+        `,
+        [
+          marker.sourceRef,
+          hold.user_id,
+          hold.username,
+          hold.reason,
+          hold.locked_at,
+        ],
+      );
+      await client.query(
+        `
+          INSERT INTO risk_events (
+            user_id, event_type, source, source_ref, score_delta, score_after,
+            title, detail, payload, occurred_at
+          ) VALUES ($1,$2,$3,$4,0,$5,$6,$7,$8::jsonb,$9)
+          ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+          DO NOTHING
+        `,
+        [
+          hold.user_id,
+          marker.eventType,
+          marker.source,
+          marker.sourceRef,
+          marker.score,
+          marker.title,
+          marker.detail,
+          JSON.stringify(marker.payload),
+          hold.locked_at,
+        ],
+      );
+      await client.query(
+        `
+          UPDATE source_cursors
+          SET occurred_at = $2, source_id = $3, updated_at = now()
+          WHERE stream = $1
+            AND (occurred_at, source_id) < ($2, $3)
+        `,
+        [FIAT_WITHDRAWAL_HOLD_STREAM, hold.locked_at, hold.user_id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async deliverPendingFiatWithdrawalHoldAlerts(): Promise<void> {
+    type PendingAlert = {
+      source_ref: string;
+      user_id: string;
+      username: string | null;
+      reason: string;
+      occurred_at: Date;
+      attempt_count: number;
+    };
+
+    const pending = await this.db.antifraud.query<PendingAlert>(
+      `
+        SELECT
+          source_ref, user_id, username, reason, occurred_at, attempt_count
+        FROM fiat_withdrawal_hold_alert_outbox
+        WHERE next_attempt_at <= now()
+          AND discord_delivered_at IS NULL
+        ORDER BY created_at
+        LIMIT 25
+      `,
+    );
+
+    for (const alert of pending.rows) {
+      const delivered = await this.discord.sendWithdrawalHold({
+        title: "Automatic fiat withdrawal hold",
+        description:
+          "Lifetime fiat deposits crossed the automatic review threshold. Crypto withdrawals and item shipping are locked, and the account is queued for Account Review.",
+        userId: alert.user_id,
+        username: alert.username,
+        score: FIAT_WITHDRAWAL_HOLD_SCORE,
+        severity: "high",
+        trigger: alert.reason,
+        outcome: "withdrawals_locked",
+        occurredAt: alert.occurred_at,
+        url: new URL(
+          "/antifraud/reviews",
+          this.config.ANTIFRAUD_DASHBOARD_URL,
+        ).toString(),
+      });
+      const attempt = alert.attempt_count + 1;
+      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
+      await this.db.antifraud.query(
+        `
+          UPDATE fiat_withdrawal_hold_alert_outbox
+          SET
+            discord_delivered_at = CASE
+              WHEN $2::boolean THEN COALESCE(discord_delivered_at, now())
+              ELSE discord_delivered_at
+            END,
+            attempt_count = $3,
+            next_attempt_at = CASE
+              WHEN $2::boolean THEN now()
+              ELSE now() + ($4::text || ' seconds')::interval
+            END,
+            last_error = CASE
+              WHEN $2::boolean THEN NULL
+              ELSE 'Discord delivery failed'
+            END,
+            updated_at = now()
+          WHERE source_ref = $1
+        `,
+        [alert.source_ref, delivered, attempt, retrySeconds],
+      );
+
+      if (!delivered) {
+        this.log.warn(
+          {
+            userId: alert.user_id,
+            retrySeconds,
+          },
+          "Fiat withdrawal hold alert remains pending",
         );
       }
     }

@@ -20,6 +20,9 @@ It does not modify the Packy frontend or backend.
 - Signed, retry-safe delivery of committed risk events to the Admin dashboard
 - Durable Discord delivery for every score-60 signup, retried independently
   from the signed Account Review event stream
+- Incremental detection of automatic lifetime-fiat withdrawal holds, with
+  independent durable delivery to Account Review and a dedicated Discord
+  webhook
 - Rate-limited HTTP API with separate read and admin-write credentials
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
@@ -35,6 +38,12 @@ the delivery cursor advances only after the dashboard confirms every event.
 Retries are idempotent because the risk-event id is the dashboard external id.
 Score-60 signup markers use this same stream to open Account Review cases.
 Neither value is returned by runtime status.
+
+`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL` is the dedicated destination
+for automatic lifetime-fiat withdrawal holds. Those alerts use the compiled
+standard support mentions, link directly to Account Review, and retry from the
+Antifraud database outbox until Discord accepts them. The URL is never returned
+by runtime status.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external

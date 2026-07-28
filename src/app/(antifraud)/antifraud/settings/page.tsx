@@ -207,6 +207,14 @@ async function IntegrationSection() {
       status: reportedStatus(runtimeData?.discord.webhookConfigured),
       note: "Authoritative webhook presence reported by the deployed monitor. Unset means every alert is dropped.",
     },
+    {
+      name: "Fiat hold Discord webhook",
+      envs: ["ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"],
+      status: reportedStatus(
+        runtimeData?.discord.withdrawalHoldWebhookConfigured,
+      ),
+      note: "Dedicated destination for automatic lifetime-deposit withdrawal holds. Delivery retries until Discord accepts it.",
+    },
   ];
 
   return (
