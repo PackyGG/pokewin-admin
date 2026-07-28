@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   buildFiatDiscordPayload,
+  discordRetryAfterSeconds,
   fetchFailedPaymentWebhooks,
   fetchHighRiskFiatProblems,
   fiatProblemTitle,
@@ -160,6 +161,20 @@ test("signup blacklist alerts identify the signup email", () => {
   assert.deepEqual(payload.allowed_mentions, { parse: [] });
 });
 
+test("fiat Discord delivery honors bounded retry-after headers", () => {
+  assert.equal(
+    discordRetryAfterSeconds(new Headers({ "retry-after": "2.4" })),
+    3,
+  );
+  assert.equal(
+    discordRetryAfterSeconds(
+      new Headers({ "x-ratelimit-reset-after": "999" }),
+    ),
+    300,
+  );
+  assert.equal(discordRetryAfterSeconds(new Headers()), null);
+});
+
 test("fiat alert ingestion is mirror-only, durable, and retryable", async () => {
   const source = await readFile(
     new URL("../src/fiat-alerts.ts", import.meta.url),
@@ -186,6 +201,8 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   assert.match(source, /ON CONFLICT \(source_kind, source_id\) DO NOTHING/);
   assert.match(source, /discord_delivered_at IS NULL/);
   assert.match(source, /next_attempt_at/);
+  assert.match(source, /LIMIT 1/);
+  assert.match(source, /discordRetryAfterSeconds/);
   assert.match(migration, /PRIMARY KEY \(source_kind, source_id\)/);
   assert.match(migration, /WHERE discord_delivered_at IS NULL/);
 

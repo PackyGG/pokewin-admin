@@ -64,6 +64,15 @@ type DiscordPayload = {
   }>;
 };
 
+export function discordRetryAfterSeconds(headers: Headers): number | null {
+  const raw =
+    headers.get("retry-after") ?? headers.get("x-ratelimit-reset-after");
+  if (!raw) return null;
+  const seconds = Number(raw);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(300, Math.max(1, Math.ceil(seconds)));
+}
+
 function clean(value: unknown, maxLength = 1_024): string {
   const text = String(value ?? "")
     .replace(/@everyone/gi, "everyone")
@@ -630,14 +639,16 @@ export class FiatProblemAlerts {
         WHERE discord_delivered_at IS NULL
           AND next_attempt_at <= now()
         ORDER BY occurred_at
-        LIMIT 25
+        LIMIT 1
       `,
     );
 
     for (const problem of pending.rows) {
-      const delivered = await this.send(webhookUrl, problem);
+      const delivery = await this.send(webhookUrl, problem);
       const attempt = problem.attempt_count + 1;
-      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
+      const retrySeconds =
+        delivery.retryAfterSeconds ??
+        Math.min(300, 2 ** Math.min(attempt, 8));
       await this.db.antifraud.query(
         `
           UPDATE fiat_problem_alert_outbox
@@ -661,7 +672,7 @@ export class FiatProblemAlerts {
         [
           problem.source_kind,
           problem.source_id,
-          delivered,
+          delivery.delivered,
           attempt,
           retrySeconds,
         ],
@@ -672,7 +683,7 @@ export class FiatProblemAlerts {
   private async send(
     webhookUrl: string,
     problem: FiatProblem,
-  ): Promise<boolean> {
+  ): Promise<{ delivered: boolean; retryAfterSeconds: number | null }> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
     try {
@@ -690,16 +701,19 @@ export class FiatProblemAlerts {
         signal: controller.signal,
       });
       if (!response.ok) {
+        const retryAfterSeconds = discordRetryAfterSeconds(response.headers);
         this.log.error(
           {
             status: response.status,
+            retryAfterSeconds,
             sourceKind: problem.source_kind,
             sourceId: problem.source_id,
           },
-          "Fiat Discord alert delivery failed",
+          `Fiat Discord alert delivery failed with HTTP ${response.status}`,
         );
+        return { delivered: false, retryAfterSeconds };
       }
-      return response.ok;
+      return { delivered: true, retryAfterSeconds: null };
     } catch {
       this.log.error(
         {
@@ -708,7 +722,7 @@ export class FiatProblemAlerts {
         },
         "Fiat Discord alert delivery failed",
       );
-      return false;
+      return { delivered: false, retryAfterSeconds: null };
     } finally {
       clearTimeout(timer);
     }
