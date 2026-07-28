@@ -173,6 +173,32 @@ export class IngestDelivery {
       leader = lock.rows[0]?.acquired === true;
       if (!leader) return 0;
 
+      const containment = await client.query<RiskEventRow>(
+        `
+          SELECT
+            re.id, re.case_id, re.session_id, re.user_id, s.username,
+            re.event_type, re.source, re.source_ref, re.score_delta,
+            re.score_after, re.title, re.detail, re.payload,
+            re.occurred_at, re.recorded_at
+          FROM risk_events re
+          JOIN subjects s ON s.user_id = re.user_id
+          JOIN fiat_email_domain_matches match ON
+            re.source_ref = 'blacklisted-signup:' || match.source_event_id
+            OR re.source_ref =
+              'blacklisted-checkout:' || match.source_event_id
+          WHERE re.event_type = 'fiat_blacklisted_email_domain'
+            AND match.lock_delivered_at IS NULL
+          ORDER BY re.recorded_at, re.id
+          LIMIT $1
+        `,
+        [BATCH_SIZE],
+      );
+      if (containment.rows.length > 0) {
+        await this.deliverEvents(containment.rows);
+        await this.confirmContainmentEvents(client, containment.rows);
+        return containment.rows.length;
+      }
+
       const cursor = await client.query<{
         recorded_at: Date;
         event_id: string;
@@ -211,35 +237,7 @@ export class IngestDelivery {
       );
       if (events.rows.length === 0) return 0;
 
-      const rawBody = JSON.stringify({
-        events: events.rows.map(ingestEvent),
-      });
-      const timestamp = String(Date.now());
-      const response = await this.send(this.config.ANTIFRAUD_INGEST_URL, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          "x-antifraud-timestamp": timestamp,
-          "x-antifraud-signature": signIngest(
-            this.config.ANTIFRAUD_INGEST_SECRET,
-            timestamp,
-            rawBody,
-          ),
-        },
-        body: rawBody,
-        signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
-      });
-      if (!response.ok) {
-        throw new Error(`Dashboard ingest returned HTTP ${response.status}`);
-      }
-      const result = (await response.json()) as IngestResponse;
-      const confirmed =
-        Number(result.accepted ?? 0) + Number(result.duplicates ?? 0);
-      if (result.ok !== true || confirmed !== events.rows.length) {
-        throw new Error(
-          `Dashboard ingest confirmed ${confirmed}/${events.rows.length} events`,
-        );
-      }
+      await this.deliverEvents(events.rows);
 
       const last = events.rows.at(-1);
       if (!last) return 0;
@@ -270,6 +268,79 @@ export class IngestDelivery {
       }
       client.release();
     }
+  }
+
+  private async deliverEvents(events: RiskEventRow[]): Promise<void> {
+    const rawBody = JSON.stringify({
+      events: events.map(ingestEvent),
+    });
+    const timestamp = String(Date.now());
+    const response = await this.send(this.config.ANTIFRAUD_INGEST_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-antifraud-timestamp": timestamp,
+        "x-antifraud-signature": signIngest(
+          this.config.ANTIFRAUD_INGEST_SECRET,
+          timestamp,
+          rawBody,
+        ),
+      },
+      body: rawBody,
+      signal: AbortSignal.timeout(DELIVERY_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Dashboard ingest returned HTTP ${response.status}`);
+    }
+    const result = (await response.json()) as IngestResponse;
+    const confirmed =
+      Number(result.accepted ?? 0) + Number(result.duplicates ?? 0);
+    if (result.ok !== true || confirmed !== events.length) {
+      throw new Error(
+        `Dashboard ingest confirmed ${confirmed}/${events.length} events`,
+      );
+    }
+  }
+
+  private async confirmContainmentEvents(
+    client: pg.PoolClient,
+    events: RiskEventRow[],
+  ): Promise<void> {
+    const eventIds = events
+      .filter((event) => event.event_type === "fiat_blacklisted_email_domain")
+      .map((event) => event.id);
+    if (eventIds.length === 0) return;
+    await client.query(
+      `
+        WITH confirmed_matches AS (
+          UPDATE fiat_email_domain_matches AS match
+          SET
+            lock_delivered_at = COALESCE(match.lock_delivered_at, now()),
+            next_attempt_at = now(),
+            last_error = NULL,
+            updated_at = now()
+          FROM risk_events AS event
+          WHERE event.id = ANY($1::uuid[])
+            AND (
+              event.source_ref = 'blacklisted-signup:' || match.source_event_id
+              OR event.source_ref =
+                'blacklisted-checkout:' || match.source_event_id
+            )
+          RETURNING match.source_event_id, match.match_source, match.domain
+        )
+        UPDATE fiat_problem_alert_outbox AS alert
+        SET next_attempt_at = now(), updated_at = now()
+        FROM confirmed_matches AS match
+        WHERE alert.source_kind = CASE
+            WHEN match.match_source = 'signup' THEN 'signup'
+            ELSE 'payment_webhook'
+          END
+          AND alert.source_id =
+            match.source_event_id || ':blacklisted_email_domain:' || match.domain
+          AND alert.discord_delivered_at IS NULL
+      `,
+      [eventIds],
+    );
   }
 
   private async confirmDeliveredContainment(
