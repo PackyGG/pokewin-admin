@@ -35,6 +35,21 @@ test("mirror DB configuration fails closed and forces read-only sessions", () =>
   assert.doesNotMatch(source, /MIRROR_DEV_DB\s*\?\?\s*process\.env\.DEV_DATABASE_URL/);
 });
 
+test("serverless mirror pools preserve shared role connection headroom", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "src/lib/db.ts"), "utf8");
+  const warmRoute = fs.readFileSync(
+    path.join(repoRoot, "src/app/api/cron/warm/route.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
+  assert.match(
+    source,
+    /idleTimeoutMillis:\s*isReadMirror\s*\?\s*5_000\s*:\s*10_000/,
+  );
+  assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
+});
+
 test("mirror index failures expose safe, actionable connection diagnostics", () => {
   const result = spawnSync(
     process.execPath,

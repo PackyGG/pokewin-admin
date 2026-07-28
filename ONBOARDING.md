@@ -9,6 +9,13 @@ with `npm run db:index:mirrors -- <prod|dev|all>`, but may not run direct
 DDL/DML against either primary. This supersedes older blanket read-only wording
 below.
 
+The production mirror role `fraud_app` has a 30-session limit shared by the
+dashboard and Antifraud reader. Dashboard mirror pools are capped at two
+connections per serverless instance and release idle sessions after five
+seconds; the primary mutation pool remains capped at three. Do not widen the
+mirror pool without first increasing role capacity or putting a transaction
+pooler in front of it.
+
 > **Durable architecture + domain knowledge** for **pokewin-admin**. Does NOT hold live session state.
 >
 > **Read order every session:** `AGENT_HANDOFF.md` (state) → **this file** (knowledge) → `AGENTS.md` (rules).
