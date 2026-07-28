@@ -117,13 +117,10 @@ async function findCreatorRewardLedgerId(
  */
 
 /**
- * Both surfaces render the same programs + claim queue from the same queries:
- * the admin page `/creator-rewards` and the Creator Hub page
- * `/creator-hub/rewards`. Every mutation below must refresh both, or a change
- * made from one shows stale on the other.
+ * Creator Rewards now lives only in Creator Hub. Every mutation refreshes that
+ * route so the Marketing surface always reflects the saved state.
  */
 function revalidateCreatorRewards(): void {
-  revalidatePath("/creator-rewards");
   revalidatePath("/creator-hub/rewards");
 }
 

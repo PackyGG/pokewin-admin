@@ -38,12 +38,14 @@ export const ADMIN_PAGES: AdminPage[] = [
     label: "Affiliate Leaderboards",
     key: "/creators/leaderboards",
   },
-  // Creator Rewards — VIP wager-milestone programs + the manual claim-review
-  // queue. Its own grantable key, NOT inherited from /rewards: approving a
-  // claim credits a player's balance, so access to it is a strictly bigger
-  // grant than the read-mostly /rewards config hub it used to live in. (The
-  // server actions additionally require the admin role.)
-  { group: "Players", label: "Creator Rewards", key: "/creator-rewards" },
+  // Creator Rewards lives only in Creator Hub, but keeps its existing
+  // grantable key so current staff access does not change. Approving a claim
+  // credits a player's balance, so the actions additionally require admin.
+  {
+    group: "Creator Portal",
+    label: "Creator Rewards",
+    key: "/creator-rewards",
+  },
   // XP Sales was merged into the /rewards tab hub (XP Sales tab); the page
   // now gates on /rewards, so the standalone /xp-sales key was retired. The
   // The insights XP-sales data layer is unaffected.

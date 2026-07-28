@@ -316,26 +316,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
 
-  // ── Insights (sidebar-only; absent from palette today) ─────────────────
-  {
-    // Creator Rewards — VIP wager programs + the claim review queue. Promoted
-    // out of the /rewards tab hub to its own page: it is an operational queue
-    // staff work through, and burying that a tab deep hides work that needs
-    // doing. Icon "Gift" is already in the ICONS map in app-sidebar.tsx —
-    // a nav icon string that ISN'T there is a runtime crash (React #130).
-    id: "nav.creator-rewards",
-    group: "Players",
-    label: "Creator Rewards",
-    href: "/creator-rewards",
-    pageKey: "/creator-rewards",
-    icon: "Gift",
-    description: "Creator wager-reward programs + claim review",
-    keywords: ["creator", "vip", "wager", "reward", "claim", "review"],
-    isNew: true,
-    inSidebar: true,
-    inPalette: true,
-  },
-
   {
     id: "nav.fiat",
     group: "Overview",

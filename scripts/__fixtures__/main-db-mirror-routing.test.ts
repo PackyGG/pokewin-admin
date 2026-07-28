@@ -14,12 +14,23 @@ const readResolvers = new Set([
 ]);
 
 function trackedRuntimeFiles(): string[] {
-  return execFileSync("git", ["ls-files", "src/**/*.ts", "src/**/*.tsx"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  })
+  return execFileSync(
+    "git",
+    [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "src/**/*.ts",
+      "src/**/*.tsx",
+    ],
+    {
+      cwd: repoRoot,
+      encoding: "utf8",
+    },
+  )
     .split(/\r?\n/)
-    .filter(Boolean);
+    .filter((file) => file && fs.existsSync(path.join(repoRoot, file)));
 }
 
 test("mirror DB configuration fails closed and forces read-only sessions", () => {

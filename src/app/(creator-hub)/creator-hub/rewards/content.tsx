@@ -61,7 +61,7 @@ import {
 } from "./actions";
 
 /**
- * Creator VIP reward programs + the claim review queue.
+ * Creator Hub VIP reward programs + the claim review queue.
  *
  * House-POV colouring throughout (CLAUDE.md): a VIP reward is money the house
  * GIVES a user, so every payout figure is ROSE. The wager that earned it is

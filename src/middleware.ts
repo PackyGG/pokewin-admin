@@ -150,6 +150,21 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/api", request.url), 308);
     }
 
+    // Creator Rewards moved out of the apex dashboard and now belongs only to
+    // the Marketing workspace. Keep old bookmarks useful without retaining a
+    // duplicate App Router page in the normal admin app.
+    if (pathname === "/creator-rewards") {
+      const creatorHub = APP_HOSTS.find(
+        (entry) => entry.basePath === "/creator-hub",
+      );
+      if (creatorHub) {
+        return NextResponse.redirect(
+          new URL(`https://${creatorHub.host}/rewards`),
+          308,
+        );
+      }
+    }
+
     // Legacy /chat bookmark → resolve the redirect at the HTTP layer, BEFORE
     // React renders. chat/page.tsx did this with an in-render redirect(); an
     // unconditional in-render redirect on the initial document load is replayed

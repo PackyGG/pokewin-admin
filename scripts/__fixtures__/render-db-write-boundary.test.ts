@@ -26,11 +26,18 @@ type Violation = {
 function trackedRenderModules(): string[] {
   return execFileSync(
     "git",
-    ["ls-files", "src/app/**/page.tsx", "src/app/**/layout.tsx"],
+    [
+      "ls-files",
+      "--cached",
+      "--others",
+      "--exclude-standard",
+      "src/app/**/page.tsx",
+      "src/app/**/layout.tsx",
+    ],
     { cwd: root, encoding: "utf8" },
   )
     .split(/\r?\n/)
-    .filter(Boolean);
+    .filter((file) => file && existsSync(path.join(root, file)));
 }
 
 function isInsideAfterCallback(node: ts.Node): boolean {

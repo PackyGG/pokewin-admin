@@ -15,7 +15,7 @@ import { formatCurrency } from "@/lib/utils/format";
 import {
   CreatorVipContent,
   type CreatorVipTab,
-} from "../../../(admin)/creator-rewards/content";
+} from "./content";
 import { HubNotice } from "../_components/hub-notice";
 import { RewardsBodySkeleton } from "./loading";
 
@@ -27,12 +27,9 @@ const CLAIMS_CAP = 200;
 /**
  * Creator Hub → Creator Rewards.
  *
- * The Hub surface for the same wager-milestone reward programs + manual
- * claim-review queue as `/creator-rewards`. ONE data layer, ONE UI: it reuses
- * `getProgramsWithStats` / `getClaims` and the exact `CreatorVipContent`
- * client component the admin page renders, so the two surfaces cannot drift.
- * The server actions the content fires are the admin ones — no duplicate
- * mutation path — and they now revalidate BOTH paths.
+ * The only staff surface for wager-milestone reward programs + the manual
+ * claim-review queue. Its data, UI, and mutations all live with this Marketing
+ * route so the normal admin dashboard has no duplicate entry point.
  *
  * On top of the shared body, the Hub adds a work-queue summary strip (pending
  * count, pending payout total, oldest pending age, active programs) computed
@@ -40,17 +37,17 @@ const CLAIMS_CAP = 200;
  * Hub pages (`/creator-hub/creators/{id}`) so the surface stays self-contained.
  * `?tab=programs|requests` deep-links a tab.
  *
- * ── ACCESS (deliberately the admin page's gate, not just the Hub's) ────────
+ * ── ACCESS ────────────────────────────────────────────────────────────────
  * `requireCreatorHubPageAccess()` **and** `requirePageAccess("/creator-rewards")`.
  *
  * The Hub is reachable by non-admin roles via the per-role ADMIN-DB toggle,
  * and `creator`-role users hold real dashboard sessions. Gating this page on
  * Hub membership ALONE would show a creator the full claim queue (every
  * creator's pending payouts) on a page whose every button then throws — the
- * mutations in `creator-rewards/actions.ts` are `requireAdmin()` precisely so
+ * mutations in `rewards/actions.ts` are `requireAdmin()` precisely so
  * a creator can't approve payouts against their own program. So the view gate
- * here matches the admin page exactly; the Hub check is additive, never a
- * loosening. The `requireAdmin()` write gate is untouched.
+ * remains stricter than Hub membership alone. The `requireAdmin()` write gate
+ * is untouched.
  *
  * Shell-first: the identity heading renders immediately; both reads stream
  * behind one Suspense boundary (loading.tsx shares the same skeleton), each
