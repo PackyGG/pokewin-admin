@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-28 Keno user gaming transactions:** `/users/[id]` now includes `keno_bet` and `keno_payout` ledger rows in both the initial Gaming feed and paginated refreshes, labeled as Keno bet / Keno payout through the shared ledger formatter. TypeScript, changed-file ESLint, and full repository ESLint excluding temporary worktree directories pass.
+
 - **2026-07-28 mandatory geo-policy defense in depth shipped:** The exact 33 legal-policy jurisdictions are a non-reversible full exclusion in Admin: site access, physical/digital withdrawals, gift/promo codes, every supported crypto deposit/withdrawal asset, and the complete Whop checkout stay closed together. Per-row and global controls cannot reopen policy rows, the physical-withdrawal global switch preserves them, raw Security config cannot bypass the atomic Fiat/Geo owner, and ordinary row edits report backend cache uptake. Dogecoin/XRP lock tokens match backend runtime names. Production deployment `dpl_8DYW2a2aoMX2RRyPxURXdcccNQ9d` for commit `d3eba6ae` is `READY`; the live action reported `33/33 fully restricted`, and an independent read-only production mirror audit found all 33 rows present with no missing or unsafe policy fields. Focused tests, all 299 guardrails, TypeScript, zero-warning scoped ESLint, diff check, and the production build pass.
 
 - **2026-07-28 New Packs pool max-win correction:** `/pack-studio/new-packs` now defines Max win as the highest current card value in the requested pool, rather than the shaper's weighted-risk maximum. The two pending production ADMIN requests were backfilled from the production MAIN read mirror to `$719.94` and `$98.76`. The focused regression, all guardrails, TypeScript, zero-warning task ESLint, and the production build pass.

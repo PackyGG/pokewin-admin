@@ -757,7 +757,8 @@ export type GameSessionDetails = {
   createdAt: string;
 };
 
-// Gaming = the full pack / battle / upgrader play cycle: the bet/play legs. The
+// Gaming = the full pack / battle / upgrader / Keno play cycle: the bet/play
+// and payout legs. The
 // item cash-OUTS — card_sale / reward_card_sale (selling a won/reward card back
 // to balance) and voucher_redeemed (cashing a won voucher back to balance) —
 // were MOVED to the Inventory tab (CARD_SALE_TX_TYPES below) per owner: they're
@@ -776,6 +777,8 @@ export const GAMING_TX_TYPES = [
   "battle_refund",
   "upgrader_bet",
   "upgrader_payout",
+  "keno_bet",
+  "keno_payout",
 ] as const;
 // Financial = deposits, withdrawals (card_withdrawal + withdrawal_shipping_fee)
 // and direct cash payouts (rakeback / affiliate / rain / race / gift / promo).
