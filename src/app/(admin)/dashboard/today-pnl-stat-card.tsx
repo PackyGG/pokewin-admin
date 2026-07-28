@@ -191,7 +191,7 @@ export function TodayPnlStatCard({
           >
             Cash P&amp;L
           </span>{" "}
-          is deposits − withdrawals only (raw crypto cash flow).
+          is deposits − withdrawals only (completed fiat + crypto cash flow).
         </p>
         {/* GGR — moved down here from the KPI strip (owner request,
             2026-07-02) so the P&L Today tile fills the space the strip's
@@ -261,7 +261,7 @@ function RawCashPnlBadge({ pnl }: { pnl: number }) {
   const sign = up ? "+" : down ? "−" : "";
   return (
     <span
-      title={`Raw cash flow today (since 00:00 UTC): completed deposits minus card + manual withdrawals. No balance, inventory, or voucher movement — the plain crypto in/out figure.`}
+      title={`Raw cash flow today (since 00:00 UTC): completed fiat + crypto deposits minus card + manual withdrawals. Paid-but-uncredited payment attempts are excluded. No balance, inventory, or voucher movement.`}
       // Bumped 10px → 11px to match the rest of the card's
       // post-readability-pass labels — the badge sits next to the
       // hero number, so the prior 10px text was lost beside it.
@@ -447,8 +447,9 @@ function TodayPnlInfoPopover({
             and the daily-P&amp;L chart. Real customers only (staff + excluded
             users dropped).{" "}
             <strong>Cash P&amp;L</strong> (top-right badge) is deposits −
-            withdrawals only — raw crypto cash flow with no balance /
-            inventory / voucher terms.{" "}
+            withdrawals only — completed fiat + crypto cash flow with no
+            balance / inventory / voucher terms. Paid-but-uncredited payment
+            attempts are excluded.{" "}
             <strong>Includes:</strong> gaming, rakeback, bonuses, card sales,
             fraud/abuse cash removals, admin inventory/voucher removals
             (via sold/claimed stamps).{" "}

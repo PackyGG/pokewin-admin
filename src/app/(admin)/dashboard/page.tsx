@@ -662,8 +662,9 @@ async function DashboardCashPnlChart() {
   const creatorCostByDate = new Map(
     creatorCostPoints.map((p) => [p.date, p.creatorCost]),
   );
-  // Cash P&L = deposits − withdrawals per day (raw crypto cash flow only —
-  // same canonical formula as the "P&L Today" tile's `rawCashPnl`). The bars
+  // Cash P&L = deposits − withdrawals per day (completed fiat + crypto cash
+  // flow — paid-but-uncredited intents are excluded). Same canonical formula
+  // as the "P&L Today" tile's `rawCashPnl`. The bars
   // use this; the rest of each row (pnl, balanceChange, inventoryChange,
   // voucherChange, creatorCost) rides along for the merged hover breakdown.
   const cash = data.map((d) => ({

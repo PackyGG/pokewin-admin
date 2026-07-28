@@ -74,8 +74,8 @@ export type KpiWindowPayload = {
   /**
    * SECONDARY: Cash P&L (`deposits − withdrawals`) for the window. Surfaced
    * INSIDE the GGR popover alongside the headline so an operator can audit
-   * net cash kept (crypto-flow tracking) without leaving the tile. Not the
-   * headline number.
+   * net cash kept (fiat + crypto cash-flow tracking) without leaving the
+   * tile. Not the headline number.
    */
   cashGgr: number;
   /** Customer wager (creator-on-stream sessions excluded) for the window. */
@@ -180,7 +180,7 @@ async function computeKpiWindowPayload(
   // GGR tile reads the industry definition again (`wager − payouts`, what
   // we won from the games today — packs, battles, upgrader). Cash P&L
   // (`deposits − withdrawals`) is kept as a SECONDARY figure inside the
-  // popover so an operator can still see net cash kept (crypto-flow
+  // popover so an operator can still see net cash kept (fiat + crypto cash-flow
   // tracking) without leaving the tile, but it is no longer the headline.
   const cashGgr = cashflow
     ? cashflow.deposits - cashflow.withdrawals
