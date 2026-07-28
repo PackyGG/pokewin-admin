@@ -68,12 +68,12 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.doesNotMatch(page, /<SystemDetails/);
 });
 
-test("the KYC landing view shows checks still in progress", () => {
+test("the KYC landing view defaults to all records", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
 
   assert.match(
     page,
-    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"kyc_in_progress"/,
+    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"all"/,
   );
   assert.match(page, /all:\s*"KYC record history"/);
   assert.match(page, /No KYC checks are currently in progress/);

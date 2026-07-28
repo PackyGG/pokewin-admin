@@ -59,7 +59,7 @@ export default async function AntifraudKycPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const params = await searchParams;
-  const status = isKycFilter(params.status) ? params.status : "kyc_in_progress";
+  const status = isKycFilter(params.status) ? params.status : "all";
   const search = params.q?.trim() || undefined;
   const canManage = canManageAntifraud(session);
   const contentKey = `${status}-${search ?? ""}`;
