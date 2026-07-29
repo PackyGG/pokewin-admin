@@ -101,6 +101,15 @@ labels, and bounded review history. Names, dates of birth, addresses, document
 numbers, document images, and private provider comments are never returned.
 Successful reads are cached in memory for five minutes.
 
+KYC Home also sends up to 100 recent completed applicants to
+`POST /v1/kyc/country-checks/refresh`. The admin-only route compares the
+account country with normalized, approved Sumsub document countries and stores
+only the sanitized verdict in `kyc_country_reviews`. Each request reuses
+six-hour saved results and refreshes at most ten providers with five concurrent
+workers. Saved evidence contains country codes, provider status/answer,
+applicant ID, and timestamps; it does not contain identity fields, document
+numbers, images, or raw provider data.
+
 ## Automatic Fiat checkout eligibility
 
 `POST /v1/fiat-eligibility/check` is a server-to-server endpoint. It never

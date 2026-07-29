@@ -6,6 +6,7 @@ import {
   Fingerprint,
   LockKeyhole,
   ShieldX,
+  TriangleAlert,
   UserCheck,
 } from "lucide-react";
 
@@ -184,6 +185,9 @@ async function KycDashboardContent({
   }
 
   const { stats } = result.data;
+  const countryMismatches = result.data.accounts.filter(
+    (account) => account.countryReview?.countryMatch === "mismatch",
+  ).length;
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -221,7 +225,16 @@ async function KycDashboardContent({
         {stats.required} currently locked · {stats.total} historical verification
         records ·{" "}
         {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
-        applicant
+        applicant ·{" "}
+        <span
+          className={cn(
+            countryMismatches > 0 &&
+              "font-semibold text-rose-600 dark:text-rose-400",
+          )}
+        >
+          {countryMismatches} saved country mismatch
+          {countryMismatches === 1 ? "" : "es"} in this view
+        </span>
       </p>
 
       <AccountList
@@ -303,6 +316,15 @@ function AccountCard({
           <span className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold">{label}</span>
             <KycStateBadge presentation={presentation} />
+            {account.countryReview?.countryMatch === "mismatch" && (
+              <Badge
+                variant="outline"
+                className="h-5 border-rose-500/40 bg-rose-500/10 text-[10px] text-rose-600 dark:text-rose-400"
+              >
+                <TriangleAlert className="mr-1 size-3" />
+                Country mismatch
+              </Badge>
+            )}
           </span>
           <span className="mt-1 block text-xs text-muted-foreground">
             {presentation.summary}
@@ -434,6 +456,28 @@ function AccountCard({
                   : "—"
               }
               mono
+            />
+            <InfoRow
+              label="Verified country"
+              value={account.countryReview?.verifiedCountry ?? "—"}
+            />
+            <InfoRow
+              label="Document countries"
+              value={
+                account.countryReview?.documentCountries.join(", ") || "—"
+              }
+            />
+            <InfoRow
+              label="Country check"
+              value={countryReviewLabel(account)}
+            />
+            <InfoRow
+              label="Country evidence saved"
+              value={
+                account.countryReview
+                  ? formatDateTime(new Date(account.countryReview.checkedAt))
+                  : "—"
+              }
             />
           </InfoGroup>
 
@@ -616,6 +660,18 @@ type AccountPresentation = {
 };
 
 function getAccountPresentation(account: KycAccount): AccountPresentation {
+  if (account.countryReview?.countryMatch === "mismatch") {
+    return {
+      label: "Country mismatch",
+      summary: `The account country ${account.countryReview.accountCountry ?? "is unknown"}, but the completed KYC evidence is from ${account.countryReview.verifiedCountry ?? "another country"}.`,
+      nextStep: "Review the saved country evidence before treating this cycle as safe.",
+      badgeClassName:
+        "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400",
+      panelClassName:
+        "border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+    };
+  }
+
   if (!account.kycRequired && account.adminDecision === "safe") {
     return {
       label: "Cleared by admin",
@@ -734,6 +790,17 @@ function providerStatusLabel(status: KycAccount["status"]): string {
   if (status === "on_hold") return "On hold at Sumsub";
   if (status === "pending") return "Pending at Sumsub";
   return "No provider result";
+}
+
+function countryReviewLabel(account: KycAccount): string {
+  const review = account.countryReview;
+  if (!review || review.countryMatch === "unknown") {
+    return "Not enough country evidence";
+  }
+  if (review.countryMatch === "match") {
+    return `Match — account and KYC are ${review.accountCountry}`;
+  }
+  return `Mismatch — account ${review.accountCountry ?? "unknown"}, KYC ${review.verifiedCountry ?? "unknown"}`;
 }
 
 function shortId(value: string): string {

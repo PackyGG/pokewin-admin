@@ -81,6 +81,7 @@ import { registerWithdrawalRoutes } from "./withdrawal-routes.js";
 import { WithdrawalRiskService } from "./withdrawal-risk.js";
 import { SumsubClient } from "./sumsub-client.js";
 import { registerSumsubRoutes } from "./sumsub-routes.js";
+import { KycCountryReviewService } from "./kyc-country-reviews.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -1215,7 +1216,11 @@ await registerSignupFailureRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
-await registerSumsubRoutes(app, sumsub);
+await registerSumsubRoutes(
+  app,
+  sumsub,
+  sumsub ? new KycCountryReviewService(db.antifraud, sumsub) : undefined,
+);
 await registerFiatEligibilityRoutes(app, {
   config,
   access: fiatEligibilityAccess,

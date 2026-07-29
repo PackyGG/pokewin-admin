@@ -3,11 +3,16 @@ import { createHmac } from "node:crypto";
 import test from "node:test";
 
 import Fastify from "fastify";
+import type pg from "pg";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
 import type { Config } from "../src/config.js";
 import { SumsubClient } from "../src/sumsub-client.js";
 import { registerSumsubRoutes } from "../src/sumsub-routes.js";
+import {
+  assessKycCountry,
+  KycCountryReviewService,
+} from "../src/kyc-country-reviews.js";
 
 const applicantId = "64d2f8a091e8b70001a2b3c4";
 const token = "prd:admin-read-token";
@@ -194,4 +199,125 @@ test("the Sumsub route returns sanitized live data and fails closed when unconfi
     error: "sumsub_not_configured",
   });
   await unavailable.close();
+});
+
+test("completed KYC country evidence detects CZ to UK mismatches", async () => {
+  const { client } = clientFixture();
+  const review = await client.getApplicantReview(applicantId);
+  const mismatch = assessKycCountry(
+    {
+      userId: "user-cz",
+      applicantId,
+      accountCountry: "CZ",
+    },
+    review,
+    fixedNow,
+  );
+  assert.equal(mismatch.accountCountry, "CZ");
+  assert.equal(mismatch.verifiedCountry, "GB");
+  assert.deepEqual(mismatch.documentCountries, ["GB"]);
+  assert.equal(mismatch.countryMatch, "mismatch");
+  assert.equal(mismatch.checkedAt, fixedNow.toISOString());
+  assert.doesNotMatch(
+    JSON.stringify(mismatch),
+    /name|birth|documentNumber|image|address/i,
+  );
+
+  const match = assessKycCountry(
+    {
+      userId: "user-gb",
+      applicantId,
+      accountCountry: "GBR",
+    },
+    review,
+    fixedNow,
+  );
+  assert.equal(match.accountCountry, "GB");
+  assert.equal(match.countryMatch, "match");
+});
+
+test("country check refresh is admin-only and returns saved sanitized evidence", async () => {
+  const config = {
+    API_TOKEN: "read-token-that-is-at-least-32-characters",
+    API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
+  } as Pick<Config, "API_TOKEN" | "API_ADMIN_TOKEN">;
+  const path = "/v1/kyc/country-checks/refresh";
+  assert.equal(serviceRequestAuthorized("POST", path, config.API_TOKEN, config), false);
+  assert.equal(
+    serviceRequestAuthorized("POST", path, config.API_ADMIN_TOKEN, config),
+    true,
+  );
+
+  const fixture = clientFixture();
+  const app = Fastify();
+  await registerSumsubRoutes(app, fixture.client, {
+    refresh: async (accounts) =>
+      accounts.map((account) => ({
+        userId: account.userId,
+        applicantId: account.applicantId,
+        accountCountry: "CZ",
+        verifiedCountry: "GB",
+        documentCountries: ["GB"],
+        countryMatch: "mismatch" as const,
+        reviewStatus: "completed",
+        reviewAnswer: "GREEN",
+        providerReviewedAt: "2026-07-29T19:15:48.000Z",
+        checkedAt: fixedNow.toISOString(),
+      })),
+  });
+  const response = await app.inject({
+    method: "POST",
+    url: path,
+    payload: {
+      accounts: [
+        {
+          userId: "user-cz",
+          applicantId,
+          accountCountry: "CZ",
+        },
+      ],
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().data[0].countryMatch, "mismatch");
+  await app.close();
+});
+
+test("country mismatch evidence is persisted in the Antifraud database", async () => {
+  const fixture = clientFixture();
+  const writes: Array<{ text: string; values: unknown[] }> = [];
+  const pool = {
+    query: async (text: string, values: unknown[]) => {
+      if (text.includes("FROM kyc_country_reviews")) {
+        return { rows: [] };
+      }
+      writes.push({ text, values });
+      return { rows: [] };
+    },
+  } as unknown as pg.Pool;
+  const service = new KycCountryReviewService(
+    pool,
+    fixture.client,
+    () => fixedNow,
+  );
+
+  const reviews = await service.refresh([
+    {
+      userId: "user-cz",
+      applicantId,
+      accountCountry: "CZ",
+    },
+  ]);
+
+  assert.equal(reviews[0]?.countryMatch, "mismatch");
+  assert.equal(writes.length, 1);
+  assert.match(writes[0]!.text, /INSERT INTO kyc_country_reviews/);
+  assert.deepEqual(writes[0]!.values.slice(0, 6), [
+    "user-cz",
+    applicantId,
+    "CZ",
+    "GB",
+    ["GB"],
+    "mismatch",
+  ]);
 });

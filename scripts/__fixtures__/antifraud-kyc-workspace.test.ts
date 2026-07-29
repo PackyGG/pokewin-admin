@@ -157,6 +157,35 @@ test("live Sumsub details stay admin-only, read-only, and sanitized", () => {
   assert.match(card, /Names, birth dates, document numbers, addresses and images are not/);
 });
 
+test("finished KYC records save and expose account-country mismatches", () => {
+  const service = source(
+    "services/antifraud-monitor/src/kyc-country-reviews.ts",
+  );
+  const migration = source(
+    "services/antifraud-monitor/migrations/034_kyc_country_reviews.sql",
+  );
+  const routes = source("services/antifraud-monitor/src/sumsub-routes.ts");
+  const dashboardApi = source("src/lib/antifraud/sumsub-review-api.ts");
+  const query = source("src/lib/antifraud/kyc.ts");
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
+
+  assert.match(service, /document\.reviewAnswer !== "RED"/);
+  assert.match(service, /countries\.alpha3ToAlpha2/);
+  assert.match(service, /countryMatch[\s\S]*?"mismatch"/);
+  assert.doesNotMatch(
+    service,
+    /firstName|lastName|dateOfBirth|documentNumber|imageIds|address/,
+  );
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS kyc_country_reviews/);
+  assert.match(migration, /PRIMARY KEY \(user_id, applicant_id\)/);
+  assert.match(routes, /app\.post\("\/v1\/kyc\/country-checks\/refresh"/);
+  assert.match(dashboardApi, /refreshKycCountryReviews/);
+  assert.match(query, /account\.status === "approved"/);
+  assert.match(page, /Country mismatch/);
+  assert.match(page, /Country evidence saved/);
+  assert.match(page, /saved country mismatch/);
+});
+
 test("account reviews exclude currently KYC-required users before pagination", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
   const reviews = source("src/lib/antifraud/reviews.ts");

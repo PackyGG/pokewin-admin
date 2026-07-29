@@ -40,6 +40,8 @@ export function serviceRequestAuthorized(
     (pathname === "/v1/operations/signup-failures" && method === "GET") ||
     (method === "POST" &&
       pathname.startsWith("/v1/operations/signup-failures/")) ||
+    (method === "POST" &&
+      pathname === "/v1/kyc/country-checks/refresh") ||
     (method === "POST" && pathname === "/v1/network-cases") ||
     (method === "GET" &&
       pathname.startsWith("/v1/networks/") &&

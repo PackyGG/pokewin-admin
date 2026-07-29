@@ -40,20 +40,50 @@ const responseSchema = z.object({ data: reviewSchema });
 
 export type SumsubApplicantReview = z.infer<typeof reviewSchema>;
 
+const countryReviewSchema = z.object({
+  userId: z.string(),
+  applicantId: z.string(),
+  accountCountry: z.string().nullable(),
+  verifiedCountry: z.string().nullable(),
+  documentCountries: z.array(z.string()),
+  countryMatch: z.enum(["match", "mismatch", "unknown"]),
+  reviewStatus: z.string().nullable(),
+  reviewAnswer: z.string().nullable(),
+  providerReviewedAt: z.string().nullable(),
+  checkedAt: z.string(),
+});
+
+const countryReviewResponseSchema = z.object({
+  data: z.array(countryReviewSchema),
+});
+
+export type KycCountryReview = z.infer<typeof countryReviewSchema>;
+
+type KycCountryReviewInput = {
+  userId: string;
+  applicantId: string;
+  accountCountry: string | null;
+};
+
+function monitorCredentials(): { baseUrl: string; token: string } | null {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  return baseUrl && token ? { baseUrl, token } : null;
+}
+
 export async function getSumsubApplicantReview(
   applicantId: string,
 ): Promise<SumsubApplicantReview | null> {
-  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
-  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
-  if (!baseUrl || !token) return null;
+  const credentials = monitorCredentials();
+  if (!credentials) return null;
 
   try {
     const response = await fetch(
-      `${baseUrl}/v1/kyc/applicants/${encodeURIComponent(applicantId)}/review`,
+      `${credentials.baseUrl}/v1/kyc/applicants/${encodeURIComponent(applicantId)}/review`,
       {
         headers: {
           accept: "application/json",
-          authorization: `Bearer ${token}`,
+          authorization: `Bearer ${credentials.token}`,
         },
         cache: "no-store",
         signal: AbortSignal.timeout(12_000),
@@ -72,5 +102,42 @@ export async function getSumsubApplicantReview(
       error instanceof Error ? error.message : "unknown_error",
     );
     return null;
+  }
+}
+
+export async function refreshKycCountryReviews(
+  accounts: KycCountryReviewInput[],
+): Promise<KycCountryReview[]> {
+  const credentials = monitorCredentials();
+  if (!credentials || accounts.length === 0) return [];
+
+  try {
+    const response = await fetch(
+      `${credentials.baseUrl}/v1/kyc/country-checks/refresh`,
+      {
+        method: "POST",
+        headers: {
+          accept: "application/json",
+          authorization: `Bearer ${credentials.token}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ accounts: accounts.slice(0, 100) }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(8_000),
+      },
+    );
+    if (!response.ok) {
+      console.error(
+        `[antifraud-sumsub] country review request failed with status ${response.status}`,
+      );
+      return [];
+    }
+    return countryReviewResponseSchema.parse(await response.json()).data;
+  } catch (error) {
+    console.error(
+      "[antifraud-sumsub] country review request failed:",
+      error instanceof Error ? error.message : "unknown_error",
+    );
+    return [];
   }
 }

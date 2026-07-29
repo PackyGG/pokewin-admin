@@ -19,6 +19,10 @@ import {
   user_kyc,
 } from "@/lib/db-schema/main/schema";
 import { loadAdminIdentities } from "@/lib/antifraud/admin-identities";
+import {
+  refreshKycCountryReviews,
+  type KycCountryReview,
+} from "@/lib/antifraud/sumsub-review-api";
 
 export const KYC_FILTERS = [
   "all",
@@ -64,6 +68,7 @@ export type KycAccount = {
   lastWebhookDigest: string | null;
   createdAt: Date;
   updatedAt: Date;
+  countryReview: KycCountryReview | null;
 };
 
 export type SumsubEventSummary = {
@@ -288,6 +293,7 @@ async function listKycAccounts(
     lastWebhookCreatedAt: nullableDate(row.lastWebhookCreatedAt),
     createdAt: date(row.createdAt),
     updatedAt: date(row.updatedAt),
+    countryReview: null,
   }));
 }
 
@@ -386,8 +392,34 @@ export async function getKycDashboard(
     loadKycStats(),
     listSumsubEvents(),
   ]);
+  const countryReviews = await refreshKycCountryReviews(
+    accounts
+      .filter(
+        (account) =>
+          account.applicantId !== null &&
+          (account.status === "approved" || account.status === "rejected"),
+      )
+      .slice(0, 100)
+      .map((account) => ({
+        userId: account.userId,
+        applicantId: account.applicantId!,
+        accountCountry: account.countryCode?.trim() || null,
+      })),
+  );
+  const reviewsByApplicant = new Map(
+    countryReviews.map((review) => [
+      `${review.userId}:${review.applicantId}`,
+      review,
+    ]),
+  );
   return {
-    accounts,
+    accounts: accounts.map((account) => ({
+      ...account,
+      countryReview: account.applicantId
+        ? reviewsByApplicant.get(`${account.userId}:${account.applicantId}`) ??
+          null
+        : null,
+    })),
     stats,
     events,
     config: integrationConfig(env),
