@@ -138,6 +138,14 @@ IPv6 addresses or CIDRs. The allowlist applies to the calling backend's trusted
 source IP; `ipAddress` in the JSON body is the end user's IP and is never used
 to authenticate the caller.
 
+Every request writes structured `fiat_eligibility.*` lifecycle logs with the
+Fastify request ID. Logs cover validation and authentication rejection, rate
+limiting, assessment start, automatic allow/deny completion, Fingerprint replay
+rejection, and assessment failure. Completion logs include the environment,
+user ID, decision ID, score, reason codes, expiry, idempotency and duration.
+API keys, authorization headers, Fingerprint request IDs, raw caller/client IPs,
+request bodies and provider/database error messages are never logged.
+
 Signup assessment, case/session creation, initial risk events and cursor
 advancement commit atomically. Provider successes are cached before that
 transaction so a process restart does not normally repeat paid enrichment.

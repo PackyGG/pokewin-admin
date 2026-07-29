@@ -1,11 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { FingerprintReuseError, fiatEligibilityInternals } from "../src/fiat-eligibility.js";
+import Fastify from "fastify";
+
+import type { Config } from "../src/config.js";
+import {
+  FiatEligibilityService,
+  FingerprintReuseError,
+  fiatEligibilityInternals,
+} from "../src/fiat-eligibility.js";
 import { FiatEligibilityAccess } from "../src/fiat-eligibility-auth.js";
 import {
   authenticateFiatEligibilityRequest,
   fiatEligibilityRequestSchema,
+  registerFiatEligibilityRoutes,
 } from "../src/fiat-eligibility-routes.js";
 import type { EnrichmentResult } from "../src/enrichment.js";
 
@@ -156,6 +164,179 @@ test("Fiat request contract accepts only the exact dev/prod payload", () => {
     }).success,
     false,
   );
+});
+
+test("Fiat endpoint logs correlated decisions without credentials or raw device data", async () => {
+  const logLines: string[] = [];
+  const app = Fastify({
+    logger: {
+      level: "info",
+      stream: {
+        write(line: string) {
+          logLines.push(line);
+        },
+      },
+    },
+  });
+  const localAccess = new FiatEligibilityAccess({
+    FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
+    FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
+    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
+    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
+  });
+  const decision = {
+    decisionId: "decision-1",
+    decision: "allow" as const,
+    allowed: true,
+    riskScore: 8,
+    reasonCodes: ["established_account"],
+    expiresAt: "2026-07-29T12:01:00.000Z",
+    idempotent: false,
+  };
+  const service = {
+    assess: async () => decision,
+  } as unknown as FiatEligibilityService;
+  await registerFiatEligibilityRoutes(app, {
+    config: {
+      FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 60,
+    } as Config,
+    access: localAccess,
+    service,
+  });
+
+  const fingerprint = "fresh-sensitive-fingerprint-request";
+  const clientIp = "203.0.113.42";
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    headers: { authorization: `Bearer ${PROD_KEY}` },
+    payload: {
+      env: "prod",
+      createdAt: new Date().toISOString(),
+      ipAddress: clientIp,
+      fingerprint,
+      userID: "user-log-test",
+    },
+  });
+  await app.close();
+
+  assert.equal(response.statusCode, 200);
+  const records = logLines.map(
+    (line) => JSON.parse(line) as Record<string, unknown>,
+  );
+  const started = records.find(
+    (record) => record.event === "fiat_eligibility.assessment_started",
+  );
+  const completed = records.find(
+    (record) => record.event === "fiat_eligibility.assessment_completed",
+  );
+  assert.equal(started?.userId, "user-log-test");
+  assert.equal(started?.clientAddressFamily, 4);
+  assert.equal(completed?.decisionId, decision.decisionId);
+  assert.equal(completed?.decision, "allow");
+  assert.equal(completed?.riskScore, 8);
+  assert.deepEqual(completed?.reasonCodes, ["established_account"]);
+  assert.equal(typeof completed?.durationMs, "number");
+  assert.equal(started?.requestId, completed?.requestId);
+
+  const serializedLogs = logLines.join("");
+  assert.equal(serializedLogs.includes(PROD_KEY), false);
+  assert.equal(serializedLogs.includes(fingerprint), false);
+  assert.equal(serializedLogs.includes(clientIp), false);
+});
+
+test("Fiat endpoint logs safe rejection, replay, and failure classifications", async () => {
+  const logLines: string[] = [];
+  const app = Fastify({
+    logger: {
+      level: "info",
+      stream: {
+        write(line: string) {
+          logLines.push(line);
+        },
+      },
+    },
+  });
+  const localAccess = new FiatEligibilityAccess({
+    FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
+    FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
+    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
+    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
+  });
+  const secretErrorMessage =
+    "database failed at postgresql://private-user:private-password@db";
+  const service = {
+    assess: async (request: { userID: string }) => {
+      if (request.userID === "replay-user") throw new FingerprintReuseError();
+      throw Object.assign(new Error(secretErrorMessage), { code: "ECONNRESET" });
+    },
+  } as unknown as FiatEligibilityService;
+  await registerFiatEligibilityRoutes(app, {
+    config: {
+      FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 60,
+    } as Config,
+    access: localAccess,
+    service,
+  });
+  const requestPayload = {
+    env: "prod",
+    createdAt: new Date().toISOString(),
+    ipAddress: "203.0.113.42",
+    fingerprint: "fresh-sensitive-fingerprint-request",
+    userID: "failure-user",
+  };
+
+  const invalid = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    payload: { env: "prod" },
+  });
+  const unauthenticated = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    headers: { authorization: "Bearer definitely-not-valid" },
+    payload: requestPayload,
+  });
+  const replay = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    headers: { authorization: `Bearer ${PROD_KEY}` },
+    payload: { ...requestPayload, userID: "replay-user" },
+  });
+  const failed = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    headers: { authorization: `Bearer ${PROD_KEY}` },
+    payload: requestPayload,
+  });
+  await app.close();
+
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(unauthenticated.statusCode, 401);
+  assert.equal(replay.statusCode, 409);
+  assert.equal(failed.statusCode, 503);
+  const records = logLines.map(
+    (line) => JSON.parse(line) as Record<string, unknown>,
+  );
+  for (const event of [
+    "fiat_eligibility.invalid_request",
+    "fiat_eligibility.authentication_rejected",
+    "fiat_eligibility.fingerprint_reused",
+    "fiat_eligibility.assessment_failed",
+  ]) {
+    assert.equal(
+      records.some((record) => record.event === event),
+      true,
+      `${event} was not logged`,
+    );
+  }
+  const failure = records.find(
+    (record) => record.event === "fiat_eligibility.assessment_failed",
+  );
+  assert.equal(failure?.errorType, "Error");
+  assert.equal(failure?.errorCode, "ECONNRESET");
+  assert.equal(logLines.join("").includes(secretErrorMessage), false);
+  assert.equal(logLines.join("").includes(PROD_KEY), false);
 });
 
 test("established matching account is automatically allowed", () => {
