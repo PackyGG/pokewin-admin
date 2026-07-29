@@ -3,6 +3,7 @@ import "server-only";
 import { and, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import { admin_audit_events } from "@/lib/db-schema/admin/schema";
 import { account, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 
@@ -12,12 +13,16 @@ type SetupRow = {
   id: string;
   guild_id: string;
   creator_discord_user_id: string;
+  created_by_discord_user_id: string;
   interaction_id: string;
   status: "pending" | "active";
   category_id: string | null;
   chat_channel_id: string | null;
   logs_channel_id: string | null;
   category_name: string | null;
+  creator_user_id: string | null;
+  linked_by_discord_user_id: string | null;
+  link_interaction_id: string | null;
 };
 
 export type CreatorSetup = {
@@ -27,6 +32,7 @@ export type CreatorSetup = {
   chatChannelId: string;
   logsChannelId: string;
   categoryName: string;
+  creatorUserId: string | null;
 };
 
 export class CreatorSetupError extends Error {
@@ -58,13 +64,18 @@ function activeSetup(row: SetupRow): CreatorSetup {
     chatChannelId: row.chat_channel_id,
     logsChannelId: row.logs_channel_id,
     categoryName: row.category_name,
+    creatorUserId: row.creator_user_id ?? null,
   };
 }
 
-async function requireLinkedCreator(discordUserId: string): Promise<void> {
+async function requireLinkedCreator(
+  discordUserId: string,
+  creatorUserId?: string,
+): Promise<void> {
   const db = getProdReadDrizzleDb();
   const [linked] = await db
     .select({
+      id: user.id,
       role: user.role,
       roles: user.roles,
     })
@@ -85,9 +96,229 @@ async function requireLinkedCreator(discordUserId: string): Promise<void> {
     throw new CreatorSetupError(
       404,
       "creator_not_found",
-      "That Discord account is not linked to a creator account.",
+      creatorUserId
+        ? "That Packy creator account is not linked to this Discord account."
+        : "That Discord account is not linked to a creator account.",
     );
   }
+  if (creatorUserId && linked.id !== creatorUserId) {
+    throw new CreatorSetupError(
+      409,
+      "creator_mismatch",
+      "That Packy creator account belongs to a different Discord account.",
+    );
+  }
+}
+
+function linkedSetup(row: SetupRow): CreatorSetup {
+  const setup = activeSetup(row);
+  if (
+    !row.creator_user_id ||
+    !row.linked_by_discord_user_id ||
+    !row.link_interaction_id
+  ) {
+    throw new Error("Linked creator setup has incomplete account data");
+  }
+  return setup;
+}
+
+export async function linkCreatorSetup(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  creatorUserId: string;
+  actorDiscordUserId: string;
+  interactionId: string;
+  apiKeyId: string;
+  apiKeyPrefix: string;
+}): Promise<{ status: "linked" | "already_linked"; setup: CreatorSetup }> {
+  return adminDrizzle.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${`discord-creator-link:${input.guildId}:${input.categoryId}`}, 0)
+      )
+    `);
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${`discord-creator-link-interaction:${input.interactionId}`}, 0)
+      )
+    `);
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${`discord-creator-link-account:${input.guildId}:${input.creatorUserId}`}, 0)
+      )
+    `);
+
+    const interactionResult = await tx.execute<SetupRow>(sql`
+      SELECT
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+      FROM discord_creator_setups
+      WHERE link_interaction_id = ${input.interactionId}
+      FOR UPDATE
+    `);
+    const interactionSetup = interactionResult.rows[0];
+    if (interactionSetup) {
+      if (
+        interactionSetup.guild_id !== input.guildId ||
+        interactionSetup.category_id !== input.categoryId ||
+        (interactionSetup.chat_channel_id !== input.channelId &&
+          interactionSetup.logs_channel_id !== input.channelId) ||
+        interactionSetup.creator_user_id !== input.creatorUserId ||
+        interactionSetup.linked_by_discord_user_id !== input.actorDiscordUserId
+      ) {
+        throw new CreatorSetupError(
+          409,
+          "idempotency_conflict",
+          "That Discord interaction is already bound to another creator link.",
+        );
+      }
+      return {
+        status: "already_linked" as const,
+        setup: linkedSetup(interactionSetup),
+      };
+    }
+
+    const setupResult = await tx.execute<SetupRow>(sql`
+      SELECT
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+      FROM discord_creator_setups
+      WHERE guild_id = ${input.guildId}
+        AND category_id = ${input.categoryId}
+        AND (
+          chat_channel_id = ${input.channelId}
+          OR logs_channel_id = ${input.channelId}
+        )
+        AND status = 'active'
+      FOR UPDATE
+    `);
+    const setup = setupResult.rows[0];
+    if (!setup) {
+      throw new CreatorSetupError(
+        404,
+        "setup_not_found",
+        "This channel does not belong to an active creator section.",
+      );
+    }
+    if (
+      input.actorDiscordUserId !== setup.creator_discord_user_id &&
+      input.actorDiscordUserId !== setup.created_by_discord_user_id
+    ) {
+      throw new CreatorSetupError(
+        403,
+        "setup_actor_forbidden",
+        "Only this creator or the staff member who created the section can link it.",
+      );
+    }
+
+    await requireLinkedCreator(
+      setup.creator_discord_user_id,
+      input.creatorUserId,
+    );
+
+    if (setup.creator_user_id) {
+      if (setup.creator_user_id !== input.creatorUserId) {
+        throw new CreatorSetupError(
+          409,
+          "setup_link_conflict",
+          "This creator section is already linked to another Packy account.",
+        );
+      }
+      return {
+        status: "already_linked" as const,
+        setup: linkedSetup(setup),
+      };
+    }
+
+    const conflictingResult = await tx.execute<{ id: string }>(sql`
+      SELECT id
+      FROM discord_creator_setups
+      WHERE guild_id = ${input.guildId}
+        AND creator_user_id = ${input.creatorUserId}
+      FOR UPDATE
+    `);
+    if (conflictingResult.rows[0]) {
+      throw new CreatorSetupError(
+        409,
+        "setup_link_conflict",
+        "That Packy creator account is already linked to another section.",
+      );
+    }
+
+    const updated = await tx.execute<SetupRow>(sql`
+      UPDATE discord_creator_setups
+      SET creator_user_id = ${input.creatorUserId},
+          linked_by_discord_user_id = ${input.actorDiscordUserId},
+          link_interaction_id = ${input.interactionId},
+          linked_at = now()
+      WHERE id = ${setup.id}::uuid
+        AND creator_user_id IS NULL
+      RETURNING
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+    `);
+    const linked = updated.rows[0];
+    if (!linked) {
+      throw new CreatorSetupError(
+        409,
+        "setup_link_conflict",
+        "This creator section was linked by another request.",
+      );
+    }
+
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: null,
+      event_type: "discord_creator_setup_linked",
+      target_user_id: input.creatorUserId,
+      metadata: {
+        apiKeyId: input.apiKeyId,
+        apiKeyPrefix: input.apiKeyPrefix,
+        setupId: linked.id,
+        guildId: input.guildId,
+        categoryId: input.categoryId,
+        channelId: input.channelId,
+        creatorDiscordUserId: linked.creator_discord_user_id,
+        actorDiscordUserId: input.actorDiscordUserId,
+        interactionId: input.interactionId,
+      },
+    });
+
+    return { status: "linked" as const, setup: linkedSetup(linked) };
+  });
 }
 
 export async function prepareCreatorSetup(input: {

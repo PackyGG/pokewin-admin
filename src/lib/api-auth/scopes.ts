@@ -62,7 +62,7 @@ export const API_SCOPES = {
   "discord:creator:setup": {
     label: "Provision creator Discord channels",
     description:
-      "Validate linked creators and reserve, complete, or cancel private creator-channel setup records. Reads the creator role from the production mirror and writes provisioning state only to the admin database.",
+      "Validate linked creators; reserve, complete, or cancel private creator-channel setup records; and bind an active section to its matching Packy creator account. Reads the creator role and Discord ownership from the production mirror and writes provisioning state only to the admin database.",
     access: "admin-write",
   },
   "discord:antifraud": {
