@@ -31,28 +31,6 @@ export async function registerNetworkRoutes(
   service: NetworkRiskService,
   config: Config,
 ): Promise<void> {
-  app.get("/v1/networks/search", async (request) => {
-    const { q } = z.object({
-      q: z.string().trim().min(2).max(100),
-    }).parse(request.query);
-    const prefix = `${q.toLowerCase()}%`;
-    const result = await db.source.query(
-      `
-        SELECT id, username, email, image, country_code, created_at AT TIME ZONE 'UTC' AS created_at
-        FROM "user"
-        WHERE id=$1
-           OR lower(username) LIKE $2
-           OR lower(email)=$3
-        ORDER BY
-          CASE WHEN id=$1 THEN 0 WHEN lower(username)=lower($1) THEN 1 ELSE 2 END,
-          created_at DESC
-        LIMIT 20
-      `,
-      [q, prefix, q.toLowerCase()],
-    );
-    return { data: result.rows };
-  });
-
   app.get("/v1/networks/accounts/:userId", async (request, reply) => {
     const { userId } = z.object({
       userId: z.string().trim().min(1).max(100),

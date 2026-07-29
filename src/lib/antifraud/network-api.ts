@@ -141,47 +141,6 @@ export type CreatorFraudAssessment = z.infer<typeof creatorAssessmentSchema>;
 export type AntifraudAnalysisRule = z.infer<typeof analysisRuleSchema>;
 export type CreatorWindow = "7d" | "30d" | "90d" | "lifetime";
 
-export async function searchNetworkAccounts(query: string): Promise<{
-  configured: boolean;
-  data: Array<{
-    id: string;
-    username: string | null;
-    email: string | null;
-    image: string | null;
-    country_code: string | null;
-    created_at: string;
-  }>;
-  error: boolean;
-}> {
-  if (!readConfig().baseUrl || !readConfig().token) {
-    return { configured: false, data: [], error: false };
-  }
-  try {
-    const response = await request(
-      `/v1/networks/search?q=${encodeURIComponent(query)}`,
-    );
-    if (!response.ok) throw new Error(`search returned ${response.status}`);
-    const schema = z.object({
-      data: z.array(z.object({
-        id: z.string(),
-        username: z.string().nullable(),
-        email: z.string().nullable(),
-        image: z.string().nullable(),
-        country_code: z.string().nullable(),
-        created_at: z.string(),
-      })),
-    });
-    return {
-      configured: true,
-      data: schema.parse(await response.json()).data,
-      error: false,
-    };
-  } catch (error) {
-    console.error("[antifraud-networks] account search failed:", error);
-    return { configured: true, data: [], error: true };
-  }
-}
-
 export async function getAccountNetwork(userId: string): Promise<{
   configured: boolean;
   data: AntifraudNetworkSnapshot | null;

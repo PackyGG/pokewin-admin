@@ -633,6 +633,7 @@ export function AccountNetworkMap({
                   <Button
                     size="sm"
                     variant="outline"
+                    nativeButton={false}
                     render={<HostLink href={`/users/${selected.user_id}`} />}
                   >
                     Open account

@@ -9,7 +9,6 @@ import {
   Braces,
   Fingerprint,
   Gauge,
-  GitFork,
   LayoutDashboard,
   MailWarning,
   MapPinned,
@@ -69,10 +68,6 @@ const WORKSPACE_NAV: NavItem[] = [
   { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
 const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
-
-const NETWORK_NAV: NavItem[] = [
-  { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
-];
 
 const TRANSACTION_NAV: NavItem[] = [
   { label: "Fiat Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
@@ -295,18 +290,6 @@ export function AntifraudSidebar({
               onNavTap={handleNavTap}
               alertCounts={navAlertCounts}
               onAlertSeen={markNavAlertSeen}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Network</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavMenu
-              items={NETWORK_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
               toHref={toHref}
             />
           </SidebarGroupContent>

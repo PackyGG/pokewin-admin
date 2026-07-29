@@ -1,11 +1,11 @@
 import { Suspense } from "react";
+import { notFound } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
   Fingerprint,
   Gauge,
   Network,
-  Search,
   ShieldAlert,
   Users,
   Wifi,
@@ -13,15 +13,11 @@ import {
 
 import { HostLink } from "@/components/host-link";
 import { KpiTile, PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getAccountNetwork,
   getNetworkGraph,
-  searchNetworkAccounts,
 } from "@/lib/antifraud/network-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { formatNumber, formatRelative } from "@/lib/utils/format";
@@ -35,12 +31,12 @@ export const metadata = { title: "Account Networks · Antifraud" };
 export default async function AccountNetworksPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; user?: string; page?: string }>;
+  searchParams: Promise<{ user?: string; page?: string }>;
 }) {
   await requireAntifraudPageAccess();
   const params = await searchParams;
-  const query = params.q?.trim().slice(0, 100) ?? "";
   const userId = params.user?.trim().slice(0, 100) ?? "";
+  if (!userId) notFound();
   const rawPage = Number(params.page ?? "1");
   const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   return (
@@ -49,93 +45,20 @@ export default async function AccountNetworksPage({
         <PageHeroIdentity />
       </PageHero>
 
-      <div className="rounded-xl border bg-card p-4">
-        <form className="flex gap-2" action="/antifraud/networks">
-          <Input
-            name="q"
-            defaultValue={query}
-            placeholder="Search username, exact email, or user ID"
-            minLength={2}
-            maxLength={100}
-            aria-label="Search accounts"
-          />
-          <Button type="submit">
-            <Search className="size-4" />
-            <span className="hidden sm:inline">Search</span>
-          </Button>
-        </form>
-      </div>
-
-      <Suspense key={`${query}-${userId}-${page}`} fallback={<NetworkSkeleton />}>
-        <NetworkContent query={query} userId={userId} page={page} />
+      <Suspense key={`${userId}-${page}`} fallback={<NetworkSkeleton />}>
+        <NetworkContent userId={userId} page={page} />
       </Suspense>
     </div>
   );
 }
 
 async function NetworkContent({
-  query,
   userId,
   page,
 }: {
-  query: string;
   userId: string;
   page: number;
 }) {
-  if (!userId && query.length < 2) {
-    return <Empty text="Search for an account to build or open its connected network." />;
-  }
-  if (!userId) {
-    const result = await searchNetworkAccounts(query);
-    if (!result.configured) return <Empty text="The monitor service is not configured." />;
-    if (result.error) return <Empty text="Account search could not be loaded." />;
-    if (result.data.length === 0) return <Empty text="No matching accounts found." />;
-    return (
-      <div className="space-y-3">
-        <SectionHeading
-          icon={Users}
-          title={
-            <>
-              Matching accounts
-              <span className="text-xs font-normal text-muted-foreground">
-                {result.data.length} result
-                {result.data.length === 1 ? "" : "s"}
-              </span>
-            </>
-          }
-        />
-        <div className="divide-y overflow-hidden rounded-xl border bg-card">
-          {result.data.map((account) => (
-            <HostLink
-              key={account.id}
-              href={`/antifraud/networks?user=${encodeURIComponent(account.id)}`}
-              className="flex items-center gap-3 p-3 transition-colors hover:bg-accent/50"
-            >
-              <Avatar className="size-9">
-                {account.image && <AvatarImage src={account.image} alt="" />}
-                <AvatarFallback>{(account.username ?? "?").slice(0, 2)}</AvatarFallback>
-              </Avatar>
-              <span className="min-w-0 flex-1">
-                <span className="block truncate text-sm font-semibold">
-                  {account.username ?? "Unnamed account"}
-                </span>
-                <span className="block truncate text-xs text-muted-foreground">
-                  {account.email ?? account.id}
-                </span>
-              </span>
-              {account.country_code && (
-                <Badge variant="outline" className="shrink-0">
-                  {account.country_code}
-                </Badge>
-              )}
-              <ChevronRight className="size-4 shrink-0 text-muted-foreground" />
-            </HostLink>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
   const network = await getAccountNetwork(userId);
   if (!network.configured) return <Empty text="The monitor service is not configured." />;
   if (network.notFound) return <Empty text="That account does not exist." />;
@@ -278,6 +201,7 @@ async function NetworkContent({
               size="sm"
               variant="outline"
               disabled={page <= 1}
+              nativeButton={false}
               render={page > 1 ? <HostLink href={`/antifraud/networks?user=${encodeURIComponent(userId)}&page=${page - 1}`} /> : undefined}
             >
               <ChevronLeft className="size-3.5" />
@@ -287,6 +211,7 @@ async function NetworkContent({
               size="sm"
               variant="outline"
               disabled={page >= graph.pagination.pages}
+              nativeButton={false}
               render={page < graph.pagination.pages ? <HostLink href={`/antifraud/networks?user=${encodeURIComponent(userId)}&page=${page + 1}`} /> : undefined}
             >
               Next
