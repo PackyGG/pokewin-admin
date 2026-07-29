@@ -4,13 +4,13 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { requirePageAccess } from "@/lib/dal";
 import {
   createDiscordNotificationEvent,
   deleteDiscordNotificationRoute,
   setDiscordNotificationRouteEnabled,
   upsertDiscordNotificationRoute,
 } from "@/lib/discord-notifications/config";
+import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 
 const snowflakeSchema = z.string().regex(/^\d{15,21}$/, "Invalid Discord channel");
 const eventKeySchema = z
@@ -36,7 +36,7 @@ const routeSchema = z.object({
 const routeIdSchema = z.string().uuid("Invalid routing rule");
 
 export async function createCustomEventAction(input: unknown): Promise<void> {
-  const session = await requirePageAccess("/webhooks");
+  const session = await requireAntifraudManager();
   const parsed = createEventSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
@@ -53,11 +53,11 @@ export async function createCustomEventAction(input: unknown): Promise<void> {
       category: parsed.data.category,
     },
   });
-  revalidatePath("/webhooks");
+  revalidatePath("/antifraud/webhooks");
 }
 
 export async function upsertRouteAction(input: unknown): Promise<void> {
-  const session = await requirePageAccess("/webhooks");
+  const session = await requireAntifraudManager();
   const parsed = routeSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
@@ -70,11 +70,11 @@ export async function upsertRouteAction(input: unknown): Promise<void> {
     eventType: "discord_notification_route_upserted",
     metadata: parsed.data,
   });
-  revalidatePath("/webhooks");
+  revalidatePath("/antifraud/webhooks");
 }
 
 export async function setRouteEnabledAction(input: unknown): Promise<void> {
-  const session = await requirePageAccess("/webhooks");
+  const session = await requireAntifraudManager();
   const parsed = z
     .object({ id: routeIdSchema, enabled: z.boolean() })
     .safeParse(input);
@@ -86,11 +86,11 @@ export async function setRouteEnabledAction(input: unknown): Promise<void> {
     eventType: "discord_notification_route_toggled",
     metadata: parsed.data,
   });
-  revalidatePath("/webhooks");
+  revalidatePath("/antifraud/webhooks");
 }
 
 export async function deleteRouteAction(input: unknown): Promise<void> {
-  const session = await requirePageAccess("/webhooks");
+  const session = await requireAntifraudManager();
   const parsed = z.object({ id: routeIdSchema }).safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
@@ -100,5 +100,5 @@ export async function deleteRouteAction(input: unknown): Promise<void> {
     eventType: "discord_notification_route_deleted",
     metadata: parsed.data,
   });
-  revalidatePath("/webhooks");
+  revalidatePath("/antifraud/webhooks");
 }

@@ -26,19 +26,12 @@ test("fraud navigation owns a manager-only Notifications webhooks route", () => 
   assert.match(antifraudHost, /"webhooks"/);
 });
 
-test("webhooks page is manager-gated and consumes only the monitor registry", () => {
+test("webhooks page is manager-gated and renders the bot routing workspace", () => {
   const page = source(
     "src/app/(antifraud)/antifraud/webhooks/page.tsx",
   );
-  const monitorApi = source("src/lib/antifraud/monitor-api.ts");
 
   assert.match(page, /await requireAntifraudManagerPage\(\)/);
-  assert.match(page, /getAntifraudNotificationRoutes\(\)/);
-  assert.match(page, /runtime\.data\?\.routes/);
-  assert.doesNotMatch(page, /ANTIFRAUD_[A-Z_]+|FIAT_[A-Z_]+/);
-  assert.doesNotMatch(page, /route\.(?:url|token|secret|signature|webhookId)/i);
-  assert.match(monitorApi, /label:\s*z\.string\(\)/);
-  assert.match(monitorApi, /purpose:\s*z\.string\(\)/);
-  assert.match(monitorApi, /eventFamilies:\s*z\.array\(z\.string\(\)\)/);
-  assert.match(monitorApi, /configured:\s*z\.boolean\(\)/);
+  assert.match(page, /getDiscordNotificationConfig\(\)/);
+  assert.match(page, /DiscordRoutingWorkspace/);
 });

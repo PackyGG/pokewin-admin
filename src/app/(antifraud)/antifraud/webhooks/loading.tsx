@@ -1,23 +1,19 @@
-import { Webhook } from "lucide-react";
-
-import { KpiStripSkeleton } from "@/components/loading-skeletons";
-import { SectionHeading } from "@/components/modern-panels";
+import { PageHeroSkeleton } from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
 export default function WebhooksLoading() {
   return (
     <div className="space-y-6">
-      <div>
-        <SectionHeading icon={Webhook} title="Webhooks" />
-        <div className="mt-2 h-5 w-full max-w-2xl animate-pulse rounded bg-muted/50" />
+      <PageHeroSkeleton />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Skeleton className="h-24 rounded-xl" />
+        <Skeleton className="h-24 rounded-xl" />
+        <Skeleton className="h-24 rounded-xl" />
       </div>
-      <KpiStripSkeleton count={3} />
-      <div className="grid gap-4 lg:grid-cols-2">
-        {Array.from({ length: 6 }, (_, index) => (
-          <div
-            key={index}
-            className="h-52 animate-pulse rounded-xl border bg-muted/35"
-          />
-        ))}
+      <Skeleton className="h-16 rounded-xl" />
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
+        <Skeleton className="h-[520px] rounded-xl" />
+        <Skeleton className="h-[520px] rounded-xl" />
       </div>
     </div>
   );

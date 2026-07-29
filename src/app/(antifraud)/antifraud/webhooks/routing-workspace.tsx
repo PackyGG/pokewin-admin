@@ -233,7 +233,7 @@ export function DiscordRoutingWorkspace({
           <p className="truncate text-sm font-semibold">
             {initialConfig.guild.connected
               ? initialConfig.guild.name
-              : "Admin Discord is not connected"}
+              : "Antifraud Discord routing is not connected"}
           </p>
           <p className="text-xs text-muted-foreground">
             {initialConfig.guild.lastSyncedAt

@@ -202,6 +202,16 @@ export async function middleware(request: NextRequest) {
     if (appHost?.basePath === "/antifraud" && pathname === "/settings/api") {
       return NextResponse.redirect(new URL("/api", request.url), 308);
     }
+    if (appHost?.basePath === null && pathname === "/webhooks") {
+      const fraudHost = APP_HOSTS.find(
+        (entry) => entry.basePath === "/antifraud",
+      );
+      if (fraudHost) {
+        const url = new URL(`https://${fraudHost.host}/webhooks`);
+        url.search = request.nextUrl.search;
+        return NextResponse.redirect(url, 308);
+      }
+    }
 
     // Creator Rewards moved out of the apex dashboard and now belongs only to
     // the Marketing workspace. Keep old bookmarks useful without retaining a
