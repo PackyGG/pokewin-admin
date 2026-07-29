@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-30 minimal Fiat eligibility response:** successful `POST /v1/fiat-eligibility/check` responses now contain only top-level `decisionId`, boolean `allowed`, and immutable persisted `timestamp`. Detailed score, reasons, expiry, and idempotency remain internal in Antifraud logs/evidence. Monitor TypeScript and all 183 service tests pass.
+
 - **2026-07-30 Fiat eligibility security/performance hardening:** the dedicated checkout gate caps its JSON body at 4 KiB, coalesces concurrent identical Fingerprint requests into one provider/database review, rejects concurrent conflicting reuse, and bounds velocity history to the indexed 24-hour window. The caller contract, automatic decision policy, exact dev/prod key and IP isolation, read-only MAIN routing, five-second provider limits, structured redaction, and durable replay protection remain unchanged. Monitor TypeScript/build, all 183 monitor tests, production dependency audit, repository TypeScript, all 387 guardrails, full lint with only the existing generated-schema warning, and the production build pass.
 
 - **2026-07-30 Keno gaming-row cleanup:** `/users/[id]?tab=gaming` now represents each Keno round once on its enriched bet row, with the same won/lost outcome treatment and P&L/won-value presentation as packs, battles, and upgrader. Separate Keno payout rows and Keno-only hit/multiplier chips are removed from the feed; the detailed replay remains available from the bet row. The focused regression, all 385 guardrails, TypeScript, scoped ESLint, diff check, and a clean production build pass.

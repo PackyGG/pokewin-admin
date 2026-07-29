@@ -127,27 +127,23 @@ It compares the checkout with signup IP/device, account age, account and Fiat
 locks, KYC, country policy, shared networks, signup/case history, previous Fiat
 history and recent eligibility velocity.
 
-The response is always an automatic binary decision:
+Successful assessments return only the persisted decision ID, the binary
+result, and the immutable decision timestamp:
 
 ```json
 {
-  "data": {
-    "decisionId": "assessment-uuid",
-    "decision": "allow",
-    "allowed": true,
-    "riskScore": 0,
-    "reasonCodes": [],
-    "expiresAt": "2026-07-29T12:01:00.000Z",
-    "idempotent": false
-  }
+  "decisionId": "assessment-uuid",
+  "allowed": true,
+  "timestamp": "2026-07-29T12:00:00.000Z"
 }
 ```
 
-Allow decisions expire after 60 seconds. The production backend must bind the
-decision to that checkout attempt and must fail closed on `deny`, an expired
-decision, any non-200 response, timeout or transport error. Repeating the exact
-payload with the same Fingerprint request ID returns the stored result; reusing
-that event with changed input returns `409 fingerprint_reused`.
+Allow decisions expire 60 seconds after `timestamp`. The production backend
+must bind the decision to that checkout attempt and must fail closed on `deny`,
+an expired decision, any non-200 response, timeout or transport error.
+Repeating the exact payload with the same Fingerprint request ID returns the
+stored result; reusing that event with changed input returns
+`409 fingerprint_reused`.
 
 Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
 `FIAT_ELIGIBILITY_PROD_ALLOWED_IPS`. Development additionally requires

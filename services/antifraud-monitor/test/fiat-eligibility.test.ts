@@ -241,6 +241,7 @@ test("Fiat endpoint logs correlated decisions without credentials or raw device 
     decisionId: "decision-1",
     decision: "allow" as const,
     allowed: true,
+    timestamp: "2026-07-29T12:00:00.000Z",
     riskScore: 8,
     reasonCodes: ["established_account"],
     expiresAt: "2026-07-29T12:01:00.000Z",
@@ -274,6 +275,11 @@ test("Fiat endpoint logs correlated decisions without credentials or raw device 
   await app.close();
 
   assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    decisionId: "decision-1",
+    allowed: true,
+    timestamp: "2026-07-29T12:00:00.000Z",
+  });
   const records = logLines.map(
     (line) => JSON.parse(line) as Record<string, unknown>,
   );
@@ -515,7 +521,9 @@ test("concurrent identical requests share one automatic provider review", async 
   };
   const antifraud = {
     query: async (sql: string) => {
-      if (sql.includes("SELECT id, request_hash")) return { rows: [] };
+      if (sql.includes("WHERE fingerprint_request_id = $1")) {
+        return { rows: [] };
+      }
       if (sql.includes("signup_risk_score")) return { rows: [] };
       if (sql.includes("attempts_10m")) {
         return {
@@ -534,6 +542,7 @@ test("concurrent identical requests share one automatic provider review", async 
             risk_score: 0,
             reason_codes: [],
             expires_at: new Date(now.getTime() + 60_000),
+            created_at: now,
           }],
         };
       }

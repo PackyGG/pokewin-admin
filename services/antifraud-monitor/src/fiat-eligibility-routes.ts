@@ -11,10 +11,26 @@ import {
 import {
   FiatEligibilityService,
   FingerprintReuseError,
+  type FiatEligibilityDecision,
 } from "./fiat-eligibility.js";
 
 export const FIAT_ELIGIBILITY_PATH = "/v1/fiat-eligibility/check";
 const MAX_LOGGED_VALIDATION_ISSUES = 5;
+
+export type FiatEligibilityResponse = Pick<
+  FiatEligibilityDecision,
+  "decisionId" | "allowed" | "timestamp"
+>;
+
+function publicDecision(
+  decision: FiatEligibilityDecision,
+): FiatEligibilityResponse {
+  return {
+    decisionId: decision.decisionId,
+    allowed: decision.allowed,
+    timestamp: decision.timestamp,
+  };
+}
 
 export const fiatEligibilityRequestSchema = z.object({
   env: z.enum(["dev", "prod"]),
@@ -207,7 +223,7 @@ export async function registerFiatEligibilityRoutes(
           },
           "Fiat eligibility assessment completed",
         );
-        return { data: decision };
+        return publicDecision(decision);
       } catch (error) {
         if (error instanceof FingerprintReuseError) {
           request.log.warn(

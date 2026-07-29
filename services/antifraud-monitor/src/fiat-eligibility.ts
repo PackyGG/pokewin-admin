@@ -25,6 +25,7 @@ export type FiatEligibilityDecision = {
   decisionId: string;
   decision: "allow" | "deny";
   allowed: boolean;
+  timestamp: string;
   riskScore: number;
   reasonCodes: string[];
   expiresAt: string;
@@ -56,6 +57,7 @@ type StoredAssessment = {
   risk_score: number;
   reason_codes: string[];
   expires_at: Date;
+  created_at: Date;
 };
 
 export type FiatEligibilitySignal = {
@@ -507,6 +509,7 @@ function storedDecision(
     decisionId: row.id,
     decision: row.decision,
     allowed: row.decision === "allow",
+    timestamp: row.created_at.toISOString(),
     riskScore: row.risk_score,
     reasonCodes: row.reason_codes,
     expiresAt: row.expires_at.toISOString(),
@@ -543,7 +546,9 @@ export class FiatEligibilityService {
   ): Promise<StoredAssessment | null> {
     const result = await this.db.antifraud.query<StoredAssessment>(
       `
-        SELECT id, request_hash, decision, risk_score, reason_codes, expires_at
+        SELECT
+          id, request_hash, decision, risk_score, reason_codes,
+          expires_at, created_at
         FROM fiat_eligibility_assessments
         WHERE fingerprint_request_id = $1
         LIMIT 1
@@ -708,7 +713,8 @@ export class FiatEligibilityService {
         )
         ON CONFLICT (fingerprint_request_id) DO NOTHING
         RETURNING
-          id, request_hash, decision, risk_score, reason_codes, expires_at
+          id, request_hash, decision, risk_score, reason_codes,
+          expires_at, created_at
       `,
       [
         input.env,
