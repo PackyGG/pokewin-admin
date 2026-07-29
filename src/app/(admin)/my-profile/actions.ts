@@ -13,22 +13,26 @@ import { assertSafeWebhookUrl, isSafeWebhookUrl } from "@/lib/security/webhook-u
 
 /**
  * Get the main site user_id linked to the current admin creator.
- * We match by email between admin_users and the target_user_id stored in socials/webhooks.
- * For the my-profile page, the session contains the admin_user id + email.
- * We need a way to find the corresponding main site user_id.
  *
- * Convention: when makeCreator() creates the admin_user, we store the main site
- * user_id in admin_notes or we can look it up. For simplicity, we'll store
- * the main user_id in the admin_users username field as "creator_{username}"
- * and match by email. We query the main DB to find the user by email.
+ * The link is resolved by email: the admin_users row and the creator's
+ * main-site account share the same email address, so we look up the MAIN
+ * `user` row (role = creator) matching the admin user's email. That id is
+ * what creator_socials / creator_webhooks store in `target_user_id` — the
+ * rest of the system (creators pages, webhook dispatch, deals) treats that
+ * column strictly as a MAIN user id.
+ *
+ * If no main-site account matches, the creator is NOT linked yet and every
+ * mutation here refuses. Falling back to the admin-DB uuid would write rows
+ * keyed on an id no other surface can resolve — they would silently orphan
+ * the moment the account is properly linked.
  */
 import { getReadDrizzleDb } from "@/lib/db";
 
 async function getCreatorTargetUserId(): Promise<string> {
-  const db = await getReadDrizzleDb();
   const session = await verifySession();
   // Holds the creator role (primary OR secondary in a multi-role set).
   if (!sessionHasRole(session, "creator")) throw new Error("Not a creator");
+  const db = await getReadDrizzleDb();
 
   // Look up the admin_user to get email, then find main user by email
   const [adminUser] = await adminDrizzle.select({ email: admin_users.email })
@@ -41,8 +45,12 @@ async function getCreatorTargetUserId(): Promise<string> {
     .where(and(eq(user.email, adminUser.email), eq(user.role, "creator")))
     .limit(1);
 
-  // Use main user id if linked, otherwise use admin user id
-  return mainUser?.id ?? session.userId;
+  if (!mainUser) {
+    throw new Error(
+      "Your creator account isn't linked to a main-site user yet — ask an admin to link it before managing webhooks or socials.",
+    );
+  }
+  return mainUser.id;
 }
 
 // --- Webhooks (creator self-service) ---
@@ -131,6 +139,17 @@ export async function deleteCreatorWebhook(webhookId: string) {
     .where(and(eq(creator_webhooks.id, webhookId), eq(creator_webhooks.target_user_id, userId)))
     .returning({ id: creator_webhooks.id });
   if (deleted.length === 0) throw new Error("Webhook not found");
+
+  // Audit: mirrors the admin-side deleteWebhook in creators/actions.ts so the
+  // self-service path leaves the same trail.
+  const session = await verifySession();
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_webhook_deleted",
+    targetUserId: userId,
+    metadata: { webhookId },
+  });
+
   revalidatePath("/my-profile");
 }
 
@@ -186,8 +205,19 @@ export async function unlinkSocial(socialId: string) {
 
   const deleted = await adminDrizzle.delete(creator_socials)
     .where(and(eq(creator_socials.id, socialId), eq(creator_socials.target_user_id, userId)))
-    .returning({ id: creator_socials.id });
+    .returning({ id: creator_socials.id, platform: creator_socials.platform, username: creator_socials.username });
   if (deleted.length === 0) throw new Error("Social connection not found");
+
+  // Audit: unlinking removes a verification surface — trace it like the
+  // webhook mutations above.
+  const session = await verifySession();
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_unlinked",
+    targetUserId: userId,
+    metadata: { socialId, platform: deleted[0].platform, username: deleted[0].username },
+  });
+
   revalidatePath("/my-profile");
 }
 
@@ -216,6 +246,20 @@ export async function linkSocialByUsername(platform: string, username: string) {
       platform_user_id: stats.platformUserId ?? null,
       follower_count: stats.followerCount ?? 0,
       last_fetched_at: new Date().toISOString(),
+    },
+  });
+
+  // Audit: linking attaches an external identity to the creator profile —
+  // same trail as the webhook create/update above.
+  const session = await verifySession();
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_social_linked",
+    targetUserId: userId,
+    metadata: {
+      platform: socialPlatform,
+      username: trimmed,
+      followerCount: stats.followerCount ?? 0,
     },
   });
 
