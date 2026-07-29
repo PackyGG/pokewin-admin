@@ -4,8 +4,11 @@ import { and, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { admin_audit_events } from "@/lib/db-schema/admin/schema";
-import { account, user } from "@/lib/db-schema/main/schema";
+import { account, affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
+import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { toNumber } from "@/lib/utils/decimal";
 
 export const CREATOR_SETUP_GUILD_ID = "1402743122789929022";
 
@@ -33,6 +36,29 @@ export type CreatorSetup = {
   logsChannelId: string;
   categoryName: string;
   creatorUserId: string | null;
+};
+
+export type CreatorSetupStats = {
+  periodDays: 30;
+  generatedAt: string;
+  creator: {
+    userId: string;
+    username: string | null;
+    codes: string[];
+  };
+  totals: CreatorCodeStats;
+  byCode: CreatorCodeStats[];
+};
+
+export type CreatorCodeStats = {
+  code: string | null;
+  clicks: number;
+  signups: number;
+  firstTimeDepositors: number;
+  activePlayers: number;
+  depositsUsd: number;
+  wagerUsd: number;
+  earningsUsd: number;
 };
 
 export class CreatorSetupError extends Error {
@@ -68,11 +94,14 @@ function activeSetup(row: SetupRow): CreatorSetup {
   };
 }
 
-async function requireActiveCreator(creatorUserId: string): Promise<void> {
+async function requireActiveCreator(
+  creatorUserId: string,
+): Promise<{ id: string; username: string | null }> {
   const db = getProdReadDrizzleDb();
   const [creator] = await db
     .select({
       id: user.id,
+      username: user.username,
       role: user.role,
       roles: user.roles,
     })
@@ -91,6 +120,7 @@ async function requireActiveCreator(creatorUserId: string): Promise<void> {
       "That Packy user does not have the active creator role.",
     );
   }
+  return { id: creator.id, username: creator.username };
 }
 
 async function requireDiscordOwnership(
@@ -117,6 +147,213 @@ async function requireDiscordOwnership(
       "That Packy creator account belongs to a different Discord account.",
     );
   }
+}
+
+type UsageStatsRow = {
+  code: string | null;
+  signups: string;
+  first_time_depositors: string;
+  active_players: string;
+  deposits_usd: string;
+  wager_usd: string;
+  earnings_usd: string;
+};
+
+type ClickStatsRow = {
+  code: string | null;
+  clicks: string;
+};
+
+const money = (value: unknown): number =>
+  Math.round(toNumber(value) * 100) / 100;
+
+function emptyCodeStats(code: string | null): CreatorCodeStats {
+  return {
+    code,
+    clicks: 0,
+    signups: 0,
+    firstTimeDepositors: 0,
+    activePlayers: 0,
+    depositsUsd: 0,
+    wagerUsd: 0,
+    earningsUsd: 0,
+  };
+}
+
+function readCodeStats(
+  code: string | null,
+  usage: UsageStatsRow | undefined,
+  clicks: ClickStatsRow | undefined,
+): CreatorCodeStats {
+  return {
+    code,
+    clicks: Number(clicks?.clicks ?? 0),
+    signups: Number(usage?.signups ?? 0),
+    firstTimeDepositors: Number(usage?.first_time_depositors ?? 0),
+    activePlayers: Number(usage?.active_players ?? 0),
+    depositsUsd: money(usage?.deposits_usd ?? 0),
+    wagerUsd: money(usage?.wager_usd ?? 0),
+    earningsUsd: money(usage?.earnings_usd ?? 0),
+  };
+}
+
+export async function getCreatorSetupStats(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorSetupStats> {
+  const setupResult = await adminDrizzle.execute<SetupRow>(sql`
+    SELECT
+      id,
+      guild_id,
+      creator_discord_user_id,
+      created_by_discord_user_id,
+      interaction_id,
+      status,
+      category_id,
+      chat_channel_id,
+      logs_channel_id,
+      category_name,
+      creator_user_id,
+      linked_by_discord_user_id,
+      link_interaction_id
+    FROM discord_creator_setups
+    WHERE guild_id = ${input.guildId}
+      AND category_id = ${input.categoryId}
+      AND (
+        chat_channel_id = ${input.channelId}
+        OR logs_channel_id = ${input.channelId}
+      )
+      AND status = 'active'
+    LIMIT 1
+  `);
+  const setup = setupResult.rows[0];
+  if (!setup) {
+    throw new CreatorSetupError(
+      404,
+      "setup_not_found",
+      "This channel does not belong to an active creator section.",
+    );
+  }
+  if (
+    input.actorDiscordUserId !== setup.creator_discord_user_id &&
+    input.actorDiscordUserId !== setup.created_by_discord_user_id
+  ) {
+    throw new CreatorSetupError(
+      403,
+      "setup_actor_forbidden",
+      "Only this creator or the staff member who created the section can view its stats.",
+    );
+  }
+  if (!setup.creator_user_id) {
+    throw new CreatorSetupError(
+      409,
+      "setup_not_linked",
+      "This creator section is not linked to a Packy account yet.",
+    );
+  }
+
+  const db = getProdReadDrizzleDb();
+  const [creator, ownedCodes, excludedUserIds] = await Promise.all([
+    requireActiveCreator(setup.creator_user_id),
+    db
+      .select({ code: affiliate_codes.code })
+      .from(affiliate_codes)
+      .where(eq(affiliate_codes.user_id, setup.creator_user_id))
+      .orderBy(affiliate_codes.created_at),
+    getExcludedUserIds(),
+  ]);
+  const codes = Array.from(
+    new Set(
+      ownedCodes
+        .map((row) => row.code.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+
+  if (codes.length === 0) {
+    return {
+      periodDays: 30,
+      generatedAt: new Date().toISOString(),
+      creator: { userId: creator.id, username: creator.username, codes },
+      totals: emptyCodeStats(null),
+      byCode: [],
+    };
+  }
+
+  const excludedFilter =
+    excludedUserIds.length > 0
+      ? sql`AND acu.referred_user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
+      : sql``;
+  const [usageResult, clickResult] = await Promise.all([
+    db.execute<UsageStatsRow>(sql`
+      SELECT
+        CASE
+          WHEN GROUPING(UPPER(acu.code)) = 1 THEN NULL
+          ELSE UPPER(acu.code)
+        END AS code,
+        COUNT(DISTINCT acu.referred_user_id)::text AS signups,
+        COUNT(DISTINCT acu.referred_user_id) FILTER (
+          WHERE acu.usage_type::text = 'deposit'
+        )::text AS first_time_depositors,
+        COUNT(DISTINCT acu.referred_user_id) FILTER (
+          WHERE acu.usage_type::text IN ('deposit', 'wager')
+        )::text AS active_players,
+        COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposits_usd,
+        COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager_usd,
+        COALESCE(SUM(acu.referrer_cut_usd::numeric), 0)::text AS earnings_usd
+      FROM affiliate_code_usages acu
+      JOIN "user" referred ON referred.id = acu.referred_user_id
+      WHERE acu.affiliate_user_id = ${setup.creator_user_id}
+        AND UPPER(acu.code) = ANY(${pgArrayParam(codes)}::text[])
+        AND acu.status::text = 'completed'
+        AND acu.referred_user_id <> acu.affiliate_user_id
+        AND acu.created_at >= NOW() - INTERVAL '30 days'
+        AND referred.role::text NOT IN ('admin', 'support', 'creator')
+        ${excludedFilter}
+      GROUP BY GROUPING SETS ((UPPER(acu.code)), ())
+    `),
+    db.execute<ClickStatsRow>(sql`
+      SELECT
+        CASE
+          WHEN GROUPING(UPPER(code)) = 1 THEN NULL
+          ELSE UPPER(code)
+        END AS code,
+        COUNT(*)::text AS clicks
+      FROM affiliate_clicks
+      WHERE UPPER(code) = ANY(${pgArrayParam(codes)}::text[])
+        AND created_at >= NOW() - INTERVAL '30 days'
+      GROUP BY GROUPING SETS ((UPPER(code)), ())
+    `),
+  ]);
+
+  const usageByCode = new Map(
+    usageResult.rows
+      .filter((row) => row.code)
+      .map((row) => [row.code!, row]),
+  );
+  const clicksByCode = new Map(
+    clickResult.rows
+      .filter((row) => row.code)
+      .map((row) => [row.code!, row]),
+  );
+  const totalUsage = usageResult.rows.find((row) => row.code === null);
+  const totalClicks = clickResult.rows.find((row) => row.code === null);
+
+  return {
+    periodDays: 30,
+    generatedAt: new Date().toISOString(),
+    creator: {
+      userId: creator.id,
+      username: creator.username,
+      codes,
+    },
+    totals: readCodeStats(null, totalUsage, totalClicks),
+    byCode: codes.map((code) =>
+      readCodeStats(code, usageByCode.get(code), clicksByCode.get(code)),
+    ),
+  };
 }
 
 function linkedSetup(row: SetupRow): CreatorSetup {

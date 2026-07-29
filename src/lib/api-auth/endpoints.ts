@@ -55,13 +55,6 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
-    path: "/api/v1/discord/creator",
-    summary:
-      "Body { discordUserId }. Returns the linked creator's own code, reward-program configuration, player counts, wager volume, and pending/approved payouts. The code is resolved server-side and cannot be supplied by the caller.",
-    scopes: ["discord:creator:read"],
-  },
-  {
-    method: "POST",
     path: "/api/v1/discord/creator-setups/prepare",
     summary:
       "Body { guildId, creatorDiscordUserId, createdByDiscordUserId, interactionId }. Validates the linked creator and reserves one setup before Discord channels are created.",
@@ -93,6 +86,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     path: "/api/v1/discord/creator-setups/link",
     summary:
       "Body { guildId, categoryId, channelId, creatorUserId, actorDiscordUserId, interactionId }. Links an active creator section to the selected Packy creator account. The channel, actor, site creator role, self-link ownership, conflicts, and idempotency are verified server-side.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/stats",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns rolling 30-day combined totals and a per-code breakdown for every affiliate code owned by the Packy creator linked to that private Discord section.",
     scopes: ["discord:creator:setup"],
   },
   {

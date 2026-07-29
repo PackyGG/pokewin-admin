@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, prepare, complete, repair, cancel, link, migration, linkMigration, scopes, endpoints] =
+  const [service, prepare, complete, repair, cancel, link, stats, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
       read("src/app/api/v1/discord/creator-setups/prepare/route.ts"),
@@ -13,6 +13,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/app/api/v1/discord/creator-setups/repair/route.ts"),
       read("src/app/api/v1/discord/creator-setups/cancel/route.ts"),
       read("src/app/api/v1/discord/creator-setups/link/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/stats/route.ts"),
       read(
         "drizzle/admin/migrations/20260729_discord_creator_setups.sql",
       ),
@@ -38,7 +39,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, repair, cancel, link]) {
+  for (const route of [prepare, complete, repair, cancel, link, stats]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
@@ -51,6 +52,8 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(link, /creatorUserId[\s\S]*\^\[A-Za-z0-9_-\]\+\$/);
   assert.match(link, /actorDiscordUserId: DiscordIdSchema/);
   assert.match(link, /principal\.keyId/);
+  assert.match(stats, /getCreatorSetupStats/);
+  assert.match(stats, /rejectWrongGuild/);
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "discord_creator_setups"/);
   assert.match(migration, /UNIQUE \("guild_id", "creator_discord_user_id"\)/);
@@ -101,4 +104,5 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/repair/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/cancel/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
 });

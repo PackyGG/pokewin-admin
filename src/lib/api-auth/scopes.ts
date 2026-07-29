@@ -53,16 +53,10 @@ export const API_SCOPES = {
       "Username, user id, current code + time left on it, and rewards open / pending / claimed. UNLIKE the other Discord scopes this returns PROFILE DATA — grant it only to a bot that renders a player-facing card.",
     access: "admin-write",
   },
-  "discord:creator:read": {
-    label: "Read creator performance",
-    description:
-      "Read the linked creator's own code, configured reward legs, player counts, wager volume, and reward payouts. The caller cannot choose a code.",
-    access: "prod-read",
-  },
   "discord:creator:setup": {
     label: "Provision creator Discord channels",
     description:
-      "Validate creators; reserve, complete, or cancel private creator-channel setup records; and bind an active section to a Packy creator account selected by its setup staff member. Reads the creator role from the production mirror, verifies Discord ownership for creator self-linking, and writes provisioning state only to the admin database.",
+      "Provision and link private creator sections, then read their combined 30-day performance across every owned Packy code. Reads the creator role and performance from the production mirror, verifies Discord ownership for creator self-linking, and writes provisioning state only to the admin database.",
     access: "admin-write",
   },
   "discord:antifraud": {

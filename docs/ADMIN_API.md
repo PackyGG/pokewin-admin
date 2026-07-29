@@ -36,14 +36,14 @@ it by hand in the dashboard, and only then is the player's balance credited.
 Design the UX around that: the honest message after a successful claim is
 "submitted for review", never "paid".
 
-### The five commands
+### Main bot commands
 
 | Command | Endpoint | What it does |
 |---|---|---|
 | `/verify` | `POST /api/v1/discord/verify` | Confirms the account is linked, and records that they verified |
 | `/info` | `POST /api/v1/discord/info` | Their summary card: code, time left, totals |
 | `/check` | `POST /api/v1/discord/rewards` | What they can claim right now |
-| `/creator` | `POST /api/v1/discord/creator` | The linked creator's own program performance |
+| `/stats` | `POST /api/v1/discord/creator-setups/stats` | The linked section's combined 30-day creator performance |
 | *(Claim button)* | `POST /api/v1/discord/claim` | Files a claim for staff review |
 
 ---
@@ -148,8 +148,7 @@ that work.
 | `discord:verify` | `/discord/verify` |
 | `discord:info:read` | `/discord/info` |
 | `discord:rewards:read` | `/discord/rewards` |
-| `discord:creator:read` | `/discord/creator` |
-| `discord:creator:setup` | `/discord/creator-setups/{prepare,complete,cancel}` |
+| `discord:creator:setup` | `/discord/creator-setups/{prepare,complete,repair,cancel,link,stats}` |
 | `discord:rewards:claim` | `/discord/claim` |
 | `discord:read` | `/discord/linked` (only needed for a bare link check) |
 
@@ -364,33 +363,64 @@ Claim-specific failures:
 
 ---
 
-## 8. Creator performance — `POST /api/v1/discord/creator`
+## 8. Creator performance — `POST /api/v1/discord/creator-setups/stats`
 
-**Scope:** `discord:creator:read`
+**Scope:** `discord:creator:setup`
 
-The caller sends only `{ "discordUserId": "..." }`. The API resolves the
-creator and code server-side; it never accepts a code to query.
+The caller sends only the current Discord section context. The API resolves the
+Packy creator from the active linked setup and never accepts a Packy user ID or
+affiliate code to query.
+
+```json
+{
+  "guildId": "1402743122789929022",
+  "categoryId": "123456789012345678",
+  "channelId": "123456789012345679",
+  "actorDiscordUserId": "123456789012345680"
+}
+```
 
 ```json
 {
   "data": {
-    "code": "JIMMY",
-    "programs": [
-      { "type": "wager", "active": true, "perThresholdUsd": 5,
-        "thresholdUsd": 1000, "vipPerThresholdUsd": 8 },
-      { "type": "ftd_lossback", "active": true, "lossbackPct": 10,
-        "minDepositUsd": 25 }
-    ],
-    "players": { "total": 1240, "active7d": 88 },
-    "wagerUsd": { "allTime": 512000, "last7d": 24000 },
-    "payoutsUsd": { "approved": 2560, "pending": 120 }
+    "periodDays": 30,
+    "generatedAt": "2026-07-29T10:00:00.000Z",
+    "creator": {
+      "userId": "creator_User-123",
+      "username": "creator",
+      "codes": ["JIMMY", "BONUS"]
+    },
+    "totals": {
+      "code": null,
+      "clicks": 1500,
+      "signups": 240,
+      "firstTimeDepositors": 90,
+      "activePlayers": 130,
+      "depositsUsd": 24000,
+      "wagerUsd": 512000,
+      "earningsUsd": 2560
+    },
+    "byCode": [
+      {
+        "code": "JIMMY",
+        "clicks": 1000,
+        "signups": 160,
+        "firstTimeDepositors": 60,
+        "activePlayers": 90,
+        "depositsUsd": 16000,
+        "wagerUsd": 400000,
+        "earningsUsd": 2000
+      }
+    ]
   }
 }
 ```
 
-`404 not_linked` means the Discord account has no Packy link.
-`404 program_not_found` means the linked account is not a creator or has no
-creator code. A creator with a code but no reward program gets `programs: []`.
+The result covers every affiliate code currently owned by the linked creator.
+`signups` is the distinct referred-user cohort with completed code activity in
+the window. `depositsUsd` is first-deposit volume, matching the backend's
+code-usage convention. `setup_not_found`, `setup_not_linked`,
+`setup_actor_forbidden`, and `creator_not_found` fail closed.
 
 ---
 
@@ -398,16 +428,21 @@ creator code. A creator with a code but no reward program gets `programs: []`.
 
 **Scope:** `discord:creator:setup`
 
-This three-step workflow is pinned to Discord guild `1402743122789929022`.
-`prepare` validates the tagged Discord account is linked to a Packy creator and
-reserves the setup before Discord is changed. `complete` stores the created
-category, chat, and logs channel IDs. `cancel` removes only an unfinished
-reservation after Discord creation is rolled back.
+This workflow is pinned to Discord guild `1402743122789929022`. `prepare`
+reserves the tagged Discord member before Discord is changed; it does not
+require a Packy link. `complete` stores the created category, chat, and logs
+channel IDs. `repair` atomically replaces deleted Discord channels. `link`
+binds the active section to an active Packy creator. `stats` reads that linked
+creator's rolling performance. `cancel` removes only an unfinished reservation
+after Discord creation is rolled back.
 
 ```text
 POST /api/v1/discord/creator-setups/prepare
 POST /api/v1/discord/creator-setups/complete
+POST /api/v1/discord/creator-setups/repair
 POST /api/v1/discord/creator-setups/cancel
+POST /api/v1/discord/creator-setups/link
+POST /api/v1/discord/creator-setups/stats
 ```
 
 Prepare and complete are idempotent. One active setup is allowed per creator in

@@ -4,29 +4,38 @@ import test from "node:test";
 
 const read = (path: string) => readFile(path, "utf8");
 
-test("creator endpoint resolves its code server-side and exposes the bot contract", async () => {
-  const [route, scopes, endpoints] = await Promise.all([
-    read("src/app/api/v1/discord/creator/route.ts"),
+test("creator stats are section-bound and aggregate every owned code", async () => {
+  const [route, service, scopes, endpoints] = await Promise.all([
+    read("src/app/api/v1/discord/creator-setups/stats/route.ts"),
+    read("src/lib/discord-creator-setups.ts"),
     read("src/lib/api-auth/scopes.ts"),
     read("src/lib/api-auth/endpoints.ts"),
   ]);
 
-  assert.match(route, /scopes: \["discord:creator:read"\]/);
+  assert.match(route, /scopes: \["discord:creator:setup"\]/);
   assert.match(
     route,
-    /const BodySchema = z\.object\(\{\s*discordUserId:[\s\S]*?\n\}\);/,
+    /guildId: DiscordIdSchema[\s\S]*categoryId: DiscordIdSchema[\s\S]*channelId: DiscordIdSchema[\s\S]*actorDiscordUserId: DiscordIdSchema/,
   );
-  for (const field of [
-    "programs",
-    "players",
-    "active7d",
-    "wagerUsd",
-    "payoutsUsd",
-  ]) {
-    assert.match(route, new RegExp(`\\b${field}\\b`));
-  }
-  assert.match(scopes, /"discord:creator:read"/);
-  assert.match(endpoints, /\/api\/v1\/discord\/creator/);
+  assert.match(route, /rejectWrongGuild/);
+  assert.match(service, /export async function getCreatorSetupStats/);
+  assert.match(service, /creator_user_id/);
+  assert.match(service, /INTERVAL '30 days'/);
+  assert.match(service, /GROUP BY GROUPING SETS/);
+  assert.match(service, /affiliate_user_id = \$\{setup\.creator_user_id\}/);
+  assert.match(service, /UPPER\(acu\.code\) = ANY/);
+  assert.match(service, /acu\.status::text = 'completed'/);
+  assert.match(service, /acu\.referred_user_id <> acu\.affiliate_user_id/);
+  assert.match(service, /COUNT\(DISTINCT acu\.referred_user_id\)::text AS signups/);
+  assert.match(service, /usage_type::text = 'deposit'/);
+  assert.match(service, /firstTimeDepositors/);
+  assert.match(service, /earningsUsd/);
+  assert.doesNotMatch(scopes, /"discord:creator:read"/);
+  assert.doesNotMatch(
+    endpoints,
+    /path: "\/api\/v1\/discord\/creator",/,
+  );
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
 });
 
 test("creator offer expiry is persisted and shared by list, info, and claim", async () => {
