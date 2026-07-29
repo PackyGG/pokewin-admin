@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-29 Discord creator setup API release-ready:** `/api/v1/discord/creator-setups/{prepare,complete,cancel}` is pinned to guild `1402743122789929022`, validates the linked Packy creator through the read-only MAIN mirror, and stores idempotent reservation/channel state in the ADMIN DB. Migration `20260729_discord_creator_setups.sql` is applied. All 369 guardrails, TypeScript, scoped ESLint, and the production build pass.
+
 - **2026-07-29 resumed admin-user audit verification:** Claude's two assigned admin-user fixes remain on `origin/main`: deleting staff preserves expense and recurring-expense records with nullable attribution and audits only after commit, while creator linking enforces its catalog capability and keeps its explicit MAIN mutation client. Follow-up verification against the newer mirror-routing contract moved the ordinary MAIN user search from the primary client to `getReadDrizzleDb`; a focused source contract locks both the read/mutation split and the financial-history behavior. Two focused tests, all 368 guardrails, TypeScript, lint with zero errors and one unrelated generated-schema warning, diff check, and the production build pass.
 
 - **2026-07-29 resumed Antifraud list-page cleanup:** Withdrawals and Fiat Deposits now share their filter, verdict, fact, empty-state, pagination, skeleton, and bounded page-parsing primitives. Those pages plus Signups use the canonical timestamp formatters, Signups uses the shared 10,000-page cap, and Fiat Fraud has its missing route loading state. Commit `838447e5`; the focused signup-age contract, all 366 guardrails, TypeScript, task-scoped ESLint, full lint with zero errors and one unrelated generated-schema warning, diff check, and the production build pass.

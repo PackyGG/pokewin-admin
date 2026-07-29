@@ -149,6 +149,7 @@ that work.
 | `discord:info:read` | `/discord/info` |
 | `discord:rewards:read` | `/discord/rewards` |
 | `discord:creator:read` | `/discord/creator` |
+| `discord:creator:setup` | `/discord/creator-setups/{prepare,complete,cancel}` |
 | `discord:rewards:claim` | `/discord/claim` |
 | `discord:read` | `/discord/linked` (only needed for a bare link check) |
 
@@ -393,7 +394,29 @@ creator code. A creator with a code but no reward program gets `programs: []`.
 
 ---
 
-## 9. Link check only — `POST /api/v1/discord/linked`
+## 9. Creator channel setup
+
+**Scope:** `discord:creator:setup`
+
+This three-step workflow is pinned to Discord guild `1402743122789929022`.
+`prepare` validates the tagged Discord account is linked to a Packy creator and
+reserves the setup before Discord is changed. `complete` stores the created
+category, chat, and logs channel IDs. `cancel` removes only an unfinished
+reservation after Discord creation is rolled back.
+
+```text
+POST /api/v1/discord/creator-setups/prepare
+POST /api/v1/discord/creator-setups/complete
+POST /api/v1/discord/creator-setups/cancel
+```
+
+Prepare and complete are idempotent. One active setup is allowed per creator in
+the guild, and pending reservations expire after 15 minutes. Active records are
+never automatically reclaimed or deleted by `cancel`.
+
+---
+
+## 10. Link check only — `POST /api/v1/discord/linked`
 
 **Scope:** `discord:read`
 
@@ -407,7 +430,7 @@ must not write anything.
 
 ---
 
-## 9. Errors
+## 11. Errors
 
 Success is always wrapped in `data`, failures always in `error`.
 

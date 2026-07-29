@@ -62,6 +62,27 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/prepare",
+    summary:
+      "Body { guildId, creatorDiscordUserId, createdByDiscordUserId, interactionId }. Validates the linked creator and reserves one setup before Discord channels are created.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/complete",
+    summary:
+      "Body { reservationId, guildId, creatorDiscordUserId, categoryId, chatChannelId, logsChannelId, categoryName }. Idempotently activates a reserved creator setup.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/cancel",
+    summary:
+      "Body { reservationId }. Idempotently removes only an unfinished creator setup reservation.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",

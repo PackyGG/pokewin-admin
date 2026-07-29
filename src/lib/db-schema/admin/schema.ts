@@ -1697,6 +1697,31 @@ export const discord_notification_jobs = pgTable("discord_notification_jobs", {
 	check("discord_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
 ]);
 
+export const discord_creator_setups = pgTable("discord_creator_setups", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	creator_discord_user_id: text().notNull(),
+	created_by_discord_user_id: text().notNull(),
+	interaction_id: text().notNull(),
+	status: text().default('pending').notNull(),
+	category_id: text(),
+	chat_channel_id: text(),
+	logs_channel_id: text(),
+	category_name: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_creator_setups_pending_created_idx").using("btree", table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = 'pending'::text)`),
+	unique("discord_creator_setups_creator_unique").on(table.creator_discord_user_id, table.guild_id),
+	unique("discord_creator_setups_interaction_id_key").on(table.interaction_id),
+	check("discord_creator_setups_active_shape_check", sql`(status = 'pending'::text) OR ((category_id ~ '^[0-9]{15,21}$'::text) AND (chat_channel_id ~ '^[0-9]{15,21}$'::text) AND (logs_channel_id ~ '^[0-9]{15,21}$'::text) AND ((length(category_name) >= 1) AND (length(category_name) <= 100)) AND (completed_at IS NOT NULL))`),
+	check("discord_creator_setups_actor_id_check", sql`created_by_discord_user_id ~ '^[0-9]{15,21}$'::text`),
+	check("discord_creator_setups_creator_id_check", sql`creator_discord_user_id ~ '^[0-9]{15,21}$'::text`),
+	check("discord_creator_setups_guild_id_check", sql`guild_id ~ '^[0-9]{15,21}$'::text`),
+	check("discord_creator_setups_interaction_id_check", sql`interaction_id ~ '^[0-9]{15,21}$'::text`),
+	check("discord_creator_setups_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text])`),
+]);
+
 export const discord_notification_channels = pgTable("discord_notification_channels", {
 	guild_id: text().notNull(),
 	channel_id: text().notNull(),

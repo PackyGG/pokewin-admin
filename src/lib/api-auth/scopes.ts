@@ -59,6 +59,12 @@ export const API_SCOPES = {
       "Read the linked creator's own code, configured reward legs, player counts, wager volume, and reward payouts. The caller cannot choose a code.",
     access: "prod-read",
   },
+  "discord:creator:setup": {
+    label: "Provision creator Discord channels",
+    description:
+      "Validate linked creators and reserve, complete, or cancel private creator-channel setup records. Reads the creator role from the production mirror and writes provisioning state only to the admin database.",
+    access: "admin-write",
+  },
   "discord:antifraud": {
     label: "Deliver Antifraud notifications",
     description:
