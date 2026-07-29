@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests } from "./schema";
+import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, discord_notification_guilds } from "./schema";
 
 export const admin_giveaway_actionsRelations = relations(admin_giveaway_actions, ({one}) => ({
 	admin_user: one(admin_users, {
@@ -30,11 +30,11 @@ export const admin_usersRelations = relations(admin_users, ({one, many}) => ({
 	admin_excluded_user_balance_v2s: many(admin_excluded_user_balance_v2),
 	admin_passkeys: many(admin_passkeys),
 	admin_withdrawal_unlocks: many(admin_withdrawal_unlocks),
-	chat_raffle_rounds_drawn_by: many(chat_raffle_rounds, {
-		relationName: "chat_raffle_rounds_drawn_by_admin_users_id"
-	}),
 	chat_raffle_rounds_created_by: many(chat_raffle_rounds, {
 		relationName: "chat_raffle_rounds_created_by_admin_users_id"
+	}),
+	chat_raffle_rounds_drawn_by: many(chat_raffle_rounds, {
+		relationName: "chat_raffle_rounds_drawn_by_admin_users_id"
 	}),
 	chat_raffle_prizes: many(chat_raffle_prizes),
 	chat_raffle_adjustments: many(chat_raffle_adjustments),
@@ -50,6 +50,8 @@ export const admin_usersRelations = relations(admin_users, ({one, many}) => ({
 	pack_creation_requests_reviewed_by: many(pack_creation_requests, {
 		relationName: "pack_creation_requests_reviewed_by_admin_users_id"
 	}),
+	discord_notification_events: many(discord_notification_events),
+	discord_notification_routes: many(discord_notification_routes),
 }));
 
 export const admin_rolesRelations = relations(admin_roles, ({many}) => ({
@@ -114,13 +116,13 @@ export const admin_shiftsRelations = relations(admin_shifts, ({one, many}) => ({
 }));
 
 export const admin_shift_assignmentsRelations = relations(admin_shift_assignments, ({one}) => ({
-	admin_shift: one(admin_shifts, {
-		fields: [admin_shift_assignments.shift_id],
-		references: [admin_shifts.id]
-	}),
 	admin_user: one(admin_users, {
 		fields: [admin_shift_assignments.admin_user_id],
 		references: [admin_users.id]
+	}),
+	admin_shift: one(admin_shifts, {
+		fields: [admin_shift_assignments.shift_id],
+		references: [admin_shifts.id]
 	}),
 }));
 
@@ -261,15 +263,15 @@ export const creator_reward_claimsRelations = relations(creator_reward_claims, (
 }));
 
 export const chat_raffle_roundsRelations = relations(chat_raffle_rounds, ({one, many}) => ({
-	admin_user_drawn_by: one(admin_users, {
-		fields: [chat_raffle_rounds.drawn_by],
-		references: [admin_users.id],
-		relationName: "chat_raffle_rounds_drawn_by_admin_users_id"
-	}),
 	admin_user_created_by: one(admin_users, {
 		fields: [chat_raffle_rounds.created_by],
 		references: [admin_users.id],
 		relationName: "chat_raffle_rounds_created_by_admin_users_id"
+	}),
+	admin_user_drawn_by: one(admin_users, {
+		fields: [chat_raffle_rounds.drawn_by],
+		references: [admin_users.id],
+		relationName: "chat_raffle_rounds_drawn_by_admin_users_id"
 	}),
 	chat_raffle_prizes: many(chat_raffle_prizes),
 	chat_raffle_entries: many(chat_raffle_entries),
@@ -277,13 +279,13 @@ export const chat_raffle_roundsRelations = relations(chat_raffle_rounds, ({one, 
 }));
 
 export const chat_raffle_prizesRelations = relations(chat_raffle_prizes, ({one}) => ({
-	chat_raffle_round: one(chat_raffle_rounds, {
-		fields: [chat_raffle_prizes.round_id],
-		references: [chat_raffle_rounds.id]
-	}),
 	admin_user: one(admin_users, {
 		fields: [chat_raffle_prizes.paid_by],
 		references: [admin_users.id]
+	}),
+	chat_raffle_round: one(chat_raffle_rounds, {
+		fields: [chat_raffle_prizes.round_id],
+		references: [chat_raffle_rounds.id]
 	}),
 }));
 
@@ -295,13 +297,13 @@ export const chat_raffle_entriesRelations = relations(chat_raffle_entries, ({one
 }));
 
 export const chat_raffle_adjustmentsRelations = relations(chat_raffle_adjustments, ({one}) => ({
-	chat_raffle_round: one(chat_raffle_rounds, {
-		fields: [chat_raffle_adjustments.round_id],
-		references: [chat_raffle_rounds.id]
-	}),
 	admin_user: one(admin_users, {
 		fields: [chat_raffle_adjustments.created_by],
 		references: [admin_users.id]
+	}),
+	chat_raffle_round: one(chat_raffle_rounds, {
+		fields: [chat_raffle_adjustments.round_id],
+		references: [chat_raffle_rounds.id]
 	}),
 }));
 
@@ -362,13 +364,13 @@ export const staff_quiz_optionsRelations = relations(staff_quiz_options, ({one})
 }));
 
 export const staff_quiz_attemptsRelations = relations(staff_quiz_attempts, ({one, many}) => ({
-	staff_quizz: one(staff_quizzes, {
-		fields: [staff_quiz_attempts.quiz_id],
-		references: [staff_quizzes.id]
-	}),
 	admin_user: one(admin_users, {
 		fields: [staff_quiz_attempts.admin_user_id],
 		references: [admin_users.id]
+	}),
+	staff_quizz: one(staff_quizzes, {
+		fields: [staff_quiz_attempts.quiz_id],
+		references: [staff_quizzes.id]
 	}),
 	staff_quiz_answers: many(staff_quiz_answers),
 }));
@@ -421,4 +423,64 @@ export const pack_creation_requestsRelations = relations(pack_creation_requests,
 		references: [admin_users.id],
 		relationName: "pack_creation_requests_reviewed_by_admin_users_id"
 	}),
+}));
+
+export const discord_notification_eventsRelations = relations(discord_notification_events, ({one, many}) => ({
+	admin_user: one(admin_users, {
+		fields: [discord_notification_events.created_by],
+		references: [admin_users.id]
+	}),
+	discord_notification_routes: many(discord_notification_routes),
+	discord_notification_jobs: many(discord_notification_jobs),
+}));
+
+export const discord_notification_routesRelations = relations(discord_notification_routes, ({one}) => ({
+	discord_notification_channel: one(discord_notification_channels, {
+		fields: [
+			discord_notification_routes.guild_id,
+			discord_notification_routes.channel_id,
+		],
+		references: [
+			discord_notification_channels.guild_id,
+			discord_notification_channels.channel_id,
+		]
+	}),
+	admin_user: one(admin_users, {
+		fields: [discord_notification_routes.created_by],
+		references: [admin_users.id]
+	}),
+	discord_notification_event: one(discord_notification_events, {
+		fields: [discord_notification_routes.event_key],
+		references: [discord_notification_events.event_key]
+	}),
+}));
+
+export const discord_notification_channelsRelations = relations(discord_notification_channels, ({one, many}) => ({
+	discord_notification_routes: many(discord_notification_routes),
+	discord_notification_jobs: many(discord_notification_jobs),
+	discord_notification_guild: one(discord_notification_guilds, {
+		fields: [discord_notification_channels.guild_id],
+		references: [discord_notification_guilds.guild_id]
+	}),
+}));
+
+export const discord_notification_jobsRelations = relations(discord_notification_jobs, ({one}) => ({
+	discord_notification_channel: one(discord_notification_channels, {
+		fields: [
+			discord_notification_jobs.guild_id,
+			discord_notification_jobs.channel_id,
+		],
+		references: [
+			discord_notification_channels.guild_id,
+			discord_notification_channels.channel_id,
+		]
+	}),
+	discord_notification_event: one(discord_notification_events, {
+		fields: [discord_notification_jobs.event_key],
+		references: [discord_notification_events.event_key]
+	}),
+}));
+
+export const discord_notification_guildsRelations = relations(discord_notification_guilds, ({many}) => ({
+	discord_notification_channels: many(discord_notification_channels),
 }));

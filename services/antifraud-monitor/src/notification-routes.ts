@@ -10,7 +10,7 @@ export const NOTIFICATION_ROUTE_KEYS = [
 ] as const;
 
 export type NotificationRouteKey = (typeof NOTIFICATION_ROUTE_KEYS)[number];
-export type DiscordNotificationRouteKey = Exclude<
+export type BotNotificationRouteKey = Exclude<
   NotificationRouteKey,
   "signed_ingest"
 >;
@@ -18,13 +18,9 @@ export type DiscordNotificationRouteKey = Exclude<
 type NotificationConfig = Partial<
   Pick<
     Config,
-    | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
-    | "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"
-    | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
-    | "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"
-    | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
     | "ANTIFRAUD_INGEST_URL"
     | "ANTIFRAUD_INGEST_SECRET"
+    | "ADMIN_GUILD_ID"
   >
 >;
 
@@ -45,7 +41,7 @@ const ROUTES = {
       "Canonical high-risk fiat verdicts",
       "Fiat deposits on locked accounts",
     ],
-    configured: (config) => Boolean(config.ANTIFRAUD_DISCORD_WEBHOOK_URL),
+    configured: botQueueConfigured,
   },
   fiat_operations: {
     label: "Fiat operations",
@@ -57,14 +53,13 @@ const ROUTES = {
       "Stale checkout and pending payments",
       "Failed payment webhooks",
     ],
-    configured: (config) => Boolean(config.FIAT_ALERT_DISCORD_WEBHOOK_URL),
+    configured: botQueueConfigured,
   },
   high_risk_supplemental: {
     label: "High-risk fiat supplemental",
     purpose: "A separate Discord copy of canonical high-risk fiat verdicts.",
     eventFamilies: ["Canonical high-risk fiat verdicts"],
-    configured: (config) =>
-      Boolean(config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL),
+    configured: botQueueConfigured,
   },
   email_blacklist: {
     label: "Email containment",
@@ -74,15 +69,13 @@ const ROUTES = {
       "Blacklisted Whop checkout domains",
       "Suspicious same-amount deposit clusters",
     ],
-    configured: (config) =>
-      Boolean(config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL),
+    configured: botQueueConfigured,
   },
   withdrawal_hold: {
     label: "Withdrawal holds",
     purpose: "Discord alerts for automatic account-level withdrawal holds.",
     eventFamilies: ["Automatic lifetime-fiat withdrawal holds"],
-    configured: (config) =>
-      Boolean(config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL),
+    configured: botQueueConfigured,
   },
   signed_ingest: {
     label: "Signed dashboard ingest",
@@ -98,22 +91,12 @@ const ROUTES = {
   },
 } satisfies Record<NotificationRouteKey, NotificationRouteDefinition>;
 
-const DISCORD_CONFIG_KEYS = {
-  antifraud_risk: "ANTIFRAUD_DISCORD_WEBHOOK_URL",
-  fiat_operations: "FIAT_ALERT_DISCORD_WEBHOOK_URL",
-  high_risk_supplemental: "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL",
-  email_blacklist: "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL",
-  withdrawal_hold: "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL",
-} as const satisfies Record<
-  DiscordNotificationRouteKey,
-  keyof NotificationConfig
->;
-
-export function notificationWebhookUrl(
-  config: NotificationConfig,
-  route: DiscordNotificationRouteKey,
-): string | undefined {
-  return config[DISCORD_CONFIG_KEYS[route]];
+function botQueueConfigured(config: NotificationConfig): boolean {
+  return Boolean(
+    config.ANTIFRAUD_INGEST_URL &&
+      config.ANTIFRAUD_INGEST_SECRET &&
+      config.ADMIN_GUILD_ID,
+  );
 }
 
 export function signedIngestTarget(
@@ -160,7 +143,7 @@ type FiatProblemCode =
   | "suspicious_deposit_cluster";
 
 export type FiatNotificationRouteKey = Extract<
-  DiscordNotificationRouteKey,
+  BotNotificationRouteKey,
   | "antifraud_risk"
   | "fiat_operations"
   | "high_risk_supplemental"

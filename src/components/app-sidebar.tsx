@@ -65,6 +65,7 @@ import {
   Anchor,
   Dices,
   Crown,
+  Webhook,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -163,6 +164,7 @@ const ICONS: Record<string, LucideIcon> = {
   Anchor,
   Dices,
   Crown,
+  Webhook,
 };
 
 type NavItem = {

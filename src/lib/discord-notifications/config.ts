@@ -1,0 +1,307 @@
+import "server-only";
+
+import { sql } from "drizzle-orm";
+
+import { adminDrizzle } from "@/lib/admin-db";
+
+const SNOWFLAKE = /^\d{15,21}$/;
+const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
+
+export type DiscordNotificationChannel = {
+  id: string;
+  name: string;
+  type: string;
+  parentId: string | null;
+  parentName: string | null;
+  position: number;
+  canView: boolean;
+  canSend: boolean;
+  canEmbed: boolean;
+};
+
+export type DiscordNotificationEvent = {
+  key: string;
+  label: string;
+  description: string;
+  category: string;
+  custom: boolean;
+  enabled: boolean;
+};
+
+export type DiscordNotificationRoute = {
+  id: string;
+  eventKey: string;
+  channelId: string;
+  enabled: boolean;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type DiscordNotificationConfig = {
+  guild: {
+    id: string;
+    name: string;
+    connected: boolean;
+    lastSyncedAt: string | null;
+  };
+  channels: DiscordNotificationChannel[];
+  events: DiscordNotificationEvent[];
+  routes: DiscordNotificationRoute[];
+};
+
+function requireSnowflake(value: string, field: string): string {
+  const normalized = value.trim();
+  if (!SNOWFLAKE.test(normalized)) {
+    throw new Error(`${field} must be a Discord snowflake.`);
+  }
+  return normalized;
+}
+
+function normalizeEventKey(value: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!EVENT_KEY.test(normalized)) {
+    throw new Error(
+      "Event key must be 3-80 lowercase letters, numbers, dots, dashes, or underscores.",
+    );
+  }
+  return normalized;
+}
+
+function boundedText(value: string, field: string, max: number): string {
+  const normalized = value.trim();
+  if (!normalized || normalized.length > max) {
+    throw new Error(`${field} must contain 1-${max} characters.`);
+  }
+  return normalized;
+}
+
+function configuredGuildId(guildId?: string): string {
+  return requireSnowflake(
+    guildId ?? process.env.ADMIN_GUILD_ID ?? "",
+    "guildId",
+  );
+}
+
+export async function getDiscordNotificationConfig(
+  guildId?: string,
+): Promise<DiscordNotificationConfig> {
+  const id = configuredGuildId(guildId);
+  const [guildResult, channelResult, eventResult, routeResult] =
+    await Promise.all([
+      adminDrizzle.execute<{
+        guild_id: string;
+        name: string;
+        connected: boolean;
+        last_synced_at: string;
+      }>(sql`
+        SELECT guild_id, name, connected, last_synced_at::text
+        FROM discord_notification_guilds
+        WHERE guild_id = ${id}
+        LIMIT 1
+      `),
+      adminDrizzle.execute<{
+        channel_id: string;
+        name: string;
+        type: string;
+        parent_id: string | null;
+        parent_name: string | null;
+        position: number;
+        can_view: boolean;
+        can_send: boolean;
+        can_embed: boolean;
+      }>(sql`
+        SELECT
+          channel_id, name, type, parent_id, parent_name, position,
+          can_view, can_send, can_embed
+        FROM discord_notification_channels
+        WHERE guild_id = ${id} AND available = true
+        ORDER BY position, name, channel_id
+        LIMIT 1000
+      `),
+      adminDrizzle.execute<{
+        event_key: string;
+        label: string;
+        description: string;
+        category: string;
+        is_custom: boolean;
+        enabled: boolean;
+      }>(sql`
+        SELECT event_key, label, description, category, is_custom, enabled
+        FROM discord_notification_events
+        ORDER BY category, label, event_key
+        LIMIT 500
+      `),
+      adminDrizzle.execute<{
+        id: string;
+        event_key: string;
+        channel_id: string;
+        enabled: boolean;
+        created_at: string;
+        updated_at: string;
+      }>(sql`
+        SELECT
+          id::text, event_key, channel_id, enabled,
+          created_at::text, updated_at::text
+        FROM discord_notification_routes
+        WHERE guild_id = ${id}
+        ORDER BY event_key, created_at, id
+        LIMIT 2000
+      `),
+    ]);
+
+  const guild = guildResult.rows[0];
+  return {
+    guild: {
+      id,
+      name: guild?.name ?? "Admin server",
+      connected: guild?.connected ?? false,
+      lastSyncedAt: guild?.last_synced_at ?? null,
+    },
+    channels: channelResult.rows.map((row) => ({
+      id: row.channel_id,
+      name: row.name,
+      type: row.type,
+      parentId: row.parent_id,
+      parentName: row.parent_name,
+      position: row.position,
+      canView: row.can_view,
+      canSend: row.can_send,
+      canEmbed: row.can_embed,
+    })),
+    events: eventResult.rows.map((row) => ({
+      key: row.event_key,
+      label: row.label,
+      description: row.description,
+      category: row.category,
+      custom: row.is_custom,
+      enabled: row.enabled,
+    })),
+    routes: routeResult.rows.map((row) => ({
+      id: row.id,
+      eventKey: row.event_key,
+      channelId: row.channel_id,
+      enabled: row.enabled,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+    })),
+  };
+}
+
+export async function createDiscordNotificationEvent(input: {
+  key: string;
+  label: string;
+  description?: string;
+  category: string;
+  actorId: string;
+}): Promise<DiscordNotificationEvent> {
+  const key = normalizeEventKey(input.key);
+  const label = boundedText(input.label, "Label", 120);
+  const category = boundedText(input.category, "Category", 80);
+  const description = input.description?.trim().slice(0, 500) ?? "";
+  const result = await adminDrizzle.execute<{
+    event_key: string;
+    label: string;
+    description: string;
+    category: string;
+    is_custom: boolean;
+    enabled: boolean;
+  }>(sql`
+    INSERT INTO discord_notification_events (
+      event_key, label, description, category, is_custom, enabled, created_by
+    )
+    VALUES (${key}, ${label}, ${description}, ${category}, true, true, ${input.actorId}::uuid)
+    RETURNING event_key, label, description, category, is_custom, enabled
+  `);
+  const row = result.rows[0];
+  if (!row) throw new Error("The custom event could not be created.");
+  return {
+    key: row.event_key,
+    label: row.label,
+    description: row.description,
+    category: row.category,
+    custom: row.is_custom,
+    enabled: row.enabled,
+  };
+}
+
+export async function upsertDiscordNotificationRoute(input: {
+  guildId?: string;
+  eventKey: string;
+  channelId: string;
+  enabled: boolean;
+  actorId: string;
+}): Promise<DiscordNotificationRoute> {
+  const guildId = configuredGuildId(input.guildId);
+  const eventKey = normalizeEventKey(input.eventKey);
+  const channelId = requireSnowflake(input.channelId, "channelId");
+  const result = await adminDrizzle.execute<{
+    id: string;
+    event_key: string;
+    channel_id: string;
+    enabled: boolean;
+    created_at: string;
+    updated_at: string;
+  }>(sql`
+    INSERT INTO discord_notification_routes (
+      guild_id, event_key, channel_id, enabled, created_by
+    )
+    SELECT ${guildId}, event.event_key, channel.channel_id, ${input.enabled}, ${input.actorId}::uuid
+    FROM discord_notification_events AS event
+    JOIN discord_notification_channels AS channel
+      ON channel.guild_id = ${guildId}
+     AND channel.channel_id = ${channelId}
+     AND channel.available = true
+     AND channel.can_view = true
+     AND channel.can_send = true
+     AND channel.can_embed = true
+    WHERE event.event_key = ${eventKey} AND event.enabled = true
+    ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
+      enabled = EXCLUDED.enabled,
+      updated_at = now()
+    RETURNING
+      id::text, event_key, channel_id, enabled,
+      created_at::text, updated_at::text
+  `);
+  const row = result.rows[0];
+  if (!row) {
+    throw new Error(
+      "The event or channel is unavailable, or the bot cannot send embeds there.",
+    );
+  }
+  return {
+    id: row.id,
+    eventKey: row.event_key,
+    channelId: row.channel_id,
+    enabled: row.enabled,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export async function setDiscordNotificationRouteEnabled(input: {
+  guildId?: string;
+  id: string;
+  enabled: boolean;
+}): Promise<void> {
+  const guildId = configuredGuildId(input.guildId);
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    UPDATE discord_notification_routes
+    SET enabled = ${input.enabled}, updated_at = now()
+    WHERE id = ${input.id}::uuid AND guild_id = ${guildId}
+    RETURNING id::text
+  `);
+  if (result.rows.length !== 1) throw new Error("Notification route not found.");
+}
+
+export async function deleteDiscordNotificationRoute(input: {
+  guildId?: string;
+  id: string;
+}): Promise<void> {
+  const guildId = configuredGuildId(input.guildId);
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    DELETE FROM discord_notification_routes
+    WHERE id = ${input.id}::uuid AND guild_id = ${guildId}
+    RETURNING id::text
+  `);
+  if (result.rows.length !== 1) throw new Error("Notification route not found.");
+}

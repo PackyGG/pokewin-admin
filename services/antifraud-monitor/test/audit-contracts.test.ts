@@ -9,10 +9,7 @@ import type pg from "pg";
 import type { WebSocket } from "ws";
 
 import { serviceRequestAuthorized } from "../src/auth.js";
-import {
-  assertHighRiskDiscordWebhookIsolation,
-  type Config,
-} from "../src/config.js";
+import type { Config } from "../src/config.js";
 import { sameDecisionIdentity } from "../src/decision-idempotency.js";
 import { pollerStalledFor, type PollerHealthSnapshot } from "../src/poller-health.js";
 import {
@@ -25,7 +22,6 @@ import { processOrderedBatch } from "../src/ordered-ingestion.js";
 import {
   notificationRouteStatuses,
   notificationRoutesForFiatProblem,
-  notificationWebhookUrl,
   signedIngestTarget,
 } from "../src/notification-routes.js";
 import { createPromiseCache } from "../src/promise-cache.js";
@@ -198,16 +194,7 @@ const runtimeConfig: Config = {
   ANTIFRAUD_INGEST_URL:
     "https://fraud.packydash.com/api/antifraud/ingest",
   ANTIFRAUD_INGEST_SECRET: "ingest-secret-that-is-at-least-32-characters",
-  ANTIFRAUD_DISCORD_WEBHOOK_URL:
-    "https://discord.com/api/webhooks/secret-id/secret-token",
-  ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL:
-    "https://discord.com/api/webhooks/hold-id/hold-token",
-  FIAT_ALERT_DISCORD_WEBHOOK_URL:
-    "https://discord.com/api/webhooks/fiat-id/fiat-token",
-  FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
-    "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
-  FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
-    "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
+  ADMIN_GUILD_ID: "1483064422778798112",
   FIAT_ALERT_DASHBOARD_URL:
     "https://fraud.packydash.com/fiat-deposits",
   ALLOWED_ORIGINS: "https://fraud.packydash.com",
@@ -292,11 +279,6 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.PROXYCHECK_API_KEY,
     runtimeConfig.API_TOKEN,
     runtimeConfig.API_ADMIN_TOKEN,
-    runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL ?? "",
-    runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL ?? "",
-    runtimeConfig.FIAT_ALERT_DISCORD_WEBHOOK_URL ?? "",
-    runtimeConfig.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL ?? "",
-    runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL ?? "",
     runtimeConfig.FIAT_ALERT_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_DASHBOARD_URL,
     runtimeConfig.ANTIFRAUD_INGEST_URL,
@@ -308,26 +290,19 @@ test("authoritative runtime status returns presence and compiled ids only", () =
 
 test("notification registry owns every producer route and missing state", async () => {
   const routes = notificationRouteStatuses({
-    ANTIFRAUD_DISCORD_WEBHOOK_URL:
-      runtimeConfig.ANTIFRAUD_DISCORD_WEBHOOK_URL,
-    ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL: undefined,
-    FIAT_ALERT_DISCORD_WEBHOOK_URL:
-      runtimeConfig.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: undefined,
-    FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
-      runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
     ANTIFRAUD_INGEST_URL: runtimeConfig.ANTIFRAUD_INGEST_URL,
-    ANTIFRAUD_INGEST_SECRET: undefined,
+    ANTIFRAUD_INGEST_SECRET: runtimeConfig.ANTIFRAUD_INGEST_SECRET,
+    ADMIN_GUILD_ID: runtimeConfig.ADMIN_GUILD_ID,
   });
   assert.deepEqual(
     routes.map((route) => [route.label, route.configured]),
     [
       ["Antifraud risk", true],
       ["Fiat operations", true],
-      ["High-risk fiat supplemental", false],
+      ["High-risk fiat supplemental", true],
       ["Email containment", true],
-      ["Withdrawal holds", false],
-      ["Signed dashboard ingest", false],
+      ["Withdrawal holds", true],
+      ["Signed dashboard ingest", true],
     ],
   );
   for (const route of routes) {
@@ -353,10 +328,6 @@ test("notification registry owns every producer route and missing state", async 
   assert.deepEqual(notificationRoutesForFiatProblem("failed"), [
     "fiat_operations",
   ]);
-  assert.equal(
-    notificationWebhookUrl(runtimeConfig, "withdrawal_hold"),
-    runtimeConfig.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
-  );
   assert.deepEqual(signedIngestTarget(runtimeConfig), {
     url: runtimeConfig.ANTIFRAUD_INGEST_URL,
     secret: runtimeConfig.ANTIFRAUD_INGEST_SECRET,
@@ -364,8 +335,8 @@ test("notification registry owns every producer route and missing state", async 
 
   const srcUrl = new URL("../src/", import.meta.url);
   const producerContracts = [
-    ["discord.ts", "notificationWebhookUrl"],
-    ["fiat-alerts.ts", "notificationRoutesForFiatProblem"],
+    ["discord.ts", "sendBotDiscordEvent"],
+    ["fiat-alerts.ts", "sendBotDiscordEvent"],
     ["ingest-delivery.ts", "signedIngestTarget"],
     ["server.ts", "notificationRouteStatuses"],
   ] as const;
@@ -375,42 +346,19 @@ test("notification registry owns every producer route and missing state", async 
   }
 });
 
-test("high-risk Discord routes are isolated without exposing their values", () => {
-  const duplicate =
-    "https://discord.com/api/webhooks/same-id/same-token";
-  assert.throws(
-    () =>
-      assertHighRiskDiscordWebhookIsolation({
-        ANTIFRAUD_DISCORD_WEBHOOK_URL: duplicate,
-        FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL: `${duplicate}?wait=true`,
-      }),
-    (error: unknown) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /must use distinct Discord webhooks/);
-      assert.equal(error.message.includes(duplicate), false);
-      return true;
-    },
-  );
-  assert.doesNotThrow(() =>
-    assertHighRiskDiscordWebhookIsolation({
-      ANTIFRAUD_DISCORD_WEBHOOK_URL:
-        "https://discord.com/api/webhooks/risk-id/risk-token",
-      FIAT_ALERT_DISCORD_WEBHOOK_URL:
-        "https://discord.com/api/webhooks/pending-id/pending-token",
-      FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
-        "https://discord.com/api/webhooks/high-id/high-token",
-    }),
-  );
-  assert.doesNotThrow(() =>
-    assertHighRiskDiscordWebhookIsolation({
-      ANTIFRAUD_DISCORD_WEBHOOK_URL:
-        "https://discord.com/api/webhooks/risk-id/risk-token",
-      FIAT_ALERT_DISCORD_WEBHOOK_URL:
-        "https://discord.com/api/webhooks/pending-id/pending-token",
-      FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
-        runtimeConfig.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
-    }),
-  );
+test("Discord alert routing uses the signed bot queue only", async () => {
+  const srcUrl = new URL("../src/", import.meta.url);
+  for (const file of [
+    "config.ts",
+    "discord.ts",
+    "fiat-alerts.ts",
+    "monitor.ts",
+    "notification-routes.ts",
+    "server.ts",
+  ]) {
+    const source = await readFile(new URL(file, srcUrl), "utf8");
+    assert.doesNotMatch(source, /DISCORD_WEBHOOK_URL/);
+  }
 });
 
 test("operations config accepts read/admin tokens and rejects missing tokens", () => {

@@ -37,18 +37,12 @@ It does not modify the Packy frontend or backend.
 
 Copy `.env.example` to `.env`, supply secrets and run `npm run dev`.
 
-`FIAT_ALERT_DISCORD_WEBHOOK_URL` is the dedicated fiat-operations channel for
-failed, review, dispute, refund, stalled checkout, stale pending, and failed
-provider-webhook alerts. Canonical high-risk deposits and deposits from
-fiat-locked accounts remain on the general `ANTIFRAUD_DISCORD_WEBHOOK_URL`.
-Canonical high-risk deposits additionally use the separate
-`FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL`, so one failed destination retries without
-duplicating or blocking the other. The high-risk supplemental webhook must be
-distinct from both the general-risk and routine fiat-operations webhooks.
-Blacklisted signup or Whop checkout email-domain containment uses
-`FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL`. Automatic withdrawal holds and
-other account-containment alerts use
-`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL`.
+Discord alerts are submitted to the Admin dashboard's signed
+`/api/antifraud/discord-events` endpoint and delivered by the shared Discord
+bot. `ADMIN_GUILD_ID` fixes the destination server. Channel selection and
+event-to-channel routing are configured in the dashboard; the monitor no
+longer holds Discord webhook URLs. Its existing Antifraud outboxes retain
+per-destination dedupe, retry, and partial-failure isolation.
 `FIAT_ALERT_DASHBOARD_URL` controls the alert button target and defaults to the
 live Antifraud Fiat Deposits workspace. Ordinary customer-canceled checkouts
 are not alerted.
@@ -60,12 +54,10 @@ Retries are idempotent because the risk-event id is the dashboard external id.
 Score-60 signup markers use this same stream to open Account Review cases.
 Neither value is returned by runtime status.
 
-`ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL` is the dedicated containment
-destination for automatic lifetime-fiat withdrawal holds and future non-email
-account lock/ban alerts. Those alerts use the compiled standard support
-mentions, link directly to Account Review, and retry from the Antifraud
-database outbox until Discord accepts them. Webhook URLs are never returned by
-runtime status.
+Automatic lifetime-fiat withdrawal holds and future non-email account
+containment alerts use their own configurable event key. They retain the
+compiled standard support mentions, link directly to Account Review, and retry
+from the Antifraud database outbox until the dashboard accepts the event.
 
 Database TLS is explicit per connection. Railway private-network databases use
 `disable`; set the matching `*_DATABASE_SSL=require` variable when an external

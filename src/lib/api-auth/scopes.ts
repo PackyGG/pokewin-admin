@@ -59,6 +59,12 @@ export const API_SCOPES = {
       "Read the linked creator's own code, configured reward legs, player counts, wager volume, and reward payouts. The caller cannot choose a code.",
     access: "prod-read",
   },
+  "discord:antifraud": {
+    label: "Deliver Antifraud notifications",
+    description:
+      "Synchronize Discord channels and claim, acknowledge, or enqueue durable Antifraud notification jobs. Writes only the admin database.",
+    access: "admin-write",
+  },
   "discord:verify": {
     label: "Run Discord verification",
     description:

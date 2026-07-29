@@ -487,6 +487,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.webhooks",
+    group: "System",
+    label: "Discord Routing",
+    href: "/webhooks",
+    pageKey: "/webhooks",
+    icon: "Webhook",
+    description: "Route antifraud events to bot-visible Discord channels",
+    keywords: ["discord", "webhook", "antifraud", "alerts", "events", "channels"],
+    isNew: true,
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Admins & Access — the unified staff-administration surface (admin
     // accounts + roles & permissions, merged into one tabbed page). The
     // standalone "Roles" entry was removed; roles live on the admin-only

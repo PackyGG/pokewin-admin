@@ -1,4 +1,4 @@
-import { pgTable, varchar, timestamp, text, integer, index, uuid, boolean, numeric, foreignKey, unique, bigint, jsonb, uniqueIndex, date, smallint, check, pgEnum, customType } from "drizzle-orm/pg-core"
+import { pgTable, varchar, timestamp, text, integer, index, uuid, boolean, numeric, foreignKey, unique, bigint, jsonb, uniqueIndex, date, smallint, check, primaryKey, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 const bytea = customType<{ data: Buffer }>({
@@ -341,7 +341,7 @@ export const admin_shifts = pgTable("admin_shifts", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 }, (table) => [
-	uniqueIndex("admin_shifts_week_start_day_of_week_shift_slot_key").using("btree", table.week_start.asc().nullsLast().op("int4_ops"), table.day_of_week.asc().nullsLast().op("timestamptz_ops"), table.shift_slot.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("admin_shifts_week_start_day_of_week_shift_slot_key").using("btree", table.week_start.asc().nullsLast().op("int4_ops"), table.day_of_week.asc().nullsLast().op("int4_ops"), table.shift_slot.asc().nullsLast().op("int4_ops")),
 	index("admin_shifts_week_start_idx").using("btree", table.week_start.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.created_by_id],
@@ -359,14 +359,14 @@ export const admin_shift_assignments = pgTable("admin_shift_assignments", {
 	index("admin_shift_assignments_admin_user_id_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops")),
 	uniqueIndex("admin_shift_assignments_shift_id_admin_user_id_key").using("btree", table.shift_id.asc().nullsLast().op("uuid_ops"), table.admin_user_id.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
-			columns: [table.shift_id],
-			foreignColumns: [admin_shifts.id],
-			name: "admin_shift_assignments_shift_id_fkey"
-		}).onUpdate("cascade").onDelete("cascade"),
-	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
 			name: "admin_shift_assignments_admin_user_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({
+			columns: [table.shift_id],
+			foreignColumns: [admin_shifts.id],
+			name: "admin_shift_assignments_shift_id_fkey"
 		}).onUpdate("cascade").onDelete("cascade"),
 ]);
 
@@ -682,7 +682,7 @@ export const kick_streams = pgTable("kick_streams", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("kick_streams_username_started_idx").using("btree", table.username.asc().nullsLast().op("timestamptz_ops"), table.started_at.desc().nullsFirst().op("text_ops")),
+	index("kick_streams_username_started_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("kick_streams_username_stream_unique").using("btree", table.username.asc().nullsLast().op("text_ops"), table.kick_stream_id.asc().nullsLast().op("text_ops")),
 ]);
 
@@ -723,8 +723,8 @@ export const tweets = pgTable("tweets", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("tweets_username_mentions_posted_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.mentions_us.asc().nullsLast().op("bool_ops"), table.posted_at.desc().nullsFirst().op("text_ops")),
-	index("tweets_username_posted_idx").using("btree", table.username.asc().nullsLast().op("timestamptz_ops"), table.posted_at.desc().nullsFirst().op("text_ops")),
+	index("tweets_username_mentions_posted_idx").using("btree", table.username.asc().nullsLast().op("bool_ops"), table.mentions_us.asc().nullsLast().op("text_ops"), table.posted_at.desc().nullsFirst().op("bool_ops")),
+	index("tweets_username_posted_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.posted_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("tweets_username_tweet_id_key").using("btree", table.username.asc().nullsLast().op("text_ops"), table.tweet_id.asc().nullsLast().op("text_ops")),
 	uniqueIndex("tweets_username_tweet_unique").using("btree", table.username.asc().nullsLast().op("text_ops"), table.tweet_id.asc().nullsLast().op("text_ops")),
 ]);
@@ -796,7 +796,7 @@ export const creator_alerts = pgTable("creator_alerts", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("creator_alerts_active_idx").using("btree", table.dismissed_at.asc().nullsLast().op("timestamptz_ops"), table.severity.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	index("creator_alerts_active_idx").using("btree", table.dismissed_at.asc().nullsLast().op("timestamptz_ops"), table.severity.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	uniqueIndex("creator_alerts_dedupe_key_key").using("btree", table.dedupe_key.asc().nullsLast().op("text_ops")),
 	index("creator_alerts_target_user_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
 ]);
@@ -1139,8 +1139,8 @@ export const creator_reward_claims = pgTable("creator_reward_claims", {
 	bot_notified_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	bot_notify_error: text(),
 }, (table) => [
-	uniqueIndex("creator_reward_claims_one_pending_per_user").using("btree", table.program_id.asc().nullsLast().op("uuid_ops"), table.user_id.asc().nullsLast().op("text_ops"), table.leg.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'pending'::text)`),
-	index("creator_reward_claims_program_user_idx").using("btree", table.program_id.asc().nullsLast().op("uuid_ops"), table.user_id.asc().nullsLast().op("uuid_ops")),
+	uniqueIndex("creator_reward_claims_one_pending_per_user").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("uuid_ops"), table.leg.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'pending'::text)`),
+	index("creator_reward_claims_program_user_idx").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("text_ops")),
 	index("creator_reward_claims_status_requested_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.requested_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("creator_reward_claims_user_idx").using("btree", table.user_id.asc().nullsLast().op("text_ops")),
 	foreignKey({
@@ -1173,14 +1173,14 @@ export const chat_raffle_rounds = pgTable("chat_raffle_rounds", {
 	index("chat_raffle_rounds_ends_at_idx").using("btree", table.ends_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("chat_raffle_rounds_status_idx").using("btree", table.status.asc().nullsLast().op("text_ops")),
 	foreignKey({
-			columns: [table.drawn_by],
-			foreignColumns: [admin_users.id],
-			name: "chat_raffle_rounds_drawn_by_fkey"
-		}).onDelete("set null"),
-	foreignKey({
 			columns: [table.created_by],
 			foreignColumns: [admin_users.id],
 			name: "chat_raffle_rounds_created_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.drawn_by],
+			foreignColumns: [admin_users.id],
+			name: "chat_raffle_rounds_drawn_by_fkey"
 		}).onDelete("set null"),
 ]);
 
@@ -1202,15 +1202,15 @@ export const chat_raffle_prizes = pgTable("chat_raffle_prizes", {
 }, (table) => [
 	index("chat_raffle_prizes_round_idx").using("btree", table.round_id.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
-			columns: [table.round_id],
-			foreignColumns: [chat_raffle_rounds.id],
-			name: "chat_raffle_prizes_round_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
 			columns: [table.paid_by],
 			foreignColumns: [admin_users.id],
 			name: "chat_raffle_prizes_paid_by_fkey"
 		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.round_id],
+			foreignColumns: [chat_raffle_rounds.id],
+			name: "chat_raffle_prizes_round_id_fkey"
+		}).onDelete("cascade"),
 	unique("chat_raffle_prizes_round_position_unique").on(table.position, table.round_id),
 ]);
 
@@ -1228,7 +1228,7 @@ export const chat_raffle_entries = pgTable("chat_raffle_entries", {
 	position: integer().default(0).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("chat_raffle_entries_round_position_idx").using("btree", table.round_id.asc().nullsLast().op("uuid_ops"), table.position.asc().nullsLast().op("uuid_ops")),
+	index("chat_raffle_entries_round_position_idx").using("btree", table.round_id.asc().nullsLast().op("int4_ops"), table.position.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.round_id],
 			foreignColumns: [chat_raffle_rounds.id],
@@ -1249,15 +1249,15 @@ export const chat_raffle_adjustments = pgTable("chat_raffle_adjustments", {
 	index("chat_raffle_adjustments_round_idx").using("btree", table.round_id.asc().nullsLast().op("uuid_ops")),
 	index("chat_raffle_adjustments_round_user_idx").using("btree", table.round_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("text_ops")),
 	foreignKey({
-			columns: [table.round_id],
-			foreignColumns: [chat_raffle_rounds.id],
-			name: "chat_raffle_adjustments_round_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
 			columns: [table.created_by],
 			foreignColumns: [admin_users.id],
 			name: "chat_raffle_adjustments_created_by_fkey"
 		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.round_id],
+			foreignColumns: [chat_raffle_rounds.id],
+			name: "chat_raffle_adjustments_round_id_fkey"
+		}).onDelete("cascade"),
 ]);
 
 export const admin_stepup_used = pgTable("admin_stepup_used", {
@@ -1301,8 +1301,8 @@ export const staff_point_events = pgTable("staff_point_events", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("staff_point_events_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	uniqueIndex("staff_point_events_source_uniq").using("btree", table.source_kind.asc().nullsLast().op("text_ops"), table.source_id.asc().nullsLast().op("text_ops")).where(sql`((source_id IS NOT NULL) AND (source_kind <> 'manual'::text))`),
-	index("staff_point_events_user_created_idx").using("btree", table.admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("staff_point_events_source_uniq").using("btree", table.source_kind.asc().nullsLast().op("text_ops"), table.source_id.asc().nullsLast().op("uuid_ops")).where(sql`((source_id IS NOT NULL) AND (source_kind <> 'manual'::text))`),
+	index("staff_point_events_user_created_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
 	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
@@ -1438,17 +1438,17 @@ export const staff_quiz_attempts = pgTable("staff_quiz_attempts", {
 	submitted_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 }, (table) => [
 	uniqueIndex("staff_quiz_attempts_open_uniq").using("btree", table.quiz_id.asc().nullsLast().op("uuid_ops"), table.admin_user_id.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'in_progress'::text)`),
-	index("staff_quiz_attempts_quiz_idx").using("btree", table.quiz_id.asc().nullsLast().op("uuid_ops"), table.submitted_at.desc().nullsFirst().op("uuid_ops")),
-	index("staff_quiz_attempts_user_started_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
-	foreignKey({
-			columns: [table.quiz_id],
-			foreignColumns: [staff_quizzes.id],
-			name: "staff_quiz_attempts_quiz_id_fkey"
-		}).onDelete("cascade"),
+	index("staff_quiz_attempts_quiz_idx").using("btree", table.quiz_id.asc().nullsLast().op("timestamptz_ops"), table.submitted_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("staff_quiz_attempts_user_started_idx").using("btree", table.admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
 			name: "staff_quiz_attempts_admin_user_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.quiz_id],
+			foreignColumns: [staff_quizzes.id],
+			name: "staff_quiz_attempts_quiz_id_fkey"
 		}).onDelete("cascade"),
 ]);
 
@@ -1493,7 +1493,7 @@ export const antifraud_reviews = pgTable("antifraud_reviews", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("antifraud_reviews_assigned_idx").using("btree", table.assigned_to.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("antifraud_reviews_assigned_idx").using("btree", table.assigned_to.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_reviews_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
 	index("antifraud_reviews_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("antifraud_reviews_open_target_uniq").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['open'::text, 'in_review'::text]))`),
@@ -1532,9 +1532,9 @@ export const creator_reward_offer_windows = pgTable("creator_reward_offer_window
 	expires_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	claimed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 }, (table) => [
-	index("creator_reward_offer_windows_lookup_idx").using("btree", table.program_id.asc().nullsLast().op("timestamptz_ops"), table.user_id.asc().nullsLast().op("text_ops"), table.leg.asc().nullsLast().op("text_ops"), table.expires_at.asc().nullsLast().op("uuid_ops")),
+	index("creator_reward_offer_windows_lookup_idx").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("timestamptz_ops"), table.leg.asc().nullsLast().op("uuid_ops"), table.expires_at.asc().nullsLast().op("uuid_ops")),
 	index("creator_reward_offer_windows_open_expiry_idx").using("btree", table.expires_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(claimed_at IS NULL)`),
-	uniqueIndex("creator_reward_offer_windows_unit_key").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("uuid_ops"), table.leg.asc().nullsLast().op("timestamptz_ops"), table.run_started_at.asc().nullsLast().op("text_ops"), table.basis_position_usd.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("creator_reward_offer_windows_unit_key").using("btree", table.program_id.asc().nullsLast().op("numeric_ops"), table.user_id.asc().nullsLast().op("timestamptz_ops"), table.leg.asc().nullsLast().op("text_ops"), table.run_started_at.asc().nullsLast().op("text_ops"), table.basis_position_usd.asc().nullsLast().op("text_ops")),
 	foreignKey({
 			columns: [table.program_id],
 			foreignColumns: [creator_reward_programs.id],
@@ -1583,8 +1583,8 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 	preview_max_win: numeric({ precision: 20, scale:  2 }),
 }, (table) => [
 	uniqueIndex("pack_creation_requests_pending_slug_key").using("btree", sql`lower(slug)`).where(sql`(status = ANY (ARRAY['pending'::text, 'processing'::text]))`),
-	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("pack_creation_requests_status_created_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
+	index("pack_creation_requests_status_created_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	foreignKey({
 			columns: [table.requested_by],
 			foreignColumns: [admin_users.id],
@@ -1595,6 +1595,130 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 			foreignColumns: [admin_users.id],
 			name: "pack_creation_requests_reviewed_by_fkey"
 		}).onUpdate("cascade").onDelete("set null"),
-	check("pack_creation_requests_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'approved'::text, 'declined'::text])`),
 	check("pack_creation_requests_payload_object_check", sql`jsonb_typeof(request_payload) = 'object'::text`),
+	check("pack_creation_requests_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'approved'::text, 'declined'::text])`),
+]);
+
+export const discord_notification_guilds = pgTable("discord_notification_guilds", {
+	guild_id: text().primaryKey().notNull(),
+	name: text().notNull(),
+	connected: boolean().default(true).notNull(),
+	last_synced_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	check("discord_notification_guilds_id_check", sql`guild_id ~ '^[0-9]{15,21}$'::text`),
+]);
+
+export const discord_notification_events = pgTable("discord_notification_events", {
+	event_key: text().primaryKey().notNull(),
+	label: text().notNull(),
+	description: text().default('').notNull(),
+	category: text().notNull(),
+	is_custom: boolean().default(false).notNull(),
+	enabled: boolean().default(true).notNull(),
+	created_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_events_created_by_fkey"
+		}).onDelete("set null"),
+	check("discord_notification_events_key_check", sql`event_key ~ '^[a-z0-9][a-z0-9._-]{2,79}$'::text`),
+]);
+
+export const discord_notification_routes = pgTable("discord_notification_routes", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	event_key: text().notNull(),
+	channel_id: text().notNull(),
+	enabled: boolean().default(true).notNull(),
+	created_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_notification_routes_dispatch_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.event_key.asc().nullsLast().op("text_ops")).where(sql`enabled`),
+	uniqueIndex("discord_notification_routes_unique").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.event_key.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.guild_id, table.channel_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_routes_channel_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_routes_created_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.event_key],
+			foreignColumns: [discord_notification_events.event_key],
+			name: "discord_notification_routes_event_key_fkey"
+		}).onDelete("cascade"),
+]);
+
+export const discord_notification_jobs = pgTable("discord_notification_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	event_key: text().notNull(),
+	channel_id: text().notNull(),
+	dedupe_key: text().notNull(),
+	content: text(),
+	embed: jsonb().notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(10).notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_notification_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	uniqueIndex("discord_notification_jobs_dedupe_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.event_key.asc().nullsLast().op("text_ops"), table.dedupe_key.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops")),
+	index("discord_notification_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.guild_id, table.channel_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_jobs_channel_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.event_key],
+			foreignColumns: [discord_notification_events.event_key],
+			name: "discord_notification_jobs_event_key_fkey"
+		}).onDelete("restrict"),
+	check("discord_notification_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+]);
+
+export const discord_notification_channels = pgTable("discord_notification_channels", {
+	guild_id: text().notNull(),
+	channel_id: text().notNull(),
+	name: text().notNull(),
+	type: text().notNull(),
+	parent_id: text(),
+	parent_name: text(),
+	position: integer().default(0).notNull(),
+	can_view: boolean().default(false).notNull(),
+	can_send: boolean().default(false).notNull(),
+	can_embed: boolean().default(false).notNull(),
+	available: boolean().default(true).notNull(),
+	last_synced_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_notification_channels_guild_position_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available.asc().nullsLast().op("bool_ops"), table.position.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.guild_id],
+			foreignColumns: [discord_notification_guilds.guild_id],
+			name: "discord_notification_channels_guild_id_fkey"
+		}).onDelete("cascade"),
+	primaryKey({ columns: [table.channel_id, table.guild_id], name: "discord_notification_channels_pkey"}),
+	check("discord_notification_channels_id_check", sql`channel_id ~ '^[0-9]{15,21}$'::text`),
 ]);

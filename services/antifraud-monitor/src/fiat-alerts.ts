@@ -5,15 +5,14 @@ import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import {
   notificationRoutesForFiatProblem,
-  notificationWebhookUrl,
   type FiatNotificationRouteKey,
 } from "./notification-routes.js";
+import { sendBotDiscordEvent } from "./discord-events.js";
 import { whopPaymentMethodLabel } from "./whop-payment-method.js";
 
 const CURSOR_STREAM = "fiat-problems";
 const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
 const BATCH_SIZE = 100;
-const SEND_TIMEOUT_MS = 5_000;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export const FIAT_PROBLEM_CODES = [
@@ -72,13 +71,19 @@ export type FiatAlertDestination =
     (typeof FIAT_ALERT_DESTINATIONS)[number]
   >;
 
-type FiatAlertWebhookConfig = Pick<
-  Config,
-  | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
-  | "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"
-  | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
-  | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
->;
+export function fiatAlertEventKey(
+  destination: FiatAlertDestination,
+): "antifraud.fiat_risk" | "antifraud.fiat_operations" | "antifraud.email_blacklist" {
+  switch (destination) {
+    case "antifraud_risk":
+    case "high_risk_supplemental":
+      return "antifraud.fiat_risk";
+    case "fiat_operations":
+      return "antifraud.fiat_operations";
+    case "email_blacklist":
+      return "antifraud.email_blacklist";
+  }
+}
 
 type DiscordPayload = {
   username: string;
@@ -103,15 +108,6 @@ type DiscordPayload = {
     }>;
   }>;
 };
-
-export function discordRetryAfterSeconds(headers: Headers): number | null {
-  const raw =
-    headers.get("retry-after") ?? headers.get("x-ratelimit-reset-after");
-  if (!raw) return null;
-  const seconds = Number(raw);
-  if (!Number.isFinite(seconds) || seconds <= 0) return null;
-  return Math.min(300, Math.max(1, Math.ceil(seconds)));
-}
 
 function clean(value: unknown, maxLength = 1_024): string {
   const text = String(value ?? "")
@@ -640,13 +636,6 @@ export function fiatAlertDestinations(
   return notificationRoutesForFiatProblem(problemCode);
 }
 
-export function fiatAlertWebhookUrl(
-  config: FiatAlertWebhookConfig,
-  destination: FiatAlertDestination,
-): string | undefined {
-  return notificationWebhookUrl(config, destination);
-}
-
 export class FiatProblemAlerts {
   constructor(
     private readonly config: Config,
@@ -832,21 +821,6 @@ export class FiatProblemAlerts {
   }
 
   private async deliver(): Promise<void> {
-    const operationsWebhookUrl = this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL;
-    const highRiskWebhookUrl =
-      this.config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL;
-    const riskWebhookUrl = this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL;
-    const blacklistWebhookUrl =
-      this.config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL;
-    if (
-      !operationsWebhookUrl &&
-      !highRiskWebhookUrl &&
-      !riskWebhookUrl &&
-      !blacklistWebhookUrl
-    ) {
-      return;
-    }
-
     const pending = await this.db.antifraud.query<PendingFiatAlert>(
       `
         SELECT
@@ -865,45 +839,13 @@ export class FiatProblemAlerts {
         WHERE delivery.delivered_at IS NULL
           AND delivery.next_attempt_at <= now()
           AND alert.next_attempt_at <= now()
-          AND (
-            (
-              delivery.destination = 'email_blacklist'
-              AND $1::boolean
-            )
-            OR
-            (
-              delivery.destination = 'antifraud_risk'
-              AND $2::boolean
-            )
-            OR
-            (
-              delivery.destination = 'fiat_operations'
-              AND $3::boolean
-            )
-            OR
-            (
-              delivery.destination = 'high_risk_supplemental'
-              AND $4::boolean
-            )
-          )
         ORDER BY alert.occurred_at, delivery.destination
         LIMIT 1
       `,
-      [
-        Boolean(blacklistWebhookUrl),
-        Boolean(riskWebhookUrl),
-        Boolean(operationsWebhookUrl),
-        Boolean(highRiskWebhookUrl),
-      ],
     );
 
     for (const problem of pending.rows) {
-      const webhookUrl = fiatAlertWebhookUrl(
-        this.config,
-        problem.destination,
-      );
-      if (!webhookUrl) continue;
-      const delivery = await this.send(webhookUrl, problem);
+      const delivery = await this.send(problem);
       const attempt = problem.attempt_count + 1;
       const retrySeconds =
         delivery.retryAfterSeconds ??
@@ -993,50 +935,21 @@ export class FiatProblemAlerts {
   }
 
   private async send(
-    webhookUrl: string,
-    problem: FiatProblem,
+    problem: PendingFiatAlert,
   ): Promise<{ delivered: boolean; retryAfterSeconds: number | null }> {
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-    try {
-      const deliveryUrl = new URL(webhookUrl);
-      deliveryUrl.searchParams.set("with_components", "true");
-      const response = await fetch(deliveryUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          buildFiatDiscordPayload(
-            this.config.FIAT_ALERT_DASHBOARD_URL,
-            problem,
-          ),
-        ),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const retryAfterSeconds = discordRetryAfterSeconds(response.headers);
-        this.log.error(
-          {
-            status: response.status,
-            retryAfterSeconds,
-            sourceKind: problem.source_kind,
-            sourceId: problem.source_id,
-          },
-          `Fiat Discord alert delivery failed with HTTP ${response.status}`,
-        );
-        return { delivered: false, retryAfterSeconds };
-      }
-      return { delivered: true, retryAfterSeconds: null };
-    } catch {
-      this.log.error(
-        {
-          sourceKind: problem.source_kind,
-          sourceId: problem.source_id,
-        },
-        "Fiat Discord alert delivery failed",
-      );
-      return { delivered: false, retryAfterSeconds: null };
-    } finally {
-      clearTimeout(timer);
-    }
+    const delivered = await sendBotDiscordEvent(this.config, this.log, {
+      eventKey: fiatAlertEventKey(problem.destination),
+      // The former high-risk supplemental webhook now resolves to the same
+      // event and dedupe key. The configurable router fans one event out to
+      // every selected channel without creating duplicate alerts.
+      dedupeKey:
+        `fiat:${problem.source_kind}:${problem.source_id}:` +
+        fiatAlertEventKey(problem.destination),
+      payload: buildFiatDiscordPayload(
+        this.config.FIAT_ALERT_DASHBOARD_URL,
+        problem,
+      ),
+    });
+    return { delivered, retryAfterSeconds: null };
   }
 }

@@ -1,0 +1,67 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(path, "utf8");
+
+test("Discord notification persistence has durable routing, leases, and dedupe", () => {
+  const migration = read(
+    "drizzle/admin/migrations/20260729_discord_notification_router.sql",
+  );
+  const router = read("src/lib/discord-notifications/router.ts");
+
+  for (const table of [
+    "discord_notification_guilds",
+    "discord_notification_channels",
+    "discord_notification_events",
+    "discord_notification_routes",
+    "discord_notification_jobs",
+  ]) {
+    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`));
+  }
+  assert.match(migration, /discord_notification_jobs_dedupe_idx/);
+  assert.match(migration, /WHERE "status" IN \('pending', 'leased'\)/);
+  assert.match(router, /FOR UPDATE SKIP LOCKED/);
+  assert.match(router, /leased_until = now\(\) \+ interval '60 seconds'/);
+  assert.match(router, /ON CONFLICT \(guild_id, event_key, dedupe_key, channel_id\) DO NOTHING/);
+  assert.match(router, /attempt_count >= max_attempts THEN 'dead'/);
+});
+
+test("bot API is scoped, guild-bound, and matches the worker contract", () => {
+  const scopes = read("src/lib/api-auth/scopes.ts");
+  const sync = read(
+    "src/app/api/v1/discord/antifraud/channels/sync/route.ts",
+  );
+  const claim = read(
+    "src/app/api/v1/discord/antifraud/jobs/claim/route.ts",
+  );
+  const ack = read(
+    "src/app/api/v1/discord/antifraud/jobs/[id]/ack/route.ts",
+  );
+
+  assert.match(scopes, /"discord:antifraud"/);
+  for (const route of [sync, claim, ack]) {
+    assert.match(route, /scopes: \["discord:antifraud"\]/);
+    assert.match(route, /process\.env\.ADMIN_GUILD_ID/);
+  }
+  assert.match(claim, /return \{ jobs: await claimDiscordJobs/);
+  assert.match(ack, /z\.enum\(\["delivered", "failed"\]\)/);
+});
+
+test("monitor enqueue is bounded, signed, replay-safe, and webhook-free", () => {
+  const receiver = read("src/app/api/antifraud/discord-events/route.ts");
+  const sender = read(
+    "services/antifraud-monitor/src/discord-events.ts",
+  );
+  const monitorConfig = read(
+    "services/antifraud-monitor/src/config.ts",
+  );
+
+  assert.match(receiver, /MAX_SKEW_MS = 5 \* 60 \* 1000/);
+  assert.match(receiver, /MAX_BODY_BYTES = 64 \* 1024/);
+  assert.match(receiver, /timingSafeEqual/);
+  assert.match(receiver, /x-antifraud-signature/);
+  assert.match(sender, /createHmac\("sha256"/);
+  assert.match(sender, /\/api\/antifraud\/discord-events/);
+  assert.doesNotMatch(monitorConfig, /DISCORD_WEBHOOK_URL/);
+});

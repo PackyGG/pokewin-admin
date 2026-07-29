@@ -4,12 +4,11 @@ import test from "node:test";
 
 import {
   buildFiatDiscordPayload,
-  discordRetryAfterSeconds,
   fetchFailedPaymentWebhooks,
   fetchHighRiskFiatProblems,
   FiatProblemAlerts,
   fiatAlertDestinations,
-  fiatAlertWebhookUrl,
+  fiatAlertEventKey,
   fiatProblemTitle,
   isFiatRiskProblem,
   type FiatProblem,
@@ -282,18 +281,7 @@ test("deposit cluster alerts aggregate evidence without duplicate account alerts
   );
 });
 
-test("the five-route mapping keeps pending and high-risk fiat separate", () => {
-  const config = {
-    FIAT_ALERT_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/fiat-id/fiat-token",
-    ANTIFRAUD_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/risk-id/risk-token",
-    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
-    FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
-  };
-
+test("the four-route mapping preserves current fiat classification", () => {
   assert.deepEqual(
     fiatAlertDestinations("blacklisted_email_domain"),
     ["email_blacklist"],
@@ -312,47 +300,19 @@ test("the five-route mapping keeps pending and high-risk fiat separate", () => {
   );
   assert.deepEqual(fiatAlertDestinations("failed"), ["fiat_operations"]);
 
+  assert.equal(fiatAlertEventKey("email_blacklist"), "antifraud.email_blacklist");
+  assert.equal(fiatAlertEventKey("antifraud_risk"), "antifraud.fiat_risk");
   assert.equal(
-    fiatAlertWebhookUrl(config, "high_risk_supplemental"),
-    config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL,
+    fiatAlertEventKey("high_risk_supplemental"),
+    "antifraud.fiat_risk",
   );
   assert.equal(
-    fiatAlertWebhookUrl(config, "email_blacklist"),
-    config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
-  );
-  assert.equal(
-    fiatAlertWebhookUrl(config, "antifraud_risk"),
-    config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
-  );
-  assert.equal(
-    fiatAlertWebhookUrl(config, "fiat_operations"),
-    config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-  );
-  assert.equal(
-    fiatAlertWebhookUrl(
-      {
-        FIAT_ALERT_DISCORD_WEBHOOK_URL:
-          config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-        ANTIFRAUD_DISCORD_WEBHOOK_URL:
-          config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
-      },
-      "email_blacklist",
-    ),
-    undefined,
-  );
-  assert.equal(
-    fiatAlertWebhookUrl(
-      {
-        FIAT_ALERT_DISCORD_WEBHOOK_URL:
-          config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-      },
-      "email_blacklist",
-    ),
-    undefined,
+    fiatAlertEventKey("fiat_operations"),
+    "antifraud.fiat_operations",
   );
 });
 
-test("high-risk destinations retry independently after partial failure", async () => {
+test("legacy high-risk destinations collapse into one routed event", async () => {
   const pending = [
     {
       ...failedIntent,
@@ -389,14 +349,11 @@ test("high-risk destinations retry independently after partial failure", async (
     },
   };
   const config = {
-    FIAT_ALERT_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/fiat-id/fiat-token",
-    ANTIFRAUD_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/risk-id/risk-token",
-    FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/high-risk-id/high-risk-token",
-    FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL:
-      "https://discord.com/api/webhooks/blacklist-id/blacklist-token",
+    ADMIN_GUILD_ID: "1483064422778798112",
+    ANTIFRAUD_INGEST_URL:
+      "https://fraud.packydash.com/api/antifraud/ingest",
+    ANTIFRAUD_INGEST_SECRET:
+      "ingest-secret-that-is-at-least-32-characters",
     FIAT_ALERT_DASHBOARD_URL: FIAT_WORKSPACE_URL,
   } as Config;
   const alerts = new FiatProblemAlerts(
@@ -406,15 +363,18 @@ test("high-risk destinations retry independently after partial failure", async (
   );
   const originalFetch = globalThis.fetch;
   const fetchUrls: string[] = [];
-  globalThis.fetch = async (input) => {
+  const eventKeys: string[] = [];
+  const dedupeKeys: string[] = [];
+  globalThis.fetch = async (input, init) => {
     const url = String(input);
     fetchUrls.push(url);
-    return url.includes("/risk-id/")
-      ? new Response(null, {
-          status: 503,
-          headers: { "retry-after": "4" },
-        })
-      : new Response(null, { status: 204 });
+    const body = JSON.parse(String(init?.body)) as {
+      eventKey: string;
+      dedupeKey: string;
+    };
+    eventKeys.push(body.eventKey);
+    dedupeKeys.push(body.dedupeKey);
+    return Response.json({ ok: true });
   };
 
   try {
@@ -426,8 +386,12 @@ test("high-risk destinations retry independently after partial failure", async (
   }
 
   assert.equal(fetchUrls.length, 2);
-  assert.match(fetchUrls[0] ?? "", /\/risk-id\//);
-  assert.match(fetchUrls[1] ?? "", /\/high-risk-id\//);
+  assert.ok(fetchUrls.every((url) => url.endsWith("/api/antifraud/discord-events")));
+  assert.deepEqual(eventKeys, [
+    "antifraud.fiat_risk",
+    "antifraud.fiat_risk",
+  ]);
+  assert.equal(new Set(dedupeKeys).size, 1);
   assert.deepEqual(
     updates.map((values) => ({
       destination: values[2],
@@ -435,10 +399,10 @@ test("high-risk destinations retry independently after partial failure", async (
       retrySeconds: values[5],
     })),
     [
-      {
-        destination: "antifraud_risk",
-        delivered: false,
-        retrySeconds: 4,
+        {
+          destination: "antifraud_risk",
+          delivered: true,
+          retrySeconds: 2,
       },
       {
         destination: "high_risk_supplemental",
@@ -447,20 +411,6 @@ test("high-risk destinations retry independently after partial failure", async (
       },
     ],
   );
-});
-
-test("fiat Discord delivery honors bounded retry-after headers", () => {
-  assert.equal(
-    discordRetryAfterSeconds(new Headers({ "retry-after": "2.4" })),
-    3,
-  );
-  assert.equal(
-    discordRetryAfterSeconds(
-      new Headers({ "x-ratelimit-reset-after": "999" }),
-    ),
-    300,
-  );
-  assert.equal(discordRetryAfterSeconds(new Headers()), null);
 });
 
 test("fiat alert ingestion is mirror-only, durable, and retryable", async () => {
@@ -503,15 +453,11 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   assert.match(source, /delivery\.delivered_at IS NULL/);
   assert.match(source, /next_attempt_at/);
-  assert.match(source, /delivery\.destination = 'antifraud_risk'/);
-  assert.match(source, /delivery\.destination = 'fiat_operations'/);
-  assert.match(source, /delivery\.destination = 'high_risk_supplemental'/);
-  assert.match(source, /delivery\.destination = 'email_blacklist'/);
-  assert.match(source, /ANTIFRAUD_DISCORD_WEBHOOK_URL/);
-  assert.match(source, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
-  assert.match(source, /FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL/);
+  assert.match(source, /antifraud\.fiat_risk/);
+  assert.match(source, /antifraud\.fiat_operations/);
+  assert.match(source, /antifraud\.email_blacklist/);
+  assert.match(source, /sendBotDiscordEvent/);
   assert.match(source, /LIMIT 1/);
-  assert.match(source, /discordRetryAfterSeconds/);
   assert.match(
     migration,
     /PRIMARY KEY \(source_kind, source_id, destination\)/,

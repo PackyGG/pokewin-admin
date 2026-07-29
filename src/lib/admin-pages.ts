@@ -203,6 +203,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Moderation", label: "Chat", key: "/chat" },
   // System
   { group: "System", label: "Security", key: "/security" },
+  { group: "System", label: "Discord Routing", key: "/webhooks" },
   { group: "System", label: "Admins & Access", key: "/admin-users" },
   { group: "System", label: "New Packs", key: "/system/new-packs" },
   {

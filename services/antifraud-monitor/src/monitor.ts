@@ -281,11 +281,6 @@ export class MonitorEngine {
       this.config.ANTIFRAUD_DATABASE_URL,
       this.config.REDIS_URL,
       this.config.ANTIFRAUD_INGEST_SECRET,
-      this.config.ANTIFRAUD_DISCORD_WEBHOOK_URL,
-      this.config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
-      this.config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-      this.config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL,
-      this.config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
     ].filter(
       (secret): secret is string =>
         typeof secret === "string" && secret.length > 0,
@@ -896,19 +891,23 @@ export class MonitorEngine {
       let discordDelivered = alert.discord_delivered_at !== null;
       const failures: string[] = [];
       if (!discordDelivered) {
-        discordDelivered = await this.discord.send({
-          title: "High-risk signup detected",
-          description:
-            "This account crossed the automated signup review threshold and needs a staff decision.",
-          userId: alert.user_id,
-          username: alert.username,
-          caseId: alert.case_id ?? undefined,
-          score: alert.score,
-          severity: severity(alert.score),
-          trigger: "Signup score reached 60+",
-          signals,
-          occurredAt: alert.occurred_at,
-        });
+        discordDelivered = await this.discord.send(
+          "antifraud.signup_high_risk",
+          `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
+          {
+            title: "High-risk signup detected",
+            description:
+              "This account crossed the automated signup review threshold and needs a staff decision.",
+            userId: alert.user_id,
+            username: alert.username,
+            caseId: alert.case_id ?? undefined,
+            score: alert.score,
+            severity: severity(alert.score),
+            trigger: "Signup score reached 60+",
+            signals,
+            occurredAt: alert.occurred_at,
+          },
+        );
         if (!discordDelivered) failures.push("Discord delivery failed");
       }
 
@@ -973,7 +972,11 @@ export class MonitorEngine {
     // Discord has a five-second request timeout. Run this small bounded batch
     // concurrently so an outage cannot consume the poller's liveness budget.
     await Promise.all(pending.rows.map(async (alert) => {
-      const delivered = await this.discord.send(alert.payload);
+      const delivered = await this.discord.send(
+        "antifraud.rule_matched",
+        `rule:${alert.rule_match_id}`,
+        alert.payload,
+      );
       const attempt = alert.attempt_count + 1;
       const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
       await this.db.antifraud.query(
@@ -1135,22 +1138,25 @@ export class MonitorEngine {
     );
 
     for (const alert of pending.rows) {
-      const delivered = await this.discord.sendWithdrawalHold({
-        title: "Automatic fiat withdrawal hold",
-        description:
-          "Lifetime fiat deposits crossed the automatic review threshold. Crypto withdrawals and item shipping are locked, and the account is queued for Account Review.",
-        userId: alert.user_id,
-        username: alert.username,
-        score: FIAT_WITHDRAWAL_HOLD_SCORE,
-        severity: "high",
-        trigger: alert.reason,
-        outcome: "withdrawals_locked",
-        occurredAt: alert.occurred_at,
-        url: new URL(
-          "/antifraud/reviews",
-          this.config.ANTIFRAUD_DASHBOARD_URL,
-        ).toString(),
-      });
+      const delivered = await this.discord.sendWithdrawalHold(
+        `withdrawal-hold:${alert.source_ref}`,
+        {
+          title: "Automatic fiat withdrawal hold",
+          description:
+            "Lifetime fiat deposits crossed the automatic review threshold. Crypto withdrawals and item shipping are locked, and the account is queued for Account Review.",
+          userId: alert.user_id,
+          username: alert.username,
+          score: FIAT_WITHDRAWAL_HOLD_SCORE,
+          severity: "high",
+          trigger: alert.reason,
+          outcome: "withdrawals_locked",
+          occurredAt: alert.occurred_at,
+          url: new URL(
+            "/antifraud/reviews",
+            this.config.ANTIFRAUD_DASHBOARD_URL,
+          ).toString(),
+        },
+      );
       const attempt = alert.attempt_count + 1;
       const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
       await this.db.antifraud.query(

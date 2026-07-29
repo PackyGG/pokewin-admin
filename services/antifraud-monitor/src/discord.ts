@@ -1,7 +1,7 @@
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
-import { notificationWebhookUrl } from "./notification-routes.js";
+import { sendBotDiscordEvent } from "./discord-events.js";
 
 export const SUPPORT_USER_IDS = [
   "1302882250391818311",
@@ -16,7 +16,6 @@ export const URGENT_USER_IDS = [
   "188051599099297802",
 ] as const;
 
-const SEND_TIMEOUT_MS = 5_000;
 const DISCORD_DESCRIPTION_LIMIT = 1_200;
 const DISCORD_FIELD_LIMIT = 1_024;
 const MAX_SIGNAL_ROWS = 4;
@@ -48,11 +47,9 @@ export type DiscordAlert = {
 
 export function discordRuntimeStatus(config: Pick<
   Config,
-  | "ANTIFRAUD_DISCORD_WEBHOOK_URL"
-  | "ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"
-  | "FIAT_ALERT_DISCORD_WEBHOOK_URL"
-  | "FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"
-  | "FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"
+  | "ANTIFRAUD_INGEST_URL"
+  | "ANTIFRAUD_INGEST_SECRET"
+  | "ADMIN_GUILD_ID"
   | "ANTIFRAUD_DASHBOARD_URL"
 >): {
   webhookConfigured: boolean;
@@ -64,20 +61,17 @@ export function discordRuntimeStatus(config: Pick<
   supportRecipientIds: readonly string[];
   urgentRecipientIds: readonly string[];
 } {
+  const botQueueConfigured = Boolean(
+    config.ANTIFRAUD_INGEST_URL &&
+      config.ANTIFRAUD_INGEST_SECRET &&
+      config.ADMIN_GUILD_ID,
+  );
   return {
-    webhookConfigured: Boolean(config.ANTIFRAUD_DISCORD_WEBHOOK_URL),
-    withdrawalHoldWebhookConfigured: Boolean(
-      config.ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL,
-    ),
-    fiatProblemWebhookConfigured: Boolean(
-      config.FIAT_ALERT_DISCORD_WEBHOOK_URL,
-    ),
-    fiatHighRiskWebhookConfigured: Boolean(
-      config.FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL,
-    ),
-    fiatEmailBlacklistWebhookConfigured: Boolean(
-      config.FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL,
-    ),
+    webhookConfigured: botQueueConfigured,
+    withdrawalHoldWebhookConfigured: botQueueConfigured,
+    fiatProblemWebhookConfigured: botQueueConfigured,
+    fiatHighRiskWebhookConfigured: botQueueConfigured,
+    fiatEmailBlacklistWebhookConfigured: botQueueConfigured,
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
     supportRecipientIds: SUPPORT_USER_IDS,
     urgentRecipientIds: URGENT_USER_IDS,
@@ -294,55 +288,33 @@ export class DiscordAlerts {
     private readonly log: FastifyBaseLogger,
   ) {}
 
-  async send(alert: DiscordAlert): Promise<boolean> {
-    return this.sendTo(
-      notificationWebhookUrl(this.config, "antifraud_risk"),
-      alert,
-    );
+  async send(
+    eventKey: "antifraud.signup_high_risk" | "antifraud.rule_matched",
+    dedupeKey: string,
+    alert: DiscordAlert,
+  ): Promise<boolean> {
+    return this.sendTo(eventKey, dedupeKey, alert);
   }
 
-  async sendWithdrawalHold(alert: DiscordAlert): Promise<boolean> {
-    return this.sendTo(
-      notificationWebhookUrl(this.config, "withdrawal_hold"),
-      alert,
-    );
+  async sendWithdrawalHold(
+    dedupeKey: string,
+    alert: DiscordAlert,
+  ): Promise<boolean> {
+    return this.sendTo("antifraud.withdrawal_hold", dedupeKey, alert);
   }
 
   private async sendTo(
-    webhookUrl: string | undefined,
+    eventKey: string,
+    dedupeKey: string,
     alert: DiscordAlert,
   ): Promise<boolean> {
-    if (!webhookUrl) return false;
-
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), SEND_TIMEOUT_MS);
-    try {
-      const deliveryUrl = new URL(webhookUrl);
-      deliveryUrl.searchParams.set("with_components", "true");
-      const response = await fetch(deliveryUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          buildDiscordAlertPayload(
-            this.config.ANTIFRAUD_DASHBOARD_URL,
-            alert,
-          ),
-        ),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        this.log.error(
-          { status: response.status },
-          "Discord alert delivery failed",
-        );
-        return false;
-      }
-      return true;
-    } catch (error) {
-      this.log.error({ err: error }, "Discord alert delivery failed");
-      return false;
-    } finally {
-      clearTimeout(timer);
-    }
+    return sendBotDiscordEvent(this.config, this.log, {
+      eventKey,
+      dedupeKey,
+      payload: buildDiscordAlertPayload(
+        this.config.ANTIFRAUD_DASHBOARD_URL,
+        alert,
+      ),
+    });
   }
 }

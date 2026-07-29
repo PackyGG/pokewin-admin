@@ -205,6 +205,10 @@ export async function POST(request: Request): Promise<Response> {
             riskScore: signal.riskScore,
             userId: signal.userId,
           },
+          // Channel delivery is handled by the durable Discord bot queue. Keep
+          // this legacy staff fan-out in-app only so one signal cannot also hit
+          // the retired global Discord webhook path.
+          inAppOnly: true,
         });
       } catch (err) {
         console.error("[antifraud-ingest] failed to notify staff:", err);

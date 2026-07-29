@@ -60,6 +60,7 @@ import {
   UserSearch,
   Users,
   Wallet,
+  Webhook,
   type LucideIcon,
 } from "lucide-react";
 
@@ -163,6 +164,7 @@ const NAV_ICONS: Record<string, LucideIcon> = {
   UserCircle,
   Users,
   Wallet,
+  Webhook,
 };
 
 function navEntryToCommand(e: NavEntry): NavCommand {

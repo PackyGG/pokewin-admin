@@ -75,20 +75,18 @@ test("Fraud Fiat deposits force blacklist matches to the critical score", () => 
   assert.match(risk, /Keep crypto and item withdrawals locked/);
 });
 
-test("email blacklist alerts have a dedicated Discord destination", () => {
+test("email blacklist alerts have a dedicated bot event destination", () => {
   const config = read("services/antifraud-monitor/src/config.ts");
   const alerts = read("services/antifraud-monitor/src/fiat-alerts.ts");
-  const routes = read(
-    "services/antifraud-monitor/src/notification-routes.ts",
+  const transport = read(
+    "services/antifraud-monitor/src/discord-events.ts",
   );
 
-  assert.match(config, /FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL/);
-  assert.match(alerts, /notificationRoutesForFiatProblem/);
-  assert.match(alerts, /notificationWebhookUrl/);
-  assert.match(routes, /problemCode === "suspicious_deposit_cluster"/);
-  assert.match(routes, /return \["email_blacklist"\]/);
-  assert.match(
-    routes,
-    /email_blacklist:\s*"FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"/,
-  );
+  assert.match(config, /ADMIN_GUILD_ID/);
+  assert.match(alerts, /case "email_blacklist":/);
+  assert.match(alerts, /antifraud\.email_blacklist/);
+  assert.match(alerts, /sendBotDiscordEvent/);
+  assert.match(transport, /\/api\/antifraud\/discord-events/);
+  assert.match(transport, /x-antifraud-signature/);
+  assert.doesNotMatch(config, /DISCORD_WEBHOOK_URL/);
 });
