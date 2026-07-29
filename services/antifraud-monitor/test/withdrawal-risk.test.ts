@@ -21,6 +21,8 @@ const safeInput = {
   requiresConfirmation: false,
   confirmationReason: null,
   borrowedVoucherUsd: 0,
+  fundingTraceGapUsd: 0,
+  linkedRiskAccountCount: 0,
 };
 
 test("a reconciled, traceable withdrawal is good", () => {
@@ -133,4 +135,31 @@ test("borrow-mode voucher provenance is visible but not treated as fraud", () =>
   assert.equal(signal?.points, 0);
   assert.equal(signal?.tone, "neutral");
   assert.equal(result.verdict, "good");
+});
+
+test("an incomplete funding allocation raises a funding risk", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    fundingTraceGapUsd: 40,
+  });
+  assert.ok(result.signals.some((signal) => signal.key === "funding_trace_gap"));
+  assert.ok(result.scoreBreakdown.funding >= 20);
+});
+
+test("restricted accounts tied to allocated funds raise network risk", () => {
+  const result = scoreWithdrawal({
+    ...safeInput,
+    method: "balance",
+    hasPayoutDestination: false,
+    linkedRiskAccountCount: 1,
+  });
+  assert.ok(
+    result.signals.some(
+      (signal) => signal.key === "restricted_funding_account",
+    ),
+  );
+  assert.equal(
+    result.flowChecks.find((check) => check.key === "network")?.status,
+    "watch",
+  );
 });

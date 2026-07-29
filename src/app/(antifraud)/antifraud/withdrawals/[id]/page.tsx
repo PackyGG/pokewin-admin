@@ -577,7 +577,7 @@ function ReviewStatusBadge({ status }: { status: WithdrawalReviewStatus }) {
 
 function reviewStatusLabel(status: WithdrawalReviewStatus): string {
   const labels: Record<WithdrawalReviewStatus, string> = {
-    unreviewed: "Unreviewed",
+    unreviewed: "Pending",
     in_review: "In review",
     cleared: "Cleared",
     escalated: "In review",

@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import {
   AlertTriangle,
-  ArrowRight,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -35,6 +34,7 @@ import {
   parsePageParam,
   verdictStyle,
 } from "../_components/list-page";
+import { WithdrawalReviewDialog } from "./review-dialog";
 
 export const metadata = { title: "Withdrawals · Antifraud" };
 
@@ -132,7 +132,7 @@ function Filters({ state }: { state: FilterState }) {
               href={filterHref({ reviewStatus: null })}
             />
             <FilterButton
-              label="Unreviewed"
+              label="Pending"
               active={state.reviewStatus === "unreviewed"}
               href={filterHref({ reviewStatus: "unreviewed" })}
             />
@@ -247,7 +247,7 @@ function SummaryCards({
         accent="emerald"
         label="No signal"
         value={summary.good.toLocaleString()}
-        sub={`${summary.unreviewed.toLocaleString()} unreviewed`}
+        sub={`${summary.unreviewed.toLocaleString()} awaiting analyst`}
       />
       <KpiTile
         icon={AlertTriangle}
@@ -336,17 +336,7 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
             </span>
           </div>
           {withdrawal.flow_checks.length > 0 ? (
-            <Button
-              size="sm"
-              render={
-                <HostLink
-                  href={`/antifraud/withdrawals/${withdrawal.withdrawal_id}`}
-                />
-              }
-            >
-              Open review
-              <ArrowRight className="size-3.5" />
-            </Button>
+            <WithdrawalReviewDialog withdrawal={withdrawal} />
           ) : (
             <Button size="sm" disabled>
               Assessment pending
@@ -387,7 +377,9 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
           }
         />
         <Badge variant="secondary" className="ml-auto shrink-0 capitalize">
-          {withdrawal.review_status.replaceAll("_", " ")}
+          {withdrawal.review_status === "unreviewed"
+            ? "Pending"
+            : withdrawal.review_status.replaceAll("_", " ")}
         </Badge>
       </div>
       <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">

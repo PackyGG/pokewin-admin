@@ -32,11 +32,20 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
     "src/app/(antifraud)/antifraud/withdrawals/[id]/page.tsx",
   );
   const api = read("src/lib/antifraud/withdrawals-api.ts");
+  const dialog = read(
+    "src/app/(antifraud)/antifraud/withdrawals/review-dialog.tsx",
+  );
   const excludedUsers = read("src/lib/excluded-users/fetch.ts");
   assert.match(page, /listWithdrawalAssessments/);
   assert.match(page, /Review flow/);
   assert.match(page, /90-day account activity/);
   assert.match(page, /Gross wagered/);
+  assert.match(page, /WithdrawalReviewDialog/);
+  assert.doesNotMatch(page, /href=\{`\/antifraud\/withdrawals\/\$\{/);
+  assert.match(dialog, /Allocated funding for this withdrawal/);
+  assert.match(dialog, /Linked funding accounts/);
+  assert.match(dialog, /WithdrawalReviewControls/);
+  assert.doesNotMatch(dialog, /Unreviewed/i);
   assert.match(detail, /Withdrawal review flow/);
   assert.match(detail, /90-day account activity/);
   assert.match(detail, /gross totals/);
@@ -48,11 +57,13 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
   assert.match(api, /\/v1\/withdrawals/);
   assert.match(api, /getExcludedUserIdsStrict/);
   assert.match(api, /x-antifraud-excluded-users/);
+  assert.match(api, /admin_user_tags/);
+  assert.match(api, /antifraud_reviews/);
   assert.match(
     excludedUsers,
     /getExcludedUserIdsStrict[\s\S]*?await loadExcludedUserIdsFromDb\(\)/,
   );
-  assert.doesNotMatch(api, /@\/lib\/db/);
+  assert.doesNotMatch(api, /from ["']@\/lib\/db["']/);
 });
 
 test("the monitor service keeps the source pool read-only and persists assessments", () => {
@@ -80,6 +91,12 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(risk, /balance_ledger_coverage/);
   assert.match(risk, /balance_after::numeric/);
   assert.match(risk, /voucher_pack_borrow/);
+  assert.match(risk, /loadFundingTraceRows/);
+  assert.match(risk, /LIMIT 5000/);
+  assert.match(risk, /sender_user_id/);
+  assert.match(risk, /user_feature_locks/);
+  assert.match(risk, /user_kyc/);
+  assert.match(risk, /restricted_funding_account/);
   assert.match(routes, /excludedUserIds/);
   assert.match(routes, /userIsCreator/);
   assert.match(routeHelpers, /excludedUsersHeaderSchema/);

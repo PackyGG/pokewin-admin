@@ -1,7 +1,13 @@
 import "server-only";
 
+import { desc, inArray } from "drizzle-orm";
 import { z } from "zod";
 
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  admin_user_tags,
+  antifraud_reviews,
+} from "@/lib/db-schema/admin/schema";
 import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
 
 const numeric = z
@@ -72,6 +78,58 @@ const flowSchema = z.object({
   coverageKind: z
     .enum(["balance_ledger", "attached_assets"])
     .default("attached_assets"),
+  fundingTrace: z
+    .object({
+      requestedUsd: z.number(),
+      coveredUsd: z.number(),
+      gapUsd: z.number(),
+      complete: z.boolean(),
+      scannedEvents: z.number().int(),
+      entries: z.array(
+        z.object({
+          id: z.string(),
+          type: z.string(),
+          label: z.string(),
+          allocatedUsd: z.number(),
+          grossCreditUsd: z.number(),
+          occurredAt: z.string(),
+          counterpartyUserId: z.string().nullable(),
+          counterpartyReason: z.string().nullable(),
+        }),
+      ),
+    })
+    .default({
+      requestedUsd: 0,
+      coveredUsd: 0,
+      gapUsd: 0,
+      complete: false,
+      scannedEvents: 0,
+      entries: [],
+    }),
+  linkedAccounts: z
+    .array(
+      z.object({
+        userId: z.string(),
+        username: z.string().nullable(),
+        email: z.string().nullable(),
+        attributedUsd: z.number(),
+        reasons: z.array(z.string()),
+        isLocked: z.boolean(),
+        isBanned: z.boolean(),
+        isSuspectedAlt: z.boolean(),
+        isSelfExcluded: z.boolean(),
+        withdrawalsLocked: z.boolean(),
+        withdrawalLockReason: z.string().nullable(),
+        kycRequired: z.boolean(),
+        kycStatus: z.string(),
+        kycDecision: z.string(),
+        activeFraudCase: z.boolean(),
+        fraudScore: z.number(),
+        adminTags: z.array(z.string()).default([]),
+        adminReviewStatus: z.string().nullable().default(null),
+      }),
+    )
+    .default([]),
   modelVersion: z.number().int().default(1),
 });
 
@@ -188,6 +246,52 @@ export type WithdrawalDetail = z.infer<typeof detailResponseSchema>["data"];
 const UPSTREAM_TIMEOUT_MS = 12_000;
 const EXCLUDED_USERS_HEADER = "x-antifraud-excluded-users";
 
+async function enrichLinkedAccounts(
+  assessments: WithdrawalAssessment[],
+): Promise<void> {
+  const userIds = [
+    ...new Set(
+      assessments.flatMap((assessment) =>
+        assessment.flow.linkedAccounts.map((account) => account.userId),
+      ),
+    ),
+  ];
+  if (userIds.length === 0) return;
+  const [tags, reviews] = await Promise.all([
+    adminDrizzle
+      .select({
+        userId: admin_user_tags.target_user_id,
+        tag: admin_user_tags.tag,
+      })
+      .from(admin_user_tags)
+      .where(inArray(admin_user_tags.target_user_id, userIds)),
+    adminDrizzle
+      .select({
+        userId: antifraud_reviews.target_user_id,
+        status: antifraud_reviews.status,
+      })
+      .from(antifraud_reviews)
+      .where(inArray(antifraud_reviews.target_user_id, userIds))
+      .orderBy(desc(antifraud_reviews.updated_at)),
+  ]);
+  const tagsByUser = new Map<string, string[]>();
+  for (const row of tags) {
+    const values = tagsByUser.get(row.userId) ?? [];
+    values.push(row.tag);
+    tagsByUser.set(row.userId, values);
+  }
+  const reviewByUser = new Map<string, string>();
+  for (const row of reviews) {
+    if (!reviewByUser.has(row.userId)) reviewByUser.set(row.userId, row.status);
+  }
+  for (const assessment of assessments) {
+    for (const account of assessment.flow.linkedAccounts) {
+      account.adminTags = tagsByUser.get(account.userId) ?? [];
+      account.adminReviewStatus = reviewByUser.get(account.userId) ?? null;
+    }
+  }
+}
+
 async function monitorHeaders(token: string): Promise<Record<string, string>> {
   const excludedUserIds = await getExcludedUserIdsStrict();
   return {
@@ -241,6 +345,7 @@ export async function listWithdrawalAssessments(input: {
       throw new Error(`Monitor API returned ${response.status}`);
     }
     const payload = responseSchema.parse(await response.json());
+    await enrichLinkedAccounts(payload.data);
     return { configured: true, error: false, ...payload };
   } catch (error) {
     console.error("[antifraud-withdrawals] list failed:", error);
@@ -281,6 +386,7 @@ export async function getWithdrawalAssessment(withdrawalId: string): Promise<{
       throw new Error(`Monitor API returned ${response.status}`);
     }
     const payload = detailResponseSchema.parse(await response.json());
+    await enrichLinkedAccounts([payload.data.assessment]);
     return {
       configured: true,
       notFound: false,

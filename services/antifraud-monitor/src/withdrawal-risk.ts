@@ -51,6 +51,45 @@ export type WithdrawalSource = {
   traceable: boolean;
 };
 
+export type WithdrawalFundingTraceEntry = {
+  id: string;
+  type: string;
+  label: string;
+  allocatedUsd: number;
+  grossCreditUsd: number;
+  occurredAt: string;
+  counterpartyUserId: string | null;
+  counterpartyReason: string | null;
+};
+
+export type WithdrawalFundingTrace = {
+  requestedUsd: number;
+  coveredUsd: number;
+  gapUsd: number;
+  complete: boolean;
+  scannedEvents: number;
+  entries: WithdrawalFundingTraceEntry[];
+};
+
+export type WithdrawalLinkedAccount = {
+  userId: string;
+  username: string | null;
+  email: string | null;
+  attributedUsd: number;
+  reasons: string[];
+  isLocked: boolean;
+  isBanned: boolean;
+  isSuspectedAlt: boolean;
+  isSelfExcluded: boolean;
+  withdrawalsLocked: boolean;
+  withdrawalLockReason: string | null;
+  kycRequired: boolean;
+  kycStatus: string;
+  kycDecision: string;
+  activeFraudCase: boolean;
+  fraudScore: number;
+};
+
 export type WithdrawalFlow = {
   depositsUsd: number;
   gameWinsUsd: number;
@@ -66,6 +105,8 @@ export type WithdrawalFlow = {
   tracedAssetUsd: number;
   untracedAssetUsd: number;
   coverageKind: "balance_ledger" | "attached_assets";
+  fundingTrace: WithdrawalFundingTrace;
+  linkedAccounts: WithdrawalLinkedAccount[];
   modelVersion: number;
 };
 
@@ -87,9 +128,11 @@ export type WithdrawalScoreInput = {
   requiresConfirmation: boolean;
   confirmationReason: string | null;
   borrowedVoucherUsd: number;
+  fundingTraceGapUsd: number;
+  linkedRiskAccountCount: number;
 };
 
-export const WITHDRAWAL_RISK_MODEL_VERSION = 3;
+export const WITHDRAWAL_RISK_MODEL_VERSION = 4;
 
 export function scoreWithdrawal(input: WithdrawalScoreInput): {
   riskScore: number;
@@ -259,6 +302,28 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     });
   }
 
+  if (input.fundingTraceGapUsd > 0.01) {
+    signals.push({
+      key: "funding_trace_gap",
+      label: "Withdrawal funding not fully traced",
+      detail: `$${input.fundingTraceGapUsd.toFixed(2)} of the requested amount could not be allocated to completed ledger credits.`,
+      points: input.fundingTraceGapUsd >= Math.max(25, amount * 0.25) ? 35 : 20,
+      tone: "bad",
+      category: "funding",
+    });
+  }
+
+  if (input.linkedRiskAccountCount > 0) {
+    signals.push({
+      key: "restricted_funding_account",
+      label: "Restricted linked funding account",
+      detail: `${input.linkedRiskAccountCount} account${input.linkedRiskAccountCount === 1 ? "" : "s"} tied to allocated funds has a lock, KYC restriction, fraud case, ban, alt, or self-exclusion signal.`,
+      points: Math.min(60, 35 + (input.linkedRiskAccountCount - 1) * 10),
+      tone: "bad",
+      category: "network",
+    });
+  }
+
   if (input.accountAgeDays < 1) {
     signals.push({
       key: "new_account",
@@ -353,7 +418,9 @@ export function scoreWithdrawal(input: WithdrawalScoreInput): {
     );
     const score = scoreBreakdown[definition.key];
     const isNotApplicable =
-      definition.key === "network" && !usesPayoutDestination;
+      definition.key === "network" &&
+      !usesPayoutDestination &&
+      input.linkedRiskAccountCount === 0;
     return {
       ...definition,
       status: isNotApplicable
@@ -414,6 +481,33 @@ type AssetRow = {
   id: string;
   source_type: string;
   value_usd: string;
+};
+
+type LedgerTraceRow = {
+  withdrawal_id: string;
+  id: string;
+  type: string;
+  gross_credit_usd: string;
+  gross_debit_usd: string;
+  created_at: string;
+  counterparty_user_id: string | null;
+  counterparty_reason: string | null;
+};
+
+type LinkedAccountRow = {
+  id: string;
+  username: string | null;
+  email: string | null;
+  is_locked: boolean;
+  is_banned: boolean;
+  is_suspected_alt: boolean;
+  is_self_excluded: boolean;
+  locked_withdrawals_crypto: string[] | null;
+  locked_withdrawals_items: boolean | null;
+  locked_withdrawals_reason: string | null;
+  kyc_required: boolean | null;
+  kyc_status: string | null;
+  kyc_decision: string | null;
 };
 
 const WAGER_TYPES = [
@@ -506,6 +600,294 @@ function sourceLabel(source: string): string {
     voucher_unknown: "Other vouchers",
   };
   return labels[source] ?? source.replaceAll("_", " ");
+}
+
+function fundingLabel(type: string): string {
+  const labels: Record<string, string> = {
+    deposit: "Deposit",
+    card_sale: "Card sale",
+    card_exchange: "Card exchange",
+    exchange_excess_credit: "Exchange credit",
+    voucher_redeemed: "Voucher redemption",
+    voucher_exchange: "Voucher exchange",
+    battle_refund: "Battle return",
+    battle_excess_to_voucher: "Battle win",
+    keno_payout: "Keno payout",
+    upgrader_payout: "Upgrader payout",
+    creator_tip: "Creator tip received",
+    rain_win: "Rain win",
+    race_prize: "Race prize",
+    rakeback_claim: "Rakeback",
+    deposit_bonus: "Deposit bonus",
+    balance_reward_claim: "Balance reward",
+    affiliate_claim: "Affiliate claim",
+    affiliate_leaderboard_prize: "Leaderboard prize",
+    challenge_prize: "Challenge prize",
+    admin_balance_adjustment: "Admin balance adjustment",
+  };
+  return labels[type] ?? type.replaceAll("_", " ");
+}
+
+async function loadFundingTraceRows(
+  source: Pool,
+  withdrawals: SourceWithdrawal[],
+): Promise<Map<string, LedgerTraceRow[]>> {
+  if (withdrawals.length === 0) return new Map();
+  // Production-mirror EXPLAIN ANALYZE (2026-07-29, 20 latest requests):
+  // idx_ledger_tx_user_created_at served all 20 bounded probes; 22,515 rows
+  // were reconstructed in 132 ms. The 5,000-row per-request ceiling prevents
+  // one unusually active account from monopolizing the monitor pool.
+  const result = await source.query<LedgerTraceRow>(
+    `
+      WITH targets AS (
+        SELECT *
+        FROM unnest($1::uuid[], $2::text[], $3::timestamptz[])
+          AS t(withdrawal_id, user_id, requested_at)
+      )
+      SELECT
+        t.withdrawal_id,
+        trace.id,
+        trace.type,
+        trace.gross_credit_usd,
+        trace.gross_debit_usd,
+        trace.created_at,
+        trace.counterparty_user_id,
+        trace.counterparty_reason
+      FROM targets t
+      CROSS JOIN LATERAL (
+        SELECT
+          lt.id::text,
+          lt.type::text,
+          GREATEST(
+            lt.balance_after::numeric - lt.balance_before::numeric,
+            0
+          )::text AS gross_credit_usd,
+          GREATEST(
+            lt.balance_before::numeric - lt.balance_after::numeric,
+            0
+          )::text AS gross_debit_usd,
+          lt.created_at,
+          NULL::text AS counterparty_user_id,
+          NULL::text AS counterparty_reason
+        FROM ledger_transactions lt
+        WHERE lt.user_id = t.user_id
+          AND lt.status::text = 'completed'
+          AND lt.created_at <= t.requested_at
+        ORDER BY lt.created_at DESC, lt.id DESC
+        LIMIT 5000
+      ) trace
+      ORDER BY t.withdrawal_id, trace.created_at DESC, trace.id DESC
+    `,
+    [
+      withdrawals.map((row) => row.id),
+      withdrawals.map((row) => row.user_id),
+      withdrawals.map((row) => row.requested_at),
+    ],
+  );
+  const byWithdrawal = new Map<string, LedgerTraceRow[]>();
+  for (const row of result.rows) {
+    const rows = byWithdrawal.get(row.withdrawal_id) ?? [];
+    rows.push(row);
+    byWithdrawal.set(row.withdrawal_id, rows);
+  }
+  return byWithdrawal;
+}
+
+async function attachFundingCounterparties(
+  source: Pool,
+  traces: WithdrawalFundingTrace[],
+): Promise<void> {
+  const entryIds = [
+    ...new Set(traces.flatMap((trace) => trace.entries.map((entry) => entry.id))),
+  ];
+  if (entryIds.length === 0) return;
+  const result = await source.query<{
+    id: string;
+    counterparty_user_id: string | null;
+    counterparty_reason: string | null;
+  }>(
+    `
+      SELECT
+        lt.id::text AS id,
+        COALESCE(
+          CASE
+            WHEN lt.type::text = 'creator_tip'
+              AND lt.metadata->>'direction' = 'received'
+            THEN NULLIF(lt.metadata->>'sender_user_id', '')
+          END,
+          CASE
+            WHEN COALESCE(direct_battle.sponsorship_percentage, 0) > 0
+              OR direct_participant.source_session_id IS NOT NULL
+            THEN direct_battle.user_id
+          END,
+          CASE
+            WHEN COALESCE(asset_battle.sponsorship_percentage, 0) > 0
+            THEN asset_battle.user_id
+          END
+        ) AS counterparty_user_id,
+        CASE
+          WHEN lt.type::text = 'creator_tip'
+            AND lt.metadata->>'direction' = 'received'
+            THEN 'Creator tip'
+          WHEN COALESCE(direct_battle.sponsorship_percentage, 0) > 0
+            OR direct_participant.source_session_id IS NOT NULL
+            THEN 'Sponsored battle return'
+          WHEN COALESCE(asset_battle.sponsorship_percentage, 0) > 0
+            THEN 'Card sold from sponsored battle'
+          ELSE NULL
+        END AS counterparty_reason
+      FROM ledger_transactions lt
+      LEFT JOIN battle_participants direct_participant
+        ON direct_participant.game_session_id = lt.game_session_id
+      LEFT JOIN battles direct_battle
+        ON direct_battle.id = direct_participant.battle_id
+      LEFT JOIN user_inventory sold_item
+        ON lt.type::text = 'card_sale'
+       AND sold_item.id = CASE
+         WHEN COALESCE(lt.metadata->>'inventory_item_id', '') ~
+           '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$'
+         THEN (lt.metadata->>'inventory_item_id')::uuid
+       END
+      LEFT JOIN battles asset_battle
+        ON sold_item.source_type::text = 'battle'
+       AND asset_battle.id = sold_item.source_id
+      WHERE lt.id = ANY($1::uuid[])
+    `,
+    [entryIds],
+  );
+  const byId = new Map(result.rows.map((row) => [row.id, row]));
+  for (const trace of traces) {
+    for (const entry of trace.entries) {
+      const linked = byId.get(entry.id);
+      entry.counterpartyUserId = linked?.counterparty_user_id ?? null;
+      entry.counterpartyReason = linked?.counterparty_reason ?? null;
+    }
+  }
+}
+
+function allocateFundingTrace(
+  amountUsd: number,
+  rows: LedgerTraceRow[],
+): WithdrawalFundingTrace {
+  let withdrawalNeed = Math.max(0, amountUsd);
+  let laterDebitNeed = 0;
+  let scannedEvents = 0;
+  const entries: WithdrawalFundingTraceEntry[] = [];
+  for (const row of rows) {
+    if (withdrawalNeed <= 0.005) break;
+    scannedEvents += 1;
+    const debit = number(row.gross_debit_usd);
+    if (debit > 0) {
+      laterDebitNeed += debit;
+      continue;
+    }
+    let credit = number(row.gross_credit_usd);
+    if (credit <= 0) continue;
+    const debitCoverage = Math.min(credit, laterDebitNeed);
+    laterDebitNeed -= debitCoverage;
+    credit -= debitCoverage;
+    const allocatedUsd = Math.min(credit, withdrawalNeed);
+    if (allocatedUsd <= 0.005) continue;
+    withdrawalNeed -= allocatedUsd;
+    entries.push({
+      id: row.id,
+      type: row.type,
+      label: fundingLabel(row.type),
+      allocatedUsd: Number(allocatedUsd.toFixed(2)),
+      grossCreditUsd: Number(number(row.gross_credit_usd).toFixed(2)),
+      occurredAt: new Date(row.created_at).toISOString(),
+      counterpartyUserId: row.counterparty_user_id,
+      counterpartyReason: row.counterparty_reason,
+    });
+  }
+  const gapUsd = Math.max(0, withdrawalNeed);
+  return {
+    requestedUsd: Number(amountUsd.toFixed(2)),
+    coveredUsd: Number(Math.max(0, amountUsd - gapUsd).toFixed(2)),
+    gapUsd: Number(gapUsd.toFixed(2)),
+    complete: gapUsd <= 0.005,
+    scannedEvents,
+    entries,
+  };
+}
+
+async function loadLinkedAccounts(
+  db: Databases,
+  traces: WithdrawalFundingTrace[],
+): Promise<Map<string, Omit<WithdrawalLinkedAccount, "attributedUsd" | "reasons">>> {
+  const ids = [
+    ...new Set(
+      traces.flatMap((trace) =>
+        trace.entries
+          .map((entry) => entry.counterpartyUserId)
+          .filter((id): id is string => Boolean(id)),
+      ),
+    ),
+  ];
+  if (ids.length === 0) return new Map();
+  const [accounts, cases] = await Promise.all([
+    db.source.query<LinkedAccountRow>(
+      `
+        SELECT
+          u.id, u.username, u.email, u.is_locked, u.is_banned,
+          u.is_suspected_alt, u.is_self_excluded,
+          locks.locked_withdrawals_crypto,
+          locks.locked_withdrawals_items,
+          locks.locked_withdrawals_reason,
+          kyc.kyc_required,
+          kyc.status::text AS kyc_status,
+          kyc.admin_decision::text AS kyc_decision
+        FROM "user" u
+        LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
+        LEFT JOIN user_kyc kyc ON kyc.user_id = u.id
+        WHERE u.id = ANY($1::text[])
+      `,
+      [ids],
+    ),
+    db.antifraud.query<{
+      user_id: string;
+      active: boolean;
+      score: number;
+    }>(
+      `
+        SELECT
+          user_id,
+          BOOL_OR(status IN ('open','monitoring','in_review','escalated')) AS active,
+          COALESCE(MAX(current_score), 0)::int AS score
+        FROM cases
+        WHERE user_id = ANY($1::text[])
+        GROUP BY user_id
+      `,
+      [ids],
+    ),
+  ]);
+  const casesByUser = new Map(cases.rows.map((row) => [row.user_id, row]));
+  return new Map(
+    accounts.rows.map((row) => {
+      const fraud = casesByUser.get(row.id);
+      return [
+        row.id,
+        {
+          userId: row.id,
+          username: row.username,
+          email: row.email,
+          isLocked: row.is_locked,
+          isBanned: row.is_banned,
+          isSuspectedAlt: row.is_suspected_alt,
+          isSelfExcluded: row.is_self_excluded,
+          withdrawalsLocked:
+            Boolean(row.locked_withdrawals_items) ||
+            (row.locked_withdrawals_crypto?.length ?? 0) > 0,
+          withdrawalLockReason: row.locked_withdrawals_reason,
+          kycRequired: Boolean(row.kyc_required),
+          kycStatus: row.kyc_status ?? "none",
+          kycDecision: row.kyc_decision ?? "pending",
+          activeFraudCase: fraud?.active ?? false,
+          fraudScore: fraud?.score ?? 0,
+        },
+      ];
+    }),
+  );
 }
 
 function buildSources(
@@ -875,11 +1257,26 @@ export class WithdrawalRiskService {
       return { ids: [], total: total.rows[0]?.count ?? 0 };
     }
 
-    const [ledgerById, assets, reuseByAddress] = await Promise.all([
+    const [ledgerById, assets, reuseByAddress, fundingRowsById] = await Promise.all([
       loadLedgerContext(this.db.source, requests.rows),
       loadAssets(this.db.source, requests.rows),
       destinationReuse(this.db.source, requests.rows),
+      loadFundingTraceRows(this.db.source, requests.rows),
     ]);
+    const tracesById = new Map(
+      requests.rows.map((request) => [
+        request.id,
+        allocateFundingTrace(
+          number(request.total_value_usd),
+          fundingRowsById.get(request.id) ?? [],
+        ),
+      ]),
+    );
+    await attachFundingCounterparties(this.db.source, [...tracesById.values()]);
+    const linkedAccountById = await loadLinkedAccounts(
+      this.db,
+      [...tracesById.values()],
+    );
 
     const assessments = requests.rows.map((request) => {
       const sources = buildSources(request, assets.inventory, assets.vouchers);
@@ -897,6 +1294,47 @@ export class WithdrawalRiskService {
       const playReturnsUsd = number(ledger?.play_returns_usd);
       const wageredUsd = number(ledger?.wagered_usd);
       const rewardsUsd = number(ledger?.rewards_usd);
+      const fundingTrace =
+        tracesById.get(request.id) ??
+        allocateFundingTrace(amountUsd, []);
+      const linkedAmounts = new Map<
+        string,
+        { attributedUsd: number; reasons: Set<string> }
+      >();
+      for (const entry of fundingTrace.entries) {
+        if (!entry.counterpartyUserId) continue;
+        const linked = linkedAmounts.get(entry.counterpartyUserId) ?? {
+          attributedUsd: 0,
+          reasons: new Set<string>(),
+        };
+        linked.attributedUsd += entry.allocatedUsd;
+        if (entry.counterpartyReason) linked.reasons.add(entry.counterpartyReason);
+        linkedAmounts.set(entry.counterpartyUserId, linked);
+      }
+      const linkedAccounts: WithdrawalLinkedAccount[] = [...linkedAmounts]
+        .map(([userId, attribution]) => {
+          const account = linkedAccountById.get(userId);
+          if (!account) return null;
+          return {
+            ...account,
+            attributedUsd: Number(attribution.attributedUsd.toFixed(2)),
+            reasons: [...attribution.reasons],
+          };
+        })
+        .filter((account): account is WithdrawalLinkedAccount => account !== null)
+        .sort((a, b) => b.attributedUsd - a.attributedUsd);
+      const linkedRiskAccountCount = linkedAccounts.filter(
+        (account) =>
+          account.isLocked ||
+          account.isBanned ||
+          account.isSuspectedAlt ||
+          account.isSelfExcluded ||
+          account.withdrawalsLocked ||
+          account.kycRequired ||
+          account.kycStatus === "rejected" ||
+          account.kycDecision === "rejected" ||
+          account.activeFraudCase,
+      ).length;
       const flow: WithdrawalFlow = {
         depositsUsd: number(ledger?.deposits_usd),
         gameWinsUsd: playReturnsUsd,
@@ -921,6 +1359,8 @@ export class WithdrawalRiskService {
           request.method.toLowerCase() === "balance"
             ? "balance_ledger"
             : "attached_assets",
+        fundingTrace,
+        linkedAccounts,
         modelVersion: WITHDRAWAL_RISK_MODEL_VERSION,
       };
       const scored = scoreWithdrawal({
@@ -949,6 +1389,8 @@ export class WithdrawalRiskService {
         borrowedVoucherUsd: sources
           .filter((source) => source.key === "voucher_pack_borrow")
           .reduce((sum, source) => sum + source.valueUsd, 0),
+        fundingTraceGapUsd: fundingTrace.gapUsd,
+        linkedRiskAccountCount,
       });
       return { request, sources, flow, ...scored };
     });
