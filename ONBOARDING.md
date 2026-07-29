@@ -186,6 +186,7 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 
 - `/fiat` reads card intents, recorded provider fees, and webhook processing from the MAIN mirror. Provider-paid, provider-net, credited-balance, and fee totals are independently recorded fields; differences are investigation signals and must not be labelled automatically as profit or loss.
 - Fiat configuration writes remain backend-owned. The dashboard does not write MAIN fiat/payment relations directly.
+- Manual per-user Fiat deposit access is backend-owned through GET/PUT `/v1/admin/users/:userId/fiat-deposit-access`. The admin user hero and the Antifraud monitor client use `x-admin-api-key` plus the `xbypasssecret` rate-limit bypass header; neither writes MAIN directly.
 
 ### Keno engine contract
 

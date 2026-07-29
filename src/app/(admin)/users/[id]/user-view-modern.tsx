@@ -92,6 +92,7 @@ import {
 import { UserAdminActions } from "./user-tabs-moderation";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
+import { FiatDepositAccessButton } from "./fiat-deposit-access-button";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -551,6 +552,7 @@ export function UserViewModern({
 
         {/* ── RIGHT — action cluster ────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
+          {isAdmin && <FiatDepositAccessButton userId={user.id} />}
           <Link
             href={`/antifraud/networks?user=${encodeURIComponent(user.id)}`}
             className={cn(

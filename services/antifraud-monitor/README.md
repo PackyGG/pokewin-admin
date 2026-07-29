@@ -82,6 +82,15 @@ human action to the service fallback. Reusing a key succeeds only when the
 case/rule, action or patch, actor and reason exactly match the original
 request; a changed request returns `409 idempotency_conflict`.
 
+## Manual Fiat deposit access client
+
+`FiatDepositAccessClient` provides typed GET/PUT access to
+`/v1/admin/users/:userId/fiat-deposit-access` for future Antifraud workflows.
+Configure `API_URL` (or `BACKEND_API_URL`), `ADMIN_API_KEY`, and
+`xbypasssecret`. Requests send `x-admin-api-key` plus the `xbypasssecret`
+rate-limit bypass header. Missing credentials, non-2xx responses, timeouts,
+and malformed response bodies fail closed.
+
 ## Automatic Fiat checkout eligibility
 
 `POST /v1/fiat-eligibility/check` is a server-to-server endpoint. It never
