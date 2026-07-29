@@ -4,10 +4,12 @@ import test from "node:test";
 
 import {
   applyBlacklistedCheckoutEmail,
+  FiatRiskService,
   parseWhopEvidence,
   scoreFiatDeposit,
   type FiatScoreInput,
 } from "../src/fiat-risk.js";
+import type { Databases } from "../src/db.js";
 
 const safeInput: FiatScoreInput = {
   status: "completed",
@@ -62,6 +64,35 @@ const safeInput: FiatScoreInput = {
     priorRefundedFiat: 0,
   },
 };
+
+test("fiat refresh searches the Whop checkout email through indexed resources", async () => {
+  const calls: Array<{ sql: string; values: unknown[] }> = [];
+  const source = {
+    async query(sql: string, values: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+  };
+  const service = new FiatRiskService({
+    source,
+    antifraud: {},
+  } as unknown as Databases);
+
+  const result = await service.refresh({ search: "Buyer@Example.com" });
+
+  assert.deepEqual(result, { ids: [] });
+  assert.equal(calls.length, 1);
+  assert.match(calls[0]?.sql ?? "", /payment_webhook_events checkout_event/);
+  assert.match(
+    calls[0]?.sql ?? "",
+    /checkout_event\.provider_resource_id IN \(\s*fdi\.provider_checkout_id,\s*fdi\.provider_payment_id\s*\)/,
+  );
+  assert.match(
+    calls[0]?.sql ?? "",
+    /checkout_event\.payload#>>'\{data,user,email\}'/,
+  );
+  assert.ok(calls[0]?.values.includes("%buyer@example.com%"));
+});
 
 test("known crypto funding and verified 3DS produce a good assessment", () => {
   const result = scoreFiatDeposit(safeInput);

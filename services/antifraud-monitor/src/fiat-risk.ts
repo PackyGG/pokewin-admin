@@ -1282,6 +1282,19 @@ export class FiatRiskService {
         OR lower(COALESCE(u.username,'')) LIKE $${values.length}
         OR lower(COALESCE(u.email,'')) LIKE $${values.length}
         OR lower(COALESCE(fdi.provider_payment_id,'')) LIKE $${values.length}
+        OR EXISTS (
+          SELECT 1
+          FROM payment_webhook_events checkout_event
+          WHERE checkout_event.provider='whop'
+            AND checkout_event.provider_resource_id IN (
+              fdi.provider_checkout_id,
+              fdi.provider_payment_id
+            )
+            AND lower(COALESCE(
+              checkout_event.payload#>>'{data,user,email}',
+              ''
+            )) LIKE $${values.length}
+        )
       )`);
     }
     values.push(Math.min(100, Math.max(1, input.limit ?? 100)));

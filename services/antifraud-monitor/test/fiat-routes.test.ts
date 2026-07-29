@@ -137,6 +137,14 @@ test("explicit KYC exclusion applies before rows, counts, summaries, and search 
   assert.ok(summaryQuery?.sql.includes(kycPredicate));
   assert.ok(listQuery?.values.includes("%needle%"));
   assert.ok(countQuery?.values.includes("%needle%"));
+  assert.match(
+    listQuery?.sql ?? "",
+    /provider_evidence->>'checkoutEmail'/,
+  );
+  assert.match(
+    countQuery?.sql ?? "",
+    /provider_evidence->>'checkoutEmail'/,
+  );
 });
 
 test("an explicit false value retains the include-KYC API behavior", async () => {

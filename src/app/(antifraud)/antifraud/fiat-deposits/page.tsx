@@ -182,7 +182,7 @@ function FiltersBar({ state }: { state: Filters }) {
             <Input
               name="search"
               defaultValue={state.search}
-              placeholder="User, email, payment, or ID"
+              placeholder="User, Whop email, payment, or ID"
               maxLength={100}
               aria-label="Search fiat deposits"
               className="min-w-0 xl:w-72"

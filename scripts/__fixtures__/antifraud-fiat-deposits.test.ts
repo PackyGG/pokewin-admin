@@ -144,7 +144,10 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   assert.match(service, /event_type='payment\.succeeded'/);
   assert.match(service, /provider_evidence/);
   assert.match(routes, /provider_evidence->>'paymentMethodType'/);
+  assert.match(routes, /provider_evidence->>'checkoutEmail'/);
   assert.match(routes, /normalizeWhopPaymentMethod\(query\.search\)/);
+  assert.match(service, /payment_webhook_events checkout_event/);
+  assert.match(service, /payload#>>'\{data,user,email\}'/);
   assert.match(routes, /excludeKycRequired: z/);
   assert.match(
     routes,

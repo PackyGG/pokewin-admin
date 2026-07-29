@@ -145,6 +145,10 @@ export async function registerFiatRoutes(
         OR lower(COALESCE(username,'')) LIKE $${generalSearchPosition}
         OR lower(COALESCE(email,'')) LIKE $${generalSearchPosition}
         OR lower(COALESCE(
+          provider_evidence->>'checkoutEmail',
+          ''
+        )) LIKE $${generalSearchPosition}
+        OR lower(COALESCE(
           provider_evidence->>'paymentMethodType',
           ''
         )) LIKE $${paymentMethodSearchPosition}
