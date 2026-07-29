@@ -79,6 +79,14 @@ test("refund batches require owner access and fresh step-up before expansion", (
   assert.ok(expansion > stepUp);
 });
 
+test("refund confirmation needs only owner step-up", () => {
+  assert.doesNotMatch(refundsPanel, /refund-reason|refund-confirmation|Type REFUND/);
+  assert.doesNotMatch(refundsPanel, /Textarea|@\/components\/ui\/input/);
+  assert.match(refundsPanel, /disabled=\{working \|\| !credential\}/);
+  assert.match(actions, /REFUND_BATCH_AUDIT_REASON/);
+  assert.doesNotMatch(actions, /reason:\s*string/);
+});
+
 test("Whop mutations disable SDK retries and retrieve before refunding", () => {
   assert.match(client, /maxRetries:\s*0/);
   const retrieve = actions.indexOf("client.payments.retrieve");

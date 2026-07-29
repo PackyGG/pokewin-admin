@@ -27,9 +27,6 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 
 type RefundSelection =
   | { mode: "all" }
@@ -64,9 +61,7 @@ export function RefundsPanel({
   const [payments, setPayments] = useState<Set<string>>(new Set());
   const [users, setUsers] = useState<Set<string>>(new Set());
   const [selection, setSelection] = useState<RefundSelection | null>(null);
-  const [reason, setReason] = useState("");
   const [credential, setCredential] = useState("");
-  const [confirmation, setConfirmation] = useState("");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<RefundBatchProgress | null>(null);
 
@@ -89,9 +84,7 @@ export function RefundsPanel({
 
   function open(selectionValue: RefundSelection) {
     setSelection(selectionValue);
-    setReason("");
     setCredential("");
-    setConfirmation("");
   }
 
   async function runBatch(batchId: string, initial?: RefundBatchProgress) {
@@ -123,15 +116,10 @@ export function RefundsPanel({
 
   async function submit() {
     if (!selection || working) return;
-    if (confirmation !== "REFUND") {
-      toast.error("Type REFUND to confirm.");
-      return;
-    }
     setWorking(true);
     try {
       const result = await createRefundBatch({
         selection,
-        reason,
         credential,
       });
       if (!result.success) {
@@ -340,7 +328,7 @@ export function RefundsPanel({
                     {batch.batchId.slice(0, 8)} · {batch.requestedCount} payments
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {new Date(batch.createdAt).toLocaleString()} · {batch.reason}
+                    {new Date(batch.createdAt).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
@@ -379,18 +367,7 @@ export function RefundsPanel({
               accounts. The operation cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
-          <div className="space-y-4">
-            <div className="space-y-2">
-              <Label htmlFor="refund-reason">Reason</Label>
-              <Textarea
-                id="refund-reason"
-                value={reason}
-                disabled={working}
-                maxLength={500}
-                onChange={(event) => setReason(event.target.value)}
-                placeholder="Why these payments must be refunded"
-              />
-            </div>
+          <div>
             <StepUpField
               id="refund-2fa"
               value={credential}
@@ -398,29 +375,12 @@ export function RefundsPanel({
               disabled={working}
               label="Owner verification"
             />
-            <div className="space-y-2">
-              <Label htmlFor="refund-confirmation">
-                Type REFUND to confirm
-              </Label>
-              <Input
-                id="refund-confirmation"
-                value={confirmation}
-                disabled={working}
-                autoComplete="off"
-                onChange={(event) => setConfirmation(event.target.value)}
-              />
-            </div>
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={working}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={
-                working ||
-                reason.trim().length < 8 ||
-                !credential ||
-                confirmation !== "REFUND"
-              }
+              disabled={working || !credential}
               onClick={submit}
             >
               {working ? "Starting…" : "Start full refunds"}

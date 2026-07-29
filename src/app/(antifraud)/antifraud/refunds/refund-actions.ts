@@ -23,6 +23,9 @@ type Selection =
   | { mode: "users"; ids: string[] }
   | { mode: "payments"; ids: string[] };
 
+const REFUND_BATCH_AUDIT_REASON =
+  "Owner initiated refund for a currently flagged or KYC-required account";
+
 export type RefundBatchProgress = {
   batchId: string;
   pending: number;
@@ -48,7 +51,7 @@ function validateSelection(selection: Selection): Selection {
 function actionErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (
-    /(?:2FA|passkey|verification|already used|refund reason|select at least|select at most|currently flagged selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
+    /(?:2FA|passkey|verification|already used|select at least|select at most|currently flagged selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
       message,
     )
   ) {
@@ -59,17 +62,12 @@ function actionErrorMessage(error: unknown): string {
 
 export async function createRefundBatch(input: {
   selection: Selection;
-  reason: string;
   credential: string;
 }): Promise<ServerActionResult<RefundBatchProgress>> {
   const session = await requireOwner();
   try {
     await require2FA(session.userId, input.credential);
 
-    const reason = input.reason.trim();
-    if (reason.length < 8 || reason.length > 500) {
-      throw new Error("Enter a refund reason between 8 and 500 characters.");
-    }
     const selection = validateSelection(input.selection);
     const candidates = await resolveRefundSelection(selection);
     if (candidates.length === 0) {
@@ -86,7 +84,7 @@ export async function createRefundBatch(input: {
       VALUES (
         ${session.userId}::uuid,
         ${selection.mode},
-        ${reason},
+        ${REFUND_BATCH_AUDIT_REASON},
         'pending',
         ${candidates.length}
       )
@@ -136,7 +134,7 @@ export async function createRefundBatch(input: {
         batchId: batch.id,
         selectionMode: selection.mode,
         paymentCount: batch.count,
-        reason,
+        reason: REFUND_BATCH_AUDIT_REASON,
       },
     });
     revalidatePath("/antifraud/refunds");
