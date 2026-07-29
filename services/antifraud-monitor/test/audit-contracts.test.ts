@@ -1166,6 +1166,14 @@ test("runtime workers recover cleanly from provider, pool, and process failures"
   assert.match(withdrawal, /lockClient\?\.release\(\)/);
   assert.match(withdrawal, /this\.syncRunning = false/);
   assert.match(withdrawal, /await this\.syncPromise/);
+  assert.match(
+    withdrawal,
+    /COALESCE\(MAX\(score\), 0\)::int AS score[\s\S]*?FROM cases/,
+  );
+  assert.doesNotMatch(
+    withdrawal,
+    /COALESCE\(MAX\(current_score\), 0\)::int AS score[\s\S]*?FROM cases/,
+  );
   assert.match(ingest, /async start\(\): Promise<void> \{\s*void this\.tick\(\)/);
 
   assert.match(db, /source\.on\("error"/);

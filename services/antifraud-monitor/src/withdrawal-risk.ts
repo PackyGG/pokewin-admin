@@ -853,7 +853,7 @@ async function loadLinkedAccounts(
         SELECT
           user_id,
           BOOL_OR(status IN ('open','monitoring','in_review','escalated')) AS active,
-          COALESCE(MAX(current_score), 0)::int AS score
+          COALESCE(MAX(score), 0)::int AS score
         FROM cases
         WHERE user_id = ANY($1::text[])
         GROUP BY user_id
