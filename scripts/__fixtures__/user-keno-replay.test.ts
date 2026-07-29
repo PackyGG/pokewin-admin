@@ -72,14 +72,16 @@ test("Gaming shows one settled outcome row per Keno game", () => {
   assert.match(transactionQuery, /kg\.bet_ledger_tx_id = tx\.id/);
   assert.match(transactionQuery, /kg\.payout_ledger_tx_id = tx\.id/);
   assert.match(transactionCache, /users-detail-gaming-tx-v5/);
-  assert.match(transactions, /label: "User won"/);
-  assert.match(transactions, /label: "User lost"/);
-  assert.match(transactions, /border-l-rose-500/);
-  assert.match(transactions, /border-l-emerald-500/);
+  assert.doesNotMatch(transactions, /label: "User won"/);
+  assert.doesNotMatch(transactions, /label: "User lost"/);
+  assert.doesNotMatch(transactions, /gamingOutcomeRowClass/);
+  assert.doesNotMatch(transactions, /GamingOutcomeBadge/);
   assert.match(
     transactions,
     /t\.type === "keno_bet"[\s\S]*profit=\{t\.amount - t\.kenoWinnings\}[\s\S]*won=\{t\.kenoWinnings\}/,
   );
+  assert.match(transactions, /t\.kenoResult === "win"[\s\S]*\? "Won"/);
+  assert.match(transactions, /t\.kenoResult === "lose"[\s\S]*\? "Lost"/);
   assert.doesNotMatch(transactions, /\{t\.kenoHits\}\/\{t\.kenoPicks\} hits/);
 
   const initialTypes = userPage.match(
