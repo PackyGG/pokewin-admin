@@ -354,10 +354,10 @@ export function buildFiatDiscordPayload(
       ? "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
       : problem.problem_code === "blacklisted_email_domain"
       ? patternMatch
-        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked."
+        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked and KYC is required."
         : problem.source_kind === "signup"
-        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
-        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
+        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
+        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
       : problem.problem_code === "high_risk"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
       : problem.problem_code === "fiat_locked_account"

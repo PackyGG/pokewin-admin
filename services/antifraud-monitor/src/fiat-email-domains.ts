@@ -1084,8 +1084,8 @@ export class FiatEmailDomainGuard {
     const detail = clusterMatch
       ? "Whop checkout belongs to a same-amount cluster with distinct accounts, payment identities, and unusual Gmail aliases. Crypto and item withdrawals must be locked automatically."
       : patternMatch
-      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked automatically.`
-      : `${isSignup ? "Signup" : "Whop checkout"} used blacklisted email domain ${risk.domain}. Crypto and item withdrawals must be locked automatically.`;
+      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked and KYC required automatically.`
+      : `${isSignup ? "Signup" : "Whop checkout"} used blacklisted email domain ${risk.domain}. Crypto and item withdrawals must be locked and KYC required automatically.`;
     const alertSource = isSignup ? "signup" : "payment_webhook";
 
     await client.query(

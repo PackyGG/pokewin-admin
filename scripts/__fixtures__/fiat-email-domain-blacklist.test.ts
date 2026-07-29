@@ -34,11 +34,14 @@ test("Fraud System owns the manager-only email blacklist without a reason field"
   assert.match(client, /setInterval\(\(\) => router\.refresh\(\), 3_000\)/);
 });
 
-test("blacklisted signup and Whop signals lock MAIN only through signed ingest", () => {
+test("blacklisted signup and Whop signals apply withdrawal and KYC containment through signed ingest", () => {
   const monitor = read(
     "services/antifraud-monitor/src/fiat-email-domains.ts",
   );
   const ingest = read("src/app/api/antifraud/ingest/route.ts");
+  const client = read(
+    "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
+  );
 
   assert.match(monitor, /INSERT INTO risk_events/);
   assert.match(monitor, /fiat_blacklisted_email_domain/);
@@ -62,6 +65,20 @@ test("blacklisted signup and Whop signals lock MAIN only through signed ingest",
   assert.match(ingest, /signal\.riskScore !== 100/);
   assert.match(ingest, /suspicious dot-fragmented Gmail address/);
   assert.match(ingest, /suspicious coordinated deposit cluster/);
+  assert.match(ingest, /getUserKyc\(userId\)/);
+  assert.match(ingest, /if \(!current\.kycRequired\)/);
+  assert.match(ingest, /requireUserKyc\(\{/);
+  assert.match(ingest, /system:antifraud-email-containment/);
+  assert.match(
+    ingest,
+    /emailRiskType === "blacklisted_domain"[\s\S]*emailRiskType === "gmail_dot_fragmentation"/,
+  );
+  assert.match(ingest, /pg_advisory_xact_lock/);
+  assert.match(ingest, /antifraud-email-kyc:/);
+  assert.match(
+    client,
+    /automatic crypto and item withdrawal lock and must[\s\S]*complete KYC review/,
+  );
 });
 
 test("Fraud Fiat deposits force blacklist matches to the critical score", () => {

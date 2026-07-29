@@ -103,7 +103,8 @@ export function EmailBlacklistClient({
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Exact domain matches from new signups and Whop checkout emails
-            receive an automatic crypto and item withdrawal lock.
+            receive an automatic crypto and item withdrawal lock and must
+            complete KYC review.
           </p>
         </div>
         <div className="space-y-2">

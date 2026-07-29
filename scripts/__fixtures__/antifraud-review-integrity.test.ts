@@ -130,7 +130,7 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
   );
   assert.match(
     body,
-    /if \(!stored\) return[\s\S]*?lockBlacklistedEmailDomainAccount\(signal\)/,
+    /if \(!stored\) return[\s\S]*?containBlacklistedEmailDomainAccount\(signal\)/,
     "containment lock must run AFTER the dedupe check so re-sent duplicates never re-lock",
   );
   assert.match(body, /tx[\s\S]*?update\(antifraud_reviews\)/);

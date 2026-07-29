@@ -9,6 +9,7 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
+import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
@@ -61,6 +62,10 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 
 /** Cap on one delivery so a malformed batch can't fan out unbounded work. */
 const MAX_EVENTS_PER_DELIVERY = 50;
+
+/** Human-readable system actor stored by the backend KYC audit trail. */
+const AUTOMATED_EMAIL_KYC_ACTOR_ID =
+  "system:antifraud-email-containment";
 
 /**
  * Body size ceiling in BYTES. A too-large `Content-Length` is rejected before
@@ -236,7 +241,9 @@ function blacklistDomainFromSignal(
 
 /**
  * Apply the MAIN-DB containment lock for one `fiat_blacklisted_email_domain`
- * signal.
+ * signal. Blacklisted-domain and Gmail dot-fragment matches also enter the
+ * backend-owned KYC state machine. Coordinated deposit-cluster signals keep
+ * their existing withdrawal-only containment.
  *
  * Returns `"skipped"` for PERMANENT conditions (malformed containment fields,
  * account deleted since the signal was produced) instead of throwing: a throw
@@ -245,7 +252,7 @@ function blacklistDomainFromSignal(
  * Only genuinely transient errors (DB down, etc.) are allowed to propagate
  * into the 500-retry path.
  */
-async function lockBlacklistedEmailDomainAccount(
+async function containBlacklistedEmailDomainAccount(
   signal: AntifraudSignalEvent,
 ): Promise<"locked" | "skipped"> {
   const userId = signal.userId;
@@ -317,6 +324,25 @@ async function lockBlacklistedEmailDomainAccount(
     );
     return "skipped";
   }
+
+  const emailRiskType = signal.payload?.emailRiskType;
+  const requiresKyc =
+    emailRiskType === "blacklisted_domain" ||
+    emailRiskType === "gmail_dot_fragmentation";
+  if (requiresKyc) {
+    const current = await getUserKyc(userId);
+    if (!current.kycRequired) {
+      await requireUserKyc({
+        userId,
+        adminId: AUTOMATED_EMAIL_KYC_ACTOR_ID,
+        reason: reason.replace(
+          "Automatic fraud lock:",
+          "Automatic fraud KYC:",
+        ),
+      });
+    }
+  }
+
   return "locked";
 }
 
@@ -383,7 +409,15 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     //    re-lock an account staff already reviewed and unlocked;
     //  • a transient lock failure throws, rolling back the stored signal, so
     //    the backend's retry re-attempts store AND lock together.
-    lockSkipped = (await lockBlacklistedEmailDomainAccount(signal)) === "skipped";
+    // Serialize distinct events for the same account so concurrent matches
+    // cannot both observe KYC as clear and open two verification cycles.
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(${"antifraud-email-kyc:" + (signal.userId ?? "")}, 0)
+      )
+    `);
+    lockSkipped =
+      (await containBlacklistedEmailDomainAccount(signal)) === "skipped";
   }
 
   // Idempotency: the backend's own event id. A retried delivery hits the
