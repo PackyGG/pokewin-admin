@@ -58,10 +58,6 @@ export const OVERVIEW_KPI_TILES: ReadonlyArray<{
 export const OVERVIEW_KPI_GRID_CLASS =
   "grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6";
 
-export function HubBylineSkeleton() {
-  return <Skeleton className="h-4 w-64" />;
-}
-
 /** Band a — six KPI tiles (count derived from the array) + cost chart. */
 export function OverviewBandSkeleton() {
   return (
@@ -114,15 +110,9 @@ export function FourWeekBandSkeleton() {
 export function HubDashboardSkeleton() {
   return (
     <div className="space-y-6">
-      {/* Header row: "Creator Hub" heading + period chips / add-creator. */}
-      <div className="space-y-1.5">
-        <SectionHeadingSkeleton titleWidth={110} action />
-        <HubBylineSkeleton />
-      </div>
-
-      {/* Overview · {window} */}
+      {/* Overview · {window} — carries the period chips + add-creator. */}
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={140} />
+        <SectionHeadingSkeleton titleWidth={140} action />
         <OverviewBandSkeleton />
       </div>
 

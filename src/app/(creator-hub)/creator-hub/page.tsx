@@ -1,7 +1,6 @@
 import { Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import {
-  Megaphone,
   TrendingUp,
   Trophy,
   CalendarRange,
@@ -19,7 +18,7 @@ import {
   parseDashboardPeriod,
   type DashboardPeriod,
 } from "@/lib/queries/dashboard-period";
-import { safeQuery, safeQueryOrNull } from "@/lib/errors/safe-query";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
   Card,
@@ -49,14 +48,12 @@ import {
 import {
   CostChartSkeleton,
   FourWeekBandSkeleton,
-  HubBylineSkeleton,
   OVERVIEW_KPI_GRID_CLASS,
   OVERVIEW_KPI_TILES,
   OverviewBandSkeleton,
   TopCreatorsListSkeleton,
   TrendsBandSkeleton,
 } from "./_components/hub-dashboard-skeleton";
-import { getCreatorsGlobalStats } from "../../(admin)/creators/_queries/creators-stats";
 import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 import { getFourWeekDealSummary } from "./_queries/four-week-summary";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
@@ -123,12 +120,14 @@ export default async function CreatorHubDashboardPage({
 
   return (
     <div className="space-y-6">
-      {/* Page identity — SectionHeading (PageHeroIdentity renders no titles
-          by owner decision) with the global window chips + Add Creator. */}
-      <div className="space-y-1.5">
+      {/* a) Overview — the ONLY period-keyed band (active-timeframe-only).
+          The global window chips + Add Creator live on this heading (the
+          page-level "Creator Hub" title + status byline were removed by
+          owner decision). */}
+      <section className="space-y-3">
         <SectionHeading
-          icon={Megaphone}
-          title="Creator Hub"
+          icon={TrendingUp}
+          title={`Overview · ${windowLabel}`}
           action={
             <>
               <HubPeriodSelector current={period} />
@@ -136,16 +135,6 @@ export default async function CreatorHubDashboardPage({
             </>
           }
         />
-        {/* One-line muted status byline — streams in its own tiny Suspense
-            (roster counts come from the cached backend roster walk). */}
-        <Suspense fallback={<HubBylineSkeleton />}>
-          <StatusByline windowLabel={windowLabel} />
-        </Suspense>
-      </div>
-
-      {/* a) Overview — the ONLY period-keyed band (active-timeframe-only). */}
-      <section className="space-y-3">
-        <SectionHeading icon={TrendingUp} title={`Overview · ${windowLabel}`} />
         <SectionErrorBoundary
           fallback={<BandUnavailable label="Overview" />}
         >
@@ -216,51 +205,6 @@ export default async function CreatorHubDashboardPage({
         </SectionErrorBoundary>
       </section>
     </div>
-  );
-}
-
-// ─── Status byline ─────────────────────────────────────────────────
-//
-// "Last 24h · 41 creators · 3 live" — Total Creators and Live Now were
-// demoted out of the KPI grid (max 6 tiles) into this line. Counts come
-// from the cached (5-min) backend roster walk; a failure degrades to the
-// window label alone.
-async function StatusByline({ windowLabel }: { windowLabel: string }) {
-  const { data } = await safeQuery(
-    () => getCreatorsGlobalStats(),
-    null,
-    "creator-hub.bylineStats",
-    15_000,
-  );
-
-  const windowText =
-    windowLabel.charAt(0).toUpperCase() + windowLabel.slice(1);
-
-  return (
-    <p className="flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground">
-      <span>{windowText}</span>
-      {data ? (
-        <>
-          <span aria-hidden>·</span>
-          <span>{formatNumber(data.totalCreators)} creators</span>
-          <span aria-hidden>·</span>
-          <span className="inline-flex items-center gap-1.5">
-            {data.liveCount > 0 && (
-              <span className="relative flex size-1.5" aria-hidden>
-                <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 motion-safe:animate-ping" />
-                <span className="relative inline-flex size-1.5 rounded-full bg-emerald-500" />
-              </span>
-            )}
-            {formatNumber(data.liveCount)} live
-          </span>
-        </>
-      ) : (
-        <>
-          <span aria-hidden>·</span>
-          <span>roster unavailable</span>
-        </>
-      )}
-    </p>
   );
 }
 
