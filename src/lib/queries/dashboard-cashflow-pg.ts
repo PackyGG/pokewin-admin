@@ -13,6 +13,10 @@ import {
   type DashboardKpiWindow,
 } from "./dashboard-period";
 import { getDashboardFiatMetrics } from "./dashboard-fiat";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 export type DashboardCashflow = {
   deposits: number;
   grossDeposits: number;
@@ -26,7 +30,9 @@ export type DashboardCashflow = {
 type GrossDashboardCashflow = Pick<
   DashboardCashflow,
   "deposits" | "depositCount" | "withdrawals" | "withdrawalCount"
->;
+> & {
+  attributedRefunds: number;
+};
 
 /**
  * Dashboard "Deposits / Withdrawals" KPI-box cash-flow — the Postgres
@@ -97,12 +103,17 @@ async function computeCashflow(
       /^user_id\b/,
       "cwr.user_id",
     );
+    const scopeIntent = excludeStaffAndBlacklistedSqlFromIds(blacklist).replace(
+      /^user_id\b/,
+      "i.user_id",
+    );
 
     type DepRow = { amt: string; cnt: string };
     type CardRow = { amt: string; cnt: string };
     type ManualRow = { amt: string; cnt: string };
+    type RefundRow = { amt: string };
 
-    const [dep, card, manual] = await Promise.all([
+    const [dep, card, manual, refunds] = await Promise.all([
       queryRows<DepRow[]>(db,
         `SELECT COALESCE(SUM(lt.amount::numeric), 0)::text AS amt,
                 COUNT(*)::text AS cnt
@@ -134,6 +145,14 @@ async function computeCashflow(
            AND ${scopeLt}`,
         cutoff,
       ),
+      queryRows<RefundRow[]>(db,
+        `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS amt
+         FROM fiat_deposit_intents i
+         WHERE i.status IN ('partially_refunded', 'refunded')
+           AND ${fiatRefundAttributionTimestampSql("i")} >= $1
+           AND ${scopeIntent}`,
+        cutoff,
+      ),
     ]);
 
     const deposits = toNumber(dep[0]?.amt);
@@ -142,10 +161,12 @@ async function computeCashflow(
     const cardWdCount = Number(card[0]?.cnt ?? 0);
     const manualWd = toNumber(manual[0]?.amt);
     const manualWdCount = Number(manual[0]?.cnt ?? 0);
+    const attributedRefunds = toNumber(refunds[0]?.amt);
 
     return {
       deposits,
       depositCount,
+      attributedRefunds,
       // Card + manual withdrawals — the exact composition of
       // calculateWindowedPnl's `withdrawals` total (|manualWd| + cardWd).
       withdrawals: cardWd + manualWd,
@@ -172,7 +193,7 @@ const cachedCashflow = unstable_cache(
     void _window; // cache-key discriminator only
     return computeCashflow(new Date(cutoffIso), blacklist);
   },
-  ["dashboard-cashflow-pg-v1"],
+  ["dashboard-cashflow-pg-v2-refund-attribution"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -197,9 +218,11 @@ export async function getDashboardCashflowFromPostgres(
     getDashboardFiatMetrics(window, now),
   ]);
   return {
-    ...cashflow,
+    depositCount: cashflow.depositCount,
+    withdrawals: cashflow.withdrawals,
+    withdrawalCount: cashflow.withdrawalCount,
     grossDeposits: cashflow.deposits,
-    deposits: cashflow.deposits - fiat.refundCreditsUsd,
+    deposits: cashflow.deposits - cashflow.attributedRefunds,
     fiatRefunds: fiat.refundCreditsUsd,
     fiatRefundCount: fiat.refundCount,
   };

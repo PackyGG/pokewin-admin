@@ -3,7 +3,10 @@ import "server-only";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { WAGER_TYPES_SQL as METRICS_WAGER_TYPES_SQL } from "@/lib/metrics";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 
 /**
  * Shared rolling-window KPI query for deposits, withdrawals, and customer
@@ -130,11 +133,11 @@ export async function runPeriodWindowQuery(
     ),
     fiat_refunds AS (
       SELECT ${fiatRefundCreditUsdSql("i")} AS amount,
-             i.updated_at AS effective_at
+             ${fiatRefundAttributionTimestampSql("i")} AS effective_at
       FROM fiat_deposit_intents i
       JOIN real_users ru ON ru.id = i.user_id
       WHERE i.status IN ('partially_refunded', 'refunded')
-        AND i.updated_at >= $1
+        AND ${fiatRefundAttributionTimestampSql("i")} >= $1
     )
     SELECT
       'current'::text AS window,

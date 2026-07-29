@@ -2,7 +2,10 @@ import { unstable_cache } from "next/cache";
 import { sql, type SQL } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 
 export type Period = "today" | "7d" | "30d" | "90d" | "all";
 
@@ -46,13 +49,14 @@ function transactionDateFilter(period: Period): SQL {
 }
 
 function refundDateFilter(period: Period): SQL {
+  const attributedAt = sql.raw(fiatRefundAttributionTimestampSql("i"));
   if (period === "all") {
-    return sql`AND i.updated_at >= NOW() - (365 * INTERVAL '1 day')`;
+    return sql`AND ${attributedAt} >= NOW() - (365 * INTERVAL '1 day')`;
   }
   if (period === "today") {
-    return sql`AND i.updated_at >= ${utcStartOfDay()}`;
+    return sql`AND ${attributedAt} >= ${utcStartOfDay()}`;
   }
-  return sql`AND i.updated_at >= NOW() - (${periodToDays[period]} * INTERVAL '1 day')`;
+  return sql`AND ${attributedAt} >= NOW() - (${periodToDays[period]} * INTERVAL '1 day')`;
 }
 
 export type CountryUserCount = {
@@ -219,13 +223,13 @@ async function computeUsersByCountry(
  */
 const cachedUsersByCountry = unstable_cache(
   computeUsersByCountry,
-  ["analytics-map-users-by-country-v2-refunds"],
+  ["analytics-map-users-by-country-v3-refund-attribution"],
   { revalidate: 60, tags: ["analytics"] },
 );
 
 const cachedUsersByCountryLifetime = unstable_cache(
   computeUsersByCountry,
-  ["analytics-map-users-by-country-lifetime-v2-refunds"],
+  ["analytics-map-users-by-country-lifetime-v3-refund-attribution"],
   { revalidate: 300, tags: ["analytics"] },
 );
 

@@ -10,7 +10,10 @@ import {
   removeLockedBalanceAdjustmentSqlPredicate,
   statsExcludedAdjustmentSqlPredicate,
 } from "@/lib/balance-adjustment-categories";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 
 /**
  * Ledger-only admin inventory disposals — rows hard-deleted before we
@@ -400,7 +403,7 @@ export async function calculateWindowedPnl(opts: {
         `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refunds
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
-           AND i.updated_at >= $1
+           AND ${fiatRefundAttributionTimestampSql("i")} >= $1
            AND ${scope("i.user_id")}`,
         ...params,
       ),
@@ -591,8 +594,8 @@ export async function calculateUsersBoundedWindowedPnlBatch(
            COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS amount
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
-           AND i.updated_at >= $2
-           AND i.updated_at < $3
+           AND ${fiatRefundAttributionTimestampSql("i")} >= $2
+           AND ${fiatRefundAttributionTimestampSql("i")} < $3
            AND i.user_id = ANY($1::text[])
          GROUP BY i.user_id`,
         userIds,
@@ -943,13 +946,13 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
          GROUP BY d`,
       ),
       queryMainRows<RefundRow[]>(
-        `SELECT DATE(i.updated_at) AS d,
+        `SELECT DATE(${fiatRefundAttributionTimestampSql("i")}) AS d,
            COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::float8 AS refunds
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
-           AND i.updated_at >= NOW() - INTERVAL '30 days'
+           AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '30 days'
            AND i.user_id IN ${usersScope}
-         GROUP BY DATE(i.updated_at)`,
+         GROUP BY DATE(${fiatRefundAttributionTimestampSql("i")})`,
       ),
     ]);
 
@@ -1048,7 +1051,7 @@ const cachedDailyPnl = unstable_cache(
     // confirmed (aligned-window harness: every field, every day Δ=0.00).
     return computeDailyPnl(excluded);
   },
-  ["dashboard-daily-pnl-v2-refunds"],
+  ["dashboard-daily-pnl-v3-refund-attribution"],
   { revalidate: 300, tags: ["dashboard-activity"] },
 );
 

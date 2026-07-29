@@ -2,7 +2,10 @@ import { queryMainRows } from "@/lib/drizzle-query";
 import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { statsExcludedAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 import { nonCreatorOwnerSql } from "./_creator-pnl-exclusion";
 import type { WindowedPnl } from "./pnl";
 
@@ -79,7 +82,7 @@ export async function getUserWindowedPnlMulti(
     const fiatRefundCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN i.updated_at >= ${wParam(i)} THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS refunds_${i}`,
+          `COALESCE(SUM(CASE WHEN ${fiatRefundAttributionTimestampSql("i")} >= ${wParam(i)} THEN ${fiatRefundCreditUsdSql("i")} ELSE 0 END), 0)::text AS refunds_${i}`,
       )
       .join(", ");
     // Stats-excluded adjustments (official_stream + remove_locked_balance)
@@ -209,7 +212,7 @@ export async function getUserWindowedPnlMulti(
         `SELECT ${fiatRefundCase}
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
-           AND i.updated_at >= $2
+           AND ${fiatRefundAttributionTimestampSql("i")} >= $2
            AND i.user_id = $1`,
         ...params,
       ),

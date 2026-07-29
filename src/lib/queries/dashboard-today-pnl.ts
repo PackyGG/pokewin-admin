@@ -73,7 +73,7 @@ const cachedTodayPnl = unstable_cache(
       excludeUserIds,
     });
   },
-  ["dashboard-today-pnl-v3-refunds"],
+  ["dashboard-today-pnl-v4-refund-attribution"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 

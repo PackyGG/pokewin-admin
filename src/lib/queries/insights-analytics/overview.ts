@@ -35,7 +35,10 @@ import {
   previousPeriodCutoff,
   type InsightsPeriod,
 } from "./period";
-import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "@/lib/queries/fiat-refund-credits";
 
 /**
  * Overview tab helper — top-line KPIs for the selected period AND the
@@ -497,7 +500,7 @@ const cachedWindowQuery = unstable_cache(
       sessionWindowsCte,
     });
   },
-  ["insights-analytics-overview-window-v2-refunds"],
+  ["insights-analytics-overview-window-v3-refund-attribution"],
   // Per-render TTL can't be passed to `unstable_cache` (the options object
   // is static), so the longer 300s revalidate is used and the 60s windows
   // simply re-warm more often via the page's own auto-refresh; the result
@@ -659,13 +662,13 @@ const cachedDailyOverview = unstable_cache(
         UNION ALL
         SELECT i.user_id, 'deposit_refund'::text,
                -${fiatRefundCreditUsdSql("i")} AS amount,
-               DATE(i.updated_at) AS d,
+               DATE(${fiatRefundAttributionTimestampSql("i")}) AS d,
                ru.under_creator,
                false AS in_session
         FROM fiat_deposit_intents i
         JOIN real_users ru ON ru.id = i.user_id
         WHERE i.status IN ('partially_refunded', 'refunded')
-          AND i.updated_at >= $1
+          AND ${fiatRefundAttributionTimestampSql("i")} >= $1
       ),
       daily_signups AS (
         SELECT DATE(signup_at) AS d, COUNT(*)::text AS signups
@@ -710,6 +713,6 @@ const cachedDailyOverview = unstable_cache(
       since,
     );
   },
-  ["insights-analytics-overview-daily-v3-refunds"],
+  ["insights-analytics-overview-daily-v4-refund-attribution"],
   { revalidate: 300, tags: ["insights-analytics", "dashboard-lifetime"] },
 );

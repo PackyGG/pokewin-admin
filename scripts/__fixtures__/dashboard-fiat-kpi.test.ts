@@ -107,14 +107,20 @@ test("dashboard labels keep combined ledger credits separate from Whop paid", ()
   assert.doesNotMatch(kpis, /Net deposits/);
 });
 
-test("refund credits reduce canonical deposit and P&L numbers exactly once", () => {
+test("refund credits restate their original deposit window exactly once", () => {
   assert.match(
     cashflow,
-    /deposits: cashflow\.deposits - fiat\.refundCreditsUsd/,
+    /deposits: cashflow\.deposits - cashflow\.attributedRefunds/,
   );
+  assert.match(cashflow, /fiatRefundAttributionTimestampSql/);
   assert.match(payload, /fiatRefunds: cashflow\?\.fiatRefunds/);
   assert.match(canonicalPnl, /fiatRefundCreditUsdSql/);
+  assert.match(canonicalPnl, /fiatRefundAttributionTimestampSql/);
   assert.match(canonicalPnl, /toNumber\(ledger\[0\]\?\.deposits\) - toNumber\(refunds\[0\]\?\.refunds\)/);
+  assert.match(
+    refundContract,
+    /COALESCE\(\$\{alias\}\.completed_at, \$\{alias\}\.paid_at, \$\{alias\}\.created_at\)/,
+  );
   assert.match(todayPnl, /calculateWindowedPnl owns the shared refund-aware/);
   assert.doesNotMatch(todayPnl, /refundCreditsUsd/);
 });

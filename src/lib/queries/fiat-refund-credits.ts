@@ -67,6 +67,14 @@ export function fiatRefundCreditUsdSql(alias = "i"): string {
   return `((${fiatRefundCreditCentsSql(alias)}) / 100.0)`;
 }
 
+/**
+ * P&L/deposit reporting recognizes a refund on the original deposit date.
+ * `updated_at` remains the correct timestamp for operational refund counters.
+ */
+export function fiatRefundAttributionTimestampSql(alias = "i"): string {
+  return `COALESCE(${alias}.completed_at, ${alias}.paid_at, ${alias}.created_at)`;
+}
+
 export function fiatPartialRefundAmountPresentSql(alias = "i"): string {
   return `
     (

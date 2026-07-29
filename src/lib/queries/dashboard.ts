@@ -58,7 +58,10 @@ import {
   getDashboardTrendSeries,
   type DashboardTrendSeries,
 } from "./dashboard-trend-series";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 
 // Re-export the client-safe period constants so existing call sites
 // that import from "@/lib/queries/dashboard" don't have to change. The
@@ -476,7 +479,7 @@ export function getPeriodAggregates(
       FROM fiat_deposit_intents i
       JOIN real_users ru ON ru.id = i.user_id
       WHERE i.status IN ('partially_refunded', 'refunded')
-        AND i.updated_at >= $1
+        AND ${fiatRefundAttributionTimestampSql("i")} >= $1
     ),
     -- Creator DEAL-PAYOUT cash-outs — the house's REAL creator cost that
     -- has actually walked out the door. Joins completed/shipped
@@ -644,10 +647,11 @@ const cachedDailyChart = unstable_cache(
           AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
         UNION ALL
         SELECT i.user_id, 'deposit_refund'::text,
-               -${fiatRefundCreditUsdSql("i")}, i.updated_at
+               -${fiatRefundCreditUsdSql("i")},
+               ${fiatRefundAttributionTimestampSql("i")}
         FROM fiat_deposit_intents i
         WHERE i.status IN ('partially_refunded', 'refunded')
-          AND i.updated_at >= NOW() - INTERVAL '30 days'
+          AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '30 days'
           AND i.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
       )
       SELECT
@@ -661,7 +665,7 @@ const cachedDailyChart = unstable_cache(
       ORDER BY date
     `);
   },
-  ["dashboard-daily-chart-v3-refunds"],
+  ["dashboard-daily-chart-v4-refund-attribution"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 

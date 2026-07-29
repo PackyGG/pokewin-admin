@@ -28,7 +28,10 @@ import {
   padDashboardFtdSeries,
   padDashboardWagerSeries,
 } from "./dashboard-chart-series";
-import { fiatRefundCreditUsdSql } from "./fiat-refund-credits";
+import {
+  fiatRefundAttributionTimestampSql,
+  fiatRefundCreditUsdSql,
+} from "./fiat-refund-credits";
 
 const LIFETIME_LOOKBACK_DAYS = 365;
 
@@ -160,10 +163,11 @@ async function fetchTrendSeriesPg(
           )
         UNION ALL
         SELECT i.user_id, 'deposit_refund'::text AS type,
-               -${fiatRefundCreditUsdSql("i")} AS amount, i.updated_at AS created_at
+               -${fiatRefundCreditUsdSql("i")} AS amount,
+               ${fiatRefundAttributionTimestampSql("i")} AS created_at
         FROM fiat_deposit_intents i
         WHERE i.status IN ('partially_refunded', 'refunded')
-          AND i.updated_at >= $1
+          AND ${fiatRefundAttributionTimestampSql("i")} >= $1
           AND i.user_id IN (
             SELECT id FROM "user"
             WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
@@ -385,7 +389,7 @@ export async function getDashboardTrendSeries(
 
   let partial: DashboardTrendSeries | null = null;
   try {
-    const key = buildCacheKey("dashboard-trends-v2", [
+    const key = buildCacheKey("dashboard-trends-v3-refund-attribution", [
       env,
       period,
       hashString(blacklistIdNotIn),

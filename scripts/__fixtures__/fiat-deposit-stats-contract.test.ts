@@ -69,6 +69,29 @@ test("canonical financial aggregates subtract only finalized fiat refunds", () =
   assert.doesNotMatch(contract, /status = 'pending'/);
 });
 
+test("windowed financial aggregates attribute refunds to the original deposit", () => {
+  for (const relativePath of [
+    "src/lib/queries/dashboard.ts",
+    "src/lib/queries/dashboard-trend-series.ts",
+    "src/lib/queries/dashboard-cashflow-pg.ts",
+    "src/lib/queries/period-window-kpis.ts",
+    "src/lib/queries/pnl.ts",
+    "src/lib/queries/users-windowed-pnl.ts",
+    "src/lib/queries/insights-analytics/overview.ts",
+    "src/lib/queries/map.ts",
+  ]) {
+    assert.match(
+      source(relativePath),
+      /fiatRefundAttributionTimestampSql/,
+      `${relativePath} must restate the original deposit window`,
+    );
+  }
+
+  const operationalFiat = source("src/lib/queries/dashboard-fiat.ts");
+  assert.match(operationalFiat, /i\.updated_at >= \$1/);
+  assert.doesNotMatch(operationalFiat, /fiatRefundAttributionTimestampSql/);
+});
+
 test("completed fiat intents are linked to the ledger source used by stats", () => {
   const schema = source("src/lib/db-schema/main/schema.ts");
   const fiatIntent = schema.slice(

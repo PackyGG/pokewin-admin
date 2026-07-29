@@ -19,7 +19,7 @@ test("dashboard KPI and trend sections retain successful snapshots", () => {
   assert.match(kpiSource, /must never replace a complete last-known-good snapshot/);
 
   assert.match(trendSource, /cacheGetOrSetStale/);
-  assert.match(trendSource, /dashboard-trends-v2/);
+  assert.match(trendSource, /dashboard-trends-v3-refund-attribution/);
   assert.match(trendSource, /snapshot was incomplete/);
 });
 
