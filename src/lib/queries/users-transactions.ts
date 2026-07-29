@@ -52,6 +52,8 @@ const GAMING_LEDGER_TYPES = new Set<string>([
   "battle_refund",
   "upgrader_bet",
   "upgrader_payout",
+  "keno_bet",
+  "keno_payout",
   "voucher_redeemed",
 ]);
 
@@ -369,6 +371,11 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     upgraderTargetChance: null,
     upgraderTargetChanceDerived: null,
     upgraderHouseEdge: null,
+    kenoResult: null,
+    kenoWinnings: null,
+    kenoPicks: null,
+    kenoHits: null,
+    kenoMultiplier: null,
     // Financial-only rows are always real, ledger-backed rows (this light
     // mapper serves the deposits/withdrawals feed — no synthetic double-down).
     syntheticKind: null,
@@ -440,6 +447,96 @@ async function fetchWhopCheckoutEmailsByLedgerId(
       row.checkout_email?.trim() || null,
     ]),
   );
+}
+
+type KenoTransactionSummary = {
+  result: "win" | "lose" | "draw";
+  winnings: number;
+  picks: number;
+  hits: number;
+  multiplier: number;
+};
+
+/**
+ * Resolve settled Keno games for the ledger rows already on this page.
+ *
+ * keno_games has a user/created_at index rather than ledger-id indexes, so the
+ * lookup stays bounded to this user and the current page's time window before
+ * matching the wager/payout ids. A missing auxiliary record leaves the gaming
+ * row intact with no outcome badge.
+ */
+async function fetchKenoSummariesByLedgerId(
+  db: MainDrizzleDb,
+  userId: string,
+  transactions: LedgerRow[],
+): Promise<Map<string, KenoTransactionSummary>> {
+  const kenoTransactions = transactions.filter(
+    (transaction) =>
+      transaction.type === "keno_bet" || transaction.type === "keno_payout",
+  );
+  if (kenoTransactions.length === 0) return new Map();
+
+  const ledgerIds = kenoTransactions.map((transaction) => transaction.id);
+  const timestamps = kenoTransactions.map((transaction) =>
+    new Date(transaction.created_at).getTime(),
+  );
+  const minCreatedAt = new Date(Math.min(...timestamps));
+  const maxCreatedAt = new Date(Math.max(...timestamps));
+
+  try {
+    const result = await db.execute<{
+      ledger_id: string;
+      selected_numbers: unknown;
+      hits: number;
+      result_multiplier: string;
+      bet_amount: string;
+      won_amount: string;
+    }>(sql`
+      WITH requested(id) AS (
+        SELECT unnest(${pgArrayParam(ledgerIds)}::uuid[])
+      )
+      SELECT
+        requested.id::text AS ledger_id,
+        kg.selected_numbers,
+        kg.hits,
+        kg.result_multiplier::text AS result_multiplier,
+        kg.bet_amount::text AS bet_amount,
+        kg.won_amount::text AS won_amount
+      FROM keno_games kg
+      JOIN requested
+        ON requested.id = kg.bet_ledger_tx_id
+        OR requested.id = kg.payout_ledger_tx_id
+      WHERE kg.user_id = ${userId}
+        AND kg.created_at >= ${minCreatedAt} - INTERVAL '1 day'
+        AND kg.created_at <= ${maxCreatedAt} + INTERVAL '1 day'
+    `);
+
+    return new Map(
+      result.rows.map((row) => {
+        const bet = toNumber(row.bet_amount);
+        const winnings = toNumber(row.won_amount);
+        return [
+          row.ledger_id,
+          {
+            result:
+              winnings > bet ? "win" : winnings < bet ? "lose" : "draw",
+            winnings,
+            picks: Array.isArray(row.selected_numbers)
+              ? row.selected_numbers.length
+              : 0,
+            hits: row.hits,
+            multiplier: toNumber(row.result_multiplier),
+          },
+        ];
+      }),
+    );
+  } catch (error) {
+    console.error(
+      "[getUserTransactions] Keno outcome lookup failed (non-fatal):",
+      error,
+    );
+    return new Map();
+  }
 }
 
 async function getUserFinancialTransactionsLight(
@@ -671,6 +768,11 @@ function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
     upgraderTargetChance: null,
     upgraderTargetChanceDerived: null,
     upgraderHouseEdge: null,
+    kenoResult: null,
+    kenoWinnings: null,
+    kenoPicks: null,
+    kenoHits: null,
+    kenoMultiplier: null,
     syntheticKind: "double_down",
     doubleDownResult: d.result,
     doubleDownAmount: d.amount,
@@ -921,6 +1023,11 @@ export async function getUserTransactions(
     fetchUserDoubleDownRows(db, canonicalUserId, doubleDownIds),
   ]);
   const total = Number(totalResult.rows[0]?.total ?? 0);
+  const kenoSummaryByLedgerIdPromise = fetchKenoSummariesByLedgerId(
+    db,
+    canonicalUserId,
+    transactions,
+  );
 
   const upgraderBetLedgerIds = transactions
     .filter((t) => t.type === "upgrader_bet")
@@ -1317,7 +1424,10 @@ export async function getUserTransactions(
   // after `transactions` resolved above, so it has been running concurrently
   // with the battle lookup + inventory/voucher fan-out + battle-winnings
   // groupBy this whole time — this just joins that already-in-flight promise.
-  const upgraderBetByLedgerId = await upgraderBetByLedgerIdPromise;
+  const [upgraderBetByLedgerId, kenoSummaryByLedgerId] = await Promise.all([
+    upgraderBetByLedgerIdPromise,
+    kenoSummaryByLedgerIdPromise,
+  ]);
   const upgraderWinningsByGsid = new Map<string, number>();
   for (const r of upgraderBetByLedgerId.values()) {
     if (r.gsid && r.won_amount != null) {
@@ -1528,6 +1638,7 @@ export async function getUserTransactions(
         upgraderTargetChanceDerived = resolved.targetChanceDerived;
         upgraderHouseEdge = resolved.houseEdge;
       }
+      const kenoSummary = kenoSummaryByLedgerId.get(t.id) ?? null;
 
       // Total worth (cash balance + held inventory) before/after this tx,
       // so a battle/pack that trades cash for items reads as the true
@@ -1619,6 +1730,11 @@ export async function getUserTransactions(
         upgraderTargetChance,
         upgraderTargetChanceDerived,
         upgraderHouseEdge,
+        kenoResult: kenoSummary?.result ?? null,
+        kenoWinnings: kenoSummary?.winnings ?? null,
+        kenoPicks: kenoSummary?.picks ?? null,
+        kenoHits: kenoSummary?.hits ?? null,
+        kenoMultiplier: kenoSummary?.multiplier ?? null,
         // Real ledger rows are never a synthetic double-down; the double-down
         // is surfaced as its OWN synthesized row (injected below), so these
         // fields are null on every real row.

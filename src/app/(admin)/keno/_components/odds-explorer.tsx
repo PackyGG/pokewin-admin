@@ -21,6 +21,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import {
+  formatKenoProbability,
   getKenoHitProbability,
   getKenoHouseEdge,
   getKenoPayoutRow,
@@ -59,19 +60,6 @@ const RISKS: Array<{
     dot: "bg-rose-500",
   },
 ];
-
-const TINY_PERCENT_FORMAT = new Intl.NumberFormat("en-US", {
-  maximumSignificantDigits: 3,
-  notation: "standard",
-  useGrouping: false,
-});
-
-function formatProbability(value: number): string {
-  if (value <= 0) return "0%";
-  if (value >= 0.01) return `${(value * 100).toFixed(2)}%`;
-  if (value >= 0.0001) return `${(value * 100).toFixed(4)}%`;
-  return `${TINY_PERCENT_FORMAT.format(value * 100)}%`;
-}
 
 function formatOneIn(value: number): string {
   if (value <= 0) return "Impossible";
@@ -258,14 +246,14 @@ export function KenoOddsExplorer({
         />
         <KpiTile
           label="Any match"
-          value={formatProbability(anyMatch)}
+          value={formatKenoProbability(anyMatch)}
           sub={formatOneIn(anyMatch)}
           icon={Target}
           accent="blue"
         />
         <KpiTile
           label={`All ${picks} match`}
-          value={formatProbability(allMatch)}
+          value={formatKenoProbability(allMatch)}
           sub={formatOneIn(allMatch)}
           icon={CircleDot}
           accent="amber"
@@ -273,7 +261,7 @@ export function KenoOddsExplorer({
         <KpiTile
           label="Most likely"
           value={`${mostLikely.hits} ${mostLikely.hits === 1 ? "hit" : "hits"}`}
-          sub={formatProbability(mostLikely.probability)}
+          sub={formatKenoProbability(mostLikely.probability)}
           icon={Sigma}
           accent="purple"
         />
@@ -347,7 +335,7 @@ export function KenoOddsExplorer({
                       {payoutOutcome(row.multiplier)}
                     </TableCell>
                     <TableCell className="text-right font-mono tabular-nums">
-                      {formatProbability(row.probability)}
+                      {formatKenoProbability(row.probability)}
                     </TableCell>
                     <TableCell className="text-right tabular-nums text-muted-foreground">
                       {formatOneIn(row.probability)}

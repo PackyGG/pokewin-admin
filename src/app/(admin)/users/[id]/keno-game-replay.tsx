@@ -3,6 +3,10 @@ import { Crosshair, Sparkles, Target, Trophy } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  formatKenoProbability,
+  getKenoHitProbability,
+} from "@/lib/keno/payouts";
 import type { KenoGameDetails } from "./user-tabs-types";
 
 function formatMultiplier(value: number): string {
@@ -39,6 +43,10 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
   const computedHits = game.selectedNumbers.filter((number) =>
     drawn.has(number),
   ).length;
+  const hitProbability = getKenoHitProbability(
+    game.selectedNumbers.length,
+    game.hits,
+  );
   const houseResult = game.betAmount - game.wonAmount;
   const playerResult = game.wonAmount - game.betAmount;
   const outcomeLabel =
@@ -93,7 +101,7 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
           </Badge>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-6">
+        <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-7">
           <Metric label="Bet" value={formatCurrency(game.betAmount)} />
           <Metric label="Picks" value={String(game.selectedNumbers.length)} />
           <Metric
@@ -103,6 +111,11 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
           <Metric
             label="Multiplier"
             value={formatMultiplier(game.resultMultiplier)}
+          />
+          <Metric
+            label={`Chance of ${game.hits} hits`}
+            value={formatKenoProbability(hitProbability)}
+            className="text-cyan-600 dark:text-cyan-400"
           />
           <Metric
             label="Player payout"

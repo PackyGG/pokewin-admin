@@ -538,6 +538,8 @@ _Creator Hub plan closed. Pick up deferred items below when owner prioritizes._
 
 ---
 
+- **2026-07-29 user gaming outcome clarity release-ready:** `/users/[id]?tab=gaming` now colors settled play rows by house impact and labels User won, User lost, Break even, or Pending across packs, battles, upgrader, double-down, and Keno. Keno bet rows include the settled hit count, multiplier, payout, and house P&L; their detail popup shows the canonical exact probability of hitting that recorded count without scientific notation. Nine focused Keno contracts, all 385 guardrails, TypeScript, scoped lint, full lint with one unrelated generated-schema warning, and the production build pass.
+
 ## 🔴 Blocked (needs owner)
 
 | Item | Why | Options |

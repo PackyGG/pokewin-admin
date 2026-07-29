@@ -485,6 +485,15 @@ export type Transaction = {
    * not stored or not an upgrader row.
    */
   upgraderHouseEdge: number | null;
+  /** Settled Keno result, measured by the user's net result for the game. */
+  kenoResult: "win" | "lose" | "draw" | null;
+  /** Full Keno payout for the linked game. */
+  kenoWinnings: number | null;
+  /** Exact number of selected tiles and hits for the linked game. */
+  kenoPicks: number | null;
+  kenoHits: number | null;
+  /** Settled Keno payout multiplier. */
+  kenoMultiplier: number | null;
   /**
    * Discriminator for CLIENT-SYNTHESIZED rows that do NOT correspond to a
    * real ledger_transactions row.

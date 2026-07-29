@@ -255,6 +255,94 @@ function MergedPnlCell({
   );
 }
 
+type GamingOutcome = "win" | "loss" | "draw" | "pending" | null;
+
+function gamingOutcomeFor(transaction: Transaction): GamingOutcome {
+  if (transaction.syntheticKind === "double_down") {
+    return transaction.doubleDownResult === "win" ? "win" : "loss";
+  }
+  if (transaction.type === "battle_bet") {
+    if (transaction.gameResult === "win") return "win";
+    if (transaction.gameResult === "lose") return "loss";
+    if (transaction.gameResult === "draw") return "draw";
+    if (transaction.battlePending) return "pending";
+    return null;
+  }
+  if (transaction.type === "upgrader_bet") {
+    if (transaction.upgraderResult === "win") return "win";
+    if (transaction.upgraderResult === "lose") return "loss";
+    return transaction.status === "pending" ? "pending" : null;
+  }
+  if (transaction.type === "keno_bet" || transaction.type === "keno_payout") {
+    if (transaction.kenoResult === "win") return "win";
+    if (transaction.kenoResult === "lose") return "loss";
+    if (transaction.kenoResult === "draw") return "draw";
+    return transaction.status === "pending" ? "pending" : null;
+  }
+  if (transaction.type === "pack_opening" && transaction.cardsValue != null) {
+    const net = transaction.cardsValue - transaction.amount;
+    return net > 0 ? "win" : net < 0 ? "loss" : "draw";
+  }
+  return null;
+}
+
+function gamingOutcomeRowClass(outcome: GamingOutcome): string | undefined {
+  if (outcome === "win") {
+    return "border-l-2 border-l-rose-500/55 bg-rose-500/[0.035] hover:bg-rose-500/[0.07]";
+  }
+  if (outcome === "loss") {
+    return "border-l-2 border-l-emerald-500/55 bg-emerald-500/[0.035] hover:bg-emerald-500/[0.07]";
+  }
+  if (outcome === "draw") {
+    return "border-l-2 border-l-blue-500/45 bg-blue-500/[0.025] hover:bg-blue-500/[0.06]";
+  }
+  if (outcome === "pending") {
+    return "border-l-2 border-l-amber-500/45 bg-amber-500/[0.025] hover:bg-amber-500/[0.06]";
+  }
+  return undefined;
+}
+
+function GamingOutcomeBadge({ outcome }: { outcome: GamingOutcome }) {
+  if (!outcome) return null;
+  const config = {
+    win: {
+      label: "User won",
+      icon: Trophy,
+      className:
+        "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400",
+    },
+    loss: {
+      label: "User lost",
+      icon: TrendingDown,
+      className:
+        "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
+    },
+    draw: {
+      label: "Break even",
+      icon: Target,
+      className:
+        "border-blue-500/30 bg-blue-500/15 text-blue-600 dark:text-blue-400",
+    },
+    pending: {
+      label: "Pending",
+      icon: RefreshCw,
+      className:
+        "border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400",
+    },
+  }[outcome];
+  const Icon = config.icon;
+
+  return (
+    <Badge
+      variant="outline"
+      className={cn("gap-1 text-[10px] font-medium", config.className)}
+    >
+      <Icon className="size-3" />
+      {config.label}
+    </Badge>
+  );
+}
+
 export const CategoryTransactionsTable = React.memo(
   function CategoryTransactionsTable({
     title,
@@ -649,6 +737,9 @@ export const CategoryTransactionsTable = React.memo(
             </TableHeader>
             <TableBody>
               {txData.data.map((t) => {
+                const gamingOutcome = showCardsValue
+                  ? gamingOutcomeFor(t)
+                  : null;
                 // Synthetic post-battle DOUBLE-DOWN row — its own dedicated
                 // row (injected chronologically between the battle bet and the
                 // next event by getUserTransactions). It has no ledger row, so
@@ -660,7 +751,10 @@ export const CategoryTransactionsTable = React.memo(
                   const isWin = t.doubleDownResult === "win";
                   const amount = t.doubleDownAmount ?? 0;
                   return (
-                    <TableRow key={t.id} className="bg-muted/20">
+                    <TableRow
+                      key={t.id}
+                      className={gamingOutcomeRowClass(gamingOutcome)}
+                    >
                       <TableCell>
                         {/* Clickable ID → opens the transaction-detail modal,
                             same as every real row. The synthetic dd row is NOT
@@ -758,7 +852,10 @@ export const CategoryTransactionsTable = React.memo(
                   );
                 }
                 return (
-                <TableRow key={t.id}>
+                <TableRow
+                  key={t.id}
+                  className={gamingOutcomeRowClass(gamingOutcome)}
+                >
                   <TableCell>
                     <button
                       onClick={() => {
@@ -826,6 +923,9 @@ export const CategoryTransactionsTable = React.memo(
                               : "Rakeback"
                             : ledgerTypeLabel(t.type)}
                         </Badge>
+                        {showCardsValue && (
+                          <GamingOutcomeBadge outcome={gamingOutcome} />
+                        )}
                         {t.type === "upgrader_bet" &&
                           t.upgraderTargetMultiplier != null && (
                             <span
@@ -1106,6 +1206,41 @@ export const CategoryTransactionsTable = React.memo(
                         // upgraderResult === null → row hasn't been
                         // enriched (defensive — shouldn't happen).
                         return <MergedPnlCell />;
+                      }
+                      if (t.type === "keno_bet") {
+                        if (
+                          t.kenoWinnings == null ||
+                          t.kenoHits == null ||
+                          t.kenoPicks == null
+                        ) {
+                          return <MergedPnlCell />;
+                        }
+                        return (
+                          <MergedPnlCell
+                            profit={t.amount - t.kenoWinnings}
+                            won={t.kenoWinnings}
+                            extra={
+                              <>
+                                <span className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400">
+                                  {t.kenoHits}/{t.kenoPicks} hits
+                                </span>
+                                {t.kenoMultiplier != null && (
+                                  <span className="inline-flex items-center rounded border border-violet-500/30 bg-violet-500/15 px-1.5 py-0 text-[10px] font-medium text-violet-600 dark:text-violet-400">
+                                    {formatUpgraderMultiplier(t.kenoMultiplier)}
+                                  </span>
+                                )}
+                              </>
+                            }
+                          />
+                        );
+                      }
+                      if (t.type === "keno_payout") {
+                        return (
+                          <MergedPnlCell
+                            wonLabel="Payout"
+                            won={t.kenoWinnings}
+                          />
+                        );
                       }
                       // Gaming is pack/battle only. Item cash-outs (card_sale /
                       // reward_card_sale / voucher_redeemed) live on the
