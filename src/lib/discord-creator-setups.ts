@@ -537,6 +537,143 @@ export async function completeCreatorSetup(input: {
   });
 }
 
+export async function repairCreatorSetup(input: {
+  guildId: string;
+  creatorDiscordUserId: string;
+  previousCategoryId: string;
+  previousChatChannelId: string;
+  previousLogsChannelId: string;
+  categoryId: string;
+  chatChannelId: string;
+  logsChannelId: string;
+  categoryName: string;
+  actorDiscordUserId: string;
+  interactionId: string;
+  apiKeyId: string;
+  apiKeyPrefix: string;
+}): Promise<{ setup: CreatorSetup }> {
+  return adminDrizzle.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(
+          ${`discord-creator-setup:${input.guildId}:${input.creatorDiscordUserId}`},
+          0
+        )
+      )
+    `);
+
+    const result = await tx.execute<SetupRow>(sql`
+      SELECT
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+      FROM discord_creator_setups
+      WHERE guild_id = ${input.guildId}
+        AND creator_discord_user_id = ${input.creatorDiscordUserId}
+      FOR UPDATE
+    `);
+    const row = result.rows[0];
+    if (!row || row.status !== "active") {
+      throw new CreatorSetupError(
+        404,
+        "setup_not_found",
+        "That creator does not have an active setup to repair.",
+      );
+    }
+
+    const current = activeSetup(row);
+    const alreadyRepaired =
+      current.categoryId === input.categoryId &&
+      current.chatChannelId === input.chatChannelId &&
+      current.logsChannelId === input.logsChannelId &&
+      current.categoryName === input.categoryName;
+    if (alreadyRepaired) {
+      return { setup: current };
+    }
+
+    if (
+      current.categoryId !== input.previousCategoryId ||
+      current.chatChannelId !== input.previousChatChannelId ||
+      current.logsChannelId !== input.previousLogsChannelId
+    ) {
+      throw new CreatorSetupError(
+        409,
+        "setup_conflict",
+        "That creator setup changed while Discord channels were being repaired.",
+      );
+    }
+
+    const updated = await tx.execute<SetupRow>(sql`
+      UPDATE discord_creator_setups
+      SET category_id = ${input.categoryId},
+          chat_channel_id = ${input.chatChannelId},
+          logs_channel_id = ${input.logsChannelId},
+          category_name = ${input.categoryName},
+          completed_at = now()
+      WHERE id = ${row.id}::uuid
+        AND status = 'active'
+        AND category_id = ${input.previousCategoryId}
+        AND chat_channel_id = ${input.previousChatChannelId}
+        AND logs_channel_id = ${input.previousLogsChannelId}
+      RETURNING
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+    `);
+    const repaired = updated.rows[0];
+    if (!repaired) {
+      throw new CreatorSetupError(
+        409,
+        "setup_conflict",
+        "That creator setup changed while Discord channels were being repaired.",
+      );
+    }
+
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: null,
+      event_type: "discord_creator_setup_repaired",
+      target_user_id: repaired.creator_user_id,
+      metadata: {
+        apiKeyId: input.apiKeyId,
+        apiKeyPrefix: input.apiKeyPrefix,
+        setupId: repaired.id,
+        guildId: input.guildId,
+        creatorDiscordUserId: input.creatorDiscordUserId,
+        actorDiscordUserId: input.actorDiscordUserId,
+        interactionId: input.interactionId,
+        previousCategoryId: input.previousCategoryId,
+        previousChatChannelId: input.previousChatChannelId,
+        previousLogsChannelId: input.previousLogsChannelId,
+        categoryId: input.categoryId,
+        chatChannelId: input.chatChannelId,
+        logsChannelId: input.logsChannelId,
+      },
+    });
+
+    return { setup: activeSetup(repaired) };
+  });
+}
+
 export async function cancelCreatorSetup(
   reservationId: string,
 ): Promise<{ cancelled: true }> {

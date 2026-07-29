@@ -5,11 +5,12 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, prepare, complete, cancel, link, migration, linkMigration, scopes, endpoints] =
+  const [service, prepare, complete, repair, cancel, link, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
       read("src/app/api/v1/discord/creator-setups/prepare/route.ts"),
       read("src/app/api/v1/discord/creator-setups/complete/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/repair/route.ts"),
       read("src/app/api/v1/discord/creator-setups/cancel/route.ts"),
       read("src/app/api/v1/discord/creator-setups/link/route.ts"),
       read(
@@ -37,11 +38,14 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, cancel, link]) {
+  for (const route of [prepare, complete, repair, cancel, link]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
   assert.match(complete, /rejectWrongGuild/);
+  assert.match(repair, /rejectWrongGuild/);
+  assert.match(repair, /principal\.keyId/);
+  assert.match(repair, /previousCategoryId: DiscordIdSchema/);
   assert.match(cancel, /cancelCreatorSetup/);
   assert.match(link, /rejectWrongGuild/);
   assert.match(link, /creatorUserId[\s\S]*\^\[A-Za-z0-9_-\]\+\$/);
@@ -73,6 +77,10 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /"setup_actor_forbidden"/);
   assert.match(service, /"setup_link_conflict"/);
   assert.match(service, /"idempotency_conflict"/);
+  assert.match(service, /export async function repairCreatorSetup/);
+  assert.match(service, /alreadyRepaired/);
+  assert.match(service, /category_id = \$\{input\.previousCategoryId\}/);
+  assert.match(service, /event_type: "discord_creator_setup_repaired"/);
   assert.match(
     service,
     /status: "already_linked" as const,\s*setup: linkedSetup/s,
@@ -86,6 +94,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(scopes, /"discord:creator:setup"/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/prepare/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/complete/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/repair/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/cancel/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
 });

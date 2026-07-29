@@ -76,6 +76,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/repair",
+    summary:
+      "Body { guildId, creatorDiscordUserId, previousCategoryId, previousChatChannelId, previousLogsChannelId, categoryId, chatChannelId, logsChannelId, categoryName, actorDiscordUserId, interactionId }. Atomically replaces stale Discord channel IDs after the bot confirms they no longer form a valid creator section.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/cancel",
     summary:
       "Body { reservationId }. Idempotently removes only an unfinished creator setup reservation.",
