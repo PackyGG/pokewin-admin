@@ -642,7 +642,11 @@ function Assessment({ item }: { item: FiatAssessment }) {
               </p>
             </div>
             <Badge variant="outline" className="shrink-0">
-              {signal.points > 0 ? `+${signal.points}` : "Pass"}
+              {signal.points > 0
+                ? `+${signal.points}`
+                : signal.points < 0
+                  ? `${signal.points} risk`
+                  : "Pass"}
             </Badge>
           </div>
         ))}

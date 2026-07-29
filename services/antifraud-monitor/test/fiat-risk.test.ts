@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  applyBlacklistedCheckoutEmail,
   parseWhopEvidence,
   scoreFiatDeposit,
   type FiatScoreInput,
@@ -66,9 +67,58 @@ test("known crypto funding and verified 3DS produce a good assessment", () => {
   const result = scoreFiatDeposit(safeInput);
   assert.equal(result.riskScore, 0);
   assert.equal(result.verdict, "good");
-  assert.ok(result.signals.some((signal) => signal.key === "known_crypto_history"));
+  assert.equal(
+    result.signals.find((signal) => signal.key === "known_crypto_history")
+      ?.points,
+    -20,
+  );
   assert.ok(result.signals.some((signal) => signal.key === "three_ds_verified"));
   assert.ok(result.flowChecks.every((check) => check.status === "pass"));
+});
+
+test("established accounts with meaningful prior crypto funding receive lower fiat risk", () => {
+  const established = scoreFiatDeposit({
+    ...safeInput,
+    provider: { ...safeInput.provider, riskScore: 60 },
+  });
+  const recent = scoreFiatDeposit({
+    ...safeInput,
+    provider: { ...safeInput.provider, riskScore: 60 },
+    account: { ...safeInput.account, accountAgeDays: 14 },
+  });
+  const cryptoDust = scoreFiatDeposit({
+    ...safeInput,
+    provider: { ...safeInput.provider, riskScore: 60 },
+    funding: {
+      ...safeInput.funding,
+      priorCryptoDeposits: 1,
+      priorCryptoUsd: 1,
+    },
+  });
+
+  assert.equal(established.riskScore, 0);
+  assert.equal(recent.riskScore, 20);
+  assert.equal(cryptoDust.riskScore, 20);
+});
+
+test("blocked checkout email is an unconditional critical lock", () => {
+  const scored = scoreFiatDeposit(safeInput);
+  const blocked = applyBlacklistedCheckoutEmail(scored, {
+    deposit_intent_id: "deposit-1",
+    checkout_email: "buyer@blocked.example",
+    domain: "blocked.example",
+    match_type: "blacklisted_domain",
+    lock_delivered_at: new Date("2026-07-29T12:00:00.000Z"),
+  });
+
+  assert.equal(blocked.riskScore, 100);
+  assert.equal(blocked.verdict, "bad");
+  assert.equal(blocked.scoreBreakdown.provider, 100);
+  assert.equal(
+    blocked.signals[0]?.key,
+    "blacklisted_checkout_email_domain",
+  );
+  assert.match(blocked.recommendation, /withdrawals locked/);
 });
 
 test("a dispute independently makes the payment high risk", () => {

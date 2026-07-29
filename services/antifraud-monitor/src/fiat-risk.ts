@@ -156,6 +156,26 @@ const REWARD_TYPES = [
   "affiliate_claim",
   "affiliate_leaderboard_prize",
 ];
+const ESTABLISHED_ACCOUNT_DAYS = 30;
+const MEANINGFUL_PRIOR_CRYPTO_USD = 25;
+const ESTABLISHED_CRYPTO_TRUST_CREDIT = -20;
+const NON_DISCOUNTABLE_SIGNAL_KEYS = new Set([
+  "payment_reconciliation_failed",
+  "payment_disputed",
+  "auto_refunded",
+  "payment_refunded",
+  "three_ds_failed",
+  "provider_history_risk",
+  "repeated_failed_payments",
+  "restricted_account",
+  "suspected_alt",
+  "kyc_rejected",
+  "kyc_incomplete",
+  "shared_device",
+  "shared_signup_ip",
+  "rapid_fiat_cashout",
+  "low_playthrough_cashout",
+]);
 
 function addSignal(
   signals: FiatSignal[],
@@ -419,12 +439,22 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
 
   const hasFundingHistory =
     input.funding.priorCryptoDeposits + input.funding.priorFiatDeposits > 0;
+  const hasEstablishedCryptoHistory =
+    input.account.accountAgeDays >= ESTABLISHED_ACCOUNT_DAYS &&
+    input.funding.priorCryptoDeposits > 0 &&
+    input.funding.priorCryptoUsd >= MEANINGFUL_PRIOR_CRYPTO_USD;
   if (input.funding.priorCryptoDeposits > 0) {
     addSignal(signals, {
       key: "known_crypto_history",
-      label: "Known crypto funding",
-      detail: `${input.funding.priorCryptoDeposits} earlier crypto deposits totaling $${input.funding.priorCryptoUsd.toFixed(2)} were found.`,
-      points: 0,
+      label: hasEstablishedCryptoHistory
+        ? "Established crypto funding"
+        : "Known crypto funding",
+      detail: hasEstablishedCryptoHistory
+        ? `${input.funding.priorCryptoDeposits} earlier settled crypto deposits totaling $${input.funding.priorCryptoUsd.toFixed(2)} were found on this ${input.account.accountAgeDays.toFixed(1)}-day-old account.`
+        : `${input.funding.priorCryptoDeposits} earlier crypto deposits totaling $${input.funding.priorCryptoUsd.toFixed(2)} were found.`,
+      points: hasEstablishedCryptoHistory
+        ? ESTABLISHED_CRYPTO_TRUST_CREDIT
+        : 0,
       tone: "good",
       category: "funding",
     });
@@ -634,9 +664,24 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       scoreBreakdown[signal.category] + signal.points,
     );
   }
-  const riskScore = Math.min(
-    100,
-    Object.values(scoreBreakdown).reduce((total, value) => total + value, 0),
+  const nonDiscountableRisk = signals
+    .filter(
+      (signal) =>
+        signal.points > 0 && NON_DISCOUNTABLE_SIGNAL_KEYS.has(signal.key),
+    )
+    .reduce((total, signal) => total + signal.points, 0);
+  const riskScore = Math.max(
+    0,
+    Math.min(
+      100,
+      Math.max(
+        nonDiscountableRisk,
+        Object.values(scoreBreakdown).reduce(
+          (total, value) => total + value,
+          0,
+        ),
+      ),
+    ),
   );
   const verdict: FiatVerdict =
     riskScore >= 60 ? "bad" : riskScore >= 30 ? "review" : "good";
@@ -1417,7 +1462,7 @@ export class FiatRiskService {
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
               $16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,
-              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,'fiat-v1',now()
+              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,'fiat-v2',now()
             )
             ON CONFLICT (deposit_intent_id) DO UPDATE SET
               user_id=EXCLUDED.user_id,
@@ -1447,7 +1492,7 @@ export class FiatRiskService {
               account_evidence=EXCLUDED.account_evidence,
               score_breakdown=EXCLUDED.score_breakdown,
               flow_checks=EXCLUDED.flow_checks,
-              score_version='fiat-v1',
+              score_version='fiat-v2',
               assessed_at=now()
           `,
           [
