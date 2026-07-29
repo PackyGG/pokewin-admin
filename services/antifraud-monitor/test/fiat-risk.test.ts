@@ -83,6 +83,7 @@ test("fiat refresh searches the Whop checkout email through indexed resources", 
   assert.deepEqual(result, { ids: [] });
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.sql ?? "", /payment_webhook_events checkout_event/);
+  assert.match(calls[0]?.sql ?? "", /paid\.checkout_email/);
   assert.match(
     calls[0]?.sql ?? "",
     /checkout_event\.provider_resource_id IN \(\s*fdi\.provider_checkout_id,\s*fdi\.provider_payment_id\s*\)/,
@@ -269,6 +270,7 @@ test("assessment refresh loads settled and paid-unreconciled fiat", async () => 
     source,
     /payload#>>'\{data,metadata,deposit_intent_id\}'/,
   );
+  assert.match(source, /paid\.checkout_email/);
   assert.doesNotMatch(
     source,
     /FIAT_ASSESSMENT_STATUSES[\s\S]{0,200}"checkout_ready"/,

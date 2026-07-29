@@ -1282,6 +1282,7 @@ export class FiatRiskService {
         OR lower(COALESCE(u.username,'')) LIKE $${values.length}
         OR lower(COALESCE(u.email,'')) LIKE $${values.length}
         OR lower(COALESCE(fdi.provider_payment_id,'')) LIKE $${values.length}
+        OR lower(COALESCE(paid.checkout_email,'')) LIKE $${values.length}
         OR EXISTS (
           SELECT 1
           FROM payment_webhook_events checkout_event
@@ -1306,6 +1307,7 @@ export class FiatRiskService {
           )
             payload#>>'{data,metadata,deposit_intent_id}' AS intent_id,
             provider_resource_id,
+            payload#>>'{data,user,email}' AS checkout_email,
             payload,
             received_at
           FROM payment_webhook_events
