@@ -170,7 +170,12 @@ export function RetuneWorkspace({
   initialBulk,
 }: {
   rows: RetuneRailRow[];
-  railError: string | null;
+  /**
+   * True when the rail seed read failed (F1 state). A boolean by design: the
+   * raw server error string must never be serialized into the client payload
+   * (safe-query.ts SECURITY note) — the workspace renders generic copy.
+   */
+  railError: boolean;
   /**
    * Persistent, server-derived count of DISTINCT packs that have a workspace
    * push recorded (edit/retune snapshots) — survives sessions/browsers. Drives

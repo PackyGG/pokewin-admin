@@ -52,7 +52,9 @@ async function RailLoader({
     <FadeIn>
       <RetuneWorkspace
         rows={rows}
-        railError={error}
+        // Boolean only — the raw server error string must never cross into
+        // the client payload (safe-query.ts SECURITY note).
+        railError={error !== null}
         tunedCount={tunedPackIds.length}
         tunedPackIds={tunedPackIds}
         initialPackId={pack}

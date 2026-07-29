@@ -37,6 +37,10 @@ export type RetuneRailRow = PackRiskRow & {
  * to `{ rows: [], error }` on failure instead of throwing (the page renders
  * an EmptyState with retry); `rows: []` with `error: null` means "no snapshot
  * yet — compute one in Pack Doctor".
+ *
+ * SECURITY: the error string is SERVER-ONLY diagnostics — page.tsx collapses
+ * it to a boolean before the client boundary (raw driver errors must never be
+ * serialized into the client payload, per safe-query.ts's SECURITY note).
  */
 export async function getRetuneRailRows(): Promise<{
   rows: RetuneRailRow[];
