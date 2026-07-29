@@ -91,10 +91,12 @@ function totalSubscribers(): number {
 
 function parseMessage(raw: string): PackyEvent | null {
   try {
-    // The proxy escapes embedded newlines as `\n` to survive SSE
-    // `data:` framing. Reverse that before JSON.parse.
-    const normalized = raw.includes("\\n") ? raw.replace(/\\n/g, "\n") : raw;
-    const parsed: unknown = JSON.parse(normalized);
+    // The proxy frames multi-line payloads as multiple SSE `data:` lines
+    // per spec; EventSource already rejoined them with "\n" here, so the
+    // raw string is parseable as-is. (The old `\\n` un-escape hack would
+    // corrupt legitimate `\n` escape sequences inside JSON strings —
+    // e.g. a multi-line chat message — into raw newlines and break parse.)
+    const parsed: unknown = JSON.parse(raw);
     if (
       parsed &&
       typeof parsed === "object" &&

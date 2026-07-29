@@ -84,6 +84,37 @@ test("the Packy live bridge reports upstream truth and closes dead streams", asy
   );
 });
 
+test("the Packy live bridge uses lossless SSE data-line framing", async () => {
+  const [route, client] = await Promise.all([
+    readFile(packyRoutePath, "utf8"),
+    readFile(packyClientPath, "utf8"),
+  ]);
+
+  assert.match(route, /\.split\(\/\\r\\n\|\\r\|\\n\/\)/);
+  assert.doesNotMatch(route, /payload\.replace\(\/\\n\/g/);
+  assert.match(client, /JSON\.parse\(raw\)/);
+  assert.doesNotMatch(client, /raw\.replace\(\/\\\\n\/g/);
+
+  const payload = JSON.stringify(
+    {
+      type: "chat.pull.history",
+      payload: { messages: [{ content: "first line\nsecond line" }] },
+    },
+    null,
+    2,
+  );
+  const framed = payload
+    .split(/\r\n|\r|\n/)
+    .map((line) => `data: ${line}`)
+    .join("\n");
+  const eventSourceData = framed
+    .split("\n")
+    .map((line) => line.slice("data: ".length))
+    .join("\n");
+
+  assert.deepEqual(JSON.parse(eventSourceData), JSON.parse(payload));
+});
+
 test("player gaming activity is shown only in the live monitor", async () => {
   const [overview, monitor] = await Promise.all([
     readFile(overviewPath, "utf8"),

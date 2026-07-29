@@ -310,7 +310,17 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       const writeEvent = (event: string, data: string) => {
-        write(`event: ${event}\ndata: ${data}\n\n`);
+        // SSE framing per spec: a payload may contain newlines (e.g. a
+        // pretty-printed upstream JSON frame on the raw chat passthrough).
+        // Emit one `data:` line per segment — EventSource rejoins them
+        // with "\n" client-side, so this is lossless for any payload.
+        // Escaping (`\n` → `\\n`) would corrupt passthrough JSON instead,
+        // and a bare `\r` would still break framing.
+        const dataLines = data
+          .split(/\r\n|\r|\n/)
+          .map((line) => `data: ${line}`)
+          .join("\n");
+        write(`event: ${event}\n${dataLines}\n\n`);
       };
 
       const failUpstream = (detail: Record<string, unknown>) => {
@@ -477,11 +487,7 @@ export async function GET(request: Request): Promise<Response> {
               canReceiveGaming,
             );
             if (filteredPayload == null) return;
-            payload = filteredPayload;
-            if (payload.includes("\n")) {
-              payload = payload.replace(/\n/g, "\\n");
-            }
-            writeEvent("packy", payload);
+            writeEvent("packy", filteredPayload);
           });
 
           receiver.on("conclude", (code, reason) => {

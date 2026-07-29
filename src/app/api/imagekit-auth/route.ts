@@ -33,7 +33,15 @@ function getClient(): ImageKit {
 }
 
 export async function GET() {
-  await requirePageAccess("/packs");
+  // requirePageAccess redirect()s on failure — this endpoint is consumed
+  // via fetch() by the upload widget, so an expired session would get a
+  // 307-to-login HTML page instead of a parseable error. Short-circuit
+  // with 401 JSON (same pattern as api/admin/avatar/[id]).
+  try {
+    await requirePageAccess("/packs");
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const authParams = getClient().getAuthenticationParameters();
   return NextResponse.json(authParams);
 }

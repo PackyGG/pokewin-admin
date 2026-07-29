@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
-import { adminDrizzle } from "@/lib/drizzle";
-import { admin_users } from "@/lib/db-schema/admin/schema";
-import { requirePageAccess } from "@/lib/dal";
+import {
+  getUserPermissions,
+  requirePageAccess,
+  sessionIsAdmin,
+  sessionIsOwner,
+} from "@/lib/dal";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { exportUsers, rowsToCsv } from "@/lib/queries/users-export";
@@ -30,23 +32,37 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request): Promise<Response> {
-  const session = await requirePageAccess("/users");
+  // requirePageAccess redirect()s on failure — meaningless for the fetch()
+  // caller expecting CSV/JSON (it would receive a 307-to-login HTML page),
+  // so short-circuit with 401 JSON instead (same pattern as
+  // api/admin/avatar/[id]).
+  let session: Awaited<ReturnType<typeof requirePageAccess>>;
+  try {
+    session = await requirePageAccess("/users");
+  } catch {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  // CSRF-class guard — this is a cookie-authenticated heavy POST. Without
+  // it a cross-site page could burn the per-admin rate budget, trigger
+  // 120s prod scans and pollute the audit log (same checks as
+  // api/antifraud/monitor).
+  if (request.headers.get("sec-fetch-site") === "cross-site") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+  const originHeader = request.headers.get("origin");
+  if (originHeader && originHeader !== new URL(request.url).origin) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   // Page access is necessary but not sufficient — exporting raw user
   // emails is a separate capability that must be granted explicitly.
-  // Admins always pass; non-admins need __can_export_users.
-  if (session.role !== "admin") {
-    const perms = (
-      await adminDrizzle
-        .select({ allowed_pages: admin_users.allowed_pages })
-        .from(admin_users)
-        .where(eq(admin_users.id, session.userId))
-        .limit(1)
-    )[0];
-    if (
-      !perms ||
-      !hasCapability(perms.allowed_pages ?? [], "__can_export_users")
-    ) {
+  // Admins and owners always pass (multi-role aware — a raw
+  // `session.role !== "admin"` check would wrongly deny a multi-role
+  // admin); everyone else needs __can_export_users.
+  if (!sessionIsAdmin(session) && !sessionIsOwner(session)) {
+    const allowedPages = await getUserPermissions(session.userId);
+    if (!hasCapability(allowedPages, "__can_export_users")) {
       return NextResponse.json(
         { error: "Not permitted" },
         { status: 403 },
