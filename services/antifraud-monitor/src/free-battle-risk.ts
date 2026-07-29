@@ -130,6 +130,19 @@ export function crossedRiskBand(
   return null;
 }
 
+export function serializeCreatorRisks(
+  risks: Map<string, CreatorRisk>,
+): string {
+  return JSON.stringify(
+    [...risks].map(([creator_user_id, risk]) => ({
+      creator_user_id,
+      creator_risk_kind: risk.kind,
+      creator_risk_detail: risk.detail,
+      risk_points: risk.points,
+    })),
+  );
+}
+
 function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null;
 }
@@ -293,12 +306,7 @@ export class FreeBattleRiskMonitor {
           updated_at = now()
       `,
       [
-        [...risks].map(([creator_user_id, risk]) => ({
-          creator_user_id,
-          creator_risk_kind: risk.kind,
-          creator_risk_detail: risk.detail,
-          risk_points: risk.points,
-        })),
+        serializeCreatorRisks(risks),
         INITIAL_LOOKBACK_DAYS,
       ],
     );

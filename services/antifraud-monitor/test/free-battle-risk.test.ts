@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   classifyCreatorRisk,
   crossedRiskBand,
+  serializeCreatorRisks,
 } from "../src/free-battle-risk.js";
 
 const creator = {
@@ -67,4 +68,21 @@ test("risk events emit only when evidence crosses a review band", () => {
   assert.equal(crossedRiskBand(40, 80), 80);
   assert.equal(crossedRiskBand(80, 120), 120);
   assert.equal(crossedRiskBand(120, 120), null);
+});
+
+test("creator cursor input is serialized as JSON for the jsonb recordset", () => {
+  const serialized = serializeCreatorRisks(new Map([
+    ["creator-1", {
+      kind: "fraud_kyc_required",
+      detail: "scammer",
+      points: 40,
+    }],
+  ]));
+  assert.equal(typeof serialized, "string");
+  assert.deepEqual(JSON.parse(serialized), [{
+    creator_user_id: "creator-1",
+    creator_risk_kind: "fraud_kyc_required",
+    creator_risk_detail: "scammer",
+    risk_points: 40,
+  }]);
 });
