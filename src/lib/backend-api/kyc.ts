@@ -1,6 +1,10 @@
 import "server-only";
 
 import { backendApi } from "./client";
+import {
+  getSumsubApplicantReview,
+  type SumsubApplicantReview,
+} from "@/lib/antifraud/sumsub-review-api";
 
 /**
  * Sumsub KYC — admin control surface. The backend owns the KYC state machine:
@@ -45,16 +49,27 @@ export type UserKycStatus = {
   verificationCycle: number;
   /** Sumsub applicant id, learned from the first webhook (null until then). */
   applicantId: string | null;
+  /** Sanitized live provider detail. Never includes names, DOB, IDs or images. */
+  sumsubReview: SumsubApplicantReview | null;
 };
 
 type Success<T> = { success: boolean; data: T };
 
-export const getUserKyc = (userId: string) =>
-  backendApi
-    .get<Success<UserKycStatus>>(
+type BackendUserKycStatus = Omit<UserKycStatus, "sumsubReview">;
+
+export const getUserKyc = async (userId: string): Promise<UserKycStatus> => {
+  const status = await backendApi
+    .get<Success<BackendUserKycStatus>>(
       `/admin/kyc/${encodeURIComponent(userId)}`,
     )
     .then((r) => r.data);
+  return {
+    ...status,
+    sumsubReview: status.applicantId
+      ? await getSumsubApplicantReview(status.applicantId)
+      : null,
+  };
+};
 
 /**
  * Flag a user for KYC. Opens a new verification cycle (returned), resets the

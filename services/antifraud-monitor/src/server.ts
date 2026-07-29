@@ -78,6 +78,8 @@ import {
 } from "./transport-limits.js";
 import { registerWithdrawalRoutes } from "./withdrawal-routes.js";
 import { WithdrawalRiskService } from "./withdrawal-risk.js";
+import { SumsubClient } from "./sumsub-client.js";
+import { registerSumsubRoutes } from "./sumsub-routes.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -97,6 +99,8 @@ const SECRET_VALUES = [
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
+  config.SUMSUB_ADMIN_TOKEN,
+  config.SUMSUB_ADMIN_KEY,
 ].filter(
   (value): value is string =>
     typeof value === "string" && value.length >= 8,
@@ -156,6 +160,13 @@ const fiatEligibility = new FiatEligibilityService(
   scoreWeights,
   new EnrichmentService(config),
 );
+const sumsub =
+  config.SUMSUB_ADMIN_TOKEN && config.SUMSUB_ADMIN_KEY
+    ? new SumsubClient({
+        token: config.SUMSUB_ADMIN_TOKEN,
+        secretKey: config.SUMSUB_ADMIN_KEY,
+      })
+    : null;
 const ingestDelivery = new IngestDelivery(
   config,
   db.antifraud,
@@ -1202,6 +1213,7 @@ await registerFiatEmailDomainRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
+await registerSumsubRoutes(app, sumsub);
 await registerFiatEligibilityRoutes(app, {
   config,
   access: fiatEligibilityAccess,

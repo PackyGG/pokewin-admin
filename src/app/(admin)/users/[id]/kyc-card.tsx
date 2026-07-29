@@ -16,6 +16,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
 import { AlertTriangle, BadgeCheck } from "lucide-react";
+import countries from "i18n-iso-countries";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -66,10 +67,12 @@ function statusBadgeClass(status: KycStatus): string {
 
 export function KycCard({
   userId,
+  accountCountry,
   data,
   canManage,
 }: {
   userId: string;
+  accountCountry: string | null;
   data: UserKycStatus | null;
   canManage: boolean;
 }) {
@@ -190,6 +193,13 @@ export function KycCard({
           </div>
         </div>
 
+        {localData.applicantId && (
+          <SumsubReviewPanel
+            accountCountry={accountCountry}
+            review={localData.sumsubReview}
+          />
+        )}
+
         {canManage && (
           <div className="flex flex-wrap gap-2">
             <Button
@@ -231,6 +241,205 @@ export function KycCard({
         />
       </CardContent>
     </Card>
+  );
+}
+
+function country(value: string | null): string {
+  return value?.trim().toUpperCase() || "?";
+}
+
+function normalizedCountry(value: string | null): string | null {
+  const code = value?.trim().toUpperCase();
+  if (!code) return null;
+  return code.length === 3 ? countries.alpha3ToAlpha2(code) ?? code : code;
+}
+
+function humanize(value: string): string {
+  return value
+    .toLowerCase()
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function providerDate(value: string | null): string {
+  if (!value) return "?";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime())
+    ? value
+    : new Intl.DateTimeFormat("en-US", {
+        dateStyle: "medium",
+        timeStyle: "short",
+        timeZone: "UTC",
+      }).format(parsed);
+}
+
+function SumsubReviewPanel({
+  accountCountry,
+  review,
+}: {
+  accountCountry: string | null;
+  review: UserKycStatus["sumsubReview"];
+}) {
+  if (!review) {
+    return (
+      <div className="rounded-md border border-dashed px-3 py-2 text-xs text-muted-foreground">
+        Detailed Sumsub identity evidence is temporarily unavailable. The
+        stored provider result above remains authoritative.
+      </div>
+    );
+  }
+
+  const verifiedCountries = [
+    review.applicantCountry,
+    ...review.documents.map((document) => document.country),
+  ].filter((value): value is string => Boolean(value));
+  const normalizedAccountCountry = normalizedCountry(accountCountry);
+  const countryMismatch =
+    normalizedAccountCountry !== null &&
+    verifiedCountries.some(
+      (value) => normalizedCountry(value) !== normalizedAccountCountry,
+    );
+
+  return (
+    <div className="space-y-3 rounded-md border bg-muted/20 p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs font-semibold">Live Sumsub review evidence</p>
+        {countryMismatch && (
+          <Badge
+            variant="outline"
+            className="bg-rose-500/15 text-rose-600 dark:text-rose-400"
+          >
+            Country mismatch
+          </Badge>
+        )}
+        <Badge variant="outline" className="text-muted-foreground">
+          sanitized read-only data
+        </Badge>
+      </div>
+
+      <div className="grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+        <ReviewFact label="Account country" value={country(accountCountry)} />
+        <ReviewFact
+          label="Extracted applicant country"
+          value={country(review.applicantCountry)}
+        />
+        <ReviewFact
+          label="Declared country"
+          value={country(review.declaredCountry)}
+        />
+        <ReviewFact
+          label="Nationality"
+          value={country(review.nationality)}
+        />
+        <ReviewFact
+          label="Country of birth"
+          value={country(review.countryOfBirth)}
+        />
+      </div>
+
+      <div className="grid gap-3 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <ReviewFact
+          label="Review status"
+          value={review.reviewStatus ? humanize(review.reviewStatus) : "?"}
+        />
+        <ReviewFact
+          label="Review answer"
+          value={review.reviewAnswer ?? "?"}
+        />
+        <ReviewFact
+          label="Reviewed at"
+          value={providerDate(review.reviewedAt)}
+        />
+        <ReviewFact
+          label="Attempts"
+          value={review.attemptCount?.toString() ?? "?"}
+        />
+      </div>
+
+      {review.documents.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Verified documents and steps
+          </p>
+          <div className="grid gap-2 md:grid-cols-2">
+            {review.documents.map((document) => (
+              <div
+                key={`${document.step}-${document.documentType ?? ""}-${document.country ?? ""}`}
+                className="rounded-md border bg-background/70 px-2.5 py-2 text-xs"
+              >
+                <p className="font-medium">{humanize(document.step)}</p>
+                <p className="mt-0.5 text-muted-foreground">
+                  {document.documentType
+                    ? humanize(document.documentType)
+                    : "Verification step"}{" "}
+                  ? issuing country {country(document.country)}
+                  {document.reviewAnswer
+                    ? ` ? ${document.reviewAnswer}`
+                    : ""}
+                </p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {(review.reviewRejectType || review.rejectLabels.length > 0) && (
+        <div className="text-xs">
+          <span className="text-muted-foreground">Provider findings: </span>
+          <span className="font-medium">
+            {[
+              review.reviewRejectType,
+              ...review.rejectLabels.map(humanize),
+            ]
+              .filter(Boolean)
+              .join(" ? ")}
+          </span>
+        </div>
+      )}
+
+      {review.history.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Review history
+          </p>
+          <div className="space-y-1">
+            {review.history.map((item, index) => (
+              <p
+                key={`${item.attemptId ?? "attempt"}-${item.reviewedAt ?? index}`}
+                className="text-xs"
+              >
+                <span className="font-medium">
+                  {item.reviewAnswer ?? item.reviewStatus ?? "Unknown result"}
+                </span>
+                <span className="text-muted-foreground">
+                  {" "}
+                  ? {providerDate(item.reviewedAt)}
+                  {item.levelName ? ` ? ${item.levelName}` : ""}
+                </span>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="text-[10px] text-muted-foreground">
+        Names, birth dates, document numbers, addresses and images are not
+        returned to this dashboard.
+      </p>
+    </div>
+  );
+}
+
+function ReviewFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background/70 px-2.5 py-2">
+      <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-0.5 font-medium">{value}</p>
+    </div>
   );
 }
 

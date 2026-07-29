@@ -24,6 +24,8 @@ const schema = z.object({
   ADMIN_API_KEY: z.string().min(1).optional(),
   xbypasssecret: z.string().min(1).optional(),
   XBYPASSSECRET: z.string().min(1).optional(),
+  SUMSUB_ADMIN_TOKEN: z.string().min(1).optional(),
+  SUMSUB_ADMIN_KEY: z.string().min(1).optional(),
   API_TOKEN: z.string().min(32),
   API_ADMIN_TOKEN: z.string().min(32),
   FIAT_ELIGIBILITY_DEV_API_KEY: z.string().min(32).optional(),
@@ -88,6 +90,11 @@ export function loadConfig(): Config {
   const config = parsed.data;
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {
     throw new Error("Invalid configuration: API_TOKEN and API_ADMIN_TOKEN must differ");
+  }
+  if (Boolean(config.SUMSUB_ADMIN_TOKEN) !== Boolean(config.SUMSUB_ADMIN_KEY)) {
+    throw new Error(
+      "Invalid configuration: SUMSUB_ADMIN_TOKEN and SUMSUB_ADMIN_KEY must be configured together",
+    );
   }
   const serviceKeys = [
     config.API_TOKEN,

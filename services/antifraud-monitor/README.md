@@ -91,6 +91,16 @@ Configure `API_URL` (or `BACKEND_API_URL`), `ADMIN_API_KEY`, and
 rate-limit bypass header. Missing credentials, non-2xx responses, timeouts,
 and malformed response bodies fail closed.
 
+## Sanitized Sumsub review reads
+
+Configure `SUMSUB_ADMIN_TOKEN` and `SUMSUB_ADMIN_KEY` together. The protected
+`GET /v1/kyc/applicants/:applicantId/review` route signs read-only Sumsub API
+requests and requires the monitor admin token. It returns only country,
+nationality, document type/issuing-country, verification outcome, rejection
+labels, and bounded review history. Names, dates of birth, addresses, document
+numbers, document images, and private provider comments are never returned.
+Successful reads are cached in memory for five minutes.
+
 ## Automatic Fiat checkout eligibility
 
 `POST /v1/fiat-eligibility/check` is a server-to-server endpoint. It never

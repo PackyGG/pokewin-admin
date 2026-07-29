@@ -138,6 +138,25 @@ test("the KYC queue exposes only the five operational filters", () => {
   );
 });
 
+test("live Sumsub details stay admin-only, read-only, and sanitized", () => {
+  const client = source("services/antifraud-monitor/src/sumsub-client.ts");
+  const routes = source("services/antifraud-monitor/src/sumsub-routes.ts");
+  const auth = source("services/antifraud-monitor/src/auth.ts");
+  const dashboardApi = source("src/lib/antifraud/sumsub-review-api.ts");
+  const card = source("src/app/(admin)/users/[id]/kyc-card.tsx");
+
+  assert.match(client, /\.update\(`\$\{timestamp\}GET\$\{path\}`\)/);
+  assert.match(client, /requiredIdDocsStatus/);
+  assert.match(client, /review\/history/);
+  assert.doesNotMatch(client, /firstName|lastName|dob|documentNumber|imageIds/);
+  assert.match(routes, /app\.get\("\/v1\/kyc\/applicants\/:applicantId\/review"/);
+  assert.match(auth, /pathname\.startsWith\("\/v1\/kyc\/applicants\/"\)/);
+  assert.match(dashboardApi, /ANTIFRAUD_MONITOR_API_ADMIN_TOKEN/);
+  assert.match(card, /Live Sumsub review evidence/);
+  assert.match(card, /Country mismatch/);
+  assert.match(card, /Names, birth dates, document numbers, addresses and images are not/);
+});
+
 test("account reviews exclude currently KYC-required users before pagination", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
   const reviews = source("src/lib/antifraud/reviews.ts");

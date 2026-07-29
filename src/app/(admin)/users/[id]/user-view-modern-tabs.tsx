@@ -2217,6 +2217,7 @@ export function KycTab({
         <Suspense fallback={<SkeletonCard lines={3} />}>
           <KycStreamed
             userId={user.id}
+            accountCountry={user.countryCode}
             kycPromise={kycPromise}
             canManage={canManage}
           />
@@ -2434,15 +2435,24 @@ function FraudLocksStreamed({
 
 function KycStreamed({
   userId,
+  accountCountry,
   kycPromise,
   canManage,
 }: {
   userId: string;
+  accountCountry: string | null;
   kycPromise: Promise<UserKycStatus | null>;
   canManage: boolean;
 }) {
   const kyc = use(kycPromise);
-  return <KycCard userId={userId} data={kyc} canManage={canManage} />;
+  return (
+    <KycCard
+      userId={userId}
+      accountCountry={accountCountry}
+      data={kyc}
+      canManage={canManage}
+    />
+  );
 }
 
 function WagerProgressStreamed({
