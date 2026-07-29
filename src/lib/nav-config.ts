@@ -155,6 +155,21 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Analytics 2 is a cleaner, additive analytics workspace. It inherits
+    // the existing /analytics grant so staff who can use Analytics do not
+    // need a second permission rollout just to reach its companion page.
+    id: "nav.analytics-2",
+    group: "Overview",
+    label: "Analytics 2",
+    href: "/analytics-2",
+    pageKey: "/analytics",
+    icon: "TrendingUp",
+    description: "Daily acquisition and depositor activity",
+    keywords: ["signups", "ftd", "depositors", "acquisition"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Map — palette-only. /map was folded into /analytics as a tab; the
     // palette still surfaces it (routing through the analytics shell) but the
     // sidebar dropped the standalone link. href carries the tab; permission
@@ -596,6 +611,7 @@ export function getSidebarFooterItems(): NavEntry[] {
 const PALETTE_ORDER: string[] = [
   "nav.dashboard",
   "nav.analytics",
+  "nav.analytics-2",
   "nav.map",
   "nav.users",
   "nav.vips",

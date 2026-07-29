@@ -168,6 +168,7 @@ const ICONS: Record<string, LucideIcon> = {
 type NavItem = {
   label: string;
   href: string;
+  pageKey: string;
   icon: string;
   // Restrict an item to a specific username allowlist (case-
   // insensitive). Used for the salaries link which is visible only
@@ -208,6 +209,7 @@ type NavGroup = {
 const NAV_FOOTER_ITEMS: NavItem[] = getSidebarFooterItems().map((e) => ({
   label: e.label,
   href: e.href,
+  pageKey: e.pageKey,
   icon: e.sidebarIcon ?? e.icon,
   usernameAllowlist: e.usernameAllowlist,
   strictUsernameAllowlist: e.strictUsernameAllowlist,
@@ -222,6 +224,7 @@ const NAV_GROUPS: NavGroup[] = getSidebarGroups().map((group) => ({
   items: group.items.map((e) => ({
     label: e.label,
     href: e.href,
+    pageKey: e.pageKey,
     icon: e.sidebarIcon ?? e.icon,
     usernameAllowlist: e.usernameAllowlist,
     strictUsernameAllowlist: e.strictUsernameAllowlist,
@@ -367,7 +370,7 @@ export function AppSidebar({
         }
         if (item.alwaysVisible && !dedicatedPackBuilder) return true;
         // Owners + admins see every page.
-        return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
+        return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.pageKey);
       }),
     [isAdmin, isOwner, effectiveAllowedPages, username, dedicatedPackBuilder],
   );
@@ -401,7 +404,7 @@ export function AppSidebar({
           }
           if (item.alwaysVisible && !dedicatedPackBuilder) return true;
           // Owners + admins see every page.
-          return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.href);
+          return isAdmin || isOwner || pageAccessGranted(effectiveAllowedPages, item.pageKey);
         }),
       })),
   [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, dedicatedPackBuilder]);
