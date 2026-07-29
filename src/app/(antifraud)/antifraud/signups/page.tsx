@@ -292,7 +292,11 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
             <Button
               variant="outline"
               size="sm"
-              render={<HostLink href={`/antifraud/reviews/${signup.case_id}`} />}
+              render={
+                <HostLink
+                  href={`/antifraud/reviews?review=${encodeURIComponent(signup.case_id)}`}
+                />
+              }
             >
               {signup.monitor_status === "active" && (
                 <RadioTower className="size-3.5 text-cyan-500" />

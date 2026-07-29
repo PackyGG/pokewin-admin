@@ -75,16 +75,17 @@ export function OpenCaseDialog({
         reason: reason.trim(),
       });
       if (!result.ok) {
+        const conflictReviewId = result.conflictReviewId;
         toast.error(
           result.message,
-          result.conflictReviewId
+          conflictReviewId
             ? {
                 action: {
                   label: "Open live case",
                   onClick: () =>
                     router.push(
                       hrefForCurrentHost(
-                        `/antifraud/reviews/${result.conflictReviewId}`,
+                        `/antifraud/reviews?review=${encodeURIComponent(conflictReviewId)}`,
                       ),
                     ),
                 },
@@ -96,7 +97,11 @@ export function OpenCaseDialog({
       toast.success("Case opened");
       setOpen(false);
       reset();
-      router.push(hrefForCurrentHost(`/antifraud/reviews/${result.id}`));
+      router.push(
+        hrefForCurrentHost(
+          `/antifraud/reviews?review=${encodeURIComponent(result.id)}`,
+        ),
+      );
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not open the case");
     } finally {

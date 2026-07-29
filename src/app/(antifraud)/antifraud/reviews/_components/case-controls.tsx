@@ -111,16 +111,17 @@ export function CaseControls({
       });
       if (!result.ok) {
         statusAttempt.current = null;
+        const conflictReviewId = result.conflictReviewId;
         toast.error(
           result.message,
-          result.conflictReviewId
+          conflictReviewId
             ? {
                 action: {
                   label: "Open live case",
                   onClick: () =>
                     router.push(
                       hrefForCurrentHost(
-                        `/antifraud/reviews/${result.conflictReviewId}`,
+                        `/antifraud/reviews?review=${encodeURIComponent(conflictReviewId)}`,
                       ),
                     ),
                 },
@@ -145,15 +146,19 @@ export function CaseControls({
   return (
     <div className="space-y-5 rounded-xl border border-border/60 bg-card p-4">
       {/* ── Status ─────────────────────────────────────────────────── */}
-      <div className="space-y-2">
+      <div className="space-y-3">
         <Label className="text-xs uppercase tracking-wide text-muted-foreground">
-          Status
+          Review workflow
         </Label>
-        <div className="flex flex-wrap gap-1.5">
+        <Textarea
+          value={resolution}
+          onChange={(e) => setResolution(e.target.value)}
+          rows={3}
+          placeholder="Record your conclusion before clearing or flagging."
+          className="text-xs"
+        />
+        <div className="grid grid-cols-2 gap-2">
           {REVIEW_STATUSES.map((value) => {
-            // A verdict without a written conclusion closes the case and
-            // records nothing about why — blocked here AND in the action's
-            // schema (the server side is the real gate).
             const needsConclusion =
               isTerminalTarget(value) && trimmedResolution.length === 0;
             return (
@@ -162,32 +167,37 @@ export function CaseControls({
                 type="button"
                 disabled={pending !== null || value === status || needsConclusion}
                 title={
-                  needsConclusion
-                    ? "Write your conclusion below first"
-                    : undefined
+                  needsConclusion ? "Write your conclusion first" : undefined
                 }
                 onClick={() => void changeStatus(value)}
                 className={cn(
-                  "rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
+                  "min-h-9 rounded-md border px-2.5 py-1.5 text-xs font-medium transition-colors disabled:opacity-60",
                   value === status
                     ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"
-                    : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
+                    : value === "flagged"
+                      ? "border-rose-500/30 bg-rose-500/5 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+                      : value === "cleared"
+                        ? "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400"
+                        : value === "in_review" && status === "open"
+                          ? "border-primary bg-primary text-primary-foreground hover:bg-primary/90"
+                          : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
                 )}
               >
                 {pending === `status-${value}`
                   ? "…"
-                  : REVIEW_STATUS_LABELS[value]}
+                  : value === "in_review" && status === "open"
+                    ? "Start review"
+                    : value === "cleared"
+                      ? "Clear account"
+                      : value === "flagged"
+                        ? "Flag account"
+                        : value === "open"
+                          ? "Reopen"
+                          : REVIEW_STATUS_LABELS[value]}
               </button>
             );
           })}
         </div>
-        <Textarea
-          value={resolution}
-          onChange={(e) => setResolution(e.target.value)}
-          rows={2}
-          placeholder="What did you conclude? (required for Cleared / Flagged)"
-          className="text-xs"
-        />
         <p className="text-[11px] text-muted-foreground">
           Clear and Flag require a conclusion. Reopening withdraws the previous
           verdict but keeps the append-only trail.

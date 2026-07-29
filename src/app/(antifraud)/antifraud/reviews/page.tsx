@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { z } from "zod";
 import { HostLink } from "@/components/host-link";
 import {
   ArrowUp,
@@ -39,7 +40,8 @@ import {
 import { listKycRequiredUserIds } from "@/lib/antifraud/kyc";
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
-import { QuickReviewActions } from "./_components/quick-review-actions";
+import { ReviewCaseDialog } from "./_components/review-case-dialog";
+import { ReviewCaseWorkspace } from "./_components/review-case-workspace";
 import { ReviewSignalBadge } from "./_components/review-signal-badge";
 
 export const metadata = { title: "Account Review" };
@@ -47,10 +49,9 @@ export const metadata = { title: "Account Review" };
 /**
  * Antifraud → Account Review.
  *
- * The case queue. Filters are plain links driven by search params (no client
- * state, no extra JS). Status and chronological ordering use the queue indexes.
- * Text search is prefix-only and its list + COUNT predicates are covered by the
- * ADMIN pg_trgm indexes.
+ * The case queue. Filters and the selected review are URL-driven, so search,
+ * paging, dialog state, and direct links stay shareable. Review details stream
+ * into an accessible dialog without replacing the queue underneath it.
  *
  * Shell-first: the hero + filter bar paint immediately, the KPI strip and the
  * list stream behind their own Suspense boundary keyed on the active filter so
@@ -68,6 +69,7 @@ type SearchParams = {
   targetUsername?: string;
   reason?: string;
   monitorCaseId?: string;
+  review?: string;
 };
 
 export default async function ReviewQueuePage({
@@ -75,7 +77,7 @@ export default async function ReviewQueuePage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requireAntifraudPageAccess();
+  const session = await requireAntifraudPageAccess();
   const params = await searchParams;
 
   const status =
@@ -86,6 +88,9 @@ export default async function ReviewQueuePage({
         : "unresolved";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
+  const selectedReviewId = z.string().uuid().safeParse(params.review).success
+    ? params.review
+    : undefined;
 
   const filters: ReviewFilters = {
     status,
@@ -118,7 +123,9 @@ export default async function ReviewQueuePage({
         <QueueList
           filters={filters}
           cursor={cursor}
-          current={{ status, q: search }}
+          current={{ status, q: search, cursor }}
+          selectedReviewId={selectedReviewId}
+          viewerId={session.userId}
         />
       </Suspense>
     </div>
@@ -228,10 +235,14 @@ async function QueueList({
   filters,
   cursor,
   current,
+  selectedReviewId,
+  viewerId,
 }: {
   filters: ReviewFilters;
   cursor?: string;
   current: SearchParams;
+  selectedReviewId?: string;
+  viewerId: string;
 }) {
   const { data, error } = await safeQuery(
     async () => {
@@ -321,7 +332,7 @@ async function QueueList({
       ) : (
         <ul className="space-y-3">
           {reviews.map((review) => (
-            <CaseRow key={review.id} review={review} />
+            <CaseRow key={review.id} review={review} current={current} />
           ))}
         </ul>
       )}
@@ -357,11 +368,26 @@ async function QueueList({
           )}
         </nav>
       )}
+
+      {selectedReviewId && (
+        <ReviewDialogFromQueue
+          reviewId={selectedReviewId}
+          reviews={reviews}
+          current={current}
+          viewerId={viewerId}
+        />
+      )}
     </div>
   );
 }
 
-function CaseRow({ review }: { review: ReviewListItem }) {
+function CaseRow({
+  review,
+  current,
+}: {
+  review: ReviewListItem;
+  current: SearchParams;
+}) {
   const name = review.targetUsername ?? review.targetUserId;
   return (
     <li className="rounded-xl border border-border/70 bg-card shadow-sm">
@@ -432,20 +458,14 @@ function CaseRow({ review }: { review: ReviewListItem }) {
               Profile
             </HostLink>
             <HostLink
-              href={`/antifraud/reviews/${review.id}`}
+              href={buildHref({ review: review.id }, current)}
+              scroll={false}
               className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={`Review ${review.targetUsername ?? review.targetUserId}`}
             >
               <Eye className="size-3.5" />
               Review
             </HostLink>
-            <QuickReviewActions
-              reviewId={review.id}
-              targetUserId={review.targetUserId}
-              targetUsername={review.targetUsername}
-              status={review.status}
-              compact
-            />
           </div>
         </div>
       </div>
@@ -453,11 +473,60 @@ function CaseRow({ review }: { review: ReviewListItem }) {
   );
 }
 
+function ReviewDialogFromQueue({
+  reviewId,
+  reviews,
+  current,
+  viewerId,
+}: {
+  reviewId: string;
+  reviews: ReviewListItem[];
+  current: SearchParams;
+  viewerId: string;
+}) {
+  const index = reviews.findIndex((review) => review.id === reviewId);
+  const previous = index > 0 ? reviews[index - 1] : undefined;
+  const next = index >= 0 ? reviews[index + 1] : undefined;
+  const closeHref = buildHref({ review: undefined }, current);
+
+  return (
+    <ReviewCaseDialog
+      key={reviewId}
+      closeHref={closeHref}
+      previousHref={
+        previous ? buildHref({ review: previous.id }, current) : undefined
+      }
+      nextHref={next ? buildHref({ review: next.id }, current) : undefined}
+    >
+      <Suspense key={reviewId} fallback={<CaseDialogSkeleton />}>
+        <ReviewCaseWorkspace reviewId={reviewId} viewerId={viewerId} />
+      </Suspense>
+    </ReviewCaseDialog>
+  );
+}
+
+function CaseDialogSkeleton() {
+  return (
+    <div className="space-y-5">
+      <Skeleton className="h-24 w-full rounded-xl" />
+      <Skeleton className="h-16 w-full rounded-xl" />
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.7fr)]">
+        <div className="space-y-5">
+          <Skeleton className="h-40 w-full rounded-xl" />
+          <Skeleton className="h-48 w-full rounded-xl" />
+          <Skeleton className="h-64 w-full rounded-xl" />
+        </div>
+        <Skeleton className="h-96 w-full rounded-xl" />
+      </div>
+    </div>
+  );
+}
+
 function QueueSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
+      <div className="grid gap-3 sm:grid-cols-3">
+        {Array.from({ length: 3 }).map((_, i) => (
           <Skeleton key={i} className="h-24 rounded-xl" />
         ))}
       </div>
