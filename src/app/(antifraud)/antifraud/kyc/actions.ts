@@ -14,6 +14,7 @@ import {
 } from "@/lib/backend-api/kyc";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
+import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 
 type ActionResult =
@@ -112,7 +113,7 @@ export async function requireAccountKyc(
   }
 
   revalidatePath("/antifraud/kyc");
-  revalidateTag(`users-detail-${userId}`);
+  revalidateTag(userDetailTag(userId));
   return { success: true, data, userId };
 }
 
@@ -156,7 +157,7 @@ export async function reviewAccountKyc(
   }
 
   revalidatePath("/antifraud/kyc");
-  revalidateTag(`users-detail-${parsed.data.userId}`);
+  revalidateTag(userDetailTag(parsed.data.userId));
   return {
     success: true,
     data,

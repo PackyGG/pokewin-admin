@@ -10,6 +10,7 @@ import {
 } from "@/lib/antifraud/fiat-deposits-api";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
+import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import {
   requireAntifraudAccess,
   requireAntifraudManager,
@@ -166,7 +167,7 @@ export async function requireFiatDepositKyc(
     `/antifraud/fiat-deposits/${parsed.data.depositIntentId}`,
   );
   revalidatePath("/antifraud/kyc");
-  revalidateTag(`users-detail-${parsed.data.userId}`);
+  revalidateTag(userDetailTag(parsed.data.userId));
   return {
     success: true,
     alreadyRequired: false,

@@ -579,7 +579,8 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
           sql`DELETE FROM session WHERE "userId" = ${review.targetUserId}`,
         );
       });
-    } catch {
+    } catch (error) {
+      console.error("[antifraud] quick review ban failed:", error);
       throw new Error("The account could not be banned. Nothing was hidden.");
     }
 
@@ -652,7 +653,8 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
       RETURNING user_id
     `);
     if (locked.rows.length === 0) throw new Error("User not found");
-  } catch {
+  } catch (error) {
+    console.error("[antifraud] quick review withdrawal lock failed:", error);
     throw new Error(
       "Withdrawals could not be locked. The case was left unchanged.",
     );
