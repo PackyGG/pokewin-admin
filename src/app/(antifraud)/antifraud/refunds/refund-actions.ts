@@ -39,11 +39,17 @@ export type RefundBatchProgress = {
   failed: number;
   unknown: number;
   done: boolean;
+  recoveryFailedAccounts?: number;
+  recoveryAuditFailures?: number;
 };
 
 export type RefundRecoveryResult = {
   batchId: string;
+  attemptedAccounts: number;
   accounts: number;
+  failedAccounts: number;
+  auditFailures: number;
+  complete: boolean;
   newlyBanned: number;
   alreadyBanned: number;
   recoveredBalanceUsd: number;
@@ -131,9 +137,7 @@ async function loadRefundRecoveryTargets(
   }));
 }
 
-async function loadAllRefundRecoveryTargets(): Promise<
-  RefundRecoveryTarget[]
-> {
+async function loadAllRefundRecoveryTargets(): Promise<RefundRecoveryTarget[]> {
   const rows = (
     await adminDrizzle.execute<{
       user_id: string;
@@ -158,6 +162,7 @@ async function recoverRefundedUser(
   db: MainDrizzleDb,
   target: RefundRecoveryTarget,
   batchId: string,
+  adminUserId: string,
 ): Promise<UserRecoveryResult> {
   return db.transaction(async (tx) => {
     await tx.execute(sql`
@@ -211,7 +216,8 @@ async function recoverRefundedUser(
     const priorRecoveredCents = cents(moneyNumber(prior?.recovered_usd));
     let remainingCents = Math.max(0, refundedCreditCents - priorRecoveredCents);
 
-    await tx.execute(sql`
+    const updatedUsers = (
+      await tx.execute<{ id: string }>(sql`
       UPDATE "user"
       SET
         is_banned = TRUE,
@@ -222,7 +228,12 @@ async function recoverRefundedUser(
         banned_at = COALESCE(banned_at, NOW()),
         updated_at = NOW()
       WHERE id = ${target.userId}
-    `);
+      RETURNING id::text
+    `)
+    ).rows;
+    if (updatedUsers.length !== 1) {
+      throw new Error("Refunded Packy account could not be banned.");
+    }
     await tx.execute(sql`
       DELETE FROM session
       WHERE "userId" = ${target.userId}
@@ -241,9 +252,7 @@ async function recoverRefundedUser(
         FOR UPDATE
       `)
     ).rows[0];
-    const availableBeforeCents = cents(
-      moneyNumber(balance?.available_balance),
-    );
+    const availableBeforeCents = cents(moneyNumber(balance?.available_balance));
     const lockedBeforeCents = cents(moneyNumber(balance?.locked_balance));
     const availableTakeCents = Math.min(remainingCents, availableBeforeCents);
     remainingCents -= availableTakeCents;
@@ -252,7 +261,8 @@ async function recoverRefundedUser(
     const balanceTakeCents = availableTakeCents + lockedTakeCents;
 
     if (balance && balanceTakeCents > 0) {
-      await tx.execute(sql`
+      const updatedBalances = (
+        await tx.execute<{ user_id: string }>(sql`
         UPDATE balances
         SET
           available_balance =
@@ -262,7 +272,15 @@ async function recoverRefundedUser(
           version = version + 1,
           updated_at = NOW()
         WHERE user_id = ${target.userId}
-      `);
+        RETURNING user_id::text
+      `)
+      ).rows;
+      if (updatedBalances.length !== 1) {
+        throw new Error("Refunded account balance changed during recovery.");
+      }
+    }
+
+    if (availableTakeCents > 0) {
       await tx.execute(sql`
         INSERT INTO ledger_transactions (
           id, user_id, type, amount, balance_before, balance_after,
@@ -271,7 +289,7 @@ async function recoverRefundedUser(
           ${crypto.randomUUID()}::uuid,
           ${target.userId},
           'admin_balance_adjustment',
-          -${dollars(balanceTakeCents)}::numeric,
+          -${dollars(availableTakeCents)}::numeric,
           ${dollars(availableBeforeCents)}::numeric,
           ${dollars(availableBeforeCents - availableTakeCents)}::numeric,
           ${`Admin adjustment: ${REFUND_RECOVERY_REASON}`},
@@ -279,8 +297,39 @@ async function recoverRefundedUser(
             kind: "whop_refund_recovery",
             adjustment_category: "fraud_abuse",
             batch_id: batchId,
-            recovered_value_usd: dollars(balanceTakeCents),
+            initiated_by_admin_user_id: adminUserId,
+            recovered_value_usd: dollars(availableTakeCents),
             recovered_available_usd: dollars(availableTakeCents),
+            recovered_locked_usd: 0,
+          })}::jsonb,
+          'completed',
+          NOW(),
+          NOW()
+        )
+      `);
+    }
+
+    if (lockedTakeCents > 0) {
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, metadata, status, created_at, updated_at
+        ) VALUES (
+          ${crypto.randomUUID()}::uuid,
+          ${target.userId},
+          'admin_balance_adjustment',
+          -${dollars(lockedTakeCents)}::numeric,
+          ${dollars(lockedBeforeCents)}::numeric,
+          ${dollars(lockedBeforeCents - lockedTakeCents)}::numeric,
+          ${`Locked balance adjustment: ${REFUND_RECOVERY_REASON}`},
+          ${JSON.stringify({
+            kind: "whop_refund_recovery",
+            adjustment_category: "remove_locked_balance",
+            balance_target: "locked",
+            batch_id: batchId,
+            initiated_by_admin_user_id: adminUserId,
+            recovered_value_usd: dollars(lockedTakeCents),
+            recovered_available_usd: 0,
             recovered_locked_usd: dollars(lockedTakeCents),
           })}::jsonb,
           'completed',
@@ -304,12 +353,18 @@ async function recoverRefundedUser(
     remainingCents -= voucherSelection.valueCents;
     if (voucherSelection.selected.length > 0) {
       const voucherIds = voucherSelection.selected.map((row) => row.id);
-      await tx.execute(sql`
+      const deletedVouchers = (
+        await tx.execute<{ id: string }>(sql`
         DELETE FROM vouchers
         WHERE id = ANY(${pgArrayParam(voucherIds)}::uuid[])
           AND user_id = ${target.userId}
           AND claimed_at IS NULL
-      `);
+        RETURNING id::text
+      `)
+      ).rows;
+      if (deletedVouchers.length !== voucherIds.length) {
+        throw new Error("Refunded account vouchers changed during recovery.");
+      }
       await tx.execute(sql`
         INSERT INTO ledger_transactions (
           id, user_id, type, amount, balance_before, balance_after,
@@ -326,6 +381,7 @@ async function recoverRefundedUser(
             kind: "whop_refund_recovery",
             asset_kind: "voucher",
             batch_id: batchId,
+            initiated_by_admin_user_id: adminUserId,
             recovered_value_usd: dollars(voucherSelection.valueCents),
             voucher_ids: voucherIds,
           })}::jsonb,
@@ -370,14 +426,20 @@ async function recoverRefundedUser(
           ${pgArrayParam(inventoryIds)}::uuid[]
         )
       `);
-      await tx.execute(sql`
+      const updatedInventory = (
+        await tx.execute<{ id: string }>(sql`
         UPDATE user_inventory
         SET sold_at = NOW(), updated_at = NOW()
         WHERE id = ANY(${pgArrayParam(inventoryIds)}::uuid[])
           AND user_id = ${target.userId}
           AND sold_at IS NULL
           AND exchanged_at IS NULL
-      `);
+        RETURNING id::text
+      `)
+      ).rows;
+      if (updatedInventory.length !== inventoryIds.length) {
+        throw new Error("Refunded account inventory changed during recovery.");
+      }
       await tx.execute(sql`
         INSERT INTO ledger_transactions (
           id, user_id, type, amount, balance_before, balance_after,
@@ -394,6 +456,7 @@ async function recoverRefundedUser(
             kind: "whop_refund_recovery",
             asset_kind: "inventory",
             batch_id: batchId,
+            initiated_by_admin_user_id: adminUserId,
             recovered_value_usd: dollars(inventorySelection.valueCents),
             inventory_item_ids: inventoryIds,
           })}::jsonb,
@@ -426,33 +489,69 @@ async function recoverRefundedAccountsForBatch(
   adminUserId: string,
   targetsOverride?: RefundRecoveryTarget[],
 ): Promise<RefundRecoveryResult> {
-  const targets =
-    targetsOverride ?? (await loadRefundRecoveryTargets(batchId));
+  const targets = targetsOverride ?? (await loadRefundRecoveryTargets(batchId));
   const db = await getPrimaryDrizzleDb();
   const recovered: UserRecoveryResult[] = [];
+  const failedUserIds: string[] = [];
+  let auditFailures = 0;
   for (const target of targets) {
-    recovered.push(await recoverRefundedUser(db, target, batchId));
+    try {
+      const row = await recoverRefundedUser(db, target, batchId, adminUserId);
+      recovered.push(row);
+      try {
+        await createAdminAuditEvent({
+          adminUserId,
+          eventType: "whop_refund_account_recovered",
+          targetUserId: row.userId,
+          metadata: {
+            batch_id: batchId,
+            newly_banned: row.newlyBanned,
+            refunded_credit_usd: row.refundedCreditUsd,
+            recovered_balance_usd: row.recoveredBalanceUsd,
+            recovered_inventory_usd: row.recoveredInventoryUsd,
+            recovered_voucher_usd: row.recoveredVoucherUsd,
+            recovered_total_usd: row.recoveredTotalUsd,
+            remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
+          },
+        });
+      } catch {
+        auditFailures += 1;
+      }
+    } catch {
+      failedUserIds.push(target.userId);
+      try {
+        await createAdminAuditEvent({
+          adminUserId,
+          eventType: "whop_refund_account_recovery_failed",
+          targetUserId: target.userId,
+          metadata: {
+            batch_id: batchId,
+            error_code: "recovery_transaction_failed",
+          },
+        });
+      } catch {
+        auditFailures += 1;
+      }
+    }
   }
 
   const result: RefundRecoveryResult = {
     batchId,
+    attemptedAccounts: targets.length,
     accounts: recovered.length,
+    failedAccounts: failedUserIds.length,
+    auditFailures,
+    complete: failedUserIds.length === 0,
     newlyBanned: recovered.filter((row) => row.newlyBanned).length,
     alreadyBanned: recovered.filter((row) => !row.newlyBanned).length,
     recoveredBalanceUsd: dollars(
       recovered.reduce((sum, row) => sum + cents(row.recoveredBalanceUsd), 0),
     ),
     recoveredInventoryUsd: dollars(
-      recovered.reduce(
-        (sum, row) => sum + cents(row.recoveredInventoryUsd),
-        0,
-      ),
+      recovered.reduce((sum, row) => sum + cents(row.recoveredInventoryUsd), 0),
     ),
     recoveredVoucherUsd: dollars(
-      recovered.reduce(
-        (sum, row) => sum + cents(row.recoveredVoucherUsd),
-        0,
-      ),
+      recovered.reduce((sum, row) => sum + cents(row.recoveredVoucherUsd), 0),
     ),
     recoveredTotalUsd: dollars(
       recovered.reduce((sum, row) => sum + cents(row.recoveredTotalUsd), 0),
@@ -465,25 +564,32 @@ async function recoverRefundedAccountsForBatch(
     ),
   };
 
-  await createAdminAuditEvent({
-    adminUserId,
-    eventType: "whop_refund_accounts_recovered",
-    metadata: {
-      ...result,
-      users: recovered.map((row) => ({
-        user_id: row.userId,
-        refunded_credit_usd: row.refundedCreditUsd,
-        recovered_usd: row.recoveredTotalUsd,
-        remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
-      })),
-    },
-  });
+  try {
+    await createAdminAuditEvent({
+      adminUserId,
+      eventType: "whop_refund_accounts_recovered",
+      metadata: {
+        ...result,
+        failed_user_ids: failedUserIds,
+        users: recovered.map((row) => ({
+          user_id: row.userId,
+          refunded_credit_usd: row.refundedCreditUsd,
+          recovered_usd: row.recoveredTotalUsd,
+          remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
+        })),
+      },
+    });
+  } catch {
+    result.auditFailures += 1;
+  }
   return result;
 }
 
 function validateSelection(selection: Selection): Selection {
   if (selection.mode === "all") return selection;
-  const ids = [...new Set(selection.ids.map((id) => id.trim()).filter(Boolean))];
+  const ids = [
+    ...new Set(selection.ids.map((id) => id.trim()).filter(Boolean)),
+  ];
   if (ids.length === 0) throw new Error("Select at least one payment or user.");
   if (ids.length > MAX_REFUNDS_PER_BATCH) {
     throw new Error(`Select at most ${MAX_REFUNDS_PER_BATCH} records.`);
@@ -520,7 +626,7 @@ export async function createRefundBatch(input: {
     }
 
     const batch = await adminDrizzle.transaction(async (tx) => {
-    const inserted = await tx.execute<{ id: string }>(sql`
+      const inserted = await tx.execute<{ id: string }>(sql`
       INSERT INTO admin_whop_refund_batches (
         requested_by, selection_mode, reason, status, requested_count
       )
@@ -533,11 +639,11 @@ export async function createRefundBatch(input: {
       )
       RETURNING id::text
     `);
-    const batchId = inserted.rows[0]?.id;
-    if (!batchId) throw new Error("Could not create the refund batch.");
+      const batchId = inserted.rows[0]?.id;
+      if (!batchId) throw new Error("Could not create the refund batch.");
 
-    const values = candidates.map(
-      (candidate) => sql`(
+      const values = candidates.map(
+        (candidate) => sql`(
         ${batchId}::uuid,
         ${candidate.userId},
         ${candidate.depositIntentId}::uuid,
@@ -545,8 +651,8 @@ export async function createRefundBatch(input: {
         ${candidate.currency.toLowerCase()},
         ${candidate.amountCents}
       )`,
-    );
-    const items = await tx.execute(sql`
+      );
+      const items = await tx.execute(sql`
       INSERT INTO admin_whop_refund_items (
         batch_id,
         user_id,
@@ -559,15 +665,15 @@ export async function createRefundBatch(input: {
       ON CONFLICT (provider_payment_id) DO NOTHING
       RETURNING id
     `);
-    if (items.rows.length === 0) {
-      throw new Error("Those deposits are already in refund batches.");
-    }
-    await tx.execute(sql`
+      if (items.rows.length === 0) {
+        throw new Error("Those deposits are already in refund batches.");
+      }
+      await tx.execute(sql`
       UPDATE admin_whop_refund_batches
       SET requested_count = ${items.rows.length}, updated_at = now()
       WHERE id = ${batchId}::uuid
     `);
-    return { id: batchId, count: items.rows.length };
+      return { id: batchId, count: items.rows.length };
     });
 
     await createAdminAuditEvent({
@@ -587,7 +693,10 @@ export async function createRefundBatch(input: {
   }
 }
 
-async function finalizeBatch(batchId: string, adminUserId: string) {
+async function finalizeBatch(
+  batchId: string,
+  adminUserId: string,
+): Promise<RefundRecoveryResult | null> {
   const result = await adminDrizzle.execute<{
     status: string;
     requested_count: number;
@@ -619,17 +728,27 @@ async function finalizeBatch(batchId: string, adminUserId: string) {
   `);
   const completed = result.rows[0];
   if (completed) {
-    await recoverRefundedAccountsForBatch(batchId, adminUserId);
-    await createAdminAuditEvent({
+    const recovery = await recoverRefundedAccountsForBatch(
+      batchId,
       adminUserId,
-      eventType: "whop_refund_batch_completed",
-      metadata: {
-        batchId,
-        status: completed.status,
-        paymentCount: completed.requested_count,
-      },
-    });
+    );
+    try {
+      await createAdminAuditEvent({
+        adminUserId,
+        eventType: "whop_refund_batch_completed",
+        metadata: {
+          batchId,
+          status: completed.status,
+          paymentCount: completed.requested_count,
+          recoveryFailedAccounts: recovery.failedAccounts,
+        },
+      });
+    } catch {
+      recovery.auditFailures += 1;
+    }
+    return recovery;
   }
+  return null;
 }
 
 export async function processNextRefund(
@@ -639,10 +758,10 @@ export async function processNextRefund(
   try {
     if (!/^[0-9a-f-]{36}$/i.test(batchId)) throw new Error("Invalid batch.");
 
-  const claimed = await adminDrizzle.execute<{
-    id: string;
-    provider_payment_id: string;
-  }>(sql`
+    const claimed = await adminDrizzle.execute<{
+      id: string;
+      provider_payment_id: string;
+    }>(sql`
     WITH next_item AS (
       SELECT id
       FROM admin_whop_refund_items
@@ -667,31 +786,38 @@ export async function processNextRefund(
     FROM next_item
     WHERE item.id = next_item.id
     RETURNING item.id::text, item.provider_payment_id
-  `);
-  const item = claimed.rows[0];
-  if (!item) {
-    await recoverRefundedAccountsForBatch(batchId, session.userId);
-    await finalizeBatch(batchId, session.userId);
-    return ok(await getRefundBatchProgress(batchId));
-  }
+    `);
+    const item = claimed.rows[0];
+    if (!item) {
+      const finalizedRecovery = await finalizeBatch(batchId, session.userId);
+      const recovery =
+        finalizedRecovery ??
+        (await recoverRefundedAccountsForBatch(batchId, session.userId));
+      const progress = await getRefundBatchProgress(batchId);
+      return ok({
+        ...progress,
+        recoveryFailedAccounts: recovery.failedAccounts,
+        recoveryAuditFailures: recovery.auditFailures,
+      });
+    }
 
-  await adminDrizzle.execute(sql`
+    await adminDrizzle.execute(sql`
     UPDATE admin_whop_refund_batches
     SET status = 'processing', updated_at = now()
     WHERE id = ${batchId}::uuid AND status = 'pending'
   `);
 
-  let refundRequested = false;
-  try {
-    const client = whopAdminClient();
-    const payment = await client.payments.retrieve(item.provider_payment_id);
-    if (!payment.refundable) {
-      const fullyRefunded =
-        payment.substatus === "refunded" ||
-        (payment.total !== null &&
-          payment.refunded_amount !== null &&
-          payment.refunded_amount >= payment.total);
-      await adminDrizzle.execute(sql`
+    let refundRequested = false;
+    try {
+      const client = whopAdminClient();
+      const payment = await client.payments.retrieve(item.provider_payment_id);
+      if (!payment.refundable) {
+        const fullyRefunded =
+          payment.substatus === "refunded" ||
+          (payment.total !== null &&
+            payment.refunded_amount !== null &&
+            payment.refunded_amount >= payment.total);
+        await adminDrizzle.execute(sql`
         UPDATE admin_whop_refund_items
         SET
           status = ${fullyRefunded ? "already_refunded" : "not_refundable"},
@@ -705,11 +831,11 @@ export async function processNextRefund(
         WHERE id = ${item.id}::uuid
           AND status = 'processing'
       `);
-    } else {
-      // Omit partial_amount intentionally: Whop defines this as a full refund.
-      refundRequested = true;
-      const refunded = await client.payments.refund(item.provider_payment_id);
-      await adminDrizzle.execute(sql`
+      } else {
+        // Omit partial_amount intentionally: Whop defines this as a full refund.
+        refundRequested = true;
+        const refunded = await client.payments.refund(item.provider_payment_id);
+        await adminDrizzle.execute(sql`
         UPDATE admin_whop_refund_items
         SET
           status = 'succeeded',
@@ -723,10 +849,10 @@ export async function processNextRefund(
         WHERE id = ${item.id}::uuid
           AND status = 'processing'
       `);
-    }
-  } catch (error) {
-    const safe = safeWhopError(error);
-    await adminDrizzle.execute(sql`
+      }
+    } catch (error) {
+      const safe = safeWhopError(error);
+      await adminDrizzle.execute(sql`
       UPDATE admin_whop_refund_items
       SET
         status = ${safe.outcomeUnknown || refundRequested ? "unknown" : "failed"},
@@ -739,11 +865,16 @@ export async function processNextRefund(
       WHERE id = ${item.id}::uuid
         AND status = 'processing'
     `);
-  }
+    }
 
-  await finalizeBatch(batchId, session.userId);
-  revalidatePath("/antifraud/refunds");
-    return ok(await getRefundBatchProgress(batchId));
+    const recovery = await finalizeBatch(batchId, session.userId);
+    revalidatePath("/antifraud/refunds");
+    const progress = await getRefundBatchProgress(batchId);
+    return ok({
+      ...progress,
+      recoveryFailedAccounts: recovery?.failedAccounts,
+      recoveryAuditFailures: recovery?.auditFailures,
+    });
   } catch (error) {
     return fail(actionErrorMessage(error));
   }

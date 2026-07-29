@@ -25,7 +25,10 @@ const queries = readFileSync(
   "utf8",
 );
 const refundPage = readFileSync(
-  new URL("../../src/app/(antifraud)/antifraud/refunds/page.tsx", import.meta.url),
+  new URL(
+    "../../src/app/(antifraud)/antifraud/refunds/page.tsx",
+    import.meta.url,
+  ),
   "utf8",
 );
 const refundsPanel = readFileSync(
@@ -36,7 +39,10 @@ const refundsPanel = readFileSync(
   "utf8",
 );
 const transactionsPage = readFileSync(
-  new URL("../../src/app/(admin)/transactions/deposits/page.tsx", import.meta.url),
+  new URL(
+    "../../src/app/(admin)/transactions/deposits/page.tsx",
+    import.meta.url,
+  ),
   "utf8",
 );
 const sidebar = readFileSync(
@@ -59,7 +65,10 @@ test("Whop refunds live only in the owner-only Fraud workspace", () => {
   assert.match(refundPage, /await requireOwner\(\)/);
   assert.match(refundsPanel, /Whop refunds for currently flagged accounts/);
   assert.match(sidebar, /label: "Whop Refunds"/);
-  assert.match(sidebar, /isOwner\s*\?\s*\[\.\.\.TRANSACTION_NAV, OWNER_TRANSACTION_NAV\]/);
+  assert.match(
+    sidebar,
+    /isOwner\s*\?\s*\[\.\.\.TRANSACTION_NAV, OWNER_TRANSACTION_NAV\]/,
+  );
   assert.match(appHosts, /"refunds"/);
   assert.doesNotMatch(transactionsPage, /RefundsPanel|value: "refunds"/);
   assert.match(
@@ -80,7 +89,10 @@ test("refund batches require owner access and fresh step-up before expansion", (
 });
 
 test("refund confirmation needs only owner step-up", () => {
-  assert.doesNotMatch(refundsPanel, /refund-reason|refund-confirmation|Type REFUND/);
+  assert.doesNotMatch(
+    refundsPanel,
+    /refund-reason|refund-confirmation|Type REFUND/,
+  );
   assert.doesNotMatch(refundsPanel, /Textarea|@\/components\/ui\/input/);
   assert.match(refundsPanel, /disabled=\{working \|\| !credential\}/);
   assert.match(actions, /REFUND_BATCH_AUDIT_REASON/);
@@ -102,7 +114,7 @@ test("Whop mutations disable SDK retries and retrieve before refunding", () => {
 test("successful refund batches ban accounts and recover only attributable value", () => {
   assert.match(
     actions,
-    /await recoverRefundedAccountsForBatch\(batchId, adminUserId\)/,
+    /await recoverRefundedAccountsForBatch\(\s*batchId,\s*adminUserId,\s*\)/,
   );
   assert.match(actions, /is_banned = TRUE/);
   assert.match(actions, /DELETE FROM session/);
@@ -112,11 +124,28 @@ test("successful refund batches ban accounts and recover only attributable value
   );
   assert.match(actions, /metadata->>'kind' = 'whop_refund_recovery'/);
   assert.match(actions, /adjustment_category: "fraud_abuse"/);
+  assert.match(actions, /adjustment_category: "remove_locked_balance"/);
+  assert.match(actions, /initiated_by_admin_user_id: adminUserId/);
   assert.doesNotMatch(actions, /sender_user_id|recipient_user_id/);
 });
 
+test("account recovery is atomic per user and continues after a failure", () => {
+  assert.match(actions, /for \(const target of targets\) \{[\s\S]*?try \{/);
+  assert.match(actions, /failedUserIds\.push\(target\.userId\)/);
+  assert.match(actions, /failedAccounts: failedUserIds\.length/);
+  assert.match(actions, /complete: failedUserIds\.length === 0/);
+  assert.match(actions, /RETURNING user_id::text/);
+  assert.match(actions, /deletedVouchers\.length !== voucherIds\.length/);
+  assert.match(actions, /updatedInventory\.length !== inventoryIds\.length/);
+  assert.match(refundsPanel, /run this again to retry/);
+  assert.match(actions, /recoveryFailedAccounts: recovery\.failedAccounts/);
+  assert.match(refundsPanel, /account recoveries need a retry/);
+});
+
 test("completed-batch recovery is owner-only, step-up gated, and visible", () => {
-  const recovery = actions.indexOf("export async function recoverRefundedBatch");
+  const recovery = actions.indexOf(
+    "export async function recoverRefundedBatch",
+  );
   const owner = actions.indexOf("await requireOwner()", recovery);
   const stepUp = actions.indexOf("await require2FA", recovery);
   assert.ok(recovery >= 0);
@@ -129,17 +158,17 @@ test("completed-batch recovery is owner-only, step-up gated, and visible", () =>
 });
 
 test("the database prevents one Whop payment entering two refund batches", () => {
-  assert.match(
-    migration,
-    /UNIQUE \(provider_payment_id\)/,
-  );
+  assert.match(migration, /UNIQUE \(provider_payment_id\)/);
   assert.match(actions, /ON CONFLICT \(provider_payment_id\) DO NOTHING/);
 });
 
 test("refund scope includes every current KYC requirement and paid deposit state", () => {
   assert.match(queries, /antifraud_reviews\.status, "flagged"/);
   assert.match(queries, /kyc_required = true/);
-  assert.doesNotMatch(queries, /system:antifraud-|kyc_required_reason[\s\S]*~\*/);
+  assert.doesNotMatch(
+    queries,
+    /system:antifraud-|kyc_required_reason[\s\S]*~\*/,
+  );
   assert.match(queries, /i\.status IN \('completed', 'partially_refunded'\)/);
 });
 

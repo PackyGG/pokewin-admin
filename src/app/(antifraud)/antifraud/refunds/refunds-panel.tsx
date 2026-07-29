@@ -84,7 +84,11 @@ export function RefundsPanel({
     return [...groups.entries()];
   }, [candidates]);
 
-  function toggle(setter: (next: Set<string>) => void, source: Set<string>, id: string) {
+  function toggle(
+    setter: (next: Set<string>) => void,
+    source: Set<string>,
+    id: string,
+  ) {
     const next = new Set(source);
     if (next.has(id)) next.delete(id);
     else next.add(id);
@@ -109,7 +113,17 @@ export function RefundsPanel({
         current = result.data;
         setProgress(current);
       } while (!current.done);
-      if (current.failed + current.unknown + current.notRefundable > 0) {
+      if ((current.recoveryFailedAccounts ?? 0) > 0) {
+        toast.warning(
+          `Refunds finished, but ${current.recoveryFailedAccounts} account recoveries need a retry with “Ban & recover all successful refunds”.`,
+          { duration: 12_000 },
+        );
+      } else if ((current.recoveryAuditFailures ?? 0) > 0) {
+        toast.warning(
+          "Refunds and account recovery finished, but an audit record could not be saved.",
+          { duration: 12_000 },
+        );
+      } else if (current.failed + current.unknown + current.notRefundable > 0) {
         toast.warning("Refund batch finished with items that need review.");
       } else {
         toast.success("Refund batch completed.");
@@ -144,7 +158,9 @@ export function RefundsPanel({
       await runBatch(created.batchId, created);
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : "Could not create refund batch.",
+        error instanceof Error
+          ? error.message
+          : "Could not create refund batch.",
       );
       setWorking(false);
     }
@@ -162,16 +178,28 @@ export function RefundsPanel({
         return;
       }
       const recovery = result.data;
-      toast.success(
-        `Banned ${recovery.newlyBanned} account${
-          recovery.newlyBanned === 1 ? "" : "s"
-        }; recovered ${new Intl.NumberFormat("en-US", {
-          style: "currency",
-          currency: "USD",
-        }).format(recovery.recoveredTotalUsd)}.`,
-      );
-      setRecoveryOpen(false);
-      setRecoveryCredential("");
+      const recovered = new Intl.NumberFormat("en-US", {
+        style: "currency",
+        currency: "USD",
+      }).format(recovery.recoveredTotalUsd);
+      if (!recovery.complete || recovery.auditFailures > 0) {
+        toast.warning(
+          `Processed ${recovery.accounts} of ${recovery.attemptedAccounts} accounts and recovered ${recovered}. ${
+            recovery.failedAccounts > 0
+              ? `${recovery.failedAccounts} account recovery failed; run this again to retry.`
+              : `${recovery.auditFailures} audit record failed; the account changes still completed.`
+          }`,
+          { duration: 12_000 },
+        );
+      } else {
+        toast.success(
+          `Banned ${recovery.newlyBanned} account${
+            recovery.newlyBanned === 1 ? "" : "s"
+          }; recovered ${recovered}.`,
+        );
+        setRecoveryOpen(false);
+        setRecoveryCredential("");
+      }
     } catch (error) {
       toast.error(
         error instanceof Error
@@ -183,7 +211,9 @@ export function RefundsPanel({
     }
   }
 
-  const selectableCount = candidates.filter((item) => !item.alreadyQueued).length;
+  const selectableCount = candidates.filter(
+    (item) => !item.alreadyQueued,
+  ).length;
 
   return (
     <div className="space-y-6">
@@ -228,7 +258,9 @@ export function RefundsPanel({
       {progress && (
         <div className="rounded-lg border p-4 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium">Batch {progress.batchId.slice(0, 8)}</span>
+            <span className="font-medium">
+              Batch {progress.batchId.slice(0, 8)}
+            </span>
             <Badge variant={progress.done ? "secondary" : "outline"}>
               {progress.done ? "Finished" : "Processing"}
             </Badge>
@@ -250,10 +282,15 @@ export function RefundsPanel({
         <div className="space-y-4">
           {grouped.map(([userId, deposits]) => {
             const first = deposits[0];
-            const available = deposits.filter((deposit) => !deposit.alreadyQueued);
+            const available = deposits.filter(
+              (deposit) => !deposit.alreadyQueued,
+            );
             const selectedUser = users.has(userId);
             return (
-              <section key={userId} className="overflow-hidden rounded-xl border">
+              <section
+                key={userId}
+                className="overflow-hidden rounded-xl border"
+              >
                 <div className="flex flex-wrap items-start justify-between gap-3 bg-muted/35 p-4">
                   <div className="flex items-start gap-3">
                     <Checkbox
@@ -383,14 +420,17 @@ export function RefundsPanel({
               >
                 <div>
                   <p className="font-medium">
-                    {batch.batchId.slice(0, 8)} · {batch.requestedCount} payments
+                    {batch.batchId.slice(0, 8)} · {batch.requestedCount}{" "}
+                    payments
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {new Date(batch.createdAt).toLocaleString()}
                   </p>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Badge variant={batch.issues > 0 ? "destructive" : "secondary"}>
+                  <Badge
+                    variant={batch.issues > 0 ? "destructive" : "secondary"}
+                  >
                     {batch.succeeded} done · {batch.issues} issues
                   </Badge>
                   {batch.pending > 0 && (
@@ -419,7 +459,9 @@ export function RefundsPanel({
       >
         <AlertDialogContent className="sm:max-w-lg">
           <AlertDialogHeader>
-            <AlertDialogTitle>Confirm irreversible Whop refunds</AlertDialogTitle>
+            <AlertDialogTitle>
+              Confirm irreversible Whop refunds
+            </AlertDialogTitle>
             <AlertDialogDescription>
               This creates full refunds for the selected currently flagged
               accounts. The operation cannot be undone.
@@ -455,13 +497,14 @@ export function RefundsPanel({
       >
         <AlertDialogContent className="sm:max-w-lg">
           <AlertDialogHeader>
-            <AlertDialogTitle>Ban and recover refunded accounts</AlertDialogTitle>
+            <AlertDialogTitle>
+              Ban and recover refunded accounts
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              This bans every Packy account with a successful refund in the
-              batch and removes remaining cash, vouchers, and removable
-              inventory only up to that account&apos;s refunded site credit.
-              Completed withdrawals are recorded as unavailable and are not
-              charged again.
+              This bans every Packy account across all successful refunds and
+              removes remaining cash, vouchers, and removable inventory only up
+              to that account&apos;s refunded site credit. Completed withdrawals
+              are recorded as unavailable and are not charged again.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div>
