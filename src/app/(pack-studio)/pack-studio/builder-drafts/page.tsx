@@ -40,16 +40,7 @@ export default async function PackBuildDraftsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ClipboardList}
-          accent="blue"
-          title="Saved Pack Builds"
-          subtitle={
-            canManageAll
-              ? "Saved new-pack builds from every Pack Builder. Approval starts only when a live push is requested."
-              : "Your saved new-pack builds. Approval starts only when you request a live push."
-          }
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<BuildDraftsSkeleton />}>

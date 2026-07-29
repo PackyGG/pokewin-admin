@@ -49,12 +49,7 @@ export default async function AntifraudSignupsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={UserRoundSearch}
-          accent="cyan"
-          title="Signups"
-          subtitle="Every new account with its signup risk assessment and provider checks"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense key={page} fallback={<SignupsSkeleton />}>

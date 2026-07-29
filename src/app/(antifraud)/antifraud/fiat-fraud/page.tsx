@@ -1,4 +1,3 @@
-import { ShieldAlert } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
@@ -53,12 +52,7 @@ export default async function FiatFraudPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Fiat fraud"
-          subtitle="Durable fraudulent fiat catches from email and coordinated-deposit signals."
-        />
+        <PageHeroIdentity />
       </PageHero>
       <FiatFraudContent
         page={page}

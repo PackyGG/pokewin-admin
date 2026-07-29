@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  CloudRain,
   Coins,
   DollarSign,
   Users,
@@ -91,19 +90,7 @@ export default async function RainDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={CloudRain}
-          accent="blue"
-          backHref="/rewards?tab=rain"
-          title="Rain"
-          badges={
-            <Badge variant="outline" className={STATUS_COLORS[data.status] ?? ""}>
-              {data.status}
-            </Badge>
-          }
-          subtitle={`${data.id.slice(0, 8)}…`}
-          subtitleClassName="font-mono"
-        />
+        <PageHeroIdentity backHref="/rewards?tab=rain" />
       </PageHero>
 
       {/* Rain payouts go FROM us TO the winning user → user wins → ROSE.

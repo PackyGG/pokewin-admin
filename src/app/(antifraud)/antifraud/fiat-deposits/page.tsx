@@ -93,12 +93,7 @@ export default async function FiatDepositsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Banknote}
-          accent="cyan"
-          title="Fiat deposit risk"
-          subtitle="Paid Whop deposits only, with 3DS, funding history, account links, and post-deposit money movement"
-        />
+        <PageHeroIdentity />
       </PageHero>
       <FiltersBar state={state} />
       <Suspense

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { KeyRound, Plug } from "lucide-react";
+import { Plug } from "lucide-react";
 import { and, desc, eq, isNull } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
@@ -30,11 +30,7 @@ export default async function ApiKeysPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={KeyRound}
-          title="Admin API"
-          subtitle="Machine-to-machine keys and the endpoint catalogue for the /api/v1 surface — scoped, rate-limited and revocable."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense

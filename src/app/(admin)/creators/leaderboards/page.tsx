@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import {
-    Trophy,
     Plus,
     ArrowUp,
     ArrowDown,
@@ -152,10 +151,7 @@ export default async function AffiliateLeaderboardsPage({
         <div className="space-y-6">
             <PageHero>
                 <PageHeroIdentity
-                    icon={Trophy}
-                    title="Affiliate Leaderboards"
-                    subtitle="Create on behalf of any creator (site-funded), or manage existing entries."
-                    action={
+                  action={
                         <CreateDialog
                             trigger={
                                 <Button>

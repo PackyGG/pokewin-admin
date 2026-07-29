@@ -152,11 +152,12 @@ export function PageHero({
 //   • the `action` slot (page buttons / filters / period selectors) on the
 //     RIGHT.
 //
-// The full prop signature is intentionally kept intact. Every existing call
-// site still passes `icon` / `title` / `subtitle` / `accent` / `badges` /
-// `titleClassName` / `subtitleClassName`; those props are still ACCEPTED (so
-// all call sites compile unchanged) but are no longer rendered. Only `action`,
-// `backHref`, and `back` drive output.
+// The prop type is narrowed to the three props that actually drive output
+// (`action`, `backHref`, `back`). The old identity props (`icon` / `title` /
+// `subtitle` / `accent` / `badges` / `titleClassName` / `subtitleClassName`)
+// were accepted-but-ignored for a transition period, which misled new call
+// sites into thinking the title renders — they have been removed and every
+// call site stripped. Pages own their visible title themselves (or none).
 //
 // When a call site passes NEITHER a back affordance NOR an action, there is
 // nothing to show and the component renders `null` (no empty chrome).
@@ -166,16 +167,9 @@ export function PageHeroIdentity({
   backHref,
   back,
 }: {
-  icon: React.ElementType;
-  title: React.ReactNode;
-  subtitle?: React.ReactNode;
   action?: React.ReactNode;
-  accent?: AccentColor;
   backHref?: string;
   back?: React.ReactNode;
-  badges?: React.ReactNode;
-  titleClassName?: string;
-  subtitleClassName?: string;
 }) {
   // Leading back affordance: an explicit node wins, otherwise a backHref
   // renders the standard ArrowLeft link used across detail pages. Nothing
@@ -481,16 +475,24 @@ export function StatPanel({
   accent,
   action,
   children,
+  className,
 }: {
   title: React.ReactNode;
   icon: React.ElementType;
   accent: AccentColor;
   action?: React.ReactNode;
   children: React.ReactNode;
+  /**
+   * Layout passthrough for the panel surface. Used by pages that render
+   * StatPanels in equal-height grids with bottom-pinned footers (e.g. the
+   * users/[id] Overview row passes `flex h-full flex-col` via its local
+   * re-export). Purely additive — omit it and nothing changes.
+   */
+  className?: string;
 }) {
   const colors = TILE_COLORS[accent];
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm sm:p-5">
+    <div className={cn("rounded-xl border bg-card p-4 shadow-sm sm:p-5", className)}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {/* Flat icon chip — one solid tinted fill (`colors.bg`), no

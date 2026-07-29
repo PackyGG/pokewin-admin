@@ -1,4 +1,3 @@
-import { Wand2 } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { BuilderSkeleton } from "./builder-skeleton";
@@ -12,12 +11,7 @@ export default function PackBuilderLoading() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Wand2}
-          accent="purple"
-          title="Pack Builder"
-          subtitle="Compose a new pack, tune its feel, and watch the edge live."
-        />
+        <PageHeroIdentity />
       </PageHero>
       <BuilderSkeleton />
     </div>

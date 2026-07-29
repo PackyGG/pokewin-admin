@@ -83,12 +83,7 @@ export default async function RiskyLocationsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={MapPin}
-          accent="cyan"
-          title="Risky locations"
-          subtitle="Choose which signup countries need a longer live-monitor window"
-        />
+        <PageHeroIdentity />
       </PageHero>
       <Suspense fallback={<RiskyLocationsFallback />}>
         <RiskyLocationsContent />

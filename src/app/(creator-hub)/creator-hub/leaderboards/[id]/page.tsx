@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ExternalLink, Trophy } from "lucide-react";
+import { ExternalLink} from "lucide-react";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { isUuid } from "@/lib/utils/ids";
@@ -97,11 +97,7 @@ export default async function CreatorHubLeaderboardDetailPage({
   return (
     <div className="space-y-6">
       {/* Standard back affordance (controls-only identity row). */}
-      <PageHeroIdentity
-        icon={Trophy}
-        title={lb.title}
-        backHref="/creator-hub/leaderboards"
-      />
+      <PageHeroIdentity backHref="/creator-hub/leaderboards" />
 
       <div className="min-w-0">
         <h1 className="text-2xl font-bold leading-tight tracking-tight">
@@ -121,7 +117,7 @@ export default async function CreatorHubLeaderboardDetailPage({
           {lb.cancelled_at && (
             <Badge
               variant="outline"
-              className="border-zinc-500/30 bg-zinc-500/15 text-zinc-600"
+              className="border-zinc-500/30 bg-zinc-500/15 text-zinc-600 dark:text-zinc-400"
             >
               cancelled
             </Badge>

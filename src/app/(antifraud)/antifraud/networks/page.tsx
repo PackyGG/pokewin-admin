@@ -46,12 +46,7 @@ export default async function AccountNetworksPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Network}
-          accent="cyan"
-          title="Account networks"
-          subtitle="Trace complete signup-IP and device connections across accounts"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="rounded-xl border bg-card p-4">

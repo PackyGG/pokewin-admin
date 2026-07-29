@@ -141,11 +141,7 @@ export default async function UsersPage({
             2026-07-22). /users/deleted still exists and is reachable by URL;
             it gates itself with requirePageAccess("/users/deleted"), so
             dropping the link changes discoverability, not access. */}
-        <PageHeroIdentity
-          icon={Users}
-          title="Users"
-          subtitle="Browse, search, and filter every user on the platform."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {/* KPI strip — GLOBAL aggregates (Total Users, Banned, Depositors,

@@ -6,7 +6,6 @@ import {
   Gauge,
   ListChecks,
   Network,
-  ShieldAlert,
   UserRound,
   Users,
 } from "lucide-react";
@@ -64,10 +63,6 @@ export default async function CreatorFraudDetailPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Affiliate cohort assessment"
-          subtitle="Only referred-account networks and activity; creator account behavior is excluded"
           backHref={`/antifraud/creator-fraud?window=${window}`}
           action={
             <>

@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import {
   AlertTriangle,
   ArrowRight,
-  ArrowUpFromLine,
   ChevronLeft,
   ChevronRight,
   Search,
@@ -90,12 +89,7 @@ export default async function WithdrawalsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ArrowUpFromLine}
-          accent="cyan"
-          title="Withdrawal security"
-          subtitle="Run every payout through funding, behavior, account, and destination checks"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Filters state={state} />

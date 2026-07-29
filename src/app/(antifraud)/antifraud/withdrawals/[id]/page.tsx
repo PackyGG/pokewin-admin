@@ -78,10 +78,6 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Withdrawal review"
-          subtitle="Behavioral payout review"
           backHref="/antifraud/withdrawals"
           action={
             <Button
@@ -643,13 +639,7 @@ function Unavailable({ text }: { text: string }) {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Withdrawal review"
-          subtitle="Behavioral payout review"
-          backHref="/antifraud/withdrawals"
-        />
+        <PageHeroIdentity backHref="/antifraud/withdrawals" />
       </PageHero>
       <div className="rounded-xl border border-dashed bg-card/40 px-4 py-14 text-center">
         <UserRound className="mx-auto mb-3 size-6 text-muted-foreground" />

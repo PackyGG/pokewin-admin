@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Activity, Gauge, LayoutDashboard, LineChart } from "lucide-react";
+import { Activity, Gauge, LineChart } from "lucide-react";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
 import { getDoubleDownDashboardStats } from "@/lib/queries/double-down";
 import { getDailyPnl } from "@/lib/queries/pnl";
@@ -70,11 +70,7 @@ export default async function DashboardPage() {
       <AutoRefresh intervalMs={60_000} />
 
       <PageHero>
-        <PageHeroIdentity
-          icon={LayoutDashboard}
-          title="Dashboard"
-          subtitle="Live platform overview — revenue, users, and trends."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <SectionHeading

@@ -568,16 +568,16 @@ Jede neue Admin-Seite muss dem modernen Stil von `/users/[id]` folgen. Das ist d
 
 | Baustein | Pfad | Einsatz |
 |---|---|---|
-| `PageHero` | `src/components/modern-panels.tsx` oder `src/app/(admin)/users/[id]/user-view-modern-panels.tsx` | Jede Seite startet mit einem Hero: Gradient-Container mit Corner-Glows (`blur-3xl` absolut positionierte divs), Titel + Icon + Untertitel, optional Action-Slot rechts |
-| `SectionHeading` | gleich | Icon-Chip + Title + optional Action — trennt Abschnitte innerhalb der Seite |
-| `StatPanel` | gleich | Große Panels mit Corner-Glow, Icon-Chip, Hero-Zahl, Breakdown-Rows |
-| `KpiTile` / `MetricTile` | gleich | Kompakte bzw. mittlere KPI-Kacheln mit Accent-Farbe aus `TILE_COLORS` |
-| `PanelRow` | gleich | Breakdown-Zeilen innerhalb von `StatPanel` |
+| `PageHero` / `PageHeroIdentity` | `src/components/modern-panels.tsx` | Ungeboxter Page-Top-Slot; `PageHeroIdentity` rendert ausschließlich Back-/Action-Controls. Sichtbare Seitentitel gehören in die Page selbst. |
+| `SectionHeading` | `src/components/modern-panels.tsx` | Icon-Chip + Title + optional Action — trennt Abschnitte innerhalb der Seite |
+| `StatPanel` | `src/components/modern-panels.tsx` | Große flache Panels mit Icon-Chip, Hero-Zahl und Breakdown-Rows |
+| `KpiTile` / `MetricTile` | `src/components/modern-panels.tsx` | Kompakte bzw. mittlere KPI-Kacheln mit Accent-Farbe aus `TILE_COLORS` |
+| `PanelRow` | `src/components/modern-panels.tsx` | Breakdown-Zeilen innerhalb von `StatPanel`; `users/[id]/user-view-modern-panels.tsx` re-exportiert bzw. umhüllt die kanonischen Primitives nur für lokales Layout |
 | `AnimatedNumber` | `src/components/animated-number.tsx` | Zahlen-Transitions bei Werteänderungen, nutzt `formatKind` Enum (currency / number / percent), **niemals Function-Props** über die RSC-Grenze |
 | `FadeIn` | `src/components/fade-in.tsx` | Weiches Reinfaden für große Content-Blöcke |
 
 **Regeln:**
-- **Kein reiner `<h1>` als Seitenkopf** mehr — immer `PageHero` mit Icon + Gradient.
+- Sichtbare Seitentitel werden von der Page selbst gerendert. `PageHeroIdentity` darf nur Back-/Action-Controls erhalten; keine ignorierten Titel-/Icon-/Badge-Props.
 - **Keine blanken `<Card>` Stat-Kacheln** — die modernen `KpiTile` / `StatPanel` aus dem oben genannten Set nutzen. Accent-Farbe bewusst aus `TILE_COLORS` wählen (blue / emerald / rose / cyan / amber / purple / orange / pink).
 - **Tabellen** bleiben `@tanstack/react-table` + `src/components/data-table/`, aber eingebettet in einen modernen Container mit `SectionHeading` darüber.
 - **Charts** nutzen `recharts` mit `animationDuration={700}` + `animationEasing="ease-out"`.

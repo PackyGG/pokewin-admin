@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Wand2 } from "lucide-react";
 import { notFound } from "next/navigation";
 import { z } from "zod";
 
@@ -130,12 +129,7 @@ export default async function PackBuilderPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Wand2}
-          accent="purple"
-          title="Pack Builder"
-          subtitle="Compose a new pack, tune its feel, and watch the edge live."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<BuilderSkeleton />}>

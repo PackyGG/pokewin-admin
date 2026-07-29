@@ -49,12 +49,7 @@ export default async function AntifraudOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Antifraud"
-          subtitle="Account reviews and live risk signals"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <OverviewLiveSync snapshotAt={snapshotAt} />

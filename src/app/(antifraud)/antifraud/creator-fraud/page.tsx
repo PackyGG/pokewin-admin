@@ -52,12 +52,7 @@ export default async function CreatorFraudPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Creator fraud"
-          subtitle="Fraud risk among referred accounts; the creator account's own behavior is excluded"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="rounded-xl border border-border/70 bg-card p-3">

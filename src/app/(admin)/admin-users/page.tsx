@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { ShieldCheck, Wallet } from "lucide-react";
+import { Wallet } from "lucide-react";
 import Link from "next/link";
 import { requirePageAccess } from "@/lib/dal";
 import { Button } from "@/components/ui/button";
@@ -61,10 +61,6 @@ export default async function AdminUsersPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={ShieldCheck}
-          title="Admins & Access"
-          subtitle="Staff accounts, roles, and per-user permissions in one place."
-          accent="blue"
           action={
             // Hero actions belong to the Admins tab (create an admin / jump to
             // balance limits). The Roles tab carries its own "New Role" action

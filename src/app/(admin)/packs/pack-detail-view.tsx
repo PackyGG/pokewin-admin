@@ -202,11 +202,7 @@ export function PackDetailView({
   const detail = state.status === "ready" ? state.payload.detail : null;
 
   const resolvedName = detail?.name ?? headerSeed?.name ?? null;
-  // The name is still unknown (no detail, no seed yet) → show a skeleton in the
-  // title slot rather than a placeholder string.
-  const titlePending = resolvedName === null;
   const title = resolvedName ?? "Pack";
-  const slug = detail?.slug ?? headerSeed?.slug ?? "";
   const imageUrl = detail?.imageUrl ?? headerSeed?.imageUrl ?? null;
   const active = detail?.active ?? headerSeed?.active ?? false;
   const packType = detail?.packType ?? null;
@@ -296,11 +292,6 @@ export function PackDetailView({
 
       <PageHero>
         <PageHeroIdentity
-          icon={Package}
-          title={
-            titlePending ? <Skeleton className="h-6 w-40" /> : title
-          }
-          subtitle={slug || "Pack detail"}
           action={
             showActions && detail ? (
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">

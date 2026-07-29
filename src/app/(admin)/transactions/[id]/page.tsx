@@ -2,7 +2,6 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import {
-  Receipt,
   Coins,
   ArrowRightLeft,
   Bitcoin,
@@ -93,13 +92,7 @@ export default async function TransactionDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Receipt}
-          backHref="/transactions/deposits"
-          title="Transaction"
-          subtitle={id}
-          subtitleClassName="font-mono truncate"
-        />
+        <PageHeroIdentity backHref="/transactions/deposits" />
       </PageHero>
 
       <Suspense fallback={<TransactionDetailBodySkeleton />}>

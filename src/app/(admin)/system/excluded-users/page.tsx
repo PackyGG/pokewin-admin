@@ -1,4 +1,4 @@
-import { Ban, AlertTriangle } from "lucide-react";
+import { AlertTriangle } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -36,12 +36,7 @@ export default async function ExcludedUsersPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Ban}
-          accent="rose"
-          title="Excluded Users"
-          subtitle="packy.gg user IDs whose activity is filtered out of dashboard, analytics, and PnL aggregates. Race / leaderboard queries deliberately keep counting these users."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">

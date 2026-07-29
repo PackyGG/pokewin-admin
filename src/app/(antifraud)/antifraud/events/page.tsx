@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Activity, RadioTower } from "lucide-react";
+import { RadioTower } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -14,12 +14,7 @@ export default async function AntifraudEventsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Activity}
-          accent="cyan"
-          title="Events & triggers"
-          subtitle="The complete action vocabulary for custom point flows"
-        />
+        <PageHeroIdentity />
       </PageHero>
       <Suspense fallback={<CatalogSkeleton />}>
         <CatalogData />

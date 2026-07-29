@@ -1,4 +1,3 @@
-import { Banknote } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,7 +6,7 @@ export default function FiatDepositsLoading() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity icon={Banknote} accent="cyan" title="Fiat deposit risk" subtitle="Loading payment assessments" />
+        <PageHeroIdentity />
       </PageHero>
       <Skeleton className="h-20 rounded-xl" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">

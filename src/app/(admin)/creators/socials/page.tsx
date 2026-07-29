@@ -1,6 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
-import { ChevronLeft, ChevronRight, Inbox, ShieldCheck } from "lucide-react";
+import { ChevronLeft, ChevronRight, Inbox} from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { FadeIn } from "@/components/fade-in";
@@ -75,10 +75,6 @@ export default async function CreatorSocialsPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={ShieldCheck}
-          accent="emerald"
-          title="Creator Socials"
-          subtitle="Approve or reject social accounts submitted by creators."
           action={
             <KpiTile
               label="Total in queue"

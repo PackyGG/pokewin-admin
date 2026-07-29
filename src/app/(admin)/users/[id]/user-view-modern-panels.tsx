@@ -1,9 +1,19 @@
 "use client";
 
 /**
- * Shared primitives + "modern" stat panels used by the modern user detail
- * view. Split out of user-view-modern.tsx to keep files focused and under
- * ~500 lines. Pure presentation — no data fetching, no side effects.
+ * "Modern" stat panels used by the modern user detail view. Split out of
+ * user-view-modern.tsx to keep files focused and under ~500 lines. Pure
+ * presentation — no data fetching, no side effects.
+ *
+ * The generic primitives (TILE_COLORS / SectionHeading / StatPanel /
+ * PanelRow) are NOT defined here anymore — this file used to carry local
+ * copies that drifted from the canonical set (Record<string,…> typing,
+ * missing orange/pink accents, stale heading tags, no responsive padding).
+ * They now come from `@/components/modern-panels` (single source of truth)
+ * and are re-exported below so the existing `./user-view-modern-panels`
+ * import sites keep working. Only the genuinely page-specific pieces
+ * (px-3 SectionHeading alignment, equal-height StatPanel column, the
+ * Modern*Panel composites) stay local.
  */
 
 import * as React from "react";
@@ -43,155 +53,55 @@ import type {
   UserDetail,
   PnlBreakdown,
 } from "./user-tabs-types";
+import {
+  TILE_COLORS,
+  SectionHeading as SharedSectionHeading,
+  StatPanel as SharedStatPanel,
+} from "@/components/modern-panels";
 
 // ───────────────────────────────────────────────────────────────────
-//  SHARED COLOR TOKENS
+//  SHARED PRIMITIVES — canonical copies live in @/components/modern-panels
 // ───────────────────────────────────────────────────────────────────
+// Re-exported (not redefined) so the sibling files that import them from
+// "./user-view-modern-panels" keep working without carrying a second,
+// drift-prone implementation in this file.
 
-export const TILE_COLORS: Record<
-  string,
-  { bg: string; text: string; icon: string }
-> = {
-  blue: {
-    bg: "bg-blue-500/10 border-blue-500/20",
-    text: "text-blue-600 dark:text-blue-400",
-    icon: "text-blue-500",
-  },
-  emerald: {
-    bg: "bg-emerald-500/10 border-emerald-500/20",
-    text: "text-emerald-600 dark:text-emerald-400",
-    icon: "text-emerald-500",
-  },
-  rose: {
-    bg: "bg-rose-500/10 border-rose-500/20",
-    text: "text-rose-600 dark:text-rose-400",
-    icon: "text-rose-500",
-  },
-  cyan: {
-    bg: "bg-cyan-500/10 border-cyan-500/20",
-    text: "text-cyan-600 dark:text-cyan-400",
-    icon: "text-cyan-500",
-  },
-  amber: {
-    bg: "bg-amber-500/10 border-amber-500/20",
-    text: "text-amber-600 dark:text-amber-400",
-    icon: "text-amber-500",
-  },
-  purple: {
-    bg: "bg-purple-500/10 border-purple-500/20",
-    text: "text-purple-600 dark:text-purple-400",
-    icon: "text-purple-500",
-  },
-};
+export { TILE_COLORS, PanelRow } from "@/components/modern-panels";
+export type { AccentColor } from "@/components/modern-panels";
 
-// ───────────────────────────────────────────────────────────────────
-//  SECTION HEADING
-// ───────────────────────────────────────────────────────────────────
-
-export function SectionHeading({
-  icon: Icon,
-  title,
-}: {
-  icon: React.ElementType;
-  title: string;
-}) {
+/**
+ * Page-local alignment wrapper around the shared SectionHeading: px-3
+ * matches CollapsibleSection's trigger padding so a plain SectionHeading's
+ * icon/title lines up with a collapsible box's icon/title directly above
+ * or below it, instead of sitting flush left. All heading styling comes
+ * from the shared primitive.
+ */
+export function SectionHeading(
+  props: React.ComponentProps<typeof SharedSectionHeading>,
+) {
   return (
-    // px-3 matches CollapsibleSection's trigger padding so a plain
-    // SectionHeading's icon/title lines up with a collapsible box's icon/
-    // title directly above or below it, instead of sitting flush left.
-    <div className="flex items-center gap-2 px-3">
-      <div className="rounded-md bg-primary/10 p-1.5">
-        <Icon className="size-4 text-primary" />
-      </div>
-      <h3 className="text-base font-semibold">{title}</h3>
+    <div className="px-3">
+      <SharedSectionHeading {...props} />
     </div>
   );
 }
 
-// ───────────────────────────────────────────────────────────────────
-//  MODERN STAT PANELS — used in the Overview tab
-// ───────────────────────────────────────────────────────────────────
-
+/**
+ * Page-local layout wrapper around the shared StatPanel: this page renders
+ * its panels in equal-height grid rows with bottom-pinned footers (see
+ * ModernPnlPanel's `mt-auto` rolling-P&L chips), so every panel here opts
+ * into the `flex h-full flex-col` column. All panel styling comes from the
+ * shared primitive.
+ */
 export function StatPanel({
-  title,
-  icon: Icon,
-  accent,
-  action,
-  children,
-}: {
-  title: string;
-  icon: React.ElementType;
-  accent: keyof typeof TILE_COLORS;
-  // Optional right-aligned slot in the header, e.g. for the Balances
-  // panel's refresh icon button.
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  const colors = TILE_COLORS[accent] ?? TILE_COLORS.blue;
-  // Flat surface: one solid bg-card + a single hairline border + a very
-  // soft shadow on this (large) panel only. The old gradient fill, the
-  // colored corner-glow blob, and the rounded-2xl were the layered noise
-  // that read as "not clean" — dropped for the flat direction. The accent
-  // now lives only on the small icon chip (colors.bg) + the value numbers
-  // inside (House-POV tinted), not on the panel surface.
+  className,
+  ...props
+}: React.ComponentProps<typeof SharedStatPanel>) {
   return (
-    <div className="flex h-full flex-col rounded-xl border bg-card p-5 shadow-sm">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <div className={cn("flex size-7 items-center justify-center rounded-lg shrink-0", colors.bg)}>
-            <Icon className={cn("size-3.5", colors.icon)} />
-          </div>
-          <h3 className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground truncate">
-            {title}
-          </h3>
-        </div>
-        {action}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-export function PanelRow({
-  label,
-  value,
-  valueClassName,
-  // Optional small subtitle line rendered beneath the label, e.g. for the
-  // Vault row's unlock-at timestamp or the Locked row's wager-progress hint.
-  // Kept optional + string-typed so the dozens of existing PanelRow call
-  // sites stay unchanged.
-  sub,
-}: {
-  label: string;
-  value: React.ReactNode;
-  valueClassName?: string;
-  sub?: string | null;
-}) {
-  if (sub) {
-    return (
-      <div className="flex items-start justify-between gap-3 py-1 text-sm">
-        <div className="min-w-0">
-          <div className="text-muted-foreground">{label}</div>
-          <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70 truncate">
-            {sub}
-          </div>
-        </div>
-        <span
-          className={cn(
-            "font-medium tabular-nums shrink-0",
-            valueClassName,
-          )}
-        >
-          {value}
-        </span>
-      </div>
-    );
-  }
-  return (
-    <div className="flex items-center justify-between py-1 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className={cn("font-medium tabular-nums", valueClassName)}>{value}</span>
-    </div>
+    <SharedStatPanel
+      {...props}
+      className={cn("flex h-full flex-col", className)}
+    />
   );
 }
 

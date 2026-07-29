@@ -1,4 +1,4 @@
-import { Coins, Users, Receipt, Wallet } from "lucide-react";
+import { Users, Receipt, Wallet } from "lucide-react";
 import { desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { salary_employees, salary_payments } from "@/lib/db-schema/admin/schema";
@@ -92,18 +92,7 @@ export default async function SalariesPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Coins}
-          accent="amber"
-          title="Employee Salaries"
-          subtitle={
-            <>
-              Saved recipient registry. Click an employee&apos;s address to
-              scan it as a QR code and pay them manually from your wallet.
-              Each address is tagged ERC-20 or Solana.
-            </>
-          }
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">

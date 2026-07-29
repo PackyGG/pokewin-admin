@@ -214,10 +214,6 @@ export default async function PackDoctorPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Stethoscope}
-          accent="purple"
-          title="Pack Doctor"
-          subtitle="Diagnose pack edge, EV, and risk health across every cash pack."
           action={
             <div className="flex flex-wrap items-center gap-2">
               {owner && (

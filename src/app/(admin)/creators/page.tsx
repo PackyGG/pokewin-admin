@@ -3,7 +3,6 @@ import {
   AlertTriangle,
   Coins,
   LineChart,
-  Megaphone,
   Sparkles,
   Users,
   UserX,
@@ -152,10 +151,6 @@ export default async function CreatorsPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Megaphone}
-          accent="pink"
-          title="Creators"
-          subtitle="Weekly fill deals, stream sessions, and payouts."
           action={
             <div className="flex items-center gap-2">
               <WhitelistDialog />

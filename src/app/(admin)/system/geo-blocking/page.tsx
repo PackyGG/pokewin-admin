@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Globe } from "lucide-react";
 import { requireAdmin } from "@/lib/dal";
 import { getCountryRestrictions } from "@/lib/queries/geo-blocking";
 import { getFiatConfig } from "@/lib/queries/fiat";
@@ -44,11 +43,7 @@ export default async function GeoBlockingPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Globe}
-          title="Geo Blocking"
-          subtitle="Per-country deposit & withdrawal restrictions and locked currencies."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense

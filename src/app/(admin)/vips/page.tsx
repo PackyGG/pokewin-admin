@@ -52,12 +52,7 @@ export default async function VipsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Crown}
-          accent="purple"
-          title="VIPs"
-          subtitle="Users flagged as VIP"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense key={offset} fallback={<VipsListSkeleton />}>

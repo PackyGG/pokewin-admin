@@ -1,7 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
-  UserCog,
   Activity,
   Clock,
   ShieldCheck,
@@ -29,7 +28,6 @@ import { getLimitsForAdmin } from "@/lib/balance-limits";
 import { postgresTimestampIso } from "@/lib/postgres-runtime";
 import { adminRolesColumnExists } from "@/lib/admin-user-roles";
 import { listAssignablePresets } from "../_roles/custom-roles-actions";
-import { Badge } from "@/components/ui/badge";
 import { formatRelative } from "@/lib/utils/format";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import {
@@ -184,24 +182,7 @@ export default async function AdminUserDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={UserCog}
-          accent="purple"
-          backHref="/admin-users"
-          title={detail.username}
-          titleClassName="truncate"
-          badges={
-            <div className="flex flex-wrap gap-1">
-              {detail.roles.map((r) => (
-                <Badge key={r} variant="outline" className="text-xs uppercase">
-                  {r}
-                </Badge>
-              ))}
-            </div>
-          }
-          subtitle={detail.email}
-          subtitleClassName="truncate"
-        />
+        <PageHeroIdentity backHref="/admin-users" />
       </PageHero>
 
       {/* Stream the KPI strip + tabs as a single leg keyed on the admin id, so

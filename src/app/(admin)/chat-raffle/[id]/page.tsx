@@ -56,13 +56,7 @@ export default async function ChatRaffleRoundPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Trophy}
-          accent="cyan"
-          title="Raffle round"
-          subtitle="The frozen draw record"
-          backHref="/chat-raffle"
-        />
+        <PageHeroIdentity backHref="/chat-raffle" />
       </PageHero>
 
       <Suspense fallback={<RoundDetailSkeleton />}>

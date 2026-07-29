@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Dices } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import {
@@ -31,12 +30,7 @@ export default async function KenoPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Dices}
-          accent="purple"
-          title="Keno"
-          subtitle="Performance, controls, complete backend paytables, and exact draw probabilities."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <KenoTabNav />

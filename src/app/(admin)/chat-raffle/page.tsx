@@ -85,12 +85,7 @@ export default async function ChatRafflePage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Dices}
-          accent="cyan"
-          title="Chat Raffle"
-          subtitle="Chat activity earns tickets — one is drawn per prize place"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<ActiveRoundSkeleton />}>

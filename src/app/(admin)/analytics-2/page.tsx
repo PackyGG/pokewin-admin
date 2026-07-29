@@ -41,9 +41,6 @@ export default async function Analytics2Page({
 
       <PageHero>
         <PageHeroIdentity
-          icon={LineChart}
-          title="Analytics 2"
-          subtitle="Daily account creation and depositor activity."
           action={<Analytics2PeriodFilter period={period} />}
         />
       </PageHero>

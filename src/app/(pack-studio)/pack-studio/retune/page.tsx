@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { Sparkles } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -83,12 +82,7 @@ export default async function PackRetuneWorkspacePage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Sparkles}
-          accent="purple"
-          title="Retune Workspace"
-          subtitle="Pick a pack, review its plan, push it live — what you see is exactly what writes."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<WorkspaceSkeleton />}>

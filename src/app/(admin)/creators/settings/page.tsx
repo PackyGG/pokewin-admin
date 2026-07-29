@@ -1,4 +1,3 @@
-import { Settings } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { getAffiliateLevelConfigs } from "@/lib/queries/creators";
 import { getSiteConfigValues } from "@/lib/queries/site-config";
@@ -41,11 +40,7 @@ export default async function CreatorSettingsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Settings}
-          title="Creator Settings"
-          subtitle="Configure affiliate level tiers, commission rates, and global affiliate policies."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <FadeIn className="space-y-6">

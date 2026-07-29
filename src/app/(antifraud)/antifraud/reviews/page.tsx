@@ -98,12 +98,7 @@ export default async function ReviewQueuePage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Account Review"
-          subtitle="Cases opened by the fraud backend or by hand"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <FilterBar

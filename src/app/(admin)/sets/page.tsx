@@ -157,9 +157,6 @@ export default async function SetsPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Library}
-          title="Sets"
-          subtitle="Group cards into sets and series (Pokémon, One Piece, …)."
           action={
             <div className="flex items-center gap-2">
               {isAdmin && <SeedInitialSetsButton />}

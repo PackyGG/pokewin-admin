@@ -23,12 +23,7 @@ export default async function NewPacksPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={PackageOpen}
-          accent="purple"
-          title="Pack Approval Queue"
-          subtitle="The final owner gate before a Pack Builder request can go live."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<QueueSkeleton />}>

@@ -90,12 +90,7 @@ export default async function RewardsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={CloudRain}
-          accent="blue"
-          title="Rewards"
-          subtitle="Rain, challenges, XP sales, rakeback, promo codes, leaderboards, deposit bonus, level-up, affiliate, and settings."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="space-y-4">

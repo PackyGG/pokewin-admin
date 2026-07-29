@@ -51,13 +51,7 @@ export default async function DeletedUsersPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Archive}
-          title="Deleted Users"
-          subtitle={`Snapshots of users wiped from main DB. Auto-purged after ${SNAPSHOT_RETENTION_DAYS} days.`}
-          accent="rose"
-          backHref="/users"
-        />
+        <PageHeroIdentity backHref="/users" />
       </PageHero>
 
       <Suspense fallback={<DeletedUsersBodySkeleton />}>

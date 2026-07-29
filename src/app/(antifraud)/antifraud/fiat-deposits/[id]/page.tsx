@@ -76,10 +76,6 @@ function FiatReview({ detail }: { detail: FiatDetail }) {
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Banknote}
-          accent="cyan"
-          title="Fiat deposit review"
-          subtitle="Paid Whop deposit risk review"
           backHref="/antifraud/fiat-deposits"
           action={
             <>
@@ -762,13 +758,7 @@ function Unavailable({ text }: { text: string }) {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Banknote}
-          accent="cyan"
-          title="Fiat deposit review"
-          subtitle="Paid Whop deposit risk review"
-          backHref="/antifraud/fiat-deposits"
-        />
+        <PageHeroIdentity backHref="/antifraud/fiat-deposits" />
       </PageHero>
       <div className="rounded-xl border border-dashed bg-card/40 px-4 py-14 text-center">
         <CreditCard className="mx-auto mb-3 size-6 text-muted-foreground" />

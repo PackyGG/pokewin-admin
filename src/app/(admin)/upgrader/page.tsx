@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Zap } from "lucide-react";
 
 import {
   getUserPermissions,
@@ -72,12 +71,7 @@ export default async function UpgraderPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Zap}
-          accent="amber"
-          title="Upgrader"
-          subtitle="The output card pool the upgrader wheel can pay out, plus every upgrader game."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <UpgraderTabNav canViewTransactions={canViewTransactions} />

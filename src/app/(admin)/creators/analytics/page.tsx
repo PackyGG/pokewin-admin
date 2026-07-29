@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import {
-  BarChart3,
   DollarSign,
   MousePointerClick,
   UserPlus,
@@ -46,12 +45,7 @@ export default async function CreatorAnalyticsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={BarChart3}
-          title="Creator Analytics"
-          subtitle="Affiliate performance — signups, commission, wagers, clicks."
-          action={<PeriodFilter />}
-        />
+        <PageHeroIdentity action={<PeriodFilter />} />
       </PageHero>
 
       <Suspense

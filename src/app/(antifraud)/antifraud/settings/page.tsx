@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { AlertTriangle, Check, Plug, Settings, Users, X } from "lucide-react";
+import { AlertTriangle, Check, Plug, Users, X } from "lucide-react";
 
 import {
   PageHero,
@@ -40,12 +40,7 @@ export default async function SettingsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Settings}
-          accent="cyan"
-          title="Settings"
-          subtitle="Access, integrations, and alert delivery"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <SettingsTabNav active={tab} />

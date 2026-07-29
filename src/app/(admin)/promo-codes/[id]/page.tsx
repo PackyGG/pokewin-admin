@@ -65,25 +65,7 @@ export default async function PromoCodeDetailPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Ticket}
           backHref="/rewards?tab=promo-codes"
-          title={data.code ?? "Promo Code"}
-          titleClassName="truncate"
-          badges={
-            <>
-              <Badge variant="outline">{data.region}</Badge>
-              {isExpired && (
-                <Badge
-                  variant="outline"
-                  className="bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30"
-                >
-                  Expired
-                </Badge>
-              )}
-            </>
-          }
-          subtitle={data.codeHash}
-          subtitleClassName="font-mono truncate"
           action={<DeletePromoCodeButton promoCodeId={data.id} />}
         />
       </PageHero>

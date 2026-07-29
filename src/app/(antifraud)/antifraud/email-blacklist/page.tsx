@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { AlertTriangle, Ban, LockKeyhole, MailWarning } from "lucide-react";
+import { AlertTriangle, Ban, LockKeyhole} from "lucide-react";
 
 import {
   FormCardSkeleton,
@@ -88,12 +88,7 @@ export default async function EmailBlacklistPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={MailWarning}
-          accent="rose"
-          title="Checkout email blacklist"
-          subtitle="Contain accounts that use blocked email domains during Whop checkout"
-        />
+        <PageHeroIdentity />
       </PageHero>
       <Suspense fallback={<EmailBlacklistFallback />}>
         <EmailBlacklistContent />

@@ -51,13 +51,7 @@ export default async function WithdrawalDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ArrowUpFromLine}
-          backHref="/withdrawals"
-          title="Withdrawal"
-          subtitle={id}
-          subtitleClassName="font-mono truncate"
-        />
+        <PageHeroIdentity backHref="/withdrawals" />
       </PageHero>
 
       <Suspense fallback={<WithdrawalDetailBodySkeleton />}>

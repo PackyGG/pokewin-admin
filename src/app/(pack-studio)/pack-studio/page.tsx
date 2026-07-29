@@ -3,7 +3,6 @@ import type * as React from "react";
 import {
   ArrowUpRight,
   Layers3,
-  LayoutDashboard,
   Package,
   PackageOpen,
   Sparkles,
@@ -45,12 +44,7 @@ export default async function PackStudioOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={LayoutDashboard}
-          accent="purple"
-          title="Pack Studio"
-          subtitle="Design, audit, and tune packs and cards in one workspace."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {/* Quick actions — static, role-aware jump-offs into the Studio's core

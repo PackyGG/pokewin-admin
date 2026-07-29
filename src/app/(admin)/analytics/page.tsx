@@ -1,4 +1,3 @@
-import { BarChart3 } from "lucide-react";
 import { Suspense } from "react";
 import { requirePageAccess } from "@/lib/dal";
 import { AutoRefresh } from "../dashboard/auto-refresh";
@@ -107,11 +106,7 @@ export default async function AnalyticsPage({
           force a fresh fetch when needed. */}
       <AutoRefresh intervalMs={300_000} />
       <PageHero>
-        <PageHeroIdentity
-          icon={BarChart3}
-          title="Analytics"
-          subtitle="Revenue, acquisition, and gameplay metrics over time."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {/* Period filter rides the tab row instead of the hero (owner,

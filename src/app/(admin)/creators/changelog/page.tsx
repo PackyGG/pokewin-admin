@@ -65,12 +65,7 @@ export default async function CreatorChangelogPage({
     <div className="space-y-6">
       <PageHero>
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
-          <PageHeroIdentity
-            icon={History}
-            title="Creator Changelog"
-            subtitle="Every creator-marketing action — promotions, deals, resets, and exclusions — newest first."
-            accent="blue"
-          />
+          <PageHeroIdentity />
           <ChangelogPeriodFilter />
         </div>
       </PageHero>

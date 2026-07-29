@@ -99,10 +99,6 @@ async function CaseDetail({
     <>
       <PageHero>
         <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Account review"
-          subtitle="Case"
           backHref="/antifraud/reviews"
           action={
             <>

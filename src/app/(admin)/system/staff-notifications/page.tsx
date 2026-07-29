@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import {
-  Bell,
   Inbox,
   Radio,
   Send,
@@ -44,12 +43,7 @@ export default async function StaffNotificationsPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Bell}
-          accent="cyan"
-          title="Staff Notifications"
-          subtitle="One inbox across Admin, Creator Hub, Pack Studio, and Anti-Fraud."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<PageSkeleton canManage={canManage} />}>

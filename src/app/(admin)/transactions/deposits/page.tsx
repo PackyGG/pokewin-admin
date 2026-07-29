@@ -8,7 +8,6 @@ import {
   CreditCard,
   DatabaseZap,
   ListChecks,
-  Receipt,
 } from "lucide-react";
 import { getDepositTransactions } from "@/lib/queries/transactions";
 import { getCardPayments } from "@/lib/queries/card-payments";
@@ -115,17 +114,7 @@ export default async function TransactionsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Receipt}
-          title="Transactions"
-          subtitle={
-            tab === "card-payments"
-              ? "Whop card-payment lifecycle, fees, and ledger reconciliation."
-              : tab === "deposits"
-                ? "All inbound deposit transactions across users."
-                : "All physical and crypto withdrawal requests — filter by status and method."
-          }
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {/* ── Tab switch ────────────────────────────────────────────────

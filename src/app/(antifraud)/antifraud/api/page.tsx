@@ -144,12 +144,7 @@ export default async function AntifraudApiPage() {
   return (
     <div className="space-y-8">
       <PageHero>
-        <PageHeroIdentity
-          icon={Braces}
-          accent="blue"
-          title="Antifraud API"
-          subtitle="Current service, live transport and durable ingest contracts"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <EndpointSection icon={Activity} title="Read API" endpoints={READ_ENDPOINTS} />

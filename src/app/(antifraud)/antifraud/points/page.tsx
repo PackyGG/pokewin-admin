@@ -58,12 +58,7 @@ export default async function AntifraudPointsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Gauge}
-          accent="cyan"
-          title="Risk scoring"
-          subtitle="Manage live point values, thresholds, and event sequences"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <TabChips

@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Wallet } from "lucide-react";
 
 import {
   KpiStripSkeleton,
@@ -34,12 +33,7 @@ export default async function FiatPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Wallet}
-          accent="emerald"
-          title="Fiat"
-          subtitle="Whop deposits, limits, holds, access controls, and webhook health."
-        />
+        <PageHeroIdentity />
       </PageHero>
       <FiatTabNav current={tab} />
       <Suspense

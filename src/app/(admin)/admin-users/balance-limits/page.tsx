@@ -130,13 +130,7 @@ export default async function BalanceLimitsOverviewPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Wallet}
-          title="Balance Limits"
-          subtitle="Per-admin caps on how much they can adjust user balances within a period. Add, edit, or remove any cap here."
-          accent="amber"
-          backHref="/admin-users"
-        />
+        <PageHeroIdentity backHref="/admin-users" />
       </PageHero>
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">

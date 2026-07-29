@@ -67,11 +67,7 @@ export default async function VouchersPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Ticket}
-          title="Vouchers"
-          subtitle="Track issued vouchers and claim history across the platform."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {/* Stats are global + tab-independent: both unclaimed and claimed

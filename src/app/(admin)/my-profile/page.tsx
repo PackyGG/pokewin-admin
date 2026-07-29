@@ -73,12 +73,7 @@ export default async function MyProfilePage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={User}
-          accent="cyan"
-          title="My Profile"
-          subtitle="Creator affiliate profile"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       {isCreator ? (

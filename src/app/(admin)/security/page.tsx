@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Lock } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
@@ -30,11 +29,7 @@ export default async function SecurityPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Lock}
-          title="Security"
-          subtitle="Vault lock windows, wager weights, brute-force protection, and platform lockdown controls."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <FadeIn>

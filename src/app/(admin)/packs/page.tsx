@@ -1,6 +1,5 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { Package } from "lucide-react";
 import { isUuid } from "@/lib/utils/ids";
 import {
   getUserPermissions,
@@ -131,9 +130,6 @@ export default async function PacksPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Package}
-          title="Packs"
-          subtitle="Pack catalog and pack-opening transactions in one place."
           action={
             // Hero actions belong to the Catalog tab only (create / reprice).
             caps && (caps.canCreate || isRepriceOwner(session)) ? (

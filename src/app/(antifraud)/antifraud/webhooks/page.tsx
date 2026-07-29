@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Webhook } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -15,12 +14,7 @@ export default async function WebhooksPage() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Webhook}
-          accent="cyan"
-          title="Discord Routing"
-          subtitle="Send antifraud events through the bot instead of fixed webhooks"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <Suspense fallback={<WorkspaceSkeleton />}>

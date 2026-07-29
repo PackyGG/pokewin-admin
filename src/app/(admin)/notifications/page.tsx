@@ -1,5 +1,4 @@
 import { Suspense } from "react";
-import { Megaphone } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -121,11 +120,7 @@ export default async function NotificationsPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={Megaphone}
-          title="Notifications"
-          subtitle="Broadcast a site-wide announcement, or send a personal notification straight into one user's feed."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <NotificationsTabNav />

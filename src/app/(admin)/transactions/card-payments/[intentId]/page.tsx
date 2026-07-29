@@ -42,7 +42,7 @@ export default async function CardPaymentDetailPage({ params }: { params: Promis
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity icon={CreditCard} backHref="/transactions/deposits?tab=card-payments" title="Card payment" subtitle={intentId} subtitleClassName="truncate font-mono" />
+        <PageHeroIdentity backHref="/transactions/deposits?tab=card-payments" />
       </PageHero>
       <Suspense fallback={<CardPaymentDetailSkeleton />}>
         <CardPaymentDetailBody intentId={intentId} />

@@ -10,8 +10,6 @@ import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import {
     affiliateLeaderboardsApi,
-    type ApprovalStatus,
-    type TimeStatus,
     type LeaderboardAdminRow,
 } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
@@ -52,18 +50,6 @@ import {
 
 export const metadata = { title: "Affiliate Leaderboard" };
 
-const APPROVAL_COLORS: Record<ApprovalStatus, string> = {
-    pending: "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-    approved: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-    rejected: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-};
-
-const TIME_COLORS: Record<TimeStatus, string> = {
-    upcoming: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-    active: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-    ended: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-};
-
 export default async function AffiliateLeaderboardDetailPage({
     params,
 }: {
@@ -93,13 +79,7 @@ export default async function AffiliateLeaderboardDetailPage({
         return (
             <div className="space-y-6">
                 <PageHero>
-                    <PageHeroIdentity
-                        icon={AlertTriangle}
-                        accent="rose"
-                        backHref="/creators/leaderboards"
-                        title="Affiliate leaderboard"
-                        subtitle="Couldn't load this leaderboard."
-                    />
+                    <PageHeroIdentity backHref="/creators/leaderboards" />
                 </PageHero>
                 <TileErrorFallback
                     label="Leaderboard unavailable"
@@ -144,35 +124,8 @@ export default async function AffiliateLeaderboardDetailPage({
                     query already documents. Keeping it off the hero critical
                     path is what lets the hero paint instantly. */}
                 <PageHeroIdentity
-                    icon={Trophy}
-                    accent="amber"
-                    backHref="/creators/leaderboards"
-                    title={lb.title}
-                    badges={
-                        <>
-                            <Badge variant="outline" className={APPROVAL_COLORS[lb.approval_status]}>
-                                {lb.approval_status}
-                            </Badge>
-                            <Badge variant="outline" className={TIME_COLORS[lb.time_status]}>
-                                {lb.time_status}
-                            </Badge>
-                            {lb.is_sponsored && <Badge variant="outline">sponsored</Badge>}
-                            {lb.paid_manually && (
-                                <Badge
-                                    variant="outline"
-                                    className="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30"
-                                >
-                                    paid manually
-                                </Badge>
-                            )}
-                            {lb.cancelled_at && (
-                                <Badge variant="outline" className="bg-zinc-500/15 text-zinc-600 border-zinc-500/30">
-                                    cancelled
-                                </Badge>
-                            )}
-                        </>
-                    }
-                    action={<DetailActions row={lb} currentSponsoredPct={null} />}
+                  backHref="/creators/leaderboards"
+                  action={<DetailActions row={lb} currentSponsoredPct={null} />}
                 />
             </PageHero>
 

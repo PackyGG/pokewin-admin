@@ -1,4 +1,3 @@
-import { ShieldAlert } from "lucide-react";
 
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -22,12 +21,7 @@ export default async function AntifraudMonitorPage() {
   return (
     <div className="space-y-5">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Live Monitor"
-          subtitle="Signup behaviour windows as they happen"
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <MonitorConsole />

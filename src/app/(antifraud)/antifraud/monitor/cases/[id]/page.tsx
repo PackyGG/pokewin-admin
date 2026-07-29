@@ -10,7 +10,6 @@ import {
   Network,
   RadioTower,
   ScanSearch,
-  ShieldAlert,
   UserRoundSearch,
   Workflow,
 } from "lucide-react";
@@ -75,13 +74,7 @@ export default async function MonitorCaseDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Monitor case"
-          subtitle="Signup behavior evidence and verdict"
-          backHref="/antifraud/monitor"
-        />
+        <PageHeroIdentity backHref="/antifraud/monitor" />
       </PageHero>
 
       <Suspense key={id} fallback={<CaseSkeleton />}>

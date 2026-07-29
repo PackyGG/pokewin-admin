@@ -284,12 +284,7 @@ export default async function PackHistoryPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={History}
-          accent="amber"
-          title="Change History"
-          subtitle="Review every captured pack state and revert a pack to an earlier price + odds."
-        />
+        <PageHeroIdentity />
       </PageHero>
 
       <div className="space-y-3">

@@ -399,9 +399,6 @@ export default async function CardsPage({
       {/* ── HERO ───────────────────────────────────────────────────── */}
       <PageHero>
         <PageHeroIdentity
-          icon={Layers}
-          title="Cards"
-          subtitle="Browse and manage card assets across all sets."
           action={
             <CreateCardButton sets={sets} defaultSetId={defaultCreateSetId} />
           }

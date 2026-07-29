@@ -1,4 +1,3 @@
-import { ShieldAlert } from "lucide-react";
 
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -7,13 +6,7 @@ export default function WithdrawalReviewLoading() {
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={ShieldAlert}
-          accent="cyan"
-          title="Withdrawal review"
-          subtitle="Behavioral payout review"
-          backHref="/antifraud/withdrawals"
-        />
+        <PageHeroIdentity backHref="/antifraud/withdrawals" />
       </PageHero>
       <Skeleton className="h-24 rounded-xl" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

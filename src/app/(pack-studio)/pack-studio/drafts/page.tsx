@@ -1,6 +1,6 @@
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { ClipboardEdit, Layers } from "lucide-react";
+import { Layers } from "lucide-react";
 
 import {
   PageHero,
@@ -121,10 +121,6 @@ export default async function PackDraftsPage() {
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={ClipboardEdit}
-          accent="purple"
-          title="Pack Drafts"
-          subtitle="Stage retune / edit / reprice proposals against admin DB. No 2FA, no MAIN write until you push."
           action={
             <Suspense
               fallback={

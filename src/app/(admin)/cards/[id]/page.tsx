@@ -114,25 +114,7 @@ export default async function CardDetailPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          icon={Layers}
-          accent="blue"
           back={<BackButton />}
-          title={data.name}
-          titleClassName="truncate"
-          badges={
-            data.rarity ? (
-              <Badge variant="outline" className={RARITY_COLORS[data.rarity.toLowerCase()] ?? ""}>
-                {data.rarity}
-              </Badge>
-            ) : undefined
-          }
-          subtitle={
-            <>
-              {data.setName ? `${data.setName} · ` : ""}
-              {data.cardNumber ? `#${data.cardNumber}` : ""}
-            </>
-          }
-          subtitleClassName="truncate"
           action={
             <div className="flex flex-wrap gap-1.5 sm:gap-2">
               <EditCardButton card={data} sets={sets} />

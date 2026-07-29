@@ -1,8 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
-  KeyRound,
-  Lock,
   FileText,
   ShieldCheck,
   Users,
@@ -53,16 +51,7 @@ export default async function RoleDetailPage({
   return (
     <div className="space-y-6">
       <PageHero>
-        <PageHeroIdentity
-          icon={data.isSystem ? Lock : KeyRound}
-          accent={data.isSystem ? "amber" : "emerald"}
-          backHref="/admin-users?tab=roles"
-          title={data.name}
-          subtitle={
-            data.description ||
-            (data.isSystem ? "Built-in role" : "Custom role")
-          }
-        />
+        <PageHeroIdentity backHref="/admin-users?tab=roles" />
       </PageHero>
 
       {data.bypass ? (
