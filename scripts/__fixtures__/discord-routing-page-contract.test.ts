@@ -31,6 +31,8 @@ test("Discord Routing exposes channel inventory and many-to-many event routes", 
   assert.match(workspace, /setRouteEnabledAction/);
   assert.match(workspace, /deleteRouteAction/);
   assert.match(workspace, /createCustomEventAction/);
+  assert.match(workspace, /\{channel\.name\} -/);
+  assert.match(workspace, /\{channel\.id\}/);
 });
 
 test("every Discord route mutation is permission-gated and audited", () => {

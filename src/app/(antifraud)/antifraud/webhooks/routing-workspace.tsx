@@ -270,7 +270,7 @@ export function DiscordRoutingWorkspace({
               <Input
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search channels or categories"
+                placeholder="Search channel name, category, or ID"
                 className="pl-9"
               />
             </div>
@@ -309,9 +309,12 @@ export function DiscordRoutingWorkspace({
                     >
                       <Hash className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
                       <span className="min-w-0 flex-1">
-                        <span className="flex items-center gap-2">
-                          <span className="truncate text-sm font-medium">
-                            {channel.name}
+                        <span className="flex items-start gap-2">
+                          <span className="min-w-0 break-all text-sm font-medium">
+                            {channel.name} -{" "}
+                            <span className="font-mono text-xs text-muted-foreground">
+                              {channel.id}
+                            </span>
                           </span>
                           {routeCount > 0 && (
                             <Badge variant="secondary">{routeCount}</Badge>
