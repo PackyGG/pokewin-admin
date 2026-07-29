@@ -108,7 +108,7 @@ export function suspiciousGmailDotPattern(
   const local = email.slice(0, at).split("+", 1)[0] ?? "";
   const segments = local.split(".");
   if (
-    segments.length < 4 ||
+    segments.length < 3 ||
     segments.some((segment) => !/^[a-z0-9]+$/.test(segment))
   ) {
     return null;
@@ -120,13 +120,22 @@ export function suspiciousGmailDotPattern(
   const shortFragments = segments.filter(
     (segment) => segment.length <= 2,
   ).length;
-  if (compactLength < 12 || shortFragments < 2) return null;
+  const [root = "", codedFragment = "", numericFragment = ""] = segments;
+  const hasCodedNumericSuffix =
+    segments.length === 3 &&
+    /^[a-z]{10,}$/.test(root) &&
+    /^[a-z]{1,3}\d{2,4}$/.test(codedFragment) &&
+    /^\d{3,4}$/.test(numericFragment);
+  const hasHeavyFragmentation =
+    segments.length >= 4 && compactLength >= 12 && shortFragments >= 2;
+  if (!hasHeavyFragmentation && !hasCodedNumericSuffix) return null;
 
   return {
     type: "gmail_dot_fragmentation",
     domain,
-    reason:
-      "Gmail local part contains four or more dot-separated segments and multiple one- or two-character fragments",
+    reason: hasCodedNumericSuffix
+      ? "Gmail local part contains a long undelimited name followed by coded and numeric dot-separated suffixes"
+      : "Gmail local part contains four or more dot-separated segments and multiple one- or two-character fragments",
   };
 }
 
@@ -264,13 +273,18 @@ export async function fetchSuspiciousGmailEvents(
             pwe.payload #>> '{data,user,email}', '@', 2
           ))) IN ('gmail.com', 'googlemail.com')
           AND (
-            length(split_part(
+            (
+              length(split_part(
+                pwe.payload #>> '{data,user,email}', '@', 1
+              ))
+              - length(replace(split_part(
+                pwe.payload #>> '{data,user,email}', '@', 1
+              ), '.', ''))
+            ) >= 3
+            OR lower(split_part(
               pwe.payload #>> '{data,user,email}', '@', 1
-            ))
-            - length(replace(split_part(
-              pwe.payload #>> '{data,user,email}', '@', 1
-            ), '.', ''))
-          ) >= 3
+            )) ~ '^[a-z]{10,}\.[a-z]{1,3}[0-9]{2,4}\.[0-9]{3,4}(\+[^@]*)?$'
+          )
           AND (pwe.received_at, pwe.id::text) > ($1::timestamptz, $2::text)
         ORDER BY pwe.received_at, pwe.id::text
         LIMIT $3

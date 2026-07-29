@@ -37,6 +37,9 @@ test("dot-fragmented Gmail aliases are blocked without flagging normal Gmail add
     "giecphangqua.nh.ghun.g@gmail.com",
     "carmenw.oods29.7.1@gmail.com",
     "CarmenW.oods29.7.1+checkout@GoogleMail.com",
+    "catherinebish.op47.972@gmail.com",
+    "CatherineBish.OP47.972+checkout@GoogleMail.com",
+    "phuongquiechr.ac.hr.uang@gmail.com",
   ];
   for (const email of suspicious) {
     assert.equal(
@@ -53,6 +56,10 @@ test("dot-fragmented Gmail aliases are blocked without flagging normal Gmail add
     "a.b.c.d@gmail.com",
     "carmenw.oods29.7.1@outlook.com",
     "plainaddress@gmail.com",
+    "catherinebish.op.972@gmail.com",
+    "catherinebish.op47.work@gmail.com",
+    "catherinebish.op4.972@gmail.com",
+    "john.smith.1972@gmail.com",
   ];
   for (const email of allowed) {
     assert.equal(suspiciousGmailDotPattern(email), null, email);
@@ -173,7 +180,7 @@ test("deposit-cluster polling is bounded and conjunctive", async () => {
   assert.deepEqual(calls[0]?.values, [occurredAt, "cluster-row-1", 75]);
 });
 
-test("Gmail pattern backfill is bounded to dot-heavy Whop checkout candidates", async () => {
+test("Gmail pattern backfill includes heavy fragments and coded numeric suffixes", async () => {
   const calls: Array<{ sql: string; values?: unknown[] }> = [];
   const source = {
     async query(sql: string, values?: unknown[]) {
@@ -192,6 +199,10 @@ test("Gmail pattern backfill is bounded to dot-heavy Whop checkout candidates", 
   assert.equal(calls.length, 1);
   assert.match(calls[0]?.sql ?? "", /IN \('gmail\.com', 'googlemail\.com'\)/);
   assert.match(calls[0]?.sql ?? "", /\) >= 3/);
+  assert.match(
+    calls[0]?.sql ?? "",
+    /\^\[a-z\]\{10,\}.*\[a-z\]\{1,3\}.*\[0-9\]\{3,4\}/,
+  );
   assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "gmail-row-1", 50]);
 });
@@ -259,6 +270,13 @@ test("blacklist matches are durable before signed lock delivery", async () => {
     ),
     "utf8",
   );
+  const codedSuffixReplayMigration = await readFile(
+    new URL(
+      "../migrations/026_replay_coded_gmail_suffixes.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
 
   assert.match(source, /INSERT INTO fiat_email_domain_matches/);
   assert.match(source, /INSERT INTO fiat_problem_alert_outbox/);
@@ -286,6 +304,10 @@ test("blacklist matches are durable before signed lock delivery", async () => {
   assert.match(
     clusterReplayV2Migration,
     /fiat_suspicious_deposit_clusters_v2[\s\S]*interval '7 days'[\s\S]*NOT EXISTS[\s\S]*suspicious_deposit_cluster/,
+  );
+  assert.match(
+    codedSuffixReplayMigration,
+    /interval '7 days'[\s\S]*fiat_gmail_dot_patterns/,
   );
   assert.match(source, /fiat_suspicious_deposit_clusters_v2/);
   assert.match(source, /cluster_source_event_ids/);

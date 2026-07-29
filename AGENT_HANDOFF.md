@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-29 coded Gmail suffix detection release-ready:** Antifraud now treats long undelimited Gmail names followed by a short alphanumeric code and a 3–4 digit suffix as the same critical email-alias risk as heavy dot fragmentation. The detector covers signup and Whop checkout ingestion, retains conservative negative controls, and replays the last seven days idempotently so recent confirmed accounts are picked up. All 146 monitor tests, 369 repository guardrails, scoped ESLint, and diff check pass.
+
 - **2026-07-29 Discord routing UI simplification release-ready:** manager-only Fraud `/webhooks` now presents one active-channel list with each channel's assigned events. New Channel selects a bot-synced channel plus events; Edit updates the complete assignment or removes the channel. Saves are permission-gated, audited, and atomic in the ADMIN DB. Custom events remain available without the old channel/detail split or separate catalog. All 369 guardrails, TypeScript, lint with zero errors and one unrelated generated-schema warning, diff check, and the production build pass.
 
 - **2026-07-29 Discord creator account linking:** the bot-scoped creator setup API now links an active Discord section to the exact Packy creator account already owned by that section's Discord creator. Guild, category, chat/log channel, actor, current site creator role, account ownership, conflicts, and interaction retries all fail closed. The additive ADMIN migration is applied and idempotent, the schema snapshot is refreshed, and MAIN remained read-only.
