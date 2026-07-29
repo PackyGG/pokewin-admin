@@ -735,15 +735,23 @@ export async function computeAltAccounts(
     const [first, ...rest] = g.userIds;
     for (const other of rest) uf.union(first, other);
   }
-  // Also seed platform-flagged users so a cluster that EXISTS via another
-  // signal can absorb the flag; lone flagged users (no shared signal) are NOT
-  // promoted to a cluster on the flag alone — they're reported via the count.
+  // Platform-flagged users are NOT added to the union-find — a lone flagged
+  // user (no shared signal) never becomes a cluster on the flag alone;
+  // they're reported via the count. Flag absorption happens below, during
+  // cluster summary construction, via the `hasPlatformFlag` check.
 
   const rawGroups = uf.groups();
 
-  // Map each clustered user → which signal groups touch them, so we can attach
-  // per-cluster signal summaries.
-  const clustersOut: AltCluster[] = [];
+  // First pass: resolve each candidate cluster's signal summaries and skip
+  // non-clusters, so the single batched enrichment below only fetches
+  // members that will actually render.
+  type PendingCluster = {
+    memberIds: string[];
+    clusterSignals: AltSignalSummary[];
+    signalKinds: Set<AltSignalKind>;
+    hasPlatformFlag: boolean;
+  };
+  const pendingClusters: PendingCluster[] = [];
 
   for (const [, memberIds] of rawGroups) {
     if (memberIds.length < 2) continue; // not a cluster
@@ -779,7 +787,29 @@ export async function computeAltAccounts(
       });
     }
 
-    const enriched = await enrichMembers(memberIds, codes);
+    pendingClusters.push({
+      memberIds,
+      clusterSignals,
+      signalKinds,
+      hasPlatformFlag,
+    });
+  }
+
+  // ONE grouped enrichment round-trip over the union of all cluster members
+  // (per this file's PERFORMANCE contract) — not 3 queries per cluster.
+  const allMemberIds = [
+    ...new Set(pendingClusters.flatMap((p) => p.memberIds)),
+  ];
+  const enriched = await enrichMembers(allMemberIds, codes);
+
+  const clustersOut: AltCluster[] = [];
+
+  for (const {
+    memberIds,
+    clusterSignals,
+    signalKinds,
+    hasPlatformFlag,
+  } of pendingClusters) {
     const members: AltClusterMember[] = memberIds
       .map((id) => {
         const e = enriched.get(id);

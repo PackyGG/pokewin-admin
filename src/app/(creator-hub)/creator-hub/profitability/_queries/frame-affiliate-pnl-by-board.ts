@@ -3,12 +3,13 @@ import "server-only";
 import { unstable_cache } from "next/cache";
 
 import { readDrizzleForEnv } from "@/lib/db";
-import { queryRows } from "@/lib/drizzle-query";
+import { queryRowsInTimeboxedTx } from "@/lib/drizzle-query";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { escapeBlacklistIds } from "@/lib/queries/_blacklist";
 import {
   COVERING_CREATOR_SQL,
+  CREATOR_PNL_STATEMENT_TIMEOUT_MS,
   WITHDRAWN_UNITS_SQL,
 } from "@/lib/queries/creators-pnl";
 import { toNumber } from "@/lib/utils/decimal";
@@ -182,14 +183,23 @@ const cachedBoardPnl = (
           LEFT JOIN wd w ON w.board_id = f.board_id
           LEFT JOIN claims cl ON cl.board_id = f.board_id`;
 
-      const rows = await queryRows<
-          {
-            board_id: string;
-            deposits: string;
-            card_withdrawals: string;
-            affiliate_claims: string;
-          }[]
-        >(db, sql, ...params);
+      // Same cold-scan-completion guard as the by-user twin: this is a copy
+      // of the page's heaviest CTE scan, and past boards span even wider
+      // historic windows — run it with the raised per-statement timeout so
+      // it can't silently zero the Past Deals PnL leg on MAIN's default 30s.
+      const rows = await queryRowsInTimeboxedTx(
+        db,
+        CREATOR_PNL_STATEMENT_TIMEOUT_MS,
+        (query) =>
+          query<
+            {
+              board_id: string;
+              deposits: string;
+              card_withdrawals: string;
+              affiliate_claims: string;
+            }[]
+          >(sql, ...params),
+      );
 
       return rows.map((r) => {
         const deposits = toNumber(r.deposits);

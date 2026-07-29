@@ -484,13 +484,15 @@ async function computeRiskData(creatorUserId: string): Promise<RiskData> {
   }
 
   // Resolve usernames for wager-only users (not in perUserRows). Cheap
-  // batched lookup, best-effort.
+  // batched lookup, best-effort. Set membership keeps this pass O(rows)
+  // instead of O(perGameRows × perUserRows).
+  const perUserIds = new Set(perUserRows.map((u) => u.user_id));
   const wagerOnlyIds = new Set<string>();
   for (const r of perGameRows) {
     const a = ensure(r.user_id);
     const game = normalizeGame(r.game_type);
     a.games.set(game, (a.games.get(game) ?? 0) + toNumber(r.wager));
-    if (!perUserRows.some((u) => u.user_id === r.user_id)) {
+    if (!perUserIds.has(r.user_id)) {
       wagerOnlyIds.add(r.user_id);
     }
   }

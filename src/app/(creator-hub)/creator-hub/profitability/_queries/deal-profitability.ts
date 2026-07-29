@@ -13,6 +13,7 @@ import {
   weeklyDealsInFrame,
 } from "@/lib/deal-economics";
 
+import { mapPool, pagedWalk } from "../../_lib/backend-walk";
 import { getCodeAndWagerByUser } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
 import {
   getActiveLeaderboardFrameByUser,
@@ -59,6 +60,12 @@ const MS_PER_WEEK = 7 * 24 * 60 * 60 * 1000;
 const BACKEND_PAGE_SIZE = 100;
 /** Per-creator deal-history walk cap (deal histories are a small bounded set). */
 const DEAL_FETCH_CAP = 1000;
+/**
+ * Bounded concurrency for the per-creator deal-history fan-out (mirrors the
+ * tips/sponsors fan-out) — a large roster must not stampede the backend
+ * admin API with one multi-page walk per creator all at once.
+ */
+const DEAL_FETCH_CONCURRENCY = 6;
 
 /**
  * Number of whole weeks in a deal frame — the FRAME-LENGTH label only (the
@@ -77,26 +84,14 @@ function frameWeeks(startMs: number, endMs: number): number {
 async function fetchAllDealsForCreator(
   userId: string,
 ): Promise<CreatorDealResponse[]> {
-  const firstPage = await creatorsApi.listDeals(userId, {
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: CreatorDealResponse[] = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(DEAL_FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      creatorsApi
+        .listDeals(userId, { offset, limit })
+        .then((page) => ({ rows: page.data, total: page.total })),
+    DEAL_FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      creatorsApi.listDeals(userId, {
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
 }
 
 export type CreatorProfitabilityRow = {
@@ -184,18 +179,14 @@ const EMPTY_TOTALS: ProfitabilityTotals = {
 };
 
 async function computeWalk(): Promise<CreatorListItem[]> {
-  const firstPage = await creatorsApi.list({ offset: 0, limit: PAGE_SIZE });
-  const all = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / PAGE_SIZE),
-    Math.ceil(firstPage.total / PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      creatorsApi
+        .list({ offset, limit })
+        .then((page) => ({ rows: page.data, total: page.total })),
+    FETCH_CAP,
+    PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(creatorsApi.list({ offset: p * PAGE_SIZE, limit: PAGE_SIZE }));
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
 }
 
 // Shares the roster walk's revalidation tag so it stays in lockstep, but is
@@ -250,21 +241,20 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     }),
     // Each fill creator's FULL deal history — the canonical cost sums the
     // weekly fill-deals overlapping the current frame (not a single deal).
-    // allSettled so one creator's failed lookup can't sink the roster.
+    // Bounded concurrency (mapPool) so a large roster can't stampede the
+    // backend admin API; a failed lookup degrades that creator to [] instead
+    // of sinking the roster.
     (async () => {
-      const settled = await Promise.allSettled(
-        ids.map((id) => fetchAllDealsForCreator(id)),
-      );
       const map = new Map<string, CreatorDealResponse[]>();
-      settled.forEach((outcome, i) => {
-        if (outcome.status === "fulfilled") {
-          map.set(ids[i], outcome.value);
-        } else {
+      await mapPool(ids, DEAL_FETCH_CONCURRENCY, async (id) => {
+        try {
+          map.set(id, await fetchAllDealsForCreator(id));
+        } catch (err) {
           console.error(
-            `[profitability] listDeals failed for creator ${ids[i]} (frame costs only the LB leg):`,
-            outcome.reason,
+            `[profitability] listDeals failed for creator ${id} (frame costs only the LB leg):`,
+            err,
           );
-          map.set(ids[i], []);
+          map.set(id, []);
         }
       });
       return map;

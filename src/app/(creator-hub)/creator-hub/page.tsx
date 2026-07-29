@@ -58,8 +58,7 @@ import { getHubDashboardOverview } from "./_queries/dashboard-overview";
 import { getFourWeekDealSummary } from "./_queries/four-week-summary";
 import { getHubTopCreatorsByDeposits } from "./_queries/hub-top-creators-query";
 import { getTopSignupLeaders } from "./_queries/hub-top-creator-meta";
-import { getHubCohortWindowed } from "./_queries/hub-dashboard-cohort";
-import { HUB_CHART_PERIOD } from "./_queries/hub-period-sql";
+import { getHubCohortCharts } from "./_queries/hub-dashboard-cohort";
 import {
   getHubCreatorCostSeries,
   padCreatorCostSeries,
@@ -502,13 +501,12 @@ async function CreatorCostSeriesSection({
 
 // ─── b) Trends band (fixed 30 days, outside the period boundary) ───
 //
-// Reads the cohort scan pinned to HUB_CHART_PERIOD ("30d") — the chart legs
-// inside that bundle are ALWAYS 30 daily buckets, and the pinned entry is
-// `unstable_cache`'d (5-min revalidate), so a global chip flip resolves this
-// band from cache instead of re-running the chart scans.
+// Reads the fixed-30d chart cache (`getHubCohortCharts` — always 30 daily
+// buckets, single `unstable_cache` entry, 5-min revalidate), so a global
+// chip flip never re-runs the chart scans.
 async function TrendsSection() {
   const { data, error } = await safeQueryOrNull(
-    () => getHubCohortWindowed(HUB_CHART_PERIOD),
+    () => getHubCohortCharts(),
     "creator-hub.trends30d",
     20_000,
   );

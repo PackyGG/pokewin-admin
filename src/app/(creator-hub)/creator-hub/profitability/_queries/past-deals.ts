@@ -16,6 +16,7 @@ import {
   computeDealCost,
   weeklyDealsInFrame,
 } from "@/lib/deal-economics";
+import { mapPool, pagedWalk } from "../../_lib/backend-walk";
 import { getBoardAffiliatePnl } from "./frame-affiliate-pnl-by-board";
 import { getDealWagerByDeal } from "./frame-wager-by-deal";
 
@@ -99,6 +100,8 @@ const BACKEND_PAGE_SIZE = 100;
 const DEAL_FETCH_CAP = 1000;
 /** Cold-walk safety cap for the approved-board walk. */
 const BOARD_FETCH_CAP = 2000;
+/** Keep per-owner multi-page deal walks from stampeding the backend. */
+const DEAL_FETCH_CONCURRENCY = 6;
 
 /**
  * Per-leg timeout (ms) for the page-scoped heavy reads. Long enough that a
@@ -255,54 +258,28 @@ type PastDealBaseRow = {
 
 /** Walk every APPROVED leaderboard, first-page-then-parallel, up to the cap. */
 async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
-  const firstPage = await affiliateLeaderboardsApi.list({
-    status: "approved",
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: LeaderboardAdminRow[] = [...firstPage.leaderboards];
-  const pagesNeeded = Math.min(
-    Math.ceil(BOARD_FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      affiliateLeaderboardsApi
+        .list({ status: "approved", offset, limit })
+        .then((page) => ({ rows: page.leaderboards, total: page.total })),
+    BOARD_FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      affiliateLeaderboardsApi.list({
-        status: "approved",
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.leaderboards);
-  return all;
 }
 
 /** Fetch one creator's FULL deal history, paging the backend. */
 export async function fetchAllDealsForCreator(
   userId: string,
 ): Promise<CreatorDealResponse[]> {
-  const firstPage = await creatorsApi.listDeals(userId, {
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: CreatorDealResponse[] = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(DEAL_FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      creatorsApi
+        .listDeals(userId, { offset, limit })
+        .then((page) => ({ rows: page.data, total: page.total })),
+    DEAL_FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      creatorsApi.listDeals(userId, {
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
 }
 
 /**
@@ -336,24 +313,21 @@ const getEndedDealsBase = unstable_cache(
     }
 
     // Deal terms live per creator — fetch each frame-owner's deal history once
-    // (allSettled so one failed fetch can't sink the page), then sum the
-    // weekly fill-deals overlapping each frame for the cost terms.
+    // with bounded concurrency, then sum the weekly fill-deals overlapping
+    // each frame for the cost terms. One failed owner degrades to [].
     const ownerIds = Array.from(
       new Set(endedFrames.map((lb) => lb.creator_user_id)),
     );
-    const settled = await Promise.allSettled(
-      ownerIds.map((id) => fetchAllDealsForCreator(id)),
-    );
     const dealsByOwner = new Map<string, CreatorDealResponse[]>();
-    settled.forEach((outcome, i) => {
-      if (outcome.status === "fulfilled") {
-        dealsByOwner.set(ownerIds[i], outcome.value);
-      } else {
+    await mapPool(ownerIds, DEAL_FETCH_CONCURRENCY, async (id) => {
+      try {
+        dealsByOwner.set(id, await fetchAllDealsForCreator(id));
+      } catch (error) {
         console.error(
-          `[past-deals] listDeals failed for creator ${ownerIds[i]} (its frames cost only the LB leg):`,
-          outcome.reason,
+          `[past-deals] listDeals failed for creator ${id} (its frames cost only the LB leg):`,
+          error,
         );
-        dealsByOwner.set(ownerIds[i], []);
+        dealsByOwner.set(id, []);
       }
     });
 

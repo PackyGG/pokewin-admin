@@ -31,11 +31,25 @@ import {
   type HubWagerChartRow,
 } from "./hub-types";
 
-export type HubCohortWindowed = {
+/**
+ * Split cache design (active-timeframe-only):
+ *
+ *   • KPI scalars (signups / FTDs / deposits) are PERIOD-scoped — one cheap
+ *     cached entry per period chip, so a chip flip only pays the three
+ *     scalar scans for the new window.
+ *   • Chart series are ALWAYS fixed 30 daily buckets (HUB_CHART_PERIOD) —
+ *     one single cached entry, consumed only by the Trends band. A chip
+ *     flip never re-runs the five chart scans.
+ */
+
+export type HubCohortKpis = {
   period: DashboardPeriod;
   signups: number;
   ftds: number;
   depositsUsd: number;
+};
+
+export type HubCohortCharts = {
   dailyWagers: HubWagerChartRow[];
   dailyDeposits: HubDepositChartRow[];
   dailySignupsFtds: HubSignupsFtdsChartRow[];
@@ -46,17 +60,6 @@ type BucketRow = { bucket: Date | string; amount: string };
 type CountBucketRow = { bucket: Date | string; value: string };
 type WagerBucketRow = { bucket: Date | string; packs: string; battles: string };
 type CountRow = { value: string };
-
-type HubCohortScanBundle = {
-  signupRows: CountRow[];
-  ftdRows: CountRow[];
-  depositTotalRows: CountRow[];
-  signupSeriesRows: CountBucketRow[];
-  ftdSeriesRows: CountBucketRow[];
-  depositSeriesRows: BucketRow[];
-  ledgerWagerSeriesRows: WagerBucketRow[];
-  upgraderWagerSeriesRows: BucketRow[];
-};
 
 function mergeWagerBucketRows(
   ledgerRows: WagerBucketRow[],
@@ -152,66 +155,27 @@ function mergeDepositBucketRows(
     .map(([, row]) => row);
 }
 
-const cachedHubCohortScans = (
+// ─── KPI scalars (period-scoped) ────────────────────────────────────
+
+const cachedHubCohortKpiScans = (
   period: DashboardPeriod,
   env: DbEnv,
   blacklistAnd: string,
-  exclLedger: string,
-  upgBlacklist: string,
-  hasUpgrader: boolean,
 ) =>
   unstable_cache(
-    async (): Promise<HubCohortWindowed> => {
+    async (): Promise<HubCohortKpis> => {
       const db = readDrizzleForEnv(env);
-      // Chart series always roll 30 daily buckets — independent of the KPI chip.
-      const chartPeriod = HUB_CHART_PERIOD;
-      // are deterministically comparable (mirrors crm / top-creators). The
-      // anchor is fixed per unstable_cache entry (revalidate 300s).
+      // The anchor is fixed per unstable_cache entry (revalidate 300s) so
+      // buckets are deterministically comparable (mirrors crm / top-creators).
       const now = new Date();
       const sinceKpiDate = hubPeriodToSinceDate(period, now);
-      const sinceChartDate = hubPeriodToSinceDate(chartPeriod, now);
       const kpiIso = sinceKpiDate.toISOString();
-      const chartIso = sinceChartDate.toISOString();
       const sinceSignup = `AND u.created_at >= '${kpiIso}'::timestamptz`;
       const sinceAcu = `AND acu.created_at >= '${kpiIso}'::timestamptz`;
       const sinceLt = `AND lt.created_at >= '${kpiIso}'::timestamptz`;
-      const sinceChartLt = `AND lt.created_at >= '${chartIso}'::timestamptz`;
-      const sinceChartLedger = `AND ledger_transactions.created_at >= '${chartIso}'::timestamptz`;
-      const sinceChartUpg = `AND upgrader_games.created_at >= '${chartIso}'::timestamptz`;
-      const bucketDeposit = hubBucketTrunc("cd.created_at", chartPeriod);
-      const bucketLedger = hubBucketTrunc(
-        "ledger_transactions.created_at",
-        chartPeriod,
-      );
-      const bucketUpg = hubBucketTrunc("upgrader_games.created_at", chartPeriod);
-      const covering = hubCoveringLateral;
 
-      const bucketSignup = hubBucketTrunc("u.created_at", chartPeriod);
-      const bucketFtd = hubBucketTrunc("acu.created_at", chartPeriod);
-      const sinceChartSignup = `AND u.created_at >= '${chartIso}'::timestamptz`;
-      const sinceChartAcu = `AND acu.created_at >= '${chartIso}'::timestamptz`;
-
-      const {
-        signupRows,
-        ftdRows,
-        depositTotalRows,
-        signupSeriesRows,
-        ftdSeriesRows,
-        depositSeriesRows,
-        ledgerWagerSeriesRows,
-        upgraderWagerSeriesRows,
-      } = await (async (): Promise<HubCohortScanBundle> => {
-          const [
-            signupRows,
-            ftdRows,
-            depositTotalRows,
-            signupSeriesRows,
-            ftdSeriesRows,
-            depositSeriesRows,
-            ledgerWagerSeriesRows,
-            upgraderWagerSeriesRows,
-          ] = await Promise.all([
-            queryRows<CountRow[]>(db,
+      const [signupRows, ftdRows, depositTotalRows] = await Promise.all([
+        queryRows<CountRow[]>(db,
           `SELECT COUNT(*)::text AS value
              FROM "user" u
              JOIN "user" c ON c.id = u.referred_by AND c.role = 'creator'
@@ -257,7 +221,81 @@ const cachedHubCohortScans = (
              JOIN "user" c ON c.id = cd.creator_id AND c.role = 'creator'
             WHERE cd.creator_id IS NOT NULL`,
         ),
+      ]);
 
+      return {
+        period,
+        signups: toNumber(signupRows[0]?.value),
+        ftds: toNumber(ftdRows[0]?.value),
+        depositsUsd: toNumber(depositTotalRows[0]?.value),
+      };
+    },
+    ["hub-cohort-kpis-v1", period, env, blacklistAnd],
+    { revalidate: 300, tags: ["creator-hub"] },
+  );
+
+/**
+ * Period-scoped KPI scalars only (signups / FTDs / deposits) — the Overview
+ * band's cohort leg. Deliberately does NOT touch the fixed-30d chart scans,
+ * so a period-chip flip never pays for chart series it doesn't render.
+ */
+export async function getHubCohortKpis(
+  period: DashboardPeriod,
+): Promise<HubCohortKpis> {
+  return withTiming("creator-hub.cohort-kpis", async () => {
+    const env = await readDbEnv();
+    const excluded = await getExcludedUserIds();
+
+    const blacklistAnd =
+      excluded.length > 0
+        ? ` AND u.id NOT IN (${escapeBlacklistIds(excluded)})`
+        : "";
+
+    return cachedHubCohortKpiScans(period, env, blacklistAnd)();
+  });
+}
+
+// ─── Chart series (fixed 30 daily buckets, single cache entry) ──────
+
+const cachedHubChartScans = (
+  env: DbEnv,
+  blacklistAnd: string,
+  exclLedger: string,
+  upgBlacklist: string,
+  hasUpgrader: boolean,
+) =>
+  unstable_cache(
+    async (): Promise<HubCohortCharts> => {
+      const db = readDrizzleForEnv(env);
+      // Chart series always roll 30 daily buckets — independent of the KPI
+      // chip (HUB_CHART_PERIOD). Anchor fixed per cache entry (300s).
+      const chartPeriod = HUB_CHART_PERIOD;
+      const now = new Date();
+      const sinceChartDate = hubPeriodToSinceDate(chartPeriod, now);
+      const chartIso = sinceChartDate.toISOString();
+      const sinceChartLt = `AND lt.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartLedger = `AND ledger_transactions.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartUpg = `AND upgrader_games.created_at >= '${chartIso}'::timestamptz`;
+      const bucketDeposit = hubBucketTrunc("cd.created_at", chartPeriod);
+      const bucketLedger = hubBucketTrunc(
+        "ledger_transactions.created_at",
+        chartPeriod,
+      );
+      const bucketUpg = hubBucketTrunc("upgrader_games.created_at", chartPeriod);
+      const covering = hubCoveringLateral;
+
+      const bucketSignup = hubBucketTrunc("u.created_at", chartPeriod);
+      const bucketFtd = hubBucketTrunc("acu.created_at", chartPeriod);
+      const sinceChartSignup = `AND u.created_at >= '${chartIso}'::timestamptz`;
+      const sinceChartAcu = `AND acu.created_at >= '${chartIso}'::timestamptz`;
+
+      const [
+        signupSeriesRows,
+        ftdSeriesRows,
+        depositSeriesRows,
+        ledgerWagerSeriesRows,
+        upgraderWagerSeriesRows,
+      ] = await Promise.all([
         queryRows<CountBucketRow[]>(db,
           `SELECT ${bucketSignup} AS bucket, COUNT(*)::text AS value
              FROM "user" u
@@ -355,18 +393,7 @@ const cachedHubCohortScans = (
                 ORDER BY 1`,
             )
           : Promise.resolve([] as BucketRow[]),
-          ]);
-          return {
-            signupRows,
-            ftdRows,
-            depositTotalRows,
-            signupSeriesRows,
-            ftdSeriesRows,
-            depositSeriesRows,
-            ledgerWagerSeriesRows,
-            upgraderWagerSeriesRows,
-          };
-      })();
+      ]);
 
       const dailyWagers = padHubWagerChartSeries(
         mergeWagerBucketRows(
@@ -378,10 +405,6 @@ const cachedHubCohortScans = (
       );
 
       return {
-        period,
-        signups: toNumber(signupRows[0]?.value),
-        ftds: toNumber(ftdRows[0]?.value),
-        depositsUsd: toNumber(depositTotalRows[0]?.value),
         dailyWagers,
         dailyDeposits: padHubDepositChartSeries(
           mergeDepositBucketRows(depositSeriesRows, chartPeriod),
@@ -398,8 +421,7 @@ const cachedHubCohortScans = (
       };
     },
     [
-      "hub-cohort-windowed-v6-signups-ftds-chart",
-      period,
+      "hub-cohort-charts-30d-v1",
       env,
       blacklistAnd,
       exclLedger,
@@ -409,10 +431,13 @@ const cachedHubCohortScans = (
     { revalidate: 300, tags: ["creator-hub"] },
   );
 
-export async function getHubCohortWindowed(
-  period: DashboardPeriod,
-): Promise<HubCohortWindowed> {
-  return withTiming("creator-hub.cohort", async () => {
+/**
+ * Fixed-30d chart series (wagers / deposits / sign-ups & FTDs) — the Trends
+ * band's only data source. Single cache entry: a period-chip flip elsewhere
+ * on the page never invalidates or re-runs these scans.
+ */
+export async function getHubCohortCharts(): Promise<HubCohortCharts> {
+  return withTiming("creator-hub.cohort-charts", async () => {
     const env = await readDbEnv();
     const probeDb = readDrizzleForEnv(env);
     const scope = await getMetricsScope();
@@ -431,8 +456,7 @@ export async function getHubCohortWindowed(
     `);
     const hasUpgrader = upgProbe.rows[0]?.exists != null;
 
-    return cachedHubCohortScans(
-      period,
+    return cachedHubChartScans(
       env,
       blacklistAnd,
       exclLedger,

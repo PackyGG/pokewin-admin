@@ -13,6 +13,7 @@ import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
 
+import { mapPool, pagedWalk } from "../_lib/backend-walk";
 import {
   getDealWagerByDeal,
   type DealWagerWindow,
@@ -71,6 +72,12 @@ const BACKEND_PAGE_SIZE = 100;
 const DEAL_FETCH_CAP = 1000;
 /** Cold-walk safety cap for the approved-board walk (mirrors past-deals). */
 const BOARD_FETCH_CAP = 2000;
+/**
+ * Bounded concurrency for the per-owner deal-history fan-out (mirrors the
+ * tips/sponsors fan-out) — a large frame set must not stampede the backend
+ * admin API with one multi-page walk per owner all at once.
+ */
+const DEAL_FETCH_CONCURRENCY = 6;
 
 /**
  * Per-leg timeouts. Deliberately WELL UNDER the page's `maxDuration = 120`
@@ -93,26 +100,14 @@ const USERNAME_TIMEOUT_MS = 10_000;
 async function fetchAllDealsForCreator(
   userId: string,
 ): Promise<CreatorDealResponse[]> {
-  const firstPage = await creatorsApi.listDeals(userId, {
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: CreatorDealResponse[] = [...firstPage.data];
-  const pagesNeeded = Math.min(
-    Math.ceil(DEAL_FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      creatorsApi
+        .listDeals(userId, { offset, limit })
+        .then((page) => ({ rows: page.data, total: page.total })),
+    DEAL_FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      creatorsApi.listDeals(userId, {
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.data);
-  return all;
 }
 
 /**
@@ -122,28 +117,14 @@ async function fetchAllDealsForCreator(
  * never nests `unstable_cache` inside `unstable_cache`.
  */
 async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
-  const firstPage = await affiliateLeaderboardsApi.list({
-    status: "approved",
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: LeaderboardAdminRow[] = [...firstPage.leaderboards];
-  const pagesNeeded = Math.min(
-    Math.ceil(BOARD_FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      affiliateLeaderboardsApi
+        .list({ status: "approved", offset, limit })
+        .then((page) => ({ rows: page.leaderboards, total: page.total })),
+    BOARD_FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      affiliateLeaderboardsApi.list({
-        status: "approved",
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) all.push(...page.leaderboards);
-  return all;
 }
 
 /**
@@ -238,24 +219,23 @@ const getFourWeekBase = unstable_cache(
       return { frames: [], backendUnavailable: false };
     }
 
-    // Deal terms live per owner — fetch each frame-owner's deal history once
-    // (allSettled so one failed fetch can't sink the section).
+    // Deal terms live per owner — fetch each frame-owner's deal history once,
+    // with bounded concurrency (mapPool) so a large frame set can't stampede
+    // the backend admin API; a failed fetch degrades that owner to [] instead
+    // of sinking the section.
     const ownerIds = Array.from(
       new Set(inWindow.map((lb) => lb.creator_user_id)),
     );
-    const settled = await Promise.allSettled(
-      ownerIds.map((id) => fetchAllDealsForCreator(id)),
-    );
     const dealsByOwner = new Map<string, CreatorDealResponse[]>();
-    settled.forEach((outcome, i) => {
-      if (outcome.status === "fulfilled") {
-        dealsByOwner.set(ownerIds[i], outcome.value);
-      } else {
+    await mapPool(ownerIds, DEAL_FETCH_CONCURRENCY, async (id) => {
+      try {
+        dealsByOwner.set(id, await fetchAllDealsForCreator(id));
+      } catch (err) {
         console.error(
-          `[4w-summary] listDeals failed for creator ${ownerIds[i]} (frame costs only the LB leg):`,
-          outcome.reason,
+          `[4w-summary] listDeals failed for creator ${id} (frame costs only the LB leg):`,
+          err,
         );
-        dealsByOwner.set(ownerIds[i], []);
+        dealsByOwner.set(id, []);
       }
     });
 

@@ -605,12 +605,16 @@ export async function approveCreatorRewardClaim(input: {
     }
 
     let credit: Awaited<ReturnType<typeof adjustBalance>> | null = null;
+    const payoutBasis =
+      claim.leg === "ftd_lossback"
+        ? `${Number(claim.program.lossback_pct).toFixed(2)}% FTD lossback`
+        : `${claim.units} × $${Number(claim.program.reward_usd).toFixed(2)}`;
     try {
       credit = await adjustBalance({
         userId: claim.user_id,
         amount: amountUsd,
         category: "creator_vip_reward",
-        reason: `Creator VIP reward — ${claim.program.name} (${claim.units} × $${Number(claim.program.reward_usd).toFixed(2)})`,
+        reason: `Creator VIP reward — ${claim.program.name} (${payoutBasis})`,
         totpCode: parsed.data.totpCode,
         details: {
           creatorId: claim.program.creator_user_id,

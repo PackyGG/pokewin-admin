@@ -18,6 +18,7 @@ import {
   getCreatorLeaderboardWagerMap,
   type LeaderboardWagerInput,
 } from "../../../../(admin)/creators/[userId]/_queries/leaderboard-wager-by-board";
+import { pagedWalk } from "../../_lib/backend-walk";
 
 /**
  * Live Leaderboards ranklist — data layer.
@@ -184,31 +185,14 @@ export type LiveLeaderboardsResult = {
  */
 /** Paginated approved-board walk (backend caps `limit` at 100 per page). */
 export async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
-  const firstPage = await affiliateLeaderboardsApi.list({
-    status: "approved",
-    offset: 0,
-    limit: BACKEND_PAGE_SIZE,
-  });
-  const all: LeaderboardAdminRow[] = [...firstPage.leaderboards];
-
-  const pagesNeeded = Math.min(
-    Math.ceil(FETCH_CAP / BACKEND_PAGE_SIZE),
-    Math.ceil(firstPage.total / BACKEND_PAGE_SIZE),
+  return pagedWalk(
+    (offset, limit) =>
+      affiliateLeaderboardsApi
+        .list({ status: "approved", offset, limit })
+        .then((page) => ({ rows: page.leaderboards, total: page.total })),
+    FETCH_CAP,
+    BACKEND_PAGE_SIZE,
   );
-  const rest: Promise<typeof firstPage>[] = [];
-  for (let p = 1; p < pagesNeeded; p++) {
-    rest.push(
-      affiliateLeaderboardsApi.list({
-        status: "approved",
-        offset: p * BACKEND_PAGE_SIZE,
-        limit: BACKEND_PAGE_SIZE,
-      }),
-    );
-  }
-  for (const page of await Promise.all(rest)) {
-    all.push(...page.leaderboards);
-  }
-  return all;
 }
 
 /**

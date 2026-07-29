@@ -19,6 +19,7 @@ import {
   getCachedCreatorSessions,
 } from "@/lib/cache/creator-backend-cache";
 import { getTipsSponsorSpend } from "../../../../(admin)/creators/_queries/tips-sponsor-spend";
+import { mapPool } from "../../_lib/backend-walk";
 
 /** One creator's tips + sponsor spend (session-derived — authoritative totals). */
 export type CreatorTipsSponsorRow = {
@@ -241,27 +242,6 @@ async function sumCreatorSessionSpend(
   }
 
   return { tipsUsd, sponsorUsd, sessionsWithSpend, activeSessionsWithSpend };
-}
-
-async function mapPool<T, R>(
-  items: T[],
-  concurrency: number,
-  fn: (item: T) => Promise<R>,
-): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let idx = 0;
-
-  async function worker() {
-    while (idx < items.length) {
-      const i = idx++;
-      out[i] = await fn(items[i]!);
-    }
-  }
-
-  await Promise.all(
-    Array.from({ length: Math.min(concurrency, items.length) }, worker),
-  );
-  return out;
 }
 
 async function computeTipsSponsorsLedger(
