@@ -48,6 +48,11 @@ export type WithdrawalListItem = {
    * which chain a withdrawal targets without opening the detail page.
    */
   cryptoAsset: string | null;
+  /**
+   * True when the requester has paid for a fiat deposit, or has received a
+   * user-to-user creator tip from an account that has paid for a fiat deposit.
+   */
+  hasFiatFunding: boolean;
 };
 
 type GetWithdrawalsParams = {
@@ -200,6 +205,7 @@ async function computeWithdrawals(
     failure_reason: string | null;
     shipping_address_snapshot: unknown;
     crypto_asset: string | null;
+    has_fiat_funding: boolean;
   };
   const [withdrawals, countRows] = await Promise.all([
     queryRows<WithdrawalRow[]>(
@@ -212,10 +218,30 @@ async function computeWithdrawals(
               shipper.username AS shipped_username,
               cwr.method::text AS method, cwr.status::text AS status,
               cwr.total_value_usd::text, cwr.inventory_item_ids,
-              cwr.voucher_ids, cwr.requested_at, cwr.metadata,
-              cwr.tracking_number, cwr.carrier, cwr.failure_reason,
-              cwr.shipping_address_snapshot, cwr.crypto_asset
-         FROM card_withdrawal_requests cwr
+               cwr.voucher_ids, cwr.requested_at, cwr.metadata,
+               cwr.tracking_number, cwr.carrier, cwr.failure_reason,
+               cwr.shipping_address_snapshot, cwr.crypto_asset,
+               (
+                 EXISTS (
+                   SELECT 1
+                   FROM fiat_deposit_intents own_fiat
+                   WHERE own_fiat.user_id = cwr.user_id
+                     AND own_fiat.paid_at IS NOT NULL
+                 )
+                 OR EXISTS (
+                   SELECT 1
+                   FROM ledger_transactions received_tip
+                   JOIN fiat_deposit_intents sender_fiat
+                     ON sender_fiat.user_id =
+                       NULLIF(received_tip.metadata->>'sender_user_id', '')
+                    AND sender_fiat.paid_at IS NOT NULL
+                   WHERE received_tip.user_id = cwr.user_id
+                     AND received_tip.type::text = 'creator_tip'
+                     AND received_tip.status::text = 'completed'
+                     AND received_tip.metadata->>'direction' = 'received'
+                 )
+               ) AS has_fiat_funding
+          FROM card_withdrawal_requests cwr
          JOIN "user" requester ON requester.id = cwr.user_id
          LEFT JOIN "user" processor ON processor.id = cwr.processed_by
          LEFT JOIN "user" shipper ON shipper.id = cwr.shipped_by
@@ -265,6 +291,7 @@ async function computeWithdrawals(
       failureReason: w.failure_reason,
       shippingAddressSnapshot: w.shipping_address_snapshot,
       cryptoAsset: w.crypto_asset,
+      hasFiatFunding: w.has_fiat_funding,
     })),
     total,
     page: safePage,
@@ -285,7 +312,7 @@ async function computeWithdrawals(
  */
 const cachedWithdrawals = unstable_cache(
   computeWithdrawals,
-  ["transactions-withdrawals-list-v2"],
+  ["transactions-withdrawals-list-v3"],
   { revalidate: 60, tags: [WITHDRAWALS_LIST_TAG] },
 );
 

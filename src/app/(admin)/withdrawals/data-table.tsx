@@ -62,6 +62,14 @@ function WithdrawalMobileCard({ wd }: { wd: WithdrawalListItem }) {
             >
               {wd.status}
             </Badge>
+            {wd.hasFiatFunding ? (
+              <Badge
+                variant="outline"
+                className="h-4 border-red-500/30 bg-red-500/15 px-1 text-[9px] text-red-700 dark:text-red-400"
+              >
+                Fiat
+              </Badge>
+            ) : null}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-muted-foreground">
             <Badge variant="outline" className="h-3.5 px-1 text-[9px] capitalize">

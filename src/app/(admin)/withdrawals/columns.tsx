@@ -69,6 +69,21 @@ export const columns: ColumnDef<WithdrawalListItem, unknown>[] = [
     cell: ({ row }) => <Badge variant="outline">{row.original.method}</Badge>,
   },
   {
+    id: "fiatFunding",
+    header: "Funding",
+    cell: ({ row }) =>
+      row.original.hasFiatFunding ? (
+        <Badge
+          variant="outline"
+          className="border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-400"
+        >
+          Fiat
+        </Badge>
+      ) : (
+        <span className="text-muted-foreground">—</span>
+      ),
+  },
+  {
     // Crypto asset code surfaced inline so the chain is visible at the
     // list level. Renders the raw asset token (BTC, ETH_TEST5, USDC,
     // …) as a compact chip; physical-method rows have a null asset and
