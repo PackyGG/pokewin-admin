@@ -203,6 +203,10 @@ test("Gmail pattern backfill includes heavy fragments and coded numeric suffixes
     calls[0]?.sql ?? "",
     /\^\[a-z\]\{10,\}.*\[a-z\]\{1,3\}.*\[0-9\]\{3,4\}/,
   );
+  assert.match(
+    calls[0]?.sql ?? "",
+    /\^\[a-z\]\{10,\}\\\.\[a-z\].*\\\.\[0-9\].*\\\+/,
+  );
   assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "gmail-row-1", 50]);
 });

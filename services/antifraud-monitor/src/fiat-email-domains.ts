@@ -283,7 +283,7 @@ export async function fetchSuspiciousGmailEvents(
             ) >= 3
             OR lower(split_part(
               pwe.payload #>> '{data,user,email}', '@', 1
-            )) ~ '^[a-z]{10,}\.[a-z]{1,3}[0-9]{2,4}\.[0-9]{3,4}(\+[^@]*)?$'
+            )) ~ '^[a-z]{10,}\\.[a-z]{1,3}[0-9]{2,4}\\.[0-9]{3,4}(\\+[^@]*)?$'
           )
           AND (pwe.received_at, pwe.id::text) > ($1::timestamptz, $2::text)
         ORDER BY pwe.received_at, pwe.id::text
