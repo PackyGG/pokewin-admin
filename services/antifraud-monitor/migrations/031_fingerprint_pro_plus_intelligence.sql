@@ -1,0 +1,26 @@
+INSERT INTO score_weights(key, points, updated_by)
+VALUES
+  ('fingerprint_event_replayed', 120, 'system:fingerprint-pro-plus'),
+  ('fingerprint_ip_mismatch', 90, 'system:fingerprint-pro-plus'),
+  ('fingerprint_linked_id_mismatch', 120, 'system:fingerprint-pro-plus'),
+  ('fingerprint_low_confidence', 10, 'system:fingerprint-pro-plus'),
+  ('fingerprint_ip_attack_source', 80, 'system:fingerprint-pro-plus'),
+  ('fingerprint_ip_email_spam', 35, 'system:fingerprint-pro-plus'),
+  ('fingerprint_datacenter', 25, 'system:fingerprint-pro-plus'),
+  ('fingerprint_privacy_settings', 5, 'system:fingerprint-pro-plus'),
+  ('fingerprint_developer_tools', 10, 'system:fingerprint-pro-plus'),
+  ('fingerprint_rare_device', 20, 'system:fingerprint-pro-plus'),
+  ('fingerprint_velocity_ip_rotation', 45, 'system:fingerprint-pro-plus'),
+  ('fingerprint_velocity_country_hop', 50, 'system:fingerprint-pro-plus'),
+  ('fingerprint_velocity_multiple_accounts', 90, 'system:fingerprint-pro-plus'),
+  ('fingerprint_velocity_automation', 45, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_rooted', 70, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_emulator', 45, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_cloned_app', 70, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_jailbroken', 70, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_frida', 100, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_location_spoofing', 80, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_mitm', 100, 'system:fingerprint-pro-plus'),
+  ('fingerprint_mobile_recent_factory_reset', 20, 'system:fingerprint-pro-plus'),
+  ('fingerprint_proximity', 0, 'system:fingerprint-pro-plus')
+ON CONFLICT (key) DO NOTHING;

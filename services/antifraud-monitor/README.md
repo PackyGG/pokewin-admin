@@ -13,7 +13,9 @@ It does not modify the Packy frontend or backend.
 ## Runtime
 
 - Incremental signup scan from the Packy source database
-- Fingerprint Pro Plus Smart Signals from the stored signup request ID
+- Fingerprint Pro Plus event-integrity, IP/ASN/datacenter, VPN/proxy/Tor,
+  blocklist, browser/device, velocity, mobile-integrity, and privacy-preserving
+  proximity evidence from the stored signup request ID
 - proxycheck.io IP enrichment with a 24-hour per-IP cache
 - Configurable three-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions

@@ -5,6 +5,7 @@ import type { Databases } from "./db.js";
 import { DiscordAlerts, type DiscordAlert } from "./discord.js";
 import {
   EnrichmentService,
+  parseFingerprintResponse,
   parseProxycheckResponse,
   reweightFingerprintSignals,
   type EnrichmentResult,
@@ -1251,17 +1252,23 @@ export class MonitorEngine {
     if (!cached.rows[0]) {
       return this.enrichment.fingerprintCheck(signup, weights);
     }
+    const response = cached.rows[0].response ?? {};
+    const parsed = Object.hasOwn(response, "products")
+      ? parseFingerprintResponse(response, signup, weights)
+      : null;
     return {
       provider: "fingerprint",
       status: "success",
       lookupKey: signup.fingerprint_request_id,
       requestId: signup.fingerprint_request_id,
-      score: Number(cached.rows[0].score ?? 0),
-      response: cached.rows[0].response ?? {},
-      signals: reweightFingerprintSignals(
-        storedSignals(cached.rows[0].signals),
-        weights,
-      ),
+      score: parsed?.score ?? Number(cached.rows[0].score ?? 0),
+      response,
+      signals:
+        parsed?.signals
+        ?? reweightFingerprintSignals(
+          storedSignals(cached.rows[0].signals),
+          weights,
+        ),
     };
   }
 

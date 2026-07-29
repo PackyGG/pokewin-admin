@@ -19,14 +19,37 @@ export const DEFAULT_SCORE_WEIGHTS = {
   country_cluster_twenty_five_plus: 50,
   risky_location: 20,
   fingerprint_missing: 15,
+  fingerprint_event_replayed: 120,
+  fingerprint_ip_mismatch: 90,
+  fingerprint_linked_id_mismatch: 120,
+  fingerprint_low_confidence: 10,
   fingerprint_bad_bot: 80,
   fingerprint_vpn: 20,
   fingerprint_proxy: 35,
   fingerprint_tor: 65,
+  fingerprint_ip_attack_source: 80,
+  fingerprint_ip_email_spam: 35,
+  fingerprint_datacenter: 25,
   fingerprint_incognito: 10,
   fingerprint_tampering: 70,
   fingerprint_virtual_machine: 25,
   fingerprint_high_activity: 45,
+  fingerprint_privacy_settings: 5,
+  fingerprint_developer_tools: 10,
+  fingerprint_rare_device: 20,
+  fingerprint_velocity_ip_rotation: 45,
+  fingerprint_velocity_country_hop: 50,
+  fingerprint_velocity_multiple_accounts: 90,
+  fingerprint_velocity_automation: 45,
+  fingerprint_mobile_rooted: 70,
+  fingerprint_mobile_emulator: 45,
+  fingerprint_mobile_cloned_app: 70,
+  fingerprint_mobile_jailbroken: 70,
+  fingerprint_mobile_frida: 100,
+  fingerprint_mobile_location_spoofing: 80,
+  fingerprint_mobile_mitm: 100,
+  fingerprint_mobile_recent_factory_reset: 20,
+  fingerprint_proximity: 0,
   fingerprint_suspect_score_maximum: 50,
   proxycheck_anonymous_lower_risk: 25,
   proxycheck_anonymous_high_risk: 55,
@@ -98,14 +121,43 @@ export function scorePoints(weights: ScoreWeights = defaultScoreWeights()) {
     },
     riskyLocation: weights.risky_location,
     fingerprintMissing: weights.fingerprint_missing,
+    fingerprintEventReplayed: weights.fingerprint_event_replayed,
+    fingerprintIpMismatch: weights.fingerprint_ip_mismatch,
+    fingerprintLinkedIdMismatch: weights.fingerprint_linked_id_mismatch,
+    fingerprintLowConfidence: weights.fingerprint_low_confidence,
     fingerprintBadBot: weights.fingerprint_bad_bot,
     fingerprintVpn: weights.fingerprint_vpn,
     fingerprintProxy: weights.fingerprint_proxy,
     fingerprintTor: weights.fingerprint_tor,
+    fingerprintIpAttackSource: weights.fingerprint_ip_attack_source,
+    fingerprintIpEmailSpam: weights.fingerprint_ip_email_spam,
+    fingerprintDatacenter: weights.fingerprint_datacenter,
     fingerprintIncognito: weights.fingerprint_incognito,
     fingerprintTampering: weights.fingerprint_tampering,
     fingerprintVirtualMachine: weights.fingerprint_virtual_machine,
     fingerprintHighActivity: weights.fingerprint_high_activity,
+    fingerprintPrivacySettings: weights.fingerprint_privacy_settings,
+    fingerprintDeveloperTools: weights.fingerprint_developer_tools,
+    fingerprintRareDevice: weights.fingerprint_rare_device,
+    fingerprintVelocityIpRotation:
+      weights.fingerprint_velocity_ip_rotation,
+    fingerprintVelocityCountryHop:
+      weights.fingerprint_velocity_country_hop,
+    fingerprintVelocityMultipleAccounts:
+      weights.fingerprint_velocity_multiple_accounts,
+    fingerprintVelocityAutomation:
+      weights.fingerprint_velocity_automation,
+    fingerprintMobileRooted: weights.fingerprint_mobile_rooted,
+    fingerprintMobileEmulator: weights.fingerprint_mobile_emulator,
+    fingerprintMobileClonedApp: weights.fingerprint_mobile_cloned_app,
+    fingerprintMobileJailbroken: weights.fingerprint_mobile_jailbroken,
+    fingerprintMobileFrida: weights.fingerprint_mobile_frida,
+    fingerprintMobileLocationSpoofing:
+      weights.fingerprint_mobile_location_spoofing,
+    fingerprintMobileMitm: weights.fingerprint_mobile_mitm,
+    fingerprintMobileRecentFactoryReset:
+      weights.fingerprint_mobile_recent_factory_reset,
+    fingerprintProximity: weights.fingerprint_proximity,
     fingerprintSuspectScore: {
       divisor: 2,
       threshold: 20,
@@ -308,6 +360,30 @@ export function providerScoreDefinitions(
       options: [option(weights, "fingerprint_missing", "Missing")],
     },
     {
+      key: "fingerprint_event_integrity",
+      title: "Fingerprint event integrity",
+      description:
+        "Rejects replayed events and events whose IP or linked account conflicts with the signup evidence.",
+      options: [
+        option(weights, "fingerprint_event_replayed", "Payload replayed"),
+        option(weights, "fingerprint_ip_mismatch", "IP mismatch"),
+        option(
+          weights,
+          "fingerprint_linked_id_mismatch",
+          "Linked account mismatch",
+        ),
+      ],
+    },
+    {
+      key: "fingerprint_low_confidence",
+      title: "Low identification confidence",
+      description:
+        "Fingerprint is less than 90% confident in the visitor identification.",
+      options: [
+        option(weights, "fingerprint_low_confidence", "Below 90%"),
+      ],
+    },
+    {
       key: "fingerprint_bad_bot",
       title: "Bad bot detected",
       description: "Fingerprint identified automation or a malicious bot.",
@@ -316,20 +392,45 @@ export function providerScoreDefinitions(
     {
       key: "fingerprint_vpn",
       title: "VPN detected",
-      description: "Fingerprint detected VPN use or a location mismatch.",
-      options: [option(weights, "fingerprint_vpn", "Detected")],
+      description:
+        "Fingerprint detected VPN use. Low and medium confidence results receive a reduced share of this maximum.",
+      options: [option(weights, "fingerprint_vpn", "High-confidence maximum")],
     },
     {
       key: "fingerprint_proxy",
       title: "Proxy detected",
-      description: "Fingerprint detected a public or residential proxy.",
-      options: [option(weights, "fingerprint_proxy", "Detected")],
+      description:
+        "Fingerprint detected a residential or datacenter proxy. Low and medium confidence results receive a reduced share of this maximum.",
+      options: [
+        option(weights, "fingerprint_proxy", "High-confidence maximum"),
+      ],
     },
     {
       key: "fingerprint_tor",
       title: "Tor detected",
       description: "Fingerprint identified a Tor exit node.",
       options: [option(weights, "fingerprint_tor", "Detected")],
+    },
+    {
+      key: "fingerprint_ip_blocklist",
+      title: "Malicious IP history",
+      description:
+        "Fingerprint found the IP in recent network-attack or email-spam intelligence.",
+      options: [
+        option(
+          weights,
+          "fingerprint_ip_attack_source",
+          "Network attack source",
+        ),
+        option(weights, "fingerprint_ip_email_spam", "Email spam source"),
+      ],
+    },
+    {
+      key: "fingerprint_datacenter",
+      title: "Datacenter network",
+      description:
+        "Fingerprint identified the request IP as hosted in a datacenter rather than a normal access network.",
+      options: [option(weights, "fingerprint_datacenter", "Detected")],
     },
     {
       key: "fingerprint_incognito",
@@ -340,8 +441,15 @@ export function providerScoreDefinitions(
     {
       key: "fingerprint_tampering",
       title: "Browser tampering",
-      description: "Fingerprint detected an anti-detect or tampered browser.",
-      options: [option(weights, "fingerprint_tampering", "Detected")],
+      description:
+        "Fingerprint detected an anti-detect or anomalous browser. Low and medium confidence results receive a reduced share of this maximum.",
+      options: [
+        option(
+          weights,
+          "fingerprint_tampering",
+          "High-confidence maximum",
+        ),
+      ],
     },
     {
       key: "fingerprint_virtual_machine",
@@ -354,6 +462,92 @@ export function providerScoreDefinitions(
       title: "High-activity device",
       description: "Fingerprint classifies the device as unusually active.",
       options: [option(weights, "fingerprint_high_activity", "Detected")],
+    },
+    {
+      key: "fingerprint_browser_context",
+      title: "Browser concealment and tooling",
+      description:
+        "Supporting browser evidence. Privacy settings or open developer tools are not treated as fraud on their own.",
+      options: [
+        option(
+          weights,
+          "fingerprint_privacy_settings",
+          "Privacy-focused settings",
+        ),
+        option(
+          weights,
+          "fingerprint_developer_tools",
+          "Developer tools or CDP",
+        ),
+        option(weights, "fingerprint_rare_device", "Rare device"),
+      ],
+    },
+    {
+      key: "fingerprint_velocity",
+      title: "Fingerprint velocity",
+      description:
+        "Uses Fingerprint's 5-minute, 1-hour, and 24-hour device, account, country, and IP activity counters.",
+      options: [
+        option(
+          weights,
+          "fingerprint_velocity_ip_rotation",
+          "Rapid IP rotation",
+        ),
+        option(
+          weights,
+          "fingerprint_velocity_country_hop",
+          "Rapid country changes",
+        ),
+        option(
+          weights,
+          "fingerprint_velocity_multiple_accounts",
+          "Multiple linked accounts/devices",
+        ),
+        option(
+          weights,
+          "fingerprint_velocity_automation",
+          "Automation-like event velocity",
+        ),
+      ],
+    },
+    {
+      key: "fingerprint_mobile_integrity",
+      title: "Mobile device integrity",
+      description:
+        "Applies when a Fingerprint mobile SDK event is received; browser events do not produce these signals.",
+      options: [
+        option(weights, "fingerprint_mobile_rooted", "Root apps detected"),
+        option(weights, "fingerprint_mobile_emulator", "Emulator detected"),
+        option(
+          weights,
+          "fingerprint_mobile_cloned_app",
+          "Cloned app detected",
+        ),
+        option(
+          weights,
+          "fingerprint_mobile_jailbroken",
+          "Jailbreak detected",
+        ),
+        option(weights, "fingerprint_mobile_frida", "Frida detected"),
+        option(
+          weights,
+          "fingerprint_mobile_location_spoofing",
+          "Location spoofing",
+        ),
+        option(weights, "fingerprint_mobile_mitm", "MitM detected"),
+        option(
+          weights,
+          "fingerprint_mobile_recent_factory_reset",
+          "Factory reset within 30 days",
+        ),
+      ],
+    },
+    {
+      key: "fingerprint_proximity",
+      title: "Coarse proximity evidence",
+      description:
+        "Stores only a hashed coarse-zone identifier when the user already granted location permission. It does not add risk by default.",
+      options: [option(weights, "fingerprint_proximity", "Evidence only")],
     },
     {
       key: "fingerprint_suspect_score",
