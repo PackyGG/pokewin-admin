@@ -28,6 +28,17 @@ test("creator stats are section-bound and aggregate every owned code", async () 
   assert.match(service, /acu\.referred_user_id <> acu\.affiliate_user_id/);
   assert.match(service, /COUNT\(DISTINCT acu\.referred_user_id\)::text AS signups/);
   assert.match(service, /usage_type::text = 'deposit'/);
+  assert.match(service, /WITH covered_deposits AS/);
+  assert.match(service, /SELECT DISTINCT ON \(lt\.id\)/);
+  assert.match(service, /lt\.type = 'deposit'/);
+  assert.match(service, /lt\.status = 'completed'/);
+  assert.match(service, /lt\.created_at >= NOW\(\) - INTERVAL '30 days'/);
+  assert.match(service, /acu\.created_at >= lt\.created_at - INTERVAL '7 days'/);
+  assert.match(service, /COALESCE\(SUM\(amount_usd\), 0\)::text AS deposits_usd/);
+  assert.doesNotMatch(
+    service,
+    /SUM\(acu\.deposit_amount_usd::numeric\)[\s\S]*AS deposits_usd/,
+  );
   assert.match(service, /firstTimeDepositors/);
   assert.match(service, /earningsUsd/);
   assert.doesNotMatch(scopes, /"discord:creator:read"/);

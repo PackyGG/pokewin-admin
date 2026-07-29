@@ -181,9 +181,13 @@ type UsageStatsRow = {
   signups: string;
   first_time_depositors: string;
   active_players: string;
-  deposits_usd: string;
   wager_usd: string;
   earnings_usd: string;
+};
+
+type DepositStatsRow = {
+  code: string | null;
+  deposits_usd: string;
 };
 
 type ClickStatsRow = {
@@ -210,6 +214,7 @@ function emptyCodeStats(code: string | null): CreatorCodeStats {
 function readCodeStats(
   code: string | null,
   usage: UsageStatsRow | undefined,
+  deposits: DepositStatsRow | undefined,
   clicks: ClickStatsRow | undefined,
 ): CreatorCodeStats {
   return {
@@ -218,7 +223,7 @@ function readCodeStats(
     signups: Number(usage?.signups ?? 0),
     firstTimeDepositors: Number(usage?.first_time_depositors ?? 0),
     activePlayers: Number(usage?.active_players ?? 0),
-    depositsUsd: money(usage?.deposits_usd ?? 0),
+    depositsUsd: money(deposits?.deposits_usd ?? 0),
     wagerUsd: money(usage?.wager_usd ?? 0),
     earningsUsd: money(usage?.earnings_usd ?? 0),
   };
@@ -323,7 +328,11 @@ export async function getCreatorSetupStats(input: {
     excludedUserIds.length > 0
       ? sql`AND acu.referred_user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
       : sql``;
-  const [usageResult, clickResult] = await Promise.all([
+  const excludedDepositFilter =
+    excludedUserIds.length > 0
+      ? sql`AND lt.user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
+      : sql``;
+  const [usageResult, depositResult, clickResult] = await Promise.all([
     db.execute<UsageStatsRow>(sql`
       SELECT
         CASE
@@ -337,7 +346,6 @@ export async function getCreatorSetupStats(input: {
         COUNT(DISTINCT acu.referred_user_id) FILTER (
           WHERE acu.usage_type::text IN ('deposit', 'wager')
         )::text AS active_players,
-        COALESCE(SUM(acu.deposit_amount_usd::numeric), 0)::text AS deposits_usd,
         COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager_usd,
         COALESCE(SUM(acu.referrer_cut_usd::numeric), 0)::text AS earnings_usd
       FROM affiliate_code_usages acu
@@ -350,6 +358,38 @@ export async function getCreatorSetupStats(input: {
         AND referred.role::text NOT IN ('admin', 'support', 'creator')
         ${excludedFilter}
       GROUP BY GROUPING SETS ((UPPER(acu.code)), ())
+    `),
+    db.execute<DepositStatsRow>(sql`
+      WITH covered_deposits AS (
+        SELECT DISTINCT ON (lt.id)
+          lt.id,
+          UPPER(acu.code) AS code,
+          lt.amount::numeric AS amount_usd
+        FROM ledger_transactions lt
+        JOIN "user" referred ON referred.id = lt.user_id
+        JOIN affiliate_code_usages acu
+          ON acu.referred_user_id = lt.user_id
+          AND acu.affiliate_user_id = ${setup.creator_user_id}
+          AND UPPER(acu.code) = ANY(${pgArrayParam(codes)}::text[])
+          AND acu.status::text = 'completed'
+          AND acu.created_at <= lt.created_at
+          AND acu.created_at >= lt.created_at - INTERVAL '7 days'
+          AND acu.referred_user_id <> acu.affiliate_user_id
+        WHERE lt.type = 'deposit'
+          AND lt.status = 'completed'
+          AND lt.created_at >= NOW() - INTERVAL '30 days'
+          AND referred.role::text NOT IN ('admin', 'support', 'creator')
+          ${excludedDepositFilter}
+        ORDER BY lt.id, acu.created_at DESC, acu.id DESC
+      )
+      SELECT
+        CASE
+          WHEN GROUPING(code) = 1 THEN NULL
+          ELSE code
+        END AS code,
+        COALESCE(SUM(amount_usd), 0)::text AS deposits_usd
+      FROM covered_deposits
+      GROUP BY GROUPING SETS ((code), ())
     `),
     db.execute<ClickStatsRow>(sql`
       SELECT
@@ -375,7 +415,13 @@ export async function getCreatorSetupStats(input: {
       .filter((row) => row.code)
       .map((row) => [row.code!, row]),
   );
+  const depositsByCode = new Map(
+    depositResult.rows
+      .filter((row) => row.code)
+      .map((row) => [row.code!, row]),
+  );
   const totalUsage = usageResult.rows.find((row) => row.code === null);
+  const totalDeposits = depositResult.rows.find((row) => row.code === null);
   const totalClicks = clickResult.rows.find((row) => row.code === null);
 
   return {
@@ -386,9 +432,14 @@ export async function getCreatorSetupStats(input: {
       username: creator.username,
       codes,
     },
-    totals: readCodeStats(null, totalUsage, totalClicks),
+    totals: readCodeStats(null, totalUsage, totalDeposits, totalClicks),
     byCode: codes.map((code) =>
-      readCodeStats(code, usageByCode.get(code), clicksByCode.get(code)),
+      readCodeStats(
+        code,
+        usageByCode.get(code),
+        depositsByCode.get(code),
+        clicksByCode.get(code),
+      ),
     ),
   };
 }
