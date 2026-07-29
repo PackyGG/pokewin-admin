@@ -13,7 +13,7 @@ import { toast } from "sonner";
 import {
   createRefundBatch,
   processNextRefund,
-  recoverRefundedBatch,
+  recoverAllRefundedAccounts,
   type RefundBatchProgress,
 } from "./refund-actions";
 import type {
@@ -71,7 +71,7 @@ export function RefundsPanel({
   const [credential, setCredential] = useState("");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<RefundBatchProgress | null>(null);
-  const [recoveryBatchId, setRecoveryBatchId] = useState<string | null>(null);
+  const [recoveryOpen, setRecoveryOpen] = useState(false);
   const [recoveryCredential, setRecoveryCredential] = useState("");
 
   const grouped = useMemo(() => {
@@ -151,11 +151,10 @@ export function RefundsPanel({
   }
 
   async function recoverBatch() {
-    if (!recoveryBatchId || !recoveryCredential || working) return;
+    if (!recoveryOpen || !recoveryCredential || working) return;
     setWorking(true);
     try {
-      const result = await recoverRefundedBatch({
-        batchId: recoveryBatchId,
+      const result = await recoverAllRefundedAccounts({
         credential: recoveryCredential,
       });
       if (!result.success) {
@@ -171,7 +170,7 @@ export function RefundsPanel({
           currency: "USD",
         }).format(recovery.recoveredTotalUsd)}.`,
       );
-      setRecoveryBatchId(null);
+      setRecoveryOpen(false);
       setRecoveryCredential("");
     } catch (error) {
       toast.error(
@@ -359,7 +358,23 @@ export function RefundsPanel({
 
       {recentBatches.length > 0 && (
         <section className="space-y-3">
-          <h2 className="font-semibold">Recent refund batches</h2>
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <h2 className="font-semibold">Recent refund batches</h2>
+            {recentBatches.some((batch) => batch.succeeded > 0) && (
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={working}
+                onClick={() => {
+                  setRecoveryOpen(true);
+                  setRecoveryCredential("");
+                }}
+              >
+                <ShieldBan className="size-4" />
+                Ban &amp; recover all successful refunds
+              </Button>
+            )}
+          </div>
           <div className="divide-y rounded-xl border">
             {recentBatches.map((batch) => (
               <div
@@ -387,20 +402,6 @@ export function RefundsPanel({
                     >
                       <RotateCcw className="size-4" />
                       Resume
-                    </Button>
-                  )}
-                  {batch.pending === 0 && batch.succeeded > 0 && (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      disabled={working}
-                      onClick={() => {
-                        setRecoveryBatchId(batch.batchId);
-                        setRecoveryCredential("");
-                      }}
-                    >
-                      <ShieldBan className="size-4" />
-                      Ban &amp; recover
                     </Button>
                   )}
                 </div>
@@ -447,9 +448,9 @@ export function RefundsPanel({
       </AlertDialog>
 
       <AlertDialog
-        open={recoveryBatchId !== null}
+        open={recoveryOpen}
         onOpenChange={(openValue) => {
-          if (!openValue && !working) setRecoveryBatchId(null);
+          if (!openValue && !working) setRecoveryOpen(false);
         }}
       >
         <AlertDialogContent className="sm:max-w-lg">

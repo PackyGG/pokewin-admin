@@ -131,6 +131,29 @@ async function loadRefundRecoveryTargets(
   }));
 }
 
+async function loadAllRefundRecoveryTargets(): Promise<
+  RefundRecoveryTarget[]
+> {
+  const rows = (
+    await adminDrizzle.execute<{
+      user_id: string;
+      deposit_intent_ids: string[];
+    }>(sql`
+      SELECT
+        user_id,
+        array_agg(DISTINCT deposit_intent_id::text) AS deposit_intent_ids
+      FROM admin_whop_refund_items
+      WHERE status IN ('succeeded', 'already_refunded')
+      GROUP BY user_id
+      ORDER BY user_id
+    `)
+  ).rows;
+  return rows.map((row) => ({
+    userId: row.user_id,
+    depositIntentIds: row.deposit_intent_ids,
+  }));
+}
+
 async function recoverRefundedUser(
   db: MainDrizzleDb,
   target: RefundRecoveryTarget,
@@ -401,8 +424,10 @@ async function recoverRefundedUser(
 async function recoverRefundedAccountsForBatch(
   batchId: string,
   adminUserId: string,
+  targetsOverride?: RefundRecoveryTarget[],
 ): Promise<RefundRecoveryResult> {
-  const targets = await loadRefundRecoveryTargets(batchId);
+  const targets =
+    targetsOverride ?? (await loadRefundRecoveryTargets(batchId));
   const db = await getPrimaryDrizzleDb();
   const recovered: UserRecoveryResult[] = [];
   for (const target of targets) {
@@ -737,6 +762,26 @@ export async function recoverRefundedBatch(input: {
     const result = await recoverRefundedAccountsForBatch(
       input.batchId,
       session.userId,
+    );
+    revalidatePath("/antifraud/refunds");
+    revalidatePath("/users");
+    return ok(result);
+  } catch (error) {
+    return fail(actionErrorMessage(error));
+  }
+}
+
+export async function recoverAllRefundedAccounts(input: {
+  credential: string;
+}): Promise<ServerActionResult<RefundRecoveryResult>> {
+  const session = await requireOwner();
+  try {
+    await require2FA(session.userId, input.credential);
+    const targets = await loadAllRefundRecoveryTargets();
+    const result = await recoverRefundedAccountsForBatch(
+      "all-successful-refunds",
+      session.userId,
+      targets,
     );
     revalidatePath("/antifraud/refunds");
     revalidatePath("/users");

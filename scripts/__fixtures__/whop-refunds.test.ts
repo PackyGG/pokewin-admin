@@ -122,7 +122,9 @@ test("completed-batch recovery is owner-only, step-up gated, and visible", () =>
   assert.ok(recovery >= 0);
   assert.ok(owner > recovery);
   assert.ok(stepUp > owner);
-  assert.match(refundsPanel, /Ban &amp; recover/);
+  assert.match(actions, /export async function recoverAllRefundedAccounts/);
+  assert.match(actions, /await loadAllRefundRecoveryTargets\(\)/);
+  assert.match(refundsPanel, /Ban &amp; recover all successful refunds/);
   assert.match(refundsPanel, /id="refund-recovery-2fa"/);
 });
 
