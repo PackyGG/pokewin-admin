@@ -124,9 +124,7 @@ export async function FiatOverviewTab() {
               />
               <Control
                 label="Provider net minus retained credit"
-                value={formatCurrency(
-                  data.providerNetUsd - data.netRetainedCreditUsd,
-                )}
+                value={formatCurrency(data.providerNetMinusRetainedUsd)}
               />
             </CardContent>
           </Card>

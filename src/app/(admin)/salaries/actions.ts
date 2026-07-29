@@ -6,6 +6,7 @@ import { count, eq } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { salary_employees, salary_payments, salary_payouts } from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { logError } from "@/lib/errors/logger";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { isAddress, normalizeAddress } from "@/lib/salary/wallet";
 
@@ -260,12 +261,19 @@ export async function deleteSalaryPayment(
     return { success: false, error: "Invalid id" };
   }
 
+  // A real DB failure (pool timeout, connection loss) must not be
+  // misreported as a benign missing row — log it and say so; "not found"
+  // is reserved for an actual zero-row delete.
+  let deleted: { id: string }[];
   try {
-    const deleted = await adminDrizzle.delete(salary_payments)
+    deleted = await adminDrizzle.delete(salary_payments)
       .where(eq(salary_payments.id, parsed.data.paymentId))
       .returning({ id: salary_payments.id });
-    if (deleted.length === 0) throw new Error("Payment not found");
-  } catch {
+  } catch (error) {
+    logError("salaries.deletePayment", "salary payment delete failed", error);
+    return { success: false, error: "Couldn't delete the payment. Please try again." };
+  }
+  if (deleted.length === 0) {
     return { success: false, error: "Payment not found" };
   }
 

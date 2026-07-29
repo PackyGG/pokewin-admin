@@ -28,6 +28,13 @@ export type FiatOverview = {
   customerPaidUsd: number;
   providerNetUsd: number;
   providerFeesUsd: number;
+  /**
+   * providerNetUsd − netRetainedCreditUsd, computed here from the raw
+   * integer-cent values so the reconciliation delta is exact — a render-time
+   * float subtraction could fabricate or hide the cent-level discrepancies
+   * this figure exists to expose.
+   */
+  providerNetMinusRetainedUsd: number;
   last24HoursIntents: number;
   last24HoursCompletedUsd: number;
   latestIntentAt: string | null;
@@ -57,6 +64,7 @@ export const EMPTY_FIAT_OVERVIEW: FiatOverview = {
   customerPaidUsd: 0,
   providerNetUsd: 0,
   providerFeesUsd: 0,
+  providerNetMinusRetainedUsd: 0,
   last24HoursIntents: 0,
   last24HoursCompletedUsd: 0,
   latestIntentAt: null,
@@ -86,6 +94,7 @@ type RawOverview = {
   customer_paid_cents: string;
   provider_net_cents: string;
   provider_fees_cents: string;
+  provider_net_minus_retained_cents: string;
   last_24_hours_intents: string;
   last_24_hours_completed_cents: string;
   latest_intent_at: string | null;
@@ -216,6 +225,10 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
       i.*,
       c.*,
       (
+        c.provider_net_cents::numeric -
+        c.net_retained_credit_cents::numeric
+      )::text AS provider_net_minus_retained_cents,
+      (
         SELECT COALESCE(SUM(pf.amount_cents), 0)::text
         FROM payment_provider_fees pf
         INNER JOIN fiat_deposit_intents i ON i.id = pf.deposit_intent_id
@@ -273,6 +286,8 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
     customerPaidUsd: number(row.customer_paid_cents) / 100,
     providerNetUsd: number(row.provider_net_cents) / 100,
     providerFeesUsd: number(row.provider_fees_cents) / 100,
+    providerNetMinusRetainedUsd:
+      number(row.provider_net_minus_retained_cents) / 100,
     last24HoursIntents: number(row.last_24_hours_intents),
     last24HoursCompletedUsd: number(row.last_24_hours_completed_cents) / 100,
     latestIntentAt: row.latest_intent_at,
@@ -287,7 +302,7 @@ async function computeFiatOverview(env: DbEnv): Promise<FiatOverview> {
 
 const cachedFiatOverview = unstable_cache(
   computeFiatOverview,
-  ["fiat-overview-v2"],
+  ["fiat-overview-v3"],
   { revalidate: 60, tags: [FIAT_CACHE_TAG] },
 );
 

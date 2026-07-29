@@ -1,9 +1,10 @@
 import { Coins, Users, Receipt, Wallet } from "lucide-react";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { salary_employees, salary_payments } from "@/lib/db-schema/admin/schema";
 import { requireMotha } from "@/lib/salary/motha-gate";
 import { addressKind } from "@/lib/salary/wallet";
+import { toNumber } from "@/lib/utils/decimal";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
 import { SalariesClient } from "./salaries-client";
@@ -39,7 +40,7 @@ function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
 
 export default async function SalariesPage() {
   await requireMotha();
-  const [employees, payments] = await Promise.all([
+  const [employees, payments, monthlyBudgetRows] = await Promise.all([
     adminDrizzle.select().from(salary_employees)
       .orderBy(desc(salary_employees.active), salary_employees.discord_name),
     adminDrizzle.select({
@@ -49,6 +50,19 @@ export default async function SalariesPage() {
     }).from(salary_payments)
       .innerJoin(salary_employees, eq(salary_employees.id, salary_payments.employee_id))
       .orderBy(desc(salary_payments.paid_at)).limit(100),
+    adminDrizzle
+      .select({
+        value: sql<string>`COALESCE(SUM(
+          ${salary_employees.salary_usdt} *
+          CASE
+            WHEN ${salary_employees.cadence} = 'weekly' THEN 4
+            WHEN ${salary_employees.cadence} = 'biweekly' THEN 2
+            ELSE 1
+          END
+        ), 0)::text`,
+      })
+      .from(salary_employees)
+      .where(eq(salary_employees.active, true)),
   ]);
 
   const now = new Date();
@@ -62,17 +76,9 @@ export default async function SalariesPage() {
   //   monthly  → ×1
   // Fallback: anything else (or stale rows from before the cadence
   // column existed) is treated as monthly.
-  const periodsPerMonth = (cadence: string): number => {
-    if (cadence === "weekly") return 4;
-    if (cadence === "biweekly") return 2;
-    return 1;
-  };
-  const monthlyBudget = employees
-    .filter((e) => e.active)
-    .reduce(
-      (sum, e) => sum + Number(e.salary_usdt) * periodsPerMonth(e.cadence),
-      0,
-    );
+  // PostgreSQL performs the complete sum in NUMERIC arithmetic. Convert only
+  // the final display value; no per-row salary math runs through JS floats.
+  const monthlyBudget = toNumber(monthlyBudgetRows[0]?.value);
   // Address-type breakdown for the overview tile — derived purely from
   // each saved address's format (ERC-20 0x… vs Solana base58).
   const erc20Count = employees.filter(
