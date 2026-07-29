@@ -9,6 +9,7 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
+import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 
 export const CREATOR_SETUP_GUILD_ID = "1402743122789929022";
 
@@ -59,6 +60,32 @@ export type CreatorCodeStats = {
   depositsUsd: number;
   wagerUsd: number;
   earningsUsd: number;
+};
+
+export type CreatorSetupDeal = {
+  generatedAt: string;
+  creator: {
+    userId: string;
+    username: string | null;
+  };
+  deal: {
+    status: "scheduled" | "active";
+    weekStartUtc: string;
+    weekEndUtc: string;
+    fillsAllowed: number;
+    fillsUsed: number;
+    perFillUsd: number;
+    conversionRatePercent: number;
+    withdrawalCapUsd: number | null;
+    withdrawalCapUsedUsd: number;
+    cooldownMinutes: number;
+    maxTipPerStreamUsd: number;
+    maxTipPerUserUsd: number;
+    maxSponsoredBattleUsd: number;
+    maxSponsorshipPerStreamUsd: number;
+    allowSiteLeaderboards: boolean;
+    allowCodeLeaderboards: boolean;
+  } | null;
 };
 
 export class CreatorSetupError extends Error {
@@ -197,12 +224,12 @@ function readCodeStats(
   };
 }
 
-export async function getCreatorSetupStats(input: {
+async function requireLinkedSetupActor(input: {
   guildId: string;
   categoryId: string;
   channelId: string;
   actorDiscordUserId: string;
-}): Promise<CreatorSetupStats> {
+}): Promise<SetupRow & { creator_user_id: string }> {
   const setupResult = await adminDrizzle.execute<SetupRow>(sql`
     SELECT
       id,
@@ -243,7 +270,7 @@ export async function getCreatorSetupStats(input: {
     throw new CreatorSetupError(
       403,
       "setup_actor_forbidden",
-      "Only this creator or the staff member who created the section can view its stats.",
+      "Only this creator or the staff member who created the section can view its data.",
     );
   }
   if (!setup.creator_user_id) {
@@ -253,6 +280,16 @@ export async function getCreatorSetupStats(input: {
       "This creator section is not linked to a Packy account yet.",
     );
   }
+  return setup as SetupRow & { creator_user_id: string };
+}
+
+export async function getCreatorSetupStats(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorSetupStats> {
+  const setup = await requireLinkedSetupActor(input);
 
   const db = getProdReadDrizzleDb();
   const [creator, ownedCodes, excludedUserIds] = await Promise.all([
@@ -353,6 +390,58 @@ export async function getCreatorSetupStats(input: {
     byCode: codes.map((code) =>
       readCodeStats(code, usageByCode.get(code), clicksByCode.get(code)),
     ),
+  };
+}
+
+function creatorFacingDeal(deal: CreatorDealResponse): NonNullable<CreatorSetupDeal["deal"]> {
+  return {
+    status: deal.status === "scheduled" ? "scheduled" : "active",
+    weekStartUtc: deal.week_start_utc,
+    weekEndUtc: deal.week_end_utc,
+    fillsAllowed: Math.max(0, deal.fills_allowed),
+    fillsUsed: Math.max(0, deal.fills_used),
+    perFillUsd: money(deal.per_fill_amount_usd),
+    conversionRatePercent: Math.round(deal.conversion_rate_bps) / 100,
+    withdrawalCapUsd:
+      deal.total_withdraw_cap_usd === null
+        ? null
+        : money(deal.total_withdraw_cap_usd),
+    withdrawalCapUsedUsd: money(deal.withdraw_cap_used_usd),
+    cooldownMinutes: Math.max(0, deal.cooldown_minutes),
+    maxTipPerStreamUsd: money(deal.max_tip_per_stream_usd),
+    maxTipPerUserUsd: money(deal.max_tip_per_user_usd),
+    maxSponsoredBattleUsd: money(deal.max_sponsored_battle_usd),
+    maxSponsorshipPerStreamUsd: money(
+      deal.max_sponsorship_per_stream_usd,
+    ),
+    allowSiteLeaderboards: deal.allow_site_leaderboards,
+    allowCodeLeaderboards: deal.allow_code_leaderboards,
+  };
+}
+
+export async function getCreatorSetupDeal(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorSetupDeal> {
+  const setup = await requireLinkedSetupActor(input);
+  const creator = await requireActiveCreator(setup.creator_user_id);
+  const deals = await creatorsApi.listDeals(setup.creator_user_id, {
+    limit: 50,
+    offset: 0,
+  });
+  const current =
+    deals.data.find((deal) => deal.status === "active") ??
+    deals.data
+      .filter((deal) => deal.status === "scheduled")
+      .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc))[0] ??
+    null;
+
+  return {
+    generatedAt: new Date().toISOString(),
+    creator: { userId: creator.id, username: creator.username },
+    deal: current ? creatorFacingDeal(current) : null,
   };
 }
 
