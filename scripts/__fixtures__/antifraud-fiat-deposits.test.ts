@@ -2,6 +2,11 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import {
+  getStaffCheckedWithdrawalUserIds,
+  type StaffWithdrawalReviewEvent,
+} from "../../src/lib/antifraud/withdrawal-review-status";
+
 const read = (path: string) => readFileSync(path, "utf8");
 
 test("fiat deposits are a first-class Fraud transaction workspace", () => {
@@ -56,6 +61,10 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /xl:grid-cols-5/);
   assert.match(page, /canManageAntifraud\(session\)/);
   assert.match(page, /<FiatKycAction/);
+  assert.match(page, /getFiatStaffCheckedWithdrawalUserIds/);
+  assert.match(page, /staffChecked=\{checkedWithdrawalUsers\.has\(item\.user_id\)\}/);
+  assert.match(page, /Account previously checked by staff/);
+  assert.match(page, /BadgeCheck/);
   assert.match(kycAction, /requireFiatDepositKyc/);
   assert.match(kycAction, /KYC is now required and withdrawals are locked/);
   assert.match(kycAction, /const isRequired = required \|\| currentlyRequired/);
@@ -74,6 +83,41 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(detail, /Money trail/);
   assert.match(detail, /Whop risk signals/);
   assert.doesNotMatch(detail, /redirect\(["']\/fiat/);
+});
+
+test("fiat rows mark only a completed staff withdrawal-lock review", () => {
+  const event = (
+    targetUserId: string,
+    eventType: StaffWithdrawalReviewEvent["eventType"],
+    createdAt: string,
+  ): StaffWithdrawalReviewEvent => ({
+    targetUserId,
+    eventType,
+    createdAt,
+  });
+  const events: StaffWithdrawalReviewEvent[] = [
+    event("checked", "locked_withdrawals_crypto_enabled", "2026-07-01T10:00:00Z"),
+    event("checked", "locked_withdrawals_items_enabled", "2026-07-01T10:00:00Z"),
+    event("checked", "locked_withdrawals_items_disabled", "2026-07-01T10:30:00Z"),
+    event("checked", "locked_withdrawals_crypto_disabled", "2026-07-01T10:31:00Z"),
+    event("partial", "locked_withdrawals_crypto_enabled", "2026-07-01T10:00:00Z"),
+    event("partial", "locked_withdrawals_crypto_disabled", "2026-07-01T10:30:00Z"),
+    event("relocked", "locked_withdrawals_crypto_enabled", "2026-07-01T10:00:00Z"),
+    event("relocked", "locked_withdrawals_items_enabled", "2026-07-01T10:00:00Z"),
+    event("relocked", "locked_withdrawals_crypto_disabled", "2026-07-01T10:30:00Z"),
+    event("relocked", "locked_withdrawals_items_disabled", "2026-07-01T10:30:00Z"),
+    event("relocked", "locked_withdrawals_crypto_enabled", "2026-07-01T11:00:00Z"),
+  ];
+
+  assert.deepEqual(getStaffCheckedWithdrawalUserIds(events), ["checked"]);
+});
+
+test("fiat staff-check history is one bounded ADMIN audit query", () => {
+  const query = read("src/lib/queries/fiat-withdrawal-review.ts");
+  assert.match(query, /adminDrizzle/);
+  assert.match(query, /inArray\(admin_audit_events\.target_user_id, distinctUserIds\)/);
+  assert.match(query, /STAFF_WITHDRAWAL_REVIEW_EVENT_TYPES/);
+  assert.doesNotMatch(query, /getPrimaryDrizzleDb|getReadDrizzleDb/);
 });
 
 test("fiat assessment API enforces exclusions and persists review state", () => {

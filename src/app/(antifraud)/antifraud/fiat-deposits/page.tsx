@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import {
   ArrowRight,
+  BadgeCheck,
   Banknote,
   ChevronLeft,
   ChevronRight,
@@ -29,6 +30,8 @@ import {
   type FiatVerdict,
 } from "@/lib/antifraud/fiat-deposits-api";
 import { canManageAntifraud } from "@/lib/antifraud/access";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { getFiatStaffCheckedWithdrawalUserIds } from "@/lib/queries/fiat-withdrawal-review";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
@@ -256,6 +259,16 @@ async function FiatContent({
   });
   if (!result.configured) return <Empty text="The Antifraud monitor is not configured." />;
   if (result.error) return <Empty text="Fiat risk assessments could not be loaded." />;
+  const { data: checkedWithdrawalUserIds } = await safeQuery(
+    () =>
+      getFiatStaffCheckedWithdrawalUserIds(
+        result.data.map((item) => item.user_id),
+      ),
+    [],
+    "antifraud.fiatDeposits.staffChecked",
+    3_000,
+  );
+  const checkedWithdrawalUsers = new Set(checkedWithdrawalUserIds);
   return (
     <div className="space-y-4">
       {result.summary && <Summary summary={result.summary} />}
@@ -268,6 +281,7 @@ async function FiatContent({
               key={item.deposit_intent_id}
               item={item}
               canManageKyc={canManageKyc}
+              staffChecked={checkedWithdrawalUsers.has(item.user_id)}
             />
           ))}
         </div>
@@ -385,9 +399,11 @@ function FiatRiskScoreGuide() {
 function FiatRow({
   item,
   canManageKyc,
+  staffChecked,
 }: {
   item: FiatAssessment;
   canManageKyc: boolean;
+  staffChecked: boolean;
 }) {
   const style = verdictStyle(item.verdict);
   const VerdictIcon = style.icon;
@@ -409,6 +425,16 @@ function FiatRow({
           <div className="min-w-0">
             <div className="flex items-center gap-1.5">
               <p className="truncate font-semibold">{name}</p>
+              {staffChecked && (
+                <span
+                  aria-label="Account previously checked by staff"
+                  title="Account previously checked: staff cleared both crypto and item withdrawal locks."
+                  className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-emerald-600 dark:text-emerald-400"
+                >
+                  <BadgeCheck className="size-3" aria-hidden />
+                  Checked
+                </span>
+              )}
               <HostLink
                 href={`/users/${item.user_id}`}
                 target="_blank"
