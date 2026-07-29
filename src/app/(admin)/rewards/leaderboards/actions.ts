@@ -487,8 +487,11 @@ export async function endRacePeriodNow(periodId: string) {
 
   await db.transaction(async (tx) => {
     // Snapshot generation: aggregate game_sessions over the period range,
-    // assign dense_rank, exclude bots and ineligible roles. Mirrors
-    // RaceSnapshotRepository.generateSnapshotsForPeriod in the backend.
+    // assign positions, exclude bots and ineligible roles. Mirrors the live
+    // standings query (getLiveRaceStandings in src/lib/queries/races.ts):
+    // race_eligible filter, COALESCE(weighted_bet_amount, bet_amount),
+    // HAVING > 0 and ROW_NUMBER with the same user_id tie-break — so the
+    // frozen snapshot pays exactly the ranks the live leaderboard showed.
     await tx.execute(sql`
       INSERT INTO race_leaderboard_snapshots
         (user_id, race_type, period_start, period_end, position, wagered_usd)
@@ -497,20 +500,22 @@ export async function endRacePeriodNow(periodId: string) {
         ${existing.race_type}::race_type,
         ${periodStartIso}::date,
         ${existing.ends_at}::timestamp,
-        dense_rank() OVER (ORDER BY w.wagered_usd::decimal DESC),
+        (ROW_NUMBER() OVER (ORDER BY w.wagered_usd::decimal DESC, w.user_id ASC))::int,
         w.wagered_usd
       FROM (
         SELECT
           gs.user_id,
-          SUM(gs.bet_amount) AS wagered_usd
+          SUM(COALESCE(gs.weighted_bet_amount, gs.bet_amount)) AS wagered_usd
         FROM game_sessions gs
         INNER JOIN "user" u ON u.id = gs.user_id
-        WHERE gs.user_id IS NOT NULL
+        WHERE gs.race_eligible = true
+          AND gs.user_id IS NOT NULL
           AND gs.created_at >= ${existing.starts_at}
           AND gs.created_at < ${existing.ends_at}
           AND (u.role IS NULL OR u.role NOT IN ('admin', 'creator', 'support'))
           ${blacklistFilter}
         GROUP BY gs.user_id
+        HAVING SUM(COALESCE(gs.weighted_bet_amount, gs.bet_amount)) > 0
       ) w
       ON CONFLICT (user_id, race_type, period_start) DO NOTHING
     `);
