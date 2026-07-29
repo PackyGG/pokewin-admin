@@ -21,7 +21,7 @@ import {
 
 /**
  * ──────────────────────────────────────────────────────────────────────────
- *  InspectorSheet + QuickEditDrawer  (pokewin-admin · src/components/entity-surface)
+ *  InspectorSheet  (pokewin-admin · src/components/entity-surface)
  * ──────────────────────────────────────────────────────────────────────────
  *
  * Side-sheet primitives that let the operator view an entity's detail (or
@@ -141,91 +141,6 @@ export function InspectorSheet({
         </SheetHeader>
 
         {/* Scrollable, DEFERRED body — mounts only while open. */}
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <LazyModalContent
-            open={open}
-            minHeight={bodyMinHeight}
-            fallback={fallback}
-          >
-            {children}
-          </LazyModalContent>
-        </div>
-
-        {footer && <SheetFooter>{footer}</SheetFooter>}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-/**
- * Quick-edit drawer — a narrower side-sheet for fast scalar edits (a pack's
- * price + active toggle, a card's price) without a full page navigation. Same
- * deferral contract: the form body only mounts when open. Caller supplies the
- * form (a `"use client"` component invoking the existing server action) as
- * `children` and the submit row as `footer`.
- *
- * This is intentionally separate from `InspectorSheet`: the inspector is for
- * VIEWING (read-heavy, deep link out), the drawer is for a focused EDIT. Both
- * preserve list context.
- */
-export function QuickEditDrawer({
-  open,
-  onOpenChange,
-  icon: Icon,
-  accent = "amber",
-  title,
-  subtitle,
-  footer,
-  children,
-  fallback,
-  bodyMinHeight = 160,
-  width = "26rem",
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  icon?: React.ElementType;
-  accent?: AccentColor;
-  title: React.ReactNode;
-  subtitle?: React.ReactNode;
-  footer?: React.ReactNode;
-  children: React.ReactNode;
-  fallback?: React.ReactNode;
-  bodyMinHeight?: number | string;
-  width?: string;
-}) {
-  const colors = TILE_COLORS[accent];
-  return (
-    <Sheet open={open} onOpenChange={onOpenChange}>
-      <SheetContent
-        side="right"
-        className="sm:max-w-[var(--qe-w)] sm:w-[var(--qe-w)] gap-0 p-0"
-        style={{ ["--qe-w" as string]: width }}
-      >
-        <SheetHeader className="border-b p-4">
-          <div className="flex items-start gap-3 pr-8">
-            {Icon && (
-              <div
-                className={cn(
-                  "flex size-9 shrink-0 items-center justify-center rounded-xl border shadow-sm ring-1 ring-inset ring-white/5",
-                  colors.bg,
-                )}
-              >
-                <Icon className={cn("size-[18px]", colors.icon)} />
-              </div>
-            )}
-            <div className="min-w-0 flex-1">
-              <SheetTitle className="truncate pr-0 text-base">
-                {title}
-              </SheetTitle>
-              {subtitle && (
-                <SheetDescription className="truncate text-xs">
-                  {subtitle}
-                </SheetDescription>
-              )}
-            </div>
-          </div>
-        </SheetHeader>
-
         <div className="min-h-0 flex-1 overflow-y-auto p-4">
           <LazyModalContent
             open={open}

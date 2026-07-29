@@ -434,7 +434,7 @@ export const RESIDUAL_TYPES = [
  * over the ledger MISSES every upgrader win credit. `pnl.ts` corrects for
  * that by adding the `upgrader_games.won_amount` window/day-bucketed credit
  * back into `balanceChange` (see `calculateWindowedPnl` / `getDailyPnl` /
- * `getPnlBreakdownWindows` / `users-windowed-pnl.ts`). This flag stays
+ * `users-windowed-pnl.ts`). This flag stays
  * `false` regardless — that correction is a balance-movement fix, NOT a
  * ledger-type reclassification.
  *

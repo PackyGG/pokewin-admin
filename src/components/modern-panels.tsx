@@ -98,7 +98,7 @@ export const TILE_COLORS: Record<
  * Historically this was a rounded gradient container with blurred corner
  * glows + a sparkle texture — the "hero box" at the top of every admin page.
  * The owner found that generic title box to be useless chrome, so the whole
- * decorative treatment (gradient, three `blur-3xl` glows, `SparkleField`,
+ * decorative treatment (gradient, three `blur-3xl` glows, sparkle texture,
  * `surface-sheen`/`surface-raise`, border, `rounded-2xl/3xl`, the heavy
  * `p-5 sm:p-6` padding, and the top hairline highlight) was dropped.
  *

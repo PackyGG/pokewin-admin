@@ -16,9 +16,8 @@ import type { WindowedPnl } from "./pnl";
  * Callers like `getUserPnlBreakdown` need a rolling P&L ladder across 4
  * windows — 4 × 4 = 16 round-trips per page render without packing.
  *
- * Modeled on `getPnlBreakdownWindows` (`pnl.ts`) which packs three
- * windows into the global breakdown with the same CASE-WHEN-per-window
- * pattern. Same shape, scoped to one user.
+ * Packs the windows with the same CASE-WHEN-per-window pattern used by
+ * the global P&L queries, scoped to one user.
  *
  * Each returned WindowedPnl is byte-for-byte equal to what
  * `calculateWindowedPnl({ userId, since: window.since })` would return

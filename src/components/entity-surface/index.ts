@@ -34,7 +34,6 @@
  *   Detail without leaving the page
  *     InspectorSheet       — side-sheet detail preview with DEFERRED body
  *                            (mounts only when open) + "Open full page" deep link.
- *     QuickEditDrawer      — narrower side-sheet for focused scalar edits.
  *
  *   Status / states
  *     StatusBadge          — pill colored from the constants color-maps.
@@ -84,7 +83,7 @@ export {
   useEntitySelection,
 } from "./selection-toolbar";
 
-export { InspectorSheet, QuickEditDrawer } from "./inspector-sheet";
+export { InspectorSheet } from "./inspector-sheet";
 
 export { StatusBadge, ActiveBadge, MetaChip } from "./status-badge";
 

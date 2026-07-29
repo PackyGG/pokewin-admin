@@ -17,7 +17,6 @@ test("Leaderboards live in the Creators app, not the Admin sidebar", () => {
   const creatorPage = source(
     "src/app/(creator-hub)/creator-hub/leaderboards/page.tsx",
   );
-  const pnlBreakdown = source("src/components/period-pnl-breakdown.tsx");
 
   assert.doesNotMatch(nav, /id:\s*"nav\.creators\.leaderboards"/);
   assert.match(
@@ -27,10 +26,6 @@ test("Leaderboards live in the Creators app, not the Admin sidebar", () => {
   assert.match(
     creatorPage,
     /requireCreatorHubPageAccess\(\)/,
-  );
-  assert.match(
-    pnlBreakdown,
-    /label:\s*"Leaderboard Prizes"[\s\S]*?href:\s*"\/creator-hub\/leaderboards"/,
   );
   assert.doesNotMatch(
     nav,
