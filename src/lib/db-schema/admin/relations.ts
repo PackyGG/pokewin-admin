@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, discord_notification_guilds } from "./schema";
+import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, admin_whop_refund_batches, admin_whop_refund_items, discord_notification_guilds } from "./schema";
 
 export const admin_giveaway_actionsRelations = relations(admin_giveaway_actions, ({one}) => ({
 	admin_user: one(admin_users, {
@@ -52,6 +52,7 @@ export const admin_usersRelations = relations(admin_users, ({one, many}) => ({
 	}),
 	discord_notification_events: many(discord_notification_events),
 	discord_notification_routes: many(discord_notification_routes),
+	admin_whop_refund_batches: many(admin_whop_refund_batches),
 }));
 
 export const admin_rolesRelations = relations(admin_roles, ({many}) => ({
@@ -478,6 +479,21 @@ export const discord_notification_jobsRelations = relations(discord_notification
 	discord_notification_event: one(discord_notification_events, {
 		fields: [discord_notification_jobs.event_key],
 		references: [discord_notification_events.event_key]
+	}),
+}));
+
+export const admin_whop_refund_batchesRelations = relations(admin_whop_refund_batches, ({one, many}) => ({
+	admin_user: one(admin_users, {
+		fields: [admin_whop_refund_batches.requested_by],
+		references: [admin_users.id]
+	}),
+	admin_whop_refund_items: many(admin_whop_refund_items),
+}));
+
+export const admin_whop_refund_itemsRelations = relations(admin_whop_refund_items, ({one}) => ({
+	admin_whop_refund_batch: one(admin_whop_refund_batches, {
+		fields: [admin_whop_refund_items.batch_id],
+		references: [admin_whop_refund_batches.id]
 	}),
 }));
 

@@ -1732,6 +1732,63 @@ export const discord_creator_setups = pgTable("discord_creator_setups", {
 	check("discord_creator_setups_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text])`),
 ]);
 
+export const admin_whop_refund_batches = pgTable("admin_whop_refund_batches", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	requested_by: uuid(),
+	selection_mode: text().notNull(),
+	reason: text().notNull(),
+	status: text().default('pending').notNull(),
+	requested_count: integer().default(0).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("admin_whop_refund_batches_requested_created_idx").using("btree", table.requested_by.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("admin_whop_refund_batches_status_updated_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.updated_at.desc().nullsFirst().op("text_ops")),
+	foreignKey({
+			columns: [table.requested_by],
+			foreignColumns: [admin_users.id],
+			name: "admin_whop_refund_batches_requested_by_fkey"
+		}).onDelete("set null"),
+	check("admin_whop_refund_batches_requested_count_check", sql`requested_count >= 0`),
+	check("admin_whop_refund_batches_selection_mode_check", sql`selection_mode = ANY (ARRAY['payments'::text, 'users'::text, 'all'::text])`),
+	check("admin_whop_refund_batches_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'completed_with_issues'::text])`),
+]);
+
+export const admin_whop_refund_items = pgTable("admin_whop_refund_items", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	batch_id: uuid().notNull(),
+	user_id: text().notNull(),
+	deposit_intent_id: uuid().notNull(),
+	provider_payment_id: text().notNull(),
+	currency: text().notNull(),
+	original_amount_cents: integer().notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	lease_token: uuid(),
+	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
+	provider_status: text(),
+	provider_substatus: text(),
+	refunded_amount: numeric({ precision: 20, scale:  2 }),
+	error_code: text(),
+	error_message: text(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("admin_whop_refund_items_batch_status_idx").using("btree", table.batch_id.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")),
+	index("admin_whop_refund_items_user_created_idx").using("btree", table.user_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	foreignKey({
+			columns: [table.batch_id],
+			foreignColumns: [admin_whop_refund_batches.id],
+			name: "admin_whop_refund_items_batch_id_fkey"
+		}).onDelete("restrict"),
+	unique("admin_whop_refund_items_payment_unique").on(table.provider_payment_id),
+	check("admin_whop_refund_items_amount_check", sql`original_amount_cents > 0`),
+	check("admin_whop_refund_items_attempt_count_check", sql`attempt_count >= 0`),
+	check("admin_whop_refund_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'succeeded'::text, 'already_refunded'::text, 'not_refundable'::text, 'failed'::text, 'unknown'::text])`),
+]);
+
 export const discord_notification_channels = pgTable("discord_notification_channels", {
 	guild_id: text().notNull(),
 	channel_id: text().notNull(),

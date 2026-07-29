@@ -206,6 +206,12 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 - Staff payment-method coverage includes Admin card-payment list/detail, Antifraud live activity and Fiat Deposits list/detail, Fiat Deposit search, and all fiat Discord alerts. If Whop provides no supported payment-method evidence, render `Unknown`; never infer a wallet from unrelated payload fields.
 - Apple Pay receives 80% of the configured positive `fiat_deposit` Antifraud weight, rounded to the nearest whole point. Other methods, non-positive fiat weights, and non-fiat events are unchanged. This is a risk-weight adjustment, never an allowlist or containment bypass.
 
+### Whop refund operations
+
+- The owner-only Transactions â†’ Refunds workspace uses `WHOP_ADMIN_KEY` (with `WHOP_API_KEY` as a compatibility fallback) and the official Whop SDK. Refund mutations always disable SDK retries because Whop does not document an idempotency key for this endpoint.
+- Refund selection is revalidated against current fraud state immediately after owner step-up. Eligible accounts are analyst-confirmed `antifraud_reviews.status = 'flagged'` or actively KYC-contained by a fraud-specific actor/reason; merely open or historical KYC cases are not bulk-refund authority.
+- `admin_whop_refund_batches` and `admin_whop_refund_items` are the durable ADMIN audit/lease boundary. `provider_payment_id` is globally unique there, every item is retrieved live from Whop before refunding, and interrupted/uncertain mutations become `unknown` for manual reconciliation instead of automatic retry. MAIN payment and ledger state remains webhook-owned and read-only to this dashboard.
+
 ---
 
 ## 7. ⚠️ GOTCHAS / HARD-WON LESSONS (incident log)
