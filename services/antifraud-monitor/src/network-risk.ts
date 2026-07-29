@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { isIP } from "node:net";
 
 import type { FastifyBaseLogger } from "fastify";
@@ -9,6 +9,8 @@ import { severity } from "./scoring.js";
 const MAX_NETWORK_ACCOUNTS = 50_000;
 const SOURCE_BATCH_SIZE = 1_000;
 const WORKER_INTERVAL_MS = 30_000;
+const JOB_LEASE_MS = 3 * 60_000;
+const JOB_HEARTBEAT_MS = 30_000;
 const RECONCILIATION_INTERVAL_MS = 15 * 60_000;
 const CREATOR_RECONCILIATION_INTERVAL_MS = 24 * 60 * 60_000;
 
@@ -158,6 +160,9 @@ export function scoreAnalysisSignals(signals: AnalysisSignal[]): {
 export class NetworkRiskService {
   private timer: NodeJS.Timeout | null = null;
   private running = false;
+  private stopping = false;
+  private workerPromise: Promise<void> | null = null;
+  private readonly workerId = randomUUID();
   private lastAccountReconciliationAt = 0;
   private lastCreatorReconciliationAt = 0;
 
@@ -167,15 +172,19 @@ export class NetworkRiskService {
   ) {}
 
   async start(): Promise<void> {
+    this.stopping = false;
     await this.enqueueReconciliation("accounts");
     await this.enqueueReconciliation("creators:30d");
-    await this.work();
-    this.timer = setInterval(() => void this.work(), WORKER_INTERVAL_MS);
+    void this.runWorker();
+    this.timer = setInterval(() => void this.runWorker(), WORKER_INTERVAL_MS);
     this.timer.unref();
   }
 
   async stop(): Promise<void> {
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
+    this.stopping = true;
+    await this.workerPromise;
   }
 
   async enqueueAccount(userId: string, requestedBy?: string): Promise<string> {
@@ -233,6 +242,39 @@ export class NetworkRiskService {
     return id;
   }
 
+  private async enqueueMany(
+    targetKind: "account" | "creator",
+    targetIds: readonly string[],
+    days: number | null,
+  ): Promise<void> {
+    if (targetIds.length === 0) return;
+    await this.db.antifraud.query(
+      `
+        INSERT INTO network_scan_jobs(target_kind, target_id, window_days)
+        SELECT $1, target_id, $3
+        FROM unnest($2::text[]) AS queued(target_id)
+        ON CONFLICT (
+          target_kind, target_id, (COALESCE(window_days, -1))
+        ) WHERE status IN ('pending', 'running')
+        DO NOTHING
+      `,
+      [targetKind, targetIds, days],
+    );
+  }
+
+  private async runWorker(): Promise<void> {
+    if (this.workerPromise) return this.workerPromise;
+    const worker = this.work()
+      .catch((error) => {
+        this.log.error({ err: error }, "Antifraud network worker failed");
+      })
+      .finally(() => {
+        if (this.workerPromise === worker) this.workerPromise = null;
+      });
+    this.workerPromise = worker;
+    return worker;
+  }
+
   private async work(): Promise<void> {
     if (this.running) return;
     this.running = true;
@@ -250,9 +292,20 @@ export class NetworkRiskService {
         await this.enqueueReconciliation("creators:30d");
       }
 
+      await this.recoverStaleJobs();
       for (let processed = 0; processed < 10; processed += 1) {
+        if (this.stopping) break;
         const job = await this.claimJob();
         if (!job) break;
+        const heartbeat = setInterval(() => {
+          void this.heartbeatJob(job.id).catch((error) => {
+            this.log.error(
+              { err: error, jobId: job.id },
+              "Antifraud network job heartbeat failed",
+            );
+          });
+        }, JOB_HEARTBEAT_MS);
+        heartbeat.unref();
         try {
           if (job.target_kind === "account") {
             await this.scanAccount(job.target_id);
@@ -278,11 +331,29 @@ export class NetworkRiskService {
             "Antifraud network scan failed",
           );
           await this.completeJob(job.id, message.slice(0, 1_000));
+        } finally {
+          clearInterval(heartbeat);
         }
       }
     } finally {
       this.running = false;
     }
+  }
+
+  private async recoverStaleJobs(): Promise<void> {
+    await this.db.antifraud.query(
+      `
+        UPDATE network_scan_jobs
+        SET status='pending',
+            started_at=NULL,
+            lease_owner=NULL,
+            lease_expires_at=NULL,
+            heartbeat_at=NULL,
+            error_text='Recovered after stale worker lease'
+        WHERE status='running'
+          AND lease_expires_at < now()
+      `,
+    );
   }
 
   private async claimJob(): Promise<{
@@ -315,8 +386,16 @@ export class NetworkRiskService {
         return null;
       }
       await client.query(
-        "UPDATE network_scan_jobs SET status='running', started_at=now() WHERE id=$1",
-        [job.id],
+        `
+          UPDATE network_scan_jobs
+          SET status='running',
+              started_at=now(),
+              lease_owner=$2,
+              lease_expires_at=now() + ($3::text || ' milliseconds')::interval,
+              heartbeat_at=now()
+          WHERE id=$1
+        `,
+        [job.id, this.workerId, JOB_LEASE_MS],
       );
       await client.query("COMMIT");
       return job;
@@ -328,15 +407,45 @@ export class NetworkRiskService {
     }
   }
 
-  private async completeJob(id: string, error: string | null): Promise<void> {
-    await this.db.antifraud.query(
+  private async heartbeatJob(id: string): Promise<void> {
+    const result = await this.db.antifraud.query(
       `
         UPDATE network_scan_jobs
-        SET status=$2, error_text=$3, completed_at=now()
+        SET lease_expires_at=now() + ($3::text || ' milliseconds')::interval,
+            heartbeat_at=now()
         WHERE id=$1
+          AND status='running'
+          AND lease_owner=$2
       `,
-      [id, error ? "failed" : "completed", error],
+      [id, this.workerId, JOB_LEASE_MS],
     );
+    if (result.rowCount !== 1) {
+      throw new Error("Network scan job lease was lost");
+    }
+  }
+
+  private async completeJob(id: string, error: string | null): Promise<void> {
+    const result = await this.db.antifraud.query(
+      `
+        UPDATE network_scan_jobs
+        SET status=$3,
+            error_text=$4,
+            completed_at=now(),
+            lease_owner=NULL,
+            lease_expires_at=NULL,
+            heartbeat_at=NULL
+        WHERE id=$1
+          AND status='running'
+          AND lease_owner=$2
+      `,
+      [id, this.workerId, error ? "failed" : "completed", error],
+    );
+    if (result.rowCount !== 1) {
+      this.log.warn(
+        { jobId: id },
+        "Antifraud network job completion skipped after lease loss",
+      );
+    }
   }
 
   private async reconcile(target: string): Promise<void> {
@@ -350,7 +459,11 @@ export class NetworkRiskService {
           LIMIT 500
         `,
       );
-      for (const row of recent.rows) await this.enqueueAccount(row.user_id);
+      await this.enqueueMany(
+        "account",
+        recent.rows.map((row) => row.user_id),
+        null,
+      );
       return;
     }
     const rawWindow = target.split(":", 2)[1] ?? "30d";
@@ -365,9 +478,11 @@ export class NetworkRiskService {
         LIMIT 5_000
       `,
     );
-    for (const row of creators.rows) {
-      await this.enqueueCreator(row.user_id, window);
-    }
+    await this.enqueueMany(
+      "creator",
+      creators.rows.map((row) => row.user_id),
+      windowDays(window),
+    );
   }
 
   async scanAccount(rootUserId: string): Promise<string> {

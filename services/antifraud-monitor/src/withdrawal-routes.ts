@@ -332,6 +332,18 @@ export async function registerWithdrawalRoutes(
       const excluded = new Set(excludedUserIds(request.headers));
       const nextStatus = reviewStatusFor(body.action);
       const note = body.note?.trim() || null;
+      const visible = await db.antifraud.query<{ user_id: string }>(
+        `SELECT user_id FROM withdrawal_assessments WHERE withdrawal_id=$1`,
+        [id],
+      );
+      const visibleRow = visible.rows[0];
+      if (
+        !visibleRow ||
+        excluded.has(visibleRow.user_id) ||
+        (await userIsCreator(db, visibleRow.user_id))
+      ) {
+        return reply.code(404).send({ error: "not_found" });
+      }
       const client = await db.antifraud.connect();
       try {
         await client.query("BEGIN");
@@ -348,14 +360,7 @@ export async function registerWithdrawalRoutes(
           [id],
         );
         const row = current.rows[0];
-        if (!row) {
-          await client.query("ROLLBACK");
-          return reply.code(404).send({ error: "not_found" });
-        }
-        if (
-          excluded.has(row.user_id) ||
-          (await userIsCreator(db, row.user_id))
-        ) {
+        if (!row || row.user_id !== visibleRow.user_id) {
           await client.query("ROLLBACK");
           return reply.code(404).send({ error: "not_found" });
         }

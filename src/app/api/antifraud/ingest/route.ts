@@ -286,18 +286,30 @@ type IngestOutcome = "stored" | "review_opened" | "duplicate";
  * deliveries.
  */
 async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
+  return adminDrizzle.transaction(async (tx) => {
+  const [stored] = await tx
+    .insert(antifraud_signals)
+    .values({
+      external_id: signal.id || null,
+      kind: signal.kind,
+      severity: signal.severity,
+      risk_score: signal.riskScore ?? null,
+      target_user_id: signal.userId ?? null,
+      target_username: signal.username ?? null,
+      summary: signal.summary,
+      payload: signal.payload ?? undefined,
+      review_id: null,
+    })
+    .onConflictDoNothing({
+      target: antifraud_signals.external_id,
+      where: sql`${antifraud_signals.external_id} IS NOT NULL`,
+    })
+    .returning({ id: antifraud_signals.id });
+  if (!stored) return "duplicate";
+
   // Idempotency: the backend's own event id. A retried delivery hits the
   // partial unique index and is reported as a duplicate rather than
   // double-opening a case.
-  if (signal.id) {
-    const [existing] = await adminDrizzle
-      .select({ id: antifraud_signals.id })
-      .from(antifraud_signals)
-      .where(eq(antifraud_signals.external_id, signal.id))
-      .limit(1);
-    if (existing) return "duplicate";
-  }
-
   const shouldOpenCase =
     Boolean(signal.userId) &&
     shouldEscalateSignal(signal);
@@ -306,7 +318,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
   let opened = false;
 
   if (shouldOpenCase && signal.userId) {
-    const [live] = await adminDrizzle
+    const [live] = await tx
       .select({
         id: antifraud_reviews.id,
         severity: antifraud_reviews.severity,
@@ -331,7 +343,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
         SEVERITY_RANK[
           (live.severity as AntifraudSignalEvent["severity"]) ?? "medium"
         ];
-      await adminDrizzle
+      await tx
         .update(antifraud_reviews)
         .set({
           severity: worseSeverity ? signal.severity : undefined,
@@ -346,14 +358,14 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
           updated_at: new Date().toISOString(),
         })
         .where(eq(antifraud_reviews.id, live.id));
-      await adminDrizzle.insert(antifraud_review_notes).values({
+      await tx.insert(antifraud_review_notes).values({
           review_id: live.id,
           kind: "signal",
           body: `[${signal.severity}] ${signal.kind} — ${signal.summary}`,
       });
     } else {
       try {
-        const [created] = await adminDrizzle
+        const [created] = await tx
           .insert(antifraud_reviews)
           .values({
             target_user_id: signal.userId,
@@ -366,14 +378,30 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
             signals: [signal.kind],
             metadata: signal.payload ?? undefined,
           })
+          .onConflictDoNothing()
           .returning({ id: antifraud_reviews.id });
-        reviewId = created.id;
-        opened = true;
+        if (created) {
+          reviewId = created.id;
+          opened = true;
+        } else {
+          const [winner] = await tx
+            .select({ id: antifraud_reviews.id })
+            .from(antifraud_reviews)
+            .where(
+              and(
+                eq(antifraud_reviews.target_user_id, signal.userId),
+                inArray(antifraud_reviews.status, ["open", "in_review"]),
+              ),
+            )
+            .limit(1);
+          if (!winner) throw new Error("Concurrent live case was not found");
+          reviewId = winner.id;
+        }
       } catch (err) {
         // Lost a race against a concurrent delivery for the same account —
         // the partial unique index did its job. Attach to the winner.
         if ((err as { code?: string })?.code === "23505") {
-          const [winner] = await adminDrizzle
+          const [winner] = await tx
             .select({ id: antifraud_reviews.id })
             .from(antifraud_reviews)
             .where(
@@ -391,25 +419,15 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
     }
   }
 
-  try {
-    await adminDrizzle.insert(antifraud_signals).values({
-        external_id: signal.id || null,
-        kind: signal.kind,
-        severity: signal.severity,
-        risk_score: signal.riskScore ?? null,
-        target_user_id: signal.userId ?? null,
-        target_username: signal.username ?? null,
-        summary: signal.summary,
-        payload: signal.payload ?? undefined,
-        review_id: reviewId,
-    });
-  } catch (err) {
-    // The external-id unique index rejected a concurrent duplicate.
-    if ((err as { code?: string })?.code === "23505") return "duplicate";
-    throw err;
+  if (reviewId) {
+    await tx
+      .update(antifraud_signals)
+      .set({ review_id: reviewId })
+      .where(eq(antifraud_signals.id, stored.id));
   }
 
   return opened ? "review_opened" : "stored";
+  });
 }
 
 /**

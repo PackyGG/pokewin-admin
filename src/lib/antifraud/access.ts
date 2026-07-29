@@ -114,6 +114,8 @@ export const ANTIFRAUD_USER_DENYLIST_KEY = "antifraud_user_denylist";
 export type AntifraudUserAccess = {
   allowlist: string[];
   denylist: string[];
+  /** False means the authoritative override read failed. */
+  loaded?: boolean;
 };
 
 /** Lowercase + trim, returns "" for nullish input (matches `owners.ts`). */
@@ -185,6 +187,7 @@ export function canAccessAntifraud(
   userAccess?: AntifraudUserAccess,
 ): boolean {
   if (isOwner(session)) return true;
+  if (userAccess?.loaded === false) return false;
 
   const roles = getEffectiveRoles(session.role, session.roles);
   if (isDedicatedPackBuilder(roles)) return false;
@@ -223,4 +226,9 @@ export function deniedAntifraudSettings(): AntifraudAccessSettings {
   return Object.fromEntries(
     ANTIFRAUD_TOGGLE_ROLES.map((role) => [role, false]),
   ) as AntifraudAccessSettings;
+}
+
+/** Fail closed when per-user allow/deny overrides cannot be read. */
+export function unavailableAntifraudUserAccess(): AntifraudUserAccess {
+  return { allowlist: [], denylist: [], loaded: false };
 }

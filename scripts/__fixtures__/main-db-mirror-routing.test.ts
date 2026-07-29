@@ -159,6 +159,18 @@ test("mirror index failures expose safe, actionable connection diagnostics", () 
   assert.match(runnerSource, /certificate chain trusted by Node\.js/);
 });
 
+test("mirror index tooling can scope production DDL to Antifraud", () => {
+  const source = fs.readFileSync(
+    path.join(repoRoot, "scripts/apply-main-mirror-indexes.mjs"),
+    "utf8",
+  );
+  assert.match(source, /--antifraud-only/);
+  assert.match(
+    source,
+    /scope === "--antifraud-only"\s*\?\s*sourceStatements/,
+  );
+});
+
 test("query modules cannot request the writable MAIN client", () => {
   const files = execFileSync("git", ["ls-files", "src/lib/queries/**/*.ts"], {
     cwd: repoRoot,

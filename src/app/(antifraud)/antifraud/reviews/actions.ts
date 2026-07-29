@@ -24,6 +24,15 @@ import {
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
 } from "@/lib/antifraud/reviews";
+import {
+  canAccessAntifraud,
+  canManageAntifraud,
+  getAntifraudAccessSettings,
+  getAntifraudUserAccess,
+  type AntifraudAccessSettings,
+  type AntifraudUserAccess,
+} from "@/lib/antifraud/access";
+import { getEffectiveRoles } from "@/lib/admin-roles";
 
 /**
  * Account-review mutations.
@@ -682,6 +691,30 @@ const assignSchema = z.object({
   adminUserId: z.union([uuid, z.literal("")]).nullable().optional(),
 });
 
+type AssignableUser = Pick<
+  typeof admin_users.$inferSelect,
+  "username" | "role" | "roles" | "is_active"
+>;
+
+function isAssignableAnalyst(
+  target: AssignableUser,
+  settings: AntifraudAccessSettings,
+  userAccess: AntifraudUserAccess,
+): boolean {
+  if (!target.is_active) return false;
+  const identity = {
+    username: target.username,
+    role: target.role,
+    roles: target.roles,
+    isOwner: false,
+  };
+  if (!canAccessAntifraud(identity, settings, userAccess)) return false;
+  return (
+    canManageAntifraud(identity) ||
+    getEffectiveRoles(target.role, target.roles).includes("support")
+  );
+}
+
 /** Put a case in someone's queue (or take it yourself, or clear it). */
 export async function assignReview(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
@@ -691,10 +724,22 @@ export async function assignReview(input: unknown): Promise<void> {
   const assignee = parsed.data.adminUserId ? parsed.data.adminUserId : null;
 
   if (assignee) {
-    // Guard against assigning to somebody who isn't a real, active admin.
-    const [target] = await adminDrizzle.select({ is_active: admin_users.is_active })
-      .from(admin_users).where(eq(admin_users.id, assignee)).limit(1);
-    if (!target?.is_active) throw new Error("That admin account isn't active");
+    // The assignee is client-supplied. Re-read their full identity and apply
+    // the same live access decision as the workspace gate before disclosing a
+    // case or putting it in their queue.
+    const [[target], settings, userAccess] = await Promise.all([
+      adminDrizzle.select({
+        username: admin_users.username,
+        role: admin_users.role,
+        roles: admin_users.roles,
+        is_active: admin_users.is_active,
+      }).from(admin_users).where(eq(admin_users.id, assignee)).limit(1),
+      getAntifraudAccessSettings(),
+      getAntifraudUserAccess(),
+    ]);
+    if (!target || !isAssignableAnalyst(target, settings, userAccess)) {
+      throw new Error("That staff account cannot be assigned Antifraud cases");
+    }
   }
 
   // Same optimistic shape as updateReviewStatus: read, guarded UPDATE and note
@@ -747,7 +792,7 @@ export async function assignReview(input: unknown): Promise<void> {
       recipients: [assignee],
       kind: "review_assigned",
       title: "A case was assigned to you",
-      body: applied.reason,
+      body: "Open the Antifraud workspace to review the case details.",
       href: `/antifraud/reviews/${reviewId}`,
       metadata: { reviewId },
     });
@@ -792,18 +837,19 @@ export async function listAssignableAnalysts(): Promise<
 > {
   await requireAntifraudAccess();
   try {
-    const users = await adminDrizzle.select({
-      id: admin_users.id, username: admin_users.username,
-      display_username: admin_users.display_username,
-      role: admin_users.role, roles: admin_users.roles,
-    }).from(admin_users).where(eq(admin_users.is_active, true))
-      .orderBy(admin_users.username).limit(200);
-    return users.filter(
-      (user) =>
-        user.role === "admin" ||
-        user.role === "support" ||
-        user.roles.includes("admin") ||
-        user.roles.includes("support"),
+    const [users, settings, userAccess] = await Promise.all([
+      adminDrizzle.select({
+        id: admin_users.id, username: admin_users.username,
+        display_username: admin_users.display_username,
+        role: admin_users.role, roles: admin_users.roles,
+        is_active: admin_users.is_active,
+      }).from(admin_users).where(eq(admin_users.is_active, true))
+        .orderBy(admin_users.username).limit(200),
+      getAntifraudAccessSettings(),
+      getAntifraudUserAccess(),
+    ]);
+    return users.filter((user) =>
+      isAssignableAnalyst(user, settings, userAccess),
     ).map((u) => ({
       id: u.id,
       label: u.display_username ?? u.username,

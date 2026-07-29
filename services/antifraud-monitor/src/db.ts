@@ -88,6 +88,13 @@ export function createDatabases(config: Config): Databases {
       "-c default_transaction_read_only=on -c statement_timeout=10000 -c TimeZone=UTC",
     application_name: "packy-antifraud-source-reader",
   });
+  source.on("error", (error) => {
+    console.error("[source-db] idle pool client error", {
+      name: error.name,
+      message: error.message,
+      code: (error as { code?: string }).code,
+    });
+  });
 
   const antifraud = new Pool({
     connectionString: config.ANTIFRAUD_DATABASE_URL,
@@ -100,6 +107,13 @@ export function createDatabases(config: Config): Databases {
     connectionTimeoutMillis: 8_000,
     options: "-c statement_timeout=15000 -c TimeZone=UTC",
     application_name: "packy-antifraud",
+  });
+  antifraud.on("error", (error) => {
+    console.error("[antifraud-db] idle pool client error", {
+      name: error.name,
+      message: error.message,
+      code: (error as { code?: string }).code,
+    });
   });
 
   return { source, antifraud };

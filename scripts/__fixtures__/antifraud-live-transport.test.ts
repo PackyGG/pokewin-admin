@@ -99,3 +99,14 @@ test("player gaming activity is shown only in the live monitor", async () => {
   assert.match(monitor, /Signups, pack openings, player actions and matched flows/);
   await assert.rejects(access(retiredOverviewActivityPath));
 });
+
+test("monitor case snapshot and rendered limits stay aligned", async () => {
+  const [route, client] = await Promise.all([
+    readFile("src/app/api/antifraud/monitor/route.ts", "utf8"),
+    readFile(monitorClientPaths[0], "utf8"),
+  ]);
+  assert.match(route, /\/v1\/cases\?limit=40/);
+  assert.match(client, /const MAX_CASES = 40/);
+  assert.match(client, /cases\.slice\(0, MAX_CASES\)/);
+  assert.match(client, /Showing the newest 40 cases/);
+});

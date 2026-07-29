@@ -17,6 +17,7 @@ import {
   deniedAntifraudSettings,
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
+  unavailableAntifraudUserAccess,
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
@@ -146,10 +147,10 @@ async function loadUserAccess(): Promise<AntifraudUserAccess> {
   } catch (err) {
     unstable_rethrow(err);
     console.error(
-      "[antifraud-layout] loadUserAccess failed, falling back to role default:",
+      "[antifraud-layout] loadUserAccess failed, denying non-owner access:",
       err,
     );
-    return { allowlist: [], denylist: [] };
+    return unavailableAntifraudUserAccess();
   }
 }
 

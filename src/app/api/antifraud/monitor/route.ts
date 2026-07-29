@@ -121,6 +121,14 @@ export async function GET(request: Request): Promise<Response> {
           cases && typeof cases === "object" && "data" in cases
             ? (cases as { data: unknown }).data
             : [],
+        casesTruncated:
+          cases &&
+          typeof cases === "object" &&
+          "pagination" in cases &&
+          Boolean(
+            (cases as { pagination?: { hasMore?: unknown } }).pagination
+              ?.hasMore,
+          ),
         flows: flowMonitoring(rules),
       },
       { headers: { "Cache-Control": "no-store" } },

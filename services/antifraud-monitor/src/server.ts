@@ -527,7 +527,7 @@ app.get("/v1/cases", async (request) => {
     values.push(query.status);
     conditions.push(`c.status = $${values.length}`);
   }
-  values.push(query.limit);
+  values.push(query.limit + 1);
   const result = await db.antifraud.query(
     `
       SELECT
@@ -553,7 +553,13 @@ app.get("/v1/cases", async (request) => {
     `,
     values,
   );
-  return { data: result.rows };
+  return {
+    data: result.rows.slice(0, query.limit),
+    pagination: {
+      limit: query.limit,
+      hasMore: result.rows.length > query.limit,
+    },
+  };
 });
 
 app.get("/v1/cases/:id", async (request, reply) => {
@@ -1158,13 +1164,32 @@ app.setErrorHandler((error, request, reply) => {
 
 app.addHook("onClose", async () => {
   shuttingDown = true;
-  withdrawalRisk.stop();
+  await withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
   await networkRisk.stop();
   await live.close();
   await closeDatabases(db);
 });
+
+let shutdownPromise: Promise<void> | null = null;
+function requestShutdown(signal: NodeJS.Signals): void {
+  if (shutdownPromise) return;
+  app.log.info({ signal }, "Antifraud service shutdown requested");
+  const warning = setTimeout(() => {
+    app.log.error({ signal }, "Antifraud service shutdown exceeded 25 seconds");
+    process.exit(1);
+  }, 25_000);
+  warning.unref();
+  shutdownPromise = app.close()
+    .catch((error: unknown) => {
+      process.exitCode = 1;
+      app.log.error({ err: error, signal }, "Antifraud service shutdown failed");
+    })
+    .finally(() => clearTimeout(warning));
+}
+process.once("SIGTERM", () => requestShutdown("SIGTERM"));
+process.once("SIGINT", () => requestShutdown("SIGINT"));
 
 await migrate(db.antifraud);
 await db.antifraud.query("SELECT 1");

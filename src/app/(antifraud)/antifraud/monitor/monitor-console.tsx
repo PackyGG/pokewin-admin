@@ -90,6 +90,7 @@ type Snapshot = {
   error?: string;
   live?: unknown;
   cases?: unknown;
+  casesTruncated?: boolean;
   flows?: unknown;
 };
 
@@ -417,6 +418,7 @@ export function MonitorConsole() {
   );
   const [sessions, setSessions] = React.useState<MonitorSession[]>([]);
   const [cases, setCases] = React.useState<MonitorCase[]>([]);
+  const [casesTruncated, setCasesTruncated] = React.useState(false);
   const [flowCoverage, setFlowCoverage] = React.useState<FlowCoverage>({
     active: 0,
     total: 0,
@@ -487,6 +489,7 @@ export function MonitorConsole() {
         return !completedAt || timeOf(session.started_at) > completedAt;
       });
       const nextCases = list(payload.cases, parseCase);
+      setCasesTruncated(payload.casesTruncated === true);
       setFlowCoverage(parseFlowCoverage(payload.flows));
       setSessions((current) =>
         mergeSessions(current, nextSessions, requestedAt),
@@ -1142,6 +1145,12 @@ export function MonitorConsole() {
             </>
           }
         />
+        {casesTruncated && (
+          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+            Showing the newest 40 cases. Older active cases remain available
+            through the case APIs and direct links.
+          </p>
+        )}
         <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         {cases.length === 0 ? (
           <p className="px-4 py-10 text-center text-xs text-muted-foreground">
@@ -1149,7 +1158,7 @@ export function MonitorConsole() {
           </p>
         ) : (
           <ul className="divide-y divide-border/60">
-            {cases.slice(0, 20).map((item) => {
+            {cases.slice(0, MAX_CASES).map((item) => {
               const player = item.username ? `@${item.username}` : item.user_id;
               return (
                 <li key={item.id}>

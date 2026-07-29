@@ -83,3 +83,49 @@ test("manual case open keeps case, trail and audit in one transaction", () => {
   assert.match(body, /isPostgresError\(err, UNIQUE_VIOLATION\)/);
   assert.match(body, /conflictReviewId/);
 });
+
+test("Antifraud revocation outages fail closed and assignments recheck access", () => {
+  const access = read("src/lib/antifraud/access.ts");
+  assert.match(access, /if \(userAccess\?\.loaded === false\) return false;/);
+  assert.match(
+    access,
+    /unavailableAntifraudUserAccess[\s\S]*loaded: false/,
+  );
+
+  for (const file of [
+    "src/lib/require-antifraud-access.ts",
+    "src/lib/app-access.ts",
+    "src/app/(antifraud)/antifraud/layout.tsx",
+    "src/app/(admin)/layout.tsx",
+  ]) {
+    assert.match(
+      read(file),
+      /unavailableAntifraudUserAccess\(\)/,
+      `${file} must preserve unknown revocations as unavailable`,
+    );
+  }
+
+  const actions = read(
+    "src/app/(antifraud)/antifraud/reviews/actions.ts",
+  );
+  assert.match(actions, /function isAssignableAnalyst/);
+  assert.match(actions, /getAntifraudAccessSettings\(\)/);
+  assert.match(actions, /getAntifraudUserAccess\(\)/);
+  assert.match(actions, /canAccessAntifraud\(identity, settings, userAccess\)/);
+  assert.doesNotMatch(actions, /body: applied\.reason/);
+});
+
+test("signed signal ingestion reserves id and mutates its case atomically", () => {
+  const source = read("src/app/api/antifraud/ingest/route.ts");
+  const start = source.indexOf("async function ingestOne");
+  const end = source.indexOf("/**\n * Health probe", start);
+  const body = source.slice(start, end);
+
+  assert.match(body, /adminDrizzle\.transaction/);
+  assert.match(body, /tx[\s\S]*?insert\(antifraud_signals\)/);
+  assert.match(body, /onConflictDoNothing/);
+  assert.match(body, /if \(!stored\) return "duplicate"/);
+  assert.match(body, /tx[\s\S]*?update\(antifraud_reviews\)/);
+  assert.match(body, /tx[\s\S]*?insert\(antifraud_review_notes\)/);
+  assert.match(body, /update\(antifraud_signals\)[\s\S]*?review_id: reviewId/);
+});

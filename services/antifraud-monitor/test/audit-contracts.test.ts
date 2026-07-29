@@ -483,6 +483,26 @@ test("operations config accepts read/admin tokens and rejects missing tokens", (
     ),
     false,
   );
+  const fiatReviewPath =
+    "/v1/fiat-deposits/00000000-0000-4000-8000-000000000000/review";
+  assert.equal(
+    serviceRequestAuthorized(
+      "POST",
+      fiatReviewPath,
+      runtimeConfig.API_TOKEN,
+      runtimeConfig,
+    ),
+    false,
+  );
+  assert.equal(
+    serviceRequestAuthorized(
+      "POST",
+      fiatReviewPath,
+      runtimeConfig.API_ADMIN_TOKEN,
+      runtimeConfig,
+    ),
+    true,
+  );
 });
 
 test("notification route status accepts read/admin tokens and rejects missing tokens", () => {
@@ -761,6 +781,21 @@ test("signup and activity cursors preserve exact application-precision UTC tuple
     "equal-time-user",
     25,
   ]);
+  const mirrorIndexes = await readFile(
+    new URL(
+      "../migrations/source-mirror-indexes.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    mirrorIndexes,
+    /ON "user" \(date_trunc\('milliseconds', created_at\), id\)/,
+  );
+  assert.match(
+    mirrorIndexes,
+    /DROP INDEX CONCURRENTLY IF EXISTS antifraud_user_signup_cursor_idx/,
+  );
 
   const activity = capturePool();
   await fetchActivity(activity.pool, [session], 40, 2_000);
@@ -1077,4 +1112,59 @@ test("leader liveness stalls only after its bounded timeout", () => {
     121_000,
   );
   assert.equal(pollerStalledFor({ ...base, leader: false }, 1, Infinity), null);
+});
+
+test("runtime workers recover cleanly from provider, pool, and process failures", async () => {
+  const [monitor, network, withdrawal, ingest, db, server] = await Promise.all([
+    readFile(new URL("../src/monitor.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/network-risk.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/withdrawal-risk.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/ingest-delivery.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/db.ts", import.meta.url), "utf8"),
+    readFile(new URL("../src/server.ts", import.meta.url), "utf8"),
+  ]);
+
+  assert.match(monitor, /!this\.tickFailureRecorded/);
+  assert.match(monitor, /result\.status === "failed"/);
+  assert.match(monitor, /Provider enrichment unavailable/);
+  assert.match(
+    monitor,
+    /error_text LIKE 'Provider enrichment unavailable:%'/,
+  );
+
+  assert.match(network, /void this\.runWorker\(\)/);
+  assert.match(network, /Recovered after stale worker lease/);
+  assert.match(network, /lease_owner=\$2/);
+  assert.match(network, /lease_expires_at=now\(\)/);
+  assert.match(network, /AND lease_owner=\$2/);
+  assert.match(network, /await this\.workerPromise/);
+  assert.match(network, /FROM unnest\(\$2::text\[\]\)/);
+  assert.match(network, /await this\.recoverStaleJobs\(\);[\s\S]*?for \(let processed/);
+  const recoveryMigration = await readFile(
+    new URL(
+      "../migrations/025_network_scan_job_recovery.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    recoveryMigration,
+    /network_scan_jobs_running_lease_idx[\s\S]*WHERE status = 'running'/,
+  );
+  assert.match(recoveryMigration, /CREATE TABLE IF NOT EXISTS rule_alert_outbox/);
+  assert.match(monitor, /INSERT INTO rule_alert_outbox/);
+  assert.match(monitor, /deliverPendingRuleAlerts/);
+
+  assert.match(withdrawal, /let lockClient: PoolClient \| null = null/);
+  assert.match(withdrawal, /lockClient\?\.release\(\)/);
+  assert.match(withdrawal, /this\.syncRunning = false/);
+  assert.match(withdrawal, /await this\.syncPromise/);
+  assert.match(ingest, /async start\(\): Promise<void> \{\s*void this\.tick\(\)/);
+
+  assert.match(db, /source\.on\("error"/);
+  assert.match(db, /antifraud\.on\("error"/);
+  assert.match(server, /process\.once\("SIGTERM"/);
+  assert.match(server, /process\.once\("SIGINT"/);
+  assert.match(server, /app\.close\(\)/);
+  assert.match(server, /process\.exit\(1\)/);
 });

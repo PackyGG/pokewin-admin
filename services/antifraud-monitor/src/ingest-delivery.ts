@@ -139,7 +139,7 @@ export class IngestDelivery {
   ) {}
 
   async start(): Promise<void> {
-    await this.tick();
+    void this.tick();
     this.timer = setInterval(() => void this.tick(), DELIVERY_INTERVAL_MS);
     this.timer.unref();
   }

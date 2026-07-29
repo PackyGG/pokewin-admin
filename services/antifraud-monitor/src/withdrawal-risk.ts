@@ -1,5 +1,5 @@
 import type { FastifyBaseLogger } from "fastify";
-import type { Pool } from "pg";
+import type { Pool, PoolClient } from "pg";
 
 import type { Databases } from "./db.js";
 
@@ -668,6 +668,7 @@ async function destinationReuse(
 export class WithdrawalRiskService {
   private syncTimer: NodeJS.Timeout | null = null;
   private syncRunning = false;
+  private syncPromise: Promise<void> | null = null;
 
   constructor(
     private readonly db: Databases,
@@ -676,34 +677,41 @@ export class WithdrawalRiskService {
 
   start(): void {
     if (this.syncTimer) return;
-    void this.syncAll().catch((error: unknown) => {
-      this.logger?.error(
-        { err: error },
-        "Withdrawal risk assessment sync failed",
-      );
-    });
+    this.triggerSync();
     this.syncTimer = setInterval(() => {
-      void this.syncAll().catch((error: unknown) => {
-        this.logger?.error(
-          { err: error },
-          "Withdrawal risk assessment sync failed",
-        );
-      });
+      this.triggerSync();
     }, 60_000);
     this.syncTimer.unref();
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.syncTimer) clearInterval(this.syncTimer);
     this.syncTimer = null;
+    await this.syncPromise;
+  }
+
+  private triggerSync(): void {
+    if (this.syncPromise) return;
+    const sync = this.syncAll()
+      .catch((error: unknown) => {
+        this.logger?.error(
+          { err: error },
+          "Withdrawal risk assessment sync failed",
+        );
+      })
+      .finally(() => {
+        if (this.syncPromise === sync) this.syncPromise = null;
+      });
+    this.syncPromise = sync;
   }
 
   private async syncAll(): Promise<void> {
     if (this.syncRunning) return;
     this.syncRunning = true;
-    const lockClient = await this.db.antifraud.connect();
+    let lockClient: PoolClient | null = null;
     let acquired = false;
     try {
+      lockClient = await this.db.antifraud.connect();
       const lock = await lockClient.query<{ acquired: boolean }>(
         `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
         ["withdrawal-risk-model-v2-sync"],
@@ -729,13 +737,21 @@ export class WithdrawalRiskService {
         );
       }
     } finally {
-      if (acquired) {
-        await lockClient.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
-          "withdrawal-risk-model-v2-sync",
-        ]);
+      try {
+        if (acquired && lockClient) {
+          await lockClient.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
+            "withdrawal-risk-model-v2-sync",
+          ]);
+        }
+      } catch (error) {
+        this.logger?.error(
+          { err: error },
+          "Withdrawal risk advisory lock release failed",
+        );
+      } finally {
+        lockClient?.release();
+        this.syncRunning = false;
       }
-      lockClient.release();
-      this.syncRunning = false;
     }
   }
 

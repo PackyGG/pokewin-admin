@@ -4,7 +4,10 @@ import { z } from "zod";
 
 import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
 
-const numeric = z.union([z.number(), z.string()]).transform(Number);
+const numeric = z
+  .union([z.number(), z.string()])
+  .transform(Number)
+  .pipe(z.number().finite());
 const category = z.enum([
   "provider",
   "funding",

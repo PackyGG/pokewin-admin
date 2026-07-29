@@ -20,6 +20,7 @@ import {
   deniedAntifraudSettings,
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
+  unavailableAntifraudUserAccess,
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
@@ -78,8 +79,8 @@ async function safeAntifraudUsers(): Promise<AntifraudUserAccess> {
     return await getAntifraudUserAccess();
   } catch (err) {
     if (isNextControlFlowError(err)) throw err;
-    console.error("[app-access] antifraud overrides failed, role default:", err);
-    return { allowlist: [], denylist: [] };
+    console.error("[app-access] antifraud overrides failed, closing door:", err);
+    return unavailableAntifraudUserAccess();
   }
 }
 

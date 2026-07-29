@@ -24,6 +24,7 @@ import {
   deniedAntifraudSettings,
   getAntifraudAccessSettings,
   getAntifraudUserAccess,
+  unavailableAntifraudUserAccess,
   type AntifraudAccessSettings,
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
@@ -196,10 +197,10 @@ async function loadAntifraudUserAccess(): Promise<AntifraudUserAccess> {
   } catch (err) {
     unstable_rethrow(err);
     console.error(
-      "[admin-layout] loadAntifraudUserAccess failed, falling back to role default:",
+      "[admin-layout] loadAntifraudUserAccess failed, hiding portal:",
       err,
     );
-    return { allowlist: [], denylist: [] };
+    return unavailableAntifraudUserAccess();
   }
 }
 

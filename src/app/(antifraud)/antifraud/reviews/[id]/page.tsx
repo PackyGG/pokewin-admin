@@ -1,5 +1,6 @@
 import { Suspense } from "react";
 import { notFound } from "next/navigation";
+import { z } from "zod";
 import { HostLink } from "@/components/host-link";
 import {
   Activity,
@@ -61,6 +62,7 @@ export default async function ReviewDetailPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const { id } = await params;
+  if (!z.string().uuid().safeParse(id).success) notFound();
 
   return (
     <div className="space-y-6">

@@ -2,7 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
-import { DiscordAlerts } from "./discord.js";
+import { DiscordAlerts, type DiscordAlert } from "./discord.js";
 import {
   EnrichmentService,
   parseProxycheckResponse,
@@ -82,6 +82,118 @@ type PreparedSignup = {
   proxycheck: EnrichmentResult;
   weights: ScoreWeights;
 };
+
+type RuleMatchWrite = {
+  ruleId: string;
+  caseId: string;
+  sessionId: string;
+  scoreDelta: number;
+  actionType: string;
+  evidence: Record<string, unknown>;
+  alert: DiscordAlert;
+};
+
+/**
+ * Persist a first-time rule match and its score/state effects as one unit.
+ *
+ * The unique match row is the idempotency boundary. It must never commit
+ * before the session and case updates, otherwise a crash makes the retry see a
+ * duplicate and permanently skip the score/outcome change.
+ */
+export async function persistRuleMatch(
+  pool: pg.Pool,
+  input: RuleMatchWrite,
+): Promise<number | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const match = await client.query<{ id: string }>(
+      `
+        INSERT INTO rule_matches(rule_id, case_id, session_id, evidence)
+        VALUES ($1,$2,$3,$4)
+        ON CONFLICT (rule_id, session_id) DO NOTHING
+        RETURNING id
+      `,
+      [
+        input.ruleId,
+        input.caseId,
+        input.sessionId,
+        input.evidence,
+      ],
+    );
+    if (match.rowCount === 0) {
+      await client.query("COMMIT");
+      return null;
+    }
+
+    const sessionUpdate = await client.query<{ current_score: number }>(
+      `
+        UPDATE monitor_sessions
+        SET current_score=GREATEST(0,current_score+$2),
+            peak_score=GREATEST(
+              peak_score,
+              GREATEST(0,current_score+$2)
+            )
+        WHERE id=$1
+        RETURNING current_score
+      `,
+      [input.sessionId, input.scoreDelta],
+    );
+    const nextScore = Number(sessionUpdate.rows[0]?.current_score);
+    if (sessionUpdate.rowCount !== 1 || !Number.isFinite(nextScore)) {
+      throw new Error("Rule match session no longer exists");
+    }
+
+    const caseUpdate = await client.query(
+      `
+        UPDATE cases
+        SET score=$2, peak_score=GREATEST(peak_score,$2),
+            severity=$3,
+            status=CASE
+              WHEN $4 = 'escalate' THEN 'escalated'
+              WHEN $4 = 'manual_review' AND status = 'monitoring'
+                THEN 'in_review'
+              ELSE status
+            END,
+            updated_at=now()
+        WHERE id=$1
+      `,
+      [
+        input.caseId,
+        nextScore,
+        severity(nextScore),
+        input.actionType,
+      ],
+    );
+    if (caseUpdate.rowCount !== 1) {
+      throw new Error("Rule match case no longer exists");
+    }
+
+    await client.query(
+      `
+        INSERT INTO rule_alert_outbox(rule_match_id, payload)
+        VALUES ($1,$2)
+        ON CONFLICT (rule_match_id) DO NOTHING
+      `,
+      [
+        match.rows[0]!.id,
+        {
+          ...input.alert,
+          score: nextScore,
+          severity: severity(nextScore),
+        },
+      ],
+    );
+
+    await client.query("COMMIT");
+    return nextScore;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
 
 /** Grace period for a poller tick during process shutdown. */
 const TICK_WATCHDOG_INTERVALS = 10;
@@ -285,6 +397,9 @@ export class MonitorEngine {
       await this.runPhase("signup-alerts", () =>
         this.deliverPendingSignupAlerts(),
       );
+      await this.runPhase("rule-alerts", () =>
+        this.deliverPendingRuleAlerts(),
+      );
       await this.runPhase("fiat-email-domains", () =>
         this.fiatEmailDomains.process(),
       );
@@ -302,7 +417,12 @@ export class MonitorEngine {
         return true;
       });
 
-      if (signupMetrics && activitiesProcessed !== null && completed) {
+      if (
+        !this.tickFailureRecorded &&
+        signupMetrics &&
+        activitiesProcessed !== null &&
+        completed
+      ) {
         this.health.tickSucceeded({
           signupsProcessed: signupMetrics.processed,
           signupsRecovered: signupMetrics.recovered,
@@ -439,7 +559,10 @@ export class MonitorEngine {
       `
         SELECT user_id, payload
         FROM signup_ingestion_failures
-        WHERE failure_count < $1
+        WHERE (
+            failure_count < $1
+            OR error_text LIKE 'Provider enrichment unavailable:%'
+          )
           AND last_failed_at <= now() - ($2::text || ' seconds')::interval
         ORDER BY last_failed_at, user_id
         LIMIT $3
@@ -560,6 +683,14 @@ export class MonitorEngine {
       this.saveProviderCheck(signup.id, fingerprint),
       this.saveProviderCheck(signup.id, proxycheck),
     ]);
+    const unavailable = [fingerprint, proxycheck]
+      .filter((result) => result.status === "failed")
+      .map((result) => result.provider);
+    if (unavailable.length > 0) {
+      throw new Error(
+        `Provider enrichment unavailable: ${unavailable.join(",")}`,
+      );
+    }
     return { context, fingerprint, proxycheck, weights };
   }
 
@@ -821,6 +952,53 @@ export class MonitorEngine {
         );
       }
     }
+  }
+
+  private async deliverPendingRuleAlerts(): Promise<void> {
+    const pending = await this.db.antifraud.query<{
+      rule_match_id: string;
+      payload: DiscordAlert;
+      attempt_count: number;
+    }>(
+      `
+        SELECT rule_match_id, payload, attempt_count
+        FROM rule_alert_outbox
+        WHERE delivered_at IS NULL
+          AND next_attempt_at <= now()
+        ORDER BY created_at
+        LIMIT 8
+      `,
+    );
+
+    // Discord has a five-second request timeout. Run this small bounded batch
+    // concurrently so an outage cannot consume the poller's liveness budget.
+    await Promise.all(pending.rows.map(async (alert) => {
+      const delivered = await this.discord.send(alert.payload);
+      const attempt = alert.attempt_count + 1;
+      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
+      await this.db.antifraud.query(
+        `
+          UPDATE rule_alert_outbox
+          SET delivered_at = CASE WHEN $2::boolean THEN now() ELSE delivered_at END,
+              attempt_count = $3,
+              next_attempt_at = CASE
+                WHEN $2::boolean THEN now()
+                ELSE now() + ($4::text || ' seconds')::interval
+              END,
+              last_error = CASE WHEN $2::boolean THEN NULL ELSE 'Discord delivery failed' END,
+              updated_at = now()
+          WHERE rule_match_id = $1
+            AND delivered_at IS NULL
+        `,
+        [alert.rule_match_id, delivered, attempt, retrySeconds],
+      );
+      if (!delivered) {
+        this.log.warn(
+          { ruleMatchId: alert.rule_match_id, retrySeconds },
+          "Rule alert delivery deferred",
+        );
+      }
+    }));
   }
 
   private async scanFiatWithdrawalHolds(): Promise<void> {
@@ -1538,61 +1716,33 @@ export class MonitorEngine {
       )) {
         continue;
       }
-      const match = await this.db.antifraud.query(
-        `
-          INSERT INTO rule_matches(rule_id, case_id, session_id, evidence)
-          VALUES ($1,$2,$3,$4)
-          ON CONFLICT (rule_id, session_id) DO NOTHING
-          RETURNING id
-        `,
-        [
-          rule.id,
-          session.case_id,
-          session.id,
-          {
-            sequence: rule.sequence,
-            excludeBefore: rule.exclude_before,
-            windowSeconds: rule.window_seconds,
-            scoreDelta: rule.score_delta,
-            actionType: rule.action_type,
-            ruleName: rule.name,
-          },
-        ],
-      );
-      if (match.rowCount === 0) continue;
+      const nextScore = await persistRuleMatch(this.db.antifraud, {
+        ruleId: rule.id,
+        caseId: session.case_id,
+        sessionId: session.id,
+        scoreDelta: rule.score_delta,
+        actionType: rule.action_type,
+        evidence: {
+          sequence: rule.sequence,
+          excludeBefore: rule.exclude_before,
+          windowSeconds: rule.window_seconds,
+          scoreDelta: rule.score_delta,
+          actionType: rule.action_type,
+          ruleName: rule.name,
+        },
+        alert: {
+          title: `Rule matched: ${rule.name}`,
+          description:
+            "A monitored account matched an antifraud rule and needs support review.",
+          userId: session.user_id,
+          caseId: session.case_id,
+          scoreDelta: rule.score_delta,
+          trigger: rule.key,
+          outcome: rule.action_type,
+        },
+      });
+      if (nextScore === null) continue;
 
-      const nextScore = Math.max(0, session.current_score + rule.score_delta);
-      await Promise.all([
-        this.db.antifraud.query(
-          `
-            UPDATE monitor_sessions
-            SET current_score=$2, peak_score=GREATEST(peak_score,$2)
-            WHERE id=$1
-          `,
-          [session.id, nextScore],
-        ),
-        this.db.antifraud.query(
-          `
-            UPDATE cases
-            SET score=$2, peak_score=GREATEST(peak_score,$2),
-                severity=$3,
-                status=CASE
-                  WHEN $4 = 'escalate' THEN 'escalated'
-                  WHEN $4 = 'manual_review' AND status = 'monitoring'
-                    THEN 'in_review'
-                  ELSE status
-                END,
-                updated_at=now()
-            WHERE id=$1
-          `,
-          [
-            session.case_id,
-            nextScore,
-            severity(nextScore),
-            rule.action_type,
-          ],
-        ),
-      ]);
       session.current_score = nextScore;
       await this.broadcast("rule.matched", {
         caseId: session.case_id,
@@ -1603,18 +1753,6 @@ export class MonitorEngine {
         scoreDelta: rule.score_delta,
         score: nextScore,
         actionType: rule.action_type,
-      });
-      await this.discord.send({
-        title: `Rule matched: ${rule.name}`,
-        description:
-          "A monitored account matched an antifraud rule and needs support review.",
-        userId: session.user_id,
-        caseId: session.case_id,
-        score: nextScore,
-        scoreDelta: rule.score_delta,
-        severity: severity(nextScore),
-        trigger: rule.key,
-        outcome: rule.action_type,
       });
     }
   }

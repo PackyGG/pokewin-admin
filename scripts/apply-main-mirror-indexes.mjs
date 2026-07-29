@@ -6,9 +6,15 @@ import pg from "pg";
 const { Client } = pg;
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const target = process.argv[2];
+const scope = process.argv[3] ?? "all";
 
-if (!["prod", "dev", "all"].includes(target)) {
-  console.error("Usage: node scripts/apply-main-mirror-indexes.mjs <prod|dev|all>");
+if (
+  !["prod", "dev", "all"].includes(target) ||
+  !["all", "--antifraud-only"].includes(scope)
+) {
+  console.error(
+    "Usage: node scripts/apply-main-mirror-indexes.mjs <prod|dev|all> [--antifraud-only]",
+  );
   process.exit(2);
 }
 
@@ -169,7 +175,10 @@ const sourceStatements = statementsFrom(
 const recommendedStatements = statementsFrom(
   path.join(repoRoot, "prisma/recommended-indexes.sql"),
 ).filter((statement) => !excludedRecommendations.has(indexName(statement)));
-const statements = [...sourceStatements, ...recommendedStatements];
+const statements =
+  scope === "--antifraud-only"
+    ? sourceStatements
+    : [...sourceStatements, ...recommendedStatements];
 
 async function applyTarget(name) {
   const isProd = name === "prod";

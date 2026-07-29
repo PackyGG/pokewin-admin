@@ -345,6 +345,18 @@ export async function registerFiatRoutes(
       const body = reviewBodySchema.parse(request.body);
       const excluded = new Set(excludedUserIds(request.headers));
       const note = body.note?.trim() || null;
+      const visible = await db.antifraud.query<{ user_id: string }>(
+        `SELECT user_id FROM fiat_deposit_assessments WHERE deposit_intent_id=$1`,
+        [id],
+      );
+      const visibleRow = visible.rows[0];
+      if (
+        !visibleRow ||
+        excluded.has(visibleRow.user_id) ||
+        (await userIsCreator(db, visibleRow.user_id))
+      ) {
+        return reply.code(404).send({ error: "not_found" });
+      }
       const client = await db.antifraud.connect();
       try {
         await client.query("BEGIN");
@@ -358,11 +370,7 @@ export async function registerFiatRoutes(
           [id],
         );
         const row = current.rows[0];
-        if (
-          !row ||
-          excluded.has(row.user_id) ||
-          (await userIsCreator(db, row.user_id))
-        ) {
+        if (!row || row.user_id !== visibleRow.user_id) {
           await client.query("ROLLBACK");
           return reply.code(404).send({ error: "not_found" });
         }

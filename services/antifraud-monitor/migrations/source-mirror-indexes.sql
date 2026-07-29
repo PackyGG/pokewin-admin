@@ -1,8 +1,15 @@
 -- Apply to the Packy READ REPLICA only, never the primary production DB.
 -- CREATE INDEX CONCURRENTLY cannot run inside a transaction.
 
-CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_cursor_idx
-  ON "user" (created_at, id);
+-- The runtime cursor deliberately truncates MAIN's microseconds to the
+-- millisecond precision that JavaScript Dates can round-trip. Keep the index
+-- expression identical to the WHERE tuple and ORDER BY in source.ts.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_cursor_ms_idx
+  ON "user" (date_trunc('milliseconds', created_at), id);
+
+-- Replace the older raw-timestamp cursor index only after the aligned index is
+-- valid, so existing mirrors remain covered while this file is reapplied.
+DROP INDEX CONCURRENTLY IF EXISTS antifraud_user_signup_cursor_idx;
 
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_user_signup_ip_time_idx
   ON "user" (signup_ip, created_at)
