@@ -27,7 +27,9 @@ import { Button } from "@/components/ui/button";
 import { HostLink } from "@/components/host-link";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { ReviewSeverityBadge } from "../_components/badges";
+import { parsePageParam } from "../_components/list-page";
 import {
   NetworkRiskBadges,
   networkRiskLabels,
@@ -42,9 +44,7 @@ export default async function AntifraudSignupsPage({
   searchParams: Promise<{ page?: string }>;
 }) {
   await requireAntifraudPageAccess();
-  const rawPage = Number((await searchParams).page ?? "1");
-  const page =
-    Number.isInteger(rawPage) && rawPage > 0 ? Math.min(rawPage, 10_000) : 1;
+  const page = parsePageParam((await searchParams).page);
 
   return (
     <div className="space-y-6">
@@ -176,11 +176,11 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
               </p>
               <div
                 className="mt-1 inline-flex max-w-full items-center gap-1.5 rounded-md border border-cyan-500/25 bg-cyan-500/[0.07] px-1.5 py-0.5"
-                title={`Signed up ${formatDate(signup.source_created_at)}`}
+                title={`Signed up ${formatDateTime(signup.source_created_at)}`}
               >
                 <Clock3 className="size-3 shrink-0 text-cyan-600 dark:text-cyan-400" />
                 <span className="truncate text-[11px] font-medium text-cyan-700 dark:text-cyan-300">
-                  Signed up {formatSignupAge(signup.source_created_at)}
+                  Signed up {formatRelative(signup.source_created_at)}
                 </span>
               </div>
             </div>
@@ -422,35 +422,4 @@ function SignupsSkeleton() {
       </div>
     </div>
   );
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    dateStyle: "medium",
-    timeStyle: "short",
-    timeZone: "Europe/Berlin",
-  }).format(new Date(value));
-}
-
-function formatSignupAge(value: string, now = Date.now()): string {
-  const createdAt = new Date(value).getTime();
-  if (!Number.isFinite(createdAt)) return "Unknown";
-
-  const elapsedSeconds = Math.max(0, Math.floor((now - createdAt) / 1_000));
-  if (elapsedSeconds < 60) return "Just now";
-
-  const minutes = Math.floor(elapsedSeconds / 60);
-  if (minutes < 60) return `${minutes} min ago`;
-
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours} hr ago`;
-
-  const days = Math.floor(hours / 24);
-  if (days < 30) return `${days} ${days === 1 ? "day" : "days"} ago`;
-
-  const months = Math.floor(days / 30);
-  if (months < 12) return `${months} mo ago`;
-
-  const years = Math.floor(days / 365);
-  return `${years} ${years === 1 ? "yr" : "yrs"} ago`;
 }

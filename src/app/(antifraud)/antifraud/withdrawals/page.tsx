@@ -2,13 +2,10 @@ import { Suspense } from "react";
 import {
   AlertTriangle,
   ArrowRight,
-  ChevronLeft,
-  ChevronRight,
   Search,
   ShieldAlert,
   ShieldCheck,
   UserRound,
-  UserRoundSearch,
   WalletCards,
 } from "lucide-react";
 
@@ -18,7 +15,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   listWithdrawalAssessments,
   type WithdrawalAssessment,
@@ -27,7 +23,18 @@ import {
 } from "@/lib/antifraud/withdrawals-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import {
+  EmptyState,
+  Fact,
+  FilterButton,
+  FilterGroup,
+  ListPageSkeleton,
+  ListPagination,
+  mergeFilterSelection,
+  parsePageParam,
+  verdictStyle,
+} from "../_components/list-page";
 
 export const metadata = { title: "Withdrawals · Antifraud" };
 
@@ -69,9 +76,8 @@ export default async function WithdrawalsPage({
 }) {
   await requireAntifraudPageAccess();
   const params = await searchParams;
-  const rawPage = Number(params.page ?? "1");
   const state: FilterState = {
-    page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
+    page: parsePageParam(params.page),
     status: STATUSES.includes(params.status as (typeof STATUSES)[number])
       ? params.status
       : undefined,
@@ -96,7 +102,7 @@ export default async function WithdrawalsPage({
 
       <Suspense
         key={`${state.page}-${state.status}-${state.verdict}-${state.reviewStatus}-${state.search}`}
-        fallback={<WithdrawalListSkeleton />}
+        fallback={<ListPageSkeleton />}
       >
         <WithdrawalContent state={state} />
       </Suspense>
@@ -105,47 +111,48 @@ export default async function WithdrawalsPage({
 }
 
 function Filters({ state }: { state: FilterState }) {
+  const filterHref = (selection: {
+    status?: string | null;
+    verdict?: WithdrawalVerdict | null;
+    reviewStatus?: WithdrawalReviewStatus | null;
+  }) => withdrawalHref(mergeFilterSelection(state, selection));
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
           <FilterGroup label="Risk">
-            <FilterButton label="All" active={!state.verdict} state={state} verdict={null} />
-            <FilterButton label="Good" active={state.verdict === "good"} state={state} verdict="good" />
-            <FilterButton label="Review" active={state.verdict === "review"} state={state} verdict="review" />
-            <FilterButton label="Bad" active={state.verdict === "bad"} state={state} verdict="bad" />
+            <FilterButton label="All" active={!state.verdict} href={filterHref({ verdict: null })} />
+            <FilterButton label="Good" active={state.verdict === "good"} href={filterHref({ verdict: "good" })} />
+            <FilterButton label="Review" active={state.verdict === "review"} href={filterHref({ verdict: "review" })} />
+            <FilterButton label="Bad" active={state.verdict === "bad"} href={filterHref({ verdict: "bad" })} />
           </FilterGroup>
           <FilterGroup label="Workflow">
             <FilterButton
               label="All"
               active={!state.reviewStatus}
-              state={state}
-              reviewStatus={null}
+              href={filterHref({ reviewStatus: null })}
             />
             <FilterButton
               label="Unreviewed"
               active={state.reviewStatus === "unreviewed"}
-              state={state}
-              reviewStatus="unreviewed"
+              href={filterHref({ reviewStatus: "unreviewed" })}
             />
             <FilterButton
               label="In review"
               active={state.reviewStatus === "in_review"}
-              state={state}
-              reviewStatus="in_review"
+              href={filterHref({ reviewStatus: "in_review" })}
             />
             <FilterButton
               label="Escalated"
               active={state.reviewStatus === "escalated"}
-              state={state}
-              reviewStatus="escalated"
+              href={filterHref({ reviewStatus: "escalated" })}
             />
           </FilterGroup>
           <FilterGroup label="Payout status">
-            <FilterButton label="Any" active={!state.status} state={state} status={null} />
-            <FilterButton label="Pending" active={state.status === "pending"} state={state} status="pending" />
-            <FilterButton label="Processing" active={state.status === "processing"} state={state} status="processing" />
-            <FilterButton label="Completed" active={state.status === "completed"} state={state} status="completed" />
+            <FilterButton label="Any" active={!state.status} href={filterHref({ status: null })} />
+            <FilterButton label="Pending" active={state.status === "pending"} href={filterHref({ status: "pending" })} />
+            <FilterButton label="Processing" active={state.status === "processing"} href={filterHref({ status: "processing" })} />
+            <FilterButton label="Completed" active={state.status === "completed"} href={filterHref({ status: "completed" })} />
           </FilterGroup>
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/withdrawals">
@@ -168,64 +175,6 @@ function Filters({ state }: { state: FilterState }) {
         </form>
       </div>
     </div>
-  );
-}
-
-function FilterGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function FilterButton({
-  label,
-  active,
-  state,
-  status,
-  verdict,
-  reviewStatus,
-}: {
-  label: string;
-  active: boolean;
-  state: FilterState;
-  status?: string | null;
-  verdict?: WithdrawalVerdict | null;
-  reviewStatus?: WithdrawalReviewStatus | null;
-}) {
-  const next = {
-    ...state,
-    page: 1,
-    status: status === null ? undefined : status ?? state.status,
-    verdict: verdict === null ? undefined : verdict ?? state.verdict,
-    reviewStatus:
-      reviewStatus === null ? undefined : reviewStatus ?? state.reviewStatus,
-  };
-  return (
-    <HostLink
-      href={withdrawalHref(next)}
-      aria-current={active ? "true" : undefined}
-      className={cn(
-        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-        active
-          ? "border border-border/70 bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-    </HostLink>
   );
 }
 
@@ -255,40 +204,22 @@ async function WithdrawalContent({ state }: { state: FilterState }) {
         ))}
       </div>
       {result.pagination && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Page {result.pagination.page} of {result.pagination.pages} ·{" "}
-            {result.pagination.total} tracked withdrawals
-          </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={state.page <= 1}
-              render={
-                state.page > 1 ? (
-                  <HostLink href={withdrawalHref({ ...state, page: state.page - 1 })} />
-                ) : undefined
-              }
-            >
-              <ChevronLeft className="size-3.5" />
-              Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={state.page >= result.pagination.pages}
-              render={
-                state.page < result.pagination.pages ? (
-                  <HostLink href={withdrawalHref({ ...state, page: state.page + 1 })} />
-                ) : undefined
-              }
-            >
-              Next
-              <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
-        </div>
+        <ListPagination
+          page={result.pagination.page}
+          pages={result.pagination.pages}
+          total={result.pagination.total}
+          unitLabel="tracked withdrawals"
+          previousHref={
+            state.page > 1
+              ? withdrawalHref({ ...state, page: state.page - 1 })
+              : undefined
+          }
+          nextHref={
+            state.page < result.pagination.pages
+              ? withdrawalHref({ ...state, page: state.page + 1 })
+              : undefined
+          }
+        />
       )}
     </div>
   );
@@ -397,7 +328,7 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
               {formatCurrency(withdrawal.amount_usd)}
             </p>
             <p className="text-[10px] tabular-nums text-muted-foreground">
-              {formatDate(withdrawal.requested_at)}
+              {formatDateTime(withdrawal.requested_at)}
             </p>
           </div>
           <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", verdict.box)}>
@@ -473,52 +404,6 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
   );
 }
 
-function Fact({
-  label,
-  value,
-  alert = false,
-}: {
-  label: string;
-  value: string;
-  alert?: boolean;
-}) {
-  return (
-    <span className="inline-flex max-w-72 items-baseline gap-1.5">
-      <span className="shrink-0 text-muted-foreground">{label}</span>
-      <span
-        className={cn(
-          "truncate font-medium tabular-nums",
-          alert && "text-amber-600 dark:text-amber-400",
-        )}
-      >
-        {value}
-      </span>
-    </span>
-  );
-}
-
-function verdictStyle(verdict: WithdrawalVerdict) {
-  if (verdict === "good") {
-    return {
-      icon: ShieldCheck,
-      text: "text-emerald-600 dark:text-emerald-400",
-      box: "border-emerald-500/25 bg-emerald-500/5",
-    };
-  }
-  if (verdict === "bad") {
-    return {
-      icon: ShieldAlert,
-      text: "text-rose-600 dark:text-rose-400",
-      box: "border-rose-500/25 bg-rose-500/5",
-    };
-  }
-  return {
-    icon: AlertTriangle,
-    text: "text-amber-600 dark:text-amber-400",
-    box: "border-amber-500/25 bg-amber-500/5",
-  };
-}
-
 function withdrawalHref(state: FilterState): string {
   const params = new URLSearchParams();
   if (state.page > 1) params.set("page", String(state.page));
@@ -528,38 +413,4 @@ function withdrawalHref(state: FilterState): string {
   if (state.search) params.set("search", state.search);
   const query = params.toString();
   return `/antifraud/withdrawals${query ? `?${query}` : ""}`;
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(new Date(value));
-}
-
-function EmptyState({ text }: { text: string }) {
-  return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
-      <UserRoundSearch className="mx-auto mb-3 size-6 text-muted-foreground" />
-      <p className="text-sm text-muted-foreground">{text}</p>
-    </div>
-  );
-}
-
-function WithdrawalListSkeleton() {
-  return (
-    <div className="space-y-3">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      {Array.from({ length: 4 }).map((_, index) => (
-        <Skeleton key={index} className="h-36 rounded-xl" />
-      ))}
-    </div>
-  );
 }

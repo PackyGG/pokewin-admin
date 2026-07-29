@@ -3,8 +3,6 @@ import {
   ArrowRight,
   BadgeCheck,
   Banknote,
-  ChevronLeft,
-  ChevronRight,
   CircleAlert,
   CreditCard,
   Eye,
@@ -21,7 +19,6 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   listFiatAssessments,
   type FiatAssessment,
@@ -34,8 +31,19 @@ import { safeQuery } from "@/lib/errors/safe-query";
 import { getFiatStaffCheckedWithdrawalUserIds } from "@/lib/queries/fiat-withdrawal-review";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
+import {
+  EmptyState,
+  FactCell,
+  FilterButton,
+  FilterGroup,
+  ListPageSkeleton,
+  ListPagination,
+  mergeFilterSelection,
+  parsePageParam,
+  verdictStyle,
+} from "../_components/list-page";
 import { FiatKycAction } from "./fiat-kyc-action";
 
 export const metadata = { title: "Fiat Deposits · Antifraud" };
@@ -75,9 +83,8 @@ export default async function FiatDepositsPage({
   const params = await searchParams;
   const value = (key: string) =>
     typeof params[key] === "string" ? params[key] : undefined;
-  const rawPage = Number(value("page") ?? "1");
   const state: Filters = {
-    page: Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1,
+    page: parsePageParam(value("page")),
     status: STATUSES.includes(value("status") as (typeof STATUSES)[number])
       ? value("status")
       : undefined,
@@ -98,7 +105,13 @@ export default async function FiatDepositsPage({
       <FiltersBar state={state} />
       <Suspense
         key={JSON.stringify(state)}
-        fallback={<FiatListSkeleton />}
+        fallback={
+          <ListPageSkeleton
+            tiles={5}
+            tileGridClassName="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
+            tileClassName="h-28 rounded-xl"
+          />
+        }
       >
         <FiatContent state={state} canManageKyc={canManageKyc} />
       </Suspense>
@@ -107,29 +120,34 @@ export default async function FiatDepositsPage({
 }
 
 function FiltersBar({ state }: { state: Filters }) {
+  const filterHref = (selection: {
+    status?: string | null;
+    verdict?: FiatVerdict | null;
+    reviewStatus?: FiatReviewStatus | null;
+  }) => href(mergeFilterSelection(state, selection));
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
           <FilterGroup label="Risk">
-            <Filter label="All" active={!state.verdict} state={state} verdict={null} />
-            <Filter label="Good" active={state.verdict === "good"} state={state} verdict="good" />
-            <Filter label="Review" active={state.verdict === "review"} state={state} verdict="review" />
-            <Filter label="High risk" active={state.verdict === "bad"} state={state} verdict="bad" />
+            <FilterButton label="All" active={!state.verdict} href={filterHref({ verdict: null })} />
+            <FilterButton label="Good" active={state.verdict === "good"} href={filterHref({ verdict: "good" })} />
+            <FilterButton label="Review" active={state.verdict === "review"} href={filterHref({ verdict: "review" })} />
+            <FilterButton label="High risk" active={state.verdict === "bad"} href={filterHref({ verdict: "bad" })} />
           </FilterGroup>
           <FilterGroup label="Workflow">
-            <Filter label="All" active={!state.reviewStatus} state={state} reviewStatus={null} />
-            <Filter label="Unreviewed" active={state.reviewStatus === "unreviewed"} state={state} reviewStatus="unreviewed" />
-            <Filter label="In review" active={state.reviewStatus === "in_review"} state={state} reviewStatus="in_review" />
-            <Filter label="Escalated" active={state.reviewStatus === "escalated"} state={state} reviewStatus="escalated" />
+            <FilterButton label="All" active={!state.reviewStatus} href={filterHref({ reviewStatus: null })} />
+            <FilterButton label="Unreviewed" active={state.reviewStatus === "unreviewed"} href={filterHref({ reviewStatus: "unreviewed" })} />
+            <FilterButton label="In review" active={state.reviewStatus === "in_review"} href={filterHref({ reviewStatus: "in_review" })} />
+            <FilterButton label="Escalated" active={state.reviewStatus === "escalated"} href={filterHref({ reviewStatus: "escalated" })} />
           </FilterGroup>
           <FilterGroup label="Payment status">
-            <Filter label="All paid" active={!state.status} state={state} status={null} />
-            <Filter label="Completed" active={state.status === "completed"} state={state} status="completed" />
-            <Filter label="Refunded" active={state.status === "refunded"} state={state} status="refunded" />
-            <Filter label="Partial refund" active={state.status === "partially_refunded"} state={state} status="partially_refunded" />
-            <Filter label="Disputed" active={state.status === "disputed"} state={state} status="disputed" />
-            <Filter label="Reconciliation failed" active={state.status === "paid_unreconciled"} state={state} status="paid_unreconciled" />
+            <FilterButton label="All paid" active={!state.status} href={filterHref({ status: null })} />
+            <FilterButton label="Completed" active={state.status === "completed"} href={filterHref({ status: "completed" })} />
+            <FilterButton label="Refunded" active={state.status === "refunded"} href={filterHref({ status: "refunded" })} />
+            <FilterButton label="Partial refund" active={state.status === "partially_refunded"} href={filterHref({ status: "partially_refunded" })} />
+            <FilterButton label="Disputed" active={state.status === "disputed"} href={filterHref({ status: "disputed" })} />
+            <FilterButton label="Reconciliation failed" active={state.status === "paid_unreconciled"} href={filterHref({ status: "paid_unreconciled" })} />
           </FilterGroup>
         </div>
         <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto">
@@ -179,64 +197,6 @@ function FiltersBar({ state }: { state: Filters }) {
   );
 }
 
-function FilterGroup({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div>
-      <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </p>
-      <div className="inline-flex flex-wrap items-center gap-0.5 rounded-lg border border-border/60 bg-muted/30 p-0.5">
-        {children}
-      </div>
-    </div>
-  );
-}
-
-function Filter({
-  label,
-  active,
-  state,
-  status,
-  verdict,
-  reviewStatus,
-}: {
-  label: string;
-  active: boolean;
-  state: Filters;
-  status?: string | null;
-  verdict?: FiatVerdict | null;
-  reviewStatus?: FiatReviewStatus | null;
-}) {
-  const next = {
-    ...state,
-    page: 1,
-    status: status === null ? undefined : status ?? state.status,
-    verdict: verdict === null ? undefined : verdict ?? state.verdict,
-    reviewStatus:
-      reviewStatus === null ? undefined : reviewStatus ?? state.reviewStatus,
-  };
-  return (
-    <HostLink
-      href={href(next)}
-      aria-current={active ? "true" : undefined}
-      className={cn(
-        "rounded-md px-2.5 py-1 text-xs font-medium transition-colors",
-        active
-          ? "border border-border/70 bg-background text-foreground shadow-sm"
-          : "text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-    </HostLink>
-  );
-}
-
 async function FiatContent({
   state,
   canManageKyc,
@@ -252,8 +212,20 @@ async function FiatContent({
     search: state.search || undefined,
     excludeKycRequired: !state.includeKycRequired,
   });
-  if (!result.configured) return <Empty text="The Antifraud monitor is not configured." />;
-  if (result.error) return <Empty text="Fiat risk assessments could not be loaded." />;
+  if (!result.configured)
+    return (
+      <EmptyState
+        icon={CreditCard}
+        text="The Antifraud monitor is not configured."
+      />
+    );
+  if (result.error)
+    return (
+      <EmptyState
+        icon={CreditCard}
+        text="Fiat risk assessments could not be loaded."
+      />
+    );
   const { data: checkedWithdrawalUserIds } = await safeQuery(
     () =>
       getFiatStaffCheckedWithdrawalUserIds(
@@ -268,7 +240,10 @@ async function FiatContent({
     <div className="space-y-4">
       {result.summary && <Summary summary={result.summary} />}
       {result.data.length === 0 ? (
-        <Empty text="No paid fiat deposits match these filters." />
+        <EmptyState
+          icon={CreditCard}
+          text="No paid fiat deposits match these filters."
+        />
       ) : (
         <div className="space-y-3">
           {result.data.map((item) => (
@@ -282,30 +257,22 @@ async function FiatContent({
         </div>
       )}
       {result.pagination && (
-        <div className="flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Page {result.pagination.page} of {result.pagination.pages} ·{" "}
-            {result.pagination.total} deposits
-          </span>
-          <div className="flex gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={state.page <= 1}
-              render={state.page > 1 ? <HostLink href={href({ ...state, page: state.page - 1 })} /> : undefined}
-            >
-              <ChevronLeft className="size-3.5" /> Previous
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              disabled={state.page >= result.pagination.pages}
-              render={state.page < result.pagination.pages ? <HostLink href={href({ ...state, page: state.page + 1 })} /> : undefined}
-            >
-              Next <ChevronRight className="size-3.5" />
-            </Button>
-          </div>
-        </div>
+        <ListPagination
+          page={result.pagination.page}
+          pages={result.pagination.pages}
+          total={result.pagination.total}
+          unitLabel="deposits"
+          previousHref={
+            state.page > 1
+              ? href({ ...state, page: state.page - 1 })
+              : undefined
+          }
+          nextHref={
+            state.page < result.pagination.pages
+              ? href({ ...state, page: state.page + 1 })
+              : undefined
+          }
+        />
       )}
     </div>
   );
@@ -476,7 +443,7 @@ function FiatRow({
               {formatCurrency(item.credited_amount_usd)}
             </p>
             <p className="text-[10px] tabular-nums text-muted-foreground">
-              {formatDate(item.occurred_at)}
+              {formatDateTime(item.occurred_at)}
             </p>
           </div>
           <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", style.box)}>
@@ -500,17 +467,17 @@ function FiatRow({
         </div>
       </div>
       <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-3 xl:grid-cols-7">
-        <Fact
+        <FactCell
           label="Six-point flow"
           value={`${passed}/${item.flow_checks.length} pass`}
           alert={flagged.length > 0}
         />
-        <Fact
+        <FactCell
           label="Whop score"
           value={item.provider_risk_score === null ? "No result" : `${item.provider_risk_score}/100`}
           alert={item.provider_risk_score !== null && item.provider_risk_score >= 60}
         />
-        <Fact
+        <FactCell
           label="3DS"
           value={
             item.three_ds_verified === true
@@ -521,63 +488,27 @@ function FiatRow({
           }
           alert={item.three_ds_verified === false}
         />
-        <Fact
+        <FactCell
           label="Payment option"
           value={whopPaymentMethodLabel(
             item.provider_evidence.paymentMethodType,
           )}
         />
-        <Fact
+        <FactCell
           label="Prior crypto"
           value={`${funding.priorCryptoDeposits} · ${formatCurrency(funding.priorCryptoUsd)}`}
         />
-        <Fact
+        <FactCell
           label="Prior fiat"
           value={`${funding.priorFiatDeposits} · ${formatCurrency(funding.priorFiatUsd)}`}
         />
-        <Fact
+        <FactCell
           label="Whop checkout:"
           value={item.provider_evidence.checkoutEmail ?? "unavailable"}
         />
       </div>
     </article>
   );
-}
-
-function Fact({
-  label,
-  value,
-  alert = false,
-}: {
-  label: string;
-  value: string;
-  alert?: boolean;
-}) {
-  return (
-    <div
-      className={cn(
-        "rounded-lg border border-border/60 bg-muted/20 p-2.5",
-        alert && "border-amber-500/30",
-      )}
-    >
-      <p className="text-[10px] text-muted-foreground">{label}</p>
-      <p
-        className={cn(
-          "mt-0.5 truncate text-xs font-medium tabular-nums",
-          alert && "text-amber-600 dark:text-amber-400",
-        )}
-        title={value}
-      >
-        {value}
-      </p>
-    </div>
-  );
-}
-
-function verdictStyle(verdict: FiatVerdict) {
-  if (verdict === "good") return { icon: ShieldCheck, text: "text-emerald-500", box: "border-emerald-500/25 bg-emerald-500/5" };
-  if (verdict === "bad") return { icon: ShieldAlert, text: "text-rose-500", box: "border-rose-500/25 bg-rose-500/5" };
-  return { icon: CircleAlert, text: "text-amber-500", box: "border-amber-500/25 bg-amber-500/5" };
 }
 
 function href(state: Filters) {
@@ -590,28 +521,4 @@ function href(state: Filters) {
   if (state.includeKycRequired) params.set("includeKycRequired", "true");
   const query = params.toString();
   return `/antifraud/fiat-deposits${query ? `?${query}` : ""}`;
-}
-
-function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-US", { dateStyle: "medium", timeStyle: "short" }).format(new Date(value));
-}
-
-function Empty({ text }: { text: string }) {
-  return (
-    <div className="rounded-xl border border-dashed p-10 text-center">
-      <CreditCard className="mx-auto size-7 text-muted-foreground" />
-      <p className="mt-3 text-sm text-muted-foreground">{text}</p>
-    </div>
-  );
-}
-
-function FiatListSkeleton() {
-  return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => <Skeleton key={index} className="h-28 rounded-xl" />)}
-      </div>
-      {Array.from({ length: 4 }).map((_, index) => <Skeleton key={index} className="h-36 rounded-xl" />)}
-    </div>
-  );
 }
