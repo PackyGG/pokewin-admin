@@ -225,32 +225,12 @@ export async function makeCreator(userId: string) {
   revalidatePath("/creators");
 }
 
-export async function updateAffiliateLevel(userId: string, level: number) {
-  const db = await getPrimaryDrizzleDb();
-  const session = await requirePageAccess("/creators");
-  await requireCapability(
-    session,
-    "__can_update_creator_affiliate_level",
-    "update creator affiliate level",
-  );
-
-  if (level < 1 || level > 8) throw new Error("Invalid level");
-
-  await db
-    .update(affiliate_accounts)
-    .set({ updated_at: new Date().toISOString() })
-    .where(eq(affiliate_accounts.user_id, userId));
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "affiliate_level_updated",
-    targetUserId: userId,
-    metadata: { level },
-  });
-
-  revalidatePath(`/creators/${userId}`);
-  revalidatePath("/creators");
-}
+// Removed 2026-07-29: updateAffiliateLevel. There is NO per-user level
+// column anywhere in the MAIN schema (affiliate_accounts has none) — the
+// action only bumped updated_at while the UIs toasted "Level updated" and
+// a false audit event was written. Per-user level is display-only,
+// derived from the global affiliate_level_configs thresholds; the only
+// real level mutation is updateLevelConfig below.
 
 export async function addAffiliateCode(userId: string, code: string) {
   const db = await getPrimaryDrizzleDb();
@@ -321,32 +301,11 @@ export async function removeAffiliateCode(codeId: string) {
   revalidatePath(`/creators/${code.user_id}`);
 }
 
-export async function toggleAffiliateCode(codeId: string, isActive: boolean) {
-  const db = await getPrimaryDrizzleDb();
-  const session = await requirePageAccess("/creators");
-  await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
-
-  const [code] = await db
-    .select({ user_id: affiliate_codes.user_id, code: affiliate_codes.code })
-    .from(affiliate_codes)
-    .where(eq(affiliate_codes.id, codeId))
-    .limit(1);
-  if (!code) throw new Error("Code not found");
-
-  await db
-    .update(affiliate_codes)
-    .set({ updated_at: new Date().toISOString() })
-    .where(eq(affiliate_codes.id, codeId));
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "affiliate_code_toggled",
-    targetUserId: code.user_id,
-    metadata: { code: code.code, is_active: isActive },
-  });
-
-  revalidatePath(`/creators/${code.user_id}`);
-}
+// Removed 2026-07-29: toggleAffiliateCode. `affiliate_codes` has NO
+// is_active column in prod — the action only bumped updated_at while the
+// UI toasted "Code activated/deactivated" and wrote a false audit event.
+// The only real activation switch is the account-wide
+// `user.affiliate_code_active` flag — see toggleCodeActive below.
 
 export async function updateCreatorLimits(
   userId: string,
@@ -873,7 +832,7 @@ export async function createDeal(
           : null,
       leaderboard_frequency: parsed.data.leaderboardFrequency ?? null,
       min_stream_minutes: parsed.data.minStreamMinutes ?? null,
-      max_financial_exposure: String(maxExposure),
+      max_financial_exposure: maxExposure == null ? null : String(maxExposure),
       status: "active",
     })
     .returning({ id: creator_deals.id });
@@ -913,12 +872,15 @@ export async function updateDeal(
   )[0];
   if (!deal) throw new Error("Deal not found");
 
-  // Merge existing deal data with updates for exposure calculation
+  // Merge existing deal data with updates for exposure calculation.
+  // NULL-preserving on purpose: a NULL currency limit means "no limit
+  // tracked" (exposure stays null), NOT a $0 limit — toNumber() would
+  // silently coerce NULL to 0.
   const merged = {
-    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumber(deal.currency_limit_amount),
+    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumberOrNull(deal.currency_limit_amount),
     currencyLimitResetDays: v.currencyLimitResetDays !== undefined ? v.currencyLimitResetDays : deal.currency_limit_reset_days,
-    leaderboardPrizePool: v.leaderboardPrizePool !== undefined ? v.leaderboardPrizePool : toNumber(deal.leaderboard_prize_pool),
-    leaderboardOurShare: v.leaderboardOurShare !== undefined ? v.leaderboardOurShare : toNumber(deal.leaderboard_our_share),
+    leaderboardPrizePool: v.leaderboardPrizePool !== undefined ? v.leaderboardPrizePool : toNumberOrNull(deal.leaderboard_prize_pool),
+    leaderboardOurShare: v.leaderboardOurShare !== undefined ? v.leaderboardOurShare : toNumberOrNull(deal.leaderboard_our_share),
     leaderboardFrequency: v.leaderboardFrequency !== undefined ? v.leaderboardFrequency : deal.leaderboard_frequency,
   };
   const maxExposure = calculateMaxExposure(merged);
@@ -971,17 +933,19 @@ export async function updateDeal(
       }),
       ...(v.leaderboardFrequency !== undefined && { leaderboard_frequency: v.leaderboardFrequency }),
       ...(v.minStreamMinutes !== undefined && { min_stream_minutes: v.minStreamMinutes }),
-      max_financial_exposure: String(maxExposure),
+      max_financial_exposure: maxExposure == null ? null : String(maxExposure),
       updated_at: new Date().toISOString(),
     })
     .where(eq(creator_deals.id, dealId));
 
-  // Sync withdrawal limits to main DB
+  // Sync withdrawal limits to main DB. Same NULL-preservation as the
+  // exposure merge above: an unchanged NULL limit must stay NULL ("no
+  // limit"), not be rewritten as a hard $0 / 0% limit.
   await syncWithdrawalLimits(deal.target_user_id, {
-    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumber(deal.currency_limit_amount),
+    currencyLimitAmount: v.currencyLimitAmount !== undefined ? v.currencyLimitAmount : toNumberOrNull(deal.currency_limit_amount),
     currencyLimitResetDays: v.currencyLimitResetDays !== undefined ? v.currencyLimitResetDays : deal.currency_limit_reset_days,
-    percentageLimit: v.percentageLimit !== undefined ? v.percentageLimit : toNumber(deal.percentage_limit),
-    tipLimit: v.tipLimit !== undefined ? v.tipLimit : toNumber(deal.tip_limit),
+    percentageLimit: v.percentageLimit !== undefined ? v.percentageLimit : toNumberOrNull(deal.percentage_limit),
+    tipLimit: v.tipLimit !== undefined ? v.tipLimit : toNumberOrNull(deal.tip_limit),
     tipLimitResetDays: v.tipLimitResetDays !== undefined ? v.tipLimitResetDays : deal.tip_limit_reset_days,
   });
 
@@ -1045,6 +1009,13 @@ async function syncWithdrawalLimits(
   }
 }
 
+// NULL-preserving decimal → number. Unlike toNumber() (which coerces
+// NULL to 0), this keeps NULL as null so "no limit set" survives the
+// merge instead of becoming a hard 0 limit.
+function toNumberOrNull(value: unknown): number | null {
+  return value == null ? null : toNumber(value);
+}
+
 function calculateMaxExposure(data: {
   currencyLimitAmount?: number | null;
   currencyLimitResetDays?: number | null;
@@ -1059,13 +1030,15 @@ function calculateMaxExposure(data: {
   const monthlyCashout = resetDays ? (limitAmount / resetDays) * 30 : limitAmount;
 
   const pool = data.leaderboardPrizePool ?? 0;
+  // 0–100 scale (optionalPercent — "admins type 20 not 0.2"), so divide
+  // by 100 here or the leaderboard leg is inflated 100x.
   const ourShare = data.leaderboardOurShare ?? 0;
   const freqMultiplier = data.leaderboardFrequency === "weekly" ? 4
     : data.leaderboardFrequency === "biweekly" ? 2
     : data.leaderboardFrequency === "monthly" ? 1
     : 0;
 
-  const leaderboardCostPerMonth = pool * ourShare * freqMultiplier;
+  const leaderboardCostPerMonth = pool * (ourShare / 100) * freqMultiplier;
   return monthlyCashout + leaderboardCostPerMonth;
 }
 

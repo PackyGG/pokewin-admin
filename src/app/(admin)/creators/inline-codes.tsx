@@ -24,8 +24,10 @@ type Code = { id: string; code: string };
  *
  * Wraps the existing addAffiliateCode / removeAffiliateCode server
  * actions (already authed via requireCapability + audit-logged).
- * Toggle isn't exposed because the underlying column doesn't exist
- * in prod — see the comment in actions.ts:toggleAffiliateCode.
+ * Toggle isn't exposed because `affiliate_codes` has no is_active
+ * column in prod — per-code toggling can't be persisted. The only
+ * real switch is the account-wide `user.affiliate_code_active` flag
+ * (actions.ts:toggleCodeActive).
  */
 export function InlineCodes({
   userId,

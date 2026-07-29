@@ -8,12 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
-import { addAffiliateCode, removeAffiliateCode, toggleAffiliateCode, toggleCodeActive } from "../actions";
+import { addAffiliateCode, removeAffiliateCode, toggleCodeActive } from "../actions";
 
+// No per-code isActive: `affiliate_codes` has no is_active column in
+// prod, so additional codes can't be individually toggled — only the
+// account-wide primary switch (user.affiliate_code_active) is real.
 type AdditionalCode = {
   id: string;
   code: string;
-  isActive: boolean;
   createdAt: string;
 };
 
@@ -53,17 +55,6 @@ export function CodesCard({
         toast.success("Code removed");
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to remove code");
-      }
-    });
-  }
-
-  function handleToggle(codeId: string, isActive: boolean) {
-    startTransition(async () => {
-      try {
-        await toggleAffiliateCode(codeId, isActive);
-        toast.success(isActive ? "Code activated" : "Code deactivated");
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : "Failed to toggle code");
       }
     });
   }
@@ -108,12 +99,6 @@ export function CodesCard({
           <div key={c.id} className="flex items-center justify-between rounded-md border p-3">
             <span className="font-mono text-sm">{c.code}</span>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground">{c.isActive ? "Active" : "Inactive"}</span>
-              <Switch
-                checked={c.isActive}
-                onCheckedChange={(active) => handleToggle(c.id, active)}
-                disabled={isPending}
-              />
               <Button
                 variant="ghost"
                 size="icon"
