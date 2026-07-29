@@ -1,30 +1,33 @@
-export type AdminRole =
-  | "admin"
-  | "support"
-  | "marketing"
-  | "creator"
-  | "pack_creator"
-  // Creator Hub manager — the in-house Creator-Marketing (CM) team role.
-  // Lands on /creator-hub when it is the primary role. Hub entry is gated
-  // via `canAccessCreatorHub` (founder motha OR per-role ADMIN-DB toggle).
-  | "creator_manager";
-
-/** Every built-in system role, in highest → lowest privilege order. */
-export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
+/**
+ * Every built-in system role, in highest → lowest privilege order.
+ *
+ * SINGLE SOURCE OF TRUTH for the built-in role spellings: the `AdminRole`
+ * union and {@link PERSISTABLE_ADMIN_ROLES} are DERIVED from this list, so
+ * the spellings can never drift apart (they used to be three hand-kept
+ * copies).
+ */
+export const ALL_ADMIN_ROLES = [
   "admin",
   "support",
   "marketing",
   "creator",
   "pack_creator",
+  // Creator Hub manager — the in-house Creator-Marketing (CM) team role.
+  // Lands on /creator-hub when it is the primary role. Hub entry is gated
+  // via `canAccessCreatorHub` (founder motha OR per-role ADMIN-DB toggle).
   "creator_manager",
-];
+] as const;
+
+export type AdminRole = (typeof ALL_ADMIN_ROLES)[number];
 
 /**
  * The subset of built-in roles that exist as values in the ADMIN-DB
  * `admin_role` Postgres enum and can therefore be PERSISTED on an
- * `admin_users` row. Must stay in sync with the `admin_role` Postgres enum
- * in the checked-in Admin Drizzle schema (apply additive reviewed Admin SQL
- * when extending).
+ * `admin_users` row. Today EVERY built-in role is in the enum, so this is
+ * derived directly from {@link ALL_ADMIN_ROLES}. If a code-only role ever
+ * ships ahead of its additive enum migration, exclude it here explicitly
+ * (and apply the reviewed Admin SQL to extend the enum before removing the
+ * exclusion).
  *
  * Any code path that builds a value to store in `admin_users.role` /
  * `admin_users.roles` (e.g. the create / set-roles admin actions) must
@@ -33,14 +36,7 @@ export const ALL_ADMIN_ROLES: readonly AdminRole[] = [
  * (sidebar gating, `requireRole`, landing routes) use the full
  * `ALL_ADMIN_ROLES` / `isAdminRole` set and are unaffected.
  */
-export const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = [
-  "admin",
-  "support",
-  "marketing",
-  "creator",
-  "pack_creator",
-  "creator_manager",
-];
+export const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = ALL_ADMIN_ROLES;
 
 const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
   PERSISTABLE_ADMIN_ROLES,
@@ -48,18 +44,11 @@ const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
 
 /**
  * Type guard for a built-in role that can be stored in the ADMIN-DB
- * `admin_role` enum. Narrows to the exact database-enum string set so the
- * result is assignable to a `admin_role`-typed field. Drops unknown strings.
+ * `admin_role` enum. `AdminRole` is exactly the database-enum string set
+ * (both are derived from {@link ALL_ADMIN_ROLES}), so the narrowed result
+ * is assignable to an `admin_role`-typed field. Drops unknown strings.
  */
-export function isPersistableAdminRole(
-  value: string,
-): value is
-  | "admin"
-  | "support"
-  | "marketing"
-  | "creator"
-  | "pack_creator"
-  | "creator_manager" {
+export function isPersistableAdminRole(value: string): value is AdminRole {
   return PERSISTABLE_ADMIN_ROLE_SET.has(value);
 }
 
@@ -118,20 +107,42 @@ export function getEffectiveRoles(
 }
 
 /**
- * Pick the single canonical/primary role from an effective role set —
- * the highest-privilege member (admin first). Used to keep the singular
- * `role` column / session field in sync when roles change, and as the
- * landing-route driver. Falls back to `"admin"` only when the set is
- * empty, which should never happen for a real user (callers pass a set
- * that already includes the existing primary role).
+ * Pick the single canonical/primary role from an effective role set — the
+ * highest-privilege member (admin first) — or `null` when NO recognized
+ * role survives (empty set, or only unknown/stale strings, e.g. a new DB
+ * enum value shipped ahead of code).
+ *
+ * FAIL-CLOSED: `null` means "no recognized role" and callers MUST treat it
+ * as no-access / least privilege. It must never be papered over with a
+ * fabricated role — `verifySession` denies such a session outright, and
+ * routing falls back to the legacy empty-roles path.
  */
-export function pickPrimaryRole(roles: readonly string[]): AdminRole {
+export function pickPrimaryRoleOrNull(
+  roles: readonly string[],
+): AdminRole | null {
   let best: AdminRole | null = null;
   for (const r of roles) {
     if (!isAdminRole(r)) continue;
     if (best === null || ROLE_PRIORITY[r] < ROLE_PRIORITY[best]) best = r;
   }
-  return best ?? "admin";
+  return best;
+}
+
+/**
+ * Always-a-role variant of {@link pickPrimaryRoleOrNull}. Used to keep the
+ * singular `role` column / session field in sync when roles change. Every
+ * caller passes a set that already contains at least one recognized role
+ * (validated/normalized upstream, or a DB row that includes the existing
+ * primary), so the fallback is unreachable in practice — it exists as a
+ * type-level safety net only. It resolves to the LOWEST-privilege built-in
+ * role, NEVER `admin`: the old `?? "admin"` fallback turned an unrecognized
+ * role string into a full superuser session (requireAdmin/requirePageAccess
+ * bypass). A session minted with the fallback grants nothing anyway —
+ * `verifySession` re-derives the role set DB-fresh on every request and
+ * fails closed when no recognized role survives.
+ */
+export function pickPrimaryRole(roles: readonly string[]): AdminRole {
+  return pickPrimaryRoleOrNull(roles) ?? "pack_creator";
 }
 
 /**
@@ -171,8 +182,12 @@ export function getDefaultRouteForRoles(
   roles: readonly string[],
   allowedPages?: string[],
 ): string {
-  if (roles.length === 0) return getDefaultRoute("", allowedPages);
-  return getDefaultRoute(pickPrimaryRole(roles), allowedPages);
+  const primary = pickPrimaryRoleOrNull(roles);
+  // No recognized role (empty set OR only unknown strings) → identical
+  // routing to the legacy empty-roles path (allowed-pages driven). Never
+  // fabricate a role here — least of all admin's /dashboard landing.
+  if (primary === null) return getDefaultRoute("", allowedPages);
+  return getDefaultRoute(primary, allowedPages);
 }
 
 /** True when Pack Builder is the viewer's only effective built-in role. */

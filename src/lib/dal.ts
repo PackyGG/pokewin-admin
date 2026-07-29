@@ -7,7 +7,7 @@ import {
   getDefaultRoute,
   getDefaultRouteForRoles,
   getEffectiveRoles,
-  pickPrimaryRole,
+  pickPrimaryRoleOrNull,
 } from "./admin-roles";
 import {
   isMissingColumnError,
@@ -190,7 +190,16 @@ export const verifySession = cache(async (): Promise<SessionPayload> => {
   // effective set; `role` is its highest-privilege primary member so the
   // singular field stays meaningful for the many call sites that read it.
   const effectiveRoles = getEffectiveRoles(adminUser.role, adminUser.roles);
-  const primary = pickPrimaryRole(effectiveRoles);
+  const primary = pickPrimaryRoleOrNull(effectiveRoles);
+  // FAIL-CLOSED (security): if the row's role string(s) are not recognized
+  // by this build (e.g. a new DB enum value shipped ahead of code), the
+  // effective set is empty and there is NO primary role. That must mean NO
+  // access — the old pickPrimaryRole fallback fabricated `admin` here,
+  // silently bypassing requireAdmin/requirePageAccess for a row that should
+  // have least privilege. Deny exactly like an inactive account.
+  if (primary === null) {
+    redirect("/login");
+  }
   // `isOwner` is DB-fresh (the guard read above), overwriting whatever the JWT
   // carried — same freshness contract as `role`/`roles`. Owner-only gates +
   // the page/capability bypass + the sidebar all read it from the session.
@@ -348,7 +357,8 @@ async function resolveUserLandingRoute(
   allowedPages: string[],
 ): Promise<string | null> {
   try {
-    const primary = roles.length > 0 ? pickPrimaryRole(roles) : null;
+    // `null` when the set is empty — same semantics the old ternary had.
+    const primary = pickPrimaryRoleOrNull(roles);
     const row = (await adminDrizzle.execute<{
       custom_landing_route: string | null;
       system_landing_route: string | null;
