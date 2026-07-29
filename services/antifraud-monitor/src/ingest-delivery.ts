@@ -196,30 +196,10 @@ export class IngestDelivery {
       );
       if (containment.rows.length > 0) {
         await this.deliverEvents(containment.rows);
+        await this.confirmDashboardEvents(client, containment.rows);
         await this.confirmContainmentEvents(client, containment.rows);
         return containment.rows.length;
       }
-
-      const cursor = await client.query<{
-        recorded_at: Date;
-        event_id: string;
-      }>(
-        `
-          SELECT recorded_at, event_id
-          FROM ingest_delivery_cursors
-          WHERE sink = $1
-        `,
-        [CURSOR],
-      );
-      const current = cursor.rows[0];
-      if (!current) {
-        throw new Error("Antifraud ingest delivery cursor is missing");
-      }
-      await this.confirmDeliveredContainment(
-        client,
-        current.recorded_at,
-        current.event_id,
-      );
 
       const events = await client.query<RiskEventRow>(
         `
@@ -230,15 +210,19 @@ export class IngestDelivery {
             re.occurred_at, re.recorded_at
           FROM risk_events re
           JOIN subjects s ON s.user_id = re.user_id
-          WHERE (re.recorded_at, re.id) > ($1, $2::uuid)
+          -- A tuple cursor alone can skip a transaction that started earlier
+          -- but committed after the cursor advanced. This receipt is written
+          -- only after the dashboard confirms the complete signed batch.
+          WHERE re.dashboard_delivered_at IS NULL
           ORDER BY re.recorded_at, re.id
-          LIMIT $3
+          LIMIT $1
         `,
-        [current.recorded_at, current.event_id, BATCH_SIZE],
+        [BATCH_SIZE],
       );
       if (events.rows.length === 0) return 0;
 
       await this.deliverEvents(events.rows);
+      await this.confirmDashboardEvents(client, events.rows);
 
       const last = events.rows.at(-1);
       if (!last) return 0;
@@ -247,13 +231,9 @@ export class IngestDelivery {
           UPDATE ingest_delivery_cursors
           SET recorded_at = $2, event_id = $3, updated_at = now()
           WHERE sink = $1
+            AND (recorded_at, event_id) < ($2, $3::uuid)
         `,
         [CURSOR, last.recorded_at, last.id],
-      );
-      await this.confirmDeliveredContainment(
-        client,
-        last.recorded_at,
-        last.id,
       );
       return events.rows.length;
     } finally {
@@ -348,43 +328,20 @@ export class IngestDelivery {
     );
   }
 
-  private async confirmDeliveredContainment(
+  private async confirmDashboardEvents(
     client: pg.PoolClient,
-    recordedAt: Date,
-    eventId: string,
+    events: RiskEventRow[],
   ): Promise<void> {
+    const eventIds = events.map((event) => event.id);
+    if (eventIds.length === 0) return;
     await client.query(
       `
-        WITH confirmed_matches AS (
-          UPDATE fiat_email_domain_matches AS match
-          SET
-            lock_delivered_at = COALESCE(match.lock_delivered_at, now()),
-            next_attempt_at = now(),
-            last_error = NULL,
-            updated_at = now()
-          FROM risk_events AS event
-          WHERE match.lock_delivered_at IS NULL
-            AND event.event_type = 'fiat_blacklisted_email_domain'
-            AND (
-              event.source_ref = 'blacklisted-signup:' || match.source_event_id
-              OR event.source_ref =
-                'blacklisted-checkout:' || match.source_event_id
-            )
-            AND (event.recorded_at, event.id) <= ($1, $2::uuid)
-          RETURNING match.source_event_id, match.match_source, match.domain
-        )
-        UPDATE fiat_problem_alert_outbox AS alert
-        SET next_attempt_at = now(), updated_at = now()
-        FROM confirmed_matches AS match
-        WHERE alert.source_kind = CASE
-            WHEN match.match_source = 'signup' THEN 'signup'
-            ELSE 'payment_webhook'
-          END
-          AND alert.source_id =
-            match.source_event_id || ':blacklisted_email_domain:' || match.domain
-          AND alert.discord_delivered_at IS NULL
+        UPDATE risk_events
+        SET dashboard_delivered_at =
+          COALESCE(dashboard_delivered_at, now())
+        WHERE id = ANY($1::uuid[])
       `,
-      [recordedAt, eventId],
+      [eventIds],
     );
   }
 

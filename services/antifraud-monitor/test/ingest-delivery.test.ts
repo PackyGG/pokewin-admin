@@ -52,14 +52,6 @@ function deliveryPool(
       if (sql.includes("pg_try_advisory_lock")) {
         return { rows: [{ acquired: true }] };
       }
-      if (sql.includes("FROM ingest_delivery_cursors")) {
-        return {
-          rows: [{
-            recorded_at: new Date("2025-12-31T23:59:59.000Z"),
-            event_id: "00000000-0000-0000-0000-000000000000",
-          }],
-        };
-      }
       if (sql.includes("JOIN fiat_email_domain_matches")) {
         return {
           rows: rows.filter((event) =>
@@ -169,6 +161,13 @@ test("delivery advances only after every event is confirmed", async () => {
     ),
     true,
   );
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events") &&
+      sql.includes("dashboard_delivered_at")
+    ),
+    true,
+  );
 });
 
 test("successful containment delivery confirms the lock without mirror lag", async () => {
@@ -197,6 +196,13 @@ test("successful containment delivery confirms the lock without mirror lag", asy
       sql.includes("lock_delivered_at = COALESCE") &&
       sql.includes("event.id = ANY($1::uuid[])") &&
       sql.includes("UPDATE fiat_problem_alert_outbox AS alert")
+    ),
+    true,
+  );
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events") &&
+      sql.includes("dashboard_delivered_at")
     ),
     true,
   );
@@ -267,7 +273,10 @@ test("signed delivery batches stay bounded for containment writes", async () => 
 
   assert.equal(await delivery.flushOnce(), 0);
   assert.equal(
-    fixture.queries.some((sql) => /LIMIT \$3/.test(sql)),
+    fixture.queries.some((sql) =>
+      sql.includes("dashboard_delivered_at IS NULL") &&
+      /LIMIT \$1/.test(sql)
+    ),
     true,
   );
   const source = await import("node:fs/promises").then(({ readFile }) =>
@@ -295,6 +304,34 @@ test("partial confirmation keeps the cursor for an idempotent retry", async () =
       sql.includes("UPDATE ingest_delivery_cursors")
     ),
     false,
+  );
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events") &&
+      sql.includes("dashboard_delivered_at")
+    ),
+    false,
+  );
+});
+
+test("migration replays containment events skipped by the old cursor race", async () => {
+  const migration = await import("node:fs/promises").then(({ readFile }) =>
+    readFile(
+      new URL(
+        "../migrations/028_dashboard_delivery_receipts.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    )
+  );
+  assert.match(migration, /ADD COLUMN IF NOT EXISTS dashboard_delivered_at/);
+  assert.match(
+    migration,
+    /event_type <> 'risky_free_battle_containment'/,
+  );
+  assert.match(
+    migration,
+    /WHERE dashboard_delivered_at IS NULL/,
   );
 });
 
