@@ -18,6 +18,7 @@ import {
 } from "./fiat-withdrawal-holds.js";
 import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
+import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { drainOutbox } from "./outbox.js";
@@ -216,6 +217,7 @@ export class MonitorEngine {
   private readonly discord: DiscordAlerts;
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
+  private readonly freeBattleRisk: FreeBattleRiskMonitor;
   readonly riskyLocations: RiskyLocationStore;
   private readonly health = new PollerHealth();
 
@@ -231,6 +233,7 @@ export class MonitorEngine {
     this.discord = new DiscordAlerts(config, log);
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
+    this.freeBattleRisk = new FreeBattleRiskMonitor(config, db, log);
     this.riskyLocations = new RiskyLocationStore(db);
   }
 
@@ -238,6 +241,7 @@ export class MonitorEngine {
     await this.ensureCursor();
     await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
+    await this.freeBattleRisk.ensureCursor();
     await this.tick();
     this.timer = setInterval(
       () => void this.tick(),
@@ -404,6 +408,9 @@ export class MonitorEngine {
       );
       await this.runPhase("fiat-problem-alerts", () =>
         this.fiatAlerts.process(),
+      );
+      await this.runPhase("free-battle-risk", () =>
+        this.freeBattleRisk.process(),
       );
       const activitiesProcessed = await this.runPhase("activity", () =>
         this.scanActiveSessions(),
