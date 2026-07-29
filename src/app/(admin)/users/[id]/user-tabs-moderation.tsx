@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
+import { BAN_REASON_PRESETS } from "@/lib/ban-reasons";
 import type { UserDetail } from "./user-tabs-types";
 import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
 
@@ -321,9 +322,7 @@ export const ModerationSection = React.memo(function ModerationSection({
 // falls back to the free-text box. Values map to the exact string stored in
 // `user.banned_reason`; add more presets here as new categories come up.
 const BAN_REASON_OPTIONS: { value: string; label: string }[] = [
-  { value: "Multi", label: "Multi" },
-  { value: "CC Fraud", label: "CC Fraud" },
-  { value: "Abuse", label: "Abuse" },
+  ...BAN_REASON_PRESETS.map((reason) => ({ value: reason, label: reason })),
   { value: "custom", label: "Custom" },
 ];
 

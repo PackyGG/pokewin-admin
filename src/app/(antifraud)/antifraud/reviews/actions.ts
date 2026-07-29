@@ -32,6 +32,7 @@ import {
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import { FRAUD_BAN_REASON } from "@/lib/ban-reasons";
 
 /**
  * Account-review mutations.
@@ -540,7 +541,7 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
     await requireCapability(session, "__can_ban_users", "ban users");
     const db = await getPrimaryDrizzleDb();
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
-    const reason = `Antifraud review ${reviewId}: ${review.reason}`.slice(0, 500);
+    const reason = FRAUD_BAN_REASON;
 
     try {
       await db.transaction(async (tx) => {
@@ -570,6 +571,7 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
       targetUserId: review.targetUserId,
       metadata: {
         reason,
+        review_reason: review.reason,
         issuer_main_user_id: issuerMainUserId,
         reviewId,
         idempotencyKey,

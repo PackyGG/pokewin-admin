@@ -34,6 +34,7 @@ import {
 } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BAN_REASON_PRESETS } from "@/lib/ban-reasons";
 import { bulkBanFilteredUsers, previewBulkBanCount } from "./actions";
 
 /** Typed verbatim to arm the ban — a deliberate speed bump. */
@@ -115,7 +116,8 @@ export function BulkBanButton() {
   const [criteria, setCriteria] = useState<Criteria>({});
   const [count, setCount] = useState<number | null>(null);
   const [capped, setCapped] = useState(false);
-  const [reason, setReason] = useState("");
+  const [reasonOption, setReasonOption] = useState<string | null>(null);
+  const [customReason, setCustomReason] = useState("");
   const [confirm, setConfirm] = useState("");
   const [counting, startCount] = useTransition();
   const [banning, startBan] = useTransition();
@@ -128,7 +130,8 @@ export function BulkBanButton() {
     setCriteria({});
     setCount(null);
     setCapped(false);
-    setReason("");
+    setReasonOption(null);
+    setCustomReason("");
     setConfirm("");
   };
 
@@ -159,11 +162,16 @@ export function BulkBanButton() {
     });
   };
 
+  const isCustomReason = reasonOption === "custom";
+  const effectiveReason = isCustomReason
+    ? customReason.trim()
+    : (reasonOption ?? "");
+
   const armed =
     count !== null &&
     count > 0 &&
     !capped &&
-    reason.trim().length > 0 &&
+    effectiveReason.length > 0 &&
     confirm === CONFIRM_PHRASE &&
     !busy;
 
@@ -172,7 +180,7 @@ export function BulkBanButton() {
     startBan(async () => {
       const result = await bulkBanFilteredUsers({
         filters: criteria,
-        reason: reason.trim(),
+        reason: effectiveReason,
         expectedCount: count,
       });
       if (!result.success) {
@@ -284,13 +292,31 @@ export function BulkBanButton() {
 
         <div className="space-y-1.5">
           <Label htmlFor="bulk-ban-reason">Reason</Label>
-          <Input
-            id="bulk-ban-reason"
-            value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="bulk:signup-farm-2026-06-12"
-            autoComplete="off"
-          />
+          <Select
+            value={reasonOption ?? undefined}
+            onValueChange={setReasonOption}
+          >
+            <SelectTrigger id="bulk-ban-reason">
+              <SelectValue placeholder="Select a reason" />
+            </SelectTrigger>
+            <SelectContent>
+              {BAN_REASON_PRESETS.map((reason) => (
+                <SelectItem key={reason} value={reason}>
+                  {reason}
+                </SelectItem>
+              ))}
+              <SelectItem value="custom">Custom</SelectItem>
+            </SelectContent>
+          </Select>
+          {isCustomReason && (
+            <Input
+              value={customReason}
+              onChange={(event) => setCustomReason(event.target.value)}
+              placeholder="bulk:signup-farm-2026-06-12"
+              autoComplete="off"
+              autoFocus
+            />
+          )}
           <p className="text-xs text-muted-foreground">
             Stored on every account — make it a marker you can search and undo
             by later.
