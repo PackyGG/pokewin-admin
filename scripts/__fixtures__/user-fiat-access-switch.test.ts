@@ -6,6 +6,18 @@ const component = readFileSync(
   "src/app/(admin)/users/[id]/fiat-deposit-access-button.tsx",
   "utf8",
 );
+const apiClient = readFileSync(
+  "src/lib/backend-api/fiat-deposit-access.ts",
+  "utf8",
+);
+
+test("Fiat access calls the packy.gg API host", () => {
+  assert.match(
+    apiClient,
+    /FIAT_DEPOSIT_ACCESS_BASE_URL = "https:\/\/packy\.gg\/v1"/,
+  );
+  assert.doesNotMatch(apiClient, /backendApi\.(get|put)/);
+});
 
 test("user Fiat access is an immediate switch without a confirmation dialog", () => {
   assert.match(component, /<Switch[\s\S]*onCheckedChange=\{update\}/);

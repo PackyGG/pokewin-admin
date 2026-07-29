@@ -85,11 +85,11 @@ request; a changed request returns `409 idempotency_conflict`.
 ## Manual Fiat deposit access client
 
 `FiatDepositAccessClient` provides typed GET/PUT access to
-`/v1/admin/users/:userId/fiat-deposit-access` for future Antifraud workflows.
-Configure `API_URL` (or `BACKEND_API_URL`), `ADMIN_API_KEY`, and
-`xbypasssecret`. Requests send `x-admin-api-key` plus the `xbypasssecret`
-rate-limit bypass header. Missing credentials, non-2xx responses, timeouts,
-and malformed response bodies fail closed.
+`https://packy.gg/v1/admin/users/:userId/fiat-deposit-access` for future
+Antifraud workflows. Configure `ADMIN_API_KEY` and `xbypasssecret`. Requests
+send `x-admin-api-key` plus the `xbypasssecret` rate-limit bypass header.
+Missing credentials, non-2xx responses, timeouts, and malformed response
+bodies fail closed.
 
 ## Sanitized Sumsub review reads
 

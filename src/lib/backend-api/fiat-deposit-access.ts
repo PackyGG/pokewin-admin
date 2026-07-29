@@ -1,6 +1,10 @@
 import "server-only";
 
-import { backendApi } from "./client";
+import {
+  BackendApiError,
+  BackendNetworkError,
+  type BackendErrorPayload,
+} from "./errors";
 
 export type FiatDepositAccess = {
   enabled: boolean;
@@ -26,6 +30,7 @@ function headers(): Record<string, string> {
   return {
     "x-admin-api-key": requiredEnv("ADMIN_API_KEY"),
     xbypasssecret: requiredEnv("xbypasssecret"),
+    accept: "application/json",
   };
 }
 
@@ -54,27 +59,59 @@ function parseAccess(response: FiatDepositAccessResponse): FiatDepositAccess {
   throw new Error("Backend returned an invalid Fiat deposit access response");
 }
 
-const pathFor = (userId: string) =>
-  `/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
+const FIAT_DEPOSIT_ACCESS_BASE_URL = "https://packy.gg/v1";
+
+const urlFor = (userId: string) =>
+  `${FIAT_DEPOSIT_ACCESS_BASE_URL}/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
+
+async function requestFiatDepositAccess(
+  userId: string,
+  method: "GET" | "PUT",
+  enabled?: boolean,
+): Promise<FiatDepositAccess> {
+  const url = urlFor(userId);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method,
+      headers: {
+        ...headers(),
+        ...(method === "PUT" ? { "content-type": "application/json" } : {}),
+      },
+      body: method === "PUT" ? JSON.stringify({ enabled }) : undefined,
+      cache: "no-store",
+      signal: AbortSignal.timeout(8_000),
+    });
+  } catch (error) {
+    throw new BackendNetworkError(url, error);
+  }
+
+  const body = (await response.json().catch(() => null)) as
+    | FiatDepositAccessResponse
+    | BackendErrorPayload
+    | null;
+  if (!response.ok) {
+    const payload = (body ?? {}) as BackendErrorPayload;
+    throw new BackendApiError(
+      response.status,
+      payload.message ??
+        payload.error ??
+        `Fiat access request failed: ${response.status}`,
+      payload,
+    );
+  }
+  return parseAccess(body as FiatDepositAccessResponse);
+}
 
 export async function getFiatDepositAccess(
   userId: string,
 ): Promise<FiatDepositAccess> {
-  const response = await backendApi.get<FiatDepositAccessResponse>(
-    pathFor(userId),
-    { headers: headers() },
-  );
-  return parseAccess(response);
+  return requestFiatDepositAccess(userId, "GET");
 }
 
 export async function updateFiatDepositAccess(
   userId: string,
   enabled: boolean,
 ): Promise<FiatDepositAccess> {
-  const response = await backendApi.put<FiatDepositAccessResponse>(
-    pathFor(userId),
-    { enabled },
-    { headers: headers() },
-  );
-  return parseAccess(response);
+  return requestFiatDepositAccess(userId, "PUT", enabled);
 }

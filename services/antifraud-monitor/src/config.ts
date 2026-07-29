@@ -19,8 +19,6 @@ const schema = z.object({
   FINGERPRINT_SECRET_API_KEY: z.string().min(1),
   FINGERPRINT_REGION: z.enum(["eu", "us", "ap"]).default("eu"),
   PROXYCHECK_API_KEY: z.string().min(1),
-  API_URL: z.string().url().optional(),
-  BACKEND_API_URL: z.string().url().optional(),
   ADMIN_API_KEY: z.string().min(1).optional(),
   xbypasssecret: z.string().min(1).optional(),
   XBYPASSSECRET: z.string().min(1).optional(),

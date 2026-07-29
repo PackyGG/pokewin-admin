@@ -4,8 +4,6 @@ import test from "node:test";
 import { FiatDepositAccessClient } from "../src/fiat-deposit-access.js";
 
 const config = {
-  API_URL: "https://api.example.test",
-  BACKEND_API_URL: undefined,
   ADMIN_API_KEY: "admin-secret",
   xbypasssecret: "rate-limit-secret",
   XBYPASSSECRET: undefined,
@@ -26,7 +24,7 @@ test("gets Fiat access with the admin and rate-limit bypass headers", async () =
   assert.deepEqual(await client.get("user/id"), { enabled: true });
   assert.equal(
     capturedUrl,
-    "https://api.example.test/v1/admin/users/user%2Fid/fiat-deposit-access",
+    "https://packy.gg/v1/admin/users/user%2Fid/fiat-deposit-access",
   );
   assert.equal(capturedInit?.method, "GET");
   assert.equal(
@@ -42,7 +40,7 @@ test("gets Fiat access with the admin and rate-limit bypass headers", async () =
 test("updates Fiat access with the documented PUT body", async () => {
   let capturedInit: RequestInit | undefined;
   const client = new FiatDepositAccessClient(
-    { ...config, API_URL: "https://api.example.test/v1/" },
+    config,
     async (_url, init) => {
       capturedInit = init;
       return Response.json({ enabled: false });

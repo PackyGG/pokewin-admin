@@ -14,12 +14,10 @@ type FiatDepositAccessResponse =
 
 type UpstreamConfig = Pick<
   Config,
-  | "API_URL"
-  | "BACKEND_API_URL"
-  | "ADMIN_API_KEY"
-  | "xbypasssecret"
-  | "XBYPASSSECRET"
+  "ADMIN_API_KEY" | "xbypasssecret" | "XBYPASSSECRET"
 >;
+
+const FIAT_DEPOSIT_ACCESS_BASE_URL = "https://packy.gg/v1";
 
 function parseAccess(response: FiatDepositAccessResponse): FiatDepositAccess {
   if (typeof response === "boolean") return { enabled: response };
@@ -53,11 +51,7 @@ export class FiatDepositAccessClient {
   ) {}
 
   private endpoint(userId: string): string {
-    const rawUrl = this.config.API_URL ?? this.config.BACKEND_API_URL;
-    if (!rawUrl) throw new Error("fiat_deposit_access_api_url_missing");
-    const base = rawUrl.replace(/\/+$/, "");
-    const versioned = /\/v\d+$/.test(base) ? base : `${base}/v1`;
-    return `${versioned}/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
+    return `${FIAT_DEPOSIT_ACCESS_BASE_URL}/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
   }
 
   private headers(hasBody: boolean): Record<string, string> {
