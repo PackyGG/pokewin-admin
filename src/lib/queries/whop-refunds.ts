@@ -17,12 +17,17 @@ export type RefundCandidate = {
   userId: string;
   username: string | null;
   email: string | null;
+  country: string | null;
+  countryCode: string | null;
+  state: string | null;
+  city: string | null;
   currency: string;
   amountCents: number;
   status: string;
   providerStatus: string | null;
   createdAt: string;
   flagReason: string;
+  kycRequired: boolean;
   alreadyQueued: boolean;
 };
 
@@ -37,7 +42,12 @@ export type RefundBatchSummary = {
   issues: number;
 };
 
-async function currentlyFlaggedUsers(): Promise<Map<string, string>> {
+type RefundFlag = {
+  reason: string;
+  kycRequired: boolean;
+};
+
+async function currentlyFlaggedUsers(): Promise<Map<string, RefundFlag>> {
   const analystRows = await adminDrizzle
     .select({
       userId: antifraud_reviews.target_user_id,
@@ -46,9 +56,12 @@ async function currentlyFlaggedUsers(): Promise<Map<string, string>> {
     .from(antifraud_reviews)
     .where(eq(antifraud_reviews.status, "flagged"));
 
-  const reasons = new Map<string, string>();
+  const reasons = new Map<string, RefundFlag>();
   for (const row of analystRows) {
-    reasons.set(row.userId, row.reason || "Flagged by Antifraud");
+    reasons.set(row.userId, {
+      reason: row.reason || "Flagged by Antifraud",
+      kycRequired: false,
+    });
   }
 
   const db = readDrizzleForEnv(await readDbEnv());
@@ -59,19 +72,13 @@ async function currentlyFlaggedUsers(): Promise<Map<string, string>> {
     SELECT user_id, kyc_required_reason AS reason
     FROM user_kyc
     WHERE kyc_required = true
-      AND (
-        kyc_required_by LIKE 'system:antifraud-%'
-        OR COALESCE(kyc_required_reason, '') ~*
-          '(fraud|scam|chargeback|dispute|blacklist|suspicious|free battle|sponsored battle|linked alt)'
-      )
   `);
   for (const row of automated.rows) {
-    if (!reasons.has(row.user_id)) {
-      reasons.set(
-        row.user_id,
-        row.reason || "KYC required by automated Antifraud",
-      );
-    }
+    const existing = reasons.get(row.user_id);
+    reasons.set(row.user_id, {
+      reason: existing?.reason || row.reason || "KYC verification required",
+      kycRequired: true,
+    });
   }
   return reasons;
 }
@@ -90,7 +97,7 @@ async function existingRefundPayments(
 }
 
 async function queryCandidates(
-  flagged: Map<string, string>,
+  flagged: Map<string, RefundFlag>,
   filter:
     | { mode: "all" }
     | { mode: "users"; ids: readonly string[] }
@@ -120,6 +127,10 @@ async function queryCandidates(
     user_id: string;
     username: string | null;
     email: string | null;
+    country: string | null;
+    country_code: string | null;
+    state: string | null;
+    city: string | null;
     currency: string;
     amount_cents: number;
     status: string;
@@ -132,6 +143,10 @@ async function queryCandidates(
       i.user_id,
       u.username,
       u.email,
+      u.country,
+      u.country_code,
+      u.state,
+      u.city,
       i.currency,
       COALESCE(i.actual_customer_total_cents, i.requested_amount_cents)
         AS amount_cents,
@@ -158,20 +173,28 @@ async function queryCandidates(
   const queued = await existingRefundPayments(
     visibleRows.map((row) => row.provider_payment_id),
   );
-  return visibleRows.map((row) => ({
-    depositIntentId: row.deposit_intent_id,
-    providerPaymentId: row.provider_payment_id,
-    userId: row.user_id,
-    username: row.username,
-    email: row.email,
-    currency: row.currency,
-    amountCents: Number(row.amount_cents),
-    status: row.status,
-    providerStatus: row.provider_status,
-    createdAt: row.created_at,
-    flagReason: flagged.get(row.user_id) ?? "Flagged by Antifraud",
-    alreadyQueued: queued.has(row.provider_payment_id),
-  }));
+  return visibleRows.map((row) => {
+    const flag = flagged.get(row.user_id);
+    return {
+      depositIntentId: row.deposit_intent_id,
+      providerPaymentId: row.provider_payment_id,
+      userId: row.user_id,
+      username: row.username,
+      email: row.email,
+      country: row.country,
+      countryCode: row.country_code,
+      state: row.state,
+      city: row.city,
+      currency: row.currency,
+      amountCents: Number(row.amount_cents),
+      status: row.status,
+      providerStatus: row.provider_status,
+      createdAt: row.created_at,
+      flagReason: flag?.reason ?? "Flagged by Antifraud",
+      kycRequired: flag?.kycRequired ?? false,
+      alreadyQueued: queued.has(row.provider_payment_id),
+    };
+  });
 }
 
 export async function getRefundCandidates(): Promise<RefundCandidate[]> {

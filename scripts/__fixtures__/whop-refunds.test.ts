@@ -99,9 +99,18 @@ test("the database prevents one Whop payment entering two refund batches", () =>
   assert.match(actions, /ON CONFLICT \(provider_payment_id\) DO NOTHING/);
 });
 
-test("refund scope is limited to current fraud flags and paid deposit states", () => {
+test("refund scope includes every current KYC requirement and paid deposit state", () => {
   assert.match(queries, /antifraud_reviews\.status, "flagged"/);
   assert.match(queries, /kyc_required = true/);
-  assert.match(queries, /system:antifraud-/);
+  assert.doesNotMatch(queries, /system:antifraud-|kyc_required_reason[\s\S]*~\*/);
   assert.match(queries, /i\.status IN \('completed', 'partially_refunded'\)/);
+});
+
+test("refund candidates expose the account location and KYC state", () => {
+  assert.match(queries, /u\.country,/);
+  assert.match(queries, /u\.country_code,/);
+  assert.match(queries, /u\.state,/);
+  assert.match(queries, /u\.city,/);
+  assert.match(refundsPanel, /KYC required/);
+  assert.match(refundsPanel, /accountLocation\(first\)/);
 });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, RotateCcw, Users } from "lucide-react";
+import { AlertTriangle, MapPin, RotateCcw, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -41,6 +41,17 @@ function money(cents: number, currency: string) {
     style: "currency",
     currency: currency.toUpperCase(),
   }).format(cents / 100);
+}
+
+function accountLocation(candidate: RefundCandidate): string {
+  const parts = [candidate.city, candidate.state, candidate.country]
+    .map((part) => part?.trim())
+    .filter((part): part is string => Boolean(part));
+  const location = [...new Set(parts)].join(", ");
+  const countryCode = candidate.countryCode?.trim().toUpperCase();
+
+  if (location && countryCode) return `${location} (${countryCode})`;
+  return location || countryCode || "Location unknown";
 }
 
 export function RefundsPanel({
@@ -226,12 +237,21 @@ export function RefundsPanel({
                         <span className="font-medium">
                           {first?.username || "Unknown username"}
                         </span>
+                        {first?.kycRequired && (
+                          <Badge variant="destructive">KYC required</Badge>
+                        )}
                         <Badge variant="destructive">Flagged</Badge>
                       </div>
                       <p className="mt-1 break-all text-xs text-muted-foreground">
                         {userId}
                         {first?.email ? ` · ${first.email}` : ""}
                       </p>
+                      {first && (
+                        <p className="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
+                          <MapPin className="size-3 shrink-0" />
+                          {accountLocation(first)}
+                        </p>
+                      )}
                       <p className="mt-1 text-xs text-destructive">
                         {first?.flagReason}
                       </p>
