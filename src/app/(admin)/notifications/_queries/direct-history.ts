@@ -32,8 +32,11 @@ const EVENT_TYPES = [
 
 /** Audit rows scanned before folding. Bounded so a long-running admin can't
  * drag an unbounded set into the request; the folded output is capped lower
- * still. A 1000-chunk campaign would be 1000 rows — well inside this. */
-const SCAN_LIMIT = 300;
+ * still. A 1000-chunk campaign is exactly this envelope. If the scan comes
+ * back full, the oldest folded campaign may have chunks past the cutoff, so
+ * its `trackingComplete` is forced false rather than reporting "exact"
+ * analytics over a silently partial recipient set. */
+const SCAN_LIMIT = 1000;
 const RESULT_LIMIT = 40;
 
 export type DirectNotificationHistoryEntry = {
@@ -122,6 +125,9 @@ export async function getDirectNotificationHistory(): Promise<
   // Campaign key → index into `entries`, so later chunks fold into the first
   // (most recent) entry we saw for that campaign.
   const byCampaign = new Map<string, number>();
+  // Campaign key of the oldest bulk/reward row scanned — the fold that a full
+  // (truncated) scan may have cut off mid-campaign.
+  let oldestCampaignKey: string | null = null;
 
   for (const row of rows) {
     const meta = asPayload(row.metadata) ?? {};
@@ -177,6 +183,8 @@ export async function getDirectNotificationHistory(): Promise<
       : [];
     const sampleItem = asPayload(meta.sampleItem);
     const trackingItems = asTrackingItems(meta.trackingItems);
+    // Rows arrive newest-first, so the last bulk/reward row seen is the oldest.
+    oldestCampaignKey = key;
 
     const existingIndex = byCampaign.get(key);
     if (existingIndex === undefined) {
@@ -230,6 +238,16 @@ export async function getDirectNotificationHistory(): Promise<
       entry.trackingComplete && trackingItems !== null;
     if (trackingItems) {
       entry.trackingItems.push(...trackingItems);
+    }
+  }
+
+  // A full scan means older audit rows exist beyond the cutoff. The campaign
+  // whose fold reached the boundary may be missing chunks, so its counts and
+  // tracking set can be partial — never report them as complete.
+  if (rows.length === SCAN_LIMIT && oldestCampaignKey !== null) {
+    const boundaryIndex = byCampaign.get(oldestCampaignKey);
+    if (boundaryIndex !== undefined) {
+      entries[boundaryIndex].trackingComplete = false;
     }
   }
 

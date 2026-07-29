@@ -20,6 +20,7 @@ import {
 import {
   dedupeKeyFor,
   validateCampaignSlug,
+  BULK_MAX_ITEMS,
   REWARD_MAX_VALUE_USD,
 } from "@/lib/user-notification";
 
@@ -122,6 +123,16 @@ export async function sendRewardCampaignChunkAction(
 
   const userIds = [...new Set(input.userIds.map((id) => id.trim()).filter(Boolean))];
   if (userIds.length === 0) return { success: false, error: "Chunk is empty" };
+  // The composer never builds a chunk above BULK_MAX_ITEMS, but a server
+  // action is callable directly — an unbounded array would drive an unbounded
+  // IN() lookup, promo_codes insert and bulk delivery. The cap has to hold
+  // here regardless of what the form did (same boundary as direct-actions).
+  if (userIds.length > BULK_MAX_ITEMS) {
+    return {
+      success: false,
+      error: `Chunk has ${userIds.length} recipients — the limit is ${BULK_MAX_ITEMS}`,
+    };
+  }
 
   const db = await getPrimaryDrizzleDb();
 
