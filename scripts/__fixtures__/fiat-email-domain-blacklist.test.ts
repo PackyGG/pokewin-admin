@@ -74,7 +74,7 @@ test("blacklisted signup and Whop signals apply withdrawal and KYC containment t
     /emailRiskType === "blacklisted_domain"[\s\S]*emailRiskType === "gmail_dot_fragmentation"/,
   );
   assert.match(ingest, /pg_advisory_xact_lock/);
-  assert.match(ingest, /antifraud-email-kyc:/);
+  assert.match(ingest, /antifraud-containment:/);
   assert.match(
     client,
     /automatic crypto and item withdrawal lock and must[\s\S]*complete KYC review/,

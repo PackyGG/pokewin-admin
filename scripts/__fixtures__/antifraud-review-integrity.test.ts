@@ -137,3 +137,30 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
   assert.match(body, /tx[\s\S]*?insert\(antifraud_review_notes\)/);
   assert.match(body, /update\(antifraud_signals\)[\s\S]*?review_id: reviewId/);
 });
+
+test("free-battle containment requires two battles and applies KYC plus withdrawal locks", () => {
+  const source = read("src/app/api/antifraud/ingest/route.ts");
+  const containmentStart = source.indexOf(
+    "async function containRiskyFreeBattleAccount",
+  );
+  const containmentEnd = source.indexOf("type IngestResult", containmentStart);
+  const containment = source.slice(containmentStart, containmentEnd);
+  const ingestStart = source.indexOf("async function ingestOne");
+  const ingestEnd = source.indexOf("/**\n * Health probe", ingestStart);
+  const ingest = source.slice(ingestStart, ingestEnd);
+
+  assert.match(containment, /qualifyingBattleCount/);
+  assert.match(containment, /matchCount < 2/);
+  assert.match(containment, /battleCount < 2/);
+  assert.match(containment, /containmentRequired !== true/);
+  assert.match(containment, /INSERT INTO user_feature_locks/);
+  assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]/);
+  assert.match(containment, /locked_withdrawals_items = TRUE/);
+  assert.match(containment, /requireUserKyc/);
+  assert.match(source, /system:antifraud-free-battle-containment/);
+  assert.match(
+    ingest,
+    /if \(!stored\) return[\s\S]*?containRiskyFreeBattleAccount\(signal\)/,
+    "containment must run only after the signed event id is reserved",
+  );
+});

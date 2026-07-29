@@ -47,10 +47,11 @@ import {
  *     credential must never mean "accept anything".
  *
  * Normally writes only the ADMIN DB. The dedicated
- * `fiat_blacklisted_email_domain` signal is also an application-authorized
- * containment command: after signature and payload validation, a first-time
- * (non-duplicate) delivery locks crypto and item withdrawals in MAIN before
- * the signal is acknowledged. Re-sent duplicates deliberately do NOT re-lock —
+ * `fiat_blacklisted_email_domain` and `risky_free_battle_containment`
+ * signals are also application-authorized containment commands: after
+ * signature and payload validation, a first-time (non-duplicate) delivery
+ * locks crypto and item withdrawals in MAIN before the signal is acknowledged.
+ * Re-sent duplicates deliberately do NOT re-lock —
  * staff may have reviewed and unlocked the account in between.
  */
 
@@ -66,6 +67,8 @@ const MAX_EVENTS_PER_DELIVERY = 50;
 /** Human-readable system actor stored by the backend KYC audit trail. */
 const AUTOMATED_EMAIL_KYC_ACTOR_ID =
   "system:antifraud-email-containment";
+const AUTOMATED_FREE_BATTLE_KYC_ACTOR_ID =
+  "system:antifraud-free-battle-containment";
 
 /**
  * Body size ceiling in BYTES. A too-large `Content-Length` is rejected before
@@ -346,6 +349,115 @@ async function containBlacklistedEmailDomainAccount(
   return "locked";
 }
 
+function containmentCount(value: unknown): number | null {
+  return typeof value === "number" &&
+    Number.isInteger(value) &&
+    value >= 0 &&
+    value <= 10_000
+    ? value
+    : null;
+}
+
+/**
+ * Require KYC and lock withdrawals after at least two distinct free/sponsored
+ * battles connect a participant to one or more fraud-flagged creators.
+ */
+async function containRiskyFreeBattleAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const userId = signal.userId;
+  const matchCount = containmentCount(signal.payload?.matchCount);
+  const battleCount = containmentCount(
+    signal.payload?.qualifyingBattleCount,
+  );
+  const creatorCount = containmentCount(
+    signal.payload?.distinctFlaggedCreators,
+  );
+  if (
+    !userId ||
+    signal.riskScore == null ||
+    signal.riskScore < 80 ||
+    signal.payload?.containmentRequired !== true ||
+    matchCount == null ||
+    matchCount < 2 ||
+    battleCount == null ||
+    battleCount < 2 ||
+    creatorCount == null ||
+    creatorCount < 1
+  ) {
+    console.error(
+      "[antifraud-ingest] skipping invalid free-battle containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const reason = (
+    `Automatic fraud lock: joined ${battleCount} free/sponsored battles ` +
+    `created by ${creatorCount} flagged fraud account` +
+    `${creatorCount === 1 ? "" : "s"}`
+  ).slice(0, 500);
+  const db = getProdPrimaryDrizzleDb();
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id,
+      user_id,
+      locked_withdrawals_crypto,
+      locked_withdrawals_items,
+      locked_withdrawals_at,
+      locked_withdrawals_by,
+      locked_withdrawals_reason,
+      created_at,
+      updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()},
+      u.id,
+      ARRAY['all']::text[],
+      TRUE,
+      NOW(),
+      NULL,
+      ${reason},
+      NOW(),
+      NOW()
+    FROM "user" u
+    WHERE u.id = ${userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  if (locked.rows.length === 0) {
+    console.error(
+      "[antifraud-ingest] free-battle account no longer exists, skipping containment lock",
+      { externalId: signal.id || null, userId },
+    );
+    return "skipped";
+  }
+
+  const current = await getUserKyc(userId);
+  if (!current.kycRequired) {
+    await requireUserKyc({
+      userId,
+      adminId: AUTOMATED_FREE_BATTLE_KYC_ACTOR_ID,
+      reason: reason.replace(
+        "Automatic fraud lock:",
+        "Automatic fraud KYC:",
+      ),
+    });
+  }
+  return "locked";
+}
+
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** A containment lock was permanently un-appliable and acked instead of retried. */
@@ -403,7 +515,10 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   if (!stored) return { outcome: "duplicate", lockSkipped: false };
 
   let lockSkipped = false;
-  if (signal.kind === "fiat_blacklisted_email_domain") {
+  if (
+    signal.kind === "fiat_blacklisted_email_domain" ||
+    signal.kind === "risky_free_battle_containment"
+  ) {
     // Containment lock AFTER the dedupe check, inside the transaction:
     //  • a duplicate delivery returned above, so a re-sent signal can never
     //    re-lock an account staff already reviewed and unlocked;
@@ -413,11 +528,12 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     // cannot both observe KYC as clear and open two verification cycles.
     await tx.execute(sql`
       SELECT pg_advisory_xact_lock(
-        hashtextextended(${"antifraud-email-kyc:" + (signal.userId ?? "")}, 0)
+        hashtextextended(${"antifraud-containment:" + (signal.userId ?? "")}, 0)
       )
     `);
-    lockSkipped =
-      (await containBlacklistedEmailDomainAccount(signal)) === "skipped";
+    lockSkipped = signal.kind === "fiat_blacklisted_email_domain"
+      ? (await containBlacklistedEmailDomainAccount(signal)) === "skipped"
+      : (await containRiskyFreeBattleAccount(signal)) === "skipped";
   }
 
   // Idempotency: the backend's own event id. A retried delivery hits the

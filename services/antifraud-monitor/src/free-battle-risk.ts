@@ -78,6 +78,14 @@ type PendingAlert = {
   attempt_count: number;
 };
 
+type EligibleContainment = {
+  participant_user_id: string;
+  match_count: number;
+  battle_count: number;
+  creator_count: number;
+  occurred_at: Date;
+};
+
 export function classifyCreatorRisk(
   candidate: CreatorSourceState,
   antifraudScore = 0,
@@ -128,6 +136,10 @@ export function crossedRiskBand(
     if (previousScore < threshold && nextScore >= threshold) return threshold;
   }
   return null;
+}
+
+export function relationshipScoreForBattleCount(battleCount: number): number {
+  return Math.min(120, Math.max(0, Math.trunc(battleCount)) * 40);
 }
 
 export function serializeCreatorRisks(
@@ -181,6 +193,7 @@ export class FreeBattleRiskMonitor {
   async process(): Promise<number> {
     const risks = await this.riskCreators();
     if (risks.size === 0) {
+      await this.reconcileContainments();
       await this.deliverAlerts();
       return 0;
     }
@@ -224,6 +237,7 @@ export class FreeBattleRiskMonitor {
         client.release();
       }
     }
+    await this.reconcileContainments();
     await this.deliverAlerts();
     return inserted;
   }
@@ -485,70 +499,50 @@ export class FreeBattleRiskMonitor {
 
     const aggregate = await client.query<{
       match_count: number;
+      battle_count: number;
       creator_count: number;
-      previous_score: number;
-      next_score: number;
+      previous_battle_count: number;
     }>(
       `
-        WITH per_creator AS (
-          SELECT
-            creator_user_id,
-            COUNT(*)::int AS match_count,
-            MAX(risk_points)::int AS risk_points,
-            MAX(risk_points) FILTER (
-              WHERE participant_id <> $2::uuid
-            )::int AS previous_risk_points
-          FROM free_battle_risk_matches
-          WHERE participant_user_id = $1
-          GROUP BY creator_user_id
-        )
         SELECT
-          COALESCE(SUM(match_count), 0)::int AS match_count,
-          COUNT(*)::int AS creator_count,
-          LEAST(
-            120,
-            COALESCE(SUM(previous_risk_points), 0)
-          )::int AS previous_score,
-          LEAST(120, COALESCE(SUM(risk_points), 0))::int AS next_score
-        FROM per_creator
+          COUNT(*)::int AS match_count,
+          COUNT(DISTINCT battle_id)::int AS battle_count,
+          COUNT(DISTINCT creator_user_id)::int AS creator_count,
+          COUNT(DISTINCT battle_id) FILTER (
+            WHERE participant_id <> $2::uuid
+          )::int AS previous_battle_count
+        FROM free_battle_risk_matches
+        WHERE participant_user_id = $1
       `,
       [candidate.participant_user_id, candidate.participant_id],
     );
     const evidence = aggregate.rows[0];
     if (!evidence) throw new Error("Free-battle risk aggregate is missing");
-    const previousScore = number(evidence.previous_score);
-    const nextScore = number(evidence.next_score);
+    const previousScore = relationshipScoreForBattleCount(
+      number(evidence.previous_battle_count),
+    );
+    const nextScore = relationshipScoreForBattleCount(
+      number(evidence.battle_count),
+    );
     const threshold = crossedRiskBand(previousScore, nextScore);
-    if (threshold === null) return 1;
 
     let caseId: string | null = null;
     if (nextScore >= 80) {
-      const caseResult = await client.query<{ id: string }>(
-        `
-          INSERT INTO cases (
-            user_id, subject_type, status, severity, score, peak_score, summary
-          ) VALUES (
-            $1, 'account', 'open', $2, $3, $3,
-            'Free-battle links to flagged creators'
-          )
-          ON CONFLICT (user_id) WHERE subject_type = 'account'
-            AND status IN ('open','monitoring','in_review','escalated')
-          DO UPDATE SET
-            score = GREATEST(cases.score, EXCLUDED.score),
-            peak_score = GREATEST(cases.peak_score, EXCLUDED.peak_score),
-            severity = CASE
-              WHEN cases.peak_score >= EXCLUDED.peak_score
-                THEN cases.severity
-              ELSE EXCLUDED.severity
-            END,
-            updated_at = now()
-          RETURNING id
-        `,
-        [candidate.participant_user_id, severity(nextScore), nextScore],
+      caseId = await this.ensureCase(
+        client,
+        candidate.participant_user_id,
+        nextScore,
       );
-      caseId = caseResult.rows[0]?.id ?? null;
-      if (!caseId) throw new Error("Free-battle risk case was not created");
+      await this.insertContainmentEvent(client, {
+        participant_user_id: candidate.participant_user_id,
+        match_count: number(evidence.match_count),
+        battle_count: number(evidence.battle_count),
+        creator_count: number(evidence.creator_count),
+        occurred_at: candidate.occurred_at,
+      }, caseId);
     }
+
+    if (threshold === null) return 1;
 
     const detail =
       `${evidence.match_count} free/sponsored battle joins link this account ` +
@@ -562,6 +556,7 @@ export class FreeBattleRiskMonitor {
       creatorRiskKind: risk.kind,
       creatorRiskDetail: risk.detail,
       matchCount: number(evidence.match_count),
+      qualifyingBattleCount: number(evidence.battle_count),
       distinctFlaggedCreators: number(evidence.creator_count),
       relationshipScore: nextScore,
       threshold,
@@ -616,6 +611,135 @@ export class FreeBattleRiskMonitor {
       );
     }
     return 1;
+  }
+
+  private async ensureCase(
+    client: pg.PoolClient,
+    userId: string,
+    score: number,
+  ): Promise<string> {
+    const caseResult = await client.query<{ id: string }>(
+      `
+        INSERT INTO cases (
+          user_id, subject_type, status, severity, score, peak_score, summary
+        ) VALUES (
+          $1, 'account', 'open', $2, $3, $3,
+          'Free-battle links to flagged creators'
+        )
+        ON CONFLICT (user_id) WHERE subject_type = 'account'
+          AND status IN ('open','monitoring','in_review','escalated')
+        DO UPDATE SET
+          score = GREATEST(cases.score, EXCLUDED.score),
+          peak_score = GREATEST(cases.peak_score, EXCLUDED.peak_score),
+          severity = CASE
+            WHEN cases.peak_score >= EXCLUDED.peak_score
+              THEN cases.severity
+            ELSE EXCLUDED.severity
+          END,
+          updated_at = now()
+        RETURNING id
+      `,
+      [userId, severity(score), score],
+    );
+    const caseId = caseResult.rows[0]?.id;
+    if (!caseId) throw new Error("Free-battle risk case was not created");
+    return caseId;
+  }
+
+  private async insertContainmentEvent(
+    client: pg.PoolClient,
+    evidence: EligibleContainment,
+    caseId: string,
+  ): Promise<void> {
+    if (evidence.battle_count < 2) return;
+    const score = relationshipScoreForBattleCount(evidence.battle_count);
+    const detail =
+      `${evidence.match_count} free/sponsored joins across ` +
+      `${evidence.battle_count} battles link this account to ` +
+      `${evidence.creator_count} flagged fraud creator` +
+      `${evidence.creator_count === 1 ? "" : "s"}. ` +
+      "Automatic KYC and withdrawal locks are required.";
+    await client.query(
+      `
+        INSERT INTO risk_events (
+          case_id, session_id, user_id, event_type, source, source_ref,
+          score_delta, score_after, title, detail, payload, occurred_at
+        ) VALUES (
+          $1,NULL,$2,'risky_free_battle_containment',
+          'free_battle_risk_matches',$3,$4,$5,
+          'Risky free-battle account containment',$6,$7,$8
+        )
+        ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+        DO NOTHING
+      `,
+      [
+        caseId,
+        evidence.participant_user_id,
+        `free-battle-containment:${evidence.participant_user_id}`,
+        Math.min(80, score),
+        score,
+        detail,
+        {
+          containmentRequired: true,
+          matchCount: evidence.match_count,
+          qualifyingBattleCount: evidence.battle_count,
+          distinctFlaggedCreators: evidence.creator_count,
+          relationshipScore: score,
+        },
+        evidence.occurred_at,
+      ],
+    );
+  }
+
+  private async reconcileContainments(): Promise<void> {
+    const eligible = await this.db.antifraud.query<EligibleContainment>(
+      `
+        SELECT
+          match.participant_user_id,
+          COUNT(*)::int AS match_count,
+          COUNT(DISTINCT match.battle_id)::int AS battle_count,
+          COUNT(DISTINCT match.creator_user_id)::int AS creator_count,
+          MAX(match.occurred_at) AS occurred_at
+        FROM free_battle_risk_matches AS match
+        WHERE NOT EXISTS (
+          SELECT 1
+          FROM risk_events AS event
+          WHERE event.source = 'free_battle_risk_matches'
+            AND event.source_ref =
+              'free-battle-containment:' || match.participant_user_id
+        )
+        GROUP BY match.participant_user_id
+        HAVING COUNT(DISTINCT match.battle_id) >= 2
+        ORDER BY MAX(match.occurred_at)
+        LIMIT 50
+      `,
+    );
+    for (const evidence of eligible.rows) {
+      const client = await this.db.antifraud.connect();
+      try {
+        await client.query("BEGIN");
+        const score = relationshipScoreForBattleCount(
+          number(evidence.battle_count),
+        );
+        const caseId = await this.ensureCase(
+          client,
+          evidence.participant_user_id,
+          score,
+        );
+        await this.insertContainmentEvent(client, {
+          ...evidence,
+          match_count: number(evidence.match_count),
+          battle_count: number(evidence.battle_count),
+          creator_count: number(evidence.creator_count),
+        }, caseId);
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    }
   }
 
   private async deliverAlerts(): Promise<void> {

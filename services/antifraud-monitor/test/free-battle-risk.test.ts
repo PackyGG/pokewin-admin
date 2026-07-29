@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
   classifyCreatorRisk,
   crossedRiskBand,
+  relationshipScoreForBattleCount,
   serializeCreatorRisks,
 } from "../src/free-battle-risk.js";
 
@@ -70,6 +72,14 @@ test("risk events emit only when evidence crosses a review band", () => {
   assert.equal(crossedRiskBand(120, 120), null);
 });
 
+test("two qualifying battles reach automatic containment regardless of creator count", () => {
+  assert.equal(relationshipScoreForBattleCount(0), 0);
+  assert.equal(relationshipScoreForBattleCount(1), 40);
+  assert.equal(relationshipScoreForBattleCount(2), 80);
+  assert.equal(relationshipScoreForBattleCount(3), 120);
+  assert.equal(relationshipScoreForBattleCount(20), 120);
+});
+
 test("creator cursor input is serialized as JSON for the jsonb recordset", () => {
   const serialized = serializeCreatorRisks(new Map([
     ["creator-1", {
@@ -85,4 +95,17 @@ test("creator cursor input is serialized as JSON for the jsonb recordset", () =>
     creator_risk_detail: "scammer",
     risk_points: 40,
   }]);
+});
+
+test("free-battle containment is durable, distinct-battle based, and retroactive", async () => {
+  const source = await readFile(
+    new URL("../src/free-battle-risk.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /COUNT\(DISTINCT battle_id\)::int AS battle_count/);
+  assert.match(source, /battle_count < 2/);
+  assert.match(source, /risky_free_battle_containment/);
+  assert.match(source, /free-battle-containment:/);
+  assert.match(source, /reconcileContainments/);
+  assert.match(source, /containmentRequired: true/);
 });
