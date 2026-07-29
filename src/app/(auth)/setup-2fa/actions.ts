@@ -2,6 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { getDefaultRouteForUser } from "@/lib/dal";
+import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
 import { headers } from "next/headers";
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
@@ -11,6 +12,7 @@ import {
   deletePendingSession,
   createPendingSession,
   createSession,
+  SESSION_TTL_MS,
 } from "@/lib/session";
 import {
   verifyTOTP,
@@ -19,7 +21,6 @@ import {
   hashRecoveryCodes,
 } from "@/lib/totp";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { MS_PER_HOUR } from "@/lib/utils/time";
 
 export type SetupState = {
   error?: string;
@@ -109,9 +110,7 @@ export async function confirmSetup(
     // Secret is carried inside the signed pending-session cookie — NOT
     // trusted from the client form body. A client-supplied secret would
     // let an attacker submit one they already knew and bypass 2FA.
-    if (!pending.totpSecret) {
-      return { error: "Setup session error. Please login again." };
-    }
+    // (Presence is guaranteed by the CRITICAL-1 guard above.)
     const secret = pending.totpSecret;
 
     const isValid = verifyTOTP(secret, code);
@@ -142,8 +141,18 @@ export async function confirmSetup(
   // guard above). The legit flow enables 2FA in step 1, so this always passes
   // for a real setup; an attacker replaying step=confirm without verifying a
   // code is stopped here.
-  const enrolled = (await adminDrizzle.execute<{ totp_enabled: boolean }>(sql`
-    SELECT totp_enabled FROM admin_users
+  // `role` + `roles` are read alongside the enrollment check so the minted
+  // session carries the full effective role set (mirrors the verify2FA /
+  // finalizePasskeyLogin success tails) — the pending cookie only holds the
+  // login-time primary role, and a multi-role admin finishing first-time
+  // setup would otherwise be judged on that single role by JWT-level checks
+  // (middleware host gating) until re-login. The additive `roles` column is
+  // read resiliently: if its migration hasn't run, it degrades to `[role]`.
+  const enrolled = (await adminDrizzle.execute<{
+    totp_enabled: boolean; role: string; roles: string[];
+  }>(sql`
+    SELECT totp_enabled, role::text AS role, roles::text[] AS roles
+    FROM admin_users
     WHERE id = ${pending.adminUserId}::uuid
     LIMIT 1
   `)).rows[0];
@@ -151,9 +160,11 @@ export async function confirmSetup(
     return { error: "Finish two-factor setup before continuing." };
   }
 
+  const effectiveRoles = getEffectiveRoles(enrolled.role, enrolled.roles);
   await createSession({
     userId: pending.adminUserId,
-    role: pending.role,
+    role: pickPrimaryRole(effectiveRoles),
+    roles: effectiveRoles,
     email: pending.email,
     username: pending.username,
   });
@@ -174,7 +185,7 @@ export async function confirmSetup(
         admin_user_id, ip, user_agent, auth_method, expires_at
       ) VALUES (
         ${pending.adminUserId}::uuid, ${ip}, ${userAgent}, 'totp',
-        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+        ${new Date(Date.now() + SESSION_TTL_MS)}
       )
     `),
   ]);

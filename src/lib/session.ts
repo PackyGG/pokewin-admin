@@ -21,6 +21,18 @@ if (secretKey.length < 32) {
   );
 }
 const encodedKey = new TextEncoder().encode(secretKey);
+
+/**
+ * Single source of truth for the admin session lifetime. The JWT expiry, the
+ * `admin_session` cookie expiry AND the `admin_sessions` DB rows written by
+ * the four login flows (password-only, TOTP/recovery, passkey, first-time 2FA
+ * setup) all derive from this constant. Keeping one number prevents the drift
+ * that previously had DB rows expiring at 8h while the JWT lived 12h — which
+ * made the sessions list show "expired" for a token's last 4 hours and let
+ * force-expire skip stamping still-live sessions.
+ */
+export const SESSION_TTL_MS = 12 * MS_PER_HOUR;
+
 const COOKIE_NAME = "admin_session";
 const PENDING_COOKIE_NAME = "admin_2fa_pending";
 const WEBAUTHN_CHALLENGE_COOKIE = "admin_webauthn_challenge";
@@ -75,7 +87,9 @@ export async function encrypt(payload: SessionPayload) {
   return new SignJWT(payload as unknown as Record<string, unknown>)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
-    .setExpirationTime("12h")
+    // Derived from SESSION_TTL_MS so the JWT `exp` can never drift from the
+    // cookie / DB-row lifetime.
+    .setExpirationTime(new Date(Date.now() + SESSION_TTL_MS))
     .sign(encodedKey);
 }
 
@@ -126,10 +140,9 @@ function sessionCookieDomain(): string | undefined {
 }
 
 export async function createSession(payload: Omit<SessionPayload, "expiresAt">) {
-  // 12h session — keeps admins from re-logging in mid-shift. JWT
-  // expiration above must match this number ("12h"). No rolling
-  // refresh; the clock starts at login.
-  const expiresAt = new Date(Date.now() + 12 * MS_PER_HOUR);
+  // 12h session (SESSION_TTL_MS) — keeps admins from re-logging in mid-shift.
+  // No rolling refresh; the clock starts at login.
+  const expiresAt = new Date(Date.now() + SESSION_TTL_MS);
   const session = await encrypt({ ...payload, expiresAt });
   const cookieStore = await cookies();
 

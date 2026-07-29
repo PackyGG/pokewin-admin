@@ -5,7 +5,7 @@ import bcrypt from "bcryptjs";
 import { headers } from "next/headers";
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
-import { createSession, createPendingSession } from "@/lib/session";
+import { createSession, createPendingSession, SESSION_TTL_MS } from "@/lib/session";
 import { rateLimit, buildCacheKey } from "@/lib/cache/redis";
 import { generateSecret } from "@/lib/totp";
 import { redirect } from "next/navigation";
@@ -13,7 +13,7 @@ import { getDefaultRouteForUser } from "@/lib/dal";
 import { getEffectiveRoles, pickPrimaryRole } from "@/lib/admin-roles";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isMandatory2faEnabled } from "@/lib/admin-guards";
-import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
+import { MS_PER_MINUTE } from "@/lib/utils/time";
 
 const loginSchema = z.object({
   email: z.string().email("Invalid email"),
@@ -32,6 +32,14 @@ export type LoginState = {
 // as before.
 const LOGIN_IP_MAX_PER_MIN = 20;
 const LOGIN_EMAIL_MAX_PER_MIN = 10;
+
+// Constant, valid bcrypt hash (of a random throwaway string) used ONLY to
+// equalize timing when no admin_users row matches the email: the missing-user
+// path burns the same bcrypt.compare cost as the real path, so response time
+// stops being an email-enumeration oracle. The compare result is always
+// discarded — this hash never grants anything.
+const DUMMY_PASSWORD_HASH =
+  "$2b$10$Z1A7WZ90oxm1ZrdQodlN2ugIKVKa/skxzhBjL9XYRqL0Asg32HbNW";
 
 const rateLimitMap = new Map<string, { count: number; resetAt: number }>();
 
@@ -63,7 +71,9 @@ export async function login(
 
   const { email, password } = parsed.data;
 
-  if (!checkRateLimit(email)) {
+  // Lowercased to match the fleet limiter's key below — otherwise case
+  // variations of the same address sidestep the per-instance 5/min cap.
+  if (!checkRateLimit(email.toLowerCase())) {
     return { error: "Too many login attempts. Try again in a minute." };
   }
 
@@ -106,6 +116,9 @@ export async function login(
   `)).rows[0];
 
   if (!adminUser) {
+    // Timing equalizer (email-enumeration hardening): burn the same bcrypt
+    // cost as the real path before returning the identical generic error.
+    await bcrypt.compare(password, DUMMY_PASSWORD_HASH);
     return { error: "Invalid email or password" };
   }
 
@@ -196,7 +209,7 @@ export async function login(
         admin_user_id, ip, user_agent, auth_method, expires_at
       ) VALUES (
         ${adminUser.id}::uuid, ${ip}, ${userAgent}, 'no_2fa',
-        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+        ${new Date(Date.now() + SESSION_TTL_MS)}
       )
     `),
   ]);

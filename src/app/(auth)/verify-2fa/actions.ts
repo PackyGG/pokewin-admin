@@ -12,12 +12,13 @@ import {
   createWebauthnChallenge,
   getWebauthnChallenge,
   deleteWebauthnChallenge,
+  SESSION_TTL_MS,
 } from "@/lib/session";
 import { verifyTOTP, verifyRecoveryCode } from "@/lib/totp";
 import { buildAuthenticationOptions, checkAuthentication } from "@/lib/webauthn";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { headers } from "next/headers";
-import { MS_PER_MINUTE, MS_PER_HOUR } from "@/lib/utils/time";
+import { MS_PER_MINUTE } from "@/lib/utils/time";
 import { rateLimit, buildCacheKey } from "@/lib/cache/redis";
 import type {
   AuthenticationResponseJSON,
@@ -190,7 +191,7 @@ export async function verify2FA(
       ) VALUES (
         ${pending.adminUserId}::uuid, ${ip}, ${userAgent},
         ${mode === "recovery" ? "recovery_code" : "totp"},
-        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+        ${new Date(Date.now() + SESSION_TTL_MS)}
       )
     `),
   ]);
@@ -375,7 +376,7 @@ async function finalizePasskeyLogin(
         admin_user_id, ip, user_agent, auth_method, expires_at
       ) VALUES (
         ${adminUserId}::uuid, ${ip}, ${userAgent}, 'passkey',
-        ${new Date(Date.now() + 8 * MS_PER_HOUR)}
+        ${new Date(Date.now() + SESSION_TTL_MS)}
       )
     `),
   ]);
