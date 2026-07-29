@@ -21,10 +21,16 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/lib/api-auth/scopes.ts"),
       read("src/lib/api-auth/endpoints.ts"),
     ]);
+  const prepareService = service.slice(
+    service.indexOf("export async function prepareCreatorSetup"),
+    service.indexOf("export async function completeCreatorSetup"),
+  );
 
   assert.match(service, /CREATOR_SETUP_GUILD_ID = "1402743122789929022"/);
-  assert.match(service, /getProdReadDrizzleDb\(\)/);
-  assert.match(service, /linked\.role !== "creator"/);
+  assert.doesNotMatch(prepareService, /getProdReadDrizzleDb\(\)/);
+  assert.doesNotMatch(prepareService, /requireLinkedCreator/);
+  assert.doesNotMatch(prepareService, /creator_not_found/);
+  assert.match(service, /creator_discord_user_id/);
   assert.match(service, /pg_advisory_xact_lock/);
   assert.match(service, /INTERVAL '15 minutes'/);
   assert.match(service, /FOR UPDATE/);

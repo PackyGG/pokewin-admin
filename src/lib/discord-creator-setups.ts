@@ -330,8 +330,6 @@ export async function prepareCreatorSetup(input: {
   | { status: "ready"; reservationId: string }
   | { status: "existing"; setup: CreatorSetup }
 > {
-  await requireLinkedCreator(input.creatorDiscordUserId);
-
   return adminDrizzle.transaction(async (tx) => {
     await tx.execute(sql`
       SELECT pg_advisory_xact_lock(
