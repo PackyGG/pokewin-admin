@@ -3,6 +3,7 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import swagger from "@fastify/swagger";
 import websocket from "@fastify/websocket";
+import { isIP } from "node:net";
 import { isDeepStrictEqual } from "node:util";
 import {
   isListLoaded as isDisposableEmailListLoaded,
@@ -333,6 +334,16 @@ app.addHook("onRequest", async (request, reply) => {
       },
     );
     if (!authentication.authorized) {
+      request.log.warn(
+        {
+          event: "fiat_eligibility.authentication_rejected",
+          requestId: request.id,
+          reason: authentication.error,
+          sourceAddressFamily: isIP(request.ip) || null,
+          statusCode: authentication.status,
+        },
+        "Fiat eligibility request rejected by pre-authentication",
+      );
       return reply
         .code(authentication.status)
         .send({ error: authentication.error });

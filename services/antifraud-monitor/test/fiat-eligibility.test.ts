@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import Fastify from "fastify";
@@ -19,6 +20,10 @@ import type { EnrichmentResult } from "../src/enrichment.js";
 
 const DEV_KEY = "dev-fiat-key-that-is-at-least-32-characters";
 const PROD_KEY = "prod-fiat-key-that-is-at-least-32-characters";
+const serverSource = readFileSync(
+  new URL("../src/server.ts", import.meta.url),
+  "utf8",
+);
 
 function access(): FiatEligibilityAccess {
   return new FiatEligibilityAccess({
@@ -163,6 +168,13 @@ test("Fiat request contract accepts only the exact dev/prod payload", () => {
       unexpected: true,
     }).success,
     false,
+  );
+});
+
+test("server pre-authentication logs dedicated Fiat endpoint rejections", () => {
+  assert.match(
+    serverSource,
+    /pathname === FIAT_ELIGIBILITY_PATH[\s\S]*?fiat_eligibility\.authentication_rejected[\s\S]*?reply\s*\.code\(authentication\.status\)/,
   );
 });
 
