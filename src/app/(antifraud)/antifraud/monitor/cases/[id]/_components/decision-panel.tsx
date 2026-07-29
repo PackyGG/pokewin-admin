@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpRight, Gavel, ShieldCheck, ShieldX } from "lucide-react";
+import { Gavel, ShieldCheck, ShieldX } from "lucide-react";
 import { toast } from "sonner";
 
 import { Label } from "@/components/ui/label";
@@ -25,7 +25,6 @@ import { decideMonitorCase } from "../actions";
 
 type MonitorCaseDecision =
   | "in_review"
-  | "escalated"
   | "resolved_safe"
   | "resolved_fraud";
 
@@ -43,14 +42,6 @@ const DECISIONS: {
     className:
       "border-amber-500/30 bg-amber-500/10 text-amber-600 hover:bg-amber-500/15 dark:text-amber-400",
     hint: "You are working it — keeps the case open.",
-  },
-  {
-    value: "escalated",
-    icon: ArrowUpRight,
-    label: "Escalate",
-    className:
-      "border-purple-500/30 bg-purple-500/10 text-purple-600 hover:bg-purple-500/15 dark:text-purple-400",
-    hint: "Hand it up. Still open, flagged for a second pair of eyes.",
   },
   {
     value: "resolved_safe",

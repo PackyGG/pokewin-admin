@@ -9,7 +9,6 @@ import {
   FolderOpen,
   Search,
   ShieldAlert,
-  TriangleAlert,
   UserRound,
 } from "lucide-react";
 
@@ -252,7 +251,6 @@ async function QueueList({
       stats: {
         open: 0,
         inReview: 0,
-        escalated: 0,
         resolvedToday: 0,
         flaggedTotal: 0,
         mineOpen: 0,
@@ -266,7 +264,7 @@ async function QueueList({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-3">
         <KpiTile
           icon={FolderOpen}
           accent="cyan"
@@ -280,13 +278,6 @@ async function QueueList({
           label="In review"
           value={stats.inReview.toLocaleString()}
           sub="being worked on"
-        />
-        <KpiTile
-          icon={TriangleAlert}
-          accent={stats.escalated > 0 ? "amber" : "emerald"}
-          label="Escalated"
-          value={stats.escalated.toLocaleString()}
-          sub="need a senior look"
         />
         <KpiTile
           icon={CheckCircle2}

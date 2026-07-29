@@ -117,7 +117,7 @@ async function CaseDetail({ caseId }: { caseId: string }) {
     severity: isReviewSeverity(subject.severity) ? subject.severity : "medium",
     monitorCaseId: subject.id,
     reason:
-      `Escalated from monitor case ${subject.id}. ${subject.summary}`.slice(
+      `Opened from monitor case ${subject.id}. ${subject.summary}`.slice(
         0,
         480,
       ),
@@ -398,7 +398,7 @@ function FlowMatchRow({ match }: { match: AntifraudMonitorFlowMatch }) {
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-semibold">{match.rule_name}</span>
           <Badge variant="outline" className="text-[10px]">
-            {match.action_type === "escalate" ? "Escalated" : "Manual review"}
+            Manual review
           </Badge>
         </div>
         <p className="mt-1 text-xs text-muted-foreground">
@@ -584,8 +584,8 @@ function StaffActionRow({ action }: { action: AntifraudMonitorStaffAction }) {
 // ─── Bits ────────────────────────────────────────────────────────────────
 
 /**
- * Monitor case statuses (`open` / `monitoring` / `in_review` / `escalated` /
- * `resolved`) are the SERVICE's vocabulary, not the review queue's, so they get
+ * Monitor case statuses are the SERVICE's vocabulary, not the review queue's,
+ * so they get
  * their own map rather than being forced through `REVIEW_STATUS_COLORS`. These
  * are risk colours, not money colours — nothing here is an amount.
  */
@@ -595,28 +595,28 @@ const CASE_STATUS_COLORS: Record<string, string> = {
     "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
   in_review:
     "bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30",
-  escalated:
-    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
   resolved:
     "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
 };
 
 function CaseStatusBadge({ status }: { status: string }) {
+  const visibleStatus = status === "escalated" ? "in_review" : status;
   return (
     <Badge
       variant="outline"
       className={cn(
         "h-5 px-1.5 text-[10px] font-bold uppercase tracking-wide",
-        CASE_STATUS_COLORS[status] ?? "",
+        CASE_STATUS_COLORS[visibleStatus] ?? "",
       )}
     >
-      {status.replace(/_/g, " ")}
+      {visibleStatus.replace(/_/g, " ")}
     </Badge>
   );
 }
 
 /** `resolution` / `staff_actions.action_type` carry the decision verbatim. */
 function decisionLabel(value: string): string {
+  if (value === "escalated") return "Take into review";
   return (
     MONITOR_CASE_DECISION_LABELS[value as MonitorCaseDecision] ??
     value.replace(/_/g, " ")

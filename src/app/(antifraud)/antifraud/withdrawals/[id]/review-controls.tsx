@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CirclePlay,
   ShieldAlert,
-  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -38,13 +37,6 @@ const actions: {
     label: "Clear",
     success: "Withdrawal risk cleared",
     icon: CircleCheck,
-    variant: "outline",
-  },
-  {
-    key: "escalate",
-    label: "Escalate",
-    success: "Withdrawal escalated",
-    icon: TriangleAlert,
     variant: "outline",
   },
   {
@@ -132,8 +124,7 @@ export function WithdrawalReviewControls({
           placeholder="What did you check, and why is this safe or suspicious?"
         />
         <p className="text-[11px] text-muted-foreground">
-          A written conclusion is required to clear, escalate, or recommend a
-          block.
+          A written conclusion is required to clear or recommend a block.
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -142,7 +133,6 @@ export function WithdrawalReviewControls({
           const isCurrent =
             (action.key === "start_review" && status === "in_review") ||
             (action.key === "clear" && status === "cleared") ||
-            (action.key === "escalate" && status === "escalated") ||
             (action.key === "recommend_block" &&
               status === "block_recommended");
           return (

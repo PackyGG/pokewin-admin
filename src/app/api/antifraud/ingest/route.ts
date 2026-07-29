@@ -13,7 +13,7 @@ import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
-  shouldEscalateSignal,
+  shouldOpenReviewForSignal,
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
 import { isPostgresError } from "@/lib/postgres-errors";
@@ -503,7 +503,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   // double-opening a case.
   const shouldOpenCase =
     Boolean(signal.userId) &&
-    shouldEscalateSignal(signal);
+    shouldOpenReviewForSignal(signal);
 
   let reviewId: string | null = null;
   let opened = false;

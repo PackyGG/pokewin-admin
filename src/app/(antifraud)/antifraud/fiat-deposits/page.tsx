@@ -60,7 +60,6 @@ const REVIEWS = [
   "unreviewed",
   "in_review",
   "cleared",
-  "escalated",
   "hold_recommended",
 ] as const;
 
@@ -91,7 +90,9 @@ export default async function FiatDepositsPage({
     verdict: VERDICTS.includes(value("verdict") as FiatVerdict)
       ? (value("verdict") as FiatVerdict)
       : undefined,
-    reviewStatus: REVIEWS.includes(value("reviewStatus") as FiatReviewStatus)
+    reviewStatus: REVIEWS.includes(
+      value("reviewStatus") as (typeof REVIEWS)[number],
+    )
       ? (value("reviewStatus") as FiatReviewStatus)
       : undefined,
     search: value("search")?.trim().slice(0, 100) ?? "",
@@ -139,7 +140,6 @@ function FiltersBar({ state }: { state: Filters }) {
             <FilterButton label="All" active={!state.reviewStatus} href={filterHref({ reviewStatus: null })} />
             <FilterButton label="Unreviewed" active={state.reviewStatus === "unreviewed"} href={filterHref({ reviewStatus: "unreviewed" })} />
             <FilterButton label="In review" active={state.reviewStatus === "in_review"} href={filterHref({ reviewStatus: "in_review" })} />
-            <FilterButton label="Escalated" active={state.reviewStatus === "escalated"} href={filterHref({ reviewStatus: "escalated" })} />
           </FilterGroup>
           <FilterGroup label="Payment status">
             <FilterButton label="All paid" active={!state.status} href={filterHref({ status: null })} />

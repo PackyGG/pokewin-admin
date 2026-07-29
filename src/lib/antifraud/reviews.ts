@@ -17,6 +17,11 @@ import {
   type ReviewStatus,
 } from "./constants";
 
+const REVIEW_QUEUE_STORAGE_STATUSES = [
+  ...OPEN_REVIEW_STATUSES,
+  "escalated",
+] as const;
+
 /**
  * The account-review queue.
  *
@@ -108,7 +113,7 @@ function toRow(row: {
     id: row.id,
     targetUserId: row.target_user_id,
     targetUsername: row.target_username,
-    status: row.status,
+    status: row.status === "escalated" ? "in_review" : row.status,
     severity: row.severity,
     source: row.source,
     riskScore: row.risk_score,
@@ -164,7 +169,9 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
   } else if (filters.status && filters.status !== "unresolved") {
     conditions.push(eq(antifraud_reviews.status, filters.status));
   } else {
-    conditions.push(inArray(antifraud_reviews.status, [...OPEN_REVIEW_STATUSES]));
+    conditions.push(
+      inArray(antifraud_reviews.status, [...REVIEW_QUEUE_STORAGE_STATUSES]),
+    );
   }
 
   if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
@@ -451,7 +458,6 @@ export async function getReviewDetail(
 export type ReviewStats = {
   open: number;
   inReview: number;
-  escalated: number;
   resolvedToday: number;
   flaggedTotal: number;
   mineOpen: number;
@@ -465,7 +471,6 @@ export async function getReviewStats(
   const empty: ReviewStats = {
     open: 0,
     inReview: 0,
-    escalated: 0,
     resolvedToday: 0,
     flaggedTotal: 0,
     mineOpen: 0,
@@ -493,16 +498,15 @@ export async function getReviewStats(
       : sql`TRUE`;
 
     const result = await adminDrizzle.execute<{
-      open: string; in_review: string; escalated: string; flagged: string;
+      open: string; in_review: string; flagged: string;
       resolved_today: string; mine_open: string;
     }>(sql`
       SELECT
         COUNT(*) FILTER (WHERE status = 'open') AS open,
-        COUNT(*) FILTER (WHERE status = 'in_review') AS in_review,
-        COUNT(*) FILTER (WHERE status = 'escalated') AS escalated,
+        COUNT(*) FILTER (WHERE status IN ('in_review', 'escalated')) AS in_review,
         COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
         COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
-        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS mine_open
+        COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...REVIEW_QUEUE_STORAGE_STATUSES])}::text[])) AS mine_open
       FROM antifraud_reviews
       WHERE ${targetScope}
     `);
@@ -511,7 +515,7 @@ export async function getReviewStats(
 
     return {
       open: value("open"), inReview: value("in_review"),
-      escalated: value("escalated"), resolvedToday: value("resolved_today"),
+      resolvedToday: value("resolved_today"),
       flaggedTotal: value("flagged"),
       mineOpen: value("mine_open"),
     };

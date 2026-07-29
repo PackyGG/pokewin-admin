@@ -288,14 +288,13 @@ function mergeCases(
 
 /**
  * Case status implied by a decision, mirroring the mapping in the monitor
- * service (`POST /v1/cases/:id/decision`): `resolved_*` → resolved,
- * `escalated` → escalated, anything else → in_review. Only used when the
+ * service (`POST /v1/cases/:id/decision`): `resolved_*` → resolved and a
+ * review decision → in_review. Only used when the
  * frame does not carry the status itself.
  */
 function statusForDecision(decision: string): string | null {
   if (!decision) return null;
   if (decision.startsWith("resolved_")) return "resolved";
-  if (decision === "escalated") return "escalated";
   if (decision === "in_review") return "in_review";
   return null;
 }

@@ -514,7 +514,6 @@ app.get("/v1/cases", async (request) => {
       "open",
       "monitoring",
       "in_review",
-      "escalated",
       "resolved",
     ]).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -527,8 +526,12 @@ app.get("/v1/cases", async (request) => {
   ];
   const values: unknown[] = [];
   if (query.status) {
-    values.push(query.status);
-    conditions.push(`c.status = $${values.length}`);
+    if (query.status === "in_review") {
+      conditions.push(`c.status IN ('in_review','escalated')`);
+    } else {
+      values.push(query.status);
+      conditions.push(`c.status = $${values.length}`);
+    }
   }
   values.push(query.limit + 1);
   const result = await db.antifraud.query(
@@ -557,7 +560,10 @@ app.get("/v1/cases", async (request) => {
     values,
   );
   return {
-    data: result.rows.slice(0, query.limit),
+    data: result.rows.slice(0, query.limit).map((row) => ({
+      ...row,
+      status: row.status === "escalated" ? "in_review" : row.status,
+    })),
     pagination: {
       limit: query.limit,
       hasMore: result.rows.length > query.limit,
@@ -632,7 +638,7 @@ app.get("/v1/cases/:id", async (request, reply) => {
           rm.id, rm.session_id, rd.key AS rule_key,
           COALESCE(rm.evidence->>'ruleName', rd.name) AS rule_name,
           COALESCE((rm.evidence->>'scoreDelta')::int, rd.score_delta) AS score_delta,
-          COALESCE(rm.evidence->>'actionType', rd.action_type) AS action_type,
+          'manual_review'::text AS action_type,
           COALESCE(rm.evidence->'sequence', rd.sequence) AS sequence,
           rm.matched_at
          FROM rule_matches rm
@@ -646,7 +652,13 @@ app.get("/v1/cases/:id", async (request, reply) => {
   if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
   return {
     data: {
-      case: caseResult.rows[0],
+      case: {
+        ...caseResult.rows[0],
+        status:
+          caseResult.rows[0].status === "escalated"
+            ? "in_review"
+            : caseResult.rows[0].status,
+      },
       events: events.rows,
       providerChecks: checks.rows,
       sessions: sessions.rows,
@@ -665,7 +677,12 @@ app.get("/v1/rules", async () => {
   const result = await db.antifraud.query(
     "SELECT * FROM rule_definitions ORDER BY priority, name",
   );
-  return { data: result.rows };
+  return {
+    data: result.rows.map((row) => ({
+      ...row,
+      action_type: "manual_review",
+    })),
+  };
 });
 
 app.post("/v1/rules", {
@@ -922,9 +939,7 @@ app.post("/v1/cases/:id/decision", {
   const body = caseDecisionSchema.parse(request.body);
   const status = body.decision.startsWith("resolved_")
     ? "resolved"
-    : body.decision === "escalated"
-      ? "escalated"
-      : "in_review";
+    : "in_review";
   const client = await db.antifraud.connect();
   let userId: string;
   try {
@@ -1088,7 +1103,8 @@ app.get("/v1/scoring", async () => {
   const [rules, weights] = await Promise.all([
     db.antifraud.query(
       `SELECT id, key, name, description, enabled, trigger, sequence,
-              exclude_before, window_seconds, score_delta, action_type, priority,
+              exclude_before, window_seconds, score_delta,
+              'manual_review'::text AS action_type, priority,
               updated_at
          FROM rule_definitions
         ORDER BY priority, name`,

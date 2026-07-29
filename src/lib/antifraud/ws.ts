@@ -13,7 +13,7 @@
  * (`src/app/(antifraud)/antifraud/_components/monitor-stream.ts`).
  *
  * This module is the SYSTEM OF RECORD side: a signal POSTed here is persisted
- * (and escalated into a case) even when no analyst has the dashboard open.
+ * (and opened as a case) even when no analyst has the dashboard open.
  * A second, parallel SSE proxy used to live here as well; it spoke an envelope
  * and an event vocabulary the service never emitted, so it could not receive a
  * frame and was removed.
@@ -111,7 +111,7 @@ export const SIGNUP_REVIEW_SCORE_FLOOR = 60;
  * High-risk signup scores are an explicit queue contract. They must not depend
  * on the broader severity bands (where 60 is still "medium").
  */
-export function shouldEscalateSignal(
+export function shouldOpenReviewForSignal(
   signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
 ): boolean {
   return (

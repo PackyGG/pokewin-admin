@@ -182,7 +182,6 @@ const summarySchema = z.object({
   bad: z.number(),
   unreviewed: z.number(),
   in_review: z.number(),
-  escalated: z.number(),
   hold_recommended: z.number(),
   provider_high_risk: z.number(),
   three_ds_failed: z.number(),
@@ -210,7 +209,10 @@ const detailResponseSchema = z.object({
 export type FiatAssessment = z.infer<typeof assessmentSchema>;
 export type FiatVerdict = FiatAssessment["verdict"];
 export type FiatReviewStatus = z.infer<typeof reviewStatusSchema>;
-export type FiatReviewAction = z.infer<typeof reviewEventSchema>["action"];
+export type FiatReviewAction =
+  | "start_review"
+  | "clear"
+  | "recommend_hold";
 export type FiatDetail = z.infer<typeof detailResponseSchema>["data"];
 export type FiatSummary = z.infer<typeof summarySchema>;
 

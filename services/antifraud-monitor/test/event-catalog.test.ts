@@ -61,6 +61,22 @@ test("custom flow create contract accepts complete ordered flows", () => {
   assert.equal(parsed.enabled, true);
 });
 
+test("custom flows can only send matches to manual review", () => {
+  const result = ruleCreateSchema.safeParse({
+    idempotencyKey: "550e8400-e29b-41d4-a716-446655440000",
+    actorId: "admin-1",
+    name: "Legacy action",
+    description: "",
+    enabled: false,
+    sequence: ["account_signed_up"],
+    excludeBefore: [],
+    windowSeconds: 180,
+    scoreDelta: 35,
+    actionType: "escalate",
+  });
+  assert.equal(result.success, false);
+});
+
 test("rule creation requires the admin service token", () => {
   const config = {
     API_TOKEN: "read-token",

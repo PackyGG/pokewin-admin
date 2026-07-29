@@ -565,7 +565,7 @@ function ReviewStatusBadge({ status }: { status: WithdrawalReviewStatus }) {
         status === "in_review" &&
           "border-cyan-500/30 text-cyan-600 dark:text-cyan-400",
         status === "escalated" &&
-          "border-amber-500/30 text-amber-600 dark:text-amber-400",
+          "border-cyan-500/30 text-cyan-600 dark:text-cyan-400",
         status === "block_recommended" &&
           "border-rose-500/30 text-rose-600 dark:text-rose-400",
       )}
@@ -580,7 +580,7 @@ function reviewStatusLabel(status: WithdrawalReviewStatus): string {
     unreviewed: "Unreviewed",
     in_review: "In review",
     cleared: "Cleared",
-    escalated: "Escalated",
+    escalated: "In review",
     block_recommended: "Block recommended",
   };
   return labels[status];

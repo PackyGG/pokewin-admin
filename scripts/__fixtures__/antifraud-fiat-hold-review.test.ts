@@ -8,7 +8,7 @@ import {
 } from "../../src/lib/antifraud/signal-display";
 import {
   parseAntifraudEvent,
-  shouldEscalateSignal,
+  shouldOpenReviewForSignal,
 } from "../../src/lib/antifraud/ws";
 
 test("fiat withdrawal holds are accepted as high-severity review signals", () => {
@@ -28,7 +28,7 @@ test("fiat withdrawal holds are accepted as high-severity review signals", () =>
   });
 
   assert.ok(event);
-  assert.equal(shouldEscalateSignal(event), true);
+  assert.equal(shouldOpenReviewForSignal(event), true);
   assert.equal(
     reviewSignalLabel(event.kind),
     "Fiat-triggered withdrawal hold",

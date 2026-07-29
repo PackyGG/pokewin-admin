@@ -55,7 +55,7 @@ export function OpenCaseDialog({
   const [reason, setReason] = React.useState(
     prefill.reason ??
       (prefill.monitorCaseId
-        ? `Escalated from monitor case ${prefill.monitorCaseId}.`
+        ? `Opened from monitor case ${prefill.monitorCaseId}.`
         : ""),
   );
 

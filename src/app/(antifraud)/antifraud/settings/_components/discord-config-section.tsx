@@ -217,7 +217,7 @@ export async function DiscordConfigSection() {
           ids={discord?.supportRecipientIds ?? null}
         />
         <RecipientList
-          title="Urgent escalation"
+          title="Urgent alerts"
           description="Added only when a future trigger is explicitly marked urgent."
           ids={discord?.urgentRecipientIds ?? null}
           urgent

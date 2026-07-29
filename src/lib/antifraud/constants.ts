@@ -21,7 +21,6 @@ export const REVIEW_STATUSES = [
   "in_review",
   "cleared",
   "flagged",
-  "escalated",
 ] as const;
 export type ReviewStatus = (typeof REVIEW_STATUSES)[number];
 
@@ -33,7 +32,6 @@ export function isReviewStatus(value: string): value is ReviewStatus {
 export const OPEN_REVIEW_STATUSES: readonly ReviewStatus[] = [
   "open",
   "in_review",
-  "escalated",
 ];
 
 export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
@@ -41,13 +39,12 @@ export const REVIEW_STATUS_LABELS: Record<ReviewStatus, string> = {
   in_review: "In review",
   cleared: "Cleared",
   flagged: "Flagged",
-  escalated: "Escalated",
 };
 /**
  * Status badge colours. These are RISK colours, not money colours â€” the
  * House-POV money rule governs amounts, and a review carries none. "Cleared" is
  * emerald because a clean account is the good outcome for the house;
- * "flagged" / "escalated" are the bad ones.
+ * "flagged" is the bad outcome.
  */
 export const REVIEW_STATUS_COLORS: Record<ReviewStatus, string> = {
   open: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
@@ -56,8 +53,6 @@ export const REVIEW_STATUS_COLORS: Record<ReviewStatus, string> = {
   cleared:
     "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
   flagged: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",
-  escalated:
-    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
 // â”€â”€â”€ Review severity â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

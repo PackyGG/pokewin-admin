@@ -696,7 +696,7 @@ function ReviewStatusBadge({ status }: { status: FiatReviewStatus }) {
         status === "in_review" &&
           "border-cyan-500/30 text-cyan-600 dark:text-cyan-400",
         status === "escalated" &&
-          "border-amber-500/30 text-amber-600 dark:text-amber-400",
+          "border-cyan-500/30 text-cyan-600 dark:text-cyan-400",
         status === "hold_recommended" &&
           "border-rose-500/30 text-rose-600 dark:text-rose-400",
       )}
@@ -711,7 +711,7 @@ function reviewStatusLabel(status: FiatReviewStatus): string {
     unreviewed: "Unreviewed",
     in_review: "In review",
     cleared: "Cleared",
-    escalated: "Escalated",
+    escalated: "In review",
     hold_recommended: "Hold recommended",
   };
   return labels[status];

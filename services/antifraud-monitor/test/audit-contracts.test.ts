@@ -989,6 +989,17 @@ test("decision schema accepts and preserves server-derived staff identity", () =
   assert.equal(parsed.actorUsername, "Support Agent");
 });
 
+test("monitor case decisions do not accept escalation", () => {
+  const result = caseDecisionSchema.safeParse({
+    decision: "escalated",
+    idempotencyKey: "123e4567-e89b-42d3-a456-426614174000",
+    reason: "Legacy decision.",
+    actorId: "staff-user-id",
+    actorUsername: "staff",
+  });
+  assert.equal(result.success, false);
+});
+
 test("decision idempotency accepts exact replay and rejects identity changes", () => {
   const stored = {
     case_id: "case-1",

@@ -6,7 +6,6 @@ import {
   CircleCheck,
   CirclePlay,
   ShieldAlert,
-  TriangleAlert,
 } from "lucide-react";
 import { toast } from "sonner";
 
@@ -28,7 +27,6 @@ const actions: Array<{
 }> = [
   { key: "start_review", label: "Start review", success: "Review started", icon: CirclePlay, variant: "default" },
   { key: "clear", label: "Clear", success: "Deposit cleared", icon: CircleCheck, variant: "outline" },
-  { key: "escalate", label: "Escalate", success: "Deposit escalated", icon: TriangleAlert, variant: "outline" },
   { key: "recommend_hold", label: "Recommend hold", success: "Hold recommendation recorded", icon: ShieldAlert, variant: "destructive" },
 ];
 
@@ -97,7 +95,7 @@ export function FiatReviewControls({
           placeholder="What evidence did you check, and what did you conclude?"
         />
         <p className="text-[11px] text-muted-foreground">
-          A conclusion is required to clear, escalate, or recommend a hold.
+          A conclusion is required to clear or recommend a hold.
         </p>
       </div>
       <div className="grid gap-2 sm:grid-cols-2">
@@ -106,7 +104,6 @@ export function FiatReviewControls({
           const current =
             (action.key === "start_review" && status === "in_review") ||
             (action.key === "clear" && status === "cleared") ||
-            (action.key === "escalate" && status === "escalated") ||
             (action.key === "recommend_hold" && status === "hold_recommended");
           return (
             <Button

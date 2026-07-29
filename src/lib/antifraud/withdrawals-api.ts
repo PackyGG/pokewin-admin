@@ -163,7 +163,6 @@ const responseSchema = z.object({
     bad: z.number(),
     unreviewed: z.number().default(0),
     in_review: z.number().default(0),
-    escalated: z.number().default(0),
     block_recommended: z.number().default(0),
     amount_usd: numeric,
   }),
@@ -180,9 +179,10 @@ const detailResponseSchema = z.object({
 export type WithdrawalAssessment = z.infer<typeof withdrawalSchema>;
 export type WithdrawalVerdict = WithdrawalAssessment["verdict"];
 export type WithdrawalReviewStatus = z.infer<typeof reviewStatusSchema>;
-export type WithdrawalReviewAction = z.infer<
-  typeof reviewEventSchema
->["action"];
+export type WithdrawalReviewAction =
+  | "start_review"
+  | "clear"
+  | "recommend_block";
 export type WithdrawalDetail = z.infer<typeof detailResponseSchema>["data"];
 
 const UPSTREAM_TIMEOUT_MS = 12_000;

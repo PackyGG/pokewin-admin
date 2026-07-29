@@ -51,7 +51,6 @@ const REVIEW_STATUSES = [
   "unreviewed",
   "in_review",
   "cleared",
-  "escalated",
   "block_recommended",
 ] as const;
 
@@ -85,7 +84,7 @@ export default async function WithdrawalsPage({
       ? (params.verdict as WithdrawalVerdict)
       : undefined,
     reviewStatus: REVIEW_STATUSES.includes(
-      params.reviewStatus as WithdrawalReviewStatus,
+      params.reviewStatus as (typeof REVIEW_STATUSES)[number],
     )
       ? (params.reviewStatus as WithdrawalReviewStatus)
       : undefined,
@@ -141,11 +140,6 @@ function Filters({ state }: { state: FilterState }) {
               label="In review"
               active={state.reviewStatus === "in_review"}
               href={filterHref({ reviewStatus: "in_review" })}
-            />
-            <FilterButton
-              label="Escalated"
-              active={state.reviewStatus === "escalated"}
-              href={filterHref({ reviewStatus: "escalated" })}
             />
           </FilterGroup>
           <FilterGroup label="Payout status">
@@ -235,7 +229,6 @@ function SummaryCards({
     bad: number;
     unreviewed: number;
     in_review: number;
-    escalated: number;
     block_recommended: number;
     amount_usd: number;
   };
@@ -261,7 +254,7 @@ function SummaryCards({
         accent="amber"
         label="Needs review"
         value={summary.review.toLocaleString()}
-        sub={`${summary.escalated.toLocaleString()} escalated`}
+        sub={`${summary.in_review.toLocaleString()} in progress`}
       />
       <KpiTile
         icon={ShieldAlert}

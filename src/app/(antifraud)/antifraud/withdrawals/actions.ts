@@ -14,13 +14,12 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 const inputSchema = z
   .object({
     withdrawalId: z.string().uuid("Invalid withdrawal id"),
-    action: z.enum(["start_review", "clear", "escalate", "recommend_block"]),
+    action: z.enum(["start_review", "clear", "recommend_block"]),
     note: z.string().trim().max(1_000, "Keep notes under 1,000 characters"),
     expectedStatus: z.enum([
       "unreviewed",
       "in_review",
       "cleared",
-      "escalated",
       "block_recommended",
     ]),
     idempotencyKey: z.string().uuid("Invalid idempotency key"),

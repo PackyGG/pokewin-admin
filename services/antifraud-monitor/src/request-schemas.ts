@@ -18,7 +18,7 @@ export const ruleUpdateSchema = z.object({
   excludeBefore: z.array(z.string().min(1).max(100)).max(20).optional(),
   windowSeconds: z.number().int().min(1).max(86_400).optional(),
   scoreDelta: z.number().int().min(-500).max(500).optional(),
-  actionType: z.enum(["manual_review", "escalate"]).optional(),
+  actionType: z.literal("manual_review").optional(),
 }).strict().refine(
   (value) =>
     Object.keys(value).some(
@@ -41,13 +41,12 @@ export const ruleCreateSchema = z.object({
   excludeBefore: z.array(z.string().min(1).max(100)).max(20).default([]),
   windowSeconds: z.number().int().min(1).max(86_400),
   scoreDelta: z.number().int().min(-500).max(500),
-  actionType: z.enum(["manual_review", "escalate"]),
+  actionType: z.literal("manual_review"),
 }).strict();
 
 export const caseDecisionSchema = z.object({
   decision: z.enum([
     "in_review",
-    "escalated",
     "resolved_safe",
     "resolved_fraud",
   ]),

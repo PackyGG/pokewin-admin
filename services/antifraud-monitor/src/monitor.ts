@@ -152,8 +152,7 @@ export async function persistRuleMatch(
         SET score=$2, peak_score=GREATEST(peak_score,$2),
             severity=$3,
             status=CASE
-              WHEN $4 = 'escalate' THEN 'escalated'
-              WHEN $4 = 'manual_review' AND status = 'monitoring'
+              WHEN $4 = 'manual_review' AND status IN ('monitoring','escalated')
                 THEN 'in_review'
               ELSE status
             END,
@@ -1719,7 +1718,8 @@ export class MonitorEngine {
 
     const result = await this.db.antifraud.query<SequenceRule>(
       `
-        SELECT id, key, name, sequence, exclude_before, window_seconds, score_delta, action_type
+        SELECT id, key, name, sequence, exclude_before, window_seconds,
+               score_delta, 'manual_review'::text AS action_type
         FROM rule_definitions
         WHERE enabled = true AND trigger = 'sequence'
         ORDER BY priority, key

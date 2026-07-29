@@ -19,13 +19,12 @@ import {
 const schema = z
   .object({
     depositIntentId: z.string().uuid(),
-    action: z.enum(["start_review", "clear", "escalate", "recommend_hold"]),
+    action: z.enum(["start_review", "clear", "recommend_hold"]),
     note: z.string().trim().max(1_000),
     expectedStatus: z.enum([
       "unreviewed",
       "in_review",
       "cleared",
-      "escalated",
       "hold_recommended",
     ]),
     idempotencyKey: z.string().uuid(),

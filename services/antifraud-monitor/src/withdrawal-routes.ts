@@ -31,7 +31,6 @@ const querySchema = z.object({
       "unreviewed",
       "in_review",
       "cleared",
-      "escalated",
       "block_recommended",
     ])
     .optional(),
@@ -42,13 +41,12 @@ const reviewStatuses = [
   "unreviewed",
   "in_review",
   "cleared",
-  "escalated",
   "block_recommended",
 ] as const;
 
 const reviewBodySchema = z
   .object({
-    action: z.enum(["start_review", "clear", "escalate", "recommend_block"]),
+    action: z.enum(["start_review", "clear", "recommend_block"]),
     actorId: z.string().min(1).max(100),
     actorUsername: z.string().trim().min(1).max(100).optional(),
     note: z.string().trim().max(1_000).optional(),
@@ -71,8 +69,11 @@ function reviewStatusFor(
 ): (typeof reviewStatuses)[number] {
   if (action === "start_review") return "in_review";
   if (action === "clear") return "cleared";
-  if (action === "escalate") return "escalated";
   return "block_recommended";
+}
+
+function visibleReviewStatus(status: string): string {
+  return status === "escalated" ? "in_review" : status;
 }
 
 export async function registerWithdrawalRoutes(
@@ -108,8 +109,12 @@ export async function registerWithdrawalRoutes(
       conditions.push(`verdict=$${values.length}`);
     }
     if (query.reviewStatus) {
-      values.push(query.reviewStatus);
-      conditions.push(`review_status=$${values.length}`);
+      if (query.reviewStatus === "in_review") {
+        conditions.push(`review_status IN ('in_review','escalated')`);
+      } else {
+        values.push(query.reviewStatus);
+        conditions.push(`review_status=$${values.length}`);
+      }
     }
     if (query.search) {
       values.push(`%${query.search.toLowerCase()}%`);
@@ -140,7 +145,9 @@ export async function registerWithdrawalRoutes(
                  status, amount_usd::float8 AS amount_usd, asset_count,
                  requested_at, risk_score, verdict, summary, signals, flow,
                  source_breakdown, score_breakdown, flow_checks,
-                 review_status, review_decision, reviewed_by,
+                 CASE WHEN review_status='escalated'
+                   THEN 'in_review' ELSE review_status END AS review_status,
+                 review_decision, reviewed_by,
                  reviewed_by_username, review_note, review_started_at,
                  reviewed_at, model_version, assessed_at
           FROM withdrawal_assessments
@@ -161,7 +168,6 @@ export async function registerWithdrawalRoutes(
         bad: number;
         unreviewed: number;
         in_review: number;
-        escalated: number;
         block_recommended: number;
         amount_usd: number;
       }>(
@@ -172,8 +178,9 @@ export async function registerWithdrawalRoutes(
             COUNT(*) FILTER (WHERE verdict='review')::int AS review,
             COUNT(*) FILTER (WHERE verdict='bad')::int AS bad,
             COUNT(*) FILTER (WHERE review_status='unreviewed')::int AS unreviewed,
-            COUNT(*) FILTER (WHERE review_status='in_review')::int AS in_review,
-            COUNT(*) FILTER (WHERE review_status='escalated')::int AS escalated,
+            COUNT(*) FILTER (
+              WHERE review_status IN ('in_review','escalated')
+            )::int AS in_review,
             COUNT(*) FILTER (WHERE review_status='block_recommended')::int
               AS block_recommended,
             COALESCE(SUM(amount_usd),0)::float8 AS amount_usd
@@ -201,7 +208,6 @@ export async function registerWithdrawalRoutes(
         bad: 0,
         unreviewed: 0,
         in_review: 0,
-        escalated: 0,
         block_recommended: 0,
         amount_usd: 0,
       },
@@ -223,7 +229,9 @@ export async function registerWithdrawalRoutes(
                  status, amount_usd::float8 AS amount_usd, asset_count,
                  requested_at, risk_score, verdict, summary, signals, flow,
                  source_breakdown, score_breakdown, flow_checks,
-                 review_status, review_decision, reviewed_by,
+                 CASE WHEN review_status='escalated'
+                   THEN 'in_review' ELSE review_status END AS review_status,
+                 review_decision, reviewed_by,
                  reviewed_by_username, review_note, review_started_at,
                  reviewed_at, model_version, assessed_at
           FROM withdrawal_assessments
@@ -233,7 +241,10 @@ export async function registerWithdrawalRoutes(
       ),
       db.antifraud.query(
         `
-          SELECT id, withdrawal_id, action, actor_id, actor_username, note,
+          SELECT id, withdrawal_id,
+                 CASE WHEN action='escalate' THEN 'start_review' ELSE action END
+                   AS action,
+                 actor_id, actor_username, note,
                  created_at
           FROM withdrawal_review_events
           WHERE withdrawal_id=$1
@@ -341,7 +352,7 @@ export async function registerWithdrawalRoutes(
             ? { success: true, idempotent: true }
             : reply.code(409).send({ error: "idempotency_conflict" });
         }
-        if (row.review_status !== body.expectedStatus) {
+        if (visibleReviewStatus(row.review_status) !== body.expectedStatus) {
           await client.query("ROLLBACK");
           return reply.code(409).send({ error: "review_state_changed" });
         }

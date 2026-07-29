@@ -17,7 +17,6 @@ const reviewStatuses = [
   "unreviewed",
   "in_review",
   "cleared",
-  "escalated",
   "hold_recommended",
 ] as const;
 
@@ -37,12 +36,7 @@ const querySchema = z.object({
 
 const reviewBodySchema = z
   .object({
-    action: z.enum([
-      "start_review",
-      "clear",
-      "escalate",
-      "recommend_hold",
-    ]),
+    action: z.enum(["start_review", "clear", "recommend_hold"]),
     actorId: z.string().min(1).max(100),
     actorUsername: z.string().trim().min(1).max(100).optional(),
     note: z.string().trim().max(1_000).optional(),
@@ -65,8 +59,11 @@ function nextReviewStatus(
 ): (typeof reviewStatuses)[number] {
   if (action === "start_review") return "in_review";
   if (action === "clear") return "cleared";
-  if (action === "escalate") return "escalated";
   return "hold_recommended";
+}
+
+function visibleReviewStatus(status: string): string {
+  return status === "escalated" ? "in_review" : status;
 }
 
 const assessmentSelect = `
@@ -79,7 +76,10 @@ const assessmentSelect = `
   occurred_at, source_updated_at, provider_risk_score, three_ds_verified,
   risk_score, verdict, recommendation, summary, signals, provider_evidence,
   funding_evidence, behavior_evidence, account_evidence, score_breakdown,
-  flow_checks, review_status, review_decision, reviewed_by,
+  flow_checks,
+  CASE WHEN review_status='escalated' THEN 'in_review' ELSE review_status END
+    AS review_status,
+  review_decision, reviewed_by,
   reviewed_by_username, review_note, review_started_at, reviewed_at,
   score_version, assessed_at
 `;
@@ -120,8 +120,12 @@ export async function registerFiatRoutes(
       conditions.push(`verdict=$${values.length}`);
     }
     if (query.reviewStatus) {
-      values.push(query.reviewStatus);
-      conditions.push(`review_status=$${values.length}`);
+      if (query.reviewStatus === "in_review") {
+        conditions.push(`review_status IN ('in_review','escalated')`);
+      } else {
+        values.push(query.reviewStatus);
+        conditions.push(`review_status=$${values.length}`);
+      }
     }
     if (query.excludeKycRequired) {
       conditions.push(
@@ -193,10 +197,10 @@ export async function registerFiatRoutes(
             COUNT(*) FILTER (WHERE verdict='bad')::int AS bad,
             COUNT(*) FILTER (WHERE review_status='unreviewed')::int
               AS unreviewed,
-            COUNT(*) FILTER (WHERE review_status='in_review')::int
+            COUNT(*) FILTER (
+              WHERE review_status IN ('in_review','escalated')
+            )::int
               AS in_review,
-            COUNT(*) FILTER (WHERE review_status='escalated')::int
-              AS escalated,
             COUNT(*) FILTER (WHERE review_status='hold_recommended')::int
               AS hold_recommended,
             COUNT(*) FILTER (WHERE provider_risk_score>=60)::int
@@ -266,7 +270,10 @@ export async function registerFiatRoutes(
       }),
       db.antifraud.query(
         `
-          SELECT id, deposit_intent_id, action, actor_id, actor_username,
+          SELECT id, deposit_intent_id,
+                 CASE WHEN action='escalate' THEN 'start_review' ELSE action END
+                   AS action,
+                 actor_id, actor_username,
                  note, created_at
           FROM fiat_deposit_review_events
           WHERE deposit_intent_id=$1
@@ -346,7 +353,7 @@ export async function registerFiatRoutes(
             ? { success: true, idempotent: true }
             : reply.code(409).send({ error: "idempotency_conflict" });
         }
-        if (row.review_status !== body.expectedStatus) {
+        if (visibleReviewStatus(row.review_status) !== body.expectedStatus) {
           await client.query("ROLLBACK");
           return reply.code(409).send({ error: "review_state_changed" });
         }

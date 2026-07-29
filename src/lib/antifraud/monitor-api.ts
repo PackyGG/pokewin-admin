@@ -257,7 +257,7 @@ export type AntifraudRuleMutation = {
   excludeBefore: string[];
   windowSeconds: number;
   scoreDelta: number;
-  actionType: "manual_review" | "escalate";
+  actionType: "manual_review";
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
@@ -608,7 +608,6 @@ export async function getAntifraudCaseDetail(caseId: string): Promise<{
 
 export const MONITOR_CASE_DECISIONS = [
   "in_review",
-  "escalated",
   "resolved_safe",
   "resolved_fraud",
 ] as const;
@@ -617,7 +616,6 @@ export type MonitorCaseDecision = (typeof MONITOR_CASE_DECISIONS)[number];
 export const MONITOR_CASE_DECISION_LABELS: Record<MonitorCaseDecision, string> =
   {
     in_review: "Take into review",
-    escalated: "Escalate",
     resolved_safe: "Resolve — legitimate",
     resolved_fraud: "Resolve — fraud",
   };

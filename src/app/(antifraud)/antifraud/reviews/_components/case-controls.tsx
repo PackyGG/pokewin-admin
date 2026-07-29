@@ -189,8 +189,8 @@ export function CaseControls({
           className="text-xs"
         />
         <p className="text-[11px] text-muted-foreground">
-          Cleared and Flagged need a conclusion. Moving a case back to Open,
-          In review or Escalated withdraws the previous verdict and clears it.
+          Clear and Flag require a conclusion. Reopening withdraws the previous
+          verdict but keeps the append-only trail.
         </p>
       </div>
 

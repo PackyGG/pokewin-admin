@@ -20,7 +20,7 @@ const flowSchema = z.object({
   excludeBefore: z.array(z.string().trim().min(1).max(100)).max(20),
   windowSeconds: z.number().int().min(1).max(86_400),
   scoreDelta: z.number().int().min(-500).max(500),
-  actionType: z.enum(["manual_review", "escalate"]),
+  actionType: z.literal("manual_review"),
   idempotencyKey: z.string().uuid(),
 });
 

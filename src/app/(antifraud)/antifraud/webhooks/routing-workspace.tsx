@@ -707,7 +707,7 @@ function CreateEventDialog({
               id="event-label"
               value={label}
               maxLength={80}
-              placeholder="Manual review escalated"
+              placeholder="Manual review alert"
               onChange={(event) => {
                 const next = event.target.value;
                 setLabel(next);
@@ -728,7 +728,7 @@ function CreateEventDialog({
               id="event-key"
               value={key}
               maxLength={80}
-              placeholder="manual_review_escalated"
+              placeholder="manual_review_alert"
               onChange={(event) => setKey(event.target.value)}
             />
             <p className="text-[11px] text-muted-foreground">

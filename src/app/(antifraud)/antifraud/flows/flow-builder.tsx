@@ -47,7 +47,7 @@ type Draft = {
   excludeBefore: string[];
   windowSeconds: number;
   scoreDelta: number;
-  actionType: "manual_review" | "escalate";
+  actionType: "manual_review";
 };
 
 type FlowStep = {
@@ -68,7 +68,7 @@ function fromRule(rule: AntifraudBehaviorRule): Draft {
     excludeBefore: [...rule.exclude_before],
     windowSeconds: rule.window_seconds,
     scoreDelta: rule.score_delta,
-    actionType: rule.action_type === "escalate" ? "escalate" : "manual_review",
+    actionType: "manual_review",
   };
 }
 
@@ -565,28 +565,12 @@ export function FlowBuilder({
                     disabled={pending}
                   />
                 </label>
-                <label className="space-y-1.5 text-xs font-medium">
+                <div className="space-y-1.5 text-xs font-medium">
                   Action
-                  <Select
-                    value={draft.actionType}
-                    onValueChange={(value) =>
-                      setDraft((current) => ({
-                        ...current,
-                        actionType:
-                          value === "escalate" ? "escalate" : "manual_review",
-                      }))
-                    }
-                    disabled={pending}
-                  >
-                    <SelectTrigger className="w-full">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="manual_review">Manual review</SelectItem>
-                      <SelectItem value="escalate">Escalate</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </label>
+                  <div className="flex h-9 items-center rounded-md border border-border/60 bg-muted/30 px-3 text-sm text-muted-foreground">
+                    Send to manual review
+                  </div>
+                </div>
               </div>
             </div>
           </section>

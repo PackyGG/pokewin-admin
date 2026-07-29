@@ -10,16 +10,17 @@ import {
 } from "@/lib/antifraud/constants";
 
 export function ReviewStatusBadge({ status }: { status: string }) {
-  const known = isReviewStatus(status);
+  const visibleStatus = status === "escalated" ? "in_review" : status;
+  const known = isReviewStatus(visibleStatus);
   return (
     <Badge
       variant="outline"
       className={cn(
         "h-5 px-1.5 text-[10px] font-bold uppercase tracking-wide",
-        known ? REVIEW_STATUS_COLORS[status] : "",
+        known ? REVIEW_STATUS_COLORS[visibleStatus] : "",
       )}
     >
-      {known ? REVIEW_STATUS_LABELS[status] : status}
+      {known ? REVIEW_STATUS_LABELS[visibleStatus] : visibleStatus}
     </Badge>
   );
 }
