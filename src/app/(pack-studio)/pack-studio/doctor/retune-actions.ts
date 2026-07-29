@@ -431,7 +431,6 @@ export async function getPackEditPool(packId: string): Promise<EditPool> {
              AS pack_cards
     FROM packs p
     LEFT JOIN pack_cards pc ON pc.pack_id = p.id
-    LEFT JOIN cards c ON c.id = pc.card_id
     WHERE p.id = ${packId}::uuid
     GROUP BY p.id
   `);
@@ -628,11 +627,11 @@ async function enforcePackCreatorLiveGate(
  *   • token / owner / capability / scope (`official`) gate,
  *   • non-empty pool, every weight a positive integer, no duplicate cardId,
  *     every cardId a valid uuid, optional price > 0,
- *   • every edited cardId must exist in the pack's CURRENT live pool — an edit
- *     can re-weight / remove / reorder existing cards, but cannot inject a card
- *     the pool never had (adding a brand-new card belongs in the full Builder,
- *     which validates card identity; this keeps the verbatim edit honest
- *     and read-verified against fresh MAIN truth).
+ *   • every edited cardId must exist as a REAL card in `cards` (so the
+ *     `pack_cards.card_id` FK holds) — validated against fresh MAIN truth.
+ *     It need NOT already be in this pack's live pool: injecting a brand-new
+ *     real card is deliberate and is exactly how an infeasible "no-win-cards"
+ *     pack gets fixed inline (see the inline note at the identity gate below).
  *
  * Captures an "edit" snapshot of the CURRENT state FIRST (revertable), then
  * writes via the SAME delete-all-then-createMany `pack_cards` transaction

@@ -84,12 +84,13 @@ export async function POST(req: Request): Promise<NextResponse> {
     );
   }
   const { packId, staged, opts } = parsed.data;
+  // Schema→server-type bridge as a plain ASSIGNMENT (no cast): if
+  // `stagedSchema` ever drifts from `PackTuneStagedInput` (which has changed
+  // shape repeatedly — v2–v9 cache-key history), tsc fails here instead of a
+  // blind cast silently feeding planPackTune a mis-shaped payload.
+  const stagedInput: PackTuneStagedInput | null = staged ?? null;
   try {
-    const plan = await planPackTune(
-      packId,
-      (staged ?? null) as PackTuneStagedInput | null,
-      opts ?? null,
-    );
+    const plan = await planPackTune(packId, stagedInput, opts ?? null);
     return NextResponse.json({ plan });
   } catch (err) {
     const message =
