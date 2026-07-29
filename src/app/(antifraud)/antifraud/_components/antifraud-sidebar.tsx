@@ -13,7 +13,6 @@ import {
   LayoutDashboard,
   MailWarning,
   MapPinned,
-  Megaphone,
   RadioTower,
   Settings,
   ShieldAlert,
@@ -73,7 +72,6 @@ const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
 
 const NETWORK_NAV: NavItem[] = [
   { label: "Account Networks", href: "/antifraud/networks", icon: GitFork },
-  { label: "Creator Fraud", href: "/antifraud/creator-fraud", icon: Megaphone },
 ];
 
 const TRANSACTION_NAV: NavItem[] = [

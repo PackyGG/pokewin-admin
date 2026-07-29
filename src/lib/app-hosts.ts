@@ -160,7 +160,6 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "kyc",
       "signups",
       "networks",
-      "creator-fraud",
       "quizzes",
       "staff",
       "profile",
@@ -182,6 +181,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     basePath: "/creator-hub",
     segmentRoutes: [
       "creators",
+      "creator-fraud",
       "leaderboards",
       "tips-sponsors",
       "rewards",

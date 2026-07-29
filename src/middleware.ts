@@ -227,6 +227,31 @@ export async function middleware(request: NextRequest) {
       }
     }
 
+    // Creator Fraud now belongs to the Marketing workspace. Resolve old Fraud
+    // host bookmarks and old canonical prefixed URLs before App Router renders,
+    // preserving the detail path and every search/filter value.
+    const legacyCreatorFraudPath =
+      appHost?.basePath === "/antifraud" &&
+      (pathname === "/creator-fraud" ||
+        pathname.startsWith("/creator-fraud/"))
+        ? pathname
+        : pathname === "/antifraud/creator-fraud" ||
+            pathname.startsWith("/antifraud/creator-fraud/")
+          ? pathname.slice("/antifraud".length)
+          : null;
+    if (legacyCreatorFraudPath) {
+      const creatorHub = APP_HOSTS.find(
+        (entry) => entry.basePath === "/creator-hub",
+      );
+      if (creatorHub) {
+        const url = new URL(
+          `https://${creatorHub.host}${legacyCreatorFraudPath}`,
+        );
+        url.search = request.nextUrl.search;
+        return NextResponse.redirect(url, 308);
+      }
+    }
+
     // Legacy /chat bookmark → resolve the redirect at the HTTP layer, BEFORE
     // React renders. chat/page.tsx did this with an in-render redirect(); an
     // unconditional in-render redirect on the initial document load is replayed

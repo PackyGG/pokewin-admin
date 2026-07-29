@@ -8,10 +8,10 @@ import {
   requestCreatorFraudRescan,
   type CreatorWindow,
 } from "@/lib/antifraud/network-api";
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 
 export async function rescanCreatorFraud(input: unknown): Promise<void> {
-  const session = await requireAntifraudAccess();
+  const session = await requireCreatorHubAccess();
   const parsed = z.object({
     creatorId: z.string().trim().min(1).max(100),
     window: z.enum(["7d", "30d", "90d", "lifetime"]),
@@ -30,5 +30,5 @@ export async function rescanCreatorFraud(input: unknown): Promise<void> {
     metadata: { window: parsed.data.window },
   });
   // revalidatePath does not support query strings — revalidate the bare path.
-  revalidatePath(`/antifraud/creator-fraud/${parsed.data.creatorId}`);
+  revalidatePath(`/creator-hub/creator-fraud/${parsed.data.creatorId}`);
 }

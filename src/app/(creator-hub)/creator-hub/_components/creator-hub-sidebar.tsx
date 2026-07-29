@@ -6,6 +6,7 @@ import {
   Crown,
   Gift,
   LayoutDashboard,
+  Megaphone,
   Users,
   Trophy,
   ShieldCheck,
@@ -42,9 +43,9 @@ import { hrefFrom } from "@/lib/app-hosts";
  * "Back to Admin" exit at the top, and its own nav list.
  *
  * Live nav, sectioned (owner request 2026-07-29): Overview (Dashboard),
- * Creators (Roster, Socials Review), Programs & Payouts (Leaderboards,
- * Tips & Sponsors, Creator Rewards), Economics (Profitability, ROI
- * Calculator). The theme toggle sits in the footer.
+ * Creators (Roster, Creator Fraud, Socials Review), Programs & Payouts
+ * (Leaderboards, Tips & Sponsors, Creator Rewards), Economics
+ * (Profitability, ROI Calculator). The theme toggle sits in the footer.
  *
  * Removed 2026-07-23 (owner): All Sessions, Wager / Fraud Abusers and
  * Changelog — Changelog still exists in the main admin app
@@ -70,7 +71,7 @@ type HubNavGroup = {
 
 /**
  * Sectioned nav (owner request 2026-07-29): the flat "Workspace" list grew to
- * 8 items, so the sidebar now groups them by job — mirroring the antifraud
+ * 9 items, so the sidebar now groups them by job — mirroring the antifraud
  * sidebar's sectioning. Route ownership is unchanged; this is purely nav
  * structure.
  */
@@ -85,6 +86,11 @@ const HUB_NAV_GROUPS: HubNavGroup[] = [
     label: "Creators",
     items: [
       { label: "Roster", href: "/creator-hub/creators", icon: Users },
+      {
+        label: "Creator Fraud",
+        href: "/creator-hub/creator-fraud",
+        icon: Megaphone,
+      },
       {
         label: "Socials Review",
         href: "/creator-hub/socials-review",

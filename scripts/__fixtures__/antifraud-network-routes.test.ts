@@ -5,15 +5,20 @@ import test from "node:test";
 
 const root = process.cwd();
 
-test("the Antifraud host owns network, creator, flow, and event routes", () => {
+test("Creator Fraud is owned by Marketing while Antifraud keeps network routes", () => {
   const appHosts = readFileSync(join(root, "src/lib/app-hosts.ts"), "utf8");
   const antifraudHost =
     appHosts.match(
       /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[([\s\S]*?)\]/,
     )?.[1] ?? "";
+  const marketingHost =
+    appHosts.match(
+      /basePath:\s*"\/creator-hub",[\s\S]*?segmentRoutes:\s*\[([\s\S]*?)\]/,
+    )?.[1] ?? "";
 
   assert.match(antifraudHost, /"networks"/);
-  assert.match(antifraudHost, /"creator-fraud"/);
+  assert.doesNotMatch(antifraudHost, /"creator-fraud"/);
   assert.match(antifraudHost, /"flows"/);
   assert.match(antifraudHost, /"events"/);
+  assert.match(marketingHost, /"creator-fraud"/);
 });

@@ -26,14 +26,14 @@ import {
   type CreatorFraudAssessment,
   type CreatorWindow,
 } from "@/lib/antifraud/network-api";
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
-import { RiskScoreBar } from "../../_components/risk-score-bar";
-import { ScanPoller } from "../../networks/scan-poller";
+import { RiskScoreBar } from "@/app/(antifraud)/antifraud/_components/risk-score-bar";
+import { ScanPoller } from "@/app/(antifraud)/antifraud/networks/scan-poller";
 import { CreatorRescanButton } from "../creator-rescan-button";
 
-export const metadata = { title: "Affiliate Cohort Assessment · Antifraud" };
+export const metadata = { title: "Affiliate Cohort Assessment · Marketing" };
 
 const WINDOW_LABELS: Record<CreatorWindow, string> = {
   "7d": "7-day window",
@@ -49,7 +49,7 @@ export default async function CreatorFraudDetailPage({
   params: Promise<{ creatorId: string }>;
   searchParams: Promise<{ window?: string }>;
 }) {
-  await requireAntifraudPageAccess();
+  await requireCreatorHubPageAccess();
   const creatorId = (await params).creatorId;
   if (!creatorId || creatorId.length > 100) notFound();
   const rawWindow = (await searchParams).window;
@@ -63,13 +63,14 @@ export default async function CreatorFraudDetailPage({
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
-          backHref={`/antifraud/creator-fraud?window=${window}`}
+          backHref={`/creator-hub/creator-fraud?window=${window}`}
           action={
             <>
               <CreatorRescanButton creatorId={creatorId} window={window} />
               <Button
                 size="sm"
                 variant="outline"
+                nativeButton={false}
                 render={<HostLink href={`/users/${creatorId}`} />}
               >
                 <UserRound className="size-4" />
@@ -302,6 +303,7 @@ function NetworkMaps({ metrics }: { metrics: CreatorMetrics }) {
               key={root}
               size="sm"
               variant="outline"
+              nativeButton={false}
               render={
                 <HostLink href={`/antifraud/networks?user=${encodeURIComponent(root)}`} />
               }

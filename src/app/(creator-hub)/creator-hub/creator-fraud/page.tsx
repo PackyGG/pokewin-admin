@@ -22,12 +22,12 @@ import {
   type CreatorFraudAssessment,
   type CreatorWindow,
 } from "@/lib/antifraud/network-api";
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
-import { RiskScoreBar } from "../_components/risk-score-bar";
+import { RiskScoreBar } from "@/app/(antifraud)/antifraud/_components/risk-score-bar";
 
-export const metadata = { title: "Creator Fraud · Antifraud" };
+export const metadata = { title: "Creator Fraud · Marketing" };
 
 const WINDOWS: Array<{ key: CreatorWindow; label: string }> = [
   { key: "7d", label: "7 days" },
@@ -41,7 +41,7 @@ export default async function CreatorFraudPage({
 }: {
   searchParams: Promise<{ window?: string; page?: string; search?: string }>;
 }) {
-  await requireAntifraudPageAccess();
+  await requireCreatorHubPageAccess();
   const params = await searchParams;
   const window = WINDOWS.some((item) => item.key === params.window)
     ? (params.window as CreatorWindow)
@@ -63,9 +63,10 @@ export default async function CreatorFraudPage({
                 key={item.key}
                 size="sm"
                 variant={item.key === window ? "default" : "outline"}
+                nativeButton={false}
                 render={
                   <HostLink
-                    href={`/antifraud/creator-fraud?window=${item.key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
+                    href={`/creator-hub/creator-fraud?window=${item.key}${search ? `&search=${encodeURIComponent(search)}` : ""}`}
                   />
                 }
               >
@@ -73,7 +74,7 @@ export default async function CreatorFraudPage({
               </Button>
             ))}
           </div>
-          <form className="flex w-full gap-2 sm:w-auto" action="/antifraud/creator-fraud">
+          <form className="flex w-full gap-2 sm:w-auto" action="/creator-hub/creator-fraud">
             <input type="hidden" name="window" value={window} />
             <Input
               name="search"
@@ -138,6 +139,7 @@ async function CreatorFraudContent({
               size="sm"
               variant="outline"
               disabled={page <= 1}
+              nativeButton={false}
               render={page > 1 ? <HostLink href={creatorListHref(window, page - 1, search)} /> : undefined}
             >
               <ChevronLeft className="size-3.5" />
@@ -147,6 +149,7 @@ async function CreatorFraudContent({
               size="sm"
               variant="outline"
               disabled={page >= result.pagination.pages}
+              nativeButton={false}
               render={page < result.pagination.pages ? <HostLink href={creatorListHref(window, page + 1, search)} /> : undefined}
             >
               Next
@@ -224,9 +227,10 @@ function CreatorRow({
           </div>
           <Button
             size="sm"
+            nativeButton={false}
             render={
               <HostLink
-                href={`/antifraud/creator-fraud/${assessment.creator_user_id}?window=${window}`}
+                href={`/creator-hub/creator-fraud/${assessment.creator_user_id}?window=${window}`}
               />
             }
           >
@@ -294,7 +298,7 @@ function creatorMetrics(assessment: CreatorFraudAssessment) {
 }
 
 function creatorListHref(window: CreatorWindow, page: number, search: string) {
-  return `/antifraud/creator-fraud?window=${window}&page=${page}${search ? `&search=${encodeURIComponent(search)}` : ""}`;
+  return `/creator-hub/creator-fraud?window=${window}&page=${page}${search ? `&search=${encodeURIComponent(search)}` : ""}`;
 }
 
 function Empty({ text, children }: { text: string; children?: React.ReactNode }) {
