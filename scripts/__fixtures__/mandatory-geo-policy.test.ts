@@ -34,6 +34,13 @@ const securityLoader = readFileSync(
   ),
   "utf8",
 );
+const cacheInvalidation = readFileSync(
+  new URL(
+    "../../src/lib/invalidate-country-restrictions-cache.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("mandatory policy cannot be weakened through bulk or per-row actions", () => {
   assert.match(
@@ -63,9 +70,14 @@ test("mandatory policy cannot be weakened through bulk or per-row actions", () =
 
 test("ordinary row edits report runtime cache uptake", () => {
   const invalidations = actions.match(
-    /backendApi\.post\("\/admin\/invalidate-country-restrictions-cache"\)/g,
+    /invalidateCountryRestrictionsCache\(\)/g,
   );
   assert.ok((invalidations?.length ?? 0) >= 5);
+  assert.match(
+    cacheInvalidation,
+    /backendApi\.post\("\/admin\/invalidate-country-restrictions-cache"\)/,
+  );
+  assert.match(cacheInvalidation, /Promise<boolean>/);
   assert.match(actions, /countryRestrictionsCacheReloaded/);
   assert.match(
     geoUi,

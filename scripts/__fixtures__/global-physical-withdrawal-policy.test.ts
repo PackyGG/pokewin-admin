@@ -29,10 +29,7 @@ test("global physical switch changes only the physical location flag", () => {
   assert.match(action, /physical_withdrawal = CASE/);
   assert.match(action, /THEN false[\s\S]*ELSE \$\{enabled\}/);
   assert.match(action, /physical_withdrawal IS DISTINCT FROM CASE/);
-  assert.match(
-    action,
-    /backendApi\.post\("\/admin\/invalidate-country-restrictions-cache"\)/,
-  );
+  assert.match(action, /await invalidateCountryRestrictionsCache\(\)/);
   assert.doesNotMatch(action, /withdrawals_enabled/);
   assert.doesNotMatch(action, /locked_deposits_fiat/);
 });

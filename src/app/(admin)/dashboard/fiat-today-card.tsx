@@ -11,7 +11,7 @@ import {
 
 import { AnimatedNumber } from "@/components/animated-number";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatNumber } from "@/lib/utils/format";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import type {
   DashboardFiatException,
   DashboardFiatMetrics,
@@ -94,11 +94,11 @@ export function FiatTodayCard({ data }: { data: FiatTodayCardData }) {
           <div className="grid grid-cols-3 gap-2 text-[11px]">
             <Status
               label="Whop fees"
-              value={`$${data.providerFeesUsd.toFixed(2)}`}
+              value={formatCurrency(data.providerFeesUsd)}
             />
             <Status
               label="Refunded"
-              value={`$${data.refundCreditsUsd.toFixed(2)}`}
+              value={formatCurrency(data.refundCreditsUsd)}
             />
             <Status label="Disputes" value={formatNumber(data.disputeCount)} />
           </div>
@@ -131,7 +131,7 @@ function ExceptionLink({
       className="rounded border border-amber-500/20 bg-background/60 px-1.5 py-0.5 text-[10px] font-medium tabular-nums text-amber-700 hover:underline dark:text-amber-300"
       title={`Open exact fiat intent ${exception.intentId}`}
     >
-      {exception.intentId.slice(0, 8)} · ${exception.grossPaidUsd.toFixed(2)}
+      {exception.intentId.slice(0, 8)} · {formatCurrency(exception.grossPaidUsd)}
     </Link>
   );
 }

@@ -17,19 +17,26 @@ import { backendApi, BackendApiError } from "@/lib/backend-api";
  * DB write has already succeeded by the time this is called, and forcing
  * the admin action to roll back on a transient backend hiccup would be
  * worse than letting the cache expire naturally.
+ *
+ * Returns whether the backend bust succeeded, so awaited call sites (the
+ * geo-blocking mutations feeding `countryRestrictionsCacheReloaded` into
+ * the UI's stale-cache warning toast) can surface a failed bust without
+ * this helper ever throwing. Fire-and-forget callers can ignore it.
  */
-export async function invalidateCountryRestrictionsCache(): Promise<void> {
+export async function invalidateCountryRestrictionsCache(): Promise<boolean> {
   try {
     await backendApi.post("/admin/invalidate-country-restrictions-cache");
     console.log("[invalidateCountryRestrictionsCache] backend ok");
+    return true;
   } catch (e) {
     if (e instanceof BackendApiError) {
       console.error(
         `[invalidateCountryRestrictionsCache] backend error status=${e.status} code=${e.code ?? "none"} payload=${JSON.stringify(e.payload)}`,
       );
-      return;
+      return false;
     }
     const message = e instanceof Error ? e.message : "Unknown error";
     console.error(`[invalidateCountryRestrictionsCache] failed: ${message}`, e);
+    return false;
   }
 }

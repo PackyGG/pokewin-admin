@@ -1,4 +1,4 @@
-import { Suspense } from "react";
+import { Suspense, type ReactNode } from "react";
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import {
@@ -28,6 +28,7 @@ import {
   PaginationSkeleton,
 } from "@/components/loading-skeletons";
 import { cn } from "@/lib/utils";
+import { parsePage, parsePerPage } from "@/lib/utils/pagination";
 import {
   PageHero,
   PageHeroIdentity,
@@ -72,6 +73,10 @@ export default async function TransactionsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
+  // DAL gate first — house rule: no work (not even the fiat-fraud redirect,
+  // whose destination is a fixed origin) before the page-access check.
+  await requirePageAccess("/transactions/deposits");
+
   const rawParams = await searchParams;
   const firstValue = (key: string) => {
     const raw = rawParams[key];
@@ -92,7 +97,6 @@ export default async function TransactionsPage({
     redirect(destination.toString());
   }
 
-  await requirePageAccess("/transactions/deposits");
   const params = Object.fromEntries(
     Object.keys(rawParams).map((key) => [key, firstValue(key)]),
   ) as Record<string, string | undefined>;
@@ -102,8 +106,11 @@ export default async function TransactionsPage({
       : params.tab === "card-payments"
         ? "card-payments"
         : "deposits";
-  const page = Number(params.page) || 1;
-  const perPage = Number(params.perPage) || 20;
+  // Clamped parsing — `Number(x) || 1` would let ?page=1e12 reach SQL as an
+  // OFFSET ≈ 2e13 index walk and ?perPage=1e6 dump the table into the RSC
+  // payload. parsePage/parsePerPage bound both for all three tabs.
+  const page = parsePage(params.page);
+  const perPage = parsePerPage(params.perPage);
 
   return (
     <div className="space-y-6">
@@ -286,22 +293,18 @@ async function DepositsTableSection({
   return (
     <>
       {listFailed && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-        >
-          <AlertTriangle
-            aria-hidden
-            className="mt-0.5 size-4 shrink-0 text-amber-500"
-          />
-          <p className="text-xs text-amber-700 dark:text-amber-300">
-            Couldn&apos;t load deposits — the query timed out or failed. This
-            is a{" "}
-            <span className="font-medium">query error, not zero results</span>
-            . Refresh to retry, or clear the search and amount filter.
-          </p>
-        </div>
+        <MirrorUnavailableNotice
+          message={
+            <>
+              Couldn&apos;t load deposits — the query timed out or failed.
+              This is a{" "}
+              <span className="font-medium">
+                query error, not zero results
+              </span>
+              . Refresh to retry, or clear the search and amount filter.
+            </>
+          }
+        />
       )}
       <FadeIn>
         <TransactionsDataTable data={result.data} columns={depositsColumns} />
@@ -442,14 +445,20 @@ async function CardPaymentsTableSection({
   );
 }
 
-function MirrorUnavailableNotice({ message }: { message: string }) {
+// Shared amber failure band for all three tabs — one markup source so the
+// degraded-state styling can't drift between deposits / card payments /
+// withdrawals. `message` accepts JSX so callers can keep emphasis spans.
+function MirrorUnavailableNotice({ message }: { message: ReactNode }) {
   return (
     <div
       role="status"
       aria-live="polite"
       className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
     >
-      <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
       <p className="text-xs text-amber-700 dark:text-amber-300">{message}</p>
     </div>
   );
@@ -587,22 +596,19 @@ async function WithdrawalsTableSection({
   return (
     <>
       {listFailed && (
-        <div
-          role="status"
-          aria-live="polite"
-          className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
-        >
-          <AlertTriangle
-            aria-hidden
-            className="mt-0.5 size-4 shrink-0 text-amber-500"
-          />
-          <p className="text-xs text-amber-700 dark:text-amber-300">
-            Couldn&apos;t load withdrawals — the query timed out or failed.
-            This is a{" "}
-            <span className="font-medium">query error, not zero results</span>
-            . Refresh to retry, or clear the status / method / value filters.
-          </p>
-        </div>
+        <MirrorUnavailableNotice
+          message={
+            <>
+              Couldn&apos;t load withdrawals — the query timed out or failed.
+              This is a{" "}
+              <span className="font-medium">
+                query error, not zero results
+              </span>
+              . Refresh to retry, or clear the status / method / value
+              filters.
+            </>
+          }
+        />
       )}
       <FadeIn>
         <WithdrawalsDataTable columns={withdrawalsColumns} data={result.data} />

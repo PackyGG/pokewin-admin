@@ -375,8 +375,6 @@ async function DashboardUpgraderDoubleDownToday() {
     );
   }
   const stats = upgraderResult.data;
-  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
-  // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
   return (
     <UpgraderDoubleDownTodayCard
       upgrader={{
@@ -443,8 +441,6 @@ async function DashboardTodayPnl() {
     );
   }
   const ggrPayload = ggrResult.data;
-  // side-by-side and LOG drift. Fire-and-forget + never-throwing — the served
-  // tile below stays 100% Postgres. No-op unless the flag is `comparison`.
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this P&L covers (matches the window boundary exactly).
   const dayLabel = data.dayStartIso.slice(0, 10);
@@ -544,10 +540,6 @@ async function DashboardRewardAndCreatorCostsToday() {
   }
   const reward = rewardResult.data;
   const creators = creatorsResult.data;
-  // and LOG drift. Fire-and-forget + never-throwing — the served tile below
-  // stays 100% Postgres. No-op unless each flag is `comparison`. The non-DB
-  // rain line ($2/hr) has no DB source and is EXCLUDED from the reward-cost
-  // comparison (the CH twin compares the DB sub-total = total − rainCost).
   // dayStartIso is "YYYY-MM-DDT00:00:00.000Z"; the YYYY-MM-DD slice is the
   // UTC calendar day this cost covers (matches the window boundary exactly,
   // identical on both legs since they share the same "today" boundary).
@@ -729,9 +721,6 @@ async function DashboardCashPnlChart() {
       />
     );
   }
-  // resolved inside getDailyPnl via resolveAdminRead("dashboard_daily_pnl"),
-  // which also fires the comparison-mode drift log — so no page-level compare
-  // call is needed here (it would double-log in comparison mode).
   const creatorCostByDate = new Map(
     creatorCostPoints.map((p) => [p.date, p.creatorCost]),
   );

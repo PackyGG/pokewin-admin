@@ -111,19 +111,19 @@ function revalidateFiatPolicyPages(): void {
  * the synchronous, awaited path (not inside `after()` below) so the local
  * Next.js cache is guaranteed evicted before the response returns.
  *
- * Perf fix (2026-07-12, owner: "when i click blocked it takes rly long to
- * load"): `invalidateCountryRestrictionsCache()` used to be awaited here,
- * putting a cross-service HTTP round-trip (its own dedicated 8s timeout, see
- * src/lib/backend-api/client.ts DEFAULT_TIMEOUT_MS) on the critical path of
- * every single toggle/array edit. The function already swallows and only
- * logs its own errors (its result was never surfaced to the UI either way),
- * so awaiting it bought zero error-visibility at the cost of the entire
- * round-trip's latency. Moved behind `after()` (same fire-and-forget
- * pattern as the tip-limit webhook dispatch in
- * src/app/(admin)/creators/actions.ts) so the DB write / audit event / page
- * revalidation — the parts the admin actually waits on and the only parts
- * that were ever reflected back to them — return immediately, while the
- * best-effort backend cache-bust still happens right after the response.
+ * Backend cache-bust latency: the cross-service round-trip was briefly moved
+ * behind `after()` (2026-07-12, owner: "when i click blocked it takes rly
+ * long to load"), but the toggle/array mutations now DELIBERATELY await it
+ * again — the boolean result feeds `countryRestrictionsCacheReloaded`, which
+ * the geo-blocking UI turns into a warning toast when the backend Redis bust
+ * failed (a silent fire-and-forget failure left the site serving stale
+ * restrictions for up to the backend cache's ~1h TTL with a success toast on
+ * screen). `invalidateCountryRestrictionsCache()` never throws — it swallows
+ * + logs and reports success as a boolean — so the worst case is waiting out
+ * the backend client's timeout (src/lib/backend-api/client.ts
+ * DEFAULT_TIMEOUT_MS), never a rolled-back DB write. Only
+ * `seedMissingCountryRestrictions` still fires it inside `after()`: its
+ * result is not surfaced in the UI, so nothing is lost by not waiting.
  *
  * These WRITE the MAIN/PROD game DB at runtime (operator-triggered). The
  * relocation does not change that behaviour.
@@ -195,14 +195,12 @@ export async function updateCountryRestrictionArray(
     metadata: { country_code: countryCode, field, values: normalizedValues },
   });
 
-  const countryRestrictionsCache = await Promise.allSettled([
-    backendApi.post("/admin/invalidate-country-restrictions-cache"),
-  ]);
+  const countryRestrictionsCacheReloaded =
+    await invalidateCountryRestrictionsCache();
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
   return {
-    countryRestrictionsCacheReloaded:
-      countryRestrictionsCache[0]?.status === "fulfilled",
+    countryRestrictionsCacheReloaded,
     persistedValues: updated[0].persisted_values,
   };
 }
@@ -333,14 +331,12 @@ export async function toggleCountryRestriction(
     metadata: { country_code: countryCode, field, value },
   });
 
-  const countryRestrictionsCache = await Promise.allSettled([
-    backendApi.post("/admin/invalidate-country-restrictions-cache"),
-  ]);
+  const countryRestrictionsCacheReloaded =
+    await invalidateCountryRestrictionsCache();
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
   return {
-    countryRestrictionsCacheReloaded:
-      countryRestrictionsCache[0]?.status === "fulfilled",
+    countryRestrictionsCacheReloaded,
     persistedValue: updated[0].persisted_value,
   };
 }
@@ -349,9 +345,10 @@ export async function toggleCountryRestriction(
  * Manually bust the game backend's country-restriction Redis cache NOW instead
  * of waiting for its ~1h TTL, and report WHICH backend env was hit.
  *
- * Unlike the fire-and-forget `invalidateCountryRestrictionsCache()` on every
- * toggle (which swallows its result), this AWAITS the call so a failure
- * surfaces to the operator, and returns the requested vs. resolved env. When
+ * Unlike `invalidateCountryRestrictionsCache()` on ordinary mutations (which
+ * reports failure as `false` instead of throwing), this AWAITS direct backend
+ * calls so a failure rejects to the operator, and returns the requested vs.
+ * resolved env. When
  * the admin is in `dev` mode but the dev backend isn't configured
  * (`BACKEND_API_URL_DEV` / `BACKEND_ADMIN_KEY_DEV` missing), `resolveEffective
  * Env` silently falls back to the PROD backend — so a "dev" reload would bust
@@ -520,15 +517,13 @@ export async function setGlobalPhysicalItemWithdrawals(
     },
   });
 
-  const countryRestrictionsCache = await Promise.allSettled([
-    backendApi.post("/admin/invalidate-country-restrictions-cache"),
-  ]);
+  const countryRestrictionsCacheReloaded =
+    await invalidateCountryRestrictionsCache();
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
   return {
     ...counts,
-    countryRestrictionsCacheReloaded:
-      countryRestrictionsCache[0]?.status === "fulfilled",
+    countryRestrictionsCacheReloaded,
   };
 }
 
@@ -597,13 +592,11 @@ export async function setMandatoryJurisdictionsGeoBlocked(
     },
   });
 
-  const countryRestrictionsCache = await Promise.allSettled([
-    backendApi.post("/admin/invalidate-country-restrictions-cache"),
-  ]);
+  const countryRestrictionsCacheReloaded =
+    await invalidateCountryRestrictionsCache();
   revalidateFiatPolicyPages();
   return {
     ...result,
-    countryRestrictionsCacheReloaded:
-      countryRestrictionsCache[0]?.status === "fulfilled",
+    countryRestrictionsCacheReloaded,
   };
 }
