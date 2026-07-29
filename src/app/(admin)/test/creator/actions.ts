@@ -13,6 +13,7 @@ import {
 } from "@/lib/backend-api/testing";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { BackendApiError } from "@/lib/backend-api/errors";
+import { resolveBackendApiConfig } from "@/lib/backend-api/config";
 import { readDbEnvFromCookie } from "@/lib/db-env";
 import { requirePageAccess } from "@/lib/dal";
 
@@ -34,6 +35,16 @@ function toErrorMessage(err: unknown): string {
  * to hide the page — duplicated at the action layer because a malicious
  * client could still POST directly to the server action without the
  * page render path.
+ *
+ * The cookie alone is NOT enough: `resolveEffectiveEnv` in
+ * `@/lib/backend-api/config` silently falls back to the PROD backend when
+ * the dev backend isn't configured (`BACKEND_API_URL_DEV` /
+ * `BACKEND_ADMIN_KEY_DEV` missing) — the cookie would read "dev" while
+ * injected wagers / test leaderboards / role promotions land on
+ * production. So additionally resolve the effective backend config and
+ * refuse unless it actually points at dev (same requested-vs-resolved
+ * mismatch handling as `reloadCountryRestrictionsCache` in
+ * system/geo-blocking/actions.ts).
  */
 async function requireDevEnv(): Promise<ActionResult | null> {
   const dbEnv = await readDbEnvFromCookie();
@@ -42,6 +53,21 @@ async function requireDevEnv(): Promise<ActionResult | null> {
       success: false,
       error:
         "Testing tools are only available while the dev environment is selected.",
+    };
+  }
+
+  let resolvedEnv: string;
+  try {
+    const config = await resolveBackendApiConfig();
+    resolvedEnv = config.env;
+  } catch (err) {
+    return { success: false, error: toErrorMessage(err) };
+  }
+  if (resolvedEnv !== "dev") {
+    return {
+      success: false,
+      error:
+        "Refusing to run: the dev backend is not configured (BACKEND_API_URL_DEV / BACKEND_ADMIN_KEY_DEV), so this call would silently hit the PRODUCTION backend.",
     };
   }
   return null;
