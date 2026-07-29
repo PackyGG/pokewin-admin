@@ -18,6 +18,10 @@ const transactionQuery = readFileSync(
   "src/lib/queries/users-transactions.ts",
   "utf8",
 );
+const transactionCache = readFileSync(
+  "src/lib/queries/users-detail-cache.ts",
+  "utf8",
+);
 const replay = readFileSync(
   "src/app/(admin)/users/[id]/keno-game-replay.tsx",
   "utf8",
@@ -58,6 +62,7 @@ test("Gaming rows expose settled Keno outcomes with house-POV colors", () => {
   assert.match(transactionQuery, /kg\.created_at >= \$\{minCreatedAt\}/);
   assert.match(transactionQuery, /requested\.id = kg\.bet_ledger_tx_id/);
   assert.match(transactionQuery, /requested\.id = kg\.payout_ledger_tx_id/);
+  assert.match(transactionCache, /users-detail-gaming-tx-v3/);
   assert.match(transactions, /label: "User won"/);
   assert.match(transactions, /label: "User lost"/);
   assert.match(transactions, /border-l-rose-500/);
