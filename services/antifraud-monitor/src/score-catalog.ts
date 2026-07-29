@@ -17,7 +17,7 @@ export const DEFAULT_SCORE_WEIGHTS = {
   affiliate_cluster_ten_plus: 25,
   country_cluster_ten_plus: 25,
   country_cluster_twenty_five_plus: 50,
-  risky_location: 40,
+  risky_location: 20,
   fingerprint_missing: 15,
   fingerprint_bad_bot: 80,
   fingerprint_vpn: 20,

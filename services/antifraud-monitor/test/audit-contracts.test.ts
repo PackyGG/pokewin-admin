@@ -502,6 +502,13 @@ test("editable score migration seeds every runtime weight", async () => {
       ),
       "utf8",
     ),
+    await readFile(
+      new URL(
+        "../migrations/030_risky_location_score_tuning.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   ].join("\n");
   assert.match(migration, /CREATE TABLE IF NOT EXISTS score_weights/);
   for (const key of SCORE_WEIGHT_KEYS) {

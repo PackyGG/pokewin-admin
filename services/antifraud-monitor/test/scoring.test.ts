@@ -86,7 +86,7 @@ test("requested signup and provider defaults use the live point values", () => {
   assert.equal(weights.generated_username, 25);
   assert.equal(weights.country_cluster_ten_plus, 25);
   assert.equal(weights.country_cluster_twenty_five_plus, 50);
-  assert.equal(weights.risky_location, 40);
+  assert.equal(weights.risky_location, 20);
   assert.equal(weights.proxycheck_risk_medium, 40);
   assert.equal(weights.proxycheck_risk_high, 80);
 });
