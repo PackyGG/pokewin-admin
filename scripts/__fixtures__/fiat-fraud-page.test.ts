@@ -25,17 +25,21 @@ test("Fraud Transactions owns the permission-gated canonical Fiat Fraud page", (
 test("The retired Admin deep link redirects to Fraud with query state intact", () => {
   const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
   const middleware = read("src/middleware.ts");
-  assert.match(adminPage, /firstValue\("tab"\) === "fiat-fraud"/);
+  assert.match(adminPage, /retiredFraudTab === "fiat-fraud"/);
   assert.match(adminPage, /absoluteOriginForBasePath\("\/antifraud"\)/);
-  assert.match(adminPage, /new URL\(\s*"\/fiat-fraud"/);
+  assert.match(
+    adminPage,
+    /retiredFraudTab === "refunds" \? "\/refunds" : "\/fiat-fraud"/,
+  );
   assert.match(adminPage, /key === "tab"/);
   assert.match(adminPage, /destination\.searchParams\.append\(key, value\)/);
   assert.match(adminPage, /redirect\(destination\.toString\(\)\)/);
   assert.match(middleware, /pathname === "\/transactions\/deposits"/);
   assert.match(
     middleware,
-    /searchParams\.get\("tab"\) === "fiat-fraud"/,
+    /retiredTransactionsTab === "fiat-fraud"/,
   );
+  assert.match(middleware, /fraudTransactionsRoute/);
   assert.match(middleware, /entry\.basePath === "\/antifraud"/);
   assert.match(middleware, /key !== "tab"/);
   assert.match(middleware, /NextResponse\.redirect\(url, 308\)/);
