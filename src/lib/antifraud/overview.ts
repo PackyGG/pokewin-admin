@@ -19,14 +19,10 @@ export type AntifraudOverviewMetrics = {
 /**
  * Lifetime overview totals.
  *
- * "Fraud accounts" are accounts an analyst has closed as flagged, rather than
- * every account that merely entered the review queue. KYC totals exclude the
- * untouched default user_kyc rows; the automated subset is identified by the
- * durable system actor written by Antifraud containment. Production-mirror
- * EXPLAIN ANALYZE on 2026-07-29 completed in 1.012 ms: the exact lifetime fiat
- * aggregate scanned the 68 paid rows, the one flagged-user lookup used
- * idx_fiat_deposit_intents_user_created, and both tiny KYC aggregates used the
- * planner's cheaper sequential scan.
+ * "Fraud accounts" includes every meaningful KYC account plus accounts an
+ * analyst has closed as flagged. KYC totals exclude untouched default
+ * user_kyc rows; the automated subset is identified by the durable system
+ * actor written by Antifraud containment.
  */
 async function computeAntifraudOverviewMetrics(
   env: DbEnv,
@@ -48,21 +44,92 @@ async function computeAntifraudOverviewMetrics(
     kyc_account_count: string;
     automated_fraud_kyc_count: string;
   }>(sql`
+    WITH succeeded_events AS (
+      SELECT
+        pwe.id,
+        pwe.received_at,
+        pwe.provider_resource_id,
+        pwe.payload #>> '{data,id}' AS payment_id,
+        pwe.payload #>> '{data,metadata,deposit_intent_id}'
+          AS metadata_intent_id,
+        (pwe.payload #>> '{data,paid_at}')::timestamptz
+          AS provider_paid_at,
+        CASE
+          WHEN pwe.payload #>> '{data,usd_total}'
+            ~ '^[0-9]+([.][0-9]+)?$'
+          THEN (pwe.payload #>> '{data,usd_total}')::numeric
+          ELSE NULL
+        END AS gross_paid_usd
+      FROM payment_webhook_events pwe
+      WHERE pwe.provider = 'whop'
+        AND pwe.event_type = 'payment.succeeded'
+        AND pwe.payload #>> '{data,status}' = 'paid'
+        AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+        AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
+    ),
+    provider_paid AS (
+      SELECT DISTINCT ON (payment_id)
+        payment_id,
+        provider_resource_id,
+        metadata_intent_id,
+        provider_paid_at,
+        gross_paid_usd
+      FROM succeeded_events
+      WHERE provider_paid_at <= CURRENT_TIMESTAMP
+      ORDER BY payment_id, received_at DESC, id DESC
+    ),
+    linked_paid AS (
+      SELECT paid.*, intent.user_id
+      FROM provider_paid paid
+      LEFT JOIN LATERAL (
+        SELECT i.user_id
+        FROM fiat_deposit_intents i
+        WHERE i.provider = 'whop'
+          AND (
+            i.provider_payment_id = paid.payment_id
+            OR i.provider_payment_id = paid.provider_resource_id
+            OR i.id::text = paid.metadata_intent_id
+          )
+        ORDER BY
+          (i.provider_payment_id = paid.payment_id) DESC,
+          (i.id::text = paid.metadata_intent_id) DESC,
+          i.updated_at DESC
+        LIMIT 1
+      ) intent ON TRUE
+    )
     SELECT
       COALESCE((
-        SELECT SUM(
-          COALESCE(actual_customer_total_cents, requested_amount_cents)
-        )
-        FROM fiat_deposit_intents
-        WHERE paid_at IS NOT NULL
+        SELECT SUM(gross_paid_usd) * 100
+        FROM provider_paid
       ), 0)::text AS total_fiat_deposit_cents,
       COALESCE((
-        SELECT SUM(
-          COALESCE(actual_customer_total_cents, requested_amount_cents)
+        SELECT SUM(gross_paid_usd) * 100
+        FROM linked_paid
+        WHERE user_id IS NOT NULL
+          AND (
+          ${flaggedScope}
+          OR user_id IN (
+            SELECT user_id
+            FROM user_kyc
+            WHERE (
+              kyc_required
+              OR kyc_required_at IS NOT NULL
+              OR kyc_required_by IS NOT NULL
+              OR NULLIF(BTRIM(kyc_required_reason), '') IS NOT NULL
+              OR verification_cycle > 0
+              OR admin_decision <> 'pending'
+              OR admin_reviewed_at IS NOT NULL
+              OR admin_reviewed_by IS NOT NULL
+              OR applicant_id IS NOT NULL
+              OR status <> 'none'
+              OR review_answer IS NOT NULL
+              OR reject_type IS NOT NULL
+              OR moderation_comment IS NOT NULL
+              OR last_webhook_created_at IS NOT NULL
+              OR last_webhook_digest IS NOT NULL
+            )
+          )
         )
-        FROM fiat_deposit_intents
-        WHERE paid_at IS NOT NULL
-          AND ${flaggedScope}
       ), 0)::text AS fraud_account_fiat_deposit_cents,
       (
         SELECT COUNT(*)
@@ -105,7 +172,7 @@ async function computeAntifraudOverviewMetrics(
 
 const cachedAntifraudOverviewMetrics = unstable_cache(
   computeAntifraudOverviewMetrics,
-  ["antifraud-overview-metrics-v1"],
+  ["antifraud-overview-metrics-v3"],
   {
     revalidate: 60,
     tags: ["antifraud-overview", "fiat-operations"],

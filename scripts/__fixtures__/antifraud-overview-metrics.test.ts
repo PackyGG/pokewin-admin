@@ -21,10 +21,17 @@ test("fraud overview shows the four requested lifetime account metrics", async (
   assert.match(page, /lg:grid-cols-4/);
   assert.match(loading, /Array\.from\(\{ length: 4 \}\)/);
 
-  assert.match(query, /paid_at IS NOT NULL/);
+  assert.match(query, /pwe\.event_type = 'payment\.succeeded'/);
+  assert.match(query, /DISTINCT ON \(payment_id\)/);
+  assert.match(query, /SELECT SUM\(gross_paid_usd\) \* 100\s*FROM provider_paid/);
   assert.match(query, /antifraud_reviews\.status,\s*"flagged"/);
+  assert.match(
+    query,
+    /FROM linked_paid[\s\S]*OR user_id IN \(\s*SELECT user_id\s*FROM user_kyc/,
+  );
   assert.match(query, /kyc_required_by LIKE 'system:antifraud-%'/);
   assert.match(query, /admin_decision <> 'pending'/);
   assert.match(query, /unstable_cache\(/);
   assert.match(query, /revalidate: 60/);
+  assert.match(query, /antifraud-overview-metrics-v3/);
 });
