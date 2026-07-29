@@ -413,6 +413,117 @@ export async function registerFiatEmailDomainRoutes(
     };
   });
 
+  app.get("/v1/fiat-email-catch-users", async (request) => {
+    const query = catchHistoryQuerySchema.parse(request.query);
+    const conditions: string[] = [];
+    const values: unknown[] = [];
+    if (query.riskType) {
+      values.push(query.riskType);
+      conditions.push(`match_type = $${values.length}`);
+    }
+    if (query.source) {
+      values.push(query.source);
+      conditions.push(`match_source = $${values.length}`);
+    }
+    if (query.search) {
+      values.push(`%${query.search.toLowerCase()}%`);
+      conditions.push(`(
+        lower(user_id) LIKE $${values.length}
+        OR lower(COALESCE(username, '')) LIKE $${values.length}
+        OR lower(checkout_email) LIKE $${values.length}
+        OR lower(COALESCE(deposit_intent_id, '')) LIKE $${values.length}
+      )`);
+    }
+    const where = conditions.length > 0
+      ? `WHERE ${conditions.join(" AND ")}`
+      : "";
+    const having = query.lockStatus
+      ? query.lockStatus === "locked"
+        ? "HAVING bool_or(lock_delivered_at IS NOT NULL)"
+        : "HAVING NOT bool_or(lock_delivered_at IS NOT NULL)"
+      : "";
+    const grouped = `
+      SELECT
+        user_id,
+        (array_agg(username ORDER BY occurred_at DESC)
+          FILTER (WHERE username IS NOT NULL))[1] AS username,
+        count(*)::int AS catch_count,
+        count(DISTINCT deposit_intent_id)::int AS caught_deposit_count,
+        array_agg(DISTINCT match_type) AS risk_types,
+        array_agg(DISTINCT match_source) AS sources,
+        count(DISTINCT checkout_email)::int AS email_count,
+        (array_agg(checkout_email ORDER BY occurred_at DESC))[1]
+          AS latest_email,
+        (array_agg(domain ORDER BY occurred_at DESC))[1] AS latest_domain,
+        (array_agg(deposit_intent_id ORDER BY occurred_at DESC)
+          FILTER (WHERE deposit_intent_id IS NOT NULL))[1]
+          AS latest_deposit_intent_id,
+        bool_or(lock_delivered_at IS NOT NULL) AS withdrawals_locked,
+        max(occurred_at) AS last_occurred_at
+      FROM fiat_email_domain_matches
+      ${where}
+      GROUP BY user_id
+      ${having}
+    `;
+    const offset = (query.page - 1) * query.limit;
+    const listValues = [...values, query.limit, offset];
+    const [rows, total] = await Promise.all([
+      db.antifraud.query<{
+        user_id: string;
+        username: string | null;
+        catch_count: number;
+        caught_deposit_count: number;
+        risk_types: Array<
+          | "blacklisted_domain"
+          | "gmail_dot_fragmentation"
+          | "suspicious_deposit_cluster"
+        >;
+        sources: Array<"whop_checkout" | "signup">;
+        email_count: number;
+        latest_email: string;
+        latest_domain: string;
+        latest_deposit_intent_id: string | null;
+        withdrawals_locked: boolean;
+        last_occurred_at: Date;
+      }>(
+        `
+          ${grouped}
+          ORDER BY max(occurred_at) DESC, user_id DESC
+          LIMIT $${listValues.length - 1}
+          OFFSET $${listValues.length}
+        `,
+        listValues,
+      ),
+      db.antifraud.query<{ count: number }>(
+        `SELECT count(*)::int AS count FROM (${grouped}) grouped_users`,
+        values,
+      ),
+    ]);
+    const count = total.rows[0]?.count ?? 0;
+    return {
+      data: rows.rows.map((row) => ({
+        userId: row.user_id,
+        username: row.username,
+        catchCount: row.catch_count,
+        caughtDepositCount: row.caught_deposit_count,
+        riskTypes: row.risk_types,
+        sources: row.sources,
+        emailCount: row.email_count,
+        latestEmail: row.latest_email,
+        latestDomain: row.latest_domain,
+        latestDepositIntentId: row.latest_deposit_intent_id,
+        withdrawalsLocked: row.withdrawals_locked,
+        lastOccurredAt: row.last_occurred_at.toISOString(),
+      })),
+      pagination: {
+        page: query.page,
+        limit: query.limit,
+        total: count,
+        pages: Math.max(1, Math.ceil(count / query.limit)),
+      },
+    };
+  });
+
   app.get("/v1/fiat-email-domain-matches", async (request, reply) => {
     const query = z
       .object({ intentIds: z.string().max(10_000) })

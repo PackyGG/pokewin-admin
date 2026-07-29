@@ -394,6 +394,22 @@ test("catch history is server-paginated and exposes only linkable detector facts
   assert.doesNotMatch(routes, /payload: row\./);
 });
 
+test("per-user catch rollup groups every signal behind one paginated row", async () => {
+  const routes = await readFile(
+    new URL("../src/fiat-email-domain-routes.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(routes, /app\.get\("\/v1\/fiat-email-catch-users"/);
+  assert.match(routes, /GROUP BY user_id/);
+  assert.match(routes, /bool_or\(lock_delivered_at IS NOT NULL\)/);
+  assert.match(routes, /count\(DISTINCT deposit_intent_id\)::int/);
+  assert.match(routes, /array_agg\(DISTINCT match_type\)/);
+  assert.match(routes, /max\(occurred_at\) AS last_occurred_at/);
+  assert.match(routes, /catchCount: row\.catch_count/);
+  assert.match(routes, /lastOccurredAt: row\.last_occurred_at\.toISOString\(\)/);
+});
+
 function baseFiatScore(): ReturnType<typeof scoreFiatDeposit> {
   return {
     riskScore: 10,

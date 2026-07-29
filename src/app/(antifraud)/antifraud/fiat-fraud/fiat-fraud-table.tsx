@@ -11,24 +11,27 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import type { FiatEmailCatch } from "@/lib/antifraud/fiat-email-catches-api";
+import type {
+  FiatEmailCatchRiskType,
+  FiatEmailCatchUser,
+} from "@/lib/antifraud/fiat-email-catches-api";
 import { ROOT_DOMAIN } from "@/lib/app-hosts";
-import type { FiatFraudDepositSummary } from "@/lib/queries/fiat-fraud";
+import type { FiatFraudUserDepositTotal } from "@/lib/queries/fiat-fraud";
 import {
   formatCurrency,
   formatDateTime,
   formatRelative,
 } from "@/lib/utils/format";
 
-export type FiatFraudRow = FiatEmailCatch & {
-  deposit: FiatFraudDepositSummary | null;
+export type FiatFraudUserRow = FiatEmailCatchUser & {
+  depositTotals: FiatFraudUserDepositTotal | null;
 };
 
 function adminHref(path: string): string {
   return `https://${ROOT_DOMAIN}${path}`;
 }
 
-function riskLabel(riskType: FiatEmailCatch["riskType"]): string {
+function riskLabel(riskType: FiatEmailCatchRiskType): string {
   if (riskType === "blacklisted_domain") return "Blocked email domain";
   if (riskType === "gmail_dot_fragmentation") return "Dot-fragmented Gmail";
   return "Suspicious deposit cluster";
@@ -40,22 +43,16 @@ function sourceLabel(source: string): string {
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function paymentAmount(row: FiatFraudRow): string {
-  const cents =
-    row.deposit?.actualCustomerTotalCents ??
-    row.deposit?.requestedAmountCents ??
-    null;
-  return cents === null ? "—" : formatCurrency(cents / 100);
+function depositTotal(row: FiatFraudUserRow): string {
+  return row.depositTotals === null
+    ? "—"
+    : formatCurrency(row.depositTotals.paidTotalCents / 100);
 }
 
-function DepositStatus({ row }: { row: FiatFraudRow }) {
-  const status =
-    row.deposit?.providerPaymentStatus ?? row.deposit?.status ?? "Unavailable";
-  return (
-    <Badge variant="outline" className="capitalize">
-      {status.replaceAll("_", " ")}
-    </Badge>
-  );
+function depositCountLabel(row: FiatFraudUserRow): string {
+  if (row.depositTotals === null) return "Totals unavailable";
+  const count = row.depositTotals.paidDepositCount;
+  return `${count} paid fiat deposit${count === 1 ? "" : "s"}`;
 }
 
 function LockStatus({ locked }: { locked: boolean }) {
@@ -77,7 +74,7 @@ function LockStatus({ locked }: { locked: boolean }) {
   );
 }
 
-export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
+export function FiatFraudTable({ rows }: { rows: FiatFraudUserRow[] }) {
   if (rows.length === 0) {
     return (
       <div className="rounded-xl border bg-card">
@@ -98,17 +95,17 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
           <TableHeader>
             <TableRow>
               <TableHead>User</TableHead>
-              <TableHead>Fraud signal</TableHead>
+              <TableHead>Fraud signals</TableHead>
               <TableHead>Checkout email</TableHead>
-              <TableHead>Deposit</TableHead>
-              <TableHead>Payment</TableHead>
+              <TableHead>Caught deposits</TableHead>
+              <TableHead>Total fiat deposits</TableHead>
               <TableHead>Containment</TableHead>
-              <TableHead>Caught</TableHead>
+              <TableHead>Last caught</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {rows.map((row) => (
-              <TableRow key={row.id} className="bg-red-500/[0.025]">
+              <TableRow key={row.userId} className="bg-red-500/[0.025]">
                 <TableCell>
                   <Link
                     href={adminHref(`/users/${row.userId}`)}
@@ -123,45 +120,55 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
                   </Link>
                 </TableCell>
                 <TableCell>
-                  <div className="max-w-48 space-y-1">
+                  <div className="max-w-52 space-y-1">
                     <Badge
                       variant="outline"
                       className="gap-1 border-red-600/40 bg-red-600/15 font-semibold text-red-700 dark:text-red-300"
                     >
                       <ShieldAlert className="size-3" />
-                      100 · Critical
+                      {row.catchCount}{" "}
+                      {row.catchCount === 1 ? "catch" : "catches"}
                     </Badge>
-                    <p className="truncate text-[11px]" title={riskLabel(row.riskType)}>
-                      {riskLabel(row.riskType)}
-                    </p>
+                    {row.riskTypes.map((riskType) => (
+                      <p
+                        key={riskType}
+                        className="truncate text-[11px]"
+                        title={riskLabel(riskType)}
+                      >
+                        {riskLabel(riskType)}
+                      </p>
+                    ))}
                     <p className="truncate text-[10px] text-muted-foreground">
-                      {sourceLabel(row.source)}
+                      {row.sources.map(sourceLabel).join(" · ")}
                     </p>
                   </div>
                 </TableCell>
                 <TableCell>
                   <div className="max-w-56">
-                    <p className="truncate text-xs" title={row.checkoutEmail}>
-                      {row.checkoutEmail}
+                    <p className="truncate text-xs" title={row.latestEmail}>
+                      {row.latestEmail}
                     </p>
                     <p className="truncate font-mono text-[10px] text-muted-foreground">
-                      @{row.domain}
+                      @{row.latestDomain}
+                      {row.emailCount > 1
+                        ? ` · +${row.emailCount - 1} more`
+                        : ""}
                     </p>
                   </div>
                 </TableCell>
                 <TableCell>
-                  {row.depositIntentId ? (
+                  {row.latestDepositIntentId ? (
                     <Link
                       href={adminHref(
-                        `/transactions/card-payments/${row.depositIntentId}`,
+                        `/transactions/card-payments/${row.latestDepositIntentId}`,
                       )}
                       className="block max-w-44 hover:underline"
                     >
                       <span className="block font-medium tabular-nums">
-                        {paymentAmount(row)}
+                        {row.caughtDepositCount} caught
                       </span>
                       <span className="block truncate font-mono text-[10px] text-muted-foreground">
-                        {row.depositIntentId}
+                        {row.latestDepositIntentId}
                       </span>
                     </Link>
                   ) : (
@@ -171,14 +178,19 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
                   )}
                 </TableCell>
                 <TableCell>
-                  <DepositStatus row={row} />
+                  <span className="block font-medium tabular-nums">
+                    {depositTotal(row)}
+                  </span>
+                  <span className="block text-[10px] text-muted-foreground">
+                    {depositCountLabel(row)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   <LockStatus locked={row.withdrawalsLocked} />
                 </TableCell>
                 <TableCell>
-                  <span title={formatDateTime(row.occurredAt)}>
-                    {formatRelative(row.occurredAt)}
+                  <span title={formatDateTime(row.lastOccurredAt)}>
+                    {formatRelative(row.lastOccurredAt)}
                   </span>
                 </TableCell>
               </TableRow>
@@ -190,7 +202,7 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
       <div className="overflow-hidden rounded-xl border bg-card md:hidden">
         {rows.map((row) => (
           <article
-            key={row.id}
+            key={row.userId}
             className="space-y-3 border-b border-border/60 p-3 last:border-b-0"
           >
             <div className="flex items-start justify-between gap-3">
@@ -205,9 +217,14 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
                   {row.userId}
                 </p>
               </Link>
-              <span className="shrink-0 text-sm font-semibold tabular-nums">
-                {paymentAmount(row)}
-              </span>
+              <div className="shrink-0 text-right">
+                <p className="text-sm font-semibold tabular-nums">
+                  {depositTotal(row)}
+                </p>
+                <p className="text-[10px] text-muted-foreground">
+                  {depositCountLabel(row)}
+                </p>
+              </div>
             </div>
             <div className="flex flex-wrap gap-1.5">
               <Badge
@@ -215,35 +232,42 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudRow[] }) {
                 className="gap-1 border-red-600/40 bg-red-600/15 text-red-700 dark:text-red-300"
               >
                 <ShieldAlert className="size-3" />
-                100 · Critical
+                {row.catchCount} {row.catchCount === 1 ? "catch" : "catches"}
               </Badge>
               <LockStatus locked={row.withdrawalsLocked} />
-              <DepositStatus row={row} />
             </div>
             <div className="flex min-w-0 items-start gap-2">
               <MailWarning className="mt-0.5 size-3.5 shrink-0 text-red-500" />
               <div className="min-w-0">
-                <p className="truncate text-xs">{row.checkoutEmail}</p>
+                <p className="truncate text-xs">
+                  {row.latestEmail}
+                  {row.emailCount > 1 ? ` (+${row.emailCount - 1} more)` : ""}
+                </p>
                 <p className="text-[11px] text-muted-foreground">
-                  {riskLabel(row.riskType)} · {sourceLabel(row.source)}
+                  {row.riskTypes.map(riskLabel).join(" · ")} ·{" "}
+                  {row.sources.map(sourceLabel).join(" · ")}
                 </p>
               </div>
             </div>
             <div className="flex items-center justify-between gap-3 text-[11px] text-muted-foreground">
-              {row.depositIntentId ? (
+              {row.latestDepositIntentId ? (
                 <Link
                   href={adminHref(
-                    `/transactions/card-payments/${row.depositIntentId}`,
+                    `/transactions/card-payments/${row.latestDepositIntentId}`,
                   )}
                   className="truncate font-mono hover:underline"
                 >
-                  {row.depositIntentId}
+                  {row.caughtDepositCount} caught ·{" "}
+                  {row.latestDepositIntentId}
                 </Link>
               ) : (
                 <span>Intent unavailable</span>
               )}
-              <span className="shrink-0" title={formatDateTime(row.occurredAt)}>
-                {formatRelative(row.occurredAt)}
+              <span
+                className="shrink-0"
+                title={formatDateTime(row.lastOccurredAt)}
+              >
+                {formatRelative(row.lastOccurredAt)}
               </span>
             </div>
           </article>

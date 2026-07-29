@@ -10,15 +10,15 @@ import {
 import { SectionHeading } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
-  getFiatEmailCatches,
-  type FiatEmailCatchList,
+  getFiatEmailCatchUsers,
+  type FiatEmailCatchUserList,
 } from "@/lib/antifraud/fiat-email-catches-api";
 import {
   REWARD_QUERY_TIMEOUT_MS,
   safeQuery,
 } from "@/lib/errors/safe-query";
-import { getFiatFraudDepositSummaries } from "@/lib/queries/fiat-fraud";
-import { FiatFraudTable, type FiatFraudRow } from "./fiat-fraud-table";
+import { getFiatFraudUserDepositTotals } from "@/lib/queries/fiat-fraud";
+import { FiatFraudTable, type FiatFraudUserRow } from "./fiat-fraud-table";
 
 export function FiatFraudContent({
   page,
@@ -85,9 +85,10 @@ export function FiatFraudContent({
       <div className="space-y-3">
         <SectionHeading
           icon={ShieldAlert}
-          title="Caught fiat deposits"
+          title="Caught fiat deposit users"
         />
         <p className="text-xs text-muted-foreground">
+          One row per caught user with every fraud signal grouped together.
           Durable fraud catches remain here even if a blacklist rule changes
           later.
         </p>
@@ -129,7 +130,7 @@ async function FiatFraudList({
   source?: string;
   lockStatus?: string;
 }) {
-  const empty: FiatEmailCatchList = {
+  const empty: FiatEmailCatchUserList = {
     data: [],
     page,
     limit: perPage,
@@ -138,7 +139,7 @@ async function FiatFraudList({
   };
   const catches = await safeQuery(
     () =>
-      getFiatEmailCatches({
+      getFiatEmailCatchUsers({
         page,
         limit: perPage,
         search,
@@ -147,7 +148,7 @@ async function FiatFraudList({
         lockStatus,
       }),
     empty,
-    "transactions.fiat-fraud.catches",
+    "transactions.fiat-fraud.catch-users",
     REWARD_QUERY_TIMEOUT_MS,
   );
 
@@ -171,36 +172,32 @@ async function FiatFraudList({
     );
   }
 
-  const depositIds = catches.data.data
-    .map((row) => row.depositIntentId)
-    .filter((id): id is string => id !== null);
-  const deposits = await safeQuery(
-    () => getFiatFraudDepositSummaries(depositIds),
+  const userIds = catches.data.data.map((row) => row.userId);
+  const totals = await safeQuery(
+    () => getFiatFraudUserDepositTotals(userIds),
     [],
-    "transactions.fiat-fraud.deposit-summaries",
+    "transactions.fiat-fraud.user-deposit-totals",
     REWARD_QUERY_TIMEOUT_MS,
   );
-  const depositsById = new Map(
-    deposits.data.map((deposit) => [deposit.intentId, deposit]),
+  const totalsByUserId = new Map(
+    totals.data.map((total) => [total.userId, total]),
   );
-  const rows: FiatFraudRow[] = catches.data.data.map((row) => ({
+  const rows: FiatFraudUserRow[] = catches.data.data.map((row) => ({
     ...row,
-    deposit: row.depositIntentId
-      ? (depositsById.get(row.depositIntentId) ?? null)
-      : null,
+    depositTotals: totalsByUserId.get(row.userId) ?? null,
   }));
 
   return (
     <>
-      {deposits.error && rows.length > 0 && (
+      {totals.error && rows.length > 0 && (
         <div
           role="status"
           className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
         >
           <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-500" />
           <p className="text-xs text-amber-700 dark:text-amber-300">
-            Catches loaded, but live deposit amounts and payment states are
-            temporarily unavailable.
+            Users loaded, but their total fiat deposit amounts are temporarily
+            unavailable.
           </p>
         </div>
       )}

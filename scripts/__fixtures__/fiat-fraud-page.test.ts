@@ -87,6 +87,9 @@ test("Fiat Fraud reads durable caught history with server-side controls", () => 
   );
 
   assert.match(api, /\/v1\/fiat-email-catches/);
+  assert.match(api, /\/v1\/fiat-email-catch-users/);
+  assert.match(api, /catchCount: z\.number\(\)\.int\(\)\.nonnegative\(\)/);
+  assert.match(api, /withdrawalsLocked: z\.boolean\(\)/);
   assert.match(api, /userId: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(200\)/);
   assert.match(
     api,
@@ -111,6 +114,22 @@ test("Fiat Fraud reads durable caught history with server-side controls", () => 
   assert.match(table, /No fraudulent fiat deposits found/);
   assert.match(content, /Fiat fraud history is unavailable/);
   assert.match(content, /Durable fraud catches remain here/);
+  assert.match(content, /getFiatEmailCatchUsers/);
+  assert.match(content, /getFiatFraudUserDepositTotals/);
+});
+
+test("Fiat Fraud groups catches per user with total fiat deposits", () => {
+  const table = read(
+    "src/app/(antifraud)/antifraud/fiat-fraud/fiat-fraud-table.tsx",
+  );
+  const query = read("src/lib/queries/fiat-fraud.ts");
+
+  assert.match(table, /key=\{row\.userId\}/);
+  assert.match(table, /Total fiat deposits/);
+  assert.match(table, /row\.catchCount/);
+  assert.match(table, /paidTotalCents \/ 100/);
+  assert.match(query, /GROUP BY user_id/);
+  assert.match(query, /FILTER \(WHERE paid_at IS NOT NULL\)/);
 });
 
 test("Fiat Fraud rows link to exact users and deposits without MAIN writes", () => {
@@ -123,7 +142,7 @@ test("Fiat Fraud rows link to exact users and deposits without MAIN writes", () 
   assert.match(table, /adminHref\(`\/users\/\$\{row\.userId\}`\)/);
   assert.match(
     table,
-    /adminHref\(\s*`\/transactions\/card-payments\/\$\{row\.depositIntentId\}`/,
+    /adminHref\(\s*`\/transactions\/card-payments\/\$\{row\.latestDepositIntentId\}`/,
   );
   assert.match(table, /Blocked email domain/);
   assert.match(table, /Suspicious deposit cluster/);

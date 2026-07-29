@@ -6,61 +6,50 @@ import {
   sql,
 } from "@/lib/queries/insights-rewards/_drizzle-query";
 
-export type FiatFraudDepositSummary = {
-  intentId: string;
-  currency: string;
-  requestedAmountCents: number;
-  actualCustomerTotalCents: number | null;
-  creditedAmountCents: number | null;
-  status: string;
-  providerPaymentStatus: string | null;
+export type FiatFraudUserDepositTotal = {
+  userId: string;
+  paidDepositCount: number;
+  paidTotalCents: number;
 };
 
-type RawFiatFraudDepositSummary = {
-  intent_id: string;
-  currency: string;
-  requested_amount_cents: string;
-  actual_customer_total_cents: string | null;
-  credited_amount_cents: string | null;
-  status: string;
-  provider_payment_status: string | null;
+type RawFiatFraudUserDepositTotal = {
+  user_id: string;
+  paid_deposit_count: string;
+  paid_total_cents: string;
 };
 
-function optionalNumber(value: string | null): number | null {
-  return value === null ? null : Number(value);
-}
-
-export async function getFiatFraudDepositSummaries(
-  intentIds: string[],
-): Promise<FiatFraudDepositSummary[]> {
-  const uniqueIds = [...new Set(intentIds)].slice(0, 200);
+/**
+ * Lifetime paid fiat deposit totals per user. Bounded by the id list
+ * (max 200) and index-backed via idx_fiat_deposit_intents_user_created
+ * (user_id prefix), so no full-table scan is possible.
+ */
+export async function getFiatFraudUserDepositTotals(
+  userIds: string[],
+): Promise<FiatFraudUserDepositTotal[]> {
+  const uniqueIds = [...new Set(userIds)].slice(0, 200);
   if (uniqueIds.length === 0) return [];
 
   const db = await getReadDrizzleDb();
-  const rows = await queryRows<RawFiatFraudDepositSummary[]>(db, sql`
+  const rows = await queryRows<RawFiatFraudUserDepositTotal[]>(db, sql`
     SELECT
-      id::text AS intent_id,
-      currency::text AS currency,
-      requested_amount_cents::text AS requested_amount_cents,
-      actual_customer_total_cents::text AS actual_customer_total_cents,
-      credited_amount_cents::text AS credited_amount_cents,
-      status::text AS status,
-      provider_payment_status
+      user_id,
+      COUNT(*) FILTER (WHERE paid_at IS NOT NULL)::text
+        AS paid_deposit_count,
+      COALESCE(
+        SUM(COALESCE(actual_customer_total_cents, requested_amount_cents))
+          FILTER (WHERE paid_at IS NOT NULL),
+        0
+      )::text AS paid_total_cents
     FROM fiat_deposit_intents
-    WHERE id::text IN (
+    WHERE user_id IN (
       ${sql.join(uniqueIds.map((id) => sql`${id}`), sql`, `)}
     )
+    GROUP BY user_id
   `);
 
   return rows.map((row) => ({
-    intentId: row.intent_id,
-    currency: row.currency,
-    requestedAmountCents: Number(row.requested_amount_cents),
-    actualCustomerTotalCents: optionalNumber(
-      row.actual_customer_total_cents,
-    ),
-    creditedAmountCents: optionalNumber(row.credited_amount_cents),
-    status: row.status,
-    providerPaymentStatus: row.provider_payment_status,
+    userId: row.user_id,
+    paidDepositCount: Number(row.paid_deposit_count),
+    paidTotalCents: Number(row.paid_total_cents),
   }));
 }
