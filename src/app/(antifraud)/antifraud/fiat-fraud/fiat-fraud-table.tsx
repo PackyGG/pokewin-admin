@@ -92,21 +92,13 @@ function FactBox({
   alert?: boolean;
 }) {
   return (
-    <div
-      className={cn(
-        "min-w-0 rounded-xl border border-border/60 bg-muted/20 p-3",
-        alert && "border-rose-500/25 bg-rose-500/[0.04]",
-      )}
-    >
+    <div className="min-w-0 rounded-xl border border-border/60 bg-muted/20 p-3">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         <Icon className={cn("size-3.5 shrink-0", alert && "text-rose-500")} />
         <span className="truncate">{label}</span>
       </div>
       <p
-        className={cn(
-          "mt-1 truncate text-sm font-semibold tabular-nums",
-          alert && "text-rose-600 dark:text-rose-400",
-        )}
+        className="mt-1 truncate text-sm font-semibold tabular-nums"
         title={value}
       >
         {value}
@@ -133,12 +125,11 @@ function FiatFraudCard({ row }: { row: FiatFraudUserRow }) {
     : null;
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-rose-500/20 bg-card shadow-sm">
-      <div className="h-1 bg-rose-500" />
+    <article className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
       <div className="space-y-4 p-3.5 sm:p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex min-w-0 items-start gap-3">
-            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-rose-500/25 bg-rose-500/10 text-rose-600 dark:text-rose-400">
+            <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted/50 text-muted-foreground">
               <UserRound className="size-5" />
             </div>
             <div className="min-w-0">

@@ -128,6 +128,11 @@ test("Fiat Fraud groups catches per user with total fiat deposits", () => {
   assert.match(table, /new Map\(rows\.map\(\(row\) => \[row\.userId, row\]\)\)/);
   assert.match(table, /<FiatFraudCard key=\{row\.userId\}/);
   assert.doesNotMatch(table, /<Table(?:Head|Body|Row|Cell)?\b/);
+  assert.match(
+    table,
+    /rounded-2xl border border-border\/70 bg-card shadow-sm/,
+  );
+  assert.doesNotMatch(table, /h-1 bg-rose-500/);
   assert.match(table, /Total fiat deposits/);
   assert.match(table, /row\.catchCount/);
   assert.match(table, /paidTotalCents \/ 100/);
