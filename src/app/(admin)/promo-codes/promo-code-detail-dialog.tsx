@@ -260,9 +260,11 @@ export function PromoCodeDetailDialog({
   // the header is never blank during the load.
   const totalClaims = detail?.totalClaims ?? row.redemptionCount;
   const value = detail?.value ?? row.value;
+  // Fallback estimate computed in whole cents — raw float multiplication
+  // (e.g. 0.1 * 3) would render float-noise on a money figure.
   const totalValueGiven = detail
     ? detail.totalValueGiven
-    : row.value * row.redemptionCount;
+    : (Math.round(row.value * 100) * row.redemptionCount) / 100;
   const expiresAt = detail?.expiresAt ?? row.expiresAt;
 
   return (

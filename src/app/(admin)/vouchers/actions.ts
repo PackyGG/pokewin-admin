@@ -5,11 +5,13 @@ import { z } from "zod";
 import { eq, ilike, or, sql } from "drizzle-orm";
 
 import { adminDrizzle, getPrimaryDrizzleDb } from "@/lib/drizzle";
+import { getReadDrizzleDb } from "@/lib/db";
 import { admin_voucher_actions } from "@/lib/db-schema/admin/schema";
 import { user } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { escapeLikePattern } from "@/lib/utils/sql-like";
 
 const createVoucherSchema = z.object({
   userId: z.string().min(1, "User is required"),
@@ -22,18 +24,22 @@ const createVoucherSchema = z.object({
 });
 
 export async function searchUsers(query: string) {
-  const db = await getPrimaryDrizzleDb();
+  // Auth first — never grab a DB handle before the caller is verified.
   await requirePageAccess("/vouchers");
+  const db = await getReadDrizzleDb();
 
   if (!query || query.length < 2) return [];
 
+  // Escaped so a pasted "%" / "_" matches literally instead of widening the
+  // pattern into a full-table scan on MAIN.
+  const pattern = `%${escapeLikePattern(query)}%`;
   const users = await db
     .select({ id: user.id, username: user.username, email: user.email })
     .from(user)
     .where(
       or(
-        ilike(user.username, `%${query}%`),
-        ilike(user.email, `%${query}%`),
+        ilike(user.username, pattern),
+        ilike(user.email, pattern),
         eq(user.id, query),
       ),
     )

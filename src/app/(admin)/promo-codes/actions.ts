@@ -2,14 +2,10 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
-import { desc, eq, inArray } from "drizzle-orm";
+import { eq, inArray } from "drizzle-orm";
 
 import { getPrimaryDrizzleDb } from "@/lib/db";
-import {
-  promo_code_redemptions,
-  promo_codes,
-  user,
-} from "@/lib/db-schema/main/schema";
+import { promo_codes } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
@@ -165,8 +161,8 @@ export async function createPromoCode(
 /**
  * Lazy-loaded claim detail for the promo-code click-through dialog.
  *
- * Gated by `__can_view_promo_redemptions` (same capability the legacy
- * `getRedemptions` uses). Wraps the cached query in `safeQuery` with a
+ * Gated by `__can_view_promo_redemptions`. Wraps the cached query in
+ * `safeQuery` with a
  * statement timeout so a slow/large claim scan degrades to an error
  * payload the dialog can surface as a graceful error state instead of
  * hanging the transition or throwing into the page boundary.
@@ -194,36 +190,6 @@ export async function getPromoCodeClaimDetail(promoCodeId: string): Promise<{
   );
 
   return { data: result.data, error: result.error !== null };
-}
-
-export async function getRedemptions(promoCodeId: string) {
-  const db = await getPrimaryDrizzleDb();
-  const session = await requirePageAccess("/promo-codes");
-  await requireCapability(session, "__can_view_promo_redemptions", "view promo redemptions");
-  const redemptions = await db
-    .select({
-      id: promo_code_redemptions.id,
-      user_id: promo_code_redemptions.user_id,
-      ip_address: promo_code_redemptions.ip_address,
-      redeemed_at: promo_code_redemptions.redeemed_at,
-      username: user.username,
-      email: user.email,
-      image: user.image,
-    })
-    .from(promo_code_redemptions)
-    .leftJoin(user, eq(user.id, promo_code_redemptions.user_id))
-    .where(eq(promo_code_redemptions.promo_code_id, promoCodeId))
-    .orderBy(desc(promo_code_redemptions.redeemed_at))
-    .limit(100);
-  return redemptions.map((r) => ({
-    id: r.id,
-    userId: r.user_id,
-    username: r.username ?? null,
-    email: r.email ?? null,
-    image: r.image ?? null,
-    ipAddress: r.ip_address,
-    redeemedAt: new Date(r.redeemed_at).toISOString(),
-  }));
 }
 
 /**

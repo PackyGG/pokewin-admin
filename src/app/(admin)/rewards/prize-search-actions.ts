@@ -15,6 +15,7 @@ import { getReadDrizzleDb } from "@/lib/db";
 import { cards, packs } from "@/lib/db-schema/main/schema";
 import { requirePageAccess } from "@/lib/dal";
 import { toNumber } from "@/lib/utils/decimal";
+import { escapeLikePattern } from "@/lib/utils/sql-like";
 
 export type SearchItem = {
   id: string;
@@ -32,16 +33,20 @@ export async function searchItems(
   type: "pack" | "card",
   filters?: { minPrice?: number; maxPrice?: number },
 ): Promise<SearchItem[]> {
-  const db = await getReadDrizzleDb();
   await requirePageAccess("/rewards");
+  const db = await getReadDrizzleDb();
   const isUuid = UUID_RE.test(query);
+
+  // Escaped so a pasted "%" / "_" matches literally instead of widening the
+  // pattern into a full-table scan on MAIN.
+  const pattern = `%${escapeLikePattern(query)}%`;
 
   if (type === "pack") {
     const conditions: SQL[] = [];
     if (query) {
       const search = [
-        ilike(packs.name, `%${query}%`),
-        ilike(packs.slug, `%${query}%`),
+        ilike(packs.name, pattern),
+        ilike(packs.slug, pattern),
       ];
       if (isUuid) search.push(eq(packs.id, query));
       conditions.push(or(...search)!);
@@ -73,7 +78,7 @@ export async function searchItems(
 
   const conditions: SQL[] = [];
   if (query) {
-    const search = [ilike(cards.name, `%${query}%`)];
+    const search = [ilike(cards.name, pattern)];
     if (isUuid) search.push(eq(cards.id, query));
     conditions.push(or(...search)!);
   }
