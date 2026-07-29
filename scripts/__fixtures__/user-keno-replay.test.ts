@@ -59,10 +59,11 @@ test("Keno replay shows the canonical exact-hit chance", () => {
 
 test("Gaming rows expose settled Keno outcomes with house-POV colors", () => {
   assert.match(transactionQuery, /fetchKenoSummariesByLedgerId/);
-  assert.match(transactionQuery, /kg\.created_at >= \$\{minCreatedAt\}/);
-  assert.match(transactionQuery, /requested\.id = kg\.bet_ledger_tx_id/);
-  assert.match(transactionQuery, /requested\.id = kg\.payout_ledger_tx_id/);
-  assert.match(transactionCache, /users-detail-gaming-tx-v3/);
+  assert.match(transactionQuery, /requested_tx AS MATERIALIZED/);
+  assert.match(transactionQuery, /kg\.created_at >= tx\.created_at - INTERVAL '1 day'/);
+  assert.match(transactionQuery, /kg\.bet_ledger_tx_id = tx\.id/);
+  assert.match(transactionQuery, /kg\.payout_ledger_tx_id = tx\.id/);
+  assert.match(transactionCache, /users-detail-gaming-tx-v4/);
   assert.match(transactions, /label: "User won"/);
   assert.match(transactions, /label: "User lost"/);
   assert.match(transactions, /border-l-rose-500/);

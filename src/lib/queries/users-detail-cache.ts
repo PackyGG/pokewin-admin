@@ -215,7 +215,7 @@ function cachedUserGamingTransactions(
 ) {
   return unstable_cache(
     () => getUserTransactions(userId, page, perPage, { types }),
-    ["users-detail-gaming-tx-v3", userId, String(page), String(perPage), types.join(",")],
+    ["users-detail-gaming-tx-v4", userId, String(page), String(perPage), types.join(",")],
     { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
 }

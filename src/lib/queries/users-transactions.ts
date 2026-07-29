@@ -477,12 +477,6 @@ async function fetchKenoSummariesByLedgerId(
   if (kenoTransactions.length === 0) return new Map();
 
   const ledgerIds = kenoTransactions.map((transaction) => transaction.id);
-  const timestamps = kenoTransactions.map((transaction) =>
-    new Date(transaction.created_at).getTime(),
-  );
-  const minCreatedAt = new Date(Math.min(...timestamps));
-  const maxCreatedAt = new Date(Math.max(...timestamps));
-
   try {
     const result = await db.execute<{
       ledger_id: string;
@@ -494,21 +488,34 @@ async function fetchKenoSummariesByLedgerId(
     }>(sql`
       WITH requested(id) AS (
         SELECT unnest(${pgArrayParam(ledgerIds)}::uuid[])
+      ),
+      requested_tx AS MATERIALIZED (
+        SELECT lt.id, lt.user_id, lt.created_at
+        FROM requested
+        JOIN ledger_transactions lt ON lt.id = requested.id
+        WHERE lt.user_id = ${userId}
       )
       SELECT
-        requested.id::text AS ledger_id,
-        kg.selected_numbers,
-        kg.hits,
-        kg.result_multiplier::text AS result_multiplier,
-        kg.bet_amount::text AS bet_amount,
-        kg.won_amount::text AS won_amount
-      FROM keno_games kg
-      JOIN requested
-        ON requested.id = kg.bet_ledger_tx_id
-        OR requested.id = kg.payout_ledger_tx_id
-      WHERE kg.user_id = ${userId}
-        AND kg.created_at >= ${minCreatedAt} - INTERVAL '1 day'
-        AND kg.created_at <= ${maxCreatedAt} + INTERVAL '1 day'
+        tx.id::text AS ledger_id,
+        game.selected_numbers,
+        game.hits,
+        game.result_multiplier::text AS result_multiplier,
+        game.bet_amount::text AS bet_amount,
+        game.won_amount::text AS won_amount
+      FROM requested_tx tx
+      JOIN LATERAL (
+        SELECT kg.*
+        FROM keno_games kg
+        WHERE kg.user_id = tx.user_id
+          AND kg.created_at >= tx.created_at - INTERVAL '1 day'
+          AND kg.created_at <= tx.created_at + INTERVAL '1 day'
+          AND (
+            kg.bet_ledger_tx_id = tx.id
+            OR kg.payout_ledger_tx_id = tx.id
+          )
+        ORDER BY kg.created_at DESC
+        LIMIT 1
+      ) game ON TRUE
     `);
 
     return new Map(
