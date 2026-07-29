@@ -28,21 +28,36 @@ test("all four dashboard webapps use the shared header", () => {
   }
 });
 
-test("daily reward grants cannot enter the shared staff inbox", () => {
+test("only owner/admin announcements can enter the shared staff inbox", () => {
   const notifications = source("src/lib/staff/notifications.ts");
+  const action = source(
+    "src/app/(admin)/system/staff-notifications/actions.ts",
+  );
+  const automatedSources = [
+    "src/app/api/antifraud/ingest/route.ts",
+    "src/app/(antifraud)/antifraud/reviews/actions.ts",
+  ];
 
   assert.match(
     notifications,
-    /DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS[\s\S]*"daily_reward_granted"/,
+    /eq\(staff_notifications\.kind,\s*"announcement"\)/,
   );
   assert.match(
     notifications,
-    /if \(isDisabledAutomatedStaffNotification\(input\)\) return 0;/,
+    /export async function sendStaffAnnouncement/,
   );
   assert.match(
     notifications,
-    /IS DISTINCT FROM 'daily_reward_granted'/,
+    /session\.userId !== input\.actorAdminUserId[\s\S]*sessionIsAdmin\(session\)[\s\S]*sessionIsOwner\(session\)/,
   );
+  assert.match(
+    action,
+    /sessionIsAdmin\(session\)[\s\S]*sessionIsOwner\(session\)/,
+  );
+  assert.match(action, /sendStaffAnnouncement\(\{/);
+  for (const path of automatedSources) {
+    assert.doesNotMatch(source(path), /sendStaffAnnouncement|notifyStaff/);
+  }
 });
 
 test("System navigation and the bell point to the notification handler", () => {

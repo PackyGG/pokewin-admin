@@ -14,6 +14,11 @@ to selected active staff, a system role, or every active staff account.
 - `/system/staff-notifications` is the canonical inbox and management page.
 - The old Anti-Fraud inbox redirects to the canonical page.
 - Custom sends use the existing `announcement` staff-notification kind.
+- Only the canonical composer can create staff notifications. Dashboard
+  actions, assignments, reviews, fraud signals, quizzes, and rewards do not
+  create inbox rows or external staff pings.
+- Historical automated rows stay stored but are excluded from inbox lists,
+  unread counts, and mark-read actions.
 - In-app, Discord, and Telegram delivery follow each recipient's notification
   preferences. External delivery additionally requires a verified channel.
 - Deactivated admin accounts are never targeted.

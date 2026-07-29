@@ -19,7 +19,6 @@ import { getPrimaryDrizzleDb } from "@/lib/db";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { isPostgresError } from "@/lib/postgres-errors";
-import { notifyStaff } from "@/lib/staff/notifications";
 import {
   REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
@@ -481,25 +480,6 @@ export async function updateReviewStatus(
     return { ok: true };
   }
 
-  const { openedBy } = outcome.applied;
-
-  if (isTerminal && openedBy && openedBy !== session.userId) {
-    try {
-      await notifyStaff({
-        recipients: [openedBy],
-        kind: "review_resolved",
-        title: `Case ${REVIEW_STATUS_LABELS[status].toLowerCase()}`,
-        body: resolution || `A case you opened was marked ${status}.`,
-        href: `/antifraud/reviews/${reviewId}`,
-        metadata: { reviewId, status },
-      });
-    } catch (err) {
-      // The standing verdict, note, counter and audit are already atomic. A
-      // notification transport failure must not make the client retry them.
-      console.error("[antifraud] review resolved notification failed:", err);
-    }
-  }
-
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   revalidatePath("/antifraud");
@@ -788,17 +768,6 @@ export async function assignReview(input: unknown): Promise<void> {
     return { reason: current.reason };
   });
   if (!applied) return;
-
-  if (assignee && assignee !== session.userId) {
-    await notifyStaff({
-      recipients: [assignee],
-      kind: "review_assigned",
-      title: "A case was assigned to you",
-      body: "Open the Antifraud workspace to review the case details.",
-      href: `/antifraud/reviews/${reviewId}`,
-      metadata: { reviewId },
-    });
-  }
 
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);

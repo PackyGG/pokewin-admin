@@ -11,7 +11,7 @@ import {
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   listStaffNotificationRecipients,
-  notifyStaff,
+  sendStaffAnnouncement,
 } from "@/lib/staff/notifications";
 
 const inputSchema = z.object({
@@ -71,9 +71,9 @@ export async function sendStaffNotificationAction(
     throw new Error("No active staff accounts match this audience");
   }
 
-  const inboxRows = await notifyStaff({
+  const inboxRows = await sendStaffAnnouncement({
+    actorAdminUserId: session.userId,
     recipients,
-    kind: "announcement",
     title: parsed.data.title,
     body: parsed.data.body || null,
     href: parsed.data.href || null,

@@ -9,9 +9,13 @@ import {
   inArray,
   isNotNull,
   isNull,
-  sql,
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
+import {
+  sessionIsAdmin,
+  sessionIsOwner,
+  verifySession,
+} from "@/lib/dal";
 import {
   admin_users,
   staff_notification_channels,
@@ -27,9 +31,9 @@ import {
 /**
  * The staff notification system.
  *
- * Every notification ALWAYS lands in the in-app inbox (`staff_notifications`,
- * the header bell). On top of that it can be pushed to the staff member's own
- * verified Discord / Telegram channel — Discord by default, Telegram opt-in.
+ * Owner/admin announcements land in the in-app inbox (`staff_notifications`,
+ * the header bell). They can also be pushed to the staff member's own verified
+ * Discord / Telegram channel — Discord by default, Telegram opt-in.
  *
  * Two rules the whole module is built around:
  *
@@ -52,44 +56,9 @@ import {
  * rather than silently off for everyone who never touched their settings.
  */
 export const STAFF_NOTIFICATION_KINDS = {
-  quiz_published: {
-    label: "New quiz available",
-    description: "A quiz you can take has been published.",
-    defaults: { inApp: true, discord: true, telegram: false },
-  },
-  quiz_result: {
-    label: "Quiz result",
-    description: "Your score and the points you earned.",
-    defaults: { inApp: true, discord: false, telegram: false },
-  },
-  points_awarded: {
-    label: "Points awarded",
-    description: "An owner or admin adjusted your points.",
-    defaults: { inApp: true, discord: true, telegram: false },
-  },
-  level_up: {
-    label: "Level up",
-    description: "You reached a new staff level.",
-    defaults: { inApp: true, discord: true, telegram: false },
-  },
-  review_assigned: {
-    label: "Case assigned to you",
-    description: "An account review was put in your queue.",
-    defaults: { inApp: true, discord: true, telegram: true },
-  },
-  review_resolved: {
-    label: "Case resolved",
-    description: "A case you opened or worked was closed.",
-    defaults: { inApp: true, discord: false, telegram: false },
-  },
-  fraud_alert: {
-    label: "Fraud alert",
-    description: "A high-severity signal arrived from the fraud backend.",
-    defaults: { inApp: true, discord: true, telegram: true },
-  },
   announcement: {
     label: "Announcement",
-    description: "A message from the owners to the staff team.",
+    description: "A message sent by an owner or admin to dashboard staff.",
     defaults: { inApp: true, discord: true, telegram: false },
   },
 } as const;
@@ -217,11 +186,7 @@ export async function listStaffNotifications(
     const rows = await adminDrizzle.select().from(staff_notifications)
       .where(and(
         eq(staff_notifications.admin_user_id, adminUserId),
-        sql`(
-          ${staff_notifications.kind} IS DISTINCT FROM 'fraud_alert'
-          OR ${staff_notifications.metadata}->>'kind'
-            IS DISTINCT FROM 'daily_reward_granted'
-        )`,
+        eq(staff_notifications.kind, "announcement"),
       ))
       .orderBy(desc(staff_notifications.created_at))
       .limit(Math.min(Math.max(limit, 1), 50));
@@ -251,11 +216,7 @@ export async function countUnreadStaffNotifications(
       .from(staff_notifications).where(and(
         eq(staff_notifications.admin_user_id, adminUserId),
         isNull(staff_notifications.read_at),
-        sql`(
-          ${staff_notifications.kind} IS DISTINCT FROM 'fraud_alert'
-          OR ${staff_notifications.metadata}->>'kind'
-            IS DISTINCT FROM 'daily_reward_granted'
-        )`,
+        eq(staff_notifications.kind, "announcement"),
       ));
     return row?.value ?? 0;
   } catch (err) {
@@ -280,6 +241,7 @@ export async function markStaffNotificationRead(
       .set({ read_at: new Date().toISOString() })
       .where(and(eq(staff_notifications.id, notificationId),
         eq(staff_notifications.admin_user_id, adminUserId),
+        eq(staff_notifications.kind, "announcement"),
         isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -295,6 +257,7 @@ export async function markAllStaffNotificationsRead(
     await adminDrizzle.update(staff_notifications)
       .set({ read_at: new Date().toISOString() })
       .where(and(eq(staff_notifications.admin_user_id, adminUserId),
+        eq(staff_notifications.kind, "announcement"),
         isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -305,10 +268,10 @@ export async function markAllStaffNotificationsRead(
 
 // ─── Writes (fan-out) ─────────────────────────────────────────────────────
 
-export type NotifyStaffInput = {
+export type SendStaffAnnouncementInput = {
+  actorAdminUserId: string;
   /** admin_user ids. Duplicates are collapsed; empty is a no-op. */
   recipients: readonly string[];
-  kind: StaffNotificationKind;
   title: string;
   body?: string | null;
   /** In-app deep link, e.g. "/staff/quizzes/<id>". */
@@ -320,20 +283,6 @@ export type NotifyStaffInput = {
    */
   inAppOnly?: boolean;
 };
-
-const DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS = new Set([
-  "daily_reward_granted",
-]);
-
-export function isDisabledAutomatedStaffNotification(
-  input: Pick<NotifyStaffInput, "kind" | "metadata">,
-): boolean {
-  return (
-    input.kind === "fraud_alert" &&
-    typeof input.metadata?.kind === "string" &&
-    DISABLED_AUTOMATED_STAFF_SIGNAL_KINDS.has(input.metadata.kind)
-  );
-}
 
 type ChannelRow = {
   admin_user_id: string;
@@ -358,13 +307,22 @@ type PrefRow = {
  * mid-flight, but every failure is swallowed into `last_error` on the channel
  * row instead of propagating.
  */
-export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
-  if (isDisabledAutomatedStaffNotification(input)) return 0;
+export async function sendStaffAnnouncement(
+  input: SendStaffAnnouncementInput,
+): Promise<number> {
+  const session = await verifySession();
+  if (
+    session.userId !== input.actorAdminUserId ||
+    (!sessionIsAdmin(session) && !sessionIsOwner(session))
+  ) {
+    throw new Error("Admin access is required to send staff notifications");
+  }
 
   const recipients = [...new Set(input.recipients.filter(Boolean))];
   if (recipients.length === 0) return 0;
 
-  const spec = STAFF_NOTIFICATION_KINDS[input.kind];
+  const kind = "announcement";
+  const spec = STAFF_NOTIFICATION_KINDS[kind];
   const defaults = spec.defaults;
 
   // Per-recipient preference overrides for THIS kind (missing row = default).
@@ -372,10 +330,10 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
   try {
     prefs = await adminDrizzle.select().from(staff_notification_prefs)
       .where(and(inArray(staff_notification_prefs.admin_user_id, recipients),
-        eq(staff_notification_prefs.kind, input.kind)));
+        eq(staff_notification_prefs.kind, kind)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
-      console.error("[antifraud] notifyStaff pref read failed:", err);
+      console.error("[staff-notifications] announcement pref read failed:", err);
     }
   }
   const prefByUser = new Map(prefs.map((p) => [p.admin_user_id, p]));
@@ -396,7 +354,7 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
       const result = await adminDrizzle.insert(staff_notifications).values(
         inAppRecipients.map((adminUserId) => ({
           admin_user_id: adminUserId,
-          kind: input.kind,
+          kind,
           title: input.title,
           body: input.body ?? null,
           href: input.href ?? null,
@@ -406,7 +364,7 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
       written = result.length;
     } catch (err) {
       if (!isMissingRelationError(err)) {
-        console.error("[antifraud] notifyStaff in-app write failed:", err);
+        console.error("[staff-notifications] announcement write failed:", err);
       }
     }
   }
@@ -428,7 +386,7 @@ export async function notifyStaff(input: NotifyStaffInput): Promise<number> {
     ));
   } catch (err) {
     if (!isMissingRelationError(err)) {
-      console.error("[antifraud] notifyStaff channel read failed:", err);
+      console.error("[staff-notifications] announcement channel read failed:", err);
     }
     return written;
   }
@@ -483,33 +441,4 @@ function absoluteHref(href: string | null | undefined): string | null {
       : "");
   if (!base) return href;
   return base.replace(/\/+$/, "") + href;
-}
-
-/**
- * The recipient set for a broadcast: every active dashboard account,
- * regardless of whether it has opened the Staff hub. The audience
- * can be narrowed to holders of specific roles.
- */
-export async function staffBroadcastRecipients(
-  roles?: readonly string[],
-): Promise<string[]> {
-  try {
-    const users = await adminDrizzle.select({
-      id: admin_users.id, role: admin_users.role, roles: admin_users.roles,
-    }).from(admin_users).where(eq(admin_users.is_active, true));
-
-    if (!roles || roles.length === 0) return users.map((u) => u.id);
-    const wanted = new Set(roles);
-    return users
-      .filter((u) => {
-        const effective = u.roles.length > 0 ? u.roles : [u.role];
-        return effective.some((r) => wanted.has(r));
-      })
-      .map((u) => u.id);
-  } catch (err) {
-    if (!isMissingRelationError(err)) {
-      console.error("[antifraud] staffBroadcastRecipients failed:", err);
-    }
-    return [];
-  }
 }

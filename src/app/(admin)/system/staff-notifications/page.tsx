@@ -146,8 +146,8 @@ async function NotificationsBody({
             <Inbox className="size-5 text-muted-foreground" />
             <span className="text-sm font-semibold">Nothing yet</span>
             <span className="max-w-sm text-xs text-muted-foreground">
-              Quiz drops, assignments, fraud alerts, and team announcements
-              will appear here no matter which dashboard app you are using.
+              Messages sent by an owner or admin will appear here no matter
+              which dashboard app you are using.
             </span>
           </div>
         ) : (

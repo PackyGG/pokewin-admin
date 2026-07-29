@@ -17,10 +17,6 @@ import {
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
 import { isPostgresError } from "@/lib/postgres-errors";
-import {
-  notifyStaff,
-  staffBroadcastRecipients,
-} from "@/lib/staff/notifications";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.
@@ -165,8 +161,6 @@ export async function POST(request: Request): Promise<Response> {
   let duplicates = 0;
   let reviewsOpened = 0;
   let locksSkipped = 0;
-  let recipients: string[] | null = null;
-
   for (const signal of signals) {
     let result: IngestResult;
     try {
@@ -190,38 +184,6 @@ export async function POST(request: Request): Promise<Response> {
     if (result.outcome === "review_opened") reviewsOpened += 1;
     if (result.lockSkipped) locksSkipped += 1;
 
-    if (
-      shouldEscalateSignal(signal) &&
-      signal.kind !== "fiat_blacklisted_email_domain"
-    ) {
-      // Notify IMMEDIATELY after the durable store, not after the whole
-      // batch: if a later signal 500s the delivery, the retry dedupes this
-      // one to 'duplicate' and it would never notify again. Notification
-      // failure itself is logged, not thrown — turning it into a 500 would
-      // create exactly that dedupe-and-lose-the-ping path.
-      try {
-        recipients ??= await staffBroadcastRecipients();
-        await notifyStaff({
-          recipients,
-          kind: "fraud_alert",
-          title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
-          body: signal.summary,
-          href: "/antifraud/reviews",
-          metadata: {
-            kind: signal.kind,
-            severity: signal.severity,
-            riskScore: signal.riskScore,
-            userId: signal.userId,
-          },
-          // Channel delivery is handled by the durable Discord bot queue. Keep
-          // this legacy staff fan-out in-app only so one signal cannot also hit
-          // the retired global Discord webhook path.
-          inAppOnly: true,
-        });
-      } catch (err) {
-        console.error("[antifraud-ingest] failed to notify staff:", err);
-      }
-    }
   }
 
   return json(
