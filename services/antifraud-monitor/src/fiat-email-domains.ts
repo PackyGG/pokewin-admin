@@ -4,6 +4,7 @@ import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
 
 import type { Databases } from "./db.js";
+import { drainOutbox } from "./outbox.js";
 import type { Signup } from "./types.js";
 
 const STREAM = "fiat_email_domains";
@@ -1198,41 +1199,45 @@ export class FiatEmailDomainGuard {
   }
 
   private async confirmLocks(): Promise<void> {
-    const pending = await this.db.antifraud.query<PendingMatch>(
-      `
-        SELECT
-          source_event_id, match_source, provider_event_id, deposit_intent_id,
-          provider_payment_id, user_id, username, checkout_email, domain,
-          match_type, occurred_at, attempt_count
-        FROM fiat_email_domain_matches
-        WHERE lock_delivered_at IS NULL
-          AND next_attempt_at <= now()
-        ORDER BY occurred_at
-        LIMIT 25
-      `,
-    );
-
-    if (pending.rows.length === 0) return;
-    const locked = await this.db.source.query<{ user_id: string }>(
-      `
-        SELECT user_id
-        FROM user_feature_locks
-        WHERE user_id = ANY($1::text[])
-          AND 'all' = ANY(locked_withdrawals_crypto)
-          AND locked_withdrawals_items = true
-      `,
-      [[...new Set(pending.rows.map((match) => match.user_id))]],
-    );
-    const lockedUsers = new Set(locked.rows.map((row) => row.user_id));
-
-    for (const match of pending.rows) {
-      const delivered = lockedUsers.has(match.user_id);
-      const attempt = match.attempt_count + 1;
-      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
-      const client = await this.db.antifraud.connect();
-      try {
-        await client.query("BEGIN");
-        await client.query(
+    let lockedUsers = new Set<string>();
+    await drainOutbox<PendingMatch>({
+      fetchPending: async () => {
+        const pending = await this.db.antifraud.query<PendingMatch>(
+          `
+            SELECT
+              source_event_id, match_source, provider_event_id,
+              deposit_intent_id, provider_payment_id, user_id, username,
+              checkout_email, domain, match_type, occurred_at, attempt_count
+            FROM fiat_email_domain_matches
+            WHERE lock_delivered_at IS NULL
+              AND next_attempt_at <= now()
+            ORDER BY occurred_at
+            LIMIT 25
+          `,
+        );
+        if (pending.rows.length === 0) return [];
+        const locked = await this.db.source.query<{ user_id: string }>(
+          `
+            SELECT user_id
+            FROM user_feature_locks
+            WHERE user_id = ANY($1::text[])
+              AND 'all' = ANY(locked_withdrawals_crypto)
+              AND locked_withdrawals_items = true
+          `,
+          [[...new Set(pending.rows.map((match) => match.user_id))]],
+        );
+        lockedUsers = new Set(locked.rows.map((row) => row.user_id));
+        return pending.rows;
+      },
+      attemptCount: (match) => match.attempt_count,
+      attempt: async (match) => ({
+        delivered: lockedUsers.has(match.user_id),
+      }),
+      record: async (match, outcome) => {
+        const client = await this.db.antifraud.connect();
+        try {
+          await client.query("BEGIN");
+          await client.query(
           `
             UPDATE fiat_email_domain_matches
             SET
@@ -1252,10 +1257,15 @@ export class FiatEmailDomainGuard {
               updated_at = now()
             WHERE source_event_id = $1
           `,
-          [match.source_event_id, delivered, attempt, retrySeconds],
-        );
-        if (delivered) {
-          await client.query(
+            [
+              match.source_event_id,
+              outcome.delivered,
+              outcome.attempt,
+              outcome.retrySeconds,
+            ],
+          );
+          if (outcome.delivered) {
+            await client.query(
             `
               UPDATE fiat_problem_alert_outbox
               SET next_attempt_at = now(), updated_at = now()
@@ -1267,26 +1277,29 @@ export class FiatEmailDomainGuard {
               `${match.source_event_id}:blacklisted_email_domain:${match.domain}`,
               match.match_source === "signup" ? "signup" : "payment_webhook",
             ],
-          );
+            );
+          }
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        } finally {
+          client.release();
         }
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      } finally {
-        client.release();
-      }
-      if (!delivered) {
-        this.log.warn(
+      },
+      onRecorded: (match, outcome) => {
+        if (!outcome.delivered) {
+          this.log.warn(
           {
             sourceEventId: match.source_event_id,
             domain: match.domain,
-            retrySeconds,
+              retrySeconds: outcome.retrySeconds,
           },
           "Blacklisted email-domain match is waiting for withdrawal-lock confirmation",
-        );
-      }
-    }
+          );
+        }
+      },
+    });
   }
 
   private async releaseConfirmedClusterAlerts(): Promise<void> {

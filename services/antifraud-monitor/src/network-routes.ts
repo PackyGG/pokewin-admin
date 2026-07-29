@@ -367,7 +367,7 @@ export async function registerNetworkRoutes(
         [query.window, search, matchingCreatorIds],
       ),
     ]);
-    if (assessments.rows.length === 0) {
+    if (search === null && (total.rows[0]?.count ?? 0) === 0) {
       await service.enqueueCreatorReconciliation(query.window);
     }
     const creatorIds = assessments.rows.map((row) =>

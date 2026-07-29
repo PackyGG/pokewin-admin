@@ -4,15 +4,22 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import {
+  sanitizeDiscordMentions,
+  type DiscordWebhookPayload,
+} from "./discord.js";
+import {
   notificationRoutesForFiatProblem,
   type FiatNotificationRouteKey,
 } from "./notification-routes.js";
 import { sendBotDiscordEvent } from "./discord-events.js";
+import { drainOutbox } from "./outbox.js";
 import { whopPaymentMethodLabel } from "./whop-payment-method.js";
 
 const CURSOR_STREAM = "fiat-problems";
 const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
+const FAILED_WEBHOOK_CURSOR_STREAM = "fiat-failed-webhooks";
 const BATCH_SIZE = 100;
+const DELIVERY_BATCH_SIZE = 8;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export const FIAT_PROBLEM_CODES = [
@@ -85,37 +92,10 @@ export function fiatAlertEventKey(
   }
 }
 
-type DiscordPayload = {
-  username: string;
-  content: string;
-  allowed_mentions: { parse: [] };
-  embeds: Array<{
-    title: string;
-    description: string;
-    url: string;
-    color: number;
-    fields: Array<{ name: string; value: string; inline: boolean }>;
-    footer: { text: string };
-    timestamp: string;
-  }>;
-  components: Array<{
-    type: 1;
-    components: Array<{
-      type: 2;
-      style: 5;
-      label: string;
-      url: string;
-    }>;
-  }>;
-};
+type DiscordPayload = DiscordWebhookPayload;
 
 function clean(value: unknown, maxLength = 1_024): string {
-  const text = String(value ?? "")
-    .replace(/@everyone/gi, "everyone")
-    .replace(/@here/gi, "here")
-    .replace(/<@!?(\d+)>/g, "user $1")
-    .replace(/<@&(\d+)>/g, "role $1")
-    .trim();
+  const text = sanitizeDiscordMentions(String(value ?? "")).trim();
   if (text.length === 0) return "Not provided";
   return text.length <= maxLength
     ? text
@@ -529,7 +509,8 @@ export async function fetchFiatProblems(
 
 export async function fetchFailedPaymentWebhooks(
   source: pg.Pool,
-  limit = 1_000,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = BATCH_SIZE,
 ): Promise<FiatProblem[]> {
   const result = await source.query<FiatProblem>(
     `
@@ -577,10 +558,14 @@ export async function fetchFailedPaymentWebhooks(
       LEFT JOIN "user" u ON u.id = fdi.user_id
       WHERE pwe.processing_status = 'failed'
         AND pwe.received_at >= (now() ${UTC}) - interval '30 days'
-      ORDER BY pwe.received_at DESC, pwe.id
-      LIMIT $1
+        AND (
+          pwe.received_at ${UTC},
+          pwe.id::text || ':webhook_failed'
+        ) > ($1, $2)
+      ORDER BY pwe.received_at, pwe.id
+      LIMIT $3
     `,
-    [limit],
+    [cursor.occurredAt, cursor.sourceId, limit],
   );
   return result.rows;
 }
@@ -649,10 +634,11 @@ export class FiatProblemAlerts {
         INSERT INTO source_cursors(stream, occurred_at, source_id)
         VALUES
           ($1, now() - interval '2 minutes', ''),
-          ($2, now() - interval '2 minutes', '')
+          ($2, now() - interval '2 minutes', ''),
+          ($3, now() - interval '30 days', '')
         ON CONFLICT (stream) DO NOTHING
       `,
-      [CURSOR_STREAM, HIGH_RISK_CURSOR_STREAM],
+      [CURSOR_STREAM, HIGH_RISK_CURSOR_STREAM, FAILED_WEBHOOK_CURSOR_STREAM],
     );
   }
 
@@ -702,9 +688,33 @@ export class FiatProblemAlerts {
   }
 
   private async capture(): Promise<void> {
-    const failedWebhooks = await fetchFailedPaymentWebhooks(this.db.source);
-    if (failedWebhooks.length > 0) {
+    for (;;) {
+      const cursor = await this.db.antifraud.query<{
+        occurred_at: Date;
+        source_id: string;
+      }>(
+        "SELECT occurred_at, source_id FROM source_cursors WHERE stream = $1",
+        [FAILED_WEBHOOK_CURSOR_STREAM],
+      );
+      const row = cursor.rows[0];
+      if (!row) throw new Error("Failed-webhook cursor is missing");
+      const failedWebhooks = await fetchFailedPaymentWebhooks(
+        this.db.source,
+        { occurredAt: row.occurred_at, sourceId: row.source_id },
+      );
+      if (failedWebhooks.length === 0) break;
       await this.storeProblems(failedWebhooks);
+      const last = failedWebhooks.at(-1);
+      if (!last) break;
+      await this.db.antifraud.query(
+        `
+          UPDATE source_cursors
+          SET occurred_at = $2, source_id = $3, updated_at = now()
+          WHERE stream = $1
+        `,
+        [FAILED_WEBHOOK_CURSOR_STREAM, last.occurred_at, last.source_id],
+      );
+      if (failedWebhooks.length < BATCH_SIZE) break;
     }
 
     for (;;) {
@@ -745,36 +755,29 @@ export class FiatProblemAlerts {
   }
 
   private async storeProblems(problems: readonly FiatProblem[]): Promise<void> {
-    const client = await this.db.antifraud.connect();
-    try {
-      await client.query("BEGIN");
-      for (const problem of problems) {
-        await client.query(
-          `
-            INSERT INTO fiat_problem_alert_outbox (
-              source_kind, source_id, problem_code, user_id, username,
-              details, occurred_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7)
-            ON CONFLICT (source_kind, source_id) DO NOTHING
-          `,
-          [
-            problem.source_kind,
-            problem.source_id,
-            problem.problem_code,
-            problem.user_id,
-            problem.username,
-            problem.details,
-            problem.occurred_at,
-          ],
-        );
-      }
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
-    }
+    await this.db.antifraud.query(
+      `
+        INSERT INTO fiat_problem_alert_outbox (
+          source_kind, source_id, problem_code, user_id, username,
+          details, occurred_at
+        )
+        SELECT *
+        FROM unnest(
+          $1::text[], $2::text[], $3::text[], $4::text[], $5::text[],
+          $6::jsonb[], $7::timestamptz[]
+        )
+        ON CONFLICT (source_kind, source_id) DO NOTHING
+      `,
+      [
+        problems.map((problem) => problem.source_kind),
+        problems.map((problem) => problem.source_id),
+        problems.map((problem) => problem.problem_code),
+        problems.map((problem) => problem.user_id),
+        problems.map((problem) => problem.username),
+        problems.map((problem) => JSON.stringify(problem.details)),
+        problems.map((problem) => problem.occurred_at),
+      ],
+    );
   }
 
   private async syncDeliveries(): Promise<void> {
@@ -840,17 +843,16 @@ export class FiatProblemAlerts {
           AND delivery.next_attempt_at <= now()
           AND alert.next_attempt_at <= now()
         ORDER BY alert.occurred_at, delivery.destination
-        LIMIT 1
+        LIMIT ${DELIVERY_BATCH_SIZE}
       `,
     );
 
-    for (const problem of pending.rows) {
-      const delivery = await this.send(problem);
-      const attempt = problem.attempt_count + 1;
-      const retrySeconds =
-        delivery.retryAfterSeconds ??
-        Math.min(300, 2 ** Math.min(attempt, 8));
-      await this.db.antifraud.query(
+    await drainOutbox<PendingFiatAlert>({
+      fetchPending: async () => pending.rows,
+      attemptCount: (problem) => problem.attempt_count,
+      attempt: (problem) => this.send(problem),
+      record: async (problem, outcome) => {
+        await this.db.antifraud.query(
         `
           UPDATE fiat_problem_alert_deliveries
           SET
@@ -876,23 +878,26 @@ export class FiatProblemAlerts {
           problem.source_kind,
           problem.source_id,
           problem.destination,
-          delivery.delivered,
-          attempt,
-          retrySeconds,
+            outcome.delivered,
+            outcome.attempt,
+            outcome.retrySeconds,
         ],
-      );
-      if (delivery.delivered) {
-        this.log.info(
+        );
+      },
+      onRecorded: async (problem, outcome) => {
+        if (outcome.delivered) {
+          this.log.info(
           {
             sourceKind: problem.source_kind,
             sourceId: problem.source_id,
             destination: problem.destination,
           },
           "Fiat Discord alert delivered",
-        );
-      }
-      await this.refreshLegacyDeliveryState(problem);
-    }
+          );
+        }
+        await this.refreshLegacyDeliveryState(problem);
+      },
+    });
   }
 
   private async refreshLegacyDeliveryState(

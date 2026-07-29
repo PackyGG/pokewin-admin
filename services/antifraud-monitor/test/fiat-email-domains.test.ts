@@ -264,7 +264,10 @@ test("blacklist matches are durable before signed lock delivery", async () => {
   assert.match(source, /INSERT INTO fiat_problem_alert_outbox/);
   assert.match(source, /'payment_method_type'/);
   assert.match(source, /'infinity'::timestamptz/);
-  assert.match(source, /if \(delivered\)[\s\S]*UPDATE fiat_problem_alert_outbox/);
+  assert.match(
+    source,
+    /if \(outcome\.delivered\)[\s\S]*UPDATE fiat_problem_alert_outbox/,
+  );
   assert.match(source, /fiat_blacklisted_email_domain/);
   assert.match(source, /gmail_dot_fragmentation/);
   assert.match(source, /now\(\) - interval '7 days'/);

@@ -21,6 +21,9 @@ async function buildApp() {
   const query = async (sql: string, values: unknown[] = []) => {
     calls.push({ sql, values });
     if (sql.includes("SELECT DISTINCT user_id")) return { rows: [] };
+    if (sql.includes("FROM \"user\"") && sql.includes("role::text")) {
+      return { rows: [] };
+    }
 
     const excludesKyc = sql.includes(kycPredicate);
     const searchesNeedle = values.includes("%needle%");

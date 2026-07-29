@@ -78,12 +78,13 @@ export function discordRuntimeStatus(config: Pick<
   };
 }
 
-type DiscordPayload = {
+/** Webhook payload shape shared by every Discord alert producer. */
+export type DiscordWebhookPayload = {
   username: string;
   content: string;
   allowed_mentions: {
     parse: [];
-    users: string[];
+    users?: string[];
   };
   embeds: Array<{
     title: string;
@@ -105,12 +106,22 @@ type DiscordPayload = {
   }>;
 };
 
-function clean(value: string, maxLength: number): string {
-  const withoutMentions = value
+type DiscordPayload = DiscordWebhookPayload;
+
+/**
+ * Neutralises Discord mention syntax so user-controlled text can never ping
+ * staff or roles. Shared by every alert payload builder.
+ */
+export function sanitizeDiscordMentions(value: string): string {
+  return value
     .replace(/@everyone/gi, "everyone")
     .replace(/@here/gi, "here")
     .replace(/<@!?(\d+)>/g, "user $1")
     .replace(/<@&(\d+)>/g, "role $1");
+}
+
+function clean(value: string, maxLength: number): string {
+  const withoutMentions = sanitizeDiscordMentions(value);
   return withoutMentions.length <= maxLength
     ? withoutMentions
     : `${withoutMentions.slice(0, maxLength - 3)}...`;

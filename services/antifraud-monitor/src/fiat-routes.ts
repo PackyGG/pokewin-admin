@@ -6,6 +6,11 @@ import {
   FIAT_ASSESSMENT_STATUSES,
   type FiatRiskService,
 } from "./fiat-risk.js";
+import {
+  cachedCreatorUserIds,
+  excludedUserIds,
+  userIsCreator,
+} from "./route-helpers.js";
 import { normalizeWhopPaymentMethod } from "./whop-payment-method.js";
 
 const reviewStatuses = [
@@ -55,63 +60,6 @@ const reviewBodySchema = z
   });
 
 const idSchema = z.object({ id: z.string().uuid() });
-const excludedUsersHeaderSchema = z
-  .string()
-  .min(2)
-  .max(100_000)
-  .transform((value, context): unknown => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      context.addIssue({
-        code: "custom",
-        message: "Invalid excluded-users header.",
-      });
-      return z.NEVER;
-    }
-  })
-  .pipe(z.array(z.string().trim().min(1).max(100)));
-
-function excludedUserIds(headers: Record<string, unknown>): string[] {
-  return excludedUsersHeaderSchema.parse(headers["x-antifraud-excluded-users"]);
-}
-
-async function creatorUserIdsForAssessments(db: Databases): Promise<string[]> {
-  const assessed = await db.antifraud.query<{ user_id: string }>(
-    "SELECT DISTINCT user_id FROM fiat_deposit_assessments",
-  );
-  const userIds = assessed.rows.map((row) => row.user_id);
-  if (userIds.length === 0) return [];
-  const creators = await db.source.query<{ id: string }>(
-    `
-      SELECT id
-      FROM "user"
-      WHERE id=ANY($1::text[])
-        AND (
-          role::text='creator'
-          OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
-        )
-    `,
-    [userIds],
-  );
-  return creators.rows.map((row) => row.id);
-}
-
-async function userIsCreator(db: Databases, userId: string): Promise<boolean> {
-  const result = await db.source.query<{ creator: boolean }>(
-    `
-      SELECT (
-        role::text='creator'
-        OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
-      ) AS creator
-      FROM "user"
-      WHERE id=$1
-    `,
-    [userId],
-  );
-  return result.rows[0]?.creator ?? false;
-}
-
 function nextReviewStatus(
   action: z.infer<typeof reviewBodySchema>["action"],
 ): (typeof reviewStatuses)[number] {
@@ -152,7 +100,7 @@ export async function registerFiatRoutes(
       limit: 100,
     });
     const ignored = [
-      ...new Set([...excluded, ...(await creatorUserIdsForAssessments(db))]),
+      ...new Set([...excluded, ...(await cachedCreatorUserIds(db.source))]),
     ];
     const conditions: string[] = [];
     const values: unknown[] = [];
@@ -305,7 +253,7 @@ export async function registerFiatRoutes(
     if (
       !row ||
       excluded.has(row.user_id) ||
-      (await userIsCreator(db, row.user_id))
+      (await userIsCreator(db.source, row.user_id))
     ) {
       return reply.code(404).send({ error: "not_found" });
     }
@@ -353,7 +301,7 @@ export async function registerFiatRoutes(
       if (
         !visibleRow ||
         excluded.has(visibleRow.user_id) ||
-        (await userIsCreator(db, visibleRow.user_id))
+        (await userIsCreator(db.source, visibleRow.user_id))
       ) {
         return reply.code(404).send({ error: "not_found" });
       }

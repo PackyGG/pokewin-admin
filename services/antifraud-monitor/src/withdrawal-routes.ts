@@ -6,6 +6,11 @@ import {
   WITHDRAWAL_RISK_MODEL_VERSION,
   type WithdrawalRiskService,
 } from "./withdrawal-risk.js";
+import {
+  cachedCreatorUserIds,
+  excludedUserIds,
+  userIsCreator,
+} from "./route-helpers.js";
 
 const querySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
@@ -61,64 +66,6 @@ const reviewBodySchema = z
   });
 
 const idSchema = z.object({ id: z.string().uuid() });
-const excludedUsersSchema = z.array(z.string().trim().min(1).max(100));
-const excludedUsersHeaderSchema = z
-  .string()
-  .min(2)
-  .max(100_000)
-  .transform((value, context): unknown => {
-    try {
-      return JSON.parse(value);
-    } catch {
-      context.addIssue({
-        code: "custom",
-        message: "Invalid excluded-users header.",
-      });
-      return z.NEVER;
-    }
-  })
-  .pipe(excludedUsersSchema);
-
-function excludedUserIds(headers: Record<string, unknown>): string[] {
-  return excludedUsersHeaderSchema.parse(headers["x-antifraud-excluded-users"]);
-}
-
-async function creatorUserIdsForAssessments(db: Databases): Promise<string[]> {
-  const assessed = await db.antifraud.query<{ user_id: string }>(
-    "SELECT DISTINCT user_id FROM withdrawal_assessments",
-  );
-  const userIds = assessed.rows.map((row) => row.user_id);
-  if (userIds.length === 0) return [];
-  const creators = await db.source.query<{ id: string }>(
-    `
-      SELECT id
-      FROM "user"
-      WHERE id=ANY($1::text[])
-        AND (
-          role::text='creator'
-          OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
-        )
-    `,
-    [userIds],
-  );
-  return creators.rows.map((row) => row.id);
-}
-
-async function userIsCreator(db: Databases, userId: string): Promise<boolean> {
-  const result = await db.source.query<{ creator: boolean }>(
-    `
-      SELECT (
-        role::text='creator'
-        OR 'creator'=ANY(COALESCE(roles::text[], ARRAY[]::text[]))
-      ) AS creator
-      FROM "user"
-      WHERE id=$1
-    `,
-    [userId],
-  );
-  return result.rows[0]?.creator ?? false;
-}
-
 function reviewStatusFor(
   action: z.infer<typeof reviewBodySchema>["action"],
 ): (typeof reviewStatuses)[number] {
@@ -143,7 +90,7 @@ export async function registerWithdrawalRoutes(
         : { ...query, excludedUserIds: excluded },
     );
     const ignoredUserIds = [
-      ...new Set([...excluded, ...(await creatorUserIdsForAssessments(db))]),
+      ...new Set([...excluded, ...(await cachedCreatorUserIds(db.source))]),
     ];
 
     const conditions: string[] = ["model_version=$1"];
@@ -298,7 +245,10 @@ export async function registerWithdrawalRoutes(
     ]);
     const row = assessment.rows[0];
     if (!row) return reply.code(404).send({ error: "not_found" });
-    if (excluded.has(row.user_id) || (await userIsCreator(db, row.user_id))) {
+    if (
+      excluded.has(row.user_id) ||
+      (await userIsCreator(db.source, row.user_id))
+    ) {
       return reply.code(404).send({ error: "not_found" });
     }
     const timeline = await service.loadTimeline({
@@ -340,7 +290,7 @@ export async function registerWithdrawalRoutes(
       if (
         !visibleRow ||
         excluded.has(visibleRow.user_id) ||
-        (await userIsCreator(db, visibleRow.user_id))
+        (await userIsCreator(db.source, visibleRow.user_id))
       ) {
         return reply.code(404).send({ error: "not_found" });
       }

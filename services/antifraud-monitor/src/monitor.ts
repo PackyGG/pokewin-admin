@@ -20,6 +20,7 @@ import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
+import { drainOutbox } from "./outbox.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
 import { RiskyLocationStore } from "./risky-locations.js";
 import { baseSignupSignals, severity } from "./scoring.js";
@@ -886,12 +887,11 @@ export class MonitorEngine {
       `,
     );
 
-    for (const alert of pending.rows) {
-      const signals = storedSignals(alert.signals);
-      let discordDelivered = alert.discord_delivered_at !== null;
-      const failures: string[] = [];
-      if (!discordDelivered) {
-        discordDelivered = await this.discord.send(
+    await drainOutbox<PendingAlert>({
+      fetchPending: async () => pending.rows,
+      attemptCount: (alert) => alert.attempt_count,
+      attempt: async (alert) => ({
+        delivered: await this.discord.send(
           "antifraud.signup_high_risk",
           `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
           {
@@ -904,16 +904,13 @@ export class MonitorEngine {
             score: alert.score,
             severity: severity(alert.score),
             trigger: "Signup score reached 60+",
-            signals,
+            signals: storedSignals(alert.signals),
             occurredAt: alert.occurred_at,
           },
-        );
-        if (!discordDelivered) failures.push("Discord delivery failed");
-      }
-
-      const attempt = alert.attempt_count + 1;
-      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
-      await this.db.antifraud.query(
+        ),
+      }),
+      record: async (alert, outcome) => {
+        await this.db.antifraud.query(
         `
           UPDATE signup_alert_outbox
           SET
@@ -926,31 +923,34 @@ export class MonitorEngine {
               WHEN $2::boolean THEN now()
               ELSE now() + ($4::text || ' seconds')::interval
             END,
-            last_error = $5,
+            last_error = CASE
+              WHEN $2::boolean THEN NULL
+              ELSE 'Discord delivery failed'
+            END,
             updated_at = now()
           WHERE user_id = $1
         `,
         [
           alert.user_id,
-          discordDelivered,
-          attempt,
-          retrySeconds,
-          failures.length > 0 ? failures.join("; ") : null,
+          outcome.delivered,
+          outcome.attempt,
+          outcome.retrySeconds,
         ],
-      );
-
-      if (failures.length > 0) {
-        this.log.warn(
+        );
+      },
+      onRecorded: (alert, outcome) => {
+        if (!outcome.delivered) {
+          this.log.warn(
           {
             userId: alert.user_id,
             caseId: alert.case_id,
-            retrySeconds,
-            failures,
+              retrySeconds: outcome.retrySeconds,
           },
           "High-risk signup alert remains pending",
-        );
-      }
-    }
+          );
+        }
+      },
+    });
   }
 
   private async deliverPendingRuleAlerts(): Promise<void> {
@@ -971,15 +971,18 @@ export class MonitorEngine {
 
     // Discord has a five-second request timeout. Run this small bounded batch
     // concurrently so an outage cannot consume the poller's liveness budget.
-    await Promise.all(pending.rows.map(async (alert) => {
-      const delivered = await this.discord.send(
+    await drainOutbox({
+      fetchPending: async () => pending.rows,
+      attemptCount: (alert) => alert.attempt_count,
+      attempt: async (alert) => ({
+        delivered: await this.discord.send(
         "antifraud.rule_matched",
         `rule:${alert.rule_match_id}`,
         alert.payload,
-      );
-      const attempt = alert.attempt_count + 1;
-      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
-      await this.db.antifraud.query(
+        ),
+      }),
+      record: async (alert, outcome) => {
+        await this.db.antifraud.query(
         `
           UPDATE rule_alert_outbox
           SET delivered_at = CASE WHEN $2::boolean THEN now() ELSE delivered_at END,
@@ -993,15 +996,27 @@ export class MonitorEngine {
           WHERE rule_match_id = $1
             AND delivered_at IS NULL
         `,
-        [alert.rule_match_id, delivered, attempt, retrySeconds],
-      );
-      if (!delivered) {
-        this.log.warn(
-          { ruleMatchId: alert.rule_match_id, retrySeconds },
-          "Rule alert delivery deferred",
+          [
+            alert.rule_match_id,
+            outcome.delivered,
+            outcome.attempt,
+            outcome.retrySeconds,
+          ],
         );
-      }
-    }));
+      },
+      onRecorded: (alert, outcome) => {
+        if (!outcome.delivered) {
+          this.log.warn(
+            {
+              ruleMatchId: alert.rule_match_id,
+              retrySeconds: outcome.retrySeconds,
+            },
+          "Rule alert delivery deferred",
+          );
+        }
+      },
+      concurrent: true,
+    });
   }
 
   private async scanFiatWithdrawalHolds(): Promise<void> {
@@ -1137,8 +1152,11 @@ export class MonitorEngine {
       `,
     );
 
-    for (const alert of pending.rows) {
-      const delivered = await this.discord.sendWithdrawalHold(
+    await drainOutbox<PendingAlert>({
+      fetchPending: async () => pending.rows,
+      attemptCount: (alert) => alert.attempt_count,
+      attempt: async (alert) => ({
+        delivered: await this.discord.sendWithdrawalHold(
         `withdrawal-hold:${alert.source_ref}`,
         {
           title: "Automatic fiat withdrawal hold",
@@ -1156,10 +1174,10 @@ export class MonitorEngine {
             this.config.ANTIFRAUD_DASHBOARD_URL,
           ).toString(),
         },
-      );
-      const attempt = alert.attempt_count + 1;
-      const retrySeconds = Math.min(300, 2 ** Math.min(attempt, 8));
-      await this.db.antifraud.query(
+        ),
+      }),
+      record: async (alert, outcome) => {
+        await this.db.antifraud.query(
         `
           UPDATE fiat_withdrawal_hold_alert_outbox
           SET
@@ -1179,19 +1197,26 @@ export class MonitorEngine {
             updated_at = now()
           WHERE source_ref = $1
         `,
-        [alert.source_ref, delivered, attempt, retrySeconds],
-      );
-
-      if (!delivered) {
-        this.log.warn(
+          [
+            alert.source_ref,
+            outcome.delivered,
+            outcome.attempt,
+            outcome.retrySeconds,
+          ],
+        );
+      },
+      onRecorded: (alert, outcome) => {
+        if (!outcome.delivered) {
+          this.log.warn(
           {
             userId: alert.user_id,
-            retrySeconds,
+              retrySeconds: outcome.retrySeconds,
           },
           "Fiat withdrawal hold alert remains pending",
-        );
-      }
-    }
+          );
+        }
+      },
+    });
   }
 
   private async cachedFingerprint(
@@ -1647,7 +1672,7 @@ export class MonitorEngine {
       });
     }
     if (broadcasts.length > 0) await this.evaluateRules(session);
-    return activities.length;
+    return broadcasts.length;
   }
 
   private async advanceActivityCursor(

@@ -59,6 +59,9 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   const database = read("services/antifraud-monitor/src/db.ts");
   const risk = read("services/antifraud-monitor/src/withdrawal-risk.ts");
   const routes = read("services/antifraud-monitor/src/withdrawal-routes.ts");
+  const routeHelpers = read(
+    "services/antifraud-monitor/src/route-helpers.ts",
+  );
   const migration = read(
     "services/antifraud-monitor/migrations/009_withdrawal_assessments.sql",
   );
@@ -77,8 +80,11 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(risk, /balance_ledger_coverage/);
   assert.match(risk, /balance_after::numeric/);
   assert.match(risk, /voucher_pack_borrow/);
-  assert.match(routes, /excludedUsersHeaderSchema/);
+  assert.match(routes, /excludedUserIds/);
   assert.match(routes, /userIsCreator/);
+  assert.match(routeHelpers, /excludedUsersHeaderSchema/);
+  assert.match(routeHelpers, /cachedCreatorUserIds/);
+  assert.doesNotMatch(routes, /SELECT DISTINCT user_id/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS withdrawal_assessments/);
   assert.match(
     workflowMigration,

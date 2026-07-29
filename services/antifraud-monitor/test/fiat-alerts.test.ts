@@ -500,11 +500,16 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   };
   await fetchFailedPaymentWebhooks(
     pool as never,
+    {
+      occurredAt: new Date("2026-07-01T00:00:00.000Z"),
+      sourceId: "webhook-1:webhook_failed",
+    },
     250,
   );
-  assert.equal(calls[0]?.values[0], 250);
+  assert.equal(calls[0]?.values[2], 250);
   assert.match(calls[0]?.text ?? "", /processing_status = 'failed'/);
   assert.match(calls[0]?.text ?? "", /payment_method_type/);
+  assert.match(calls[0]?.text ?? "", /\) > \(\$1, \$2\)/);
 
   const riskCalls: Array<{ text: string; values: unknown[] }> = [];
   const riskPool = {

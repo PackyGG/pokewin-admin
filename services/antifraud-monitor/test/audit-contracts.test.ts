@@ -19,6 +19,7 @@ import {
   STREAM_ID_PATTERN,
 } from "../src/live.js";
 import { processOrderedBatch } from "../src/ordered-ingestion.js";
+import { drainOutbox, outboxRetrySeconds } from "../src/outbox.js";
 import {
   notificationRouteStatuses,
   notificationRoutesForFiatProblem,
@@ -524,6 +525,28 @@ test("promise cache coalesces cold loads, expires, and evicts rejection", async 
   await assert.rejects(cached(9), /transient/);
   await assert.rejects(cached(9), /transient/);
   assert.equal(calls, 4);
+});
+
+test("shared outbox drain reaches the five-minute retry ceiling", async () => {
+  assert.equal(outboxRetrySeconds(1), 2);
+  assert.equal(outboxRetrySeconds(8), 256);
+  assert.equal(outboxRetrySeconds(9), 300);
+
+  const recorded: Array<{ delivered: boolean; attempt: number; retry: number }> =
+    [];
+  await drainOutbox({
+    fetchPending: async () => [{ attemptCount: 8 }],
+    attemptCount: (row) => row.attemptCount,
+    attempt: async () => ({ delivered: false }),
+    record: async (_row, outcome) => {
+      recorded.push({
+        delivered: outcome.delivered,
+        attempt: outcome.attempt,
+        retry: outcome.retrySeconds,
+      });
+    },
+  });
+  assert.deepEqual(recorded, [{ delivered: false, attempt: 9, retry: 300 }]);
 });
 
 test("poison signup is dead-lettered and later siblings do not reemit", async () => {

@@ -163,6 +163,40 @@ const cachedTopRain = createPromiseCache<number, TopRainRow[]>(
   (limit) => topRainWinners(db.source, limit),
   TOP_RAIN_CACHE_MS,
 );
+type SignupSummary = {
+  total: number;
+  assessed: number;
+  attention: number;
+  monitoring: number;
+};
+const cachedSignupSummary = createPromiseCache<number, SignupSummary>(
+  async (attentionScore) => {
+    const result = await db.antifraud.query<SignupSummary>(
+      `
+        SELECT
+          COUNT(*)::int AS total,
+          COUNT(sa.user_id)::int AS assessed,
+          COUNT(*) FILTER (WHERE sa.score >= $1)::int AS attention,
+          COUNT(*) FILTER (
+            WHERE EXISTS (
+              SELECT 1 FROM monitor_sessions ms
+              WHERE ms.user_id = s.user_id AND ms.status = 'active'
+            )
+          )::int AS monitoring
+        FROM subjects s
+        LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
+      `,
+      [attentionScore],
+    );
+    return result.rows[0] ?? {
+      total: 0,
+      assessed: 0,
+      attention: 0,
+      monitoring: 0,
+    };
+  },
+  30_000,
+);
 
 function ruleEventError(
   sequence: string[],
@@ -434,46 +468,20 @@ app.get("/v1/signups", async (request) => {
       `,
       [query.limit, offset],
     ),
-    db.antifraud.query<{
-      total: number;
-      assessed: number;
-      attention: number;
-      monitoring: number;
-    }>(
-      `
-        SELECT
-          COUNT(*)::int AS total,
-          COUNT(sa.user_id)::int AS assessed,
-          COUNT(*) FILTER (WHERE sa.score >= $1)::int AS attention,
-          COUNT(*) FILTER (
-            WHERE EXISTS (
-              SELECT 1 FROM monitor_sessions ms
-              WHERE ms.user_id = s.user_id AND ms.status = 'active'
-            )
-          )::int AS monitoring
-        FROM subjects s
-        LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
-      `,
-      [config.MONITOR_START_SCORE],
-    ),
+    cachedSignupSummary(config.MONITOR_START_SCORE),
   ]);
   return {
     data: rows.rows,
     pagination: {
       page: query.page,
       limit: query.limit,
-      total: summary.rows[0]?.total ?? 0,
+      total: summary.total,
       pages: Math.max(
         1,
-        Math.ceil((summary.rows[0]?.total ?? 0) / query.limit),
+        Math.ceil(summary.total / query.limit),
       ),
     },
-    summary: summary.rows[0] ?? {
-      total: 0,
-      assessed: 0,
-      attention: 0,
-      monitoring: 0,
-    },
+    summary,
   };
 });
 
