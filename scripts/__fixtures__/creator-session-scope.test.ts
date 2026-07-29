@@ -19,3 +19,17 @@ test("canonical metrics and dashboard do not fetch redundant creator windows", (
     assert.match(source, /\bEMPTY_CREATOR_SESSION_WINDOWS_CTE\b/);
   }
 });
+
+test("canonical metrics scope keeps only the documented inert window stub", () => {
+  const source = readFileSync(
+    path.join(root, "src/lib/metrics/scope.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /const sessionWindowsCte = EMPTY_CREATOR_SESSION_WINDOWS_CTE/);
+  assert.doesNotMatch(source, /\bsessionWindowsInner\b|\bCTE_PREFIX\b/);
+  assert.match(
+    source,
+    /CUSTOMER_EXCLUDED_ROLES = \["admin", "support", "creator"\]/,
+  );
+});

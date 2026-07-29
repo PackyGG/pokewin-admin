@@ -26,8 +26,8 @@ type DailyData = {
   battleWager: number;
   uniqueVisitors: number;
   newSignups: number;
-  avgDeposit: number;
-  avgBet: number;
+  medianDeposit: number;
+  medianBet: number;
   totalDeposit: number;
   totalBet: number;
   minDeposit: number;
@@ -42,24 +42,24 @@ type DailyData = {
   rewardAffiliate: number;
 };
 
-type AvgTooltipPayload = {
+type MedianTooltipPayload = {
   payload?: DailyData;
 };
 
-function AvgTooltip({
+function MedianTooltip({
   active,
   payload,
   label,
   kind,
 }: {
   active?: boolean;
-  payload?: AvgTooltipPayload[];
+  payload?: MedianTooltipPayload[];
   label?: string;
   kind: "deposit" | "bet";
 }) {
   if (!active || !payload?.length || !payload[0]?.payload) return null;
   const d = payload[0].payload;
-  const avg = kind === "deposit" ? d.avgDeposit : d.avgBet;
+  const median = kind === "deposit" ? d.medianDeposit : d.medianBet;
   const total = kind === "deposit" ? d.totalDeposit : d.totalBet;
   const min = kind === "deposit" ? d.minDeposit : d.minBet;
   const max = kind === "deposit" ? d.maxDeposit : d.maxBet;
@@ -71,7 +71,7 @@ function AvgTooltip({
       <div className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-0.5 text-muted-foreground">
         <span>Median</span>
         <span className="text-right font-semibold tabular-nums text-foreground">
-          {fmt(avg)}
+          {fmt(median)}
         </span>
         <span>Total</span>
         <span className="text-right font-semibold tabular-nums text-foreground">
@@ -105,12 +105,12 @@ const usersConfig = {
   newSignups: { label: "New Signups", color: "var(--color-chart-5)" },
 } satisfies ChartConfig;
 
-const avgDepositConfig = {
-  avgDeposit: { label: "Avg Deposit", color: "var(--color-chart-2)" },
+const medianDepositConfig = {
+  medianDeposit: { label: "Median Deposit", color: "var(--color-chart-2)" },
 } satisfies ChartConfig;
 
-const avgBetConfig = {
-  avgBet: { label: "Avg Bet", color: "var(--color-chart-4)" },
+const medianBetConfig = {
+  medianBet: { label: "Median Bet", color: "var(--color-chart-4)" },
 } satisfies ChartConfig;
 
 const rewardPayoutsConfig = {
@@ -270,15 +270,15 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         </CardContent>
       </Card>
 
-      {/* Avg Deposit */}
+      {/* Median Deposit */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
-            Avg Deposit <span className="text-xs font-normal text-muted-foreground">(median, outlier-resistant)</span>
+            Median Deposit <span className="text-xs font-normal text-muted-foreground">(outlier-resistant)</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={avgDepositConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
+          <ChartContainer config={medianDepositConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -295,11 +295,11 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 width={70}
                 tickFormatter={currencyFormatter}
               />
-              <ChartTooltip content={<AvgTooltip kind="deposit" />} />
+              <ChartTooltip content={<MedianTooltip kind="deposit" />} />
               <Line
                 type="monotone"
-                dataKey="avgDeposit"
-                stroke="var(--color-avgDeposit)"
+                dataKey="medianDeposit"
+                stroke="var(--color-medianDeposit)"
                 strokeWidth={2}
                 dot={false}
                 animationDuration={700}
@@ -310,15 +310,15 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         </CardContent>
       </Card>
 
-      {/* Avg Bet */}
+      {/* Median Bet */}
       <Card>
         <CardHeader>
           <CardTitle className="text-sm font-medium">
-            Avg Bet <span className="text-xs font-normal text-muted-foreground">(median, outlier-resistant)</span>
+            Median Bet <span className="text-xs font-normal text-muted-foreground">(outlier-resistant)</span>
           </CardTitle>
         </CardHeader>
         <CardContent>
-          <ChartContainer config={avgBetConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
+          <ChartContainer config={medianBetConfig} className="h-[240px] w-full md:h-[300px] lg:h-[340px]">
             <LineChart data={data} accessibilityLayer>
               <CartesianGrid vertical={false} />
               <XAxis
@@ -335,11 +335,11 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
                 width={70}
                 tickFormatter={currencyFormatter}
               />
-              <ChartTooltip content={<AvgTooltip kind="bet" />} />
+              <ChartTooltip content={<MedianTooltip kind="bet" />} />
               <Line
                 type="monotone"
-                dataKey="avgBet"
-                stroke="var(--color-avgBet)"
+                dataKey="medianBet"
+                stroke="var(--color-medianBet)"
                 strokeWidth={2}
                 dot={false}
                 animationDuration={700}
@@ -475,7 +475,7 @@ export function AnalyticsCharts({ data }: { data: DailyData[] }) {
         </CardContent>
       </Card>
 
-      {/* Users — moved to last position so the Avg Bet / Reward Payouts /
+      {/* Users — moved to last position so the Median Bet / Reward Payouts /
           Affiliate Payouts row is complete above it (all three chart cells
           on the same grid row per admin request). */}
       <Card>

@@ -20,6 +20,32 @@ test("daily gaming wager uses the canonical leg filter", () => {
   );
 });
 
+test("daily gaming buckets stay on the SQL date without local timezone parsing", () => {
+  const source = read("src/lib/metrics/queries.ts");
+  const daily = source.slice(source.indexOf("export async function getDailyGamingMetrics"));
+
+  for (const expression of [
+    "to_char(DATE(created_at), 'YYYY-MM-DD') AS date",
+    "to_char(DATE(obtained_at), 'YYYY-MM-DD') AS date",
+    "to_char(DATE(o.resolved_at), 'YYYY-MM-DD') AS date",
+  ]) {
+    assert.match(daily, new RegExp(expression.replace(/[()]/g, "\\$&")));
+  }
+  assert.doesNotMatch(daily, /new Date\(r\.date\)\.toISOString\(\)/);
+});
+
+test("analytics names percentile medians honestly through query and chart", () => {
+  const query = read("src/lib/queries/analytics.ts");
+  const chart = read("src/app/(admin)/analytics/charts.tsx");
+
+  assert.match(query, /PERCENTILE_CONT\(0\.5\)[\s\S]*AS median_deposit/);
+  assert.match(query, /PERCENTILE_CONT\(0\.5\)[\s\S]*AS median_bet/);
+  assert.doesNotMatch(query, /\bavg_(?:deposit|bet)\b/);
+  assert.match(chart, /medianDeposit: \{ label: "Median Deposit"/);
+  assert.match(chart, /medianBet: \{ label: "Median Bet"/);
+  assert.doesNotMatch(chart, /dataKey="avg(?:Deposit|Bet)"/);
+});
+
 test("analytics lifetime reads use the canonical bounded lookback", () => {
   const source = read("src/lib/queries/analytics.ts");
 

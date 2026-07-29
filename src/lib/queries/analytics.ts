@@ -16,17 +16,18 @@ import { MS_PER_DAY } from "@/lib/utils/time";
 // SQL fragment builder for user_id filtering on the secondary
 // `ledger_transactions` display aggregates (pack/battle wager tiles,
 // unique-depositor count, daily reward breakdown). SWEPT onto the central
-// canonical scope (`@/lib/metrics/scope` `getMetricsScope`): it drops
-// staff (admin/support) + the admin-managed blacklist AND — via an inline
-// session-window predicate — creator-on-session rows, while KEEPING
-// creators' off-session play. Previously this did a BLUNT role drop
-// (`role NOT IN ('admin','support','creator')`), excluding all creator
-// activity; the central session-window scope is the verified model and
-// keeps analytics on the SAME population as the headline GGR/NGR (which
-// come from `getDailyGamingMetrics`, also on the central scope). The
-// fragment assumes the aggregate's columns are `user_id` / `created_at`
-// (the shape of every aggregate this is appended to). Async because the
-// session windows are fetched (5-min cached) — see scope.ts.
+// canonical scope (`@/lib/metrics/scope` `getMetricsScope`): staff +
+// creators + the admin-managed blacklist are dropped WHOLESALE
+// (`role NOT IN ('admin','support','creator')` — owner decision
+// 2026-06-03; ALL creator activity is excluded, on- and off-session).
+// The appended session-window `NOT EXISTS` is the scope's permanently
+// inert stub (empty relation — see scope.ts), kept so this fragment
+// stays shape-compatible with the CTE-style consumers. This keeps
+// analytics on the SAME population as the headline GGR/NGR (which come
+// from `getDailyGamingMetrics`, also on the central scope). The fragment
+// assumes the aggregate's columns are `user_id` / `created_at` (the
+// shape of every aggregate this is appended to). Async because the scope
+// resolves the excluded-users blacklist.
 async function buildExclStaffFrag(): Promise<string> {
   const scope = await getMetricsScope();
   return scope.exclStaffSessionFrag();
@@ -165,8 +166,10 @@ export type AnalyticsData = {
     battleWager: number;
     uniqueVisitors: number;
     newSignups: number;
-    avgDeposit: number;
-    avgBet: number;
+    /** PERCENTILE_CONT(0.5) — the MEDIAN deposit size for the day. */
+    medianDeposit: number;
+    /** PERCENTILE_CONT(0.5) — the MEDIAN bet size for the day. */
+    medianBet: number;
     totalDeposit: number;
     totalBet: number;
     minDeposit: number;
@@ -195,8 +198,9 @@ async function computeAnalyticsData(
   const dateFilter = periodToDateFilter(period);
   // Per-request blacklist (cached via React cache) → build the staff
   // + blacklist SQL fragment once and re-use across every sub-query
-  // below. Same trick `dashboard.ts` uses. EXCL_STAFF_FRAG now comes from
-  // the central session-window scope (creators kept, on-session dropped).
+  // below. Same trick `dashboard.ts` uses. EXCL_STAFF_FRAG comes from the
+  // central canonical scope (staff + creators + blacklist dropped
+  // wholesale — see scope.ts).
   const EXCL_STAFF_FRAG = await buildExclStaffFrag();
   // Inline `AND id NOT IN (...)` for queries that filter directly on
   // the user table (rather than on `user_id IN (subquery)`). Empty
@@ -284,8 +288,8 @@ async function computeAnalyticsData(
           pack_wager: string;
           battle_wager: string;
           unique_visitors: string;
-          avg_deposit: string;
-          avg_bet: string;
+          median_deposit: string;
+          median_bet: string;
           total_deposit: string;
           total_bet: string;
           min_deposit: string;
@@ -312,11 +316,11 @@ async function computeAnalyticsData(
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
             CASE WHEN type::text = 'deposit'
               THEN ABS(amount::numeric) END
-          ), 0)::text AS avg_deposit,
+          ), 0)::text AS median_deposit,
           COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY
             CASE WHEN type::text IN ('pack_opening', 'battle_bet', 'battle_sponsorship')
               THEN ABS(amount::numeric) END
-          ), 0)::text AS avg_bet,
+          ), 0)::text AS median_bet,
           COALESCE(SUM(CASE
             WHEN type::text = 'deposit'
             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS total_deposit,
@@ -478,8 +482,8 @@ async function computeAnalyticsData(
       battleWager: toNumber(d.battle_wager),
       uniqueVisitors: Number(d.unique_visitors),
       newSignups: signupsMap.get(dateStr) ?? 0,
-      avgDeposit: toNumber(d.avg_deposit),
-      avgBet: toNumber(d.avg_bet),
+      medianDeposit: toNumber(d.median_deposit),
+      medianBet: toNumber(d.median_bet),
       totalDeposit: toNumber(d.total_deposit),
       totalBet: toNumber(d.total_bet),
       minDeposit: toNumber(d.min_deposit),
@@ -506,8 +510,8 @@ async function computeAnalyticsData(
         battleWager: 0,
         uniqueVisitors: 0,
         newSignups: count,
-        avgDeposit: 0,
-        avgBet: 0,
+        medianDeposit: 0,
+        medianBet: 0,
         totalDeposit: 0,
         totalBet: 0,
         minDeposit: 0,
@@ -539,8 +543,8 @@ async function computeAnalyticsData(
         battleWager: 0,
         uniqueVisitors: 0,
         newSignups: signupsMap.get(p.date) ?? 0,
-        avgDeposit: 0,
-        avgBet: 0,
+        medianDeposit: 0,
+        medianBet: 0,
         totalDeposit: 0,
         totalBet: 0,
         minDeposit: 0,

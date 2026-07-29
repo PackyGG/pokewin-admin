@@ -79,12 +79,13 @@ export type MetricWindow = {
 };
 
 // The canonical real-customer scope now lives in `./scope`
-// (`getMetricsScope`): staff + blacklist dropped, creators KEPT, and
-// creator-on-session rows excluded per-row via a session-window predicate
-// (NOT a blunt role drop). It is EXPORTED so the dashboard / analytics
-// hand-rolled scopes can be swept onto it ("one scope, fixed once"). The
-// builders below consume it; the old wholesale-creator-drop
-// `realCustomersScope` helper has been removed.
+// (`getMetricsScope`): staff + creators + blacklist dropped WHOLESALE —
+// `role NOT IN ('admin','support','creator')` (owner decision,
+// 2026-06-03: creator play, on- OR off-session, is content, not customer
+// revenue). The session-window predicate the scope also exposes is a
+// permanently inert no-op kept only for the CTE-injection contract (see
+// scope.ts). It is EXPORTED so the dashboard / analytics hand-rolled
+// scopes can be swept onto it ("one scope, fixed once").
 
 /** Inline `AND created_at >= <since>` clause, or empty for lifetime. */
 function sinceClause(column: string, since: Date | null): string {
@@ -221,9 +222,9 @@ export type GamingLegs = {
 export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
   return withTiming("metrics.gamingLegs", async () => {
     const db = await getReadDrizzleDb();
-    // Canonical scope: staff + blacklist dropped, creators KEPT, with
-    // creator-on-session rows excluded per-row via the session-window
-    // predicate (symmetric on wager + payout). See scope.ts.
+    // Canonical scope: staff + creators + blacklist dropped wholesale
+    // (owner decision 2026-06-03). The session-window predicate below is
+    // a permanently inert no-op kept for the CTE contract. See scope.ts.
     const scope = await getMetricsScope();
     const since = window.since;
 
@@ -273,12 +274,10 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       ),
       // Upgrader from upgrader_games (real gameplay, not in the ledger).
       // `null` on a pre-upgrader DB (to_regclass guard) → contributes 0.
-      // NOTE: upgraderMetrics uses the wholesale-creator-drop scope (a
-      // shared reader also used by insights-games); the ledger/inventory
-      // legs above use the session-window scope. So creator OFF-session
-      // packs/battles count but creator upgrader never does — a documented
-      // minor asymmetry (upgrader is a smaller product line and the shared
-      // reader is intentionally left untouched).
+      // upgraderMetrics inlines the same wholesale-creator-drop scope
+      // (`role NOT IN ('admin','support','creator')` + blacklist) that
+      // `getMetricsScope` applies to the ledger/inventory legs above, so
+      // all legs are on the same population.
       upgraderMetrics(window),
       // Double Down from battle_double_down_offers (real gameplay, NOT in
       // the ledger — DD money moves via the paired payout voucher). Uses
@@ -473,9 +472,9 @@ export type RewardCost = {
 export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
     const db = await getReadDrizzleDb();
-    // Same canonical session-window scope as the gaming legs so NGR is on
-    // the SAME population as GGR (staff + blacklist dropped, creators kept,
-    // creator-on-session reward rows excluded).
+    // Same canonical scope as the gaming legs so NGR is on the SAME
+    // population as GGR (staff + creators + blacklist dropped wholesale;
+    // the session-window predicate is an inert no-op — see scope.ts).
     const scope = await getMetricsScope();
     const since = window.since;
     const countedAdj = countedAdjustmentSqlPredicate();
@@ -647,70 +646,53 @@ export async function getWindowMetrics(opts: {
 }): Promise<WindowMetrics> {
   const { window } = opts;
 
-  // The canonical Postgres read — the gaming legs + reward legs composed with
-  // the pure `formulas.ts` arithmetic. Deferred into a thunk so the CQRS
-  // serve-path resolver (`resolveAdminRead`) can run it ONLY when this surface
-  // this never executes — no heavy Postgres aggregate).
-  const pgRead = async (): Promise<WindowMetrics> => {
-    const [legs, reward] = await Promise.all([
-      getGamingLegs(window),
-      getRewardCost(window),
-    ]);
+  // One Postgres read — the gaming legs + reward legs composed with the
+  // pure `formulas.ts` arithmetic.
+  const [legs, reward] = await Promise.all([
+    getGamingLegs(window),
+    getRewardCost(window),
+  ]);
 
-    // legs already include upgrader + double down (folded in by
-    // getGamingLegs). `battleRefund` carries the ledger gaming-payout legs
-    // PLUS upgrader payout; `wager`/`bets` likewise include upgrader AND
-    // DD. DD payout is carried on the separate `ddPayout` field so
-    // `gamingPayoutTotal` sums it as its own leg (kept transparent for
-    // future breakdowns). Pass them straight through — no separate term.
-    const wager = legs.wager;
-    const gamingPayout = gamingPayoutTotal({
-      inventoryPayout: legs.inventoryPayout,
-      battleRefund: legs.battleRefund,
-      ddPayout: legs.ddPayout,
-    });
-    const bets = legs.bets;
+  // legs already include upgrader + double down (folded in by
+  // getGamingLegs). `battleRefund` carries the ledger gaming-payout legs
+  // PLUS upgrader payout; `wager`/`bets` likewise include upgrader AND
+  // DD. DD payout is carried on the separate `ddPayout` field so
+  // `gamingPayoutTotal` sums it as its own leg (kept transparent for
+  // future breakdowns). Pass them straight through — no separate term.
+  const wager = legs.wager;
+  const gamingPayout = gamingPayoutTotal({
+    inventoryPayout: legs.inventoryPayout,
+    battleRefund: legs.battleRefund,
+    ddPayout: legs.ddPayout,
+  });
+  const bets = legs.bets;
 
-    const ggrValue = ggrFormula({ wager, gamingPayout });
-    const rainHouseCostInput: RainHouseCost =
-      opts.rainHouseCost ?? {
-        kind: "net",
-        rainWinTotal: reward.rainWinTotal,
-        rainTipTotal: reward.rainTipTotal,
-      };
-    const rainHouseCost = resolveRainHouseCost(rainHouseCostInput);
-    const ngrValue = ngrFormula({
-      ggr: ggrValue,
-      rewardCostExclRain: reward.rewardCostExclRain,
-      rainHouseCost: rainHouseCostInput,
-    });
-
-    return {
-      wager,
-      gamingPayout,
-      ggr: ggrValue,
-      ngr: ngrValue,
-      rtp: empiricalRtp({ gamingPayout, wager, bets }),
-      houseEdge: empiricalHouseEdge({ wager, ggr: ggrValue, bets }),
-      bets,
+  const ggrValue = ggrFormula({ wager, gamingPayout });
+  const rainHouseCostInput: RainHouseCost =
+    opts.rainHouseCost ?? {
+      kind: "net",
       rainWinTotal: reward.rainWinTotal,
       rainTipTotal: reward.rainTipTotal,
-      rainHouseCost,
     };
+  const rainHouseCost = resolveRainHouseCost(rainHouseCostInput);
+  const ngrValue = ngrFormula({
+    ggr: ggrValue,
+    rewardCostExclRain: reward.rewardCostExclRain,
+    rainHouseCost: rainHouseCostInput,
+  });
+
+  return {
+    wager,
+    gamingPayout,
+    ggr: ggrValue,
+    ngr: ngrValue,
+    rtp: empiricalRtp({ gamingPayout, wager, bets }),
+    houseEdge: empiricalHouseEdge({ wager, ggr: ggrValue, bets }),
+    bets,
+    rainWinTotal: reward.rainWinTotal,
+    rainTipTotal: reward.rainTipTotal,
+    rainHouseCost,
   };
-
-  // A caller-supplied CUSTOM `rainHouseCost` (e.g. `{ kind: "full" }`) has no
-  // current caller uses the default net model (so this only guards a future
-  // override), and it keeps the served NGR correct under a custom rain model.
-  if (opts.rainHouseCost) {
-    return pgRead();
-  }
-
-  // CQRS serve path for the `dashboard_headline_ggr` surface:
-  //     caller's unstable_cache/safeQuery degrades — no Postgres re-run).
-  //   • comparison → serve Postgres, fire-and-forget drift log (unchanged).
-  //   • off        → serve Postgres (today's behavior).
-  return pgRead();
 }
 
 // ─── Daily canonical gaming-margin series ────────────────────────────
@@ -765,16 +747,15 @@ export async function getDailyGamingMetrics(
 ): Promise<DailyGamingMetricPoint[]> {
   return withTiming("metrics.dailyGamingMetrics", async () => {
     const db = await getReadDrizzleDb();
-    // Canonical session-window scope for the ledger + inventory legs.
+    // Canonical wholesale customer scope for the ledger + inventory legs.
     const scope = await getMetricsScope();
     const since = window.since;
     const countedAdj = countedAdjustmentSqlPredicate();
 
-    // Upgrader uses the wholesale-creator-drop scope (matching the shared
-    // `upgraderMetrics` reader), so the daily upgrader figure here agrees
-    // with `getGamingLegs`' upgrader fold. (Same documented asymmetry as
-    // getGamingLegs: creator upgrader is dropped wholesale while creator
-    // off-session packs/battles count.)
+    // Upgrader uses the same wholesale-creator-drop scope as the shared
+    // `upgraderMetrics` reader — the same population `getMetricsScope`
+    // applies to the ledger/inventory legs — so the daily upgrader figure
+    // here agrees with `getGamingLegs`' upgrader fold.
     const upgScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistNotInClause(
       "u.id",
       await getExcludedUserIds(),
@@ -797,23 +778,28 @@ export async function getDailyGamingMetrics(
     const hasUpgrader = upgProbe[0]?.exists != null;
     const hasDoubleDown = ddProbe[0]?.exists != null;
 
+    // The day key is emitted as TEXT in SQL (`to_char(..., 'YYYY-MM-DD')`)
+    // rather than re-derived in JS from a driver-parsed Date: a Postgres
+    // DATE comes back as a JS Date at LOCAL midnight, so the old
+    // `toISOString().slice(0, 10)` re-labelled every bucket to the
+    // previous day on any process running east of UTC.
     type LedgerDayRow = {
-      date: Date;
+      date: string;
       wager: string;
       battle_refund: string;
       reward_excl_rain: string;
       rain_win: string;
       rain_tip: string;
     };
-    type InvDayRow = { date: Date; inv_payout: string };
-    type UpgDayRow = { date: Date; upg_wager: string; upg_payout: string };
-    type DdDayRow = { date: Date; dd_wager: string; dd_payout: string };
+    type InvDayRow = { date: string; inv_payout: string };
+    type UpgDayRow = { date: string; upg_wager: string; upg_payout: string };
+    type DdDayRow = { date: string; dd_wager: string; dd_payout: string };
 
     const [ledgerRows, invRows, upgRows, ddRows] = await Promise.all([
       queryRows<LedgerDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
-           DATE(created_at) AS date,
+           to_char(DATE(created_at), 'YYYY-MM-DD') AS date,
            -- Per-day wager. Mirrors getGamingLegs / WAGER_LEG_FILTER exactly
            -- (borrow-net-INCLUSIVE basis — owner decision, see gaming-sql.ts):
            --  • pack_opening: counted unless a reward/daily pack
@@ -855,7 +841,7 @@ export async function getDailyGamingMetrics(
       queryRows<InvDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
-           DATE(obtained_at) AS date,
+           to_char(DATE(obtained_at), 'YYYY-MM-DD') AS date,
            COALESCE(SUM(value_at_obtained::numeric), 0)::text AS inv_payout
          FROM user_inventory
          WHERE source_type IN ('pack','battle')
@@ -876,7 +862,7 @@ export async function getDailyGamingMetrics(
       hasUpgrader
         ? queryRows<UpgDayRow[]>(db,
             `SELECT
-               DATE(created_at) AS date,
+               to_char(DATE(created_at), 'YYYY-MM-DD') AS date,
                COALESCE(SUM(bet_amount::numeric), 0)::text AS upg_wager,
                COALESCE(SUM(won_amount::numeric), 0)::text AS upg_payout
              FROM upgrader_games
@@ -893,7 +879,7 @@ export async function getDailyGamingMetrics(
       hasDoubleDown
         ? queryRows<DdDayRow[]>(db,
             `SELECT
-               DATE(o.resolved_at) AS date,
+               to_char(DATE(o.resolved_at), 'YYYY-MM-DD') AS date,
                COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS dd_wager,
                COALESCE(SUM(CASE WHEN o.result = 'win'
                                  THEN v.value::numeric ELSE 0 END), 0)::text AS dd_payout
@@ -933,10 +919,8 @@ export async function getDailyGamingMetrics(
       rainTipTotal: 0,
       ddPayout: 0,
     });
-    const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
-
     for (const r of ledgerRows) {
-      const key = dayKey(r.date);
+      const key = r.date;
       const e = byDate.get(key) ?? blank();
       e.wager += toNumber(r.wager);
       e.battleRefund += toNumber(r.battle_refund);
@@ -946,7 +930,7 @@ export async function getDailyGamingMetrics(
       byDate.set(key, e);
     }
     for (const r of invRows) {
-      const key = dayKey(r.date);
+      const key = r.date;
       const e = byDate.get(key) ?? blank();
       e.inventoryPayout += toNumber(r.inv_payout);
       byDate.set(key, e);
@@ -955,7 +939,7 @@ export async function getDailyGamingMetrics(
     // won_amount → the payout side (battleRefund), so daily GGR =
     // pack + battle + upgrader and Σ daily reconciles with the headline.
     for (const r of upgRows) {
-      const key = dayKey(r.date);
+      const key = r.date;
       const e = byDate.get(key) ?? blank();
       e.wager += toNumber(r.upg_wager);
       e.battleRefund += toNumber(r.upg_payout);
@@ -967,7 +951,7 @@ export async function getDailyGamingMetrics(
     // pack + battle + upgrader + double-down and Σ daily reconciles with
     // the headline. Bucketed by resolved_at (same as the headline fold).
     for (const r of ddRows) {
-      const key = dayKey(r.date);
+      const key = r.date;
       const e = byDate.get(key) ?? blank();
       e.wager += toNumber(r.dd_wager);
       e.ddPayout += toNumber(r.dd_payout);
@@ -1010,8 +994,8 @@ export async function getDailyGamingMetrics(
 
 /**
  * Σ |amount| over an arbitrary set of ledger types for a window, through
- * the SAME canonical scope as the gaming metrics (`getMetricsScope`: staff
- * + blacklist dropped, creators kept, creator-on-session rows excluded).
+ * the SAME canonical scope as the gaming metrics (`getMetricsScope`:
+ * staff + creators + blacklist dropped wholesale).
  * Provided so cost-breakdown / residual surfaces can sum RESIDUAL_TYPES
  * (or any subset) and have their residual reconcile against GGR/NGR
  * without re-deriving the predicate. The type list is rendered via

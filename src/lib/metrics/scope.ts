@@ -25,29 +25,27 @@ import { EMPTY_CREATOR_SESSION_WINDOWS_CTE } from "@/lib/queries/creator-session
  *      breakdown (won ~$20.6k of cards off a ~$3.4k wager ≈ 600%), which
  *      is content, not customer gambling.
  *   2. The user is NOT on the admin-managed excluded-users blacklist.
- *   3. The row is NOT a creator-on-session row — its timestamp does not
- *      fall inside one of that creator's deal/stream session windows
- *      (`getCreatorSessionWindowsCte`). This predicate is now REDUNDANT
- *      with (1) — once every creator is dropped wholesale, no creator row
- *      survives to (3) anyway — but it is kept (harmless, a no-op for the
- *      now-excluded creators) so the CTE-injection contract the consumers
- *      rely on (`sessionWindowsCte` + `notInCreatorSession`) stays intact
- *      and the borrow/blacklist plumbing is untouched. It still guards the
- *      best-effort caveat below for any non-creator edge case.
- *   4. Borrow plays are excluded on both sides — handled by the borrow
- *      fragments in `queries.ts` (`NON_BORROW_*`), not here, because
- *      borrow correction is per-game-session, not per-user.
+ *   3. (INERT) The row is NOT a creator-on-session row. This predicate is
+ *      PERMANENTLY a no-op: (1) already drops every creator wholesale, so
+ *      `getMetricsScope` injects the EMPTY session-windows relation
+ *      (`EMPTY_CREATOR_SESSION_WINDOWS_CTE`) — no backend fetch ever runs
+ *      here — and the `NOT EXISTS` matches nothing. The CTE-injection
+ *      contract the consumers rely on (`sessionWindowsCte` +
+ *      `notInCreatorSession`) is kept so their SQL stays structurally
+ *      unchanged.
+ *   4. Borrow correction is handled by the shared leg fragments in
+ *      `gaming-sql.ts`, not here (the current basis is borrow-net-
+ *      INCLUSIVE — see queries.ts), because it is per-game-session, not
+ *      per-user.
  *
- * BEST-EFFORT CAVEAT (inherited from `getCreatorSessionWindowsCte`): the
- * session windows are fetched from the backend creators API and cached
- * 5 min; on a backend failure the helper yields an EMPTY relation, so the
- * creator-on-session exclusion (3) degrades to a NO-OP. This used to mean
- * creator on-stream play could leak in until the backend recovered — but
- * that leak is now CLOSED because the wholesale creator drop in (1) is the
- * primary exclusion and is NOT best-effort: it always applies (a plain
- * `role NOT IN (...)` on `"user"`, no backend dependency). The
- * staff + creator + blacklist drop in (1)/(2) always holds; (3) is the
- * now-redundant belt-and-braces layer.
+ * INERT SESSION-WINDOW STUB: earlier revisions fetched real creator
+ * deal/stream windows via `getCreatorSessionWindowsCte` (backend creators
+ * API, 5-min cached, best-effort). Since the wholesale creator drop in
+ * (1) — a plain `role NOT IN (...)` on `"user"` with no backend
+ * dependency — that fetch became pointless, so this scope now always
+ * injects the empty relation and never talks to the backend. There is no
+ * best-effort leak window. If per-session scoping is ever needed again,
+ * wire `getCreatorSessionWindowsCte()` back in here.
  *
  * ─── TWO CONSUMPTION SHAPES ──────────────────────────────────────────
  *
@@ -90,26 +88,14 @@ const CUSTOMER_EXCLUDED_ROLES_SQL = `(${CUSTOMER_EXCLUDED_ROLES.map(
 ).join(", ")})`;
 
 /**
- * Extract the inner relation expression from the
- * `session_windows(uid, win_start, win_end) AS (<BODY>)` CTE string that
- * `getCreatorSessionWindowsCte` returns, so it can be inlined as a
- * sub-relation in a `NOT EXISTS`. Returns `<BODY>` (either a `VALUES ...`
- * list or the empty-relation `SELECT … WHERE false`).
- *
- * Defensive: if the prefix/suffix ever change shape, fall back to the
- * empty relation (exclusion becomes a no-op rather than producing invalid
- * SQL — same fail-open posture as the backend-down case).
+ * Inner relation of the (always-empty) session-windows stub — inlined by
+ * `exclStaffSessionFrag` for flat queries that cannot carry a CTE. A
+ * static constant: `getMetricsScope` always injects the empty CTE (see
+ * the INERT SESSION-WINDOW STUB note above), so there is nothing to
+ * parse out of a dynamic window list anymore. Must stay shape-identical
+ * to the body of `EMPTY_CREATOR_SESSION_WINDOWS_CTE`.
  */
-const CTE_PREFIX = "session_windows(uid, win_start, win_end) AS (";
 const EMPTY_INNER = "SELECT NULL::text, NULL::timestamptz, NULL::timestamptz WHERE false";
-
-function sessionWindowsInner(cte: string): string {
-  const trimmed = cte.trim();
-  if (trimmed.startsWith(CTE_PREFIX) && trimmed.endsWith(")")) {
-    return trimmed.slice(CTE_PREFIX.length, -1);
-  }
-  return EMPTY_INNER;
-}
 
 export type MetricsScope = {
   /**
@@ -128,9 +114,8 @@ export type MetricsScope = {
   /**
    * Per-row predicate (for CTE-style queries that injected
    * `sessionWindowsCte`): resolves TRUE when the row is NOT a
-   * creator-on-session row, i.e. there is no session window for that user
-   * covering the row's timestamp. Non-creator users never match a window,
-   * so they are always kept.
+   * creator-on-session row. With the inert empty stub this is ALWAYS
+   * true — kept so consumer SQL stays structurally unchanged.
    *
    * `userCol` / `tsCol` are inlined verbatim — pass only hardcoded,
    * trusted identifiers (`lt.user_id`, `ui.obtained_at`, …).
@@ -138,8 +123,9 @@ export type MetricsScope = {
   notInCreatorSession: (userCol: string, tsCol: string) => string;
   /**
    * Self-contained scope fragment for flat queries: drops staff +
-   * blacklist AND creator-on-session rows in one `AND …` string, WITHOUT
-   * needing a CTE (the session windows are inlined as a sub-relation).
+   * creators + blacklist in one `AND …` string, WITHOUT needing a CTE.
+   * The retained session-window predicate is inert because its inline
+   * relation is always empty.
    *
    * Defaults: `userCol = 'user_id'`, `tsCol = 'created_at'` (the shape of
    * the `ledger_transactions` aggregates in `analytics.ts`). Pass
@@ -156,10 +142,10 @@ export type MetricsScope = {
 };
 
 /**
- * Resolve the canonical metric scope ONCE (blacklist + creator session
- * windows). Cheap to call repeatedly: `getExcludedUserIds` is
- * React-`cache()`d and `getCreatorSessionWindowsCte` is 5-min
- * cross-request cached.
+ * Resolve the canonical metric scope ONCE (blacklist + the inert
+ * session-window stub). Cheap to call repeatedly: `getExcludedUserIds`
+ * is React-`cache()`d and the session-windows CTE is a static empty
+ * constant — no backend or extra DB round-trip happens here.
  */
 export async function getMetricsScope(): Promise<MetricsScope> {
   const excluded = await getExcludedUserIds();
@@ -170,10 +156,10 @@ export async function getMetricsScope(): Promise<MetricsScope> {
   // Customer scope: drop staff + creators wholesale (+ blacklist). The
   // creator drop here is what keeps creators' off-stream, house-funded
   // "for content" play out of customer GGR/NGR/P&L on BOTH sides (wager
-  // and inventory wins) — the session-window predicate below is now a
-  // redundant no-op for creators but is left intact (harmless).
+  // and inventory wins) — the session-window predicate below is an inert
+  // no-op left intact for the CTE contract (harmless).
   const userScopeSql = `(SELECT id FROM "user" u WHERE u.role NOT IN ${CUSTOMER_EXCLUDED_ROLES_SQL} ${blacklist})`;
-  const inner = sessionWindowsInner(sessionWindowsCte);
+  const inner = EMPTY_INNER;
 
   const notInCreatorSession = (userCol: string, tsCol: string): string =>
     `NOT EXISTS (
