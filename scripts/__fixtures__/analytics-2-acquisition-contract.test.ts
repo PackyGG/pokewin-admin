@@ -28,6 +28,7 @@ test("Analytics 2 sits directly below Analytics and inherits its grant", () => {
   assert.equal(analytics2?.id, "nav.analytics-2");
   assert.equal(analytics2?.href, "/analytics-2");
   assert.equal(analytics2?.pageKey, "/analytics");
+  assert.equal(analytics2?.isNew, true);
   assert.match(pageSource, /requirePageAccess\("\/analytics"\)/);
 });
 

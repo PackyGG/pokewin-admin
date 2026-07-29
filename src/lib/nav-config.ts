@@ -166,6 +166,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     icon: "TrendingUp",
     description: "Daily acquisition and depositor activity",
     keywords: ["signups", "ftd", "depositors", "acquisition"],
+    isNew: true,
     inSidebar: true,
     inPalette: true,
   },
