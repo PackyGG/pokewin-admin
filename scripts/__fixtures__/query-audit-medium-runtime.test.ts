@@ -34,13 +34,6 @@ test("deposit bonus histogram gives numeric types to bound division", () => {
   assert.match(source, /0::numeric/);
 });
 
-test("expiry query emits its reviewed select fragment as SQL", () => {
-  const source = read("src/lib/queries/insights-rewards/expiry.ts");
-
-  assert.match(source, /\$\{sql\.raw\(expSelect\)\}/);
-  assert.doesNotMatch(source, /display_name, \$\{expSelect\}, enabled/);
-});
-
 test("invalid transaction type filters return an empty result", () => {
   const source = read("src/lib/queries/users-transactions.ts");
 

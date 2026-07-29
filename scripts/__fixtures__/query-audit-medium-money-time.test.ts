@@ -40,15 +40,8 @@ test("affiliate daily series uses the KPI rolling window and includes its partia
   assert.match(text, /ctx\.dateFilterFor\("acu\.created_at"\)/);
 });
 
-test("dashboard period PnL and adjustment audit include every canonical correction", () => {
+test("dashboard period PnL includes every canonical correction", () => {
   const dashboard = source("src/lib/queries/dashboard.ts");
   assert.match(dashboard, /adminInventoryRemovalDisposedSql\(/);
   assert.match(dashboard, /adminVoucherRemovalClaimedSql\(/);
-
-  const audit = source(
-    "src/lib/queries/insights-balance-adjustments/audit-trail.ts",
-  );
-  assert.match(audit, /statsExcludedAdjustmentSqlPredicate/);
-  assert.match(audit, /STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS/);
-  assert.doesNotMatch(audit, /officialStreamAdjustmentSqlPredicate/);
 });

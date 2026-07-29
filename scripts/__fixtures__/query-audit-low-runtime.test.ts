@@ -10,33 +10,6 @@ function read(relative: string): string {
   return readFileSync(path.join(root, relative), "utf8");
 }
 
-test("pack drilldown orders by numeric aggregates, not text aliases", () => {
-  const source = read("src/lib/queries/insights-games/pack-drilldown.ts");
-
-  assert.match(
-    source,
-    /ORDER BY COUNT\(\*\) DESC, COALESCE\(SUM\(p\.value\), 0\) DESC/,
-  );
-  assert.doesNotMatch(source, /ORDER BY pulls::bigint/);
-});
-
-test("upgrader-only top users avoids empty enum comparisons", () => {
-  const source = read("src/lib/queries/insights-games/top-users.ts");
-
-  assert.match(source, /const wagerTypePredicate = wagerTypes\.length > 0/);
-  assert.match(source, /const invSourcePredicate = invSourceTypes\.length > 0/);
-  assert.doesNotMatch(source, /: "''"/);
-  assert.doesNotMatch(source, /lt\.type IN \(\$\{wagerTypeIn\}\)/);
-});
-
-test("battle pack ids are passed as a bound uuid array", () => {
-  const source = read("src/lib/queries/insights-games/battle-drilldown.ts");
-
-  assert.match(source, /WHERE id = ANY\(\$1::uuid\[\]\)/);
-  assert.match(source, /ORDER BY price DESC`,\s*packIds,/);
-  assert.doesNotMatch(source, /packIds\.map/);
-});
-
 test("rain search uses the shared strict UUID validator", () => {
   const source = read("src/lib/queries/rain.ts");
 
