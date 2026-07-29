@@ -23,7 +23,8 @@ export function LinkMainUserCard({ detail }: { detail: AdminUserDetail }) {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
-    if (query.length < 2) {
+    // Keep in sync with the server-side minimum in searchMainSiteUsers.
+    if (query.trim().length < 3) {
       setResults([]);
       return;
     }

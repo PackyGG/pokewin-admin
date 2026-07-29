@@ -2,7 +2,7 @@
 
 import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
-import { eq, ilike, or, sql } from "drizzle-orm";
+import { eq, or, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
@@ -259,18 +259,33 @@ export async function updateUserPermissions(
 }
 
 export async function searchMainSiteUsers(query: string) {
-  const db = await getPrimaryDrizzleDb();
+  // Auth first — never grab a DB handle before the caller is verified.
   await requireAdmin();
+  const db = await getPrimaryDrizzleDb();
 
-  if (!query || query.length < 2) return [];
+  // Minimum 3 chars — this fires per keystroke against prod, so keep the
+  // match selective.
+  const trimmed = (query ?? "").trim();
+  if (trimmed.length < 3) return [];
 
+  // Escape LIKE metacharacters so a literal "%" / "_" in the input matches
+  // literally instead of widening the pattern (same JS-escape + ESCAPE '\'
+  // convention as buildUserListWhereClause in src/lib/queries/users-list.ts).
+  const escaped = trimmed.toLowerCase().replace(/[%_\\]/g, (m) => `\\${m}`);
+  const prefixPattern = `${escaped}%`;
+
+  // Prefix-anchored LOWER(col) LIKE — NOT a leading-wildcard ILIKE. Verified
+  // via read-only probe (2026-07-29): pg_trgm is NOT installed on MAIN (so
+  // substring matching cannot be indexed), but idx_user_lower_username_prefix
+  // and idx_user_lower_email_prefix (lower(col) text_pattern_ops) EXIST and
+  // serve exactly this shape — see prisma/recommended-indexes.sql #15.
   const users = await db
     .select({ id: user.id, username: user.username, email: user.email, role: user.role })
     .from(user)
     .where(
       or(
-        ilike(user.username, `%${query}%`),
-        ilike(user.email, `%${query}%`),
+        sql`LOWER(${user.username}) LIKE ${prefixPattern} ESCAPE '\\'`,
+        sql`LOWER(${user.email}) LIKE ${prefixPattern} ESCAPE '\\'`,
       ),
     )
     .limit(10);
@@ -284,8 +299,16 @@ export async function searchMainSiteUsers(query: string) {
 }
 
 export async function linkCreatorToMainUser(adminUserId: string, mainUserId: string) {
-  const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
+  // Enforce the catalog capability — the permission picker exposes this
+  // toggle, so the action must actually honor it (admins/owner bypass inside
+  // requireCapability).
+  await requireCapability(
+    session,
+    "__can_link_creator_main_user",
+    "link creator accounts to main site users",
+  );
+  const db = await getPrimaryDrizzleDb();
 
   const adminResult = await adminDrizzle.execute<{
     role: string;

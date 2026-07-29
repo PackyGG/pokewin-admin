@@ -469,6 +469,13 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_pf_result_metadata_pack_id_created_a
 -- Match the indexed expression to the query EXACTLY: lower(col) with
 -- text_pattern_ops. (username/email are also UNIQUE, but those uniques
 -- are plain btrees on the raw value and cannot serve a lowered LIKE.)
+--
+-- ADDITIONAL CONSUMER (2026-07-29): searchMainSiteUsers in
+-- src/app/(admin)/admin-users/[id]/actions.ts (the creator→main-user link
+-- picker) was rewritten from a per-keystroke leading-wildcard ILIKE OR to
+-- this exact prefix shape (`LOWER(username/email) LIKE 'term%' ESCAPE '\'`),
+-- so it rides the two EXISTING username/email prefix indexes below —
+-- re-verified live that day: both exist, pg_trgm still NOT installed.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_lower_username_prefix
   ON "user" (LOWER(username) text_pattern_ops);
 
