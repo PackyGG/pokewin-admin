@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { revalidatePath } from "next/cache";
 import { eq, or, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
-import { getPrimaryDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import {
   affiliate_accounts,
   affiliate_codes,
@@ -261,7 +261,7 @@ export async function updateUserPermissions(
 export async function searchMainSiteUsers(query: string) {
   // Auth first — never grab a DB handle before the caller is verified.
   await requireAdmin();
-  const db = await getPrimaryDrizzleDb();
+  const db = await getReadDrizzleDb();
 
   // Minimum 3 chars — this fires per keystroke against prod, so keep the
   // match selective.
