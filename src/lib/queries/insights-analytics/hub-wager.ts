@@ -51,9 +51,6 @@ import { MS_PER_DAY, MS_PER_MINUTE } from "@/lib/utils/time";
 /** Lifetime lookback cap (days) for the hub wager — matches the 365d cap used across /ggr + insights. */
 export const INSIGHTS_HUB_WAGER_LOOKBACK_DAYS = 365;
 
-/** 30-day window for the Edge Plan 2.0 headline (same math, shorter cutoff). */
-export const INSIGHTS_HUB_WAGER_30D_LOOKBACK_DAYS = 30;
-
 /** "now" floored to the whole minute so the period-keyed cache key is stable for 60s. */
 function bucketedNow(): Date {
   return new Date(Math.floor(Date.now() / MS_PER_MINUTE) * MS_PER_MINUTE);
@@ -126,16 +123,4 @@ async function hubWagerForLookbackDays(lookbackDays: number): Promise<number> {
  */
 export async function getInsightsHubWager(): Promise<number> {
   return hubWagerForLookbackDays(INSIGHTS_HUB_WAGER_LOOKBACK_DAYS);
-}
-
-/**
- * The SAME hub-wager math on a 30-day window — the Edge Plan 2.0 headline
- * anchor ("Wager (30d, real customers)"). Additive export: identical scope
- * (borrow-net real amounts, creator-sessions excluded, sponsored battles +
- * upgrader included), identical cached reader, only the cutoff differs —
- * so the Edge Plan headline reconciles with the /insights hub tile by
- * construction (same helper, different clearly-labeled window).
- */
-export async function getInsightsHubWager30d(): Promise<number> {
-  return hubWagerForLookbackDays(INSIGHTS_HUB_WAGER_30D_LOOKBACK_DAYS);
 }

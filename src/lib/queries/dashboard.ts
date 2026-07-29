@@ -1015,62 +1015,6 @@ const cachedUserCounts = unstable_cache(
 );
 
 /**
- * Rolling-24h activity counts only: signups, packs opened, battles played.
- *
- * Exposed as a public function so the docked Recent Activity widget — which
- * lives in the admin shell on every page, not just `/dashboard` — can power
- * its count strip without pulling the full `getDashboardStats` aggregate
- * (which scans ~20 ledger / balance / FTD queries the widget doesn't need).
- *
- * Reuses the SAME three caches the dashboard hits (`cachedUserCounts`,
- * `cached24hPackOpens`, `cached24hBattles`) so the widget piggy-backs on the
- * dashboard's 60s / 5min cache windows — zero extra DB pressure once warm,
- * and the values match what the dashboard renders at the same instant.
- *
- * Staff + blacklisted users are excluded (same filter the dashboard uses).
- */
-export async function getActivityCounts24h(): Promise<{
-  signups24h: number;
-  packsOpened24h: number;
-  battlesPlayed24h: number;
-}> {
-  const blacklistIdNotIn = blacklistNotInClause(
-    "id",
-    await getExcludedUserIds(),
-  );
-  // Start-of-day/week/month aren't read here (the widget only needs the
-  // rolling-24h signup count) but cachedUserCounts takes them as part of
-  // its cache key, so we pass deterministic values. Re-using the same
-  // computed start-of-day the dashboard uses keeps the cache key
-  // identical so this call dedupes against the dashboard's call within
-  // the 5-min TTL window.
-  const now = new Date();
-  const startOfDay = new Date(now);
-  startOfDay.setUTCHours(0, 0, 0, 0);
-  const startOfWeek = new Date(startOfDay);
-  startOfWeek.setUTCDate(startOfDay.getUTCDate() - startOfDay.getUTCDay());
-  const startOfMonth = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1),
-  );
-
-  const [userCounts, packsOpened24h, battlesPlayed24h] = await Promise.all([
-    cachedUserCounts(
-      blacklistIdNotIn,
-      startOfDay.toISOString(),
-      startOfWeek.toISOString(),
-      startOfMonth.toISOString(),
-    ),
-    cached24hPackOpens(blacklistIdNotIn),
-    cached24hBattles(blacklistIdNotIn),
-  ]);
-  return {
-    signups24h: Number(userCounts[0]?.rolling24h ?? 0),
-    packsOpened24h,
-    battlesPlayed24h,
-  };
-}
-
-/**
  * Lifetime total-user count for the admin top-bar pill (shown on EVERY admin
  * page, to the LEFT of the GGR pill).
  *

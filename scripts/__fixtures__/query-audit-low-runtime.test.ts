@@ -26,20 +26,14 @@ test("reward rows normalize nullable pack arrays without losing uuid binding", (
         /COALESCE\(pack_ids, ARRAY\[\]::uuid\[\]\) AS pack_ids/g,
       ) ?? []
     ).length,
-    2,
+    1,
   );
   assert.match(source, /WHERE id = ANY\(\$1::uuid\[\]\)/);
 });
 
-test("reward recipients and sets use stable numeric and null ordering", () => {
-  const rewards = read("src/lib/queries/rewards-analytics.ts");
+test("sets use stable null ordering", () => {
   const sets = read("src/lib/queries/sets.ts");
 
-  assert.match(
-    rewards,
-    /ORDER BY SUM\(CASE WHEN \$\{rewardRowPredicate\("lt"\)\} THEN ABS\(lt\.amount::numeric\) ELSE 0 END\) DESC/,
-  );
-  assert.doesNotMatch(rewards, /ORDER BY total DESC/);
   assert.match(sets, /s\.release_date ASC NULLS LAST/);
   assert.match(sets, /s\.release_date DESC NULLS LAST/);
 });

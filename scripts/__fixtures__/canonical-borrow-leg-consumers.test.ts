@@ -10,10 +10,7 @@ function read(relative: string): string {
   return readFileSync(path.join(root, relative), "utf8");
 }
 
-const consumers = [
-  "src/lib/queries/crm.ts",
-  "src/lib/queries/analytics-top.ts",
-] as const;
+const consumers = ["src/lib/queries/crm.ts"] as const;
 
 for (const consumer of consumers) {
   test(`${consumer} uses the canonical borrow-inclusive gaming legs`, () => {

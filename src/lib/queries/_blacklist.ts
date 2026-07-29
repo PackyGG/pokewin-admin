@@ -82,24 +82,6 @@ export async function excludeStaffAndBlacklisted() {
  * creator-excluding variants below are additive siblings; they never
  * change the existing helpers.
  */
-const STAFF_AND_CREATOR_ROLES = [...STAFF_ROLES, "creator"] as const;
-
-/**
- * Creator-excluding sibling of {@link excludeStaffAndBlacklisted}: a
- * Legacy relation-filter fragment that drops staff
- * (admin/support) AND creators AND the blacklist. Use on money/analytics
- * aggregates where creator play must NOT inflate the figures.
- *
- *   where: { user: await excludeStaffCreatorsAndBlacklisted() }
- */
-export async function excludeStaffCreatorsAndBlacklisted() {
-  const ids = await getExcludedUserIds();
-  return {
-    role: { notIn: [...STAFF_AND_CREATOR_ROLES] },
-    ...(ids.length > 0 ? { id: { notIn: ids } } : {}),
-  };
-}
-
 /**
  * Self-contained `user_id IN (...)` raw SQL fragment for the caller that
  * already resolved the blacklist (e.g. inside an `unstable_cache` fn
