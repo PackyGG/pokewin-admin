@@ -20,6 +20,13 @@ export function sanitizedRuntimeConfig(
     endpointConfigured: boolean;
     secretConfigured: boolean;
   };
+  fiatEligibility: {
+    devCredentialConfigured: boolean;
+    prodCredentialConfigured: boolean;
+    devSourceConfigured: boolean;
+    devIpAllowlistConfigured: boolean;
+    prodIpAllowlistConfigured: boolean;
+  };
 } {
   return {
     discord: discordRuntimeStatus(config),
@@ -36,6 +43,23 @@ export function sanitizedRuntimeConfig(
     ingest: {
       endpointConfigured: Boolean(config.ANTIFRAUD_INGEST_URL),
       secretConfigured: Boolean(config.ANTIFRAUD_INGEST_SECRET),
+    },
+    fiatEligibility: {
+      devCredentialConfigured: Boolean(
+        config.FIAT_ELIGIBILITY_DEV_API_KEY,
+      ),
+      prodCredentialConfigured: Boolean(
+        config.FIAT_ELIGIBILITY_PROD_API_KEY,
+      ),
+      devSourceConfigured: Boolean(
+        config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
+      ),
+      devIpAllowlistConfigured: Boolean(
+        config.FIAT_ELIGIBILITY_DEV_ALLOWED_IPS.trim(),
+      ),
+      prodIpAllowlistConfigured: Boolean(
+        config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS.trim(),
+      ),
     },
   };
 }

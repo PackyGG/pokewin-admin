@@ -77,7 +77,7 @@ function numberValue(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function canonicalIp(value: unknown): string | undefined {
+export function canonicalIp(value: unknown): string | undefined {
   const raw = stringValue(value)?.trim().toLowerCase();
   if (!raw) return undefined;
   if (raw.startsWith("::ffff:") && isIP(raw.slice(7)) === 4) {
@@ -91,6 +91,32 @@ function canonicalIp(value: unknown): string | undefined {
   } catch {
     return raw;
   }
+}
+
+export type FingerprintEventIdentity = {
+  visitorId: string | null;
+  linkedId: string | null;
+  eventIp: string | null;
+  eventTime: Date | null;
+  replayed: boolean;
+};
+
+export function fingerprintEventIdentity(
+  raw: unknown,
+): FingerprintEventIdentity {
+  const identification = object(
+    path(object(raw), "products", "identification", "data"),
+  );
+  const time = stringValue(identification.time);
+  const eventTime = time ? new Date(time) : null;
+  return {
+    visitorId: stringValue(identification.visitorId) ?? null,
+    linkedId: stringValue(identification.linkedId) ?? null,
+    eventIp: canonicalIp(identification.ip) ?? null,
+    eventTime:
+      eventTime && Number.isFinite(eventTime.getTime()) ? eventTime : null,
+    replayed: identification.replayed === true,
+  };
 }
 
 function confidencePoints(points: number, confidence: unknown): number {
@@ -836,7 +862,9 @@ export class EnrichmentService {
       this.config.PROXYCHECK_API_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
-    ].reduce(
+      this.config.FIAT_ELIGIBILITY_DEV_API_KEY,
+      this.config.FIAT_ELIGIBILITY_PROD_API_KEY,
+    ].filter((secret): secret is string => Boolean(secret)).reduce(
       (message, secret) =>
         secret ? message.replaceAll(secret, "[redacted]") : message,
       value,

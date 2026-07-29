@@ -67,26 +67,32 @@ export function sourceConnectionString(
 
 export type Databases = {
   source: pg.Pool;
+  fiatDevSource: pg.Pool | null;
   antifraud: pg.Pool;
 };
 
-export function createDatabases(config: Config): Databases {
+function createSourcePool(input: {
+  connectionString: string;
+  mode: "disable" | "require";
+  ca?: string;
+  applicationName: string;
+}): pg.Pool {
   const source = new Pool({
     connectionString: sourceConnectionString(
-      config.SOURCE_DATABASE_URL,
-      config.SOURCE_DATABASE_SSL,
-      config.SOURCE_DATABASE_CA,
+      input.connectionString,
+      input.mode,
+      input.ca,
     ),
     ssl: sourceSslFor(
-      config.SOURCE_DATABASE_SSL,
-      config.SOURCE_DATABASE_CA,
+      input.mode,
+      input.ca,
     ),
     max: 8,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 8_000,
     options:
       "-c default_transaction_read_only=on -c statement_timeout=10000 -c TimeZone=UTC",
-    application_name: "packy-antifraud-source-reader",
+    application_name: input.applicationName,
   });
   source.on("error", (error) => {
     console.error("[source-db] idle pool client error", {
@@ -95,6 +101,24 @@ export function createDatabases(config: Config): Databases {
       code: (error as { code?: string }).code,
     });
   });
+  return source;
+}
+
+export function createDatabases(config: Config): Databases {
+  const source = createSourcePool({
+    connectionString: config.SOURCE_DATABASE_URL,
+    mode: config.SOURCE_DATABASE_SSL,
+    ca: config.SOURCE_DATABASE_CA,
+    applicationName: "packy-antifraud-source-reader",
+  });
+  const fiatDevSource = config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL
+    ? createSourcePool({
+        connectionString: config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
+        mode: config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL,
+        ca: config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_CA,
+        applicationName: "packy-antifraud-fiat-dev-reader",
+      })
+    : null;
 
   const antifraud = new Pool({
     connectionString: config.ANTIFRAUD_DATABASE_URL,
@@ -116,16 +140,21 @@ export function createDatabases(config: Config): Databases {
     });
   });
 
-  return { source, antifraud };
+  return { source, fiatDevSource, antifraud };
 }
 
 export async function assertDatabaseConnections(db: Databases): Promise<void> {
   await Promise.all([
     db.source.query("SELECT 1"),
+    db.fiatDevSource?.query("SELECT 1"),
     db.antifraud.query("SELECT 1"),
   ]);
 }
 
 export async function closeDatabases(db: Databases): Promise<void> {
-  await Promise.all([db.source.end(), db.antifraud.end()]);
+  await Promise.all([
+    db.source.end(),
+    db.fiatDevSource?.end(),
+    db.antifraud.end(),
+  ]);
 }

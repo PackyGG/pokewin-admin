@@ -7,6 +7,11 @@ const schema = z.object({
   SOURCE_DATABASE_URL: z.string().min(1),
   SOURCE_DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
   SOURCE_DATABASE_CA: z.string().optional(),
+  FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL: z.string().min(1).optional(),
+  FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL: z
+    .enum(["disable", "require"])
+    .default("disable"),
+  FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_CA: z.string().optional(),
   ANTIFRAUD_DATABASE_URL: z.string().min(1),
   ANTIFRAUD_DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
   ANTIFRAUD_DATABASE_CA: z.string().optional(),
@@ -16,6 +21,16 @@ const schema = z.object({
   PROXYCHECK_API_KEY: z.string().min(1),
   API_TOKEN: z.string().min(32),
   API_ADMIN_TOKEN: z.string().min(32),
+  FIAT_ELIGIBILITY_DEV_API_KEY: z.string().min(32).optional(),
+  FIAT_ELIGIBILITY_PROD_API_KEY: z.string().min(32).optional(),
+  FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: z.string().default(""),
+  FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: z.string().default(""),
+  FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: z.coerce
+    .number()
+    .int()
+    .min(1)
+    .max(10_000)
+    .default(120),
   PUBLIC_BASE_URL: z.string().url(),
   ANTIFRAUD_DASHBOARD_URL: z
     .string()
@@ -68,6 +83,41 @@ export function loadConfig(): Config {
   const config = parsed.data;
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {
     throw new Error("Invalid configuration: API_TOKEN and API_ADMIN_TOKEN must differ");
+  }
+  const serviceKeys = [
+    config.API_TOKEN,
+    config.API_ADMIN_TOKEN,
+    config.FIAT_ELIGIBILITY_DEV_API_KEY,
+    config.FIAT_ELIGIBILITY_PROD_API_KEY,
+  ].filter((value): value is string => Boolean(value));
+  if (new Set(serviceKeys).size !== serviceKeys.length) {
+    throw new Error(
+      "Invalid configuration: all API credentials must be distinct",
+    );
+  }
+  if (
+    config.FIAT_ELIGIBILITY_DEV_API_KEY
+    && !config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL
+  ) {
+    throw new Error(
+      "Invalid configuration: the dev Fiat eligibility key requires a dev source database",
+    );
+  }
+  for (const [key, allowlist] of [
+    [
+      config.FIAT_ELIGIBILITY_DEV_API_KEY,
+      config.FIAT_ELIGIBILITY_DEV_ALLOWED_IPS,
+    ],
+    [
+      config.FIAT_ELIGIBILITY_PROD_API_KEY,
+      config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS,
+    ],
+  ] as const) {
+    if (key && !allowlist.trim()) {
+      throw new Error(
+        "Invalid configuration: every Fiat eligibility key requires an IP allowlist",
+      );
+    }
   }
   const publicUrl = new URL(config.PUBLIC_BASE_URL);
   if (config.NODE_ENV === "production" && publicUrl.protocol !== "https:") {

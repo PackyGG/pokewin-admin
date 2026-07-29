@@ -182,6 +182,7 @@ const runtimeConfig: Config = {
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",
   SOURCE_DATABASE_SSL: "disable",
+  FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL: "disable",
   ANTIFRAUD_DATABASE_URL: "postgresql://fraud-user:fraud-secret@fraud/db",
   ANTIFRAUD_DATABASE_SSL: "disable",
   REDIS_URL: "redis://default:redis-secret@redis",
@@ -190,6 +191,9 @@ const runtimeConfig: Config = {
   PROXYCHECK_API_KEY: "proxycheck-secret",
   API_TOKEN: "read-token-that-is-at-least-32-characters",
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
+  FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
+  FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "",
+  FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 120,
   PUBLIC_BASE_URL: "https://monitor.example.com",
   ANTIFRAUD_DASHBOARD_URL: "https://fraud.packydash.com/monitor",
   ANTIFRAUD_INGEST_URL:

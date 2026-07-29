@@ -31,6 +31,8 @@ It does not modify the Packy frontend or backend.
   payment-webhook processing. Source detection reads only the MAIN mirror and
   delivery retries from the Antifraud database.
 - Rate-limited HTTP API with separate read and admin-write credentials
+- Fully automatic, environment-isolated Fiat checkout eligibility decisions
+  with dedicated credentials and source-IP allowlists
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
 - Exact-origin WebSocket stream with 30-second, single-use subprotocol tickets
@@ -77,6 +79,62 @@ fields so the initiating staff identity is persisted instead of attributing a
 human action to the service fallback. Reusing a key succeeds only when the
 case/rule, action or patch, actor and reason exactly match the original
 request; a changed request returns `409 idempotency_conflict`.
+
+## Automatic Fiat checkout eligibility
+
+`POST /v1/fiat-eligibility/check` is a server-to-server endpoint. It never
+accepts `API_TOKEN` or `API_ADMIN_TOKEN`. Development and production use
+different credentials, source-IP allowlists and read-only source databases.
+The credential selects the trusted environment; a body claiming the other
+environment is rejected.
+
+```json
+{
+  "env": "prod",
+  "createdAt": "2026-07-29T12:00:00.000Z",
+  "ipAddress": "203.0.113.20",
+  "fingerprint": "fresh-fingerprint-request-id",
+  "userID": "packy-user-id"
+}
+```
+
+`fingerprint` is a fresh Fingerprint event `requestId`, not a visitor ID. The
+event must be no more than two minutes old, must be linked to `userID`, and its
+authoritative IP must match `ipAddress`. Every valid assessment performs the
+full Fingerprint Pro Plus event lookup and an independent proxycheck.io lookup.
+It compares the checkout with signup IP/device, account age, account and Fiat
+locks, KYC, country policy, shared networks, signup/case history, previous Fiat
+history and recent eligibility velocity.
+
+The response is always an automatic binary decision:
+
+```json
+{
+  "data": {
+    "decisionId": "assessment-uuid",
+    "decision": "allow",
+    "allowed": true,
+    "riskScore": 0,
+    "reasonCodes": [],
+    "expiresAt": "2026-07-29T12:01:00.000Z",
+    "idempotent": false
+  }
+}
+```
+
+Allow decisions expire after 60 seconds. The production backend must bind the
+decision to that checkout attempt and must fail closed on `deny`, an expired
+decision, any non-200 response, timeout or transport error. Repeating the exact
+payload with the same Fingerprint request ID returns the stored result; reusing
+that event with changed input returns `409 fingerprint_reused`.
+
+Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
+`FIAT_ELIGIBILITY_PROD_ALLOWED_IPS`. Development additionally requires
+`FIAT_ELIGIBILITY_DEV_API_KEY`, `FIAT_ELIGIBILITY_DEV_ALLOWED_IPS`, and
+`FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL`. Allowlist entries are exact IPv4 or
+IPv6 addresses or CIDRs. The allowlist applies to the calling backend's trusted
+source IP; `ipAddress` in the JSON body is the end user's IP and is never used
+to authenticate the caller.
 
 Signup assessment, case/session creation, initial risk events and cursor
 advancement commit atomically. Provider successes are cached before that

@@ -50,6 +50,14 @@ import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import { notificationRouteStatuses } from "./notification-routes.js";
 import { registerFiatRoutes } from "./fiat-routes.js";
 import { FiatRiskService } from "./fiat-risk.js";
+import { EnrichmentService } from "./enrichment.js";
+import { FiatEligibilityAccess } from "./fiat-eligibility-auth.js";
+import {
+  authenticateFiatEligibilityRequest,
+  FIAT_ELIGIBILITY_PATH,
+  registerFiatEligibilityRoutes,
+} from "./fiat-eligibility-routes.js";
+import { FiatEligibilityService } from "./fiat-eligibility.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
@@ -81,7 +89,10 @@ const SECRET_VALUES = [
   config.PROXYCHECK_API_KEY,
   config.API_TOKEN,
   config.API_ADMIN_TOKEN,
+  config.FIAT_ELIGIBILITY_DEV_API_KEY,
+  config.FIAT_ELIGIBILITY_PROD_API_KEY,
   config.SOURCE_DATABASE_URL,
+  config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
@@ -138,6 +149,12 @@ const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
 const withdrawalRisk = new WithdrawalRiskService(db, app.log);
 const fiatRisk = new FiatRiskService(db);
+const fiatEligibilityAccess = new FiatEligibilityAccess(config);
+const fiatEligibility = new FiatEligibilityService(
+  db,
+  scoreWeights,
+  new EnrichmentService(config),
+);
 const ingestDelivery = new IngestDelivery(
   config,
   db.antifraud,
@@ -307,6 +324,21 @@ app.addHook("onRequest", async (request, reply) => {
     return;
   }
   const authorization = request.headers.authorization ?? "";
+  if (request.method === "POST" && pathname === FIAT_ELIGIBILITY_PATH) {
+    const authentication = authenticateFiatEligibilityRequest(
+      fiatEligibilityAccess,
+      {
+        authorization,
+        sourceIp: request.ip,
+      },
+    );
+    if (!authentication.authorized) {
+      return reply
+        .code(authentication.status)
+        .send({ error: authentication.error });
+    }
+    return;
+  }
   const token = authorization.startsWith("Bearer ")
     ? authorization.slice(7)
     : "";
@@ -1159,6 +1191,11 @@ await registerFiatEmailDomainRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
+await registerFiatEligibilityRoutes(app, {
+  config,
+  access: fiatEligibilityAccess,
+  service: fiatEligibility,
+});
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {

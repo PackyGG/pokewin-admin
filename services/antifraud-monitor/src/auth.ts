@@ -2,7 +2,7 @@ import { timingSafeEqual } from "node:crypto";
 
 import type { Config } from "./config.js";
 
-function safeTokenEqual(actual: string, expected: string): boolean {
+export function safeTokenEqual(actual: string, expected: string): boolean {
   const actualBuffer = Buffer.from(actual);
   const expectedBuffer = Buffer.from(expected);
   return (
