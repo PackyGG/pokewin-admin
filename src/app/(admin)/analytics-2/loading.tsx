@@ -1,19 +1,15 @@
 import { Skeleton } from "@/components/ui/skeleton";
-import { SkeletonChart } from "@/components/ux";
+import { SkeletonChart, SkeletonKpiStrip } from "@/components/ux";
 
 export default function Analytics2Loading() {
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div className="space-y-2">
-          <Skeleton className="h-3 w-24" />
-          <Skeleton className="h-9 w-72 max-w-full" />
-          <Skeleton className="h-4 w-96 max-w-full" />
-        </div>
-        <Skeleton className="h-10 w-44" />
+    <div className="space-y-5 sm:space-y-6">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 sm:mb-6 sm:gap-3">
+        <div />
+        <Skeleton className="h-9 w-40" />
       </div>
-      <Skeleton className="h-4 w-64" />
-      <SkeletonChart height={390} variant="area" />
+      <SkeletonKpiStrip count={3} className="sm:grid-cols-3" />
+      <SkeletonChart height={300} variant="area" />
     </div>
   );
 }

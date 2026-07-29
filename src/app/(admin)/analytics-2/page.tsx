@@ -1,9 +1,20 @@
 import { Suspense } from "react";
-import { BarChart3, CalendarDays } from "lucide-react";
+import {
+  ArrowDownToLine,
+  LineChart,
+  UserPlus,
+  UsersRound,
+} from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { AutoRefresh } from "../dashboard/auto-refresh";
-import { SkeletonChart } from "@/components/ux";
+import { SkeletonChart, SkeletonKpiStrip } from "@/components/ux";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+  SectionHeading,
+} from "@/components/modern-panels";
 import { getAcquisitionTrend } from "@/lib/queries/analytics-2";
 import { AcquisitionChart } from "./acquisition-chart";
 import { Analytics2PeriodFilter } from "./period-filter";
@@ -28,30 +39,23 @@ export default async function Analytics2Page({
     <div className="space-y-5 sm:space-y-6">
       <AutoRefresh intervalMs={300_000} />
 
-      <header className="flex flex-col gap-4 border-b pb-5 sm:flex-row sm:items-end sm:justify-between">
-        <div className="max-w-2xl">
-          <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.16em] text-primary">
-            <BarChart3 className="size-3.5" aria-hidden />
-            Analytics 2
-          </div>
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Customer growth at a glance
-          </h1>
-          <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
-            A clean daily view of account creation and depositor activity.
-          </p>
-        </div>
-        <Analytics2PeriodFilter period={period} />
-      </header>
-
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        <CalendarDays className="size-3.5" aria-hidden />
-        {ANALYTICS_2_PERIOD_LABELS[period]} · UTC · refreshes every 5 minutes
-      </div>
+      <PageHero>
+        <PageHeroIdentity
+          icon={LineChart}
+          title="Analytics 2"
+          subtitle="Daily account creation and depositor activity."
+          action={<Analytics2PeriodFilter period={period} />}
+        />
+      </PageHero>
 
       <Suspense
         key={period}
-        fallback={<SkeletonChart height={390} variant="area" />}
+        fallback={
+          <div className="space-y-5 sm:space-y-6">
+            <SkeletonKpiStrip count={3} className="sm:grid-cols-3" />
+            <SkeletonChart height={300} variant="area" />
+          </div>
+        }
       >
         <AcquisitionSection period={period} />
       </Suspense>
@@ -76,5 +80,60 @@ async function AcquisitionSection({
     );
   }
 
-  return <AcquisitionChart data={result.points} />;
+  const latest = result.points.at(-1) ?? {
+    date: "",
+    signups: 0,
+    ftds: 0,
+    existingDepositors: 0,
+  };
+  const totals = result.points.reduce(
+    (sum, point) => ({
+      signups: sum.signups + point.signups,
+      ftds: sum.ftds + point.ftds,
+      existingDepositors: sum.existingDepositors + point.existingDepositors,
+    }),
+    { signups: 0, ftds: 0, existingDepositors: 0 },
+  );
+
+  return (
+    <div className="space-y-5 sm:space-y-6">
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 sm:gap-4">
+        <KpiTile
+          label="Sign-ups"
+          value={totals.signups.toLocaleString("en-US")}
+          sub={`${latest.signups.toLocaleString("en-US")} today`}
+          icon={UserPlus}
+          accent="blue"
+        />
+        <KpiTile
+          label="First-time depositors"
+          value={totals.ftds.toLocaleString("en-US")}
+          sub={`${latest.ftds.toLocaleString("en-US")} today`}
+          icon={ArrowDownToLine}
+          accent="emerald"
+        />
+        <KpiTile
+          label="Existing depositors"
+          value={totals.existingDepositors.toLocaleString("en-US")}
+          sub={`${latest.existingDepositors.toLocaleString("en-US")} today`}
+          icon={UsersRound}
+          accent="purple"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <SectionHeading
+          icon={LineChart}
+          title="Daily acquisition"
+          action={
+            <span className="text-xs text-muted-foreground">
+              {ANALYTICS_2_PERIOD_LABELS[period]} · UTC · refreshes every 5
+              minutes
+            </span>
+          }
+        />
+        <AcquisitionChart data={result.points} />
+      </div>
+    </div>
+  );
 }
