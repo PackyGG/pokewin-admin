@@ -68,17 +68,38 @@ function activeSetup(row: SetupRow): CreatorSetup {
   };
 }
 
-async function requireLinkedCreator(
-  discordUserId: string,
-  creatorUserId?: string,
-): Promise<void> {
+async function requireActiveCreator(creatorUserId: string): Promise<void> {
   const db = getProdReadDrizzleDb();
-  const [linked] = await db
+  const [creator] = await db
     .select({
       id: user.id,
       role: user.role,
       roles: user.roles,
     })
+    .from(user)
+    .where(eq(user.id, creatorUserId))
+    .limit(1);
+
+  if (
+    !creator ||
+    (creator.role !== "creator" &&
+      !(creator.roles ?? []).includes("creator"))
+  ) {
+    throw new CreatorSetupError(
+      404,
+      "creator_not_found",
+      "That Packy user does not have the active creator role.",
+    );
+  }
+}
+
+async function requireDiscordOwnership(
+  discordUserId: string,
+  creatorUserId: string,
+): Promise<void> {
+  const db = getProdReadDrizzleDb();
+  const [linked] = await db
+    .select({ id: user.id })
     .from(account)
     .innerJoin(user, eq(user.id, account.userId))
     .where(
@@ -89,19 +110,7 @@ async function requireLinkedCreator(
     )
     .limit(1);
 
-  if (
-    !linked ||
-    (linked.role !== "creator" && !(linked.roles ?? []).includes("creator"))
-  ) {
-    throw new CreatorSetupError(
-      404,
-      "creator_not_found",
-      creatorUserId
-        ? "That Packy creator account is not linked to this Discord account."
-        : "That Discord account is not linked to a creator account.",
-    );
-  }
-  if (creatorUserId && linked.id !== creatorUserId) {
+  if (!linked || linked.id !== creatorUserId) {
     throw new CreatorSetupError(
       409,
       "creator_mismatch",
@@ -234,10 +243,16 @@ export async function linkCreatorSetup(input: {
       );
     }
 
-    await requireLinkedCreator(
-      setup.creator_discord_user_id,
-      input.creatorUserId,
-    );
+    await requireActiveCreator(input.creatorUserId);
+    if (
+      input.actorDiscordUserId === setup.creator_discord_user_id &&
+      input.actorDiscordUserId !== setup.created_by_discord_user_id
+    ) {
+      await requireDiscordOwnership(
+        setup.creator_discord_user_id,
+        input.creatorUserId,
+      );
+    }
 
     if (setup.creator_user_id) {
       if (setup.creator_user_id !== input.creatorUserId) {

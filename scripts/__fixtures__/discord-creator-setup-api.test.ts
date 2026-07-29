@@ -29,7 +29,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
 
   assert.match(service, /CREATOR_SETUP_GUILD_ID = "1402743122789929022"/);
   assert.doesNotMatch(prepareService, /getProdReadDrizzleDb\(\)/);
-  assert.doesNotMatch(prepareService, /requireLinkedCreator/);
+  assert.doesNotMatch(prepareService, /requireActiveCreator/);
   assert.doesNotMatch(prepareService, /creator_not_found/);
   assert.match(service, /creator_discord_user_id/);
   assert.match(service, /pg_advisory_xact_lock/);
@@ -71,8 +71,12 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /logs_channel_id = \$\{input\.channelId\}/);
   assert.match(service, /input\.actorDiscordUserId !== setup\.creator_discord_user_id/);
   assert.match(service, /input\.actorDiscordUserId !== setup\.created_by_discord_user_id/);
-  assert.match(service, /requireLinkedCreator\(\s*setup\.creator_discord_user_id,\s*input\.creatorUserId/s);
-  assert.doesNotMatch(service, /eq\(user\.id,\s*creatorUserId\)/);
+  assert.match(service, /requireActiveCreator\(input\.creatorUserId\)/);
+  assert.match(service, /eq\(user\.id,\s*creatorUserId\)/);
+  assert.match(
+    service,
+    /input\.actorDiscordUserId === setup\.creator_discord_user_id[\s\S]*input\.actorDiscordUserId !== setup\.created_by_discord_user_id[\s\S]*requireDiscordOwnership/,
+  );
   assert.match(service, /"creator_mismatch"/);
   assert.match(service, /"setup_actor_forbidden"/);
   assert.match(service, /"setup_link_conflict"/);
