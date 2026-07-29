@@ -1,12 +1,19 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { AlertTriangle, MapPin, RotateCcw, Users } from "lucide-react";
+import {
+  AlertTriangle,
+  MapPin,
+  RotateCcw,
+  ShieldBan,
+  Users,
+} from "lucide-react";
 import { toast } from "sonner";
 
 import {
   createRefundBatch,
   processNextRefund,
+  recoverRefundedBatch,
   type RefundBatchProgress,
 } from "./refund-actions";
 import type {
@@ -64,6 +71,8 @@ export function RefundsPanel({
   const [credential, setCredential] = useState("");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<RefundBatchProgress | null>(null);
+  const [recoveryBatchId, setRecoveryBatchId] = useState<string | null>(null);
+  const [recoveryCredential, setRecoveryCredential] = useState("");
 
   const grouped = useMemo(() => {
     const groups = new Map<string, RefundCandidate[]>();
@@ -137,6 +146,40 @@ export function RefundsPanel({
       toast.error(
         error instanceof Error ? error.message : "Could not create refund batch.",
       );
+      setWorking(false);
+    }
+  }
+
+  async function recoverBatch() {
+    if (!recoveryBatchId || !recoveryCredential || working) return;
+    setWorking(true);
+    try {
+      const result = await recoverRefundedBatch({
+        batchId: recoveryBatchId,
+        credential: recoveryCredential,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      const recovery = result.data;
+      toast.success(
+        `Banned ${recovery.newlyBanned} account${
+          recovery.newlyBanned === 1 ? "" : "s"
+        }; recovered ${new Intl.NumberFormat("en-US", {
+          style: "currency",
+          currency: "USD",
+        }).format(recovery.recoveredTotalUsd)}.`,
+      );
+      setRecoveryBatchId(null);
+      setRecoveryCredential("");
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Could not recover the refunded accounts.",
+      );
+    } finally {
       setWorking(false);
     }
   }
@@ -346,6 +389,20 @@ export function RefundsPanel({
                       Resume
                     </Button>
                   )}
+                  {batch.pending === 0 && batch.succeeded > 0 && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      disabled={working}
+                      onClick={() => {
+                        setRecoveryBatchId(batch.batchId);
+                        setRecoveryCredential("");
+                      }}
+                    >
+                      <ShieldBan className="size-4" />
+                      Ban &amp; recover
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -384,6 +441,45 @@ export function RefundsPanel({
               onClick={submit}
             >
               {working ? "Starting…" : "Start full refunds"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={recoveryBatchId !== null}
+        onOpenChange={(openValue) => {
+          if (!openValue && !working) setRecoveryBatchId(null);
+        }}
+      >
+        <AlertDialogContent className="sm:max-w-lg">
+          <AlertDialogHeader>
+            <AlertDialogTitle>Ban and recover refunded accounts</AlertDialogTitle>
+            <AlertDialogDescription>
+              This bans every Packy account with a successful refund in the
+              batch and removes remaining cash, vouchers, and removable
+              inventory only up to that account&apos;s refunded site credit.
+              Completed withdrawals are recorded as unavailable and are not
+              charged again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div>
+            <StepUpField
+              id="refund-recovery-2fa"
+              value={recoveryCredential}
+              onChange={setRecoveryCredential}
+              disabled={working}
+              label="Owner verification"
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={working}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={working || !recoveryCredential}
+              onClick={recoverBatch}
+            >
+              {working ? "Recovering…" : "Ban & recover"}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

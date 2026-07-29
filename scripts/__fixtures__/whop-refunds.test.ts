@@ -99,6 +99,33 @@ test("Whop mutations disable SDK retries and retrieve before refunding", () => {
   );
 });
 
+test("successful refund batches ban accounts and recover only attributable value", () => {
+  assert.match(
+    actions,
+    /await recoverRefundedAccountsForBatch\(batchId, adminUserId\)/,
+  );
+  assert.match(actions, /is_banned = TRUE/);
+  assert.match(actions, /DELETE FROM session/);
+  assert.match(
+    actions,
+    /remainingCents = Math\.max\(0, refundedCreditCents - priorRecoveredCents\)/,
+  );
+  assert.match(actions, /metadata->>'kind' = 'whop_refund_recovery'/);
+  assert.match(actions, /adjustment_category: "fraud_abuse"/);
+  assert.doesNotMatch(actions, /sender_user_id|recipient_user_id/);
+});
+
+test("completed-batch recovery is owner-only, step-up gated, and visible", () => {
+  const recovery = actions.indexOf("export async function recoverRefundedBatch");
+  const owner = actions.indexOf("await requireOwner()", recovery);
+  const stepUp = actions.indexOf("await require2FA", recovery);
+  assert.ok(recovery >= 0);
+  assert.ok(owner > recovery);
+  assert.ok(stepUp > owner);
+  assert.match(refundsPanel, /Ban &amp; recover/);
+  assert.match(refundsPanel, /id="refund-recovery-2fa"/);
+});
+
 test("the database prevents one Whop payment entering two refund batches", () => {
   assert.match(
     migration,
