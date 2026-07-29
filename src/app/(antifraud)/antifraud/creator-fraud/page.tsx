@@ -26,7 +26,6 @@ import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
 import { RiskScoreBar } from "../_components/risk-score-bar";
-import { ScanPoller } from "../networks/scan-poller";
 
 export const metadata = { title: "Creator Fraud · Antifraud" };
 
@@ -117,9 +116,13 @@ async function CreatorFraudContent({
   if (result.error) return <Empty text="Affiliate cohort assessments could not be loaded." />;
   if (result.data.length === 0) {
     return (
-      <Empty text="Affiliate cohort assessments are being prepared. This page refreshes every 30 seconds.">
-        <ScanPoller />
-      </Empty>
+      <Empty
+        text={
+          search
+            ? "No creators match that search."
+            : "No creator assessments are available for this window."
+        }
+      />
     );
   }
   return (

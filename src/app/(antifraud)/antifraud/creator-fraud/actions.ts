@@ -29,7 +29,6 @@ export async function rescanCreatorFraud(input: unknown): Promise<void> {
     targetUserId: parsed.data.creatorId,
     metadata: { window: parsed.data.window },
   });
-  revalidatePath(
-    `/antifraud/creator-fraud/${parsed.data.creatorId}?window=${parsed.data.window}`,
-  );
+  // revalidatePath does not support query strings — revalidate the bare path.
+  revalidatePath(`/antifraud/creator-fraud/${parsed.data.creatorId}`);
 }

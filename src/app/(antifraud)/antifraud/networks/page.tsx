@@ -55,20 +55,7 @@ export default async function AccountNetworksPage({
       </PageHero>
 
       <div className="rounded-xl border bg-card p-4">
-        <div className="flex items-center gap-2.5">
-          <div className="shrink-0 rounded-lg bg-cyan-500/10 p-1.5">
-            <Network className="size-4 text-cyan-500" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-sm font-semibold tracking-tight sm:text-base">
-              Account networks
-            </h1>
-            <p className="truncate text-xs text-muted-foreground">
-              Trace complete signup-IP and device connections across accounts
-            </p>
-          </div>
-        </div>
-        <form className="mt-3 flex gap-2" action="/antifraud/networks">
+        <form className="flex gap-2" action="/antifraud/networks">
           <Input
             name="q"
             defaultValue={query}

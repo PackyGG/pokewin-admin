@@ -28,7 +28,8 @@ export async function rescanAccountNetwork(input: unknown): Promise<void> {
     eventType: "antifraud_network_rescan_requested",
     targetUserId: parsed.data.userId,
   });
-  revalidatePath(`/antifraud/networks?user=${parsed.data.userId}`);
+  // revalidatePath does not support query strings — revalidate the bare path.
+  revalidatePath("/antifraud/networks");
 }
 
 export async function openAccountNetworkCase(input: unknown): Promise<string> {
