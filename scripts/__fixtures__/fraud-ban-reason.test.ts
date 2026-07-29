@@ -12,7 +12,7 @@ test("Fraud is a canonical ban reason preset", () => {
   assert.ok(BAN_REASON_PRESETS.includes(FRAUD_BAN_REASON));
 });
 
-test("every account-ban surface uses the canonical Fraud reason", async () => {
+test("manual ban surfaces offer Fraud without making it automatic", async () => {
   const [singleBan, bulkBan, reviewAction] = await Promise.all(
     [
       "../../src/app/(admin)/users/[id]/user-tabs-moderation.tsx",
@@ -27,5 +27,9 @@ test("every account-ban surface uses the canonical Fraud reason", async () => {
   assert.match(bulkBan, /BAN_REASON_PRESETS/);
   assert.match(bulkBan, /isCustomReason &&/);
   assert.match(bulkBan, /reason: effectiveReason/);
-  assert.match(reviewAction, /const reason = FRAUD_BAN_REASON/);
+  assert.doesNotMatch(reviewAction, /FRAUD_BAN_REASON/);
+  assert.match(
+    reviewAction,
+    /const reason = `Antifraud review \$\{reviewId\}: \$\{review\.reason\}`/,
+  );
 });
