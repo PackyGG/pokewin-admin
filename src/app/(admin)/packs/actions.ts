@@ -2,6 +2,9 @@
 
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { revalidatePath, revalidateTag } from "next/cache";
+// Aliased: several actions in this file use `after` as a local variable name
+// (the post-write PackRisk), which would shadow the next/server scheduler.
+import { after as afterResponse } from "next/server";
 import { unstable_rethrow } from "next/navigation";
 import { sql } from "drizzle-orm";
 import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
@@ -76,7 +79,12 @@ import { z } from "zod";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
-import { reloadPacks } from "@/app/(admin)/rewards/actions";
+// Ungated internal helper, NOT the `reloadPacks` server action: that action
+// runs `requireAdmin`, which rejects with NEXT_REDIRECT for the
+// capability-holding non-admins these actions serve — fired-and-forgotten it
+// silently left the backend pack cache stale. Call sites here are already
+// capability-gated; the reload runs post-response via `after()`.
+import { reloadPacksInternal } from "@/lib/packs/reload-packs";
 import {
   autoRetuneTargets,
   resolveIntendedHitRate,
@@ -261,7 +269,7 @@ export async function togglePackActive(packId: string, active: boolean) {
     metadata: { pack_id: packId },
   });
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${packId}`);
@@ -287,6 +295,9 @@ function assertManageablePackType(packType: string): void {
     throw new Error("Unsupported pack type");
   }
 }
+
+const LIVE_PACK_EDIT_DENIED_MESSAGE =
+  "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.";
 
 export async function createPack(data: {
   name: string;
@@ -352,7 +363,7 @@ export async function createPack(data: {
     metadata: { pack_id: pack.id, name: data.name, card_count: data.cards.length },
   });
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
 
   revalidatePath("/packs");
   return pack.id;
@@ -397,33 +408,32 @@ export async function updatePack(
   // stacking pack_creator under a higher-priority primary role. A real
   // admin short-circuits earlier in requireCapability, so this branch is
   // never reached for admins.
-  let editedLivePackUnderCapability = false;
-  if (sessionHasRole(session, "pack_creator")) {
+  const isPackCreator = sessionHasRole(session, "pack_creator");
+  let packCreatorCanEditLive = false;
+  if (isPackCreator) {
+    // Look up the admin user's allowed_pages once — same shape the
+    // rest of the codebase uses for capability checks against
+    // non-admin roles.
+    const perms = (
+      await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
+        SELECT allowed_pages FROM admin_users
+        WHERE id = ${session.userId}::uuid
+      `)
+    ).rows[0];
+    packCreatorCanEditLive = perms
+      ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
+      : false;
+    // Fast-fail before the snapshot capture below. NOT the authoritative
+    // gate — `packs.active` can flip between this read and the write, so the
+    // transaction re-checks under a row lock (see FOR UPDATE below).
     const target = (
       await db.execute<{ active: boolean }>(sql`
         SELECT active FROM packs WHERE id = ${id}::uuid LIMIT 1
       `)
     ).rows[0];
     if (!target) throw new Error("Pack not found");
-    if (target.active) {
-      // Look up the admin user's allowed_pages once — same shape the
-      // rest of the codebase uses for capability checks against
-      // non-admin roles.
-      const perms = (
-        await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
-          SELECT allowed_pages FROM admin_users
-          WHERE id = ${session.userId}::uuid
-        `)
-      ).rows[0];
-      const canEditLive = perms
-        ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
-        : false;
-      if (!canEditLive) {
-        throw new Error(
-          "Live packs can only be edited by full admins or pack creators with the 'Edit Live Packs' capability. Ask an admin to grant the capability, or deactivate the pack first.",
-        );
-      }
-      editedLivePackUnderCapability = true;
+    if (target.active && !packCreatorCanEditLive) {
+      throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
     }
   }
 
@@ -433,7 +443,28 @@ export async function updatePack(
   // fail the committed edit (the helper swallows + logs its own errors).
   await capturePackSnapshot({ packId: id, action: "edit", capturedBy: session.userId });
 
-  await db.transaction(async (tx) => {
+  const editedLivePackUnderCapability = await db.transaction(async (tx) => {
+    // Close the check-then-write race (TOCTOU): the demo-only gate above read
+    // `packs.active` OUTSIDE this transaction, so a pack activated in the gap
+    // could slip past a demo-only pack_creator's restriction. Re-check under a
+    // row lock inside the write transaction; the audit flag is derived from
+    // the locked value so it reflects the state actually written against.
+    let editedLiveUnderCapability = false;
+    if (isPackCreator) {
+      const locked = (
+        await tx.execute<{ active: boolean }>(sql`
+          SELECT active FROM packs WHERE id = ${id}::uuid FOR UPDATE
+        `)
+      ).rows[0];
+      if (!locked) throw new Error("Pack not found");
+      if (locked.active) {
+        if (!packCreatorCanEditLive) {
+          throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
+        }
+        editedLiveUnderCapability = true;
+      }
+    }
+
     const updated = await tx.execute<{ id: string }>(sql`
       UPDATE packs
       SET name = ${data.name.trim()},
@@ -468,6 +499,8 @@ export async function updatePack(
         )
       `);
     }
+
+    return editedLiveUnderCapability;
   });
 
   await createAdminAuditEvent({
@@ -487,7 +520,7 @@ export async function updatePack(
     },
   });
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${id}`);
@@ -521,7 +554,7 @@ export async function deletePack(packId: string): Promise<void> {
     metadata: { pack_id: packId, name: pack.name },
   });
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
 
   revalidatePath("/packs");
 }
@@ -1256,7 +1289,7 @@ export async function repricePackToTargetEdge(
     });
     await refreshPackRiskScore(packId, repricedRisk, await readMaxWinCap());
 
-    reloadPacks();
+    afterResponse(() => reloadPacksInternal());
     // Re-price changes a pack's price → the V2 retune plan shapes off that
     // price, so invalidate it. Per-pack: ONLY this pack's plan is busted
     // (never the other 182).
@@ -2174,7 +2207,7 @@ async function applyPackRetuneInner(
     resolved.intendedHitRate !== null,
   );
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
   // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
   // this retune instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
   // is busted (never the other 182).
@@ -2410,7 +2443,7 @@ export async function revertPackToSnapshot(
     console.error("revertPackToSnapshot: risk refresh failed", err);
   }
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
   // Revert-gap fix (Retune V2): a revert rewrites price + weights but used to
   // revalidate NO retune/overview tag — the rail snapshot cache and this
   // pack's V2 plan kept serving pre-revert numbers for up to 60s. Bust both
@@ -2736,7 +2769,7 @@ async function materializeApprovedPack(
     });
   }
 
-  reloadPacks();
+  afterResponse(() => reloadPacksInternal());
   revalidatePath("/packs");
   revalidatePath(`/packs/${pack.id}`);
 

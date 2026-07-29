@@ -17,7 +17,12 @@ import {
 } from "@/lib/reprice-access";
 import { verifyRetuneToken } from "@/lib/reprice-token";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { reloadPacks } from "@/app/(admin)/rewards/actions";
+// Ungated internal helper, NOT the `reloadPacks` server action: that action
+// runs `requireAdmin`, which rejects with NEXT_REDIRECT for non-admin retune
+// operators — fired-and-forgotten it silently left the backend pack cache
+// stale. Call sites here are already retune-access-gated, and the helper
+// never throws (it logs failures internally), so fire-and-forget is safe.
+import { reloadPacksInternal } from "@/lib/packs/reload-packs";
 import { getPacksPoolComposition } from "@/lib/queries/packs";
 import { getPackCardValues } from "@/lib/queries/pack-card-values";
 import { getSets, getRarities } from "@/lib/queries/cards";
@@ -903,7 +908,7 @@ async function applyPackEditInner(
   // edit (the helper swallows + logs; the next snapshot run reconciles).
   await refreshEditedPackRiskScore(packId, after);
 
-  reloadPacks();
+  void reloadPacksInternal();
   // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
   // this edit instead of a 60s-stale solve. Per-pack: ONLY this pack's plan
   // is busted (never the other 182).
@@ -2131,7 +2136,7 @@ async function applyStagedPackEditAndRetuneInner(
     r.resolved.intendedHitRate !== null,
   );
 
-  reloadPacks();
+  void reloadPacksInternal();
   // Invalidate this pack's cached V2 plan so the next `planPackTune` reflects
   // this auto-tune instead of a 60s-stale solve. Per-pack: ONLY this pack's
   // plan is busted (never the other 182).

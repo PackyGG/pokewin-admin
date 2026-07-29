@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
+import { z } from "zod";
 
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import {
@@ -12,7 +13,7 @@ import {
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { backendApi, BackendApiError } from "@/lib/backend-api";
+import { reloadPacksInternal } from "@/lib/packs/reload-packs";
 
 export async function reloadPacks() {
   // A Server Action is a callable POST endpoint, so it carries its OWN
@@ -21,23 +22,36 @@ export async function reloadPacks() {
   // Without this, any signed-in panel user (support / marketing / creator /
   // pack_creator) could drive a privileged backend reload that every other
   // action in this file gates behind `requireAdmin`.
+  //
+  // Internal callers (this file + packs/actions.ts) that are already
+  // capability-gated call `reloadPacksInternal` directly instead — routing
+  // them through this gate broke the reload for capability-holding
+  // non-admins (requireAdmin rejects with NEXT_REDIRECT).
   await requireAdmin();
-  // Routes through the central backendApi client so env-specific URL+key,
-  // CF Access service tokens, and `x-bypass-secret` are all picked up.
-  try {
-    await backendApi.post("/admin/reload-packs");
-    console.log("[reloadPacks] backend ok");
-  } catch (err) {
-    if (err instanceof BackendApiError) {
-      console.error(
-        `[reloadPacks] backend error status=${err.status} code=${err.code ?? "none"} payload=${JSON.stringify(err.payload)}`,
-      );
-      return;
-    }
-    const message = err instanceof Error ? err.message : "Unknown error";
-    console.error(`[reloadPacks] failed to reach backend: ${message}`, err);
-  }
+  await reloadPacksInternal();
 }
+
+const rewardInputSchema = z.object({
+  slug: z.string().trim().min(1, "Slug is required").max(100, "Slug is too long"),
+  name: z.string().trim().min(1, "Name is required").max(200, "Name is too long"),
+  type: z.enum(["one_time", "daily", "balance"]),
+  levelRequired: z.number().int().nonnegative().max(1_000).optional(),
+  packIds: z.array(z.string().trim().min(1)).max(500).optional(),
+  cashAmount: z
+    .number()
+    .finite()
+    .nonnegative("Cash amount cannot be negative")
+    .max(10_000_000)
+    .optional(),
+  // Daily rewards only. Fraction of wagered amount (0.01 = 1%).
+  dailyUnlockPercentage: z
+    .number()
+    .finite()
+    .min(0)
+    .max(1, "Daily unlock percentage is a fraction (0.01 = 1%, max 1)")
+    .nullish(),
+  metadata: z.record(z.string(), z.unknown()).optional(),
+});
 
 function revalidateRewardPages() {
   // Rewards list + level-up + rakeback + settings all live under the /rewards
@@ -59,29 +73,30 @@ export async function createReward(data: {
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
-  if (!data.slug.trim() || !data.name.trim()) {
-    throw new Error("Slug and name are required");
+  const parsed = rewardInputSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid reward input");
   }
+  const v = parsed.data;
 
   await requireCapability(session, "__can_create_reward", "create rewards");
 
-  let reward;
+  let reward: typeof rewards.$inferSelect | undefined;
   try {
     [reward] = await db
       .insert(rewards)
       .values({
-        slug: data.slug.trim(),
-        name: data.name.trim(),
-        type: data.type,
-        level_required: data.levelRequired ?? 0,
-        pack_ids: data.packIds ?? [],
-        cash_amount:
-          data.cashAmount == null ? null : String(data.cashAmount),
+        slug: v.slug,
+        name: v.name,
+        type: v.type,
+        level_required: v.levelRequired ?? 0,
+        pack_ids: v.packIds ?? [],
+        cash_amount: v.cashAmount == null ? null : String(v.cashAmount),
         daily_unlock_percentage:
-          data.type === "daily" && data.dailyUnlockPercentage != null
-            ? String(data.dailyUnlockPercentage)
+          v.type === "daily" && v.dailyUnlockPercentage != null
+            ? String(v.dailyUnlockPercentage)
             : null,
-        metadata: data.metadata ?? null,
+        metadata: v.metadata ?? null,
       })
       .returning();
   } catch (e) {
@@ -90,6 +105,7 @@ export async function createReward(data: {
     }
     throw e;
   }
+  if (!reward) throw new Error("Reward insert returned no row");
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -97,7 +113,7 @@ export async function createReward(data: {
     metadata: { reward_id: reward.id, slug: reward.slug, type: reward.type },
   });
 
-  await reloadPacks();
+  await reloadPacksInternal();
 
   revalidateRewardPages();
   return reward.id;
@@ -120,30 +136,42 @@ export async function updateReward(
   const db = await getPrimaryDrizzleDb();
   const session = await requireAdmin();
 
-  if (!data.slug.trim() || !data.name.trim()) {
-    throw new Error("Slug and name are required");
+  const parsed = rewardInputSchema.safeParse(data);
+  if (!parsed.success) {
+    throw new Error(parsed.error.issues[0]?.message ?? "Invalid reward input");
   }
+  const v = parsed.data;
 
   await requireCapability(session, "__can_update_reward", "update rewards");
 
-  const [reward] = await db
-    .update(rewards)
-    .set({
-      slug: data.slug.trim(),
-      name: data.name.trim(),
-      type: data.type,
-      level_required: data.levelRequired ?? 0,
-      pack_ids: data.packIds ?? [],
-      cash_amount: data.cashAmount == null ? null : String(data.cashAmount),
-      daily_unlock_percentage:
-        data.type === "daily" && data.dailyUnlockPercentage != null
-          ? String(data.dailyUnlockPercentage)
-          : null,
-      metadata: data.metadata ?? null,
-      updated_at: new Date().toISOString(),
-    })
-    .where(eq(rewards.id, id))
-    .returning();
+  let reward: typeof rewards.$inferSelect | undefined;
+  try {
+    [reward] = await db
+      .update(rewards)
+      .set({
+        slug: v.slug,
+        name: v.name,
+        type: v.type,
+        level_required: v.levelRequired ?? 0,
+        pack_ids: v.packIds ?? [],
+        cash_amount: v.cashAmount == null ? null : String(v.cashAmount),
+        daily_unlock_percentage:
+          v.type === "daily" && v.dailyUnlockPercentage != null
+            ? String(v.dailyUnlockPercentage)
+            : null,
+        metadata: v.metadata ?? null,
+        updated_at: new Date().toISOString(),
+      })
+      .where(eq(rewards.id, id))
+      .returning();
+  } catch (e) {
+    // Same friendly mapping createReward uses — renaming a reward onto an
+    // existing slug is a user error, not a 500.
+    if ((e as { code?: string })?.code === "23505") {
+      throw new Error("A reward with this slug already exists");
+    }
+    throw e;
+  }
   if (!reward) throw new Error("Reward not found");
 
   await createAdminAuditEvent({
@@ -152,7 +180,7 @@ export async function updateReward(
     metadata: { reward_id: reward.id, slug: reward.slug, type: reward.type },
   });
 
-  await reloadPacks();
+  await reloadPacksInternal();
 
   revalidateRewardPages();
   return reward.id;
@@ -178,7 +206,7 @@ export async function deleteReward(rewardId: string) {
     metadata: { reward_id: rewardId },
   });
 
-  await reloadPacks();
+  await reloadPacksInternal();
 
   revalidateRewardPages();
 }
