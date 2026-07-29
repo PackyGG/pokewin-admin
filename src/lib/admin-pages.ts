@@ -101,7 +101,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Insights", label: "Analytics (legacy)", key: "/insights/analytics" },
   { group: "Insights", label: "GGR (legacy)", key: "/ggr" },
   { group: "Insights", label: "Challenges insights (legacy)", key: "/insights/challenges" },
-  { group: "Insights", label: "Edge Plan 2.0 (legacy)", key: "/insights/edge-plan-2" },
   { group: "Insights", label: "Wager Liability (legacy)", key: "/insights/wager-liability" },
   { group: "Insights", label: "Games (legacy)", key: "/insights/games" },
   { group: "Insights", label: "Signup (legacy)", key: "/insights/rewards/signup" },
@@ -232,9 +231,7 @@ export const ADMIN_PAGES: AdminPage[] = [
 export const ALL_PAGE_KEYS = ADMIN_PAGES.map((p) => p.key);
 
 /** Retired routes whose DB permission keys still grant the replacement page. */
-export const PAGE_ACCESS_ALIASES: Record<string, readonly string[]> = {
-  "/insights/edge-plan-2": ["/insights/system-edge-plan"],
-};
+export const PAGE_ACCESS_ALIASES: Record<string, readonly string[]> = {};
 
 export function pageAccessGranted(
   allowedPages: string[],
