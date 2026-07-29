@@ -273,7 +273,7 @@ function gamingOutcomeFor(transaction: Transaction): GamingOutcome {
     if (transaction.upgraderResult === "lose") return "loss";
     return transaction.status === "pending" ? "pending" : null;
   }
-  if (transaction.type === "keno_bet" || transaction.type === "keno_payout") {
+  if (transaction.type === "keno_bet") {
     if (transaction.kenoResult === "win") return "win";
     if (transaction.kenoResult === "lose") return "loss";
     if (transaction.kenoResult === "draw") return "draw";
@@ -1208,41 +1208,18 @@ export const CategoryTransactionsTable = React.memo(
                         return <MergedPnlCell />;
                       }
                       if (t.type === "keno_bet") {
-                        if (
-                          t.kenoWinnings == null ||
-                          t.kenoHits == null ||
-                          t.kenoPicks == null
-                        ) {
+                        if (t.kenoWinnings == null) {
                           return <MergedPnlCell />;
                         }
                         return (
                           <MergedPnlCell
                             profit={t.amount - t.kenoWinnings}
                             won={t.kenoWinnings}
-                            extra={
-                              <>
-                                <span className="inline-flex items-center rounded border border-cyan-500/30 bg-cyan-500/15 px-1.5 py-0 text-[10px] font-medium text-cyan-600 dark:text-cyan-400">
-                                  {t.kenoHits}/{t.kenoPicks} hits
-                                </span>
-                                {t.kenoMultiplier != null && (
-                                  <span className="inline-flex items-center rounded border border-violet-500/30 bg-violet-500/15 px-1.5 py-0 text-[10px] font-medium text-violet-600 dark:text-violet-400">
-                                    {formatUpgraderMultiplier(t.kenoMultiplier)}
-                                  </span>
-                                )}
-                              </>
-                            }
                           />
                         );
                       }
-                      if (t.type === "keno_payout") {
-                        return (
-                          <MergedPnlCell
-                            wonLabel="Payout"
-                            won={t.kenoWinnings}
-                          />
-                        );
-                      }
-                      // Gaming is pack/battle only. Item cash-outs (card_sale /
+                      // Each game is represented by one outcome row. Item
+                      // cash-outs (card_sale /
                       // reward_card_sale / voucher_redeemed) live on the
                       // Inventory tab now, so the fallback below only handles
                       // pack_opening (cardsValue present) and the remaining

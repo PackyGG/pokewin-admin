@@ -63,9 +63,11 @@ export const maxDuration = 300;
 // kills the request. Matches the reward-insights default (REWARD_QUERY_TIMEOUT_MS).
 const USER_DETAIL_QUERY_TIMEOUT_MS = 15_000;
 
-// GAMING is the full pack / battle / upgrader / Keno play cycle: the BET legs
-// (entry / sponsorship) AND the in-game WIN legs (battle_refund, upgrader /
-// Keno payout). The item cash-OUTS (card_sale / reward_card_sale / voucher_redeemed)
+// GAMING is the full pack / battle / upgrader / Keno play cycle. Keno is
+// intentionally represented by only its bet row because that row is enriched
+// with the settled outcome and payout; showing the paired keno_payout ledger
+// row duplicated one game in the activity feed. The item cash-OUTS
+// (card_sale / reward_card_sale / voucher_redeemed)
 // and the battle_excess_to_voucher win-grant were moved to the INVENTORY tab
 // per owner — they realize/grant a held item (voucher == card per house rules),
 // so they sit with the inventory they came from. battle_excess_to_voucher in
@@ -82,7 +84,6 @@ const GAMING_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
   "keno_bet",
-  "keno_payout",
   // card_sale / reward_card_sale (selling a won/reward card back to cash) AND
   // voucher_redeemed (cashing a won voucher back to balance) are inventory /
   // item cash-OUTS — they live on the INVENTORY tab now (CARD_SALE_TX_TYPES),

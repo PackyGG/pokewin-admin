@@ -788,8 +788,9 @@ export type KenoGameDetails = {
   createdAt: string;
 };
 
-// Gaming = the full pack / battle / upgrader / Keno play cycle: the bet/play
-// and payout legs. The
+// Gaming = the full pack / battle / upgrader / Keno play cycle. Keno keeps
+// only the bet row because it already carries the settled result and winnings;
+// the separate payout ledger row would duplicate the same game. The
 // item cash-OUTS — card_sale / reward_card_sale (selling a won/reward card back
 // to balance) and voucher_redeemed (cashing a won voucher back to balance) —
 // were MOVED to the Inventory tab (CARD_SALE_TX_TYPES below) per owner: they're
@@ -809,7 +810,6 @@ export const GAMING_TX_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
   "keno_bet",
-  "keno_payout",
 ] as const;
 // Financial = deposits, withdrawals (card_withdrawal + withdrawal_shipping_fee)
 // and direct cash payouts (rakeback / affiliate / rain / race / gift / promo).

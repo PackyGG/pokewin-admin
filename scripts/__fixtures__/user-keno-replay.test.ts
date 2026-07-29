@@ -22,6 +22,14 @@ const transactionCache = readFileSync(
   "src/lib/queries/users-detail-cache.ts",
   "utf8",
 );
+const userPage = readFileSync(
+  "src/app/(admin)/users/[id]/page.tsx",
+  "utf8",
+);
+const transactionTypes = readFileSync(
+  "src/app/(admin)/users/[id]/user-tabs-types.ts",
+  "utf8",
+);
 const replay = readFileSync(
   "src/app/(admin)/users/[id]/keno-game-replay.tsx",
   "utf8",
@@ -57,16 +65,33 @@ test("Keno replay shows the canonical exact-hit chance", () => {
   assert.match(replay, /label=\{`Chance of \$\{game\.hits\} hits`\}/);
 });
 
-test("Gaming rows expose settled Keno outcomes with house-POV colors", () => {
+test("Gaming shows one settled outcome row per Keno game", () => {
   assert.match(transactionQuery, /fetchKenoSummariesByLedgerId/);
   assert.match(transactionQuery, /requested_tx AS MATERIALIZED/);
   assert.match(transactionQuery, /kg\.created_at >= tx\.created_at - INTERVAL '1 day'/);
   assert.match(transactionQuery, /kg\.bet_ledger_tx_id = tx\.id/);
   assert.match(transactionQuery, /kg\.payout_ledger_tx_id = tx\.id/);
-  assert.match(transactionCache, /users-detail-gaming-tx-v4/);
+  assert.match(transactionCache, /users-detail-gaming-tx-v5/);
   assert.match(transactions, /label: "User won"/);
   assert.match(transactions, /label: "User lost"/);
   assert.match(transactions, /border-l-rose-500/);
   assert.match(transactions, /border-l-emerald-500/);
-  assert.match(transactions, /t\.kenoHits.*t\.kenoPicks/s);
+  assert.match(
+    transactions,
+    /t\.type === "keno_bet"[\s\S]*profit=\{t\.amount - t\.kenoWinnings\}[\s\S]*won=\{t\.kenoWinnings\}/,
+  );
+  assert.doesNotMatch(transactions, /\{t\.kenoHits\}\/\{t\.kenoPicks\} hits/);
+
+  const initialTypes = userPage.match(
+    /const GAMING_TYPES = \[([\s\S]*?)\n\];/,
+  )?.[1];
+  const paginatedTypes = transactionTypes.match(
+    /export const GAMING_TX_TYPES = \[([\s\S]*?)\n\] as const;/,
+  )?.[1];
+  assert.ok(initialTypes);
+  assert.ok(paginatedTypes);
+  assert.match(initialTypes, /"keno_bet"/);
+  assert.match(paginatedTypes, /"keno_bet"/);
+  assert.doesNotMatch(initialTypes, /"keno_payout"/);
+  assert.doesNotMatch(paginatedTypes, /"keno_payout"/);
 });
