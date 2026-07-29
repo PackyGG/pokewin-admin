@@ -152,6 +152,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "refunds",
       "fiat-deposits",
       "fiat-fraud",
+      "fiat-eligibility",
       "points",
       "flows",
       "events",
