@@ -554,7 +554,7 @@ Das Projekt hat ein **cleanes, konsistentes UI** — dieser Stil ist verbindlich
 - **Farb-System:** Nur die CSS-Variablen aus `src/app/globals.css` + die Konstanten aus `src/lib/constants.ts` (`ROLE_COLORS`, `STATUS_COLORS`, etc.) verwenden. Keine hardcoded Farben außerhalb dieser Quellen.
 - **Dark Mode ist Default.** Jede neue Komponente muss Dark Mode respektieren (`dark:` Varianten).
 - **Komponenten-Struktur spiegeln:** Neue Komponenten folgen den Patterns in `src/components/` und den Feature-Ordnern. Kein alternatives Layout-System.
-- **Aurora-Background** (WebGL via `ogl`) nur dort, wo bereits im Einsatz — nicht ohne Absprache ausweiten.
+- **Keine dekorativen WebGL-Backgrounds oder neue UI-Dependencies** ohne Absprache einführen.
 - **Bevor neue UI-Dependencies hinzugefügt werden: nachfragen.** Keine stillschweigenden `npm install`s von UI-Libraries.
 - **Tremor nicht zusätzlich einführen**, wenn die bestehende shadcn/base-nova + Recharts + Data-Table-Kombination den Bedarf bereits abdeckt. Bestehende Haus-Patterns haben Vorrang.
 
