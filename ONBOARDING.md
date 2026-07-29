@@ -212,7 +212,7 @@ The webapp uses PostgreSQL as its only database engine. Drizzle ORM is the defau
 
 ### Whop refund operations
 
-- The owner-only Transactions â†’ Refunds workspace uses `WHOP_ADMIN_KEY` (with `WHOP_API_KEY` as a compatibility fallback) and the official Whop SDK. Refund mutations always disable SDK retries because Whop does not document an idempotency key for this endpoint.
+- The owner-only Fraud â†’ Whop Refunds workspace at `/antifraud/refunds` uses `WHOP_ADMIN_KEY` (with `WHOP_API_KEY` as a compatibility fallback) and the official Whop SDK. On `fraud.packydash.com` the route is `/refunds`; the retired Transactions `?tab=refunds` URL redirects there. Refund mutations always disable SDK retries because Whop does not document an idempotency key for this endpoint.
 - Refund selection is revalidated against current fraud state immediately after owner step-up. Eligible accounts are analyst-confirmed `antifraud_reviews.status = 'flagged'` or actively KYC-contained by a fraud-specific actor/reason; merely open or historical KYC cases are not bulk-refund authority.
 - `admin_whop_refund_batches` and `admin_whop_refund_items` are the durable ADMIN audit/lease boundary. `provider_payment_id` is globally unique there, every item is retrieved live from Whop before refunding, and interrupted/uncertain mutations become `unknown` for manual reconciliation instead of automatic retry. MAIN payment and ledger state remains webhook-owned and read-only to this dashboard.
 

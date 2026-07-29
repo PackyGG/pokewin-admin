@@ -13,6 +13,7 @@ import {
   MailWarning,
   MapPinned,
   RadioTower,
+  RotateCcw,
   Settings,
   ShieldAlert,
   UserRoundSearch,
@@ -74,6 +75,12 @@ const TRANSACTION_NAV: NavItem[] = [
   { label: "Fiat Fraud", href: "/antifraud/fiat-fraud", icon: ShieldAlert },
   { label: "Withdrawals", href: "/antifraud/withdrawals", icon: ArrowUpFromLine },
 ];
+
+const OWNER_TRANSACTION_NAV: NavItem = {
+  label: "Whop Refunds",
+  href: "/antifraud/refunds",
+  icon: RotateCcw,
+};
 
 const KYC_NAV: NavItem[] = [
   { label: "Home", href: "/antifraud/kyc", icon: Fingerprint },
@@ -187,11 +194,14 @@ function NavMenu({
 export function AntifraudSidebar({
   viewerId,
   canManage = false,
+  isOwner = false,
   access = { creatorHub: false, packStudio: false, antifraud: true },
 }: {
   viewerId: string;
   /** Owner / admin — reveals the authoring + settings group. */
   canManage?: boolean;
+  /** Refund execution is owner-only, so non-owners never see its entry. */
+  isOwner?: boolean;
   /** Server-computed workspace entitlement for the footer switcher. */
   access?: AppSwitcherAccess;
 }) {
@@ -285,7 +295,11 @@ export function AntifraudSidebar({
           <SidebarGroupLabel>Transactions</SidebarGroupLabel>
           <SidebarGroupContent>
             <NavMenu
-              items={TRANSACTION_NAV}
+              items={
+                isOwner
+                  ? [...TRANSACTION_NAV, OWNER_TRANSACTION_NAV]
+                  : TRANSACTION_NAV
+              }
               pathname={pathname}
               onNavTap={handleNavTap}
               alertCounts={navAlertCounts}

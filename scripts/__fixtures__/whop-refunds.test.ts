@@ -4,7 +4,7 @@ import test from "node:test";
 
 const actions = readFileSync(
   new URL(
-    "../../src/app/(admin)/transactions/deposits/refund-actions.ts",
+    "../../src/app/(antifraud)/antifraud/refunds/refund-actions.ts",
     import.meta.url,
   ),
   "utf8",
@@ -24,6 +24,51 @@ const queries = readFileSync(
   new URL("../../src/lib/queries/whop-refunds.ts", import.meta.url),
   "utf8",
 );
+const refundPage = readFileSync(
+  new URL("../../src/app/(antifraud)/antifraud/refunds/page.tsx", import.meta.url),
+  "utf8",
+);
+const refundsPanel = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/refunds/refunds-panel.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const transactionsPage = readFileSync(
+  new URL("../../src/app/(admin)/transactions/deposits/page.tsx", import.meta.url),
+  "utf8",
+);
+const sidebar = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const appHosts = readFileSync(
+  new URL("../../src/lib/app-hosts.ts", import.meta.url),
+  "utf8",
+);
+const middleware = readFileSync(
+  new URL("../../src/middleware.ts", import.meta.url),
+  "utf8",
+);
+
+test("Whop refunds live only in the owner-only Fraud workspace", () => {
+  assert.match(refundPage, /await requireOwner\(\)/);
+  assert.match(refundsPanel, /Whop refunds for currently flagged accounts/);
+  assert.match(sidebar, /label: "Whop Refunds"/);
+  assert.match(sidebar, /isOwner\s*\?\s*\[\.\.\.TRANSACTION_NAV, OWNER_TRANSACTION_NAV\]/);
+  assert.match(appHosts, /"refunds"/);
+  assert.doesNotMatch(transactionsPage, /RefundsPanel|value: "refunds"/);
+  assert.match(
+    middleware,
+    /retiredTransactionsTab === "refunds"[\s\S]*\? "refunds"/,
+  );
+  assert.match(actions, /revalidatePath\("\/antifraud\/refunds"\)/);
+  assert.doesNotMatch(actions, /revalidatePath\("\/transactions\/deposits"\)/);
+});
 
 test("refund batches require owner access and fresh step-up before expansion", () => {
   const owner = actions.indexOf("await requireOwner()");

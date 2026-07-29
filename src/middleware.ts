@@ -145,8 +145,8 @@ export async function middleware(request: NextRequest) {
     const dedicatedPackBuilder =
       !owner && isDedicatedPackBuilder(sessionRoles);
 
-    // Fiat Fraud moved from the Admin Transactions tabs to the Fraud
-    // workspace. Resolve this retired cross-host deep link at the HTTP layer:
+    // Fiat Fraud and Whop Refunds moved from the Admin Transactions tabs to
+    // the Fraud workspace. Resolve retired cross-host deep links at the HTTP layer:
     // an App Router redirect emitted from the page's RSC response can make
     // React attempt a cross-origin RSC navigation first and crash with #310.
     // Preserve every existing filter/pagination value, dropping only the
@@ -155,16 +155,26 @@ export async function middleware(request: NextRequest) {
     // canonical paths, so both would otherwise fall through to the in-render
     // redirect this block exists to prevent. Segment hosts are excluded: they
     // never serve /transactions/deposits in the first place.
+    const retiredTransactionsTab =
+      request.nextUrl.searchParams.get("tab");
+    const fraudTransactionsRoute =
+      retiredTransactionsTab === "fiat-fraud"
+        ? "fiat-fraud"
+        : retiredTransactionsTab === "refunds"
+          ? "refunds"
+          : null;
     if (
       (!appHost || appHost.basePath === null) &&
       pathname === "/transactions/deposits" &&
-      request.nextUrl.searchParams.get("tab") === "fiat-fraud"
+      fraudTransactionsRoute
     ) {
       const fraudHost = APP_HOSTS.find(
         (entry) => entry.basePath === "/antifraud",
       );
       if (fraudHost) {
-        const url = new URL(`https://${fraudHost.host}/fiat-fraud`);
+        const url = new URL(
+          `https://${fraudHost.host}/${fraudTransactionsRoute}`,
+        );
         request.nextUrl.searchParams.forEach((value, key) => {
           if (key !== "tab") url.searchParams.append(key, value);
         });

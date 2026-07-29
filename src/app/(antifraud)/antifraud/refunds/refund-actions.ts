@@ -139,7 +139,7 @@ export async function createRefundBatch(input: {
         reason,
       },
     });
-    revalidatePath("/transactions/deposits");
+    revalidatePath("/antifraud/refunds");
     return ok(await getRefundBatchProgress(batch.id));
   } catch (error) {
     return fail(actionErrorMessage(error));
@@ -299,7 +299,7 @@ export async function processNextRefund(
   }
 
   await finalizeBatch(batchId, session.userId);
-  revalidatePath("/transactions/deposits");
+  revalidatePath("/antifraud/refunds");
     return ok(await getRefundBatchProgress(batchId));
   } catch (error) {
     return fail(actionErrorMessage(error));

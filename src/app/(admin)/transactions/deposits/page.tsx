@@ -8,12 +8,11 @@ import {
   CreditCard,
   DatabaseZap,
   ListChecks,
-  RotateCcw,
 } from "lucide-react";
 import { getDepositTransactions } from "@/lib/queries/transactions";
 import { getCardPayments } from "@/lib/queries/card-payments";
 import { getWithdrawals } from "@/lib/queries/withdrawals";
-import { requirePageAccess, sessionIsOwner } from "@/lib/dal";
+import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TransactionsDataTable } from "../data-table";
 import { columns as depositsColumns } from "./columns";
@@ -39,12 +38,6 @@ import { LinkPendingShell } from "@/components/ux";
 import { BigDepositsToggle } from "./big-deposits-toggle";
 import { CardPaymentsTable } from "./card-payments-table";
 import { absoluteOriginForBasePath } from "@/lib/app-hosts";
-import {
-  getRecentRefundBatches,
-  getRefundCandidates,
-} from "@/lib/queries/whop-refunds";
-import { requireOwner } from "@/lib/owners";
-import { RefundsPanel } from "./refunds-panel";
 
 export const metadata = { title: "Transactions" };
 
@@ -70,11 +63,6 @@ const TABS = [
     label: "Withdrawals",
     icon: ArrowUpFromLine,
   },
-  {
-    value: "refunds",
-    label: "Refunds",
-    icon: RotateCcw,
-  },
 ] as const;
 
 type TabValue = (typeof TABS)[number]["value"];
@@ -86,16 +74,17 @@ export default async function TransactionsPage({
 }) {
   // DAL gate first — house rule: no work (not even the fiat-fraud redirect,
   // whose destination is a fixed origin) before the page-access check.
-  const session = await requirePageAccess("/transactions/deposits");
+  await requirePageAccess("/transactions/deposits");
 
   const rawParams = await searchParams;
   const firstValue = (key: string) => {
     const raw = rawParams[key];
     return Array.isArray(raw) ? raw[0] : raw;
   };
-  if (firstValue("tab") === "fiat-fraud") {
+  const retiredFraudTab = firstValue("tab");
+  if (retiredFraudTab === "fiat-fraud" || retiredFraudTab === "refunds") {
     const destination = new URL(
-      "/fiat-fraud",
+      retiredFraudTab === "refunds" ? "/refunds" : "/fiat-fraud",
       absoluteOriginForBasePath("/antifraud") ??
         "https://fraud.packydash.com",
     );
@@ -112,9 +101,7 @@ export default async function TransactionsPage({
     Object.keys(rawParams).map((key) => [key, firstValue(key)]),
   ) as Record<string, string | undefined>;
   const tab: TabValue =
-    params.tab === "refunds" && sessionIsOwner(session)
-      ? "refunds"
-      : params.tab === "withdrawals"
+    params.tab === "withdrawals"
       ? "withdrawals"
       : params.tab === "card-payments"
         ? "card-payments"
@@ -152,10 +139,7 @@ export default async function TransactionsPage({
           doesn't jump on switch. */}
       <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
-          {TABS.filter(
-            (candidate) =>
-              candidate.value !== "refunds" || sessionIsOwner(session),
-          ).map((t) => {
+          {TABS.map((t) => {
             const href =
               t.value === "deposits"
                 ? "/transactions/deposits"
@@ -188,44 +172,10 @@ export default async function TransactionsPage({
         <DepositsTab page={page} perPage={perPage} params={params} />
       ) : tab === "card-payments" ? (
         <CardPaymentsTab page={page} perPage={perPage} params={params} />
-      ) : tab === "refunds" ? (
-        <RefundsTab />
       ) : (
         <WithdrawalsTab page={page} perPage={perPage} params={params} />
       )}
     </div>
-  );
-}
-
-function RefundsTab() {
-  return (
-    <div className="space-y-3">
-      <SectionHeading icon={RotateCcw} title="Flagged account refunds" />
-      <Suspense
-        fallback={
-          <>
-            <Skeleton className="h-28 w-full rounded-xl" />
-            <TableSkeleton rows={8} columns={4} />
-          </>
-        }
-      >
-        <RefundsSection />
-      </Suspense>
-    </div>
-  );
-}
-
-async function RefundsSection() {
-  await requireOwner();
-  const [candidates, recentBatches] = await Promise.all([
-    getRefundCandidates(),
-    getRecentRefundBatches(),
-  ]);
-  return (
-    <RefundsPanel
-      candidates={candidates}
-      recentBatches={recentBatches}
-    />
   );
 }
 

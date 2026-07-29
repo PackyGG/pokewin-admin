@@ -30,6 +30,7 @@ import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { resolveAppAccess } from "@/lib/app-access";
+import { isOwner } from "@/lib/owners";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (antifraud) and (admin) route groups are sibling directories on disk, so this
@@ -248,6 +249,7 @@ export default async function AntifraudLayout({
         <AntifraudSidebar
           viewerId={session.userId}
           canManage={canManage}
+          isOwner={isOwner(session)}
           access={appAccess}
         />
         <SidebarInset className="min-w-0">
