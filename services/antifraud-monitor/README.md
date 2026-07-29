@@ -152,8 +152,10 @@ Fastify request ID. Logs cover validation and authentication rejection, rate
 limiting, assessment start, automatic allow/deny completion, Fingerprint replay
 rejection, and assessment failure. Completion logs include the environment,
 user ID, decision ID, score, reason codes, expiry, idempotency and duration.
-API keys, authorization headers, Fingerprint request IDs, raw caller/client IPs,
-request bodies and provider/database error messages are never logged.
+The dedicated lifecycle records never include API keys, authorization headers,
+Fingerprint request IDs, raw caller/client IPs, request bodies or
+provider/database error messages. Fastify's separate transport request record
+retains the platform-observed network peer address.
 
 Signup assessment, case/session creation, initial risk events and cursor
 advancement commit atomically. Provider successes are cached before that
