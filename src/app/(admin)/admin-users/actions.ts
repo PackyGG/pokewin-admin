@@ -465,13 +465,6 @@ export async function deleteAdminUser(
     }
   }
 
-  // Audit BEFORE the delete so the event is always on record
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "admin_user_deleted",
-    metadata: { target_admin_id: adminUserId, email: target.email, username: target.username },
-  });
-
   try {
     await adminDrizzle.transaction(async (tx) => {
       // ── Provenance-only nulling — PRESERVE the business/financial/CRM row,
@@ -495,6 +488,11 @@ export async function deleteAdminUser(
       await tx.execute(sql`UPDATE salary_payouts SET paid_by_id = NULL WHERE paid_by_id = ${adminUserId}::uuid`);
       // Shift schedule — keep the rota, drop who planned it.
       await tx.execute(sql`UPDATE admin_shifts SET created_by_id = NULL WHERE created_by_id = ${adminUserId}::uuid`);
+      // Expense tracking — company financial records, NEVER delete. Keep the
+      // expense, drop who entered it (columns made nullable via the
+      // 20260729_expenses_created_by_nullable migration).
+      await tx.execute(sql`UPDATE expenses SET created_by_id = NULL WHERE created_by_id = ${adminUserId}::uuid`);
+      await tx.execute(sql`UPDATE recurring_expenses SET created_by_id = NULL WHERE created_by_id = ${adminUserId}::uuid`);
       // creator_deal_estimates is not in the generated admin schema
       // (table provisioned outside the schema, NO-ACTION FK) and is a KNOWN
       // drift table that may be ABSENT in a given admin DB. When present, NULL
@@ -526,8 +524,6 @@ export async function deleteAdminUser(
       await tx.execute(sql`DELETE FROM admin_notes WHERE admin_user_id = ${adminUserId}::uuid`);
       await tx.execute(sql`DELETE FROM admin_gift_card_actions WHERE admin_user_id = ${adminUserId}::uuid`);
       await tx.execute(sql`DELETE FROM admin_voucher_actions WHERE admin_user_id = ${adminUserId}::uuid`);
-      await tx.execute(sql`DELETE FROM expenses WHERE created_by_id = ${adminUserId}::uuid`);
-      await tx.execute(sql`DELETE FROM recurring_expenses WHERE created_by_id = ${adminUserId}::uuid`);
 
       // Delete the admin user (admin_shift_assignments FK is CASCADE → auto-removed)
       await tx.execute(sql`DELETE FROM admin_users WHERE id = ${adminUserId}::uuid`);
@@ -537,6 +533,15 @@ export async function deleteAdminUser(
     const message = err instanceof Error ? err.message : "Unknown error";
     return { success: false, error: `Delete failed: ${message}` };
   }
+
+  // Audit AFTER the transaction commits — writing it first left a false
+  // "deleted" record on file whenever the transaction failed. Same
+  // audit-after-mutation ordering as setAdminRoles above.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "admin_user_deleted",
+    metadata: { target_admin_id: adminUserId, email: target.email, username: target.username },
+  });
 
   revalidatePath("/admin-users");
   return { success: true };
