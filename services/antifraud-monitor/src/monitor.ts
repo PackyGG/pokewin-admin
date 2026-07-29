@@ -715,7 +715,7 @@ export class MonitorEngine {
               key: "risky_location_monitor",
               title: "Risky signup location",
               detail: `${locationPolicy.countryCode} signups are monitored for ${locationPolicy.monitorDurationSeconds / 60} minutes`,
-              points: 0,
+              points: weights.risky_location,
             },
           ]
         : []),

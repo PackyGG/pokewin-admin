@@ -17,6 +17,7 @@ export const DEFAULT_SCORE_WEIGHTS = {
   affiliate_cluster_ten_plus: 25,
   country_cluster_ten_plus: 25,
   country_cluster_twenty_five_plus: 50,
+  risky_location: 40,
   fingerprint_missing: 15,
   fingerprint_bad_bot: 80,
   fingerprint_vpn: 20,
@@ -95,6 +96,7 @@ export function scorePoints(weights: ScoreWeights = defaultScoreWeights()) {
       tenPlus: weights.country_cluster_ten_plus,
       twentyFivePlus: weights.country_cluster_twenty_five_plus,
     },
+    riskyLocation: weights.risky_location,
     fingerprintMissing: weights.fingerprint_missing,
     fingerprintBadBot: weights.fingerprint_bad_bot,
     fingerprintVpn: weights.fingerprint_vpn,
@@ -284,6 +286,13 @@ export function signupScoreDefinitions(
           "25 or more accounts",
         ),
       ],
+    },
+    {
+      key: "risky_location",
+      title: "Risky signup location",
+      description:
+        "The signup country is enabled in the managed Risky Locations policy.",
+      options: [option(weights, "risky_location", "Matched")],
     },
   ];
 }

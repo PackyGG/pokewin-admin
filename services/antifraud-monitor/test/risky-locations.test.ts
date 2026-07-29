@@ -53,5 +53,6 @@ test("risky location monitoring is bounded and overrides only the session durati
   assert.match(migration, /BETWEEN 60 AND 3600/);
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
   assert.match(monitor, /locationPolicy \|\|/);
+  assert.match(monitor, /points: weights\.risky_location/);
   assert.match(monitor, /durationSeconds: opened\.durationSeconds/);
 });
