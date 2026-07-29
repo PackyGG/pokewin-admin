@@ -16,7 +16,9 @@ It does not modify the Packy frontend or backend.
 - Fingerprint Pro Plus event-integrity, IP/ASN/datacenter, VPN/proxy/Tor,
   blocklist, browser/device, velocity, mobile-integrity, and privacy-preserving
   proximity evidence from the stored signup request ID
-- proxycheck.io IP enrichment with a 24-hour per-IP cache
+- proxycheck.io stable v3 enrichment with confidence-aware proxy/VPN/Tor
+  scoring, live risk, attack and prior-detection history, network/location,
+  device-estimate and operator evidence, plus a 24-hour per-IP signup cache
 - Configurable three-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions
 - Signed, retry-safe delivery of committed risk events to the Admin dashboard

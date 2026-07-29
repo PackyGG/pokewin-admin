@@ -574,7 +574,7 @@ export class FiatEligibilityService {
     };
     const [fingerprint, proxycheck, fraudHistory, velocity] = await Promise.all([
       this.enrichment.fingerprintCheck(providerSubject, weights),
-      this.enrichment.proxycheck(providerSubject, weights),
+      this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
       input.env === "prod"
         ? this.db.antifraud.query<{
             signup_risk_score: number;

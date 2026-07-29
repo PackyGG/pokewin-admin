@@ -141,6 +141,22 @@ function signalPayload(
   );
 }
 
+function proxycheckResultNode(
+  raw: JsonObject,
+  signupIp: string,
+): JsonObject {
+  const expected = canonicalIp(signupIp);
+  for (const source of [raw, object(raw.data)]) {
+    const direct = source[signupIp];
+    if (direct !== undefined) return object(direct);
+    if (!expected) continue;
+    for (const [key, value] of Object.entries(source)) {
+      if (canonicalIp(key) === expected) return object(value);
+    }
+  }
+  return {};
+}
+
 export type EnrichmentResult = {
   provider: "fingerprint" | "proxycheck";
   status: "success" | "skipped" | "failed";
@@ -151,6 +167,8 @@ export type EnrichmentResult = {
   errorCode?: string;
   signals: Signal[];
 };
+
+export type ProxycheckTag = "signup" | "fiat-eligibility";
 
 export function reweightFingerprintSignals(
   signals: Signal[],
@@ -767,11 +785,16 @@ export function parseProxycheckResponse(
   weights: ScoreWeights = defaultScoreWeights(),
 ): { risk: number; signals: Signal[] } {
   const SCORE_POINTS = scorePoints(weights);
-  const direct = raw[signupIp];
-  const nested = object(raw.data)[signupIp];
-  const node = object(direct ?? nested);
+  const node = proxycheckResultNode(raw, signupIp);
   const detections = object(node.detections);
   const network = object(node.network);
+  const location = object(node.location);
+  const deviceEstimate = object(node.device_estimate);
+  const detectionHistory = object(node.detection_history);
+  const anonymousHistory = object(detectionHistory.anonymous);
+  const attackHistory = object(node.attack_history);
+  const operator = object(node.operator);
+  const policies = object(operator.policies);
   const risk = Number(
     detections.risk
       ?? node.risk
@@ -779,14 +802,19 @@ export function parseProxycheckResponse(
       ?? raw.risk
       ?? 0,
   );
-  const detectionTypes = [
-    "proxy",
-    "vpn",
-    "tor",
-    "compromised",
-    "scraper",
-    "hosting",
-  ].filter((key) => detections[key] === true);
+  const metadataKeys = new Set([
+    "anonymous",
+    "confidence",
+    "first_seen",
+    "last_seen",
+    "risk",
+    "type",
+    "operator_type",
+  ]);
+  const detectionTypes = Object.entries(detections)
+    .filter(([key, value]) => !metadataKeys.has(key) && value === true)
+    .map(([key]) => key)
+    .sort();
   const anonymous =
     node.proxy === "yes" ||
     node.anonymous === true ||
@@ -799,18 +827,105 @@ export function parseProxycheckResponse(
       || detections.operator_type
       || "",
   ).toLowerCase();
+  const confidence = numberValue(detections.confidence);
+  const allAttackEntries = Object.entries(attackHistory)
+    .map(([key, value]) => [key, numberValue(value) ?? 0] as const)
+    .filter(([, value]) => value > 0)
+    .sort((left, right) => right[1] - left[1]);
+  const attackTotal = allAttackEntries.reduce(
+    (total, [, count]) => total + count,
+    0,
+  );
+  const attackEntries = allAttackEntries.slice(0, 20);
+  const networkEvidence = signalPayload({
+    asn: network.asn ?? node.asn,
+    range: network.range,
+    hostname: network.hostname,
+    provider: network.provider ?? node.provider,
+    organisation: network.organisation,
+    type: network.type,
+  });
+  const locationEvidence = signalPayload({
+    continent: location.continent,
+    country: location.country,
+    isocode: location.isocode,
+    region: location.region,
+    regionCode: location.region_code,
+    city: location.city,
+    timezone: location.timezone,
+  });
+  const operatorEvidence = signalPayload({
+    name: operator.name,
+    url: operator.url,
+    anonymity: operator.anonymity,
+    popularity: operator.popularity,
+    services: Array.isArray(operator.services)
+      ? operator.services.slice(0, 20)
+      : undefined,
+    protocols: Array.isArray(operator.protocols)
+      ? operator.protocols.slice(0, 20)
+      : undefined,
+    policies: signalPayload({
+      adFiltering: policies.ad_filtering,
+      freeAccess: policies.free_access,
+      paidAccess: policies.paid_access,
+      portForwarding: policies.port_forwarding,
+      logging: policies.logging,
+      anonymousPayments: policies.anonymous_payments,
+      cryptoPayments: policies.crypto_payments,
+      traceableOwnership: policies.traceable_ownership,
+    }),
+    additionalOperators: Array.isArray(operator.additional_operators)
+      ? operator.additional_operators.slice(0, 20)
+      : undefined,
+  });
+  const networkProvider = stringValue(
+    network.provider ?? network.organisation ?? operator.name,
+  );
+  const networkType = stringValue(network.type);
+  const lastSeen = stringValue(detections.last_seen);
+  const commonEvidence = {
+    confidence,
+    firstSeen: detections.first_seen,
+    lastSeen: detections.last_seen,
+    lastUpdated: node.last_updated,
+    network: networkEvidence,
+    location: locationEvidence,
+    deviceEstimate: signalPayload({
+      address: deviceEstimate.address,
+      subnet: deviceEstimate.subnet,
+    }),
+    operator: operatorEvidence,
+  };
   const signals: Signal[] = [];
 
   if (positiveDetection) {
-    const points = /tor|proxy|compromised/.test(type)
+    const basePoints = /tor|proxy|compromised/.test(type)
       ? SCORE_POINTS.proxycheckAnonymous.torProxyCompromised
       : SCORE_POINTS.proxycheckAnonymous.lowerRisk;
+    const points = confidence === undefined || confidence >= 90
+      ? basePoints
+      : confidence >= 85
+        ? Math.round(basePoints * 0.75)
+        : 0;
+    const confidenceDetail = confidence === undefined
+      ? ""
+      : ` Detection confidence is ${confidence}%.`;
+    const providerDetail = networkProvider
+      ? ` Network: ${networkProvider}${networkType ? ` (${networkType})` : ""}.`
+      : "";
+    const seenDetail = lastSeen ? ` Last seen: ${lastSeen}.` : "";
     signals.push({
       key: "proxycheck_anonymous",
       title: type ? `Anonymous IP: ${type}` : "Anonymous IP detected",
-      detail: "proxycheck.io identified anonymized or proxy traffic.",
+      detail:
+        `proxycheck.io identified anonymized or proxy traffic.${confidenceDetail}${providerDetail}${seenDetail}`,
       points,
-      payload: { type, detectionTypes },
+      payload: {
+        type,
+        detectionTypes,
+        ...commonEvidence,
+      },
     });
   }
   if (
@@ -820,15 +935,59 @@ export function parseProxycheckResponse(
     signals.push({
       key: "proxycheck_risk",
       title: "High-risk IP",
-      detail: `proxycheck.io returned a risk score of ${risk}.`,
+      detail:
+        `proxycheck.io returned a risk score of ${risk}.`
+        + (networkProvider ? ` Network: ${networkProvider}.` : ""),
       points:
         risk >= SCORE_POINTS.proxycheckRisk.highThreshold
           ? SCORE_POINTS.proxycheckRisk.high
           : SCORE_POINTS.proxycheckRisk.medium,
       payload: {
         risk,
-        asn: network.asn ?? node.asn,
-        provider: network.provider ?? node.provider,
+        ...commonEvidence,
+      },
+    });
+  }
+  if (attackTotal > 0) {
+    const attackSummary = attackEntries
+      .slice(0, 4)
+      .map(([category, count]) => `${category.replaceAll("_", " ")}: ${count}`)
+      .join(", ");
+    signals.push({
+      key: "proxycheck_attack_history",
+      title: "IP attack history",
+      detail:
+        `proxycheck.io recorded ${attackTotal} attack event${attackTotal === 1 ? "" : "s"} for this IP.`
+        + (attackSummary ? ` ${attackSummary}.` : ""),
+      // ProxyCheck already incorporates attack history into its live risk score.
+      // Preserve the evidence without counting the same behavior twice.
+      points: 0,
+      payload: {
+        total: attackTotal,
+        categories: Object.fromEntries(attackEntries),
+        ...commonEvidence,
+      },
+    });
+  }
+  if (
+    anonymousHistory.delisted === true
+    && !positiveDetection
+  ) {
+    signals.push({
+      key: "proxycheck_detection_history",
+      title: "Previously anonymous IP",
+      detail:
+        "proxycheck.io previously listed this IP as anonymous."
+        + (
+          stringValue(anonymousHistory.date)
+            ? ` Delisted: ${String(anonymousHistory.date)}.`
+            : ""
+        ),
+      points: 0,
+      payload: {
+        delisted: true,
+        date: anonymousHistory.date,
+        ...commonEvidence,
       },
     });
   }
@@ -924,6 +1083,7 @@ export class EnrichmentService {
   async proxycheck(
     signup: Signup,
     weights: ScoreWeights = defaultScoreWeights(),
+    tag: ProxycheckTag = "signup",
   ): Promise<EnrichmentResult> {
     if (!signup.signup_ip) {
       return {
@@ -940,6 +1100,9 @@ export class EnrichmentService {
     );
     url.searchParams.set("key", this.config.PROXYCHECK_API_KEY);
     url.searchParams.set("days", "30");
+    url.searchParams.set("p", "0");
+    url.searchParams.set("ver", "24-June-2026");
+    url.searchParams.set("tag", tag);
 
     try {
       const response = await fetch(url, {
@@ -948,6 +1111,13 @@ export class EnrichmentService {
       });
       if (!response.ok) throw new Error(`http_${response.status}`);
       const raw = object(await response.json());
+      const resultNode = proxycheckResultNode(raw, signup.signup_ip);
+      if (
+        Object.keys(resultNode).length === 0
+        || !["ok", "warning"].includes(String(raw.status ?? "").toLowerCase())
+      ) {
+        throw new Error("invalid_response");
+      }
       const { risk, signals } = parseProxycheckResponse(
         raw,
         signup.signup_ip,

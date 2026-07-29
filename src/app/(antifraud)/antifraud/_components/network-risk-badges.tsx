@@ -7,6 +7,7 @@ const NETWORK_LABELS: Record<string, string> = {
   compromised: "Compromised IP",
   scraper: "Scraper",
   hosting: "Hosting",
+  residential_proxy: "Residential proxy",
 };
 
 const SIGNAL_LABELS: Record<string, string> = {
@@ -42,7 +43,7 @@ export function networkRiskLabels(value: unknown): string[] {
     for (const detection of detectionTypes) {
       if (typeof detection !== "string") continue;
       const key = detection.trim().toLowerCase();
-      if (key) labels.add(NETWORK_LABELS[key] ?? key);
+      if (key) labels.add(NETWORK_LABELS[key] ?? key.replaceAll("_", " "));
     }
     if (labels.size === 0) labels.add("Anonymous IP");
   }

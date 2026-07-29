@@ -566,7 +566,7 @@ export function providerScoreDefinitions(
       key: "proxycheck_anonymous",
       title: "Proxy, VPN or anonymous IP",
       description:
-        "proxycheck.io identifies a proxy, VPN, Tor exit, compromised IP, scraper or hosting network.",
+        "proxycheck.io identifies a proxy, VPN, Tor exit, compromised IP, scraper or hosting network. Current detections score fully at 90% confidence, at 75% weight from 85-89%, and remain evidence-only below 85%.",
       options: [
         option(
           weights,
