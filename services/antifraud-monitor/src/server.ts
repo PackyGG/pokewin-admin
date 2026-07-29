@@ -33,6 +33,7 @@ import {
 } from "./event-catalog.js";
 import { registerNetworkRoutes } from "./network-routes.js";
 import { registerFiatEmailDomainRoutes } from "./fiat-email-domain-routes.js";
+import { registerSignupFailureRoutes } from "./signup-failure-routes.js";
 import { registerRiskyLocationRoutes } from "./risky-location-routes.js";
 import { NetworkRiskService } from "./network-risk.js";
 import { pollerStalledFor } from "./poller-health.js";
@@ -1210,6 +1211,7 @@ app.put("/v1/scoring/:key", {
 
 await registerNetworkRoutes(app, db, networkRisk, config);
 await registerFiatEmailDomainRoutes(app, db);
+await registerSignupFailureRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);

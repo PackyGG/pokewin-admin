@@ -1,10 +1,18 @@
-import { Activity, Braces, RadioTower, ShieldCheck } from "lucide-react";
+import {
+  Activity,
+  Braces,
+  RadioTower,
+  ShieldCheck,
+  Siren,
+} from "lucide-react";
 
+import { SignupFailureManager } from "./signup-failure-manager";
 import {
   PageHero,
   PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
+import { getSignupIngestionFailures } from "@/lib/antifraud/signup-failures-api";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 
 export const metadata = { title: "Antifraud API" };
@@ -41,6 +49,12 @@ const READ_ENDPOINTS: Endpoint[] = [
     description:
       "Sanitized deployed integration presence and compiled Discord recipients. No secrets.",
     auth: "Bearer read token",
+  },
+  {
+    method: "GET",
+    path: "/v1/operations/signup-failures",
+    description: "Pending or resolved signup ingestion failures and evidence.",
+    auth: "Bearer admin token",
   },
   {
     method: "GET",
@@ -87,6 +101,18 @@ const READ_ENDPOINTS: Endpoint[] = [
 ];
 
 const WRITE_ENDPOINTS: Endpoint[] = [
+  {
+    method: "POST",
+    path: "/v1/operations/signup-failures/:userId/retry",
+    description: "Queue one durable signup failure for immediate replay.",
+    auth: "Bearer admin token",
+  },
+  {
+    method: "POST",
+    path: "/v1/operations/signup-failures/:userId/resolve",
+    description: "Close one reviewed failure without deleting its evidence.",
+    auth: "Bearer admin token",
+  },
   {
     method: "PUT",
     path: "/v1/rules/:id",
@@ -140,12 +166,28 @@ const INGEST_ENDPOINTS: Endpoint[] = [
 
 export default async function AntifraudApiPage() {
   await requireAntifraudManagerPage();
+  const signupFailures = await getSignupIngestionFailures();
 
   return (
     <div className="space-y-8">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
+
+      <section className="space-y-4">
+        <div className="space-y-1">
+          <SectionHeading icon={Siren} title="Signup recovery" />
+          <p className="text-sm text-muted-foreground">
+            Durable ingestion failures that need a retry or an explicit staff
+            resolution.
+          </p>
+        </div>
+        <SignupFailureManager
+          configured={signupFailures.configured}
+          error={signupFailures.error}
+          failures={signupFailures.data}
+        />
+      </section>
 
       <EndpointSection icon={Activity} title="Read API" endpoints={READ_ENDPOINTS} />
       <EndpointSection

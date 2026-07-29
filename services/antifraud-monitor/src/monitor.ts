@@ -562,7 +562,8 @@ export class MonitorEngine {
       `
         SELECT user_id, payload
         FROM signup_ingestion_failures
-        WHERE (
+        WHERE resolved_at IS NULL
+          AND (
             failure_count < $1
             OR error_text LIKE 'Provider enrichment unavailable:%'
           )
@@ -621,7 +622,9 @@ export class MonitorEngine {
 
   private async countFailedSignups(): Promise<number> {
     const result = await this.db.antifraud.query<{ count: number }>(
-      "SELECT COUNT(*)::int AS count FROM signup_ingestion_failures",
+      `SELECT COUNT(*)::int AS count
+         FROM signup_ingestion_failures
+        WHERE resolved_at IS NULL`,
     );
     return result.rows[0]?.count ?? 0;
   }
@@ -1305,7 +1308,10 @@ export class MonitorEngine {
             payload = EXCLUDED.payload,
             error_text = EXCLUDED.error_text,
             failure_count = signup_ingestion_failures.failure_count + 1,
-            last_failed_at = now()
+            last_failed_at = now(),
+            resolved_at = NULL,
+            resolved_by = NULL,
+            resolution_note = NULL
         `,
         [
           signup.id,
