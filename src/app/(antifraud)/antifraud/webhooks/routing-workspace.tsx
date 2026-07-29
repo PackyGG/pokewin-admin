@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -8,19 +8,18 @@ import {
   CheckCircle2,
   CircleOff,
   Hash,
-  ListFilter,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
   Send,
-  Settings2,
   Trash2,
-  Webhook,
 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -38,19 +37,22 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import type {
+  DiscordNotificationChannel,
   DiscordNotificationConfig,
   DiscordNotificationEvent,
 } from "@/lib/discord-notifications/config";
 import { cn } from "@/lib/utils";
 import {
   createCustomEventAction,
-  deleteRouteAction,
-  setRouteEnabledAction,
-  upsertRouteAction,
+  replaceChannelRoutesAction,
 } from "./actions";
+
+type ChannelEditorState = {
+  channelId: string;
+  eventKeys: string[];
+};
 
 export function DiscordRoutingWorkspace({
   initialConfig,
@@ -59,43 +61,26 @@ export function DiscordRoutingWorkspace({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  const [busyKey, setBusyKey] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [selectedChannelId, setSelectedChannelId] = useState(
-    initialConfig?.channels.find(
-      (channel) => channel.canView && channel.canSend && channel.canEmbed,
-    )?.id ??
-      initialConfig?.channels[0]?.id ??
-      "",
-  );
-  const [selectedEventKey, setSelectedEventKey] = useState("");
-  const [createOpen, setCreateOpen] = useState(false);
+  const [editor, setEditor] = useState<ChannelEditorState | null>(null);
+  const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
+  const [eventQuery, setEventQuery] = useState("");
+  const [createEventOpen, setCreateEventOpen] = useState(false);
 
-  useEffect(() => {
-    if (
-      initialConfig &&
-      !initialConfig.channels.some((channel) => channel.id === selectedChannelId)
-    ) {
-      setSelectedChannelId(
-        initialConfig.channels.find(
-          (channel) => channel.canView && channel.canSend && channel.canEmbed,
-        )?.id ??
-          initialConfig.channels[0]?.id ??
-          "",
-      );
-    }
-  }, [initialConfig, selectedChannelId]);
-
-  const channels = useMemo(() => {
+  const activeChannels = useMemo(() => {
     if (!initialConfig) return [];
-    const normalized = query.trim().toLowerCase();
+    const enabledEventKeys = new Set(
+      initialConfig.events
+        .filter((event) => event.enabled)
+        .map((event) => event.key),
+    );
     return initialConfig.channels
-      .filter(
-        (channel) =>
-          !normalized ||
-          channel.name.toLowerCase().includes(normalized) ||
-          channel.parentName?.toLowerCase().includes(normalized) ||
-          channel.id.includes(normalized),
+      .filter((channel) =>
+        initialConfig.routes.some(
+          (route) =>
+            route.channelId === channel.id &&
+            route.enabled &&
+            enabledEventKeys.has(route.eventKey),
+        ),
       )
       .sort(
         (a, b) =>
@@ -103,7 +88,19 @@ export function DiscordRoutingWorkspace({
           a.position - b.position ||
           a.name.localeCompare(b.name),
       );
-  }, [initialConfig, query]);
+  }, [initialConfig]);
+
+  const availableChannels = useMemo(() => {
+    if (!initialConfig) return [];
+    const activeIds = new Set(activeChannels.map((channel) => channel.id));
+    return initialConfig.channels.filter(
+      (channel) =>
+        !activeIds.has(channel.id) &&
+        channel.canView &&
+        channel.canSend &&
+        channel.canEmbed,
+    );
+  }, [activeChannels, initialConfig]);
 
   if (!initialConfig) {
     return (
@@ -129,84 +126,116 @@ export function DiscordRoutingWorkspace({
     );
   }
 
-  const selectedChannel =
-    initialConfig.channels.find((channel) => channel.id === selectedChannelId) ??
-    null;
-  const selectedRoutes = selectedChannel
-    ? initialConfig.routes.filter(
-        (route) => route.channelId === selectedChannel.id,
-      )
-    : [];
-  const routeByEvent = new Map(
-    selectedRoutes.map((route) => [route.eventKey, route]),
-  );
-  const availableEvents = initialConfig.events.filter(
-    (event) => event.enabled && !routeByEvent.has(event.key),
-  );
-  const activeRoutes = initialConfig.routes.filter((route) => route.enabled).length;
-  const sendableChannels = initialConfig.channels.filter(
-    (channel) => channel.canView && channel.canSend && channel.canEmbed,
-  ).length;
+  const config = initialConfig;
+  const enabledEvents = initialConfig.events.filter((event) => event.enabled);
+  const filteredEvents = enabledEvents.filter((event) => {
+    const normalized = eventQuery.trim().toLowerCase();
+    return (
+      !normalized ||
+      event.label.toLowerCase().includes(normalized) ||
+      event.description.toLowerCase().includes(normalized) ||
+      event.category.toLowerCase().includes(normalized) ||
+      event.key.includes(normalized)
+    );
+  });
 
   function runMutation(
-    key: string,
     operation: () => Promise<void>,
     successMessage: string,
+    onSuccess?: () => void,
   ) {
-    setBusyKey(key);
     startTransition(async () => {
       try {
         await operation();
         toast.success(successMessage);
+        onSuccess?.();
         router.refresh();
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "That change could not be saved",
         );
-      } finally {
-        setBusyKey(null);
       }
     });
   }
 
-  function addSelectedEvent() {
-    if (!selectedChannel || !selectedEventKey) return;
+  function openNewChannel() {
+    setEditingChannelId(null);
+    setEventQuery("");
+    setEditor({
+      channelId: availableChannels[0]?.id ?? "",
+      eventKeys: [],
+    });
+  }
+
+  function openExistingChannel(channelId: string) {
+    setEditingChannelId(channelId);
+    setEventQuery("");
+    setEditor({
+      channelId,
+      eventKeys: config.routes
+        .filter(
+          (route) =>
+            route.channelId === channelId &&
+            route.enabled &&
+            config.events.some(
+              (event) => event.key === route.eventKey && event.enabled,
+            ),
+        )
+        .map((route) => route.eventKey),
+    });
+  }
+
+  function closeEditor() {
+    setEditor(null);
+    setEditingChannelId(null);
+    setEventQuery("");
+  }
+
+  function toggleEvent(eventKey: string, checked: boolean) {
+    if (!editor) return;
+    setEditor({
+      ...editor,
+      eventKeys: checked
+        ? [...new Set([...editor.eventKeys, eventKey])]
+        : editor.eventKeys.filter((key) => key !== eventKey),
+    });
+  }
+
+  function saveChannel() {
+    if (!editor?.channelId || editor.eventKeys.length === 0) return;
+
     runMutation(
-      `add:${selectedChannel.id}:${selectedEventKey}`,
       () =>
-        upsertRouteAction({
-          channelId: selectedChannel.id,
-          eventKey: selectedEventKey,
-          enabled: true,
+        replaceChannelRoutesAction({
+          channelId: editor.channelId,
+          eventKeys: editor.eventKeys,
         }),
-      "Event routed to this channel",
+      editingChannelId ? "Channel updated" : "Channel added",
+      closeEditor,
     );
-    setSelectedEventKey("");
+  }
+
+  function removeChannel(channel: DiscordNotificationChannel) {
+    if (
+      !window.confirm(
+        `Remove #${channel.name} and all of its event assignments?`,
+      )
+    ) {
+      return;
+    }
+    runMutation(
+      () =>
+        replaceChannelRoutesAction({
+          channelId: channel.id,
+          eventKeys: [],
+        }),
+      "Channel removed",
+      closeEditor,
+    );
   }
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        <SummaryCard
-          icon={Hash}
-          label="Bot-visible channels"
-          value={sendableChannels}
-          detail={`${initialConfig.channels.length} synced from Discord`}
-        />
-        <SummaryCard
-          icon={ListFilter}
-          label="Available events"
-          value={initialConfig.events.filter((event) => event.enabled).length}
-          detail={`${initialConfig.events.filter((event) => event.custom).length} custom`}
-        />
-        <SummaryCard
-          icon={Send}
-          label="Active routes"
-          value={activeRoutes}
-          detail={`${initialConfig.routes.length} configured`}
-        />
-      </div>
-
       <div
         className={cn(
           "flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center",
@@ -237,338 +266,149 @@ export function DiscordRoutingWorkspace({
           </p>
           <p className="text-xs text-muted-foreground">
             {initialConfig.guild.lastSyncedAt
-              ? `Channel inventory synced ${formatTimestamp(initialConfig.guild.lastSyncedAt)}`
-              : "Waiting for the bot to publish its first channel inventory"}
+              ? `Channels synced ${formatTimestamp(initialConfig.guild.lastSyncedAt)}`
+              : "Waiting for the bot to sync its channels"}
           </p>
         </div>
         <Button
-          variant="outline"
+          variant="ghost"
+          size="sm"
           disabled={pending}
           onClick={() => startTransition(() => router.refresh())}
         >
           <RefreshCw className={cn(pending && "animate-spin")} />
-          Reload synced data
+          Refresh
         </Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.45fr)]">
-        <section className="overflow-hidden rounded-xl border bg-card">
-          <div className="border-b p-4">
-            <div className="flex items-center gap-2">
-              <Hash className="size-4 text-cyan-500" />
-              <h2 className="font-semibold">Channels</h2>
-              <Badge variant="secondary" className="ml-auto">
-                {channels.length}
-              </Badge>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">
-              Every channel the bot can currently see. Unsuitable channels stay
-              visible with the missing permission explained.
-            </p>
-            <div className="relative mt-3">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search channel name, category, or ID"
-                className="pl-9"
-              />
-            </div>
-          </div>
-
-          <div className="max-h-[520px] overflow-y-auto p-2">
-            {channels.length === 0 ? (
-              <EmptyState
-                icon={Hash}
-                title={query ? "No matching channels" : "No channels synced"}
-                detail={
-                  query
-                    ? "Try another name, category, or channel ID."
-                    : "Invite the bot to the admin server and wait for its inventory sync."
-                }
-              />
-            ) : (
-              <div className="space-y-1">
-                {channels.map((channel) => {
-                  const routeCount = initialConfig.routes.filter(
-                    (route) => route.channelId === channel.id,
-                  ).length;
-                  const canDeliver =
-                    channel.canView && channel.canSend && channel.canEmbed;
-                  return (
-                    <button
-                      key={channel.id}
-                      type="button"
-                      onClick={() => setSelectedChannelId(channel.id)}
-                      className={cn(
-                        "flex w-full items-start gap-3 rounded-lg border px-3 py-3 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring",
-                        selectedChannelId === channel.id
-                          ? "border-cyan-500/35 bg-cyan-500/8"
-                          : "border-transparent hover:bg-muted/60",
-                      )}
-                    >
-                      <Hash className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-                      <span className="min-w-0 flex-1">
-                        <span className="flex items-start gap-2">
-                          <span className="min-w-0 break-all text-sm font-medium">
-                            {channel.name} -{" "}
-                            <span className="font-mono text-xs text-muted-foreground">
-                              {channel.id}
-                            </span>
-                          </span>
-                          {routeCount > 0 && (
-                            <Badge variant="secondary">{routeCount}</Badge>
-                          )}
-                        </span>
-                        <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
-                          {channel.parentName ?? "No category"} · {channel.type}
-                        </span>
-                      </span>
-                      <span
-                        className={cn(
-                          "mt-0.5 size-2 shrink-0 rounded-full",
-                          canDeliver ? "bg-emerald-500" : "bg-amber-500",
-                        )}
-                        title={
-                          canDeliver
-                            ? "Ready for embeds"
-                            : "Missing View Channel, Send Messages, or Embed Links"
-                        }
-                      />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </section>
-
-        <section className="overflow-hidden rounded-xl border bg-card">
-          {selectedChannel ? (
-            <>
-              <div className="border-b p-4">
-                <div className="flex flex-wrap items-start gap-3">
-                  <span className="flex size-9 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
-                    <Webhook className="size-4" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <h2 className="truncate font-semibold">
-                      #{selectedChannel.name}
-                    </h2>
-                    <p className="text-xs text-muted-foreground">
-                      {selectedChannel.parentName ?? "No category"} ·{" "}
-                      {selectedChannel.id}
-                    </p>
-                  </div>
-                  <DeliveryBadge
-                    canView={selectedChannel.canView}
-                    canSend={selectedChannel.canSend}
-                    canEmbed={selectedChannel.canEmbed}
-                  />
-                </div>
-
-                <div className="mt-4 flex flex-col gap-2 sm:flex-row">
-                  <Select
-                    value={selectedEventKey}
-                    onValueChange={(value) => setSelectedEventKey(value ?? "")}
-                    disabled={
-                      !selectedChannel.canSend ||
-                      !selectedChannel.canView ||
-                      !selectedChannel.canEmbed ||
-                      availableEvents.length === 0
-                    }
-                  >
-                    <SelectTrigger className="w-full sm:flex-1">
-                      <SelectValue placeholder="Choose an event to route" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {availableEvents.map((event) => (
-                        <SelectItem key={event.key} value={event.key}>
-                          {event.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    onClick={addSelectedEvent}
-                    disabled={!selectedEventKey || pending}
-                  >
-                    <Plus />
-                    Add event
-                  </Button>
-                  <Button variant="outline" onClick={() => setCreateOpen(true)}>
-                    <Settings2 />
-                    New action
-                  </Button>
-                </div>
-              </div>
-
-              <div className="min-h-[360px] p-4">
-                {selectedRoutes.length === 0 ? (
-                  <EmptyState
-                    icon={Send}
-                    title="Nothing routes here yet"
-                    detail="Choose an event above. One event can route to multiple channels, and one channel can receive multiple events."
-                  />
-                ) : (
-                  <div className="space-y-3">
-                    {selectedRoutes.map((route) => {
-                      const event = initialConfig.events.find(
-                        (candidate) => candidate.key === route.eventKey,
-                      );
-                      const toggleKey = `toggle:${route.id}`;
-                      const deleteKey = `delete:${route.id}`;
-                      return (
-                        <div
-                          key={route.id}
-                          className={cn(
-                            "flex items-start gap-3 rounded-xl border p-4",
-                            route.enabled
-                              ? "border-border/70"
-                              : "border-dashed bg-muted/20 opacity-75",
-                          )}
-                        >
-                          <span
-                            className={cn(
-                              "mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg",
-                              route.enabled
-                                ? "bg-cyan-500/10 text-cyan-500"
-                                : "bg-muted text-muted-foreground",
-                            )}
-                          >
-                            <Bot className="size-4" />
-                          </span>
-                          <span className="min-w-0 flex-1">
-                            <span className="flex flex-wrap items-center gap-2">
-                              <span className="text-sm font-semibold">
-                                {event?.label ?? route.eventKey}
-                              </span>
-                              {event?.custom && (
-                                <Badge variant="outline">Custom</Badge>
-                              )}
-                            </span>
-                            <span className="mt-1 block text-xs text-muted-foreground">
-                              {event?.description ??
-                                "This event is no longer in the catalog."}
-                            </span>
-                            <code className="mt-2 block text-[10px] text-muted-foreground">
-                              {route.eventKey}
-                            </code>
-                          </span>
-                          <div className="flex shrink-0 items-center gap-2">
-                            <Switch
-                              checked={route.enabled}
-                              disabled={pending || busyKey === toggleKey}
-                              aria-label={`${route.enabled ? "Disable" : "Enable"} ${event?.label ?? route.eventKey}`}
-                              onCheckedChange={(enabled) =>
-                                runMutation(
-                                  toggleKey,
-                                  () =>
-                                    setRouteEnabledAction({
-                                      id: route.id,
-                                      enabled,
-                                    }),
-                                  enabled ? "Route enabled" : "Route disabled",
-                                )
-                              }
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon-sm"
-                              disabled={pending || busyKey === deleteKey}
-                              aria-label={`Delete route for ${event?.label ?? route.eventKey}`}
-                              onClick={() => {
-                                if (
-                                  !window.confirm(
-                                    `Stop routing ${event?.label ?? route.eventKey} to #${selectedChannel.name}?`,
-                                  )
-                                ) {
-                                  return;
-                                }
-                                runMutation(
-                                  deleteKey,
-                                  () => deleteRouteAction({ id: route.id }),
-                                  "Routing rule deleted",
-                                );
-                              }}
-                            >
-                              <Trash2 className="text-destructive" />
-                            </Button>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            </>
-          ) : (
-            <EmptyState
-              icon={Hash}
-              title="Select a channel"
-              detail="Choose a bot-visible Discord channel to configure its events."
-            />
-          )}
-        </section>
-      </div>
-
-      <section className="rounded-xl border bg-card">
+      <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
-          <div className="flex-1">
-            <h2 className="font-semibold">Event catalog</h2>
+          <div className="min-w-0 flex-1">
+            <div className="flex items-center gap-2">
+              <Send className="size-4 text-cyan-500" />
+              <h2 className="font-semibold">Active channels</h2>
+              <Badge variant="secondary">{activeChannels.length}</Badge>
+            </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Built-in antifraud events and reusable custom actions. Counts show
-              how many Discord channels receive each event.
+              Every configured channel and the events it receives.
             </p>
           </div>
-          <Button variant="outline" onClick={() => setCreateOpen(true)}>
-            <Plus />
-            Add custom action
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setCreateEventOpen(true)}
+            >
+              <Bot />
+              New event
+            </Button>
+            <Button
+              onClick={openNewChannel}
+              disabled={
+                pending ||
+                availableChannels.length === 0 ||
+                enabledEvents.length === 0
+              }
+            >
+              <Plus />
+              New channel
+            </Button>
+          </div>
         </div>
-        {initialConfig.events.length === 0 ? (
-          <EmptyState
-            icon={ListFilter}
-            title="No events available"
-            detail="The event catalog has not been initialized yet."
-          />
+
+        {activeChannels.length === 0 ? (
+          <div className="flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
+            <span className="flex size-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-500">
+              <Hash className="size-5" />
+            </span>
+            <p className="mt-3 text-sm font-semibold">No active channels</p>
+            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+              Add a bot-visible Discord channel and choose the events it should
+              receive.
+            </p>
+            <Button
+              className="mt-4"
+              onClick={openNewChannel}
+              disabled={
+                pending ||
+                availableChannels.length === 0 ||
+                enabledEvents.length === 0
+              }
+            >
+              <Plus />
+              New channel
+            </Button>
+          </div>
         ) : (
-          <div className="grid gap-3 p-4 md:grid-cols-2 xl:grid-cols-3">
-            {initialConfig.events.map((event) => {
-              const eventRoutes = initialConfig.routes.filter(
-                (route) => route.eventKey === event.key,
+          <div className="divide-y">
+            {activeChannels.map((channel) => {
+              const routes = initialConfig.routes.filter(
+                (route) =>
+                  route.channelId === channel.id &&
+                  route.enabled &&
+                  initialConfig.events.some(
+                    (event) => event.key === route.eventKey && event.enabled,
+                  ),
               );
+              const events = routes.map(
+                (route) =>
+                  initialConfig.events.find(
+                    (event) => event.key === route.eventKey,
+                  ) ?? {
+                    key: route.eventKey,
+                    label: route.eventKey,
+                    description: "This event is no longer in the catalog.",
+                    category: "Unavailable",
+                    custom: false,
+                    enabled: false,
+                  },
+              );
+
               return (
                 <div
-                  key={event.key}
-                  className={cn(
-                    "rounded-xl border p-4",
-                    !event.enabled && "border-dashed bg-muted/20 opacity-70",
-                  )}
+                  key={channel.id}
+                  className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start"
                 >
-                  <div className="flex items-start gap-3">
-                    <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-                      <Bot className="size-4" />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="text-sm font-semibold">{event.label}</p>
-                        {event.custom && <Badge variant="outline">Custom</Badge>}
-                        {!event.enabled && (
-                          <Badge variant="secondary">Unavailable</Badge>
-                        )}
-                      </div>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        {event.description}
-                      </p>
+                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#5865F2]/10 text-[#5865F2]">
+                    <Hash className="size-4" />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <h3 className="font-semibold">#{channel.name}</h3>
+                      <DeliveryBadge channel={channel} />
+                      <span className="text-xs text-muted-foreground">
+                        {channel.parentName ?? "No category"}
+                      </span>
+                    </div>
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      {events.map((event) => (
+                        <Badge
+                          key={event.key}
+                          variant={event.enabled ? "secondary" : "destructive"}
+                          title={event.description}
+                        >
+                          {event.label}
+                        </Badge>
+                      ))}
                     </div>
                   </div>
-                  <div className="mt-3 flex items-center justify-between border-t pt-3 text-[11px] text-muted-foreground">
-                    <span>{event.category}</span>
-                    <span>
-                      {eventRoutes.filter((route) => route.enabled).length} active ·{" "}
-                      {eventRoutes.length} total
-                    </span>
+                  <div className="flex shrink-0 gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openExistingChannel(channel.id)}
+                    >
+                      <Pencil />
+                      Edit
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove #${channel.name}`}
+                      disabled={pending}
+                      onClick={() => removeChannel(channel)}
+                    >
+                      <Trash2 className="text-destructive" />
+                    </Button>
                   </div>
                 </div>
               );
@@ -577,16 +417,40 @@ export function DiscordRoutingWorkspace({
         )}
       </section>
 
+      <ChannelEditorDialog
+        editor={editor}
+        editingChannelId={editingChannelId}
+        channels={editingChannelId ? initialConfig.channels : availableChannels}
+        events={filteredEvents}
+        eventQuery={eventQuery}
+        pending={pending}
+        onEventQueryChange={setEventQuery}
+        onEditorChange={setEditor}
+        onToggleEvent={toggleEvent}
+        onClose={closeEditor}
+        onSave={saveChannel}
+        onRemove={
+          editingChannelId
+            ? () => {
+                const channel = initialConfig.channels.find(
+                  (candidate) => candidate.id === editingChannelId,
+                );
+                if (channel) removeChannel(channel);
+              }
+            : undefined
+        }
+      />
+
       <CreateEventDialog
-        open={createOpen}
-        onOpenChange={setCreateOpen}
+        open={createEventOpen}
+        onOpenChange={setCreateEventOpen}
         existingEvents={initialConfig.events}
         pending={pending}
         onCreate={(input) =>
           runMutation(
-            `event:${input.key}`,
             () => createCustomEventAction(input),
-            "Custom action created",
+            "Event created",
+            () => setCreateEventOpen(false),
           )
         }
       />
@@ -594,73 +458,184 @@ export function DiscordRoutingWorkspace({
   );
 }
 
-function SummaryCard({
-  icon: Icon,
-  label,
-  value,
-  detail,
+function ChannelEditorDialog({
+  editor,
+  editingChannelId,
+  channels,
+  events,
+  eventQuery,
+  pending,
+  onEventQueryChange,
+  onEditorChange,
+  onToggleEvent,
+  onClose,
+  onSave,
+  onRemove,
 }: {
-  icon: typeof Hash;
-  label: string;
-  value: number;
-  detail: string;
+  editor: ChannelEditorState | null;
+  editingChannelId: string | null;
+  channels: DiscordNotificationChannel[];
+  events: DiscordNotificationEvent[];
+  eventQuery: string;
+  pending: boolean;
+  onEventQueryChange: (value: string) => void;
+  onEditorChange: (value: ChannelEditorState) => void;
+  onToggleEvent: (eventKey: string, checked: boolean) => void;
+  onClose: () => void;
+  onSave: () => void;
+  onRemove?: () => void;
 }) {
+  const channel = channels.find((candidate) => candidate.id === editor?.channelId);
+
   return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="flex items-center gap-3">
-        <span className="flex size-9 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
-          <Icon className="size-4" />
-        </span>
-        <div>
-          <p className="text-xs text-muted-foreground">{label}</p>
-          <p className="text-xl font-bold tabular-nums">{value}</p>
-        </div>
-      </div>
-      <p className="mt-2 text-[11px] text-muted-foreground">{detail}</p>
-    </div>
+    <Dialog open={editor !== null} onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="sm:max-w-2xl">
+        <DialogHeader>
+          <DialogTitle>
+            {editingChannelId ? `Edit #${channel?.name ?? "channel"}` : "New channel"}
+          </DialogTitle>
+          <DialogDescription>
+            Choose a Discord channel and the events the bot should send there.
+          </DialogDescription>
+        </DialogHeader>
+
+        {editor && (
+          <div className="space-y-5">
+            <div className="space-y-1.5">
+              <Label>Discord channel</Label>
+              <Select
+                value={editor.channelId}
+                disabled={Boolean(editingChannelId)}
+                onValueChange={(channelId) =>
+                  onEditorChange({ ...editor, channelId: channelId ?? "" })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="Choose a channel" />
+                </SelectTrigger>
+                <SelectContent>
+                  {channels.map((item) => (
+                    <SelectItem key={item.id} value={item.id}>
+                      #{item.name}
+                      {item.parentName ? ` · ${item.parentName}` : ""}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label>Events</Label>
+                <span className="text-xs text-muted-foreground">
+                  {editor.eventKeys.length} selected
+                </span>
+              </div>
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={eventQuery}
+                  onChange={(event) => onEventQueryChange(event.target.value)}
+                  placeholder="Search events"
+                  className="pl-9"
+                />
+              </div>
+              <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border p-2">
+                {events.length === 0 ? (
+                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
+                    No matching events.
+                  </p>
+                ) : (
+                  events.map((event) => {
+                    const checked = editor.eventKeys.includes(event.key);
+                    return (
+                      <label
+                        key={event.key}
+                        className={cn(
+                          "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                          checked
+                            ? "border-cyan-500/30 bg-cyan-500/5"
+                            : "border-transparent hover:bg-muted/60",
+                        )}
+                      >
+                        <Checkbox
+                          className="mt-0.5"
+                          checked={checked}
+                          onCheckedChange={(value) =>
+                            onToggleEvent(event.key, value === true)
+                          }
+                        />
+                        <span className="min-w-0 flex-1">
+                          <span className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-medium">{event.label}</span>
+                            <Badge variant="outline">{event.category}</Badge>
+                            {event.custom && (
+                              <Badge variant="secondary">Custom</Badge>
+                            )}
+                          </span>
+                          <span className="mt-1 block text-xs text-muted-foreground">
+                            {event.description}
+                          </span>
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
+              {editor.eventKeys.length === 0 && (
+                <p className="text-xs text-amber-500">
+                  Select at least one event.
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        <DialogFooter className="sm:justify-between">
+          <div>
+            {onRemove && (
+              <Button
+                variant="ghost"
+                className="text-destructive hover:text-destructive"
+                disabled={pending}
+                onClick={onRemove}
+              >
+                <Trash2 />
+                Remove channel
+              </Button>
+            )}
+          </div>
+          <div className="flex gap-2">
+            <Button variant="outline" disabled={pending} onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              disabled={
+                pending || !editor?.channelId || editor.eventKeys.length === 0
+              }
+              onClick={onSave}
+            >
+              {editingChannelId ? "Save changes" : "Add channel"}
+            </Button>
+          </div>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function DeliveryBadge({
-  canView,
-  canSend,
-  canEmbed,
-}: {
-  canView: boolean;
-  canSend: boolean;
-  canEmbed: boolean;
-}) {
-  const ready = canView && canSend && canEmbed;
+function DeliveryBadge({ channel }: { channel: DiscordNotificationChannel }) {
+  const ready = channel.canView && channel.canSend && channel.canEmbed;
   return (
     <Badge variant={ready ? "secondary" : "destructive"}>
       {ready
-        ? "Ready"
-        : !canView
+        ? "Active"
+        : !channel.canView
           ? "Cannot view"
-          : !canSend
-          ? "Cannot send"
-          : "Cannot embed"}
+          : !channel.canSend
+            ? "Cannot send"
+            : "Cannot embed"}
     </Badge>
-  );
-}
-
-function EmptyState({
-  icon: Icon,
-  title,
-  detail,
-}: {
-  icon: typeof Hash;
-  title: string;
-  detail: string;
-}) {
-  return (
-    <div className="flex min-h-48 flex-col items-center justify-center px-6 py-10 text-center">
-      <span className="flex size-10 items-center justify-center rounded-xl bg-muted text-muted-foreground">
-        <Icon className="size-5" />
-      </span>
-      <p className="mt-3 text-sm font-semibold">{title}</p>
-      <p className="mt-1 max-w-sm text-xs text-muted-foreground">{detail}</p>
-    </div>
   );
 }
 
@@ -720,15 +695,14 @@ function CreateEventDialog({
     >
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add custom action</DialogTitle>
+          <DialogTitle>New event</DialogTitle>
           <DialogDescription>
-            Create a reusable event key, then assign it to one or more Discord
-            channels. The sending system must publish this exact key.
+            Add a reusable event, then assign it to a channel.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="space-y-1.5">
-            <Label htmlFor="event-label">Display name</Label>
+            <Label htmlFor="event-label">Name</Label>
             <Input
               id="event-label"
               value={label}
@@ -776,7 +750,7 @@ function CreateEventDialog({
               id="event-description"
               value={description}
               maxLength={240}
-              placeholder="When this action should be sent and what staff should do."
+              placeholder="When this event is sent."
               onChange={(event) => setDescription(event.target.value)}
             />
           </div>
@@ -793,7 +767,7 @@ function CreateEventDialog({
             onClick={create}
           >
             <Plus />
-            Create action
+            Create event
           </Button>
         </DialogFooter>
       </DialogContent>

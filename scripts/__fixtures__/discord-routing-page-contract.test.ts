@@ -19,7 +19,7 @@ test("Discord Routing belongs only to the manager-gated Fraud workspace", () => 
   );
 });
 
-test("Discord Routing exposes channel inventory and many-to-many event routes", () => {
+test("Discord Routing exposes active channels with add and edit event flows", () => {
   const workspace = source(
     "src/app/(antifraud)/antifraud/webhooks/routing-workspace.tsx",
   );
@@ -27,12 +27,11 @@ test("Discord Routing exposes channel inventory and many-to-many event routes", 
   assert.match(workspace, /initialConfig\.channels/);
   assert.match(workspace, /initialConfig\.events/);
   assert.match(workspace, /initialConfig\.routes/);
-  assert.match(workspace, /upsertRouteAction/);
-  assert.match(workspace, /setRouteEnabledAction/);
-  assert.match(workspace, /deleteRouteAction/);
+  assert.match(workspace, />Active channels</);
+  assert.match(workspace, /New channel/);
+  assert.match(workspace, /Save changes/);
+  assert.match(workspace, /replaceChannelRoutesAction/);
   assert.match(workspace, /createCustomEventAction/);
-  assert.match(workspace, /\{channel\.name\} -/);
-  assert.match(workspace, /\{channel\.id\}/);
 });
 
 test("every Discord route mutation is permission-gated and audited", () => {
@@ -42,8 +41,9 @@ test("every Discord route mutation is permission-gated and audited", () => {
 
   assert.equal(
     actions.match(/requireAntifraudManager\(\)/g)?.length,
-    4,
+    5,
   );
-  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 4);
+  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 5);
+  assert.match(actions, /discord_notification_channel_routes_replaced/);
   assert.doesNotMatch(actions, /WEBHOOK_URL|DISCORD_TOKEN/);
 });

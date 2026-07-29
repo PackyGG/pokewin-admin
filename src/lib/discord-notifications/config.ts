@@ -278,6 +278,77 @@ export async function upsertDiscordNotificationRoute(input: {
   };
 }
 
+export async function replaceDiscordNotificationChannelRoutes(input: {
+  guildId?: string;
+  channelId: string;
+  eventKeys: string[];
+  actorId: string;
+}): Promise<void> {
+  const guildId = configuredGuildId(input.guildId);
+  const channelId = requireSnowflake(input.channelId, "channelId");
+  const eventKeys = [...new Set(input.eventKeys.map(normalizeEventKey))];
+  if (eventKeys.length !== input.eventKeys.length || eventKeys.length > 500) {
+    throw new Error("Choose up to 500 unique events.");
+  }
+  const eventKeysJson = JSON.stringify(eventKeys);
+
+  await adminDrizzle.transaction(async (tx) => {
+    const channelResult = await tx.execute<{ channel_id: string }>(sql`
+      SELECT channel_id
+      FROM discord_notification_channels
+      WHERE guild_id = ${guildId}
+        AND channel_id = ${channelId}
+        AND available = true
+      LIMIT 1
+      FOR UPDATE
+    `);
+    if (channelResult.rows.length !== 1) {
+      throw new Error("That Discord channel is no longer available.");
+    }
+
+    if (eventKeys.length > 0) {
+      const inserted = await tx.execute<{ event_key: string }>(sql`
+        INSERT INTO discord_notification_routes (
+          guild_id, event_key, channel_id, enabled, created_by
+        )
+        SELECT
+          ${guildId}, event.event_key, channel.channel_id, true, ${input.actorId}::uuid
+        FROM jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
+        JOIN discord_notification_events AS event
+          ON event.event_key = desired.event_key
+         AND event.enabled = true
+        JOIN discord_notification_channels AS channel
+          ON channel.guild_id = ${guildId}
+         AND channel.channel_id = ${channelId}
+         AND channel.available = true
+         AND channel.can_view = true
+         AND channel.can_send = true
+         AND channel.can_embed = true
+        ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
+          enabled = true,
+          updated_at = now()
+        RETURNING event_key
+      `);
+      if (inserted.rows.length !== eventKeys.length) {
+        throw new Error(
+          "One or more events are unavailable, or the bot cannot send embeds to that channel.",
+        );
+      }
+    }
+
+    await tx.execute(sql`
+      DELETE FROM discord_notification_routes AS route
+      WHERE route.guild_id = ${guildId}
+        AND route.channel_id = ${channelId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
+          WHERE desired.event_key = route.event_key
+        )
+    `);
+  });
+}
+
 export async function setDiscordNotificationRouteEnabled(input: {
   guildId?: string;
   id: string;

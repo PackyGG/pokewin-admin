@@ -7,6 +7,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   createDiscordNotificationEvent,
   deleteDiscordNotificationRoute,
+  replaceDiscordNotificationChannelRoutes,
   setDiscordNotificationRouteEnabled,
   upsertDiscordNotificationRoute,
 } from "@/lib/discord-notifications/config";
@@ -31,6 +32,17 @@ const routeSchema = z.object({
   eventKey: eventKeySchema,
   channelId: snowflakeSchema,
   enabled: z.boolean(),
+});
+
+const channelRoutesSchema = z.object({
+  channelId: snowflakeSchema,
+  eventKeys: z
+    .array(eventKeySchema)
+    .max(500)
+    .refine(
+      (keys) => new Set(keys).size === keys.length,
+      "Choose each event only once",
+    ),
 });
 
 const routeIdSchema = z.string().uuid("Invalid routing rule");
@@ -69,6 +81,27 @@ export async function upsertRouteAction(input: unknown): Promise<void> {
     adminUserId: session.userId,
     eventType: "discord_notification_route_upserted",
     metadata: parsed.data,
+  });
+  revalidatePath("/antifraud/webhooks");
+}
+
+export async function replaceChannelRoutesAction(input: unknown): Promise<void> {
+  const session = await requireAntifraudManager();
+  const parsed = channelRoutesSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+
+  await replaceDiscordNotificationChannelRoutes({
+    ...parsed.data,
+    actorId: session.userId,
+  });
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "discord_notification_channel_routes_replaced",
+    metadata: {
+      channelId: parsed.data.channelId,
+      eventKeys: parsed.data.eventKeys,
+      eventCount: parsed.data.eventKeys.length,
+    },
   });
   revalidatePath("/antifraud/webhooks");
 }
