@@ -516,6 +516,13 @@ function storedDecision(
 
 export class FiatEligibilityService {
   private readonly enrichment: EnrichmentService;
+  private readonly inFlight = new Map<
+    string,
+    {
+      requestHash: string;
+      promise: Promise<FiatEligibilityDecision>;
+    }
+  >();
 
   constructor(
     private readonly db: Databases,
@@ -553,6 +560,34 @@ export class FiatEligibilityService {
     const requestIp = canonicalIp(input.ipAddress);
     if (!requestIp) throw new Error("invalid_request_ip");
     const hash = requestHash(input, requestIp);
+    const active = this.inFlight.get(input.fingerprint);
+    if (active) {
+      if (active.requestHash !== hash) throw new FingerprintReuseError();
+      return {
+        ...await active.promise,
+        idempotent: true,
+      };
+    }
+    const promise = this.assessOnce(input, now, requestIp, hash);
+    this.inFlight.set(input.fingerprint, {
+      requestHash: hash,
+      promise,
+    });
+    try {
+      return await promise;
+    } finally {
+      if (this.inFlight.get(input.fingerprint)?.promise === promise) {
+        this.inFlight.delete(input.fingerprint);
+      }
+    }
+  }
+
+  private async assessOnce(
+    input: FiatEligibilityRequest,
+    now: Date,
+    requestIp: string,
+    hash: string,
+  ): Promise<FiatEligibilityDecision> {
     const previous = await this.existing(input.fingerprint);
     if (previous) {
       if (previous.request_hash !== hash) throw new FingerprintReuseError();
@@ -618,6 +653,7 @@ export class FiatEligibilityService {
             )::int AS denied_attempts_24h
           FROM fiat_eligibility_assessments
           WHERE environment=$1 AND user_id=$2
+            AND created_at >= now() - interval '24 hours'
         `,
         [input.env, input.userID],
       ),

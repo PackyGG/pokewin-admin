@@ -115,6 +115,7 @@ export async function registerFiatEligibilityRoutes(
   app.post(
     FIAT_ELIGIBILITY_PATH,
     {
+      bodyLimit: 4 * 1024,
       config: {
         rateLimit: {
           max: input.config.FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE,

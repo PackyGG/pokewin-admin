@@ -171,6 +171,47 @@ test("Fiat request contract accepts only the exact dev/prod payload", () => {
   );
 });
 
+test("Fiat endpoint rejects oversized bodies before automatic review", async () => {
+  const app = Fastify({ logger: false });
+  const localAccess = new FiatEligibilityAccess({
+    FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
+    FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
+    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
+    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
+  });
+  let assessed = false;
+  await registerFiatEligibilityRoutes(app, {
+    config: {
+      FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 60,
+    } as Config,
+    access: localAccess,
+    service: {
+      assess: async () => {
+        assessed = true;
+        throw new Error("must_not_run");
+      },
+    } as unknown as FiatEligibilityService,
+  });
+
+  const response = await app.inject({
+    method: "POST",
+    url: "/v1/fiat-eligibility/check",
+    headers: { authorization: `Bearer ${PROD_KEY}` },
+    payload: {
+      env: "prod",
+      createdAt: new Date().toISOString(),
+      ipAddress: "203.0.113.42",
+      fingerprint: "fresh-fingerprint-request",
+      userID: "user-1",
+      padding: "x".repeat(4 * 1024),
+    },
+  });
+  await app.close();
+
+  assert.equal(response.statusCode, 413);
+  assert.equal(assessed, false);
+});
+
 test("server pre-authentication logs dedicated Fiat endpoint rejections", () => {
   assert.match(
     serverSource,
@@ -441,4 +482,109 @@ test("fresh Fingerprint identity is mandatory and replay-safe", () => {
     );
   }
   assert.equal(new FingerprintReuseError().name, "FingerprintReuseError");
+});
+
+test("concurrent identical requests share one automatic provider review", async () => {
+  let releaseFingerprint!: () => void;
+  const fingerprintGate = new Promise<void>((resolve) => {
+    releaseFingerprint = resolve;
+  });
+  let fingerprintCalls = 0;
+  let proxycheckCalls = 0;
+  let sourceCalls = 0;
+  const now = new Date("2026-07-29T12:00:00.000Z");
+  const subject = reviewInput().subject;
+  const source = {
+    query: async () => {
+      sourceCalls += 1;
+      if (sourceCalls === 1) return { rows: [subject] };
+      return {
+        rows: [{
+          shared_checkout_visitor_users: 0,
+          shared_current_ip_users: 0,
+        }],
+      };
+    },
+  };
+  const request = {
+    env: "prod" as const,
+    createdAt: "2026-07-29T11:59:30.000Z",
+    ipAddress: "203.0.113.20",
+    fingerprint: "concurrent-fingerprint-request",
+    userID: "user-1",
+  };
+  const antifraud = {
+    query: async (sql: string) => {
+      if (sql.includes("SELECT id, request_hash")) return { rows: [] };
+      if (sql.includes("signup_risk_score")) return { rows: [] };
+      if (sql.includes("attempts_10m")) {
+        return {
+          rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }],
+        };
+      }
+      if (sql.includes("INSERT INTO fiat_eligibility_assessments")) {
+        return {
+          rows: [{
+            id: "decision-concurrent",
+            request_hash: fiatEligibilityInternals.requestHash(
+              request,
+              request.ipAddress,
+            ),
+            decision: "allow",
+            risk_score: 0,
+            reason_codes: [],
+            expires_at: new Date(now.getTime() + 60_000),
+          }],
+        };
+      }
+      throw new Error("unexpected antifraud query");
+    },
+  };
+  const enrichment = {
+    fingerprintCheck: async () => {
+      fingerprintCalls += 1;
+      await fingerprintGate;
+      return provider("fingerprint", {
+        response: {
+          products: {
+            identification: {
+              data: {
+                visitorId: "visitor-1",
+                linkedId: "user-1",
+                ip: "203.0.113.20",
+                time: "2026-07-29T11:59:35.000Z",
+              },
+            },
+          },
+        },
+      });
+    },
+    proxycheck: async () => {
+      proxycheckCalls += 1;
+      return provider("proxycheck");
+    },
+  };
+  const service = new FiatEligibilityService(
+    {
+      source,
+      fiatDevSource: null,
+      antifraud,
+    } as never,
+    { get: async () => ({}) } as never,
+    enrichment as never,
+  );
+
+  const first = service.assess(request, now);
+  const second = service.assess(request, now);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(fingerprintCalls, 1);
+  assert.equal(proxycheckCalls, 1);
+  releaseFingerprint();
+
+  const [primary, follower] = await Promise.all([first, second]);
+  assert.equal(primary.decisionId, "decision-concurrent");
+  assert.equal(primary.idempotent, false);
+  assert.equal(follower.decisionId, primary.decisionId);
+  assert.equal(follower.idempotent, true);
+  assert.equal(sourceCalls, 2);
 });
