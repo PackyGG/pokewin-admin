@@ -131,6 +131,8 @@ export type ReviewFilters = {
   status?: ReviewStatus | "all" | "unresolved";
   /** Limit to cases assigned to this admin. */
   assignedTo?: string;
+  /** User ids owned by another operational queue, such as KYC. */
+  excludedTargetUserIds?: readonly string[];
   /**
    * PREFIX match on the denormalized username / player id / reason — see
    * {@link buildReviewConditions} for why this is not a substring search.
@@ -166,6 +168,15 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
   }
 
   if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
+
+  if (filters.excludedTargetUserIds?.length) {
+    conditions.push(sql`
+      NOT (
+        ${antifraud_reviews.target_user_id} =
+        ANY(${pgArrayParam(filters.excludedTargetUserIds)}::text[])
+      )
+    `);
+  }
 
   const term = filters.search?.trim();
   if (term) {
@@ -449,6 +460,7 @@ export type ReviewStats = {
 /** The dashboard KPI strip. One grouped count + three narrow counts. */
 export async function getReviewStats(
   adminUserId?: string,
+  excludedTargetUserIds: readonly string[] = [],
 ): Promise<ReviewStats> {
   const empty: ReviewStats = {
     open: 0,
@@ -471,6 +483,14 @@ export async function getReviewStats(
       new Date(),
       timeZone,
     );
+    const targetScope = excludedTargetUserIds.length
+      ? sql`
+          NOT (
+            ${antifraud_reviews.target_user_id} =
+            ANY(${pgArrayParam(excludedTargetUserIds)}::text[])
+          )
+        `
+      : sql`TRUE`;
 
     const result = await adminDrizzle.execute<{
       open: string; in_review: string; escalated: string; flagged: string;
@@ -484,6 +504,7 @@ export async function getReviewStats(
         COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
         COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...OPEN_REVIEW_STATUSES])}::text[])) AS mine_open
       FROM antifraud_reviews
+      WHERE ${targetScope}
     `);
     const row = result.rows[0];
     const value = (key: keyof NonNullable<typeof row>) => Number(row?.[key] ?? 0);

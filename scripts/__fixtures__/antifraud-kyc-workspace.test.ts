@@ -137,3 +137,22 @@ test("the KYC queue exposes only the five operational filters", () => {
     /export const KYC_FILTERS = \[[\s\S]*?"all"[\s\S]*?"kyc_in_progress"[\s\S]*?"review"[\s\S]*?"finished"[\s\S]*?"declined"[\s\S]*?\] as const/,
   );
 });
+
+test("account reviews exclude currently KYC-required users before pagination", () => {
+  const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
+  const reviews = source("src/lib/antifraud/reviews.ts");
+  const kyc = source("src/lib/antifraud/kyc.ts");
+
+  assert.match(kyc, /export async function listKycRequiredUserIds/);
+  assert.match(kyc, /eq\(user_kyc\.kyc_required,\s*true\)/);
+  assert.match(
+    page,
+    /const excludedTargetUserIds = await listKycRequiredUserIds\(\)/,
+  );
+  assert.match(page, /listReviewPage\(scopedFilters,\s*cursor\)/);
+  assert.match(page, /getReviewStats\(undefined,\s*excludedTargetUserIds\)/);
+  assert.match(
+    reviews,
+    /excludedTargetUserIds[\s\S]*?ANY\(\$\{pgArrayParam\(filters\.excludedTargetUserIds\)\}::text\[\]\)/,
+  );
+});

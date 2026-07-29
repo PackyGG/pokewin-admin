@@ -37,6 +37,7 @@ import {
   type ReviewFilters,
   type ReviewListItem,
 } from "@/lib/antifraud/reviews";
+import { listKycRequiredUserIds } from "@/lib/antifraud/kyc";
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { QuickReviewActions } from "./_components/quick-review-actions";
@@ -238,16 +239,34 @@ async function QueueList({
   cursor?: string;
   current: SearchParams;
 }) {
-  const [{ data: page, error }, stats] = await Promise.all([
-    safeQuery(
-      () => listReviewPage(filters, cursor),
-      { items: [], nextCursor: null, total: 0 },
-      "antifraud.review-queue",
-      QUERY_TIMEOUT_MS,
-    ),
-    // Queue-wide health strip — degrades to zeros on its own inside the lib.
-    getReviewStats(),
-  ]);
+  const { data, error } = await safeQuery(
+    async () => {
+      // KYC-required accounts belong only in the dedicated KYC workspace.
+      // Resolve that scope before both ADMIN reads so pagination, totals, and
+      // queue KPIs all describe the same visible set.
+      const excludedTargetUserIds = await listKycRequiredUserIds();
+      const scopedFilters = { ...filters, excludedTargetUserIds };
+      const [page, stats] = await Promise.all([
+        listReviewPage(scopedFilters, cursor),
+        getReviewStats(undefined, excludedTargetUserIds),
+      ]);
+      return { page, stats };
+    },
+    {
+      page: { items: [], nextCursor: null, total: 0 },
+      stats: {
+        open: 0,
+        inReview: 0,
+        escalated: 0,
+        resolvedToday: 0,
+        flaggedTotal: 0,
+        mineOpen: 0,
+      },
+    },
+    "antifraud.review-queue",
+    QUERY_TIMEOUT_MS,
+  );
+  const { page, stats } = data;
   const reviews = page.items;
 
   return (

@@ -114,6 +114,23 @@ export type KycDashboardFilters = {
   limit?: number;
 };
 
+/**
+ * Keep the cross-database boundary explicit: load the currently required user
+ * ids from the MAIN read mirror, then pass them into the ADMIN review query.
+ * The boolean predicate intentionally uses the planner's sequential scan:
+ * `user_kyc` is a tiny one-row-per-enrolled-user relation and the full read
+ * completed in under 1 ms during the production-mirror EXPLAIN check.
+ */
+export async function listKycRequiredUserIds(): Promise<string[]> {
+  const db = await getReadDrizzleDb();
+  const rows = await db
+    .select({ userId: user_kyc.user_id })
+    .from(user_kyc)
+    .where(eq(user_kyc.kyc_required, true));
+
+  return rows.map((row) => row.userId);
+}
+
 function date(value: Date | string): Date {
   return value instanceof Date ? value : new Date(value);
 }
