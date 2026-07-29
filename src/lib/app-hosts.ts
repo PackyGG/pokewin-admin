@@ -28,12 +28,15 @@
  * self-heals instead of 404ing.
  *
  * IMPORTED BY MIDDLEWARE — must stay dependency-free and Edge-safe. No node
- * imports, no DB, no `server-only`.
+ * imports, no DB, no `server-only`. (`owners-shared` is pure constants and
+ * satisfies the same contract.)
  *
  * Nothing here activates until a hostname actually resolves to this deployment:
  * an unmatched `Host` falls through completely untouched, which is why this
  * ships safely before the DNS exists.
  */
+
+import { isRootOwnerUsername } from "@/lib/owners-shared";
 
 /** The registrable domain every dashboard host sits under. */
 export const ROOT_DOMAIN = "packydash.com";
@@ -415,7 +418,7 @@ export function isAllowedOnHost(
   // Owners bypass every door. The root owner is recognised by username so the
   // check never depends on a flag the JWT might not carry.
   if (session.isOwner === true) return true;
-  if ((session.username ?? "").trim().toLowerCase() === "motha") return true;
+  if (isRootOwnerUsername(session.username)) return true;
 
   const roles = new Set<string>();
   if (session.role) roles.add(session.role);

@@ -8,22 +8,32 @@ import {
   rewritePathForHost,
 } from "@/lib/app-hosts";
 import {
+  getDefaultRoute,
   getEffectiveRoles,
   isDedicatedPackBuilder,
   isPackBuilderContentPath,
 } from "@/lib/admin-roles";
+import { isRootOwnerUsername } from "@/lib/owners-shared";
 
 const PUBLIC_ROUTES = ["/login"];
 const PENDING_2FA_ROUTES = ["/verify-2fa", "/setup-2fa"];
 
-// Role → landing page. Chat is a slide-out panel now, so support/marketing land
-// on a real page. Used both for the post-login bounce and the legacy /chat
-// bookmark redirect below.
-const DEFAULT_ROUTE_BY_ROLE: Record<string, string> = {
-  admin: "/dashboard",
+// Role → landing page. Used both for the post-login bounce and the legacy
+// /chat bookmark redirect below. The shared role→landing table is
+// `getDefaultRoute` (src/lib/admin-roles.ts, edge-safe) so new roles like
+// creator_manager/creator/pack_creator can't drift out of sync again;
+// middleware only holds the signed JWT (no allowed_pages), so the two roles
+// whose landing depends on page access keep explicit overrides to the surface
+// they can always reach instead of getDefaultRoute's /dashboard fallback.
+// Chat is a slide-out panel now, so support/marketing land on a real page.
+const LANDING_OVERRIDES: Record<string, string> = {
   support: "/users",
   marketing: "/analytics",
 };
+
+function landingRouteForRole(role: string): string {
+  return LANDING_OVERRIDES[role] ?? getDefaultRoute(role);
+}
 
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -97,7 +107,24 @@ export async function middleware(request: NextRequest) {
     return response;
   }
 
-  const hasPendingSession = !!pendingToken;
+  // Like the session cookie above, the pending-2FA cookie only counts when it
+  // actually verifies. A tampered / secret-rotated / undecryptable pending
+  // token would otherwise bounce every request to /verify-2fa, whose page sees
+  // getPendingSession() === null and redirects back to /login — an infinite
+  // 307 loop until the 5-minute cookie expires. Delete the bad cookie and fall
+  // through as unauthenticated instead. (Skipped when a valid full session
+  // exists — the authenticated branch below never reads the pending state.)
+  const pendingSession =
+    !isAuthenticated && pendingToken ? await decrypt(pendingToken) : null;
+  if (!isAuthenticated && pendingToken && !pendingSession) {
+    const response = isPublicRoute
+      ? NextResponse.next()
+      : NextResponse.redirect(new URL("/login", request.url));
+    response.cookies.delete("admin_2fa_pending");
+    return response;
+  }
+
+  const hasPendingSession = pendingSession !== null;
 
   // Fully authenticated users: redirect away from login and 2FA routes.
   //
@@ -114,8 +141,7 @@ export async function middleware(request: NextRequest) {
   if (isAuthenticated) {
     const sessionRoles = getEffectiveRoles(session.role, session.roles);
     const owner =
-      session.isOwner === true ||
-      (session.username ?? "").trim().toLowerCase() === "motha";
+      session.isOwner === true || isRootOwnerUsername(session.username);
     const dedicatedPackBuilder =
       !owner && isDedicatedPackBuilder(sessionRoles);
 
@@ -124,9 +150,13 @@ export async function middleware(request: NextRequest) {
     // an App Router redirect emitted from the page's RSC response can make
     // React attempt a cross-origin RSC navigation first and crash with #310.
     // Preserve every existing filter/pagination value, dropping only the
-    // retired tab selector.
+    // retired tab selector. Fires on landing hosts AND on unmatched hosts
+    // (pokewin-admin.vercel.app, previews) — both serve the main app at
+    // canonical paths, so both would otherwise fall through to the in-render
+    // redirect this block exists to prevent. Segment hosts are excluded: they
+    // never serve /transactions/deposits in the first place.
     if (
-      appHost?.basePath === null &&
+      (!appHost || appHost.basePath === null) &&
       pathname === "/transactions/deposits" &&
       request.nextUrl.searchParams.get("tab") === "fiat-fraud"
     ) {
@@ -198,7 +228,7 @@ export async function middleware(request: NextRequest) {
       // fall back to that host's own landing instead of a guaranteed 404.
       const dest = appHost?.basePath
         ? "/"
-        : DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
+        : landingRouteForRole(session.role);
       return NextResponse.redirect(new URL(dest, request.url));
     }
 
@@ -215,7 +245,7 @@ export async function middleware(request: NextRequest) {
         ? appHost.basePath
           ? "/"
           : appHost.landing
-        : DEFAULT_ROUTE_BY_ROLE[session.role] ?? "/dashboard";
+        : landingRouteForRole(session.role);
       return NextResponse.redirect(new URL(defaultRoute, request.url));
     }
 
@@ -264,8 +294,10 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
+  // The negative lookahead excludes only `api/` (with trailing slash), so the
+  // bare `/api` path (the antifraud API settings page) is already matched and
+  // middleware-protected by this single pattern — no separate entry needed.
   matcher: [
-    "/api",
     "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$|.*\\.ico$).*)",
   ],
 };

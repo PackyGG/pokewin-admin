@@ -3,6 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { admin_users } from "@/lib/db-schema/admin/schema";
 import { verifySession } from "@/lib/dal";
+import { MAIN_OWNER_USERNAME } from "@/lib/owners-shared";
 import type { SessionPayload } from "@/lib/session";
 
 /**
@@ -38,8 +39,13 @@ import type { SessionPayload } from "@/lib/session";
  * is ALWAYS an owner (DB-independent) and is the ONLY account that can manage
  * the owner list. Matches the case-insensitive `motha` checks the old
  * per-feature gates used.
+ *
+ * DEFINED in `src/lib/owners-shared.ts` (edge-safe: middleware and
+ * `app-hosts.ts` import it from there because this module pulls in the
+ * ADMIN-DB client) and re-exported here so server-side callers keep one
+ * canonical import path.
  */
-export const MAIN_OWNER_USERNAME = "motha";
+export { MAIN_OWNER_USERNAME } from "@/lib/owners-shared";
 
 function normalize(username: string | null | undefined): string {
   return (username ?? "").trim().toLowerCase();
