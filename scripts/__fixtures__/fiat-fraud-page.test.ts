@@ -109,7 +109,7 @@ test("Fiat Fraud reads durable caught history with server-side controls", () => 
   assert.match(api, /searchParams\.set\("lockStatus"/);
   assert.match(api, /cache: "no-store"/);
   assert.match(content, /<Suspense/);
-  assert.match(content, /TableSkeleton/);
+  assert.match(content, /h-72 w-full rounded-2xl/);
   assert.match(content, /DataTablePagination/);
   assert.match(table, /No fraudulent fiat deposits found/);
   assert.match(content, /Fiat fraud history is unavailable/);
@@ -125,6 +125,9 @@ test("Fiat Fraud groups catches per user with total fiat deposits", () => {
   const query = read("src/lib/queries/fiat-fraud.ts");
 
   assert.match(table, /key=\{row\.userId\}/);
+  assert.match(table, /new Map\(rows\.map\(\(row\) => \[row\.userId, row\]\)\)/);
+  assert.match(table, /<FiatFraudCard key=\{row\.userId\}/);
+  assert.doesNotMatch(table, /<Table(?:Head|Body|Row|Cell)?\b/);
   assert.match(table, /Total fiat deposits/);
   assert.match(table, /row\.catchCount/);
   assert.match(table, /paidTotalCents \/ 100/);

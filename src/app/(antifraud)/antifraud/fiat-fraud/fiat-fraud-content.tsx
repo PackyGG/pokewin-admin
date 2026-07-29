@@ -5,7 +5,6 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import {
   PaginationSkeleton,
-  TableSkeleton,
 } from "@/components/loading-skeletons";
 import { SectionHeading } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -85,18 +84,26 @@ export function FiatFraudContent({
       <div className="space-y-3">
         <SectionHeading
           icon={ShieldAlert}
-          title="Caught fiat deposit users"
+          title="Flagged accounts"
         />
         <p className="text-xs text-muted-foreground">
-          One row per caught user with every fraud signal grouped together.
-          Durable fraud catches remain here even if a blacklist rule changes
+          Each account appears once. Every card keeps its fraud signals,
+          checkout identity, fiat totals, linked deposit, and containment state
+          together. Durable fraud catches remain here even if a rule changes
           later.
         </p>
         <Suspense
           key={sectionKey}
           fallback={
             <>
-              <TableSkeleton rows={10} columns={7} />
+              <div className="space-y-3">
+                {Array.from({ length: 5 }).map((_, index) => (
+                  <Skeleton
+                    key={index}
+                    className="h-72 w-full rounded-2xl"
+                  />
+                ))}
+              </div>
               <PaginationSkeleton />
             </>
           }
