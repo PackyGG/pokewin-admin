@@ -47,19 +47,25 @@ function pct(value: number): string {
 // The edge target is no longer flat: each pack targets its OWN point on a curve
 // — floor 10.99% (no pack targets below it) up to a 11.50% safety cap, the
 // premium rising with the pack's house risk (max-win $ exposure + price). A pack
-// is flagged "below target" when its edge falls under that floor.
+// is flagged "below target" when its edge falls under its PER-PACK curve target
+// (which can sit above the floor) — not merely when it drops under the flat
+// floor, so every surface rendering `countBelowTarget` must say "edge target",
+// never "floor".
 const EDGE_FLOOR_LABEL = pct(DEFAULT_EDGE_FLOOR);
 const EDGE_BAND_LABEL = `${pct(DEFAULT_EDGE_FLOOR)}–${pct(DEFAULT_EDGE_CEILING)}`;
 
 // One-line plain-English label per volatility tier (T1 calmest → T5 spiciest).
 // The tiers run from steady, frequent-small-win packs up to lottery-style packs
 // where a rare huge hit drives the payout. Higher tiers = more house variance.
+// Names follow the canonical tier vocabulary in risk-level-bar.tsx (TIER_WORD:
+// calm / steady / lively / swingy / wild) so "steady" always means T2 — never a
+// second meaning per surface.
 const TIER_LABELS: Record<string, { name: string; blurb: string }> = {
-  T1: { name: "Steady", blurb: "Frequent small wins, low variance" },
-  T2: { name: "Balanced", blurb: "Mild swings, mostly modest payouts" },
-  T3: { name: "Spicy", blurb: "Bigger top hits, noticeable variance" },
-  T4: { name: "Volatile", blurb: "Rare large hits drive the payout" },
-  T5: { name: "Lottery", blurb: "Jackpot-style — one huge hit, high variance" },
+  T1: { name: "Calm", blurb: "Frequent small wins, low variance" },
+  T2: { name: "Steady", blurb: "Mild swings, mostly modest payouts" },
+  T3: { name: "Lively", blurb: "Bigger top hits, noticeable variance" },
+  T4: { name: "Swingy", blurb: "Rare large hits drive the payout" },
+  T5: { name: "Wild", blurb: "Jackpot-style — one huge hit, high variance" },
 };
 
 /**
@@ -236,11 +242,12 @@ export async function PackStudioOverviewContent() {
             icon={Percent}
             accent="blue"
           />
-          {/* A pack below the 10.99% edge floor is a margin leak = BAD for the
-              house → rose. The target is a per-pack curve, but the floor is the
-              one line no pack may fall under. */}
+          {/* A pack below its PER-PACK edge target is a margin leak = BAD for
+              the house → rose. countBelowTarget is judged against the per-pack
+              curve target (up to 11.50%), NOT the flat floor — label it "edge
+              target", never "floor". */}
           <KpiTile
-            label={`Below ${EDGE_FLOOR_LABEL} floor`}
+            label="Below edge target"
             value={formatNumber(data.countBelowTarget)}
             sub="Margin leak"
             icon={TrendingUp}
@@ -333,7 +340,7 @@ export async function PackStudioOverviewContent() {
         <p className="text-xs text-muted-foreground">
           The risk system scores every active cash pack on how volatile its
           payouts are — the spread between a typical pull and a rare big hit. Each
-          pack gets a 0–100 risk score and a tier (T1 steady → T5 lottery), so we
+          pack gets a 0–100 risk score and a tier (T1 calm → T5 wild), so we
           can see at a glance how much variance the catalog carries and whether
           any pack drifts below its edge target.
         </p>
@@ -377,7 +384,7 @@ export async function PackStudioOverviewContent() {
             distribution reads without needing to know what "T3" means. */}
         <div className="rounded-xl border bg-card p-4 sm:p-5">
           <p className="mb-3 text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Tier ladder · steady → lottery
+            Tier ladder · calm → wild
           </p>
           <ul className="space-y-2">
             {tierData.map(({ tier, count }) => {
@@ -432,8 +439,8 @@ export async function PackStudioOverviewContent() {
             <div>
               <p className="text-sm font-medium">All packs compliant</p>
               <p className="text-xs text-muted-foreground">
-                No packs below the {EDGE_FLOOR_LABEL} floor, over cap, zero
-                near-miss, or over tier.
+                No packs below their edge target, over cap, zero near-miss, or
+                over tier.
               </p>
             </div>
           </div>
@@ -442,7 +449,7 @@ export async function PackStudioOverviewContent() {
             <AlertGroup
               accent="rose"
               icon={TrendingUp}
-              title={`Packs below ${EDGE_FLOOR_LABEL} floor`}
+              title="Packs below edge target"
               items={data.alerts.belowTargetEdge}
               query="belowTarget=1"
               describe={(a) => pct(a.edge)}

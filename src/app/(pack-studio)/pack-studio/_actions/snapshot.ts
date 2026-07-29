@@ -172,9 +172,9 @@ export async function snapshotPackRisk(): Promise<SnapshotResult> {
   // statement, ONE round-trip, ONE connection slot — independent of N.
   // No wrapper transaction or per-row timeout knobs are needed.
   //
-  // The `array_length` defensive bail-out is unreachable in practice
-  // (we already returned at `packIds.length === 0` above), but guards
-  // against a future caller path that could pass an empty `scoredRows`.
+  // The `scoredRows.length > 0` guard below is unreachable in practice
+  // (we already returned at `packIds.length === 0` above), but keeps a
+  // future caller path from issuing an INSERT with empty parameter arrays.
   if (scoredRows.length > 0) {
     const packIdArr = scoredRows.map((r) => r.pack_id);
     const edgeArr = scoredRows.map((r) => r.edge);
