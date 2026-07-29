@@ -2145,6 +2145,8 @@ export async function getUserDeposits(
 export type JoinedBattleRow = {
   battleId: string;
   gameSessionId: string;
+  creatorUserId: string;
+  creatorUsername: string | null;
   at: string;
   result: "win" | "lose" | "pending";
   winnings: number;
@@ -2164,12 +2166,14 @@ export async function getUserJoinedSponsoredBattles(
   userId: string,
 ): Promise<JoinedBattleRow[]> {
   await requirePageAccess("/users");
-  const db = await getPrimaryDrizzleDb();
+  const db = await getReadDrizzleDb();
   const rows = (
     await db.execute<
     {
       battle_id: string;
       game_session_id: string;
+      creator_user_id: string;
+      creator_username: string | null;
       team_number: number;
       winner_team: number | null;
       status: string;
@@ -2186,6 +2190,12 @@ export async function getUserJoinedSponsoredBattles(
     // paid out mostly as a voucher reads as a near-zero win.
     sql`SELECT bp.battle_id,
             bp.game_session_id,
+            b.user_id AS creator_user_id,
+            COALESCE(
+              NULLIF(BTRIM(creator.display_username), ''),
+              NULLIF(BTRIM(creator.username), ''),
+              NULLIF(BTRIM(creator.name), '')
+            ) AS creator_username,
             bp.team_number,
             b.winner_team,
             b.status::text AS status,
@@ -2211,6 +2221,7 @@ export async function getUserJoinedSponsoredBattles(
        FROM battle_participants bp
        JOIN battles b ON b.id = bp.battle_id
        JOIN game_sessions gs ON gs.id = bp.game_session_id
+       LEFT JOIN "user" creator ON creator.id = b.user_id
       WHERE bp.user_id = ${userId}
         AND bp.bot_id IS NULL
         AND NOT EXISTS (
@@ -2232,6 +2243,8 @@ export async function getUserJoinedSponsoredBattles(
     return {
       battleId: r.battle_id,
       gameSessionId: r.game_session_id,
+      creatorUserId: r.creator_user_id,
+      creatorUsername: r.creator_username,
       at: postgresTimestampIso(r.created_at, "battle.created_at"),
       result,
       winnings: Number(r.winnings),

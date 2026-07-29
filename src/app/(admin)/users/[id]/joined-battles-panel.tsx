@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { Loader2, Swords } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -112,23 +113,34 @@ export function JoinedBattlesPanel({ userId }: { userId: string }) {
             {(battles ?? []).map((b) => (
               <div
                 key={b.gameSessionId}
-                className="flex items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2"
+                className="flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-card px-3 py-2"
               >
-                <div className="flex min-w-0 items-center gap-2">
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] capitalize ${RESULT_STYLES[b.result]}`}
-                  >
-                    {b.result === "pending" ? "in progress" : b.result}
-                  </Badge>
-                  <span className="text-xs text-muted-foreground">
-                    {formatRelative(b.at)}
-                  </span>
-                  {b.sponsorshipPercentage > 0 && (
-                    <span className="text-[10px] text-muted-foreground">
-                      · {b.sponsorshipPercentage}% sponsored
+                <div className="min-w-0 space-y-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] capitalize ${RESULT_STYLES[b.result]}`}
+                    >
+                      {b.result === "pending" ? "in progress" : b.result}
+                    </Badge>
+                    <span className="text-xs text-muted-foreground">
+                      {formatRelative(b.at)}
                     </span>
-                  )}
+                    {b.sponsorshipPercentage > 0 && (
+                      <span className="text-[10px] text-muted-foreground">
+                        · {b.sponsorshipPercentage}% sponsored
+                      </span>
+                    )}
+                  </div>
+                  <p className="truncate text-[11px] text-muted-foreground">
+                    Created by{" "}
+                    <Link
+                      href={`/users/${b.creatorUserId}`}
+                      className="font-medium text-foreground underline-offset-4 hover:underline"
+                    >
+                      {b.creatorUsername ?? b.creatorUserId}
+                    </Link>
+                  </p>
                 </div>
                 <span className="shrink-0 font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
                   {b.winnings > 0 ? formatCurrency(b.winnings) : "—"}
