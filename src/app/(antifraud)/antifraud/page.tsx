@@ -3,8 +3,8 @@ import { HostLink } from "@/components/host-link";
 import {
   AlertTriangle,
   CheckCircle2,
-  ClipboardList,
-  Inbox,
+  CircleDollarSign,
+  Fingerprint,
   ShieldAlert,
   UserCheck,
 } from "lucide-react";
@@ -18,8 +18,13 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import { formatNumber, formatRelative } from "@/lib/utils/format";
-import { getReviewStats, listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
+import {
+  formatCurrency,
+  formatNumber,
+  formatRelative,
+} from "@/lib/utils/format";
+import { listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
+import { getAntifraudOverviewMetrics } from "@/lib/antifraud/overview";
 import { LiveFeed } from "./_components/live-feed";
 import { OverviewLiveSync } from "./_components/overview-live-sync";
 import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
@@ -43,7 +48,7 @@ export const metadata = { title: "Antifraud" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 export default async function AntifraudOverviewPage() {
-  const session = await requireAntifraudPageAccess();
+  await requireAntifraudPageAccess();
   const snapshotAt = new Date().toISOString();
 
   return (
@@ -55,7 +60,7 @@ export default async function AntifraudOverviewPage() {
       <OverviewLiveSync snapshotAt={snapshotAt} />
 
       <Suspense fallback={<KpiSkeleton />}>
-        <QueueKpis adminUserId={session.userId} />
+        <OverviewKpis />
       </Suspense>
 
       {/* Client island — subscribes to /api/antifraud/monitor/stream. Rendered outside
@@ -78,57 +83,48 @@ export default async function AntifraudOverviewPage() {
 
 // ─── KPI strip ────────────────────────────────────────────────────────
 
-async function QueueKpis({ adminUserId }: { adminUserId: string }) {
-  const { data: stats } = await safeQuery(
-    () => getReviewStats(adminUserId),
+async function OverviewKpis() {
+  const { data: metrics } = await safeQuery(
+    () => getAntifraudOverviewMetrics(),
     {
-      open: 0,
-      inReview: 0,
-      escalated: 0,
-      resolvedToday: 0,
-      flaggedTotal: 0,
-      mineOpen: 0,
+      totalFiatDepositCents: 0,
+      fraudAccountFiatDepositCents: 0,
+      kycAccountCount: 0,
+      automatedFraudKycCount: 0,
     },
-    "antifraud.review-stats",
+    "antifraud.overview-metrics",
     QUERY_TIMEOUT_MS,
   );
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <KpiTile
-        label="Open cases"
-        value={formatNumber(stats.open)}
-        sub="not picked up yet"
-        icon={Inbox}
+        label="Total fiat deposits"
+        value={formatCurrency(metrics.totalFiatDepositCents / 100)}
+        sub="lifetime paid volume"
+        icon={CircleDollarSign}
         accent="blue"
       />
       <KpiTile
-        label="In review"
-        value={formatNumber(stats.inReview)}
-        sub="being worked"
-        icon={ClipboardList}
-        accent="amber"
-      />
-      <KpiTile
-        label="Escalated"
-        value={formatNumber(stats.escalated)}
-        sub="handed up"
+        label="Fraud account deposits"
+        value={formatCurrency(metrics.fraudAccountFiatDepositCents / 100)}
+        sub="paid by flagged accounts"
         icon={ShieldAlert}
-        accent="purple"
+        accent="rose"
       />
       <KpiTile
-        label="Assigned to you"
-        value={formatNumber(stats.mineOpen)}
-        sub="your queue"
+        label="KYC accounts"
+        value={formatNumber(metrics.kycAccountCount)}
+        sub="historical verification records"
         icon={UserCheck}
         accent="cyan"
       />
       <KpiTile
-        label="Resolved today"
-        value={formatNumber(stats.resolvedToday)}
-        sub="closed since midnight"
-        icon={CheckCircle2}
-        accent="emerald"
+        label="Automatic KYC / flagged"
+        value={formatNumber(metrics.automatedFraudKycCount)}
+        sub="system-required fraud KYC"
+        icon={Fingerprint}
+        accent="amber"
       />
     </div>
   );
@@ -270,8 +266,8 @@ function EmptyCard({
 
 function KpiSkeleton() {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-      {Array.from({ length: 5 }).map((_, i) => (
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, i) => (
         <Skeleton key={i} className="h-24 w-full rounded-2xl" />
       ))}
     </div>
