@@ -124,7 +124,15 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
   assert.match(body, /adminDrizzle\.transaction/);
   assert.match(body, /tx[\s\S]*?insert\(antifraud_signals\)/);
   assert.match(body, /onConflictDoNothing/);
-  assert.match(body, /if \(!stored\) return "duplicate"/);
+  assert.match(
+    body,
+    /if \(!stored\) return \{ outcome: "duplicate", lockSkipped: false \}/,
+  );
+  assert.match(
+    body,
+    /if \(!stored\) return[\s\S]*?lockBlacklistedEmailDomainAccount\(signal\)/,
+    "containment lock must run AFTER the dedupe check so re-sent duplicates never re-lock",
+  );
   assert.match(body, /tx[\s\S]*?update\(antifraud_reviews\)/);
   assert.match(body, /tx[\s\S]*?insert\(antifraud_review_notes\)/);
   assert.match(body, /update\(antifraud_signals\)[\s\S]*?review_id: reviewId/);

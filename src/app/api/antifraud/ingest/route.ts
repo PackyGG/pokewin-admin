@@ -1,4 +1,4 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 
 import { and, eq, inArray, sql } from "drizzle-orm";
 
@@ -47,8 +47,10 @@ import {
  *
  * Normally writes only the ADMIN DB. The dedicated
  * `fiat_blacklisted_email_domain` signal is also an application-authorized
- * containment command: after signature and payload validation it locks crypto
- * and item withdrawals in MAIN before the signal is acknowledged.
+ * containment command: after signature and payload validation, a first-time
+ * (non-duplicate) delivery locks crypto and item withdrawals in MAIN before
+ * the signal is acknowledged. Re-sent duplicates deliberately do NOT re-lock —
+ * staff may have reviewed and unlocked the account in between.
  */
 
 export const runtime = "nodejs";
@@ -60,7 +62,12 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 /** Cap on one delivery so a malformed batch can't fan out unbounded work. */
 const MAX_EVENTS_PER_DELIVERY = 50;
 
-/** Body size ceiling — read before parsing. */
+/**
+ * Body size ceiling in BYTES. A too-large `Content-Length` is rejected before
+ * the body is read; because the header is optional (and spoofable) the
+ * buffered body is re-checked with `Buffer.byteLength`, not `String.length`
+ * (UTF-16 units would under-count multibyte payloads ~3x).
+ */
 const MAX_BODY_BYTES = 256 * 1024;
 
 function sign(secret: string, timestamp: string, rawBody: string): string {
@@ -102,8 +109,13 @@ export async function POST(request: Request): Promise<Response> {
     return json({ error: "stale_timestamp" }, 401);
   }
 
+  const contentLength = Number(request.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) {
+    return json({ error: "payload_too_large" }, 413);
+  }
+
   const rawBody = await request.text();
-  if (rawBody.length > MAX_BODY_BYTES) {
+  if (Buffer.byteLength(rawBody, "utf8") > MAX_BODY_BYTES) {
     return json({ error: "payload_too_large" }, 413);
   }
 
@@ -144,56 +156,66 @@ export async function POST(request: Request): Promise<Response> {
   let accepted = 0;
   let duplicates = 0;
   let reviewsOpened = 0;
-  const notify: AntifraudSignalEvent[] = [];
+  let locksSkipped = 0;
+  let recipients: string[] | null = null;
 
   for (const signal of signals) {
+    let result: IngestResult;
     try {
-      if (signal.kind === "fiat_blacklisted_email_domain") {
-        await lockBlacklistedEmailDomainAccount(signal);
-      }
-      const outcome = await ingestOne(signal);
-      if (outcome === "duplicate") duplicates += 1;
-      else {
-        accepted += 1;
-        if (outcome === "review_opened") reviewsOpened += 1;
-        if (
-          shouldEscalateSignal(signal) &&
-          signal.kind !== "fiat_blacklisted_email_domain"
-        ) {
-          notify.push(signal);
-        }
-      }
+      result = await ingestOne(signal);
     } catch (err) {
       if (isPostgresError(err, "42P01")) {
         return json({ error: "not_provisioned" }, 503);
       }
       console.error("[antifraud-ingest] failed to store signal:", err);
       // 500 so the backend retries this delivery — the external_id unique
-      // index makes the retry safe.
+      // index makes the retry safe (id-less signals get a deterministic
+      // synthetic id, see externalIdForSignal).
       return json({ error: "storage_failed" }, 500);
     }
-  }
 
-  if (notify.length > 0) {
-    const recipients = await staffBroadcastRecipients();
-    for (const signal of notify) {
-      await notifyStaff({
-        recipients,
-        kind: "fraud_alert",
-        title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
-        body: signal.summary,
-        href: "/antifraud/reviews",
-        metadata: {
-          kind: signal.kind,
-          severity: signal.severity,
-          riskScore: signal.riskScore,
-          userId: signal.userId,
-        },
-      });
+    if (result.outcome === "duplicate") {
+      duplicates += 1;
+      continue;
+    }
+    accepted += 1;
+    if (result.outcome === "review_opened") reviewsOpened += 1;
+    if (result.lockSkipped) locksSkipped += 1;
+
+    if (
+      shouldEscalateSignal(signal) &&
+      signal.kind !== "fiat_blacklisted_email_domain"
+    ) {
+      // Notify IMMEDIATELY after the durable store, not after the whole
+      // batch: if a later signal 500s the delivery, the retry dedupes this
+      // one to 'duplicate' and it would never notify again. Notification
+      // failure itself is logged, not thrown — turning it into a 500 would
+      // create exactly that dedupe-and-lose-the-ping path.
+      try {
+        recipients ??= await staffBroadcastRecipients();
+        await notifyStaff({
+          recipients,
+          kind: "fraud_alert",
+          title: `${signal.severity.toUpperCase()} — ${signal.kind}`,
+          body: signal.summary,
+          href: "/antifraud/reviews",
+          metadata: {
+            kind: signal.kind,
+            severity: signal.severity,
+            riskScore: signal.riskScore,
+            userId: signal.userId,
+          },
+        });
+      } catch (err) {
+        console.error("[antifraud-ingest] failed to notify staff:", err);
+      }
     }
   }
 
-  return json({ ok: true, accepted, duplicates, reviewsOpened }, 200);
+  return json(
+    { ok: true, accepted, duplicates, reviewsOpened, locksSkipped },
+    200,
+  );
 }
 
 function blacklistDomainFromSignal(
@@ -208,13 +230,28 @@ function blacklistDomainFromSignal(
     : null;
 }
 
+/**
+ * Apply the MAIN-DB containment lock for one `fiat_blacklisted_email_domain`
+ * signal.
+ *
+ * Returns `"skipped"` for PERMANENT conditions (malformed containment fields,
+ * account deleted since the signal was produced) instead of throwing: a throw
+ * here becomes a 500 `storage_failed`, and the backend would retry the same
+ * poison-pill delivery forever, blocking every other signal batched with it.
+ * Only genuinely transient errors (DB down, etc.) are allowed to propagate
+ * into the 500-retry path.
+ */
 async function lockBlacklistedEmailDomainAccount(
   signal: AntifraudSignalEvent,
-): Promise<void> {
+): Promise<"locked" | "skipped"> {
   const userId = signal.userId;
   const domain = blacklistDomainFromSignal(signal);
   if (!userId || !domain || signal.riskScore !== 100) {
-    throw new Error("Invalid blacklisted email-domain containment signal");
+    console.error(
+      "[antifraud-ingest] skipping invalid blacklisted email-domain containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
   }
 
   const db = getProdPrimaryDrizzleDb();
@@ -270,11 +307,39 @@ async function lockBlacklistedEmailDomainAccount(
     RETURNING user_id
   `);
   if (locked.rows.length === 0) {
-    throw new Error("Blacklisted email-domain account no longer exists");
+    console.error(
+      "[antifraud-ingest] blacklisted email-domain account no longer exists, skipping containment lock",
+      { externalId: signal.id || null, userId },
+    );
+    return "skipped";
   }
+  return "locked";
 }
 
-type IngestOutcome = "stored" | "review_opened" | "duplicate";
+type IngestResult = {
+  outcome: "stored" | "review_opened" | "duplicate";
+  /** A containment lock was permanently un-appliable and acked instead of retried. */
+  lockSkipped: boolean;
+};
+
+/**
+ * The idempotency key for the dedupe index. The backend's own event id when it
+ * sent one; otherwise a DETERMINISTIC synthetic id derived from the signal's
+ * stable fields — an id-less signal must not insert `external_id NULL`,
+ * because the partial unique index (`WHERE external_id IS NOT NULL`) ignores
+ * NULLs and the 500-retry path would double-store it.
+ */
+function externalIdForSignal(signal: AntifraudSignalEvent): string {
+  if (signal.id) return signal.id;
+  return (
+    "synthetic:" +
+    createHash("sha256")
+      .update(
+        `${signal.kind}\n${signal.userId ?? ""}\n${signal.summary}\n${signal.at}`,
+      )
+      .digest("hex")
+  );
+}
 
 /**
  * Persist one signal, then decide whether it deserves a case.
@@ -285,12 +350,12 @@ type IngestOutcome = "stored" | "review_opened" | "duplicate";
  * is what makes "one live case per account" true even under concurrent
  * deliveries.
  */
-async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
+async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   return adminDrizzle.transaction(async (tx) => {
   const [stored] = await tx
     .insert(antifraud_signals)
     .values({
-      external_id: signal.id || null,
+      external_id: externalIdForSignal(signal),
       kind: signal.kind,
       severity: signal.severity,
       risk_score: signal.riskScore ?? null,
@@ -305,7 +370,17 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
       where: sql`${antifraud_signals.external_id} IS NOT NULL`,
     })
     .returning({ id: antifraud_signals.id });
-  if (!stored) return "duplicate";
+  if (!stored) return { outcome: "duplicate", lockSkipped: false };
+
+  let lockSkipped = false;
+  if (signal.kind === "fiat_blacklisted_email_domain") {
+    // Containment lock AFTER the dedupe check, inside the transaction:
+    //  • a duplicate delivery returned above, so a re-sent signal can never
+    //    re-lock an account staff already reviewed and unlocked;
+    //  • a transient lock failure throws, rolling back the stored signal, so
+    //    the backend's retry re-attempts store AND lock together.
+    lockSkipped = (await lockBlacklistedEmailDomainAccount(signal)) === "skipped";
+  }
 
   // Idempotency: the backend's own event id. A retried delivery hits the
   // partial unique index and is reported as a duplicate rather than
@@ -332,7 +407,11 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
           inArray(antifraud_reviews.status, ["open", "in_review"]),
         ),
       )
-      .limit(1);
+      .limit(1)
+      // The merge below is read-modify-write; lock the row so two concurrent
+      // deliveries for the same account can't lose a signal-kind append or a
+      // severity escalation.
+      .for("update");
 
     if (live) {
       reviewId = live.id;
@@ -426,7 +505,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestOutcome> {
       .where(eq(antifraud_signals.id, stored.id));
   }
 
-  return opened ? "review_opened" : "stored";
+  return { outcome: opened ? "review_opened" : "stored", lockSkipped };
   });
 }
 
