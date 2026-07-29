@@ -272,8 +272,9 @@ function StaticWindowLabel({ label }: { label: string }) {
  * Client KPI section for /dashboard.
  *
  * Renders the period-bound KPI boxes (Wager [Total + Organic in one merged
- * box], Deposits/Withdrawals [merged into one single tile], and Keno) with a
- * per-box today/24h toggle, plus the anchored Crypto Fee counter. GGR MOVED
+ * box] and Deposits/Withdrawals [merged into one single tile]) with a per-box
+ * today/24h toggle, plus the anchored Crypto Fee counter and lifetime Keno.
+ * GGR MOVED
  * into the "P&L Today" tile above (owner request, 2026-07-02) — this strip no
  * longer renders a general GGR box. This is now a live-ops board only — the
  * window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L 7d,
@@ -308,12 +309,24 @@ export type CryptoFeeKpi = {
   sinceLabel: string;
 };
 
+export type KenoKpi = {
+  available: boolean;
+  games: number;
+  players: number;
+  wager: number;
+  payout: number;
+  profit: number;
+  edgePct: number;
+};
+
 export function DashboardKpiSection({
   today,
   cryptoFee,
+  keno,
 }: {
   today: KpiWindowPayload;
   cryptoFee: CryptoFeeKpi;
+  keno: KenoKpi;
 }) {
   // Lazily-loaded rolling-24h payload (null until first 24h toggle).
   const [h24, setH24] = useState<KpiWindowPayload | null>(null);
@@ -375,10 +388,10 @@ export function DashboardKpiSection({
           UTC while live refresh recovers.
         </p>
       )}
-      {/* Period-bound boxes — each with a today/24h toggle. FOUR boxes now:
+      {/* Headline KPI boxes. The two period-bound boxes have today/24h toggles:
           Wager (Total + Organic merged), Deposits/Withdrawals (merged into
           one single tile), the Crypto Fee counter (anchored monotonic
-          estimate — NOT period-bound), and Keno settlement performance.
+          estimate — NOT period-bound), and lifetime Keno settlement performance.
           GGR MOVED into the "P&L Today" tile above (owner request,
           2026-07-02); Keno profit is a deliberately scoped product metric,
           not a replacement general-GGR card. Mobile-first: one column below
@@ -596,15 +609,10 @@ export function DashboardKpiSection({
           </KpiPanel>
         )}
 
-        {/* Keno — settled customer-game performance for the selected window.
-            Profit is wager minus player payouts; realized edge is
-            profit / wager. Both can be negative during a short window and
-            use House-POV coloring. The Today/24h toggle rides the same lazy
-            shared payload as the Wager and Cash-flow cards. */}
+        {/* Keno — exact lifetime settled customer-game performance, matching
+            the period-independent Upgrader display above. Profit is wager
+            minus player payouts; realized edge is profit / wager. */}
         {(() => {
-          const p = payloadFor("keno");
-          const mode = modeFor("keno");
-          const keno = p.keno;
           const resultTone = keno.profit >= 0 ? "emerald" : "rose";
 
           return (
@@ -612,13 +620,7 @@ export function DashboardKpiSection({
               title="Keno"
               tint="cyan"
               icon={Dices}
-              headerRight={
-                <WindowToggle
-                  active={mode}
-                  loading={loading}
-                  onPick={(w) => pick("keno", w)}
-                />
-              }
+              headerRight={<StaticWindowLabel label="Lifetime" />}
               footer={
                 keno.available ? (
                   <div className="space-y-1.5">
@@ -670,9 +672,9 @@ export function DashboardKpiSection({
       {/* The window-independent SNAPSHOT boxes (FTDs, Depositors, Avg RTP, Avg
           P&L 7d, Total P&L lifetime) were MOVED to the owner-only lifetime
           section on `/analytics` (Overview tab) — the dashboard is now a
-          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals /
-          Keno + the Crypto Fee counter above), while the lifetime / cadence
-          aggregates live on that Overview-tab section. The Total P&L + Avg
+          live-ops board (period-bound GGR / Wager / Deposits-Withdrawals plus
+          lifetime Keno and the Crypto Fee counter above), while other
+          lifetime / cadence aggregates live on that Overview-tab section. The Total P&L + Avg
           P&L boxes were folded into a single "Total P&L" box there (lifetime
           headline + avg-daily-7d sub-line). See
           `src/app/(admin)/analytics/real-numbers-lifetime.tsx`. */}

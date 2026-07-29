@@ -50,9 +50,13 @@ test("Keno dashboard metrics report a zero edge when there is no wager", () => {
   assert.equal(result.edgePct, 0);
 });
 
-test("dashboard wires the Keno card into the shared active-window payload", () => {
+test("dashboard renders Keno as an independent lifetime KPI", () => {
   const section = readFileSync(
     `${repoRoot}/src/app/(admin)/dashboard/dashboard-kpi-section.tsx`,
+    "utf8",
+  );
+  const page = readFileSync(
+    `${repoRoot}/src/app/(admin)/dashboard/page.tsx`,
     "utf8",
   );
   const payload = readFileSync(
@@ -65,18 +69,32 @@ test("dashboard wires the Keno card into the shared active-window payload", () =
   assert.match(section, /label="Wager"/);
   assert.match(section, /label="Payouts"/);
   assert.match(section, /xl:grid-cols-4/);
-  assert.match(payload, /getDashboardKenoMetrics\(window\)/);
-  assert.match(payload, /"dashboard\.keno"/);
+  assert.match(section, /StaticWindowLabel label="Lifetime"/);
+  assert.doesNotMatch(section, /pick\("keno"/);
+  assert.match(page, /getDashboardKenoLifetimeMetrics\(\)/);
+  assert.doesNotMatch(payload, /dashboard-keno/);
 });
 
-test("dashboard Keno read stays bounded, scoped, and cached", () => {
+test("dashboard Keno lifetime read stays exact, scoped, and cached", () => {
   const query = readFileSync(
     `${repoRoot}/src/lib/queries/dashboard-keno.ts`,
     "utf8",
   );
 
-  assert.match(query, /kg\.created_at >= \$1/);
+  assert.match(query, /getDashboardKenoLifetimeMetrics/);
+  assert.match(query, /FROM keno_games kg\s+WHERE \$\{customerScope\}/);
+  assert.doesNotMatch(query, /kg\.created_at/);
   assert.match(query, /excludeStaffCreatorsAndBlacklistedSqlFromIds/);
-  assert.match(query, /revalidate: 60/);
+  assert.match(query, /revalidate: 300/);
   assert.match(query, /"dashboard-activity", "keno-dashboard"/);
+});
+
+test("dashboard hero omits the live-refresh space filler", () => {
+  const page = readFileSync(
+    `${repoRoot}/src/app/(admin)/dashboard/page.tsx`,
+    "utf8",
+  );
+
+  assert.doesNotMatch(page, /LiveIndicator/);
+  assert.doesNotMatch(page, /live-indicator/);
 });

@@ -12,12 +12,14 @@ import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-toda
 import { getAffiliateReferredPnlToday } from "@/lib/queries/dashboard-affiliate-referred-pnl-today";
 import { getCryptoFeeProfitCounter } from "@/lib/queries/dashboard-crypto-fee-counter";
 import { getDashboardFiatMetrics } from "@/lib/queries/dashboard-fiat";
+import { getDashboardKenoLifetimeMetrics } from "@/lib/queries/dashboard-keno";
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { TileErrorFallback } from "@/components/tile-error-fallback";
 import {
   DashboardKpiSection,
   type CryptoFeeKpi,
+  type KenoKpi,
 } from "./dashboard-kpi-section";
 import {
   buildKpiWindowPayload,
@@ -32,7 +34,6 @@ import { RewardCreatorCostsTodayCard } from "./reward-creator-costs-today-card";
 import { UpgraderDoubleDownTodayCard } from "./upgrader-double-down-today-card";
 import { FiatTodayCard } from "./fiat-today-card";
 import { AutoRefresh } from "./auto-refresh";
-import { LiveIndicator } from "./live-indicator";
 import {
   WagerChart,
   WagerAttributionChart,
@@ -73,7 +74,6 @@ export default async function DashboardPage() {
           icon={LayoutDashboard}
           title="Dashboard"
           subtitle="Live platform overview — revenue, users, and trends."
-          action={<LiveIndicator />}
         />
       </PageHero>
 
@@ -121,14 +121,12 @@ export default async function DashboardPage() {
 
       {/* KPI boxes — Wager [Total + Organic merged], Deposits/Withdrawals
           [merged], the anchored Crypto Fee counter, and Keno performance.
-          The period-bound boxes carry their own today/24h toggle. GGR MOVED
+          Wager and cash flow carry their own today/24h toggle. GGR MOVED
           into the "P&L Today" tile above (owner request, 2026-07-02: that
           tile had empty space once its siblings grew back their full data
           sets) —
-          Keno now fills the fourth box with wager, payouts, realized edge,
-          and profit. DEFAULTS to "today" (loaded eagerly
-          here); the rolling 24h window is fetched lazily on the first
-          toggle inside the client section (active-timeframe-only).
+          Keno fills the fourth box with lifetime wager, payouts, realized
+          edge, and profit, matching Upgrader's period-independent display.
 
           The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg
           P&L 7d, Total P&L lifetime) MOVED to the owner-only lifetime section
@@ -211,11 +209,11 @@ const DASHBOARD_CHART_PERIOD = "30d" as const;
 
 /**
  * Eager-renders the dashboard's period-bound KPI boxes for the DEFAULT "today"
- * window (since 00:00 UTC) and hands the client section the today payload +
- * the anchored Crypto Fee counter. The payload also contains settled Keno
- * performance for the active window. The client section adds the per-box
- * today/24h toggle and fetches the rolling-24h payload lazily on the first
- * toggle (active-timeframe-only — the 24h aggregate never runs here).
+ * window (since 00:00 UTC) and hands the client section the today payload,
+ * anchored Crypto Fee counter, and exact lifetime Keno performance. The
+ * client section adds the per-box today/24h toggle and fetches the rolling-24h
+ * payload lazily on the first toggle (active-timeframe-only — the 24h
+ * aggregate never runs here).
  *
  * The window-independent snapshot boxes (FTDs, Depositors, Avg RTP, Avg P&L
  * 7d, Total P&L lifetime) that used to live here MOVED to the owner-only
@@ -229,25 +227,40 @@ const DASHBOARD_CHART_PERIOD = "30d" as const;
  * page hit in prod).
  */
 async function DashboardKpiBoxes() {
-  const [payloadResult, cryptoFeeResult] = await Promise.all([
-    // Period-bound box values + GGR legs for the eager "today" window.
-    safeQuery(
-      () => buildKpiWindowPayload("today"),
-      emptyKpiWindowPayload("today"),
-      "dashboard.kpiToday",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    // Crypto Fee counter — anchored, monotonic, durable (admin-DB high-water).
-    // Independent of the period payload; degrades to the muted slot on
-    // failure (available:false) so a slow/failed crypto read never blocks or
-    // breaks the headline KPI boxes.
-    safeQuery(
-      () => getCryptoFeeProfitCounter(),
-      null,
-      "dashboard.cryptoFeeCounter",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const [payloadResult, cryptoFeeResult, kenoResult] =
+    await runWithConcurrency(
+      [
+        // Period-bound box values + GGR legs for the eager "today" window.
+        () =>
+          safeQuery(
+            () => buildKpiWindowPayload("today"),
+            emptyKpiWindowPayload("today"),
+            "dashboard.kpiToday",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+        // Crypto Fee counter — anchored, monotonic, durable (admin-DB
+        // high-water). Independent of the period payload; degrades to the
+        // muted slot on failure.
+        () =>
+          safeQuery(
+            () => getCryptoFeeProfitCounter(),
+            null,
+            "dashboard.cryptoFeeCounter",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+        // Keno is an exact lifetime aggregate, matching Upgrader. It remains
+        // independent from the today/24h payload so toggling another KPI never
+        // reruns or relabels this card.
+        () =>
+          safeQuery(
+            () => getDashboardKenoLifetimeMetrics(),
+            null,
+            "dashboard.kenoLifetime",
+            REWARD_QUERY_TIMEOUT_MS,
+          ),
+      ] as const,
+      2,
+    );
   const today = payloadResult.data;
 
   // Crypto Fee box payload. A failed/degraded read (cryptoFeeResult.data ===
@@ -274,7 +287,22 @@ async function DashboardKpiBoxes() {
         sinceLabel: "",
       };
 
-  return <DashboardKpiSection today={today} cryptoFee={cryptoFee} />;
+  const k = kenoResult.data;
+  const keno: KenoKpi = k
+    ? { available: true, ...k }
+    : {
+        available: false,
+        games: 0,
+        players: 0,
+        wager: 0,
+        payout: 0,
+        profit: 0,
+        edgePct: 0,
+      };
+
+  return (
+    <DashboardKpiSection today={today} cryptoFee={cryptoFee} keno={keno} />
+  );
 }
 
 async function DashboardFiatToday() {

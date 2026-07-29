@@ -10,7 +10,6 @@ import {
 } from "@/lib/queries/dashboard";
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
 import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
-import { getDashboardKenoMetrics } from "@/lib/queries/dashboard-keno";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
@@ -95,17 +94,6 @@ export type KpiWindowPayload = {
   /** Total withdrawal dollars + completed/shipped request count. */
   withdrawals: number;
   withdrawalCount: number;
-  /** Settled Keno result for the same active window and customer scope. */
-  keno: {
-    available: boolean;
-    games: number;
-    players: number;
-    wager: number;
-    payout: number;
-    profit: number;
-    edgePct: number;
-  };
-
   // ---- GGR breakdown legs (for the GGR box's Info popover) ----
   /** Industry-GGR breakdown legs — secondary reference inside the popover. */
   ggrBreakdown: GgrBreakdown;
@@ -145,25 +133,13 @@ async function computeKpiWindowPayload(
   ]);
   const stats = statsResult.data;
 
-  const [cashflowResult, kenoResult] = await Promise.all([
-    safeQuery(
-      () => getDashboardCashflowFromPostgres(window),
-      null,
-      "dashboard.cashflow",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    // Keno is an independent, small aggregate. Keep a stale/missing
-    // `keno_games` relation from blanking the other dashboard KPI boxes while
-    // still reporting the failure through the standard safe-query path.
-    safeQuery(
-      () => getDashboardKenoMetrics(window),
-      null,
-      "dashboard.keno",
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const cashflowResult = await safeQuery(
+    () => getDashboardCashflowFromPostgres(window),
+    null,
+    "dashboard.cashflow",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
   const cashflow = cashflowResult.data;
-  const keno = kenoResult.data;
 
   // The shared aggregate above produces the GGR and wager boxes. Cash-flow
   // figures use their dedicated PostgreSQL read so they stay aligned with the
@@ -216,17 +192,6 @@ async function computeKpiWindowPayload(
     fiatRefundCount: cashflow?.fiatRefundCount ?? 0,
     withdrawals: cashflow?.withdrawals ?? 0,
     withdrawalCount: cashflow?.withdrawalCount ?? 0,
-    keno: keno
-      ? { available: true, ...keno }
-      : {
-          available: false,
-          games: 0,
-          players: 0,
-          wager: 0,
-          payout: 0,
-          profit: 0,
-          edgePct: 0,
-        },
     ggrBreakdown,
   };
 }
@@ -255,15 +220,6 @@ export function emptyKpiWindowPayload(
     fiatRefundCount: 0,
     withdrawals: 0,
     withdrawalCount: 0,
-    keno: {
-      available: false,
-      games: 0,
-      players: 0,
-      wager: 0,
-      payout: 0,
-      profit: 0,
-      edgePct: 0,
-    },
     ggrBreakdown: {
       wagers: [],
       payouts: [],
@@ -302,8 +258,7 @@ async function buildResilientKpiWindowPayload(
         // must never replace a complete last-known-good snapshot.
         if (
           !partial.wagerAvailable ||
-          !partial.cashflowAvailable ||
-          !partial.keno.available
+          !partial.cashflowAvailable
         ) {
           throw new Error("dashboard KPI core metrics were incomplete");
         }

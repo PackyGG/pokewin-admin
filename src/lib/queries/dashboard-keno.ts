@@ -14,9 +14,8 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { excludeStaffCreatorsAndBlacklistedSqlFromIds } from "./_blacklist";
-import { kpiWindowToCutoff, type DashboardKpiWindow } from "./dashboard-period";
 
-type RawKenoWindow = {
+type RawKenoLifetime = {
   games: string;
   players: string;
   wager: string;
@@ -24,19 +23,19 @@ type RawKenoWindow = {
 };
 
 /**
- * Settled Keno performance for one dashboard window.
+ * Exact lifetime settled Keno performance for the dashboard.
  *
  * This reads `keno_games` because it is the settlement source carrying both
  * the accepted stake and final player payout. The dashboard customer scope
  * excludes staff, creators, and the admin blacklist, matching the headline
- * customer wagering metrics beside this card. Read-only production
- * `EXPLAIN (ANALYZE, BUFFERS)` on 2026-07-27 used
- * `idx_keno_games_user_id_created_at` plus `user_pkey` and completed in
- * 0.428 ms; no MAIN index change is required.
+ * customer wagering metrics beside this card. This exact lifetime contract
+ * necessarily visits every customer Keno settlement. Read-only production
+ * `EXPLAIN (ANALYZE, BUFFERS)` on 2026-07-29 scanned 2,702 tiny game rows,
+ * joined users through `user_pkey`, and completed in 7.534 ms. The result is
+ * cached for five minutes, matching the lifetime Upgrader aggregate beside it.
  */
 async function computeDashboardKeno(
   env: DbEnv,
-  cutoff: Date,
   blacklist: string[],
 ): Promise<KenoWindowMetrics> {
   return withTiming("dashboard.keno", async () => {
@@ -46,7 +45,7 @@ async function computeDashboardKeno(
     ).replace(/^user_id\b/, "kg.user_id");
     const rows = await withTransientPostgresReadRetry(
       () =>
-        queryRows<RawKenoWindow[]>(
+        queryRows<RawKenoLifetime[]>(
           db,
           `SELECT
              COUNT(*)::text AS games,
@@ -54,9 +53,7 @@ async function computeDashboardKeno(
              COALESCE(SUM(kg.bet_amount::numeric), 0)::text AS wager,
              COALESCE(SUM(kg.won_amount::numeric), 0)::text AS payout
            FROM keno_games kg
-           WHERE kg.created_at >= $1
-             AND ${customerScope}`,
-          cutoff,
+           WHERE ${customerScope}`,
         ),
       { context: "dashboard.keno" },
     );
@@ -71,38 +68,31 @@ async function computeDashboardKeno(
   });
 }
 
-const cachedDashboardKeno = unstable_cache(
+const cachedDashboardKenoLifetime = unstable_cache(
   async (
     env: DbEnv,
-    _window: DashboardKpiWindow,
-    cutoffIso: string,
     blacklist: string[],
   ): Promise<KenoWindowMetrics> => {
-    void _window;
-    return computeDashboardKeno(env, new Date(cutoffIso), blacklist);
+    return computeDashboardKeno(env, blacklist);
   },
-  ["dashboard-keno-v1"],
-  { revalidate: 60, tags: ["dashboard-activity", "keno-dashboard"] },
+  ["dashboard-keno-lifetime-v1"],
+  { revalidate: 300, tags: ["dashboard-activity", "keno-dashboard"] },
 );
 
 /**
- * Active-window-only Keno read for the dashboard KPI strip.
+ * Lifetime Keno read for the dashboard KPI strip.
  *
- * Production is cached for the dashboard's 60-second refresh cadence. The
- * selected MAIN environment, resolved cutoff, and blacklist all participate
- * in the cache key; development remains live for environment-toggle honesty.
+ * Production is cached for five minutes. The selected MAIN environment and
+ * blacklist participate in the cache key; development remains live for
+ * environment-toggle honesty.
  */
-export async function getDashboardKenoMetrics(
-  window: DashboardKpiWindow,
-  now: Date = new Date(),
-): Promise<KenoWindowMetrics> {
+export async function getDashboardKenoLifetimeMetrics(): Promise<KenoWindowMetrics> {
   const env = await readDbEnv();
-  const cutoff = kpiWindowToCutoff(window, now);
   const blacklist = await getExcludedUserIds();
 
   if (env !== "prod") {
-    return computeDashboardKeno(env, cutoff, blacklist);
+    return computeDashboardKeno(env, blacklist);
   }
 
-  return cachedDashboardKeno(env, window, cutoff.toISOString(), blacklist);
+  return cachedDashboardKenoLifetime(env, blacklist);
 }
