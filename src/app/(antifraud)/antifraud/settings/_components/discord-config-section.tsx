@@ -1,6 +1,5 @@
-import { BellRing, ExternalLink, ShieldCheck, Siren, Users } from "lucide-react";
+import { ExternalLink, ShieldCheck, Siren, Users } from "lucide-react";
 
-import { SectionHeading } from "@/components/modern-panels";
 import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
 import { ANTIFRAUD_TEAM_IDS } from "@/lib/discord-notifications/antifraud-policy";
 import { cn } from "@/lib/utils";
@@ -97,16 +96,6 @@ export async function DiscordConfigSection() {
 
   return (
     <section className="space-y-4">
-      <div>
-        <SectionHeading icon={BellRing} title="Discord alerts" />
-        <p className="mt-2 text-xs text-muted-foreground">
-          Alerts are queued for the Discord bot and posted to the channel each
-          event is assigned on Discord Routing. Readiness and recipients come
-          from the deployed monitor service; the shared secret and provider
-          credentials are never returned.
-        </p>
-      </div>
-
       <div className="overflow-hidden rounded-xl border border-[#5865F2]/25 bg-card">
         <div className="h-1 bg-[#5865F2]" />
         <div className="grid gap-5 p-5 lg:grid-cols-[1.2fr_1fr]">
