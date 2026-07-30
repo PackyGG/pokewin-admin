@@ -18,7 +18,6 @@ import {
   RotateCcw,
   Settings,
   ShieldAlert,
-  ShieldCheck,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -137,11 +136,6 @@ const BLACKLIST_NAV: NavItem[] = [
 ];
 
 const SYSTEM_NAV: NavItem[] = [
-  {
-    label: "Providers",
-    href: "/antifraud/settings#integrations",
-    icon: ShieldCheck,
-  },
   { label: "Risk engine", href: "/antifraud/points", icon: Gauge },
   {
     label: "Audit log",
