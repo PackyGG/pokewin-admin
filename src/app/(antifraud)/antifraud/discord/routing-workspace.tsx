@@ -245,14 +245,25 @@ export function DiscordRoutingWorkspace({
   const config = initialConfig;
   const enabledEvents = initialConfig.events.filter((event) => event.enabled);
   // An event belongs to exactly one channel, so anything another channel
-  // already claims is dropped from this picker entirely.
+  // already claims is dropped from this picker entirely. Only a channel the
+  // guild still has can hold a claim — `channels` is loaded available-only, so a
+  // row left behind by a deleted channel neither hides an event here nor blocks
+  // the save.
+  const liveChannelIds = new Set(initialConfig.channels.map((item) => item.id));
   const claimedElsewhere = new Set(
     initialConfig.routes
-      .filter((route) => route.channelId !== editor?.channelId)
+      .filter(
+        (route) =>
+          route.channelId !== editor?.channelId &&
+          liveChannelIds.has(route.channelId),
+      )
       .map((route) => route.eventKey),
   );
   const filteredEvents = enabledEvents.filter((event) => {
-    if (claimedElsewhere.has(event.key)) return false;
+    // Something already selected here stays listed even if another channel
+    // claims it, so the conflict can be unchecked instead of blocking the save.
+    if (claimedElsewhere.has(event.key) && !editor?.eventKeys.includes(event.key))
+      return false;
     const normalized = eventQuery.trim().toLowerCase();
     return (
       !normalized ||

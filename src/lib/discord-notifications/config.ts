@@ -301,13 +301,19 @@ export async function upsertDiscordNotificationRoute(input: {
   const eventKey = normalizeEventKey(input.eventKey);
   const channelId = requireSnowflake(input.channelId, "channelId");
   if (input.enabled) {
-    // One event, one channel — the same claim rule the editor enforces.
+    // One event, one channel — the same claim rule the editor enforces. Only a
+    // channel that still exists in the guild can hold a claim; a row left behind
+    // by a deleted channel delivers nothing and must not block a reassignment.
     const taken = await adminDrizzle.execute<{ channel_id: string }>(sql`
-      SELECT channel_id
-      FROM discord_notification_routes
-      WHERE guild_id = ${guildId}
-        AND event_key = ${eventKey}
-        AND channel_id <> ${channelId}
+      SELECT route.channel_id
+      FROM discord_notification_routes AS route
+      JOIN discord_notification_channels AS owner
+        ON owner.guild_id = route.guild_id
+       AND owner.channel_id = route.channel_id
+       AND owner.available = true
+      WHERE route.guild_id = ${guildId}
+        AND route.event_key = ${eventKey}
+        AND route.channel_id <> ${channelId}
       LIMIT 1
     `);
     if (taken.rows.length > 0) {
@@ -431,7 +437,28 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
     }
 
     if (eventKeys.length > 0) {
-      // An event belongs to exactly one channel. The advisory lock above
+      // A row pointing at a channel the guild no longer has cannot receive
+      // anything, so it is cleared instead of blocking this assignment. The
+      // advisory lock above serializes this per guild.
+      await tx.execute(sql`
+        DELETE FROM discord_notification_routes AS route
+        WHERE route.guild_id = ${guildId}
+          AND route.channel_id <> ${channelId}
+          AND EXISTS (
+            SELECT 1
+            FROM jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
+            WHERE desired.event_key = route.event_key
+          )
+          AND NOT EXISTS (
+            SELECT 1
+            FROM discord_notification_channels AS owner
+            WHERE owner.guild_id = route.guild_id
+              AND owner.channel_id = route.channel_id
+              AND owner.available = true
+          )
+      `);
+
+      // An event belongs to exactly one live channel. The advisory lock above
       // serializes per guild, so this claim check cannot be raced.
       const taken = await tx.execute<{ event_key: string }>(sql`
         SELECT route.event_key
