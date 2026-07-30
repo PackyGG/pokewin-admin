@@ -108,10 +108,15 @@ test("Antifraud revocation outages fail closed and assignments recheck access", 
   const actions = read(
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
-  assert.match(actions, /function isAssignableAnalyst/);
+  const analysts = read("src/lib/antifraud/review-analysts.ts");
+  assert.match(actions, /import \{ isAssignableAnalyst \}/);
   assert.match(actions, /getAntifraudAccessSettings\(\)/);
   assert.match(actions, /getAntifraudUserAccess\(\)/);
-  assert.match(actions, /canAccessAntifraud\(identity, settings, userAccess\)/);
+  assert.match(analysts, /function isAssignableAnalyst/);
+  assert.match(
+    analysts,
+    /canAccessAntifraud\(identity, settings, userAccess\)/,
+  );
   assert.doesNotMatch(actions, /body: applied\.reason/);
 });
 

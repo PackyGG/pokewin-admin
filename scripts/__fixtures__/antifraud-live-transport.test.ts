@@ -33,7 +33,7 @@ test("the monitor service owns connection capacity and the SSE bridge reconnects
   );
   assert.match(route, /scheduleReconnect\("Live stream interrupted, reconnecting"\)/);
   assert.match(service, /MAX_CONNECTIONS_PER_ACTOR = 8/);
-  assert.match(service, /actorConnections >= MAX_CONNECTIONS_PER_ACTOR/);
+  assert.match(service, /actorConnections >= this\.maxConnectionsPerActor/);
   assert.match(service, /client\.on\("error"/);
   assert.match(route, /code === 1013/);
   assert.match(route, /CAPACITY_RETRY_MIN_MS/);
