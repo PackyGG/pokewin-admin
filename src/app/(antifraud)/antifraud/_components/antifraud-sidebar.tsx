@@ -89,17 +89,7 @@ const OVERVIEW_NAV: NavItem[] = [
 const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
 
 const ACCOUNT_NAV: NavItem[] = [
-  {
-    label: "Profiles",
-    href: "/antifraud/profiles",
-    icon: UserRoundSearch,
-  },
   { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
-  {
-    label: "Connections & clusters",
-    href: "/antifraud/networks",
-    icon: UsersRound,
-  },
 ];
 
 const TRANSACTION_NAV: NavItem[] = [

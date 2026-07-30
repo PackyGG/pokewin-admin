@@ -5,7 +5,6 @@ import {
   BadgeDollarSign,
   Gauge,
   ListChecks,
-  Network,
   UserRound,
   Users,
 } from "lucide-react";
@@ -30,7 +29,7 @@ import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { RiskScoreBar } from "@/app/(antifraud)/antifraud/_components/risk-score-bar";
-import { ScanPoller } from "@/app/(antifraud)/antifraud/networks/scan-poller";
+import { ScanPoller } from "./scan-poller";
 import { CreatorRescanButton } from "../creator-rescan-button";
 
 export const metadata = { title: "Affiliate Cohort Assessment · Marketing" };
@@ -184,7 +183,6 @@ async function CreatorDetail({
         </div>
         <aside className="min-w-0 space-y-5">
           <RiskBreakdown assessment={assessment} />
-          <NetworkMaps metrics={metrics} />
         </aside>
       </div>
     </div>
@@ -280,48 +278,6 @@ function RiskBreakdown({ assessment }: { assessment: CreatorFraudAssessment }) {
   );
 }
 
-function NetworkMaps({ metrics }: { metrics: CreatorMetrics }) {
-  return (
-    <div className="rounded-xl border bg-card p-4">
-      <div className="flex items-center gap-2">
-        <Network className="size-4 text-cyan-500" />
-        <p className="text-sm font-semibold">Network maps</p>
-      </div>
-      <p className="mt-1 text-xs text-muted-foreground">
-        Open complete account components detected among referred accounts.
-      </p>
-      {metrics.networkCount === 0 && metrics.networkRoots.length > 0 && (
-        <p className="mt-2 rounded-md border border-amber-500/25 bg-amber-500/10 px-2.5 py-2 text-[11px] text-amber-700 dark:text-amber-300">
-          Shared-IP groups were detected. Their graph scans are queued and may
-          still be building.
-        </p>
-      )}
-      <div className="mt-3 flex flex-wrap gap-2">
-        {metrics.networkRoots.length > 0 ? (
-          metrics.networkRoots.slice(0, 6).map((root) => (
-            <Button
-              key={root}
-              size="sm"
-              variant="outline"
-              nativeButton={false}
-              render={
-                <HostLink href={`/antifraud/networks?user=${encodeURIComponent(root)}`} />
-              }
-            >
-              <Network className="size-3.5" />
-              {evidenceLabel(metrics, root)}
-            </Button>
-          ))
-        ) : (
-          <span className="text-xs text-muted-foreground">
-            No shared IP/device component has been recorded yet.
-          </span>
-        )}
-      </div>
-    </div>
-  );
-}
-
 function readMetrics(assessment: CreatorFraudAssessment) {
   const number = (key: string) => {
     const parsed = Number(assessment.metrics[key] ?? 0);
@@ -393,14 +349,6 @@ function numberFromUnknown(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function evidenceLabel(metrics: CreatorMetrics, rootUserId: string): string {
-  for (const group of metrics.ipGroups) {
-    const member = group.members.find((item) => item.userId === rootUserId);
-    if (member) return member.username ?? rootUserId.slice(0, 10);
-  }
-  return rootUserId.slice(0, 10);
-}
-
 function SignalEvidence({
   signalKey,
   metrics,
@@ -412,7 +360,6 @@ function SignalEvidence({
     return (
       <EvidenceGroups
         groups={metrics.ipGroups}
-        networkLinks
         emptyText="The next assessment will attach the involved account names."
       />
     );
@@ -440,11 +387,9 @@ function SignalEvidence({
 
 function EvidenceGroups({
   groups,
-  networkLinks = false,
   emptyText,
 }: {
   groups: CreatorEvidenceGroup[];
-  networkLinks?: boolean;
   emptyText: string;
 }) {
   if (groups.length === 0) {
@@ -471,15 +416,6 @@ function EvidenceGroups({
               {member.username ?? member.userId.slice(0, 10)}
             </HostLink>
           ))}
-          {networkLinks && (
-            <HostLink
-              href={`/antifraud/networks?user=${encodeURIComponent(group.rootUserId)}`}
-              className="ml-auto inline-flex items-center gap-1 font-medium text-cyan-600 hover:underline dark:text-cyan-400"
-            >
-              <Network className="size-3" />
-              Open network
-            </HostLink>
-          )}
         </div>
       ))}
     </div>

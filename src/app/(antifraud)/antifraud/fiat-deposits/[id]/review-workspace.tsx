@@ -8,7 +8,6 @@ import {
   Gauge,
   History,
   ListChecks,
-  Network,
   RotateCcw,
   ShieldAlert,
   ShieldCheck,
@@ -119,18 +118,6 @@ export function FiatReview({
                 >
                   <UserRound className="size-4" />
                   User profile
-                </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  render={
-                    <HostLink
-                      href={`/antifraud/networks?user=${encodeURIComponent(item.user_id)}`}
-                    />
-                  }
-                >
-                  <Network className="size-4" />
-                  Account network
                 </Button>
                 {canRefund && unreconciled && item.provider_payment_id && (
                   <Button

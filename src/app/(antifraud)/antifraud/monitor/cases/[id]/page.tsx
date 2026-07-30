@@ -194,18 +194,6 @@ async function CaseDetail({ caseId }: { caseId: string }) {
                   <ExternalLink className="size-4" />
                   User profile
                 </Button>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  render={
-                    <HostLink
-                      href={`/antifraud/networks?user=${encodeURIComponent(subject.user_id)}`}
-                    />
-                  }
-                >
-                  <Network className="size-4" />
-                  Account network
-                </Button>
               </div>
             </div>
 
@@ -217,13 +205,6 @@ async function CaseDetail({ caseId }: { caseId: string }) {
                   <Network className="mr-1 size-3" />
                   {members.length} connected accounts
                 </Badge>
-                <HostLink
-                  href={`/antifraud/networks?user=${encodeURIComponent(subject.user_id)}`}
-                  className="inline-flex items-center gap-1.5 text-xs font-medium text-cyan-600 hover:underline dark:text-cyan-400"
-                >
-                  Open network map
-                  <ExternalLink className="size-3.5" />
-                </HostLink>
               </div>
             )}
 

@@ -12,7 +12,6 @@ import {
   Gift,
   History,
   ListChecks,
-  Network,
   ShieldAlert,
   ShieldCheck,
   TriangleAlert,
@@ -83,14 +82,10 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
             <Button
               size="sm"
               variant="outline"
-              render={
-                <HostLink
-                  href={`/antifraud/networks?user=${encodeURIComponent(withdrawal.user_id)}`}
-                />
-              }
+              render={<HostLink href={`/users/${withdrawal.user_id}`} />}
             >
-              <Network className="size-4" />
-              Account network
+              <UserRound className="size-4" />
+              User profile
             </Button>
           }
         />

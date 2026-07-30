@@ -300,18 +300,6 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
             <UserRound className="size-3.5" />
             User profile
           </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            render={
-              <HostLink
-                href={`/antifraud/networks?user=${encodeURIComponent(signup.user_id)}`}
-              />
-            }
-          >
-            <Network className="size-3.5" />
-            Network
-          </Button>
           {signup.case_id ? (
             <Button
               variant="outline"

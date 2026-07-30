@@ -33,7 +33,6 @@ function revalidate(kind: "ip" | "fingerprint") {
       ? "/antifraud/ip-blacklist"
       : "/antifraud/fingerprint-blacklist",
   );
-  revalidatePath("/antifraud/profiles");
 }
 
 export async function addIdentifierBlocklistRule(input: unknown) {

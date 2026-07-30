@@ -27,9 +27,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Dashboard",
     "Live events",
     "Account reviews",
-    "Profiles",
     "Signups",
-    "Connections & clusters",
     "Deposits",
     "Withdrawals",
     "Refunds",
@@ -59,13 +57,13 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.match(sidebar, /group-data-\[collapsible=icon\]:block/);
   assert.doesNotMatch(sidebar, /href:\s*"\/users/);
   for (const route of [
-    "/antifraud/profiles",
     "/antifraud/ip-blacklist",
     "/antifraud/fingerprint-blacklist",
     "/antifraud/banned-users",
   ]) {
     assert.match(sidebar, new RegExp(`href: "${route}"`));
   }
+  assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
@@ -102,12 +100,13 @@ test("deposit and withdrawal reviews preserve their queues in URL-driven drawers
   assert.match(drawer, /overflow-y-auto/);
 });
 
-test("connections and route errors recover locally", () => {
-  const networks = read("src/app/(antifraud)/antifraud/networks/page.tsx");
+test("unrequested profile and connection indexes stay out of Fraud", () => {
+  const sidebar = read(
+    "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
+  );
   const errorBoundary = read("src/app/(antifraud)/antifraud/error.tsx");
 
-  assert.doesNotMatch(networks, /if \(!userId\) notFound/);
-  assert.match(networks, /Find connections/);
+  assert.doesNotMatch(sidebar, /Profiles|Connections & clusters/);
   assert.match(errorBoundary, /correlation \{error\.digest\}/);
   assert.match(errorBoundary, /does not prove that a preceding action failed/);
 });

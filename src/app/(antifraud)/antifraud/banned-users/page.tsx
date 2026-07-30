@@ -1,7 +1,7 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { Ban, Search, UsersRound } from "lucide-react";
 
+import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -54,12 +54,12 @@ async function Content({ searchParams }: { searchParams: SearchParams }) {
                 >
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/antifraud/profiles/${encodeURIComponent(user.userId)}`}
+                      <HostLink
+                        href={`/users/${encodeURIComponent(user.userId)}`}
                         className="font-medium hover:underline"
                       >
                         {user.username ?? user.userId}
-                      </Link>
+                      </HostLink>
                       <Badge variant="destructive">Banned</Badge>
                       {user.countryCode && <Badge variant="outline">{user.countryCode}</Badge>}
                     </div>

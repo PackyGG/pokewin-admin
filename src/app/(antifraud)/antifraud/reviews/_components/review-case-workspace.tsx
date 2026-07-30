@@ -2,7 +2,6 @@ import { HostLink } from "@/components/host-link";
 import {
   Activity,
   FileText,
-  Network,
   ShieldAlert,
   UserRound,
 } from "lucide-react";
@@ -105,20 +104,6 @@ export async function ReviewCaseWorkspace({
             >
               <UserRound className="size-4" />
               Profile
-            </Button>
-            <Button
-              size="sm"
-              variant="outline"
-              render={
-                <HostLink
-                  href={`/antifraud/networks?user=${encodeURIComponent(review.targetUserId)}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                />
-              }
-            >
-              <Network className="size-4" />
-              Network
             </Button>
           </div>
         </div>

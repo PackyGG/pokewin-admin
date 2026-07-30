@@ -103,7 +103,6 @@ export async function mutateBannedUser(input: unknown): Promise<void> {
       metadata: { reasonCode: "operator_blocklist_workspace" },
     });
     revalidatePath("/antifraud/banned-users");
-    revalidatePath(`/antifraud/profiles/${parsed.data.userId}`);
     revalidateTag("users-list");
     revalidateTag("users-list-stats");
     revalidateTag(userDetailTag(parsed.data.userId));

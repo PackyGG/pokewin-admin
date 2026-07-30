@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 
 const root = process.cwd();
 
-test("Creator Fraud is owned by Marketing while Antifraud keeps network routes", () => {
+test("Creator Fraud stays in Marketing without a Fraud network route", () => {
   const appHosts = readFileSync(join(root, "src/lib/app-hosts.ts"), "utf8");
   const antifraudHost =
     appHosts.match(
@@ -16,23 +16,19 @@ test("Creator Fraud is owned by Marketing while Antifraud keeps network routes",
       /basePath:\s*"\/creator-hub",[\s\S]*?segmentRoutes:\s*\[([\s\S]*?)\]/,
     )?.[1] ?? "";
 
-  assert.match(antifraudHost, /"networks"/);
+  assert.doesNotMatch(antifraudHost, /"networks"/);
   assert.doesNotMatch(antifraudHost, /"creator-fraud"/);
   assert.match(antifraudHost, /"flows"/);
   assert.match(antifraudHost, /"events"/);
   assert.match(marketingHost, /"creator-fraud"/);
 });
 
-test("account networks support exact-id lookup and user-linked drill-downs", () => {
+test("unrequested profile and network pages stay removed", () => {
   const sidebar = readFileSync(
     join(
       root,
       "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
     ),
-    "utf8",
-  );
-  const page = readFileSync(
-    join(root, "src/app/(antifraud)/antifraud/networks/page.tsx"),
     "utf8",
   );
   const dashboardApi = readFileSync(
@@ -48,17 +44,16 @@ test("account networks support exact-id lookup and user-linked drill-downs", () 
     "utf8",
   );
 
-  assert.doesNotMatch(sidebar, /SidebarGroupLabel>Network/);
-  assert.match(sidebar, /href:\s*"\/antifraud\/networks"/);
-  assert.doesNotMatch(page, /if \(!userId\) notFound\(\)/);
-  assert.match(page, /name="user"/);
-  assert.match(page, /Find connections/);
-  assert.match(page, /getAccountNetwork\(userId\)/);
-  assert.doesNotMatch(page, /searchNetworkAccounts|name="q"|Search accounts/);
+  assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
+  assert.equal(
+    existsSync(join(root, "src/app/(antifraud)/antifraud/profiles/page.tsx")),
+    false,
+  );
+  assert.equal(
+    existsSync(join(root, "src/app/(antifraud)/antifraud/networks/page.tsx")),
+    false,
+  );
   assert.doesNotMatch(dashboardApi, /searchNetworkAccounts/);
   assert.doesNotMatch(monitorRoutes, /\/v1\/networks\/search/);
-  assert.match(
-    userDetail,
-    /href=\{`\/antifraud\/networks\?user=\$\{encodeURIComponent\(user\.id\)\}`\}/,
-  );
+  assert.doesNotMatch(userDetail, /\/antifraud\/networks/);
 });

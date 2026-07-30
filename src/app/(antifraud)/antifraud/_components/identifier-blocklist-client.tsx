@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   Ban,
@@ -253,14 +252,6 @@ export function IdentifierBlocklistClient({
                     <span>Updated {formatRelative(rule.updatedAt)}</span>
                     {rule.lastMatchAt && (
                       <span>Last match {formatRelative(rule.lastMatchAt)}</span>
-                    )}
-                    {rule.affectedUsers > 0 && (
-                      <Link
-                        href={`/antifraud/profiles?blocklist=${encodeURIComponent(rule.id)}`}
-                        className="text-cyan-600 hover:underline dark:text-cyan-400"
-                      >
-                        Open affected profiles
-                      </Link>
                     )}
                   </div>
                 </div>
