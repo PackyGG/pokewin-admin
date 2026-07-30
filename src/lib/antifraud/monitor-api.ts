@@ -188,6 +188,32 @@ export type AntifraudNotificationRoutes = z.infer<
   typeof notificationRoutesSchema
 >;
 
+const overviewSessionSchema = z.object({
+  session_id: z.string().uuid(),
+  case_id: z.string().uuid(),
+  user_id: z.string(),
+  username: z.string().nullable(),
+  status: z.string(),
+  started_at: z.string(),
+  ends_at: z.string(),
+  ended_at: z.string().nullable(),
+  current_score: z.number(),
+  peak_score: z.number(),
+  event_count: z.number(),
+  case_status: z.string(),
+  severity: z.string(),
+});
+
+const monitorOverviewSchema = z.object({
+  signupReviewsLeft: z.number().int().nonnegative(),
+  fiatReviewsLeft: z.number().int().nonnegative(),
+  activeDomainBlacklist: z.number().int().nonnegative(),
+  blockedIpCatches: z.number().int().nonnegative(),
+  recentSessions: z.array(overviewSessionSchema).max(40),
+});
+
+export type AntifraudMonitorOverview = z.infer<typeof monitorOverviewSchema>;
+
 /** Read/ticket token — everything except the decision write. */
 function readToken(): { baseUrl?: string; token?: string } {
   return {
@@ -288,6 +314,38 @@ export const getAntifraudPollerHealth = cache(async (): Promise<{
     return { configured: true, data: null, error: true };
   }
 });
+
+export async function getAntifraudMonitorOverview(): Promise<{
+  configured: boolean;
+  data: AntifraudMonitorOverview | null;
+  error: boolean;
+}> {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: null, error: false };
+  }
+
+  try {
+    const response = await fetch(`${baseUrl}/v1/overview`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
+    const payload = z
+      .object({ data: monitorOverviewSchema })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch (error) {
+    console.error("[antifraud-monitor] overview request failed:", error);
+    return { configured: true, data: null, error: true };
+  }
+}
 
 export async function getAntifraudScoringConfig(): Promise<{
   configured: boolean;

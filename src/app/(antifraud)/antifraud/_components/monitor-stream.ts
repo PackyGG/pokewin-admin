@@ -65,6 +65,8 @@ export type MonitorActivityEvent = {
   userId: string | null;
   username: string | null;
   score: number | null;
+  /** Validated object payload retained for the Live Events state reducers. */
+  data: Record<string, unknown>;
 };
 
 export type MonitorStreamMessage =
@@ -256,6 +258,7 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
       userId: typeof data.userId === "string" ? data.userId : null,
       username: typeof data.username === "string" ? data.username : null,
       score: score(data.score),
+      data,
     },
   };
 }

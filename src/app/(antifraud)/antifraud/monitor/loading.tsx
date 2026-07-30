@@ -1,17 +1,15 @@
-import { PageHeroSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Mirrors /antifraud/monitor exactly: hero, the five KPI tiles, the two live
+ * Mirrors /antifraud/monitor exactly: the seven KPI tiles, the two live
  * panels (each behind its section heading) and the case list. Heights match
  * the console's empty state so nothing jumps when the real content resolves.
  */
 export default function AntifraudMonitorLoading() {
   return (
-    <div className="space-y-5">
-      <PageHeroSkeleton />
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => (
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+        {Array.from({ length: 7 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-2xl" />
         ))}
       </div>

@@ -1,187 +1,698 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { desc, eq, inArray, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 
-import { antifraud_reviews } from "@/lib/db-schema/admin/schema";
+import {
+  antifraud_reviews,
+  antifraud_signals,
+} from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 
+const LIVE_REVIEW_STATUSES = ["open", "in_review"] as const;
+const THIRTY_DAY_BUCKETS = 30;
+
 export type AntifraudOverviewMetrics = {
-  totalFiatDepositCents: number;
-  fraudAccountFiatDepositCents: number;
-  kycAccountCount: number;
-  automatedFraudKycCount: number;
+  legitimateFiatDepositCents: number;
+  fraudulentFiatDepositCents: number;
+  manualKycLocks: number;
+  systemKycLocks: number;
+  manualBans: number;
+  automaticBans: number;
+  autoLockReviewsLeft: number;
 };
 
-/**
- * Lifetime overview totals.
- *
- * "Fraud accounts" includes every meaningful KYC account plus accounts an
- * analyst has closed as flagged. KYC totals exclude untouched default
- * user_kyc rows; the automated subset is identified by the durable system
- * actor written by Antifraud containment.
- */
-async function computeAntifraudOverviewMetrics(
-  env: DbEnv,
-): Promise<AntifraudOverviewMetrics> {
-  const flaggedAccounts = await adminDrizzle
-    .selectDistinct({ userId: antifraud_reviews.target_user_id })
-    .from(antifraud_reviews)
-    .where(eq(antifraud_reviews.status, "flagged"));
-  const flaggedUserIds = flaggedAccounts.map((account) => account.userId);
-  const flaggedScope =
-    flaggedUserIds.length > 0
-      ? sql`user_id = ANY(${pgArrayParam(flaggedUserIds)}::text[])`
-      : sql`FALSE`;
+export type AntifraudOverviewDay = {
+  date: string;
+  legitimateFiatCents: number;
+  fraudulentFiatCents: number;
+  signups: number;
+  bans: number;
+  locks: number;
+  caught: number;
+};
 
-  const db = readDrizzleForEnv(env);
-  const result = await db.execute<{
-    total_fiat_deposit_cents: string;
-    fraud_account_fiat_deposit_cents: string;
-    kyc_account_count: string;
-    automated_fraud_kyc_count: string;
-  }>(sql`
-    WITH succeeded_events AS (
-      SELECT
-        pwe.id,
-        pwe.received_at,
-        pwe.provider_resource_id,
-        pwe.payload #>> '{data,id}' AS payment_id,
-        pwe.payload #>> '{data,metadata,deposit_intent_id}'
-          AS metadata_intent_id,
-        (pwe.payload #>> '{data,paid_at}')::timestamptz
-          AS provider_paid_at,
-        CASE
-          WHEN pwe.payload #>> '{data,usd_total}'
-            ~ '^[0-9]+([.][0-9]+)?$'
-          THEN (pwe.payload #>> '{data,usd_total}')::numeric
-          ELSE NULL
-        END AS gross_paid_usd
-      FROM payment_webhook_events pwe
-      WHERE pwe.provider = 'whop'
-        AND pwe.event_type = 'payment.succeeded'
-        AND pwe.payload #>> '{data,status}' = 'paid'
-        AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
-        AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
-    ),
-    provider_paid AS (
-      SELECT DISTINCT ON (payment_id)
-        payment_id,
-        provider_resource_id,
-        metadata_intent_id,
-        provider_paid_at,
-        gross_paid_usd
-      FROM succeeded_events
-      WHERE provider_paid_at <= CURRENT_TIMESTAMP
-      ORDER BY payment_id, received_at DESC, id DESC
-    ),
-    linked_paid AS (
-      SELECT paid.*, intent.user_id
-      FROM provider_paid paid
-      LEFT JOIN LATERAL (
-        SELECT i.user_id
-        FROM fiat_deposit_intents i
-        WHERE i.provider = 'whop'
-          AND (
-            i.provider_payment_id = paid.payment_id
-            OR i.provider_payment_id = paid.provider_resource_id
-            OR i.id::text = paid.metadata_intent_id
-          )
-        ORDER BY
-          (i.provider_payment_id = paid.payment_id) DESC,
-          (i.id::text = paid.metadata_intent_id) DESC,
-          i.updated_at DESC
-        LIMIT 1
-      ) intent ON TRUE
+export type AntifraudActionFeedItem = {
+  id: string;
+  type:
+    | "fiat_deposit"
+    | "high_risk_signup"
+    | "locked"
+    | "banned"
+    | "kyc_requested"
+    | "kyc_reviewed"
+    | "signal";
+  title: string;
+  detail: string;
+  occurredAt: string;
+  userId: string | null;
+  href: string | null;
+  amountCents: number | null;
+};
+
+export type AntifraudOverviewData = {
+  metrics: AntifraudOverviewMetrics;
+  live: AntifraudLiveMirrorMetrics;
+  days: AntifraudOverviewDay[];
+  feed: AntifraudActionFeedItem[];
+};
+
+export type AntifraudLiveMirrorMetrics = {
+  signups24h: number;
+  locks24h: number;
+  legitimateFiatCents24h: number;
+  fraudulentFiatCents24h: number;
+};
+
+type MainOverviewRow = {
+  legitimate_fiat_deposit_cents: string;
+  fraudulent_fiat_deposit_cents: string;
+  manual_kyc_locks: string;
+  system_kyc_locks: string;
+  manual_bans: string;
+  automatic_bans: string;
+  auto_lock_reviews_left: string;
+  signups_24h: string;
+  locks_24h: string;
+  legitimate_fiat_cents_24h: string;
+  fraudulent_fiat_cents_24h: string;
+};
+
+type MainDayRow = {
+  bucket: string;
+  legitimate_fiat_cents: string;
+  fraudulent_fiat_cents: string;
+  signups: string;
+  bans: string;
+  locks: string;
+};
+
+type MainFeedRow = {
+  id: string;
+  kind: string;
+  user_id: string | null;
+  username: string | null;
+  occurred_at: string;
+  amount_cents: string | null;
+  detail: string | null;
+};
+
+function automaticBanSql(): ReturnType<typeof sql> {
+  return sql`
+    (
+      u.banned_reason LIKE 'Automatic fraud ban:%'
+      OR u.banned_reason LIKE 'Automatic Antifraud ban:%'
     )
-    SELECT
-      COALESCE((
-        SELECT SUM(gross_paid_usd) * 100
-        FROM provider_paid
-      ), 0)::text AS total_fiat_deposit_cents,
-      COALESCE((
-        SELECT SUM(gross_paid_usd) * 100
-        FROM linked_paid
-        WHERE user_id IS NOT NULL
-          AND (
-          ${flaggedScope}
-          OR user_id IN (
-            SELECT user_id
-            FROM user_kyc
-            WHERE (
-              kyc_required
-              OR kyc_required_at IS NOT NULL
-              OR kyc_required_by IS NOT NULL
-              OR NULLIF(BTRIM(kyc_required_reason), '') IS NOT NULL
-              OR verification_cycle > 0
-              OR admin_decision <> 'pending'
-              OR admin_reviewed_at IS NOT NULL
-              OR admin_reviewed_by IS NOT NULL
-              OR applicant_id IS NOT NULL
-              OR status <> 'none'
-              OR review_answer IS NOT NULL
-              OR reject_type IS NOT NULL
-              OR moderation_comment IS NOT NULL
-              OR last_webhook_created_at IS NOT NULL
-              OR last_webhook_digest IS NOT NULL
-            )
-          )
-        )
-      ), 0)::text AS fraud_account_fiat_deposit_cents,
-      (
-        SELECT COUNT(*)
-        FROM user_kyc
-        WHERE (
-          kyc_required
-          OR kyc_required_at IS NOT NULL
-          OR kyc_required_by IS NOT NULL
-          OR NULLIF(BTRIM(kyc_required_reason), '') IS NOT NULL
-          OR verification_cycle > 0
-          OR admin_decision <> 'pending'
-          OR admin_reviewed_at IS NOT NULL
-          OR admin_reviewed_by IS NOT NULL
-          OR applicant_id IS NOT NULL
-          OR status <> 'none'
-          OR review_answer IS NOT NULL
-          OR reject_type IS NOT NULL
-          OR moderation_comment IS NOT NULL
-          OR last_webhook_created_at IS NOT NULL
-          OR last_webhook_digest IS NOT NULL
-        )
-      )::text AS kyc_account_count,
-      (
-        SELECT COUNT(*)
-        FROM user_kyc
-        WHERE kyc_required_by LIKE 'system:antifraud-%'
-      )::text AS automated_fraud_kyc_count
-  `);
-  const row = result.rows[0];
+  `;
+}
 
-  return {
-    totalFiatDepositCents: Number(row?.total_fiat_deposit_cents ?? 0),
-    fraudAccountFiatDepositCents: Number(
-      row?.fraud_account_fiat_deposit_cents ?? 0,
+function fraudulentAccountSql(
+  flaggedUserIds: string[],
+): ReturnType<typeof sql> {
+  const flagged =
+    flaggedUserIds.length > 0
+      ? sql`linked.user_id = ANY(${pgArrayParam(flaggedUserIds)}::text[])`
+      : sql`FALSE`;
+  return sql`(${flagged} OR (u.is_banned AND ${automaticBanSql()}))`;
+}
+
+function numeric(value: string | number | null | undefined): number {
+  const parsed = Number(value ?? 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function utcDateKey(value: Date): string {
+  return value.toISOString().slice(0, 10);
+}
+
+function emptyDays(): AntifraudOverviewDay[] {
+  const today = new Date();
+  const start = new Date(
+    Date.UTC(
+      today.getUTCFullYear(),
+      today.getUTCMonth(),
+      today.getUTCDate() - (THIRTY_DAY_BUCKETS - 1),
     ),
-    kycAccountCount: Number(row?.kyc_account_count ?? 0),
-    automatedFraudKycCount: Number(row?.automated_fraud_kyc_count ?? 0),
+  );
+  return Array.from({ length: THIRTY_DAY_BUCKETS }, (_, index) => {
+    const date = new Date(start);
+    date.setUTCDate(start.getUTCDate() + index);
+    return {
+      date: utcDateKey(date),
+      legitimateFiatCents: 0,
+      fraudulentFiatCents: 0,
+      signups: 0,
+      bans: 0,
+      locks: 0,
+      caught: 0,
+    };
+  });
+}
+
+function feedTitle(kind: string, username: string | null): string {
+  const subject = username ? ` · @${username}` : "";
+  switch (kind) {
+    case "fiat_deposit":
+      return `Fiat deposit${subject}`;
+    case "account_locked":
+      return `Account locked${subject}`;
+    case "account_banned":
+      return `Account banned${subject}`;
+    case "kyc_required":
+      return `KYC requested${subject}`;
+    case "kyc_admin_reviewed":
+    case "kyc_provider_result_received":
+      return `KYC reviewed${subject}`;
+    default:
+      return `${kind.replaceAll("_", " ")}${subject}`;
+  }
+}
+
+function normalizeMainFeed(row: MainFeedRow): AntifraudActionFeedItem {
+  const type: AntifraudActionFeedItem["type"] =
+    row.kind === "fiat_deposit"
+      ? "fiat_deposit"
+      : row.kind === "account_locked"
+        ? "locked"
+        : row.kind === "account_banned"
+          ? "banned"
+          : row.kind === "kyc_required"
+            ? "kyc_requested"
+            : "kyc_reviewed";
+  return {
+    id: row.id,
+    type,
+    title: feedTitle(row.kind, row.username),
+    detail:
+      row.detail ??
+      (row.user_id ? `Account ${row.user_id}` : "Operational event"),
+    occurredAt: row.occurred_at,
+    userId: row.user_id,
+    href: row.user_id
+      ? `/antifraud/reviews?search=${encodeURIComponent(row.user_id)}`
+      : null,
+    amountCents:
+      row.amount_cents === null ? null : Math.round(numeric(row.amount_cents)),
   };
 }
 
-const cachedAntifraudOverviewMetrics = unstable_cache(
-  computeAntifraudOverviewMetrics,
-  ["antifraud-overview-metrics-v3"],
+async function computeAntifraudOverviewData(
+  env: DbEnv,
+): Promise<AntifraudOverviewData> {
+  const [flaggedAccounts, unresolvedReviews, caughtRows, recentSignals] =
+    await Promise.all([
+      adminDrizzle
+        .selectDistinct({ userId: antifraud_reviews.target_user_id })
+        .from(antifraud_reviews)
+        .where(eq(antifraud_reviews.status, "flagged")),
+      adminDrizzle
+        .select({
+          id: antifraud_reviews.id,
+          userId: antifraud_reviews.target_user_id,
+          signals: antifraud_reviews.signals,
+        })
+        .from(antifraud_reviews)
+        .where(inArray(antifraud_reviews.status, [...LIVE_REVIEW_STATUSES])),
+      adminDrizzle.execute<{ bucket: string; caught: string }>(sql`
+        SELECT
+          (resolved_at AT TIME ZONE 'UTC')::date::text AS bucket,
+          COUNT(DISTINCT target_user_id)::text AS caught
+        FROM antifraud_reviews
+        WHERE status = 'flagged'
+          AND resolved_at >= date_trunc('day', now() AT TIME ZONE 'UTC')
+            - interval '29 days'
+          AND resolved_at < date_trunc('day', now() AT TIME ZONE 'UTC')
+            + interval '1 day'
+        GROUP BY 1
+      `),
+      adminDrizzle
+        .select({
+          id: antifraud_signals.id,
+          kind: antifraud_signals.kind,
+          summary: antifraud_signals.summary,
+          receivedAt: antifraud_signals.received_at,
+          userId: antifraud_signals.target_user_id,
+          username: antifraud_signals.target_username,
+          reviewId: antifraud_signals.review_id,
+        })
+        .from(antifraud_signals)
+        .where(
+          sql`${antifraud_signals.received_at} >= now() - interval '30 days'`,
+        )
+        .orderBy(desc(antifraud_signals.received_at))
+        .limit(20),
+    ]);
+
+  const flaggedUserIds = flaggedAccounts.map((account) => account.userId);
+  const unresolvedUserIds = [
+    ...new Set(unresolvedReviews.map((review) => review.userId)),
+  ];
+  const fraudPredicate = fraudulentAccountSql(flaggedUserIds);
+  const unresolvedScope =
+    unresolvedUserIds.length > 0
+      ? sql`u.id = ANY(${pgArrayParam(unresolvedUserIds)}::text[])`
+      : sql`FALSE`;
+  const db = readDrizzleForEnv(env);
+
+  const [totalsResult, dayResult, feedResult] = await Promise.all([
+    db.execute<MainOverviewRow>(sql`
+      WITH succeeded_events AS (
+        SELECT
+          pwe.id,
+          pwe.received_at,
+          pwe.provider_resource_id,
+          pwe.payload #>> '{data,id}' AS payment_id,
+          pwe.payload #>> '{data,metadata,deposit_intent_id}'
+            AS metadata_intent_id,
+          (pwe.payload #>> '{data,paid_at}')::timestamptz
+            AS provider_paid_at,
+          CASE
+            WHEN pwe.payload #>> '{data,usd_total}'
+              ~ '^[0-9]+([.][0-9]+)?$'
+            THEN (pwe.payload #>> '{data,usd_total}')::numeric
+            ELSE NULL
+          END AS gross_paid_usd
+        FROM payment_webhook_events pwe
+        WHERE pwe.provider = 'whop'
+          AND pwe.event_type = 'payment.succeeded'
+          AND pwe.payload #>> '{data,status}' = 'paid'
+          AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
+      ),
+      provider_paid AS (
+        SELECT DISTINCT ON (payment_id)
+          payment_id,
+          provider_resource_id,
+          metadata_intent_id,
+          provider_paid_at,
+          gross_paid_usd
+        FROM succeeded_events
+        WHERE provider_paid_at <= CURRENT_TIMESTAMP
+        ORDER BY payment_id, received_at DESC, id DESC
+      ),
+      linked_paid AS (
+        SELECT paid.*, intent.user_id
+        FROM provider_paid paid
+        LEFT JOIN LATERAL (
+          SELECT i.user_id
+          FROM fiat_deposit_intents i
+          WHERE i.provider = 'whop'
+            AND (
+              i.provider_payment_id = paid.payment_id
+              OR i.provider_payment_id = paid.provider_resource_id
+              OR i.id::text = paid.metadata_intent_id
+            )
+          ORDER BY
+            (i.provider_payment_id = paid.payment_id) DESC,
+            (i.id::text = paid.metadata_intent_id) DESC,
+            i.updated_at DESC
+          LIMIT 1
+        ) intent ON TRUE
+      ),
+      classified_paid AS (
+        SELECT
+          linked.*,
+          ${fraudPredicate} AS is_fraud
+        FROM linked_paid linked
+        LEFT JOIN "user" u ON u.id = linked.user_id
+      ),
+      current_locks AS (
+        SELECT u.id
+        FROM "user" u
+        LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
+        WHERE ${unresolvedScope}
+          AND (
+            (
+              u.is_locked
+              AND u.locked_by IS NULL
+              AND COALESCE(u.locked_reason, '') LIKE 'Automatic fraud lock:%'
+            )
+            OR (
+              (
+                'all' = ANY(locks.locked_withdrawals_crypto)
+                OR locks.locked_withdrawals_items
+              )
+              AND locks.locked_withdrawals_by IS NULL
+              AND (
+                COALESCE(locks.locked_withdrawals_reason, '')
+                  LIKE 'Automatic fraud lock:%'
+                OR COALESCE(locks.locked_withdrawals_reason, '')
+                  LIKE 'Lifetime deposits reached %'
+              )
+            )
+          )
+      )
+      SELECT
+        COALESCE(SUM(gross_paid_usd) FILTER (WHERE NOT is_fraud), 0)
+          * 100 AS legitimate_fiat_deposit_cents,
+        COALESCE(SUM(gross_paid_usd) FILTER (WHERE is_fraud), 0)
+          * 100 AS fraudulent_fiat_deposit_cents,
+        (
+          SELECT COUNT(*) FROM user_kyc
+          WHERE kyc_required
+            AND COALESCE(kyc_required_by, '') NOT LIKE 'system:%'
+        ) AS manual_kyc_locks,
+        (
+          SELECT COUNT(*) FROM user_kyc
+          WHERE kyc_required
+            AND kyc_required_by LIKE 'system:%'
+        ) AS system_kyc_locks,
+        (
+          SELECT COUNT(*) FROM "user" u
+          WHERE is_banned AND NOT ${automaticBanSql()}
+        ) AS manual_bans,
+        (
+          SELECT COUNT(*) FROM "user" u
+          WHERE is_banned AND ${automaticBanSql()}
+        ) AS automatic_bans,
+        (SELECT COUNT(*) FROM current_locks) AS auto_lock_reviews_left,
+        (
+          SELECT COUNT(*) FROM "user"
+          WHERE created_at >= now() - interval '24 hours'
+            AND created_at < now()
+        ) AS signups_24h,
+        (
+          SELECT COUNT(DISTINCT user_id)
+          FROM (
+            SELECT id AS user_id, locked_at AS at
+            FROM "user"
+            WHERE locked_at >= now() - interval '24 hours'
+              AND locked_at < now()
+            UNION ALL
+            SELECT user_id, locked_withdrawals_at AS at
+            FROM user_feature_locks
+            WHERE locked_withdrawals_at >= now() - interval '24 hours'
+              AND locked_withdrawals_at < now()
+          ) lock_events
+        ) AS locks_24h,
+        COALESCE(SUM(gross_paid_usd) FILTER (
+          WHERE NOT is_fraud
+            AND provider_paid_at >= now() - interval '24 hours'
+            AND provider_paid_at < now()
+        ), 0) * 100 AS legitimate_fiat_cents_24h,
+        COALESCE(SUM(gross_paid_usd) FILTER (
+          WHERE is_fraud
+            AND provider_paid_at >= now() - interval '24 hours'
+            AND provider_paid_at < now()
+        ), 0) * 100 AS fraudulent_fiat_cents_24h
+      FROM classified_paid
+    `),
+    db.execute<MainDayRow>(sql`
+      WITH days AS (
+        SELECT generate_series(
+          date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days',
+          date_trunc('day', now() AT TIME ZONE 'UTC'),
+          interval '1 day'
+        )::date AS bucket
+      ),
+      succeeded_events AS (
+        SELECT
+          pwe.id,
+          pwe.received_at,
+          pwe.provider_resource_id,
+          pwe.payload #>> '{data,id}' AS payment_id,
+          pwe.payload #>> '{data,metadata,deposit_intent_id}'
+            AS metadata_intent_id,
+          (pwe.payload #>> '{data,paid_at}')::timestamptz
+            AS provider_paid_at,
+          CASE
+            WHEN pwe.payload #>> '{data,usd_total}'
+              ~ '^[0-9]+([.][0-9]+)?$'
+            THEN (pwe.payload #>> '{data,usd_total}')::numeric
+            ELSE NULL
+          END AS gross_paid_usd
+        FROM payment_webhook_events pwe
+        WHERE pwe.provider = 'whop'
+          AND pwe.event_type = 'payment.succeeded'
+          AND pwe.payload #>> '{data,status}' = 'paid'
+          AND pwe.received_at >=
+            date_trunc('day', now() AT TIME ZONE 'UTC') - interval '31 days'
+          AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+          AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
+      ),
+      provider_paid AS (
+        SELECT DISTINCT ON (payment_id)
+          payment_id,
+          provider_resource_id,
+          metadata_intent_id,
+          provider_paid_at,
+          gross_paid_usd
+        FROM succeeded_events
+        WHERE provider_paid_at >=
+            date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+          AND provider_paid_at <
+            date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+        ORDER BY payment_id, received_at DESC, id DESC
+      ),
+      linked_paid AS (
+        SELECT paid.*, intent.user_id
+        FROM provider_paid paid
+        LEFT JOIN LATERAL (
+          SELECT i.user_id
+          FROM fiat_deposit_intents i
+          WHERE i.provider = 'whop'
+            AND (
+              i.provider_payment_id = paid.payment_id
+              OR i.provider_payment_id = paid.provider_resource_id
+              OR i.id::text = paid.metadata_intent_id
+            )
+          ORDER BY
+            (i.provider_payment_id = paid.payment_id) DESC,
+            (i.id::text = paid.metadata_intent_id) DESC,
+            i.updated_at DESC
+          LIMIT 1
+        ) intent ON TRUE
+      ),
+      fiat AS (
+        SELECT
+          (linked.provider_paid_at AT TIME ZONE 'UTC')::date AS bucket,
+          SUM(linked.gross_paid_usd) FILTER (
+            WHERE NOT ${fraudPredicate}
+          ) * 100 AS legitimate_fiat_cents,
+          SUM(linked.gross_paid_usd) FILTER (
+            WHERE ${fraudPredicate}
+          ) * 100 AS fraudulent_fiat_cents
+        FROM linked_paid linked
+        LEFT JOIN "user" u ON u.id = linked.user_id
+        GROUP BY 1
+      ),
+      signup AS (
+        SELECT (created_at AT TIME ZONE 'UTC')::date AS bucket, COUNT(*) AS total
+        FROM "user"
+        WHERE created_at >=
+            date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+          AND created_at <
+            date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+        GROUP BY 1
+      ),
+      banned AS (
+        SELECT (banned_at AT TIME ZONE 'UTC')::date AS bucket, COUNT(*) AS total
+        FROM "user"
+        WHERE banned_at >=
+            date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+          AND banned_at <
+            date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+        GROUP BY 1
+      ),
+      locked AS (
+        SELECT bucket, COUNT(DISTINCT user_id) AS total
+        FROM (
+          SELECT id AS user_id, (locked_at AT TIME ZONE 'UTC')::date AS bucket
+          FROM "user"
+          WHERE locked_at >=
+              date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+            AND locked_at <
+              date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+          UNION ALL
+          SELECT
+            user_id,
+            (locked_withdrawals_at AT TIME ZONE 'UTC')::date AS bucket
+          FROM user_feature_locks
+          WHERE locked_withdrawals_at >=
+              date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+            AND locked_withdrawals_at <
+              date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+        ) rows
+        GROUP BY bucket
+      )
+      SELECT
+        days.bucket::text,
+        COALESCE(fiat.legitimate_fiat_cents, 0)::text
+          AS legitimate_fiat_cents,
+        COALESCE(fiat.fraudulent_fiat_cents, 0)::text
+          AS fraudulent_fiat_cents,
+        COALESCE(signup.total, 0)::text AS signups,
+        COALESCE(banned.total, 0)::text AS bans,
+        COALESCE(locked.total, 0)::text AS locks
+      FROM days
+      LEFT JOIN fiat USING (bucket)
+      LEFT JOIN signup USING (bucket)
+      LEFT JOIN banned USING (bucket)
+      LEFT JOIN locked USING (bucket)
+      ORDER BY days.bucket
+    `),
+    db.execute<MainFeedRow>(sql`
+      WITH succeeded_events AS (
+        SELECT DISTINCT ON (pwe.payload #>> '{data,id}')
+          'fiat:' || (pwe.payload #>> '{data,id}') AS id,
+          'fiat_deposit'::text AS kind,
+          intent.user_id,
+          u.username,
+          (pwe.payload #>> '{data,paid_at}')::timestamptz AS occurred_at,
+          CASE
+            WHEN pwe.payload #>> '{data,usd_total}'
+              ~ '^[0-9]+([.][0-9]+)?$'
+            THEN ROUND((pwe.payload #>> '{data,usd_total}')::numeric * 100)
+            ELSE NULL
+          END::text AS amount_cents,
+          'Completed Whop payment'::text AS detail
+        FROM payment_webhook_events pwe
+        LEFT JOIN LATERAL (
+          SELECT i.user_id
+          FROM fiat_deposit_intents i
+          WHERE i.provider = 'whop'
+            AND (
+              i.provider_payment_id = pwe.payload #>> '{data,id}'
+              OR i.provider_payment_id = pwe.provider_resource_id
+              OR i.id::text =
+                pwe.payload #>> '{data,metadata,deposit_intent_id}'
+            )
+          ORDER BY i.updated_at DESC
+          LIMIT 1
+        ) intent ON TRUE
+        LEFT JOIN "user" u ON u.id = intent.user_id
+        WHERE pwe.provider = 'whop'
+          AND pwe.event_type = 'payment.succeeded'
+          AND pwe.payload #>> '{data,status}' = 'paid'
+          AND pwe.received_at >= now() - interval '30 days'
+        ORDER BY pwe.payload #>> '{data,id}', pwe.received_at DESC, pwe.id DESC
+      ),
+      operations AS (
+        SELECT
+          'audit:' || ae.id AS id,
+          ae.event_type::text AS kind,
+          ae.user_id,
+          u.username,
+          ae.created_at AS occurred_at,
+          NULL::text AS amount_cents,
+          CASE
+            WHEN ae.event_type = 'account_locked' THEN 'Account access restricted'
+            WHEN ae.event_type = 'account_banned' THEN 'Account access revoked'
+            WHEN ae.event_type = 'kyc_required' THEN 'Identity review requested'
+            ELSE 'KYC result updated'
+          END AS detail
+        FROM audit_events ae
+        LEFT JOIN "user" u ON u.id = ae.user_id
+        WHERE ae.event_type IN (
+          'account_locked',
+          'account_banned',
+          'kyc_required',
+          'kyc_admin_reviewed',
+          'kyc_provider_result_received'
+        )
+          AND ae.created_at >= now() - interval '30 days'
+      )
+      SELECT * FROM (
+        SELECT * FROM succeeded_events
+        UNION ALL
+        SELECT * FROM operations
+      ) feed
+      ORDER BY occurred_at DESC
+      LIMIT 24
+    `),
+  ]);
+
+  const totals = totalsResult.rows[0];
+  const caughtByDay = new Map(
+    caughtRows.rows.map((row) => [row.bucket, numeric(row.caught)]),
+  );
+  const daysByKey = new Map(
+    emptyDays().map((day) => [day.date, day] as const),
+  );
+  for (const row of dayResult.rows) {
+    const day = daysByKey.get(row.bucket);
+    if (!day) continue;
+    day.legitimateFiatCents = numeric(row.legitimate_fiat_cents);
+    day.fraudulentFiatCents = numeric(row.fraudulent_fiat_cents);
+    day.signups = numeric(row.signups);
+    day.bans = numeric(row.bans);
+    day.locks = numeric(row.locks);
+    day.caught = caughtByDay.get(row.bucket) ?? 0;
+  }
+
+  const signalFeed: AntifraudActionFeedItem[] = recentSignals.map((signal) => ({
+    id: `signal:${signal.id}`,
+    type:
+      signal.kind === "high_risk_signup" ? "high_risk_signup" : "signal",
+    title:
+      signal.kind === "high_risk_signup"
+        ? `High-risk signup${signal.username ? ` · @${signal.username}` : ""}`
+        : feedTitle(signal.kind, signal.username),
+    detail: signal.summary,
+    occurredAt: signal.receivedAt,
+    userId: signal.userId,
+    href: signal.reviewId
+      ? `/antifraud/reviews?review=${signal.reviewId}`
+      : signal.userId
+        ? `/antifraud/reviews?search=${encodeURIComponent(signal.userId)}`
+        : null,
+    amountCents: null,
+  }));
+  const feed = [
+    ...feedResult.rows.map(normalizeMainFeed),
+    ...signalFeed,
+  ]
+    .sort(
+      (left, right) =>
+        Date.parse(right.occurredAt) - Date.parse(left.occurredAt),
+    )
+    .slice(0, 24);
+
+  return {
+    metrics: {
+      legitimateFiatDepositCents: numeric(
+        totals?.legitimate_fiat_deposit_cents,
+      ),
+      fraudulentFiatDepositCents: numeric(
+        totals?.fraudulent_fiat_deposit_cents,
+      ),
+      manualKycLocks: numeric(totals?.manual_kyc_locks),
+      systemKycLocks: numeric(totals?.system_kyc_locks),
+      manualBans: numeric(totals?.manual_bans),
+      automaticBans: numeric(totals?.automatic_bans),
+      autoLockReviewsLeft: numeric(totals?.auto_lock_reviews_left),
+    },
+    live: {
+      signups24h: numeric(totals?.signups_24h),
+      locks24h: numeric(totals?.locks_24h),
+      legitimateFiatCents24h: numeric(totals?.legitimate_fiat_cents_24h),
+      fraudulentFiatCents24h: numeric(totals?.fraudulent_fiat_cents_24h),
+    },
+    days: [...daysByKey.values()],
+    feed,
+  };
+}
+
+const cachedAntifraudOverviewData = unstable_cache(
+  computeAntifraudOverviewData,
+  ["antifraud-overview-dashboard-v4"],
   {
     revalidate: 60,
     tags: ["antifraud-overview", "fiat-operations"],
   },
 );
 
-export async function getAntifraudOverviewMetrics(): Promise<AntifraudOverviewMetrics> {
+export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData> {
   const env = await readDbEnv();
   return env === "prod"
-    ? cachedAntifraudOverviewMetrics(env)
-    : computeAntifraudOverviewMetrics(env);
+    ? cachedAntifraudOverviewData(env)
+    : computeAntifraudOverviewData(env);
+}
+
+export async function getAntifraudLiveMirrorMetrics(): Promise<AntifraudLiveMirrorMetrics> {
+  const data = await getAntifraudOverviewData();
+  return data.live;
 }

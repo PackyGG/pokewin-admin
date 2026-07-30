@@ -2,8 +2,9 @@
 
 import * as React from "react";
 import {
-  Activity,
   AlertTriangle,
+  Ban,
+  CircleDollarSign,
   ChevronRight,
   Clock3,
   History,
@@ -22,10 +23,16 @@ import { Button } from "@/components/ui/button";
 import { useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
 import { cn } from "@/lib/utils";
+import { formatCurrency } from "@/lib/utils/format";
 import {
   NetworkRiskBadges,
   networkRiskLabels,
 } from "../_components/network-risk-badges";
+import {
+  parseMonitorFrame,
+  type MonitorActivityEvent,
+} from "../_components/monitor-stream";
+import { PanelErrorBoundary } from "../_components/panel-error-boundary";
 import { RiskScoreBar } from "../_components/risk-score-bar";
 
 /**
@@ -85,12 +92,39 @@ type LiveEvent = {
   data: Record<string, unknown>;
 };
 
+type RecentMonitorSession = MonitorSession & {
+  status: string;
+  ended_at: string | null;
+  case_status: string;
+};
+
+type LiveMetrics = {
+  signups24h: number;
+  locks24h: number;
+  legitimateFiatCents24h: number;
+  fraudulentFiatCents24h: number;
+};
+
+type SnapshotSummary = {
+  signupReviewsLeft: number;
+  fiatReviewsLeft: number;
+  activeDomainBlacklist: number;
+  blockedIpCatches: number;
+};
+
 type Snapshot = {
   configured?: boolean;
   error?: string;
+  degraded?: boolean;
+  errors?: Partial<
+    Record<"live" | "cases" | "flows" | "overview" | "liveMetrics", boolean>
+  >;
   live?: unknown;
   cases?: unknown;
   casesTruncated?: boolean;
+  recentSessions?: unknown;
+  summary?: unknown;
+  liveMetrics?: unknown;
   flows?: unknown;
 };
 
@@ -209,6 +243,40 @@ function parseCase(value: unknown): MonitorCase | null {
     summary: typeof row.summary === "string" ? row.summary : null,
     updated_at: text(row.updated_at, new Date().toISOString()),
     proxycheck_signals: row.proxycheck_signals,
+  };
+}
+
+function parseRecentSession(value: unknown): RecentMonitorSession | null {
+  const session = parseSession(value);
+  const row = record(value);
+  if (!session || !row) return null;
+  return {
+    ...session,
+    status: text(row.status, "completed"),
+    ended_at: typeof row.ended_at === "string" ? row.ended_at : null,
+    case_status: text(row.case_status, "open"),
+  };
+}
+
+function parseLiveMetrics(value: unknown): LiveMetrics | null {
+  const row = record(value);
+  if (!row) return null;
+  return {
+    signups24h: number(row.signups24h),
+    locks24h: number(row.locks24h),
+    legitimateFiatCents24h: number(row.legitimateFiatCents24h),
+    fraudulentFiatCents24h: number(row.fraudulentFiatCents24h),
+  };
+}
+
+function parseSnapshotSummary(value: unknown): SnapshotSummary | null {
+  const row = record(value);
+  if (!row) return null;
+  return {
+    signupReviewsLeft: number(row.signupReviewsLeft),
+    fiatReviewsLeft: number(row.fiatReviewsLeft),
+    activeDomainBlacklist: number(row.activeDomainBlacklist),
+    blockedIpCatches: number(row.blockedIpCatches),
   };
 }
 
@@ -416,7 +484,15 @@ export function MonitorConsole() {
     null,
   );
   const [sessions, setSessions] = React.useState<MonitorSession[]>([]);
+  const [liveSnapshotAvailable, setLiveSnapshotAvailable] = React.useState<
+    boolean | null
+  >(null);
   const [cases, setCases] = React.useState<MonitorCase[]>([]);
+  const [recentSessions, setRecentSessions] = React.useState<
+    RecentMonitorSession[]
+  >([]);
+  const [liveMetrics, setLiveMetrics] = React.useState<LiveMetrics | null>(null);
+  const [summary, setSummary] = React.useState<SnapshotSummary | null>(null);
   const [casesTruncated, setCasesTruncated] = React.useState(false);
   const [flowCoverage, setFlowCoverage] = React.useState<FlowCoverage>({
     active: 0,
@@ -462,6 +538,7 @@ export function MonitorConsole() {
       if (token !== snapshotToken.current) return;
 
       if (payload.configured === false) {
+        setLiveSnapshotAvailable(false);
         setStreamState("unconfigured");
         setStreamNotice(
           "Add the monitor API URL and token to enable this page.",
@@ -477,6 +554,7 @@ export function MonitorConsole() {
         return;
       }
       if (!response.ok) {
+        setLiveSnapshotAvailable((current) => current ?? false);
         setSnapshotNotice(
           "The last snapshot refresh failed. Live events keep arriving.",
         );
@@ -489,15 +567,36 @@ export function MonitorConsole() {
       });
       const nextCases = list(payload.cases, parseCase);
       setCasesTruncated(payload.casesTruncated === true);
-      setFlowCoverage(parseFlowCoverage(payload.flows));
+      if (!payload.errors?.flows) {
+        setFlowCoverage(parseFlowCoverage(payload.flows));
+      }
+      if (!payload.errors?.overview) {
+        setRecentSessions(list(payload.recentSessions, parseRecentSession));
+        setSummary(parseSnapshotSummary(payload.summary));
+      }
+      if (!payload.errors?.liveMetrics) {
+        setLiveMetrics(parseLiveMetrics(payload.liveMetrics));
+      }
       setSessions((current) =>
-        mergeSessions(current, nextSessions, requestedAt),
+        payload.errors?.live
+          ? current
+          : mergeSessions(current, nextSessions, requestedAt),
       );
-      setCases((current) => mergeCases(current, nextCases));
-      setSnapshotNotice(null);
+      setLiveSnapshotAvailable((current) =>
+        payload.errors?.live ? (current ?? false) : true,
+      );
+      if (!payload.errors?.cases) {
+        setCases((current) => mergeCases(current, nextCases));
+      }
+      setSnapshotNotice(
+        payload.degraded
+          ? "Some snapshot sections could not refresh. Working sections and live events remain available."
+          : null,
+      );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       if (token !== snapshotToken.current) return;
+      setLiveSnapshotAvailable((current) => current ?? false);
       setSnapshotNotice(
         "The last snapshot refresh failed. Live events keep arriving.",
       );
@@ -580,18 +679,14 @@ export function MonitorConsole() {
 
   const applyFrame = React.useCallback(
     (raw: unknown) => {
-      const frame = record(raw);
-      if (!frame || typeof frame.type !== "string") return;
-      const frameType: string = frame.type;
-      const data = record(frame.data) ?? {};
-      const at = text(frame.at, new Date().toISOString());
+      const parsed = parseMonitorFrame(raw);
+      if (!parsed) return;
       lastFrameAt.current = Date.now();
 
-      if (frameType === "transport") {
-        const state = text(data.state);
-        const message =
-          typeof data.message === "string" ? data.message : null;
-        const terminal = data.terminal === true;
+      if (parsed.kind === "transport") {
+        const state = parsed.state;
+        const message = parsed.message;
+        const terminal = parsed.terminal;
 
         if (state === "unconfigured") {
           setStreamState("unconfigured");
@@ -616,14 +711,17 @@ export function MonitorConsole() {
 
         return;
       }
-      if (frameType === "connected") return;
-      const frameId = text(frame.id);
-      if (!frameId) {
+      if (parsed.kind === "unsupported") {
         setStreamNotice(
-          "The monitor service sent an event without a replay id.",
+          `The monitor service sent "${parsed.eventType}", which this dashboard does not render yet.`,
         );
         return;
       }
+      const activity: MonitorActivityEvent = parsed.event;
+      const frameType = activity.type;
+      const data = activity.data;
+      const at = activity.at;
+      const frameId = activity.id;
       if (seenFrameIds.current.has(frameId)) return;
       seenFrameIds.current.add(frameId);
       if (seenFrameIds.current.size > 1_000) {
@@ -654,6 +752,7 @@ export function MonitorConsole() {
       );
 
       if (frameType === "monitor.started" && sessionId) {
+        setLiveSnapshotAvailable(true);
         completedSessions.current.delete(sessionId);
         const started = timeOf(at) || Date.now();
         const durationSeconds = number(data.durationSeconds, 180);
@@ -833,14 +932,6 @@ export function MonitorConsole() {
     { resumeParam: "after" },
   );
 
-  const highestScore = sessions.reduce(
-    (highest, session) => Math.max(highest, session.current_score),
-    0,
-  );
-  const highRisk = sessions.filter(
-    (session) =>
-      session.severity === "high" || session.severity === "critical",
-  ).length;
   const connectionLabel =
     streamState === "live"
       ? "Live"
@@ -852,10 +943,27 @@ export function MonitorConsole() {
 
   return (
     <>
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="flex justify-end">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => void loadSnapshot(true)}
+          disabled={refreshing}
+        >
+          <RefreshCw
+            className={cn("size-3.5", refreshing && "animate-spin")}
+            aria-hidden
+          />
+          Refresh
+        </Button>
+      </div>
+
+      <PanelErrorBoundary label="Live event metrics">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         <div role="status" aria-live="polite">
           <KpiTile
-            label="Connection"
+            label="WebSocket status"
             value={connectionLabel}
             sub="Authenticated event stream"
             icon={streamState === "live" ? Radio : WifiOff}
@@ -864,33 +972,68 @@ export function MonitorConsole() {
         </div>
         <KpiTile
           label="Monitoring now"
-          value={sessions.length.toLocaleString()}
-          sub="Active behavior windows"
+          value={
+            liveSnapshotAvailable
+              ? sessions.length.toLocaleString()
+              : "—"
+          }
+          sub={
+            liveSnapshotAvailable
+              ? "Active behavior windows"
+              : "Snapshot unavailable"
+          }
           icon={UserRoundSearch}
           accent="cyan"
         />
         <KpiTile
-          label="Flows checked"
-          value={`${flowCoverage.active}/${flowCoverage.total}`}
-          sub="Evaluated on every event"
-          icon={Workflow}
+          label="24h signups"
+          value={liveMetrics?.signups24h.toLocaleString() ?? "—"}
+          sub="Mirror signup records"
+          icon={UserRoundSearch}
           accent="blue"
         />
         <KpiTile
-          label="High risk"
-          value={highRisk.toLocaleString()}
-          sub="High or critical sessions"
+          label="24h locked"
+          value={liveMetrics?.locks24h.toLocaleString() ?? "—"}
+          sub="Current lock events"
           icon={ShieldAlert}
           accent="amber"
         />
         <KpiTile
-          label="Highest score"
-          value={highestScore.toLocaleString()}
-          sub="Across active sessions"
-          icon={Activity}
-          accent={highestScore >= 80 ? "rose" : "blue"}
+          label="24h legitimate fiat"
+          value={
+            liveMetrics
+              ? formatCurrency(liveMetrics.legitimateFiatCents24h / 100)
+              : "—"
+          }
+          sub="Succeeded, fraud excluded"
+          icon={CircleDollarSign}
+          accent="emerald"
+        />
+        <KpiTile
+          label="24h fraudulent fiat"
+          value={
+            liveMetrics
+              ? formatCurrency(liveMetrics.fraudulentFiatCents24h / 100)
+              : "—"
+          }
+          sub="Confirmed fraud funding"
+          icon={CircleDollarSign}
+          accent="rose"
+        />
+        <KpiTile
+          label="Domains / IP catches"
+          value={
+            summary
+              ? `${summary.activeDomainBlacklist.toLocaleString()} / ${summary.blockedIpCatches.toLocaleString()}`
+              : "—"
+          }
+          sub="Active rules / confirmed catches"
+          icon={Ban}
+          accent="purple"
         />
       </div>
+      </PanelErrorBoundary>
 
       {flowCoverage.active > 0 && (
         <div className="flex items-start gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2.5 text-xs text-muted-foreground">
@@ -929,6 +1072,7 @@ export function MonitorConsole() {
       )}
 
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
+        <PanelErrorBoundary label="Active monitor sessions">
         <section className="space-y-3">
           <SectionHeading
             icon={UserRoundSearch}
@@ -940,24 +1084,21 @@ export function MonitorConsole() {
                 </span>
               </>
             }
-            action={
-              <Button
-                type="button"
-                size="sm"
-                variant="outline"
-                onClick={() => void loadSnapshot(true)}
-                disabled={refreshing}
-              >
-                <RefreshCw
-                  className={cn("size-3.5", refreshing && "animate-spin")}
-                  aria-hidden
-                />
-                Refresh
-              </Button>
-            }
           />
           <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          {sessions.length === 0 ? (
+          {!liveSnapshotAvailable ? (
+            <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
+              <AlertTriangle
+                className="size-6 text-amber-500"
+                aria-hidden
+              />
+              <p className="text-sm font-semibold">Sessions unavailable</p>
+              <p className="max-w-sm text-xs text-muted-foreground">
+                Refresh the snapshot. Live activity and reconnect status remain
+                independent.
+              </p>
+            </div>
+          ) : sessions.length === 0 ? (
             <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
               <UserRoundSearch className="size-6 text-muted-foreground" aria-hidden />
               <p className="text-sm font-semibold">No active monitors</p>
@@ -1056,7 +1197,9 @@ export function MonitorConsole() {
           )}
           </div>
         </section>
+        </PanelErrorBoundary>
 
+        <PanelErrorBoundary label="Live monitor activity">
         <section className="space-y-3">
           <SectionHeading
             icon={Radio}
@@ -1130,8 +1273,11 @@ export function MonitorConsole() {
             )}
           </div>
         </section>
+        </PanelErrorBoundary>
       </div>
 
+      <div className="grid gap-5 xl:grid-cols-2">
+      <PanelErrorBoundary label="Recent monitor cases">
       <section className="space-y-3">
         <SectionHeading
           icon={History}
@@ -1209,6 +1355,94 @@ export function MonitorConsole() {
         )}
         </div>
       </section>
+      </PanelErrorBoundary>
+
+      <PanelErrorBoundary label="Recent monitor sessions">
+        <section className="space-y-3">
+          <SectionHeading
+            icon={Clock3}
+            title={
+              <>
+                Recent monitor sessions
+                <span className="text-xs font-normal text-muted-foreground">
+                  bounded to the newest 40 sessions
+                </span>
+              </>
+            }
+          />
+          <div className="max-h-[520px] overflow-y-auto rounded-xl border border-border/60 bg-card">
+            {recentSessions.length === 0 ? (
+              <p className="px-4 py-10 text-center text-xs text-muted-foreground">
+                No recent monitor sessions are available.
+              </p>
+            ) : (
+              <ul className="divide-y divide-border/60">
+                {recentSessions.map((session) => {
+                  const player = session.username
+                    ? `@${session.username}`
+                    : session.user_id;
+                  const content = (
+                    <span className="flex items-center gap-3">
+                      <span className="min-w-0 flex-1">
+                        <span className="flex flex-wrap items-center gap-1.5">
+                          <span className="truncate text-sm font-semibold">
+                            {player}
+                          </span>
+                          <span className={severityBadge(session.severity)}>
+                            {session.severity}
+                          </span>
+                          <span className="rounded-full border border-border/60 bg-muted/40 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                            {session.status}
+                          </span>
+                        </span>
+                        <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                          {session.event_count.toLocaleString()} events ·{" "}
+                          {relativeTime(
+                            session.ended_at ?? session.started_at,
+                            now,
+                          )}
+                        </span>
+                      </span>
+                      <span className="text-right">
+                        <span className="block text-lg font-bold tabular-nums">
+                          {session.peak_score}
+                        </span>
+                        <span className="block text-[9px] uppercase tracking-wide text-muted-foreground">
+                          peak
+                        </span>
+                      </span>
+                      {session.case_id && (
+                        <ChevronRight
+                          className="size-4 shrink-0 text-muted-foreground"
+                          aria-hidden
+                        />
+                      )}
+                    </span>
+                  );
+
+                  return (
+                    <li key={session.session_id}>
+                      {session.case_id ? (
+                        <HostLink
+                          href={caseHref(session.case_id)}
+                          className="block px-3 py-3 hover:bg-muted/40 sm:px-4"
+                        >
+                          {content}
+                        </HostLink>
+                      ) : (
+                        <span className="block px-3 py-3 sm:px-4">
+                          {content}
+                        </span>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+          </div>
+        </section>
+      </PanelErrorBoundary>
+      </div>
     </>
   );
 }

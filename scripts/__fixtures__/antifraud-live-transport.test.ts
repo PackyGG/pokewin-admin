@@ -7,6 +7,9 @@ const servicePath = "services/antifraud-monitor/src/live.ts";
 const packyRoutePath = "src/app/api/packy-live/route.ts";
 const packyClientPath = "src/lib/packy-ws.ts";
 const overviewPath = "src/app/(antifraud)/antifraud/page.tsx";
+const monitorRoutePath = "src/app/api/antifraud/monitor/route.ts";
+const monitorParserPath =
+  "src/app/(antifraud)/antifraud/_components/monitor-stream.ts";
 const retiredOverviewActivityPath =
   "src/app/(antifraud)/antifraud/_components/live-activity.tsx";
 const monitorClientPaths = [
@@ -122,13 +125,38 @@ test("player gaming activity is shown only in the live monitor", async () => {
   ]);
 
   assert.doesNotMatch(overview, /LiveActivity|live-activity/);
-  assert.match(overview, /grid gap-6 lg:grid-cols-2/);
+  assert.match(overview, /OverviewActionFeed/);
   assert.match(monitor, /subscribePackyWs<AdminActivityEvent>/);
   assert.match(monitor, /"admin\.activity"/);
   assert.match(monitor, /topics\.includes\("gaming"\)/);
   assert.match(monitor, /type: "player\.activity"/);
   assert.match(monitor, /Signups, pack openings, player actions and matched flows/);
   await assert.rejects(access(retiredOverviewActivityPath));
+});
+
+test("live events preserve the typed envelope and degrade snapshot legs independently", async () => {
+  const [client, parser, route] = await Promise.all([
+    readFile(monitorClientPaths[0], "utf8"),
+    readFile(monitorParserPath, "utf8"),
+    readFile(monitorRoutePath, "utf8"),
+  ]);
+
+  assert.match(client, /parseMonitorFrame\(raw\)/);
+  assert.doesNotMatch(client, /JSON\.parse\(raw\)/);
+  assert.match(parser, /frame\.schemaVersion !== 1/);
+  assert.match(parser, /correlationId/);
+  assert.match(parser, /id: frame\.id/);
+  assert.match(route, /Promise\.allSettled/);
+  assert.match(route, /recentSessions/);
+  assert.match(route, /liveMetrics/);
+  assert.match(client, /WebSocket status/);
+  assert.match(client, /24h signups/);
+  assert.match(client, /24h locked/);
+  assert.match(client, /24h legitimate fiat/);
+  assert.match(client, /24h fraudulent fiat/);
+  assert.match(client, /Domains \/ IP catches/);
+  assert.match(client, /Recent monitor sessions/);
+  assert.match(client, /PanelErrorBoundary/);
 });
 
 test("monitor case snapshot and rendered limits stay aligned", async () => {

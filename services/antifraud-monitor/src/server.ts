@@ -483,6 +483,97 @@ app.get("/v1/monitors/live", async () => {
   return { data: result.rows };
 });
 
+/**
+ * Bounded data used by the Fraud Dashboard and Live Events surfaces.
+ *
+ * This endpoint intentionally owns only Antifraud-DB facts. MAIN-derived
+ * signup, lock and payment totals stay on the dashboard's read-only mirror so
+ * the two database boundaries remain explicit and independently degradable.
+ */
+app.get("/v1/overview", async () => {
+  const [reviewCounts, blacklistCounts, recentSessions] = await Promise.all([
+    db.antifraud.query<{
+      signup_reviews_left: number;
+      fiat_reviews_left: number;
+    }>(
+      `
+        SELECT
+          (
+            SELECT COUNT(DISTINCT c.id)::int
+            FROM cases c
+            JOIN signup_assessments sa ON sa.user_id = c.user_id
+            WHERE c.status IN ('open','monitoring','in_review','escalated')
+          ) AS signup_reviews_left,
+          (
+            SELECT COUNT(*)::int
+            FROM fiat_deposit_assessments
+            WHERE verdict IN ('review','bad')
+              AND review_status IN (
+                'unreviewed','in_review','escalated','hold_recommended'
+              )
+          ) AS fiat_reviews_left
+      `,
+    ),
+    db.antifraud.query<{
+      active_domains: number;
+      blocked_ip_catches: number;
+    }>(
+      `
+        SELECT
+          (
+            SELECT COUNT(*)::int
+            FROM fiat_email_domain_blacklist
+            WHERE enabled
+              AND (expires_at IS NULL OR expires_at > now())
+          ) AS active_domains,
+          (
+            SELECT COUNT(DISTINCT history.user_id)::int
+            FROM profile_assessment_signals signal
+            JOIN profile_assessment_history history
+              ON history.id = signal.assessment_id
+            WHERE signal.hard_policy = 'blocklist.ip'
+          ) AS blocked_ip_catches
+      `,
+    ),
+    db.antifraud.query(
+      `
+        SELECT
+          ms.id AS session_id,
+          ms.case_id,
+          ms.user_id,
+          s.username,
+          ms.status,
+          ms.started_at,
+          ms.ends_at,
+          ms.ended_at,
+          ms.current_score,
+          ms.peak_score,
+          ms.event_count,
+          c.status AS case_status,
+          c.severity
+        FROM monitor_sessions ms
+        JOIN cases c ON c.id = ms.case_id
+        JOIN subjects s ON s.user_id = ms.user_id
+        WHERE ms.started_at >= now() - interval '30 days'
+        ORDER BY ms.started_at DESC, ms.id DESC
+        LIMIT 40
+      `,
+    ),
+  ]);
+
+  const reviews = reviewCounts.rows[0];
+  const blacklists = blacklistCounts.rows[0];
+  return {
+    data: {
+      signupReviewsLeft: reviews?.signup_reviews_left ?? 0,
+      fiatReviewsLeft: reviews?.fiat_reviews_left ?? 0,
+      activeDomainBlacklist: blacklists?.active_domains ?? 0,
+      blockedIpCatches: blacklists?.blocked_ip_catches ?? 0,
+      recentSessions: recentSessions.rows,
+    },
+  };
+});
+
 app.get("/v1/signups", async (request) => {
   const query = z.object({
     page: z.coerce.number().int().min(1).max(10_000).default(1),

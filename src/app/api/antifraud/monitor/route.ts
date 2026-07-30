@@ -1,5 +1,6 @@
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
+import { getAntifraudLiveMirrorMetrics } from "@/lib/antifraud/overview";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -98,6 +99,9 @@ export async function GET(request: Request): Promise<Response> {
         configured: false,
         live: [],
         cases: [],
+        recentSessions: [],
+        summary: null,
+        liveMetrics: null,
         flows: { active: 0, total: 0, names: [] },
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -105,14 +109,42 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
-    const [live, cases, rules] = await Promise.all([
+    const [liveResult, casesResult, rulesResult, overviewResult, metricsResult] =
+      await Promise.allSettled([
       upstreamJson(baseUrl, token, "/v1/monitors/live"),
       upstreamJson(baseUrl, token, "/v1/cases?limit=40"),
       upstreamJson(baseUrl, token, "/v1/rules"),
+      upstreamJson(baseUrl, token, "/v1/overview"),
+      getAntifraudLiveMirrorMetrics(),
     ]);
+    const live = liveResult.status === "fulfilled" ? liveResult.value : null;
+    const cases =
+      casesResult.status === "fulfilled" ? casesResult.value : null;
+    const rules = rulesResult.status === "fulfilled" ? rulesResult.value : null;
+    const overview =
+      overviewResult.status === "fulfilled" ? overviewResult.value : null;
+    const liveMetrics =
+      metricsResult.status === "fulfilled" ? metricsResult.value : null;
+    const overviewData =
+      overview && typeof overview === "object" && "data" in overview
+        ? (overview as { data: unknown }).data
+        : null;
+    const overviewRecord =
+      overviewData && typeof overviewData === "object"
+        ? (overviewData as Record<string, unknown>)
+        : null;
+    const errors = {
+      live: liveResult.status === "rejected",
+      cases: casesResult.status === "rejected",
+      flows: rulesResult.status === "rejected",
+      overview: overviewResult.status === "rejected",
+      liveMetrics: metricsResult.status === "rejected",
+    };
     return Response.json(
       {
         configured: true,
+        degraded: Object.values(errors).some(Boolean),
+        errors,
         live:
           live && typeof live === "object" && "data" in live
             ? (live as { data: unknown }).data
@@ -129,6 +161,18 @@ export async function GET(request: Request): Promise<Response> {
             (cases as { pagination?: { hasMore?: unknown } }).pagination
               ?.hasMore,
           ),
+        recentSessions: Array.isArray(overviewRecord?.recentSessions)
+          ? overviewRecord.recentSessions
+          : [],
+        summary: overviewRecord
+          ? {
+              signupReviewsLeft: overviewRecord.signupReviewsLeft,
+              fiatReviewsLeft: overviewRecord.fiatReviewsLeft,
+              activeDomainBlacklist: overviewRecord.activeDomainBlacklist,
+              blockedIpCatches: overviewRecord.blockedIpCatches,
+            }
+          : null,
+        liveMetrics,
         flows: flowMonitoring(rules),
       },
       { headers: { "Cache-Control": "no-store" } },
@@ -141,6 +185,9 @@ export async function GET(request: Request): Promise<Response> {
         error: "monitor_unavailable",
         live: [],
         cases: [],
+        recentSessions: [],
+        summary: null,
+        liveMetrics: null,
         flows: { active: 0, total: 0, names: [] },
       },
       {

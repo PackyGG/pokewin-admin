@@ -1,282 +1,308 @@
-import { Suspense } from "react";
-import { HostLink } from "@/components/host-link";
+import { Suspense, type ElementType } from "react";
 import {
-  AlertTriangle,
-  CheckCircle2,
+  Ban,
   CircleDollarSign,
-  Fingerprint,
+  ListChecks,
+  LockKeyhole,
   ShieldAlert,
   UserCheck,
 } from "lucide-react";
 
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
-import { safeQuery } from "@/lib/errors/safe-query";
 import {
   KpiTile,
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
+  TILE_COLORS,
+  type AccentColor,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
+import { safeQuery } from "@/lib/errors/safe-query";
+import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import {
-  formatCurrency,
-  formatNumber,
-  formatRelative,
-} from "@/lib/utils/format";
-import { listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
-import { getAntifraudOverviewMetrics } from "@/lib/antifraud/overview";
+  getAntifraudOverviewData,
+  type AntifraudOverviewData,
+} from "@/lib/antifraud/overview";
+import {
+  getAntifraudMonitorOverview,
+  type AntifraudMonitorOverview,
+} from "@/lib/antifraud/monitor-api";
+import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { cn } from "@/lib/utils";
 import { OverviewLiveSync } from "./_components/overview-live-sync";
-import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
+import {
+  OverviewActionFeed,
+  OverviewCharts,
+} from "./_components/overview-panels";
+import { PanelErrorBoundary } from "./_components/panel-error-boundary";
 
-export const metadata = { title: "Antifraud" };
-
-/**
- * Antifraud → Overview.
- *
- * The workspace landing page: the state of the review queue, the live signal
- * strip fed by the (separate) fraud backend, and what's waiting for this
- * analyst.
- *
- * Shell-first: the hero + the live strip paint immediately and every data leg
- * streams in behind its own Suspense boundary (loading.tsx renders the matching
- * skeletons). Every read is a single-table ADMIN-DB query served by one of the
- * indexes created with the tables — the MAIN (prod game) DB is not touched by
- * this page at all.
- */
+export const metadata = { title: "Antifraud Dashboard" };
 
 const QUERY_TIMEOUT_MS = 10_000;
+
+const EMPTY_OVERVIEW: AntifraudOverviewData = {
+  metrics: {
+    legitimateFiatDepositCents: 0,
+    fraudulentFiatDepositCents: 0,
+    manualKycLocks: 0,
+    systemKycLocks: 0,
+    manualBans: 0,
+    automaticBans: 0,
+    autoLockReviewsLeft: 0,
+  },
+  live: {
+    signups24h: 0,
+    locks24h: 0,
+    legitimateFiatCents24h: 0,
+    fraudulentFiatCents24h: 0,
+  },
+  days: [],
+  feed: [],
+};
 
 export default async function AntifraudOverviewPage() {
   await requireAntifraudPageAccess();
   const snapshotAt = new Date().toISOString();
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity />
-      </PageHero>
-
+    <div className="space-y-4">
       <OverviewLiveSync snapshotAt={snapshotAt} />
-
-      <Suspense fallback={<KpiSkeleton />}>
-        <OverviewKpis />
+      <Suspense fallback={<DashboardSkeleton />}>
+        <Dashboard snapshotAt={snapshotAt} />
       </Suspense>
-
-      <div className="grid gap-6 lg:grid-cols-2">
-        <Suspense fallback={<ListSkeleton title="Needs attention" />}>
-          <QueuePreview />
-        </Suspense>
-        <Suspense fallback={<ListSkeleton title="Recent signals" />}>
-          <SignalHistory />
-        </Suspense>
-      </div>
-
     </div>
   );
 }
 
-// ─── KPI strip ────────────────────────────────────────────────────────
+async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
+  const [overviewResult, monitorResult] = await Promise.all([
+    safeQuery(
+      () => getAntifraudOverviewData(),
+      EMPTY_OVERVIEW,
+      "antifraud.overview-dashboard",
+      QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getAntifraudMonitorOverview(),
+      { configured: false, data: null, error: true },
+      "antifraud.monitor-overview",
+      QUERY_TIMEOUT_MS,
+    ),
+  ]);
 
-async function OverviewKpis() {
-  const { data: metrics } = await safeQuery(
-    () => getAntifraudOverviewMetrics(),
-    {
-      totalFiatDepositCents: 0,
-      fraudAccountFiatDepositCents: 0,
-      kycAccountCount: 0,
-      automatedFraudKycCount: 0,
-    },
-    "antifraud.overview-metrics",
-    QUERY_TIMEOUT_MS,
-  );
+  if (overviewResult.error) {
+    return (
+      <UnavailablePanel
+        title="Dashboard metrics are unavailable"
+        detail={
+          overviewResult.kind === "timeout"
+            ? "The read-only dashboard query took too long. The live connection above remains independent."
+            : "The Admin or MAIN mirror read failed. No zero values are being shown as real data."
+        }
+      />
+    );
+  }
+
+  const monitor = monitorResult.data;
+  const monitorUnavailable =
+    monitorResult.error !== null || monitor.error || monitor.data === null;
 
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      <KpiTile
-        label="Total fiat deposits"
-        value={formatCurrency(metrics.totalFiatDepositCents / 100)}
-        sub="lifetime paid volume"
+    <div className="space-y-4" data-snapshot-at={snapshotAt}>
+      <KpiGrid
+        data={overviewResult.data}
+        monitor={monitor.data}
+        monitorUnavailable={monitorUnavailable}
+      />
+
+      {monitorUnavailable && (
+        <UnavailablePanel
+          compact
+          title="Monitor queue counts are unavailable"
+          detail={
+            monitorResult.error !== null
+              ? "The monitor queue request failed or timed out. Retry after the service recovers; MAIN and Admin metrics remain current."
+              : monitor.configured
+              ? "The monitor service did not return its Antifraud-DB counts. MAIN and Admin metrics remain current."
+              : "Configure the monitor API URL and read token to load signup and Fiat review queues."
+          }
+        />
+      )}
+
+      <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+        <PanelErrorBoundary label="Live action feed">
+          <OverviewActionFeed initialItems={overviewResult.data.feed} />
+        </PanelErrorBoundary>
+        <PanelErrorBoundary label="Thirty-day charts">
+          <OverviewCharts days={overviewResult.data.days} />
+        </PanelErrorBoundary>
+      </div>
+    </div>
+  );
+}
+
+function KpiGrid({
+  data,
+  monitor,
+  monitorUnavailable,
+}: {
+  data: AntifraudOverviewData;
+  monitor: AntifraudMonitorOverview | null;
+  monitorUnavailable: boolean;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      <SplitKpi
+        label="Fiat deposits"
         icon={CircleDollarSign}
+        left={{
+          label: "Legitimate",
+          value: formatCurrency(
+            data.metrics.legitimateFiatDepositCents / 100,
+          ),
+          accent: "emerald",
+        }}
+        right={{
+          label: "Fraud",
+          value: formatCurrency(
+            data.metrics.fraudulentFiatDepositCents / 100,
+          ),
+          accent: "rose",
+        }}
+      />
+      <SplitKpi
+        label="KYC locked"
+        icon={UserCheck}
+        left={{
+          label: "Manual",
+          value: formatNumber(data.metrics.manualKycLocks),
+          accent: "cyan",
+        }}
+        right={{
+          label: "System",
+          value: formatNumber(data.metrics.systemKycLocks),
+          accent: "amber",
+        }}
+      />
+      <SplitKpi
+        label="Banned accounts"
+        icon={Ban}
+        left={{
+          label: "Manual",
+          value: formatNumber(data.metrics.manualBans),
+          accent: "orange",
+        }}
+        right={{
+          label: "Automatic",
+          value: formatNumber(data.metrics.automaticBans),
+          accent: "rose",
+        }}
+      />
+      <KpiTile
+        label="Signup reviews left"
+        value={
+          monitorUnavailable || !monitor
+            ? "—"
+            : formatNumber(monitor.signupReviewsLeft)
+        }
+        sub={monitorUnavailable ? "Monitor unavailable" : "Open signup cases"}
+        icon={ListChecks}
         accent="blue"
       />
       <KpiTile
-        label="Fraud account deposits"
-        value={formatCurrency(metrics.fraudAccountFiatDepositCents / 100)}
-        sub="paid by flagged accounts"
+        label="Fiat reviews left"
+        value={
+          monitorUnavailable || !monitor
+            ? "—"
+            : formatNumber(monitor.fiatReviewsLeft)
+        }
+        sub={monitorUnavailable ? "Monitor unavailable" : "Review or bad verdict"}
         icon={ShieldAlert}
-        accent="rose"
-      />
-      <KpiTile
-        label="KYC accounts"
-        value={formatNumber(metrics.kycAccountCount)}
-        sub="historical verification records"
-        icon={UserCheck}
-        accent="cyan"
-      />
-      <KpiTile
-        label="Automatic KYC / flagged"
-        value={formatNumber(metrics.automatedFraudKycCount)}
-        sub="system-required fraud KYC"
-        icon={Fingerprint}
         accent="amber"
       />
-    </div>
-  );
-}
-
-// ─── Queue preview ────────────────────────────────────────────────────
-
-async function QueuePreview() {
-  const { data: reviews } = await safeQuery(
-    () => listReviews({ status: "unresolved", limit: 8 }),
-    [],
-    "antifraud.queue-preview",
-    QUERY_TIMEOUT_MS,
-  );
-
-  return (
-    <div className="space-y-4">
-      <SectionHeading
-        icon={ShieldAlert}
-        title="Needs attention"
-        action={
-          <HostLink
-            href="/antifraud/reviews"
-            className="text-xs font-medium text-muted-foreground hover:text-foreground"
-          >
-            Open queue →
-          </HostLink>
-        }
+      <KpiTile
+        label="Auto-lock reviews left"
+        value={formatNumber(data.metrics.autoLockReviewsLeft)}
+        sub="Active automatic locks"
+        icon={LockKeyhole}
+        accent="rose"
       />
-      {reviews.length === 0 ? (
-        <EmptyCard
-          icon={CheckCircle2}
-          title="Queue is clear"
-          body="No open account reviews. New cases appear here automatically when the fraud backend flags an account, or when someone opens one by hand."
-        />
-      ) : (
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-          {reviews.map((review) => (
-            <li key={review.id}>
-              <HostLink
-                href={`/antifraud/reviews/${review.id}`}
-                className="flex items-start gap-3 px-3 py-2.5 outline-none transition-colors hover:bg-accent/50 focus-visible:bg-accent/50 sm:px-4"
-              >
-                <span className="min-w-0 flex-1">
-                  <span className="flex flex-wrap items-center gap-1.5">
-                    <span className="truncate text-sm font-semibold">
-                      {review.targetUsername ?? review.targetUserId}
-                    </span>
-                    <ReviewStatusBadge status={review.status} />
-                  </span>
-                  <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">
-                    {review.reason}
-                  </span>
-                </span>
-                <span className="shrink-0 text-[11px] text-muted-foreground">
-                  {formatRelative(review.createdAt)}
-                </span>
-              </HostLink>
-            </li>
-          ))}
-        </ul>
-      )}
     </div>
   );
 }
 
-// ─── Signal history ───────────────────────────────────────────────────
-
-async function SignalHistory() {
-  const { data: signals } = await safeQuery(
-    () => listRecentSignals(8),
-    [],
-    "antifraud.recent-signals",
-    QUERY_TIMEOUT_MS,
-  );
-
-  return (
-    <div className="space-y-4">
-      <SectionHeading icon={AlertTriangle} title="Recent signals" />
-      {signals.length === 0 ? (
-        <EmptyCard
-          icon={AlertTriangle}
-          title="No signals recorded yet"
-          body="Once the antifraud backend service posts to the ingest webhook, every signal it produces is stored here — even when nobody has the dashboard open."
-        />
-      ) : (
-        <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-          {signals.map((signal) => (
-            <li
-              key={signal.id}
-              className="flex items-start gap-3 px-3 py-2.5 sm:px-4"
-            >
-              <span className="min-w-0 flex-1">
-                <span className="flex flex-wrap items-center gap-1.5">
-                  <span className="truncate text-sm font-semibold">
-                    {signal.kind}
-                  </span>
-                  <ReviewSeverityBadge severity={signal.severity} />
-                  {signal.targetUsername && (
-                    <span className="truncate text-[11px] text-muted-foreground">
-                      @{signal.targetUsername}
-                    </span>
-                  )}
-                </span>
-                <span className="mt-0.5 line-clamp-1 block text-xs text-muted-foreground">
-                  {signal.summary}
-                </span>
-              </span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">
-                {formatRelative(signal.receivedAt)}
-              </span>
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-// ─── Personal / team section ──────────────────────────────────────────
-
-function EmptyCard({
+function SplitKpi({
+  label,
   icon: Icon,
-  title,
-  body,
+  left,
+  right,
 }: {
-  icon: React.ElementType;
-  title: string;
-  body: string;
+  label: string;
+  icon: ElementType;
+  left: { label: string; value: string; accent: AccentColor };
+  right: { label: string; value: string; accent: AccentColor };
 }) {
   return (
-    <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-8 text-center">
-      <Icon className="size-5 text-muted-foreground" />
-      <span className="text-sm font-semibold">{title}</span>
-      <span className="max-w-sm text-xs text-muted-foreground">{body}</span>
+    <div className="min-h-24 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
+      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+        <Icon className="size-3.5" aria-hidden />
+        {label}
+      </div>
+      <div className="mt-3 grid grid-cols-2 divide-x divide-border/60">
+        {[left, right].map((item) => (
+          <div key={item.label} className="min-w-0 px-2 first:pl-0 last:pr-0">
+            <p
+              className={cn(
+                "truncate text-lg font-bold tabular-nums",
+                TILE_COLORS[item.accent].text,
+              )}
+            >
+              {item.value}
+            </p>
+            <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+              {item.label}
+            </p>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
 
-function KpiSkeleton() {
+function UnavailablePanel({
+  title,
+  detail,
+  compact = false,
+}: {
+  title: string;
+  detail: string;
+  compact?: boolean;
+}) {
   return (
-    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, i) => (
-        <Skeleton key={i} className="h-24 w-full rounded-2xl" />
-      ))}
+    <div
+      role="status"
+      className={cn(
+        "rounded-xl border border-amber-500/30 bg-amber-500/5",
+        compact ? "px-3 py-2.5" : "p-5",
+      )}
+    >
+      <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+        {title}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-function ListSkeleton({ title }: { title: string }) {
+function DashboardSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2.5">
-        <Skeleton className="size-7 rounded-lg" />
-        <Skeleton className="h-4 w-40" />
-        <span className="sr-only">{title}</span>
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+        {Array.from({ length: 6 }).map((_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
+        ))}
       </div>
-      <Skeleton className="h-56 w-full rounded-xl" />
+      <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+        <Skeleton className="h-[420px] rounded-xl" />
+        <Skeleton className="h-[420px] rounded-xl" />
+      </div>
     </div>
   );
 }
