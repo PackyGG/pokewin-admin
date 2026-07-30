@@ -8,6 +8,15 @@ const riskyLocationSchema = z.object({
   updatedBy: z.string(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  reason: z.string(),
+  riskWeight: z.number().int().min(0).max(49),
+  expiresAt: z.string().nullable(),
+  affectedUsers: z.number().int(),
+  matches24h: z.number().int(),
+  matches7d: z.number().int(),
+  matches30d: z.number().int(),
+  averageRisk: z.number().int().nullable(),
+  reviewCount: z.number().int(),
 });
 
 export type RiskyLocation = z.infer<typeof riskyLocationSchema>;
@@ -72,6 +81,9 @@ type MutationInput = {
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
+  reason: string;
+  riskWeight: number;
+  expiresAt: string | null;
 };
 
 async function parseMutationResponse(

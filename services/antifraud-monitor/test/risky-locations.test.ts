@@ -54,6 +54,6 @@ test("risky location adds risk and only extends an eligible score-based session"
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
   assert.doesNotMatch(monitor, /locationPolicy \|\|/);
   assert.match(monitor, /Math\.max\(/);
-  assert.match(monitor, /points: weights\.risky_location/);
+  assert.match(monitor, /points: locationPolicy\.riskWeight/);
   assert.match(monitor, /durationSeconds: opened\.durationSeconds/);
 });

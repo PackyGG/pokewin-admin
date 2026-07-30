@@ -21,8 +21,10 @@ export function serviceRequestAuthorized(
     (method === "POST" && pathname === "/v1/rules") ||
     (method === "POST" && pathname === "/v1/fiat-email-domains") ||
     (method === "POST" && pathname === "/v1/risky-locations") ||
+    (method === "POST" && pathname.startsWith("/v1/blocklists/")) ||
     (method === "PUT" && pathname.startsWith("/v1/fiat-email-domains/")) ||
     (method === "PUT" && pathname.startsWith("/v1/risky-locations/")) ||
+    (method === "PUT" && pathname.startsWith("/v1/blocklists/")) ||
     (method === "PUT" && pathname.startsWith("/v1/rules/")) ||
     (method === "PUT" && pathname.startsWith("/v1/scoring/")) ||
     (method === "PUT" && pathname.startsWith("/v1/analysis-rules/")) ||

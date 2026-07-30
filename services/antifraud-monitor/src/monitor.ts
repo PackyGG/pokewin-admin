@@ -26,6 +26,7 @@ import {
   type FiatWithdrawalHold,
 } from "./fiat-withdrawal-holds.js";
 import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
+import { captureIdentifierBlocklistMatches } from "./identifier-blocklists.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
 import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
 import type { LiveBus } from "./live.js";
@@ -111,6 +112,7 @@ type PreparedSignup = {
   abstractEmail: EnrichmentResult;
   opportify: EnrichmentResult;
   weights: ScoreWeights;
+  identifierBlocklistSignals: Signal[];
 };
 
 type RuleMatchWrite = {
@@ -796,6 +798,8 @@ export class MonitorEngine {
     // Capture containment before external enrichment. Provider failures must
     // never delay a blacklisted signup's withdrawal lock.
     await this.fiatEmailDomains.captureSignup(signup);
+    const identifierBlocklistSignals =
+      await captureIdentifierBlocklistMatches(this.db, signup);
     const [context, weights] = await Promise.all([
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
@@ -826,6 +830,7 @@ export class MonitorEngine {
     if (unavailable.length > 0) {
       const signals = [
         ...baseSignupSignals(signup, context, weights),
+        ...identifierBlocklistSignals,
         ...fingerprint.signals,
         ...proxycheck.signals,
         ...abstractIp.signals,
@@ -881,6 +886,7 @@ export class MonitorEngine {
       abstractEmail,
       opportify,
       weights,
+      identifierBlocklistSignals,
     };
   }
 
@@ -992,12 +998,14 @@ export class MonitorEngine {
       abstractEmail,
       opportify,
       weights,
+      identifierBlocklistSignals,
     } = prepared;
     const locationPolicy = await this.riskyLocations.forCountry(
       signup.country_code,
     );
     const signals = [
       ...baseSignupSignals(signup, context, weights),
+      ...identifierBlocklistSignals,
       ...fingerprint.signals,
       ...proxycheck.signals,
       ...abstractIp.signals,
@@ -1009,7 +1017,7 @@ export class MonitorEngine {
               key: "risky_location_monitor",
               title: "Risky signup location",
               detail: `${locationPolicy.countryCode} signups are monitored for ${locationPolicy.monitorDurationSeconds / 60} minutes`,
-              points: weights.risky_location,
+              points: locationPolicy.riskWeight,
             },
           ]
         : []),

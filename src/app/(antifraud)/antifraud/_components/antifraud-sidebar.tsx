@@ -93,7 +93,6 @@ const ACCOUNT_NAV: NavItem[] = [
     label: "Profiles",
     href: "/antifraud/profiles",
     icon: UserRoundSearch,
-    disabledReason: "The Fraud profile index is not available yet",
   },
   { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
   {
@@ -134,22 +133,18 @@ const BLACKLIST_NAV: NavItem[] = [
   },
   {
     label: "IPs",
-    href: "/antifraud/networks?focus=ip",
+    href: "/antifraud/ip-blacklist",
     icon: Network,
-    disabledReason: "Editable IP blacklist storage is not available yet",
   },
   {
     label: "Fingerprints",
-    href: "/antifraud/networks?focus=fingerprint",
+    href: "/antifraud/fingerprint-blacklist",
     icon: Fingerprint,
-    disabledReason:
-      "Editable fingerprint blacklist storage is not available yet",
   },
   {
     label: "Banned users",
     href: "/antifraud/banned-users",
     icon: ShieldAlert,
-    disabledReason: "The Fraud-only banned-user index is not available yet",
   },
   {
     label: "Risk locations",

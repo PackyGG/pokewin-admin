@@ -3,11 +3,13 @@ import type { Databases } from "./db.js";
 export type RiskyLocationPolicy = {
   countryCode: string;
   monitorDurationSeconds: number;
+  riskWeight: number;
 };
 
 type RiskyLocationRow = {
   country_code: string;
   monitor_duration_seconds: number;
+  risk_weight: number;
 };
 
 const CACHE_TTL_MS = 30_000;
@@ -44,9 +46,9 @@ export class RiskyLocationStore {
 
     const result = await this.db.antifraud.query<RiskyLocationRow>(
       `
-        SELECT country_code, monitor_duration_seconds
+        SELECT country_code, monitor_duration_seconds, risk_weight
         FROM risky_locations
-        WHERE enabled
+        WHERE enabled AND (expires_at IS NULL OR expires_at > now())
       `,
     );
     const policies = new Map(
@@ -55,6 +57,7 @@ export class RiskyLocationStore {
         {
           countryCode: row.country_code,
           monitorDurationSeconds: row.monitor_duration_seconds,
+          riskWeight: row.risk_weight,
         },
       ]),
     );

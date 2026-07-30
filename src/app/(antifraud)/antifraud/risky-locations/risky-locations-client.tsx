@@ -51,6 +51,8 @@ export function RiskyLocationsClient({
   const [countryCode, setCountryCode] = useState("");
   const [countryOpen, setCountryOpen] = useState(false);
   const [duration, setDuration] = useState(60);
+  const [riskWeight, setRiskWeight] = useState(20);
+  const [expiresAt, setExpiresAt] = useState("");
   const [reason, setReason] = useState("");
   const [draftDurations, setDraftDurations] = useState<Record<string, number>>(
     Object.fromEntries(
@@ -61,6 +63,24 @@ export function RiskyLocationsClient({
     ),
   );
   const [isPending, startTransition] = useTransition();
+  const [draftWeights, setDraftWeights] = useState<Record<string, number>>(
+    Object.fromEntries(
+      initialLocations.map((location) => [
+        location.countryCode,
+        location.riskWeight,
+      ]),
+    ),
+  );
+  const [draftExpiries, setDraftExpiries] = useState<Record<string, string>>(
+    Object.fromEntries(
+      initialLocations.map((location) => [
+        location.countryCode,
+        location.expiresAt
+          ? new Date(location.expiresAt).toISOString().slice(0, 16)
+          : "",
+      ]),
+    ),
+  );
   const countryNames = useMemo(
     () => new Map(countries.map((country) => [country.code, country.name])),
     [countries],
@@ -93,6 +113,8 @@ export function RiskyLocationsClient({
           countryCode,
           monitorDurationMinutes: duration,
           reason: submittedReason,
+          riskWeight,
+          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) => [
@@ -105,8 +127,19 @@ export function RiskyLocationsClient({
           ...current,
           [saved.countryCode]: saved.monitorDurationMinutes,
         }));
+        setDraftWeights((current) => ({
+          ...current,
+          [saved.countryCode]: saved.riskWeight,
+        }));
+        setDraftExpiries((current) => ({
+          ...current,
+          [saved.countryCode]: saved.expiresAt
+            ? new Date(saved.expiresAt).toISOString().slice(0, 16)
+            : "",
+        }));
         setCountryCode("");
         setReason("");
+        setExpiresAt("");
         toast.success(
           `${countryNames.get(saved.countryCode) ?? saved.countryCode} now uses a ${saved.monitorDurationMinutes}-minute monitor.`,
         );
@@ -123,6 +156,9 @@ export function RiskyLocationsClient({
   function saveLocation(location: RiskyLocation, enabled = location.enabled) {
     const monitorDurationMinutes =
       draftDurations[location.countryCode] ?? location.monitorDurationMinutes;
+    const selectedWeight =
+      draftWeights[location.countryCode] ?? location.riskWeight;
+    const selectedExpiry = draftExpiries[location.countryCode] ?? "";
     if (monitorDurationMinutes < 1 || monitorDurationMinutes > 60) {
       toast.error("Monitor time must be between 1 and 60 minutes.");
       return;
@@ -146,6 +182,10 @@ export function RiskyLocationsClient({
           enabled,
           monitorDurationMinutes,
           reason: submittedReason,
+          riskWeight: selectedWeight,
+          expiresAt: selectedExpiry
+            ? new Date(selectedExpiry).toISOString()
+            : null,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) =>
@@ -156,6 +196,16 @@ export function RiskyLocationsClient({
         setDraftDurations((current) => ({
           ...current,
           [saved.countryCode]: saved.monitorDurationMinutes,
+        }));
+        setDraftWeights((current) => ({
+          ...current,
+          [saved.countryCode]: saved.riskWeight,
+        }));
+        setDraftExpiries((current) => ({
+          ...current,
+          [saved.countryCode]: saved.expiresAt
+            ? new Date(saved.expiresAt).toISOString().slice(0, 16)
+            : "",
         }));
         toast.success(
           saved.enabled
@@ -250,6 +300,30 @@ export function RiskyLocationsClient({
             </PopoverContent>
           </Popover>
         </div>
+        <div className="grid grid-cols-2 gap-3">
+          <div className="space-y-2">
+            <Label htmlFor="risky-weight">Risk weight</Label>
+            <Input
+              id="risky-weight"
+              type="number"
+              min={0}
+              max={49}
+              value={riskWeight}
+              onChange={(event) => setRiskWeight(Number(event.target.value))}
+              disabled={isPending}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="risky-expiry">Optional expiry</Label>
+            <Input
+              id="risky-expiry"
+              type="datetime-local"
+              value={expiresAt}
+              onChange={(event) => setExpiresAt(event.target.value)}
+              disabled={isPending}
+            />
+          </div>
+        </div>
         <div className="space-y-2">
           <Label htmlFor="risky-location-reason">Change reason</Label>
           <Textarea
@@ -314,7 +388,7 @@ export function RiskyLocationsClient({
               .map((location) => (
                 <div
                   key={location.countryCode}
-                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_120px_auto] md:items-end"
+                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_96px_96px_170px_auto] md:items-end"
                 >
                   <div className="min-w-0 self-center">
                     <div className="flex flex-wrap items-center gap-2">
@@ -335,8 +409,46 @@ export function RiskyLocationsClient({
                       </Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      Applies to new signups after this rule is enabled.
+                      {location.affectedUsers} accounts · {location.matches24h}/24h ·{" "}
+                      {location.matches7d}/7d · {location.matches30d}/30d ·{" "}
+                      {location.averageRisk ?? "unknown"} avg risk ·{" "}
+                      {location.reviewCount} reviews · bans/locks unknown
                     </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {location.reason}
+                    </p>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`weight-${location.countryCode}`}>Weight</Label>
+                    <Input
+                      id={`weight-${location.countryCode}`}
+                      type="number"
+                      min={0}
+                      max={49}
+                      value={draftWeights[location.countryCode] ?? location.riskWeight}
+                      onChange={(event) =>
+                        setDraftWeights((current) => ({
+                          ...current,
+                          [location.countryCode]: Number(event.target.value),
+                        }))
+                      }
+                      disabled={isPending}
+                    />
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label htmlFor={`expiry-${location.countryCode}`}>Expiry</Label>
+                    <Input
+                      id={`expiry-${location.countryCode}`}
+                      type="datetime-local"
+                      value={draftExpiries[location.countryCode] ?? ""}
+                      onChange={(event) =>
+                        setDraftExpiries((current) => ({
+                          ...current,
+                          [location.countryCode]: event.target.value,
+                        }))
+                      }
+                      disabled={isPending}
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor={`duration-${location.countryCode}`}>

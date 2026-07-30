@@ -36,6 +36,9 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "KYC reviews",
     "Discord",
     "Domains",
+    "IPs",
+    "Fingerprints",
+    "Banned users",
     "Risk locations",
     "System health",
     "Providers",
@@ -55,14 +58,16 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.match(sidebar, /antifraud-nav:v1:/);
   assert.match(sidebar, /group-data-\[collapsible=icon\]:block/);
   assert.doesNotMatch(sidebar, /href:\s*"\/users/);
-  assert.match(
-    sidebar,
-    /label: "Profiles"[\s\S]*disabledReason: "The Fraud profile index is not available yet"/,
-  );
-  assert.match(
-    sidebar,
-    /label: "Banned users"[\s\S]*disabledReason: "The Fraud-only banned-user index is not available yet"/,
-  );
+  for (const route of [
+    "/antifraud/profiles",
+    "/antifraud/ip-blacklist",
+    "/antifraud/fingerprint-blacklist",
+    "/antifraud/banned-users",
+  ]) {
+    assert.match(sidebar, new RegExp(`href: "${route}"`));
+  }
+  assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
+  assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
 
 test("deposit and withdrawal reviews preserve their queues in URL-driven drawers", () => {

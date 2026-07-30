@@ -75,16 +75,28 @@ test("automatic containment bans confirmed catch-all accounts without forcing KY
   assert.match(ingest, /locked_withdrawals_items = TRUE/);
 });
 
-test("OWNER DIVERGENCE: operator IP and fingerprint blocklists are absent", async () => {
+test("operator IP and fingerprint blocklists are durable and enforced at signup", async () => {
   const migrations = await migrationCorpus();
   const server = await source("../src/server.ts");
+  const matcher = await source("../src/identifier-blocklists.ts");
+  const routes = await source("../src/identifier-blocklist-routes.ts");
+  const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
 
-  assert.doesNotMatch(migrations, /CREATE TABLE IF NOT EXISTS .*ip.*blocklist/i);
-  assert.doesNotMatch(
-    migrations,
-    /CREATE TABLE IF NOT EXISTS .*fingerprint.*blocklist/i,
-  );
-  assert.doesNotMatch(server, /\/v1\/(?:ip|fingerprint)-blocklist/);
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS identifier_blocklists/i);
+  assert.match(migrations, /kind IN \('ip','fingerprint'\)/i);
+  assert.match(migrations, /identifier_blocklist_matches/i);
+  assert.match(migrations, /identifier_blocklist_audit/i);
+  assert.match(routes, /\/v1\/blocklists\/:kind/);
+  assert.match(routes, /historical_backfill[\s\S]*review_only/);
+  assert.match(matcher, /active_ip_blocklist/);
+  assert.match(matcher, /active_fingerprint_blocklist/);
+  assert.match(matcher, /lock_review/);
+  assert.match(ingest, /containIdentifierBlocklistAccount/);
+  assert.match(ingest, /blocklist\.ip/);
+  assert.match(ingest, /blocklist\.fingerprint/);
+  assert.match(ingest, /locked_withdrawals_items = TRUE/);
+  assert.doesNotMatch(ingest, /containIdentifierBlocklistAccount[\s\S]{0,2000}kyc/i);
+  assert.match(server, /registerIdentifierBlocklistRoutes/);
 });
 
 test("identity-provider evidence is explicit; unified relationship evidence remains incomplete", async () => {

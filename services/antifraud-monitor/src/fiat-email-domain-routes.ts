@@ -51,6 +51,11 @@ type RuleRow = {
   match_count: number;
   affected_users: number;
   pending_locks: number;
+  matches_24h: number;
+  matches_7d: number;
+  matches_30d: number;
+  first_match_at: Date | null;
+  last_match_at: Date | null;
 };
 
 async function listRules(db: Databases, ruleId?: string): Promise<RuleRow[]> {
@@ -70,7 +75,15 @@ async function listRules(db: Databases, ruleId?: string): Promise<RuleRow[]> {
         count(m.id)::int AS match_count,
         count(DISTINCT m.user_id)::int AS affected_users,
         count(m.id) FILTER (WHERE m.lock_delivered_at IS NULL)::int
-          AS pending_locks
+          AS pending_locks,
+        count(m.id) FILTER (WHERE m.occurred_at >= now()-interval '24 hours')::int
+          AS matches_24h,
+        count(m.id) FILTER (WHERE m.occurred_at >= now()-interval '7 days')::int
+          AS matches_7d,
+        count(m.id) FILTER (WHERE m.occurred_at >= now()-interval '30 days')::int
+          AS matches_30d,
+        min(m.occurred_at) AS first_match_at,
+        max(m.occurred_at) AS last_match_at
       FROM fiat_email_domain_blacklist b
       LEFT JOIN fiat_email_domain_matches m ON m.domain = b.domain
         AND m.match_type = 'blacklisted_domain'
@@ -95,6 +108,11 @@ function serializeRule(row: RuleRow) {
     matchCount: row.match_count,
     affectedUsers: row.affected_users,
     pendingLocks: row.pending_locks,
+    matches24h: row.matches_24h,
+    matches7d: row.matches_7d,
+    matches30d: row.matches_30d,
+    firstMatchAt: row.first_match_at?.toISOString() ?? null,
+    lastMatchAt: row.last_match_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     expiresAt: row.expires_at?.toISOString() ?? null,

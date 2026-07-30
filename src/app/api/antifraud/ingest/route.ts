@@ -51,8 +51,8 @@ import {
  *     credential must never mean "accept anything".
  *
  * Normally writes only the ADMIN DB. The dedicated
- * `fiat_blacklisted_email_domain`, `abstract_email_catchall`, and
- * `risky_free_battle_containment`
+ * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
+ * `signup_policy_recommendation`, and `risky_free_battle_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * applies deterministic MAIN containment before acknowledgement. Active
@@ -542,6 +542,55 @@ async function containRiskyFreeBattleAccount(
   return "locked";
 }
 
+async function containIdentifierBlocklistAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const policies = signal.payload?.policyMatches;
+  const matched = Array.isArray(policies)
+    && policies.some((policy) =>
+      policy === "blocklist.ip" || policy === "blocklist.fingerprint"
+    );
+  if (!signal.userId || signal.riskScore !== 100 || !matched) {
+    console.error(
+      "[antifraud-ingest] skipping invalid identifier-blocklist containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const reason = (
+    "Automatic fraud lock: signup matched an active operator-managed " +
+    "IP or fingerprint blocklist rule"
+  ).slice(0, 500);
+  const db = getProdPrimaryDrizzleDb();
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id, user_id, locked_withdrawals_crypto, locked_withdrawals_items,
+      locked_withdrawals_at, locked_withdrawals_by,
+      locked_withdrawals_reason, created_at, updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()}, u.id, ARRAY['all']::text[], TRUE, NOW(), NULL,
+      ${reason}, NOW(), NOW()
+    FROM "user" u
+    WHERE u.id = ${signal.userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  return locked.rows.length > 0 ? "locked" : "skipped";
+}
+
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** Containment was permanently un-appliable and acked instead of retried. */
@@ -604,6 +653,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     (
       signal.kind === "fiat_blacklisted_email_domain" ||
       signal.kind === "abstract_email_catchall" ||
+      signal.kind === "signup_policy_recommendation" ||
       signal.kind === "risky_free_battle_containment"
     )
   ) {
@@ -623,7 +673,9 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       ? (await containBlacklistedEmailDomainAccount(signal)) === "skipped"
       : signal.kind === "abstract_email_catchall"
         ? (await containAbstractCatchallAccount(signal)) === "skipped"
-        : (await containRiskyFreeBattleAccount(signal)) === "skipped";
+        : signal.kind === "signup_policy_recommendation"
+          ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
+          : (await containRiskyFreeBattleAccount(signal)) === "skipped";
   }
 
   // Idempotency: the backend's own event id. A retried delivery hits the

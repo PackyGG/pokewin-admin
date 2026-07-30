@@ -81,8 +81,12 @@ There are currently two related case models:
 | KYC | Active/waiting and finished-history KYC views with sanitized Sumsub evidence | `kyc/*`, `src/lib/antifraud/kyc.ts`, `src/lib/antifraud/sumsub-review-api.ts` |
 | Whop Refunds | Owner-only, step-up protected, leased and auditable refund batches | `refunds/*`, `src/lib/queries/whop-refunds.ts` |
 | Account Networks | User-linked IP/device/account graph and rescan | `networks/*`, `src/lib/antifraud/network-api.ts` |
-| Risky Locations | Country-specific signup score and monitor window | `risky-locations/*`, monitor risky-location API |
+| Profiles | Permanent per-user assessments, providers, relationships, restrictions, and blocklist evidence | `profiles/*`, monitor profile API |
+| Banned Users | Current banned-account workspace with audited ban/reactivate controls | `banned-users/*`, monitor banned-user API |
+| Risky Locations | Evidence-only country policy, weight, expiry, stats, and monitor window | `risky-locations/*`, monitor risky-location API |
 | Email Blacklist | Domain rules, matches, Gmail-pattern and cluster containment evidence | `email-blacklist/*`, monitor email-domain API |
+| IP Blacklist | Canonical IPv4/IPv6 exact and CIDR rules, history, metrics, affected profiles | `ip-blacklist/*`, monitor identifier-blocklist API |
+| Fingerprint Blacklist | Exact device rules, history, metrics, affected profiles | `fingerprint-blacklist/*`, monitor identifier-blocklist API |
 | Risk Scoring | Editable weights and analysis rules | `points/*`, `src/lib/antifraud/monitor-api.ts` |
 | Events & Triggers | Live/planned event vocabulary | `events/*`, monitor `event-catalog.ts` |
 | Custom Flows | Ordered event sequences, exclusions, score and outcome | `flows/*`, monitor rule endpoints |
@@ -109,7 +113,9 @@ There are currently two related case models:
 - Dedicated pack builders are denied.
 - Reads fail closed when the access configuration is unavailable.
 - Refund execution is owner-only.
-- Authoring settings, scoring, flows, blacklist, locations, and routing is
+- Domain, IP, fingerprint, banned-user, and risk-location operations are
+  available to every verified Fraud user and remain reasoned, confirmed,
+  idempotent, and audited. Settings, scoring, flows, and routing remain
   owner/admin-only.
 
 ## 4. Repository-contained backend inventory
@@ -369,11 +375,15 @@ bell is manual announcements only, created from
 
 - Source and worker state: `source_cursors`, `monitor_activity_cursors`,
   `signup_ingestion_failures`, `network_scan_jobs`.
-- Identity/evidence: `subjects`, `provider_checks`, `signup_assessments`.
+- Identity/evidence: `subjects`, `provider_checks`, `signup_assessments`,
+  permanent profiles, assessment history, provider evidence, relationships,
+  funding provenance, and immutable signup snapshots.
 - Detection cases: `cases`, `monitor_sessions`, `risk_events`,
   `rule_definitions`, `rule_matches`, `staff_actions`.
 - Configuration: `score_weights`, `analysis_rules`, `risky_locations`,
-  `risky_location_audit`, `fiat_email_domain_blacklist` and audit.
+  `risky_location_audit`, `fiat_email_domain_blacklist` and audit,
+  `identifier_blocklists`, `identifier_blocklist_matches`, and append-only
+  identifier audit.
 - Networks: `network_snapshots`, `network_nodes`, `network_node_secrets`,
   `network_edges`, `network_case_members`, `creator_fraud_assessments`.
 - Withdrawals: `withdrawal_assessments`, `withdrawal_review_events`.

@@ -238,7 +238,8 @@ export function EmailBlacklistClient({
                     {rule.pendingLocks > 0
                       ? ` · ${rule.pendingLocks} locks pending`
                       : ""}{" "}
-                    · updated {formatRelative(rule.updatedAt)}
+                    · {rule.matches24h}/24h · {rule.matches7d}/7d ·{" "}
+                    {rule.matches30d}/30d · updated {formatRelative(rule.updatedAt)}
                   </p>
                 </div>
                 <Button

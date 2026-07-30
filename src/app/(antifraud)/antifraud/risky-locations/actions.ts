@@ -20,6 +20,8 @@ const baseSchema = z.object({
   monitorDurationMinutes: z.number().int().min(1).max(60),
   reason: z.string().trim().min(4).max(500),
   idempotencyKey: z.string().uuid(),
+  riskWeight: z.number().int().min(0).max(100),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 export async function addRiskyLocation(input: unknown): Promise<RiskyLocation> {
@@ -33,6 +35,9 @@ export async function addRiskyLocation(input: unknown): Promise<RiskyLocation> {
     idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
+    reason: parsed.data.reason,
+    riskWeight: parsed.data.riskWeight,
+    expiresAt: parsed.data.expiresAt,
   });
   if (!saved.idempotent) {
     await createAdminAuditEvent({
@@ -42,6 +47,8 @@ export async function addRiskyLocation(input: unknown): Promise<RiskyLocation> {
         countryCode: saved.countryCode,
         monitorDurationMinutes: saved.monitorDurationMinutes,
         reason: parsed.data.reason,
+        riskWeight: parsed.data.riskWeight,
+        expiresAt: parsed.data.expiresAt,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });
@@ -63,6 +70,9 @@ export async function setRiskyLocation(input: unknown): Promise<RiskyLocation> {
     idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
+    reason: parsed.data.reason,
+    riskWeight: parsed.data.riskWeight,
+    expiresAt: parsed.data.expiresAt,
   });
   if (!saved.idempotent) {
     await createAdminAuditEvent({
@@ -73,6 +83,8 @@ export async function setRiskyLocation(input: unknown): Promise<RiskyLocation> {
         enabled: saved.enabled,
         monitorDurationMinutes: saved.monitorDurationMinutes,
         reason: parsed.data.reason,
+        riskWeight: parsed.data.riskWeight,
+        expiresAt: parsed.data.expiresAt,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });

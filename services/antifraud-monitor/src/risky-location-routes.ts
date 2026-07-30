@@ -13,11 +13,17 @@ const actorSchema = z.object({
 const createSchema = actorSchema.extend({
   countryCode: z.string().trim().length(2),
   monitorDurationMinutes: z.number().int().min(1).max(60),
+  reason: z.string().trim().min(4).max(500),
+  riskWeight: z.number().int().min(0).max(49),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 const updateSchema = actorSchema.extend({
   enabled: z.boolean(),
   monitorDurationMinutes: z.number().int().min(1).max(60),
+  reason: z.string().trim().min(4).max(500),
+  riskWeight: z.number().int().min(0).max(49),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 type LocationRow = {
@@ -28,6 +34,15 @@ type LocationRow = {
   updated_by: string;
   created_at: Date;
   updated_at: Date;
+  reason: string;
+  risk_weight: number;
+  expires_at: Date | null;
+  affected_users: number;
+  matches_24h: number;
+  matches_7d: number;
+  matches_30d: number;
+  average_risk: number | null;
+  review_count: number;
 };
 
 type AuditRow = {
@@ -38,6 +53,9 @@ type AuditRow = {
   after_state: {
     enabled?: unknown;
     monitorDurationMinutes?: unknown;
+    reason?: unknown;
+    riskWeight?: unknown;
+    expiresAt?: unknown;
   };
 };
 
@@ -50,6 +68,9 @@ function isExactReplay(
     actorUsername?: string;
     enabled: boolean;
     monitorDurationMinutes: number;
+    reason: string;
+    riskWeight: number;
+    expiresAt: string | null;
   },
 ): boolean {
   return (
@@ -60,6 +81,9 @@ function isExactReplay(
     prior.after_state.enabled === expected.enabled &&
     prior.after_state.monitorDurationMinutes ===
       expected.monitorDurationMinutes
+      && prior.after_state.reason === expected.reason
+      && prior.after_state.riskWeight === expected.riskWeight
+      && prior.after_state.expiresAt === expected.expiresAt
   );
 }
 
@@ -72,6 +96,15 @@ function serialize(row: LocationRow) {
     updatedBy: row.updated_by,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    reason: row.reason,
+    riskWeight: row.risk_weight,
+    expiresAt: row.expires_at?.toISOString() ?? null,
+    affectedUsers: row.affected_users,
+    matches24h: row.matches_24h,
+    matches7d: row.matches_7d,
+    matches30d: row.matches_30d,
+    averageRisk: row.average_risk,
+    reviewCount: row.review_count,
   };
 }
 
@@ -82,11 +115,29 @@ async function findLocations(
   const result = await db.antifraud.query<LocationRow>(
     `
       SELECT
-        country_code, monitor_duration_seconds, enabled,
-        created_by, updated_by, created_at, updated_at
-      FROM risky_locations
-      WHERE ($1::text IS NULL OR country_code = $1)
-      ORDER BY enabled DESC, country_code
+        r.country_code, r.monitor_duration_seconds, r.enabled,
+        r.created_by, r.updated_by, r.created_at, r.updated_at,
+        r.reason,r.risk_weight,r.expires_at,
+        count(DISTINCT s.user_id)::int AS affected_users,
+        count(DISTINCT s.user_id) FILTER (
+          WHERE s.source_created_at >= now()-interval '24 hours'
+        )::int AS matches_24h,
+        count(DISTINCT s.user_id) FILTER (
+          WHERE s.source_created_at >= now()-interval '7 days'
+        )::int AS matches_7d,
+        count(DISTINCT s.user_id) FILTER (
+          WHERE s.source_created_at >= now()-interval '30 days'
+        )::int AS matches_30d,
+        round(avg(p.score))::int AS average_risk,
+        count(DISTINCT s.user_id) FILTER (
+          WHERE p.outcome='review_required'
+        )::int AS review_count
+      FROM risky_locations r
+      LEFT JOIN subjects s ON s.country_code=r.country_code
+      LEFT JOIN antifraud_profiles p ON p.user_id=s.user_id
+      WHERE ($1::text IS NULL OR r.country_code = $1)
+      GROUP BY r.country_code
+      ORDER BY r.enabled DESC, r.country_code
     `,
     [countryCode ?? null],
   );
@@ -132,6 +183,9 @@ export async function registerRiskyLocationRoutes(
             actorUsername: parsed.data.actorUsername,
             enabled: true,
             monitorDurationMinutes: parsed.data.monitorDurationMinutes,
+            reason: parsed.data.reason,
+            riskWeight: parsed.data.riskWeight,
+            expiresAt: parsed.data.expiresAt,
           })
         ) {
           await client.query("ROLLBACK");
@@ -142,8 +196,9 @@ export async function registerRiskyLocationRoutes(
         const inserted = await client.query<LocationRow>(
           `
             INSERT INTO risky_locations(
-              country_code, monitor_duration_seconds, created_by, updated_by
-            ) VALUES ($1,$2,$3,$3)
+              country_code, monitor_duration_seconds, created_by, updated_by,
+              reason,risk_weight,expires_at
+            ) VALUES ($1,$2,$3,$3,$4,$5,$6)
             ON CONFLICT (country_code) DO NOTHING
             RETURNING *
           `,
@@ -151,6 +206,9 @@ export async function registerRiskyLocationRoutes(
             countryCode,
             parsed.data.monitorDurationMinutes * 60,
             parsed.data.actorId,
+            parsed.data.reason,
+            parsed.data.riskWeight,
+            parsed.data.expiresAt,
           ],
         );
         const created = inserted.rows[0];
@@ -223,6 +281,9 @@ export async function registerRiskyLocationRoutes(
             actorUsername: parsed.data.actorUsername,
             enabled: parsed.data.enabled,
             monitorDurationMinutes: parsed.data.monitorDurationMinutes,
+            reason: parsed.data.reason,
+            riskWeight: parsed.data.riskWeight,
+            expiresAt: parsed.data.expiresAt,
           })
         ) {
           await client.query("ROLLBACK");
@@ -243,7 +304,8 @@ export async function registerRiskyLocationRoutes(
           `
             UPDATE risky_locations
             SET enabled=$2, monitor_duration_seconds=$3,
-                updated_by=$4, updated_at=now()
+                updated_by=$4,reason=$5,risk_weight=$6,expires_at=$7,
+                updated_at=now()
             WHERE country_code=$1
             RETURNING *
           `,
@@ -252,6 +314,9 @@ export async function registerRiskyLocationRoutes(
             parsed.data.enabled,
             parsed.data.monitorDurationMinutes * 60,
             parsed.data.actorId,
+            parsed.data.reason,
+            parsed.data.riskWeight,
+            parsed.data.expiresAt,
           ],
         );
         await client.query(
