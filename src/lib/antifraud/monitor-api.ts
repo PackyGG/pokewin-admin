@@ -90,6 +90,43 @@ const runtimeConfigSchema = z.object({
     abstractEmailConfigured: z.boolean(),
     opportifyConfigured: z.boolean(),
   }),
+  providerContracts: z.object({
+    fingerprint: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+    proxycheck: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+    abstract_ip: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+    abstract_email: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+    opportify: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+  }).optional(),
   live: z.object({
     redisConfigured: z.boolean(),
     readTokenConfigured: z.boolean(),

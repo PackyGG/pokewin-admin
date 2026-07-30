@@ -9,6 +9,9 @@ import {
   parseOpportifyResponse,
   parseProxycheckResponse,
   sanitizeAbstractEmailResponse,
+  sanitizeAbstractIpResponse,
+  sanitizeFingerprintResponse,
+  sanitizeProxycheckResponse,
 } from "../src/enrichment.js";
 import type { Config } from "../src/config.js";
 import { defaultScoreWeights } from "../src/score-catalog.js";
@@ -1021,4 +1024,84 @@ test("clean Fingerprint events do not create risk signals", () => {
 
   assert.equal(result.score, 0);
   assert.deepEqual(result.signals, []);
+});
+
+test("provider raw evidence is allowlisted and strips direct signup identifiers", () => {
+  const fingerprint = sanitizeFingerprintResponse({
+    products: {
+      identification: {
+        data: {
+          ip: IP,
+          linkedId: SIGNUP.id,
+          visitorId: SIGNUP.visitor_id,
+          confidence: { score: 0.98 },
+          replayed: false,
+        },
+      },
+      vpn: { data: { result: true, confidence: "high" } },
+      unknownProduct: { data: { private: "must-not-persist" } },
+    },
+  });
+  const proxycheck = sanitizeProxycheckResponse({
+    status: "ok",
+    [IP]: {
+      risk: 80,
+      detections: { proxy: true, confidence: 97 },
+      network: { hostname: "customer.example", asn: "AS64500" },
+      location: { country: "Germany", city: "Berlin" },
+    },
+  }, IP);
+  const abstractIp = sanitizeAbstractIpResponse({
+    ip_address: IP,
+    security: { is_proxy: true },
+    location: {
+      country_code: "DE",
+      region: "Berlin",
+      city: "Berlin",
+      latitude: 52.5,
+      longitude: 13.4,
+    },
+  });
+
+  const serialized = JSON.stringify({
+    fingerprint,
+    proxycheck,
+    abstractIp,
+  });
+  assert.doesNotMatch(serialized, new RegExp(IP.replaceAll(".", "\\.")));
+  assert.doesNotMatch(serialized, /user-1|visitor-1|customer\.example/);
+  assert.doesNotMatch(serialized, /unknownProduct|latitude|longitude/);
+  assert.match(serialized, /"confidence":97/);
+  assert.match(serialized, /"is_proxy":true/);
+  assert.match(serialized, /"country_code":"DE"/);
+});
+
+test("Opportify marks a successful but incomplete compatible response partial", async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = (async () =>
+    new Response(JSON.stringify({
+      score: 500,
+      level: "medium",
+      factors: [],
+      sources: {
+        email: { riskReport: { score: 500, level: "medium" } },
+      },
+    }), { status: 200 })) as typeof fetch;
+
+  try {
+    const service = new EnrichmentService({
+      FINGERPRINT_SECRET_API_KEY: "fingerprint-secret",
+      FINGERPRINT_REGION: "eu",
+      PROXYCHECK_API_KEY: "proxycheck-secret",
+      OPPORTIFY_API_KEY: "opportify-secret",
+    } as Config);
+    const result = await service.opportifyCheck(SIGNUP);
+
+    assert.equal(result.status, "success");
+    assert.equal(result.completeness, "partial");
+    assert.equal(result.nativeScore, 500);
+    assert.equal(result.nativeRank, "medium");
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });

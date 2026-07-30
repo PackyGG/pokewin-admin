@@ -1,5 +1,9 @@
 import { isIP } from "node:net";
 
+import type {
+  ProviderCompleteness,
+  ProviderFailureKind,
+} from "./provider-contracts.js";
 import type { Signal } from "./types.js";
 
 export const PROFILE_ASSESSMENT_VERSION = "signup-v2";
@@ -24,7 +28,8 @@ export type ProviderCoverage = {
   provider: string;
   outcome: ProviderOutcome;
   required: boolean;
-  failureKind?: "timeout" | "rate_limited" | "authentication" | "invalid_response" | "upstream" | "unknown";
+  completeness?: ProviderCompleteness;
+  failureKind?: ProviderFailureKind;
 };
 
 export type ProfileSignal = Signal & {
@@ -171,7 +176,14 @@ export function assessProfile(input: {
     (provider) => provider.required && provider.outcome === "failed",
   );
   const unknownRequired = providers.filter(
-    (provider) => provider.required && provider.outcome === "unknown",
+    (provider) =>
+      provider.required
+      && (
+        provider.outcome === "unknown"
+        || provider.outcome === "skipped"
+        || provider.completeness === "partial"
+        || provider.completeness === "unknown"
+      ),
   );
   const providerStatus = Object.fromEntries(
     providers.map((provider) => [provider.provider, provider]),
@@ -297,7 +309,11 @@ export function assessProfile(input: {
 
   const requiredCount = providers.filter((provider) => provider.required).length;
   const successfulRequired = providers.filter(
-    (provider) => provider.required && provider.outcome === "success",
+    (provider) =>
+      provider.required
+      && provider.outcome === "success"
+      && provider.completeness !== "partial"
+      && provider.completeness !== "unknown",
   ).length;
   const confidence =
     requiredCount === 0

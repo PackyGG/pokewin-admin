@@ -76,6 +76,25 @@ test("required provider failures are incomplete, never clean", () => {
   assert.equal(assessment.confidence, 80);
 });
 
+test("partial provider responses are incomplete, never clean", () => {
+  const assessment = assessProfile({
+    signals: [],
+    providers: providers.map((provider) =>
+      provider.provider === "opportify"
+        ? { ...provider, completeness: "partial" as const }
+        : { ...provider, completeness: "complete" as const }
+    ),
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  assert.equal(assessment.score, 0);
+  assert.equal(assessment.outcome, "incomplete");
+  assert.equal(assessment.completeness, "unknown");
+  assert.equal(assessment.confidence, 80);
+});
+
 test("missing OAuth fingerprint remains unknown and adds limited risk", () => {
   const assessment = assessProfile({
     signals: [],

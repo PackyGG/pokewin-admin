@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type pg from "pg";
 
 import type { EnrichmentResult } from "./enrichment.js";
+import { classifyProviderFailure } from "./provider-contracts.js";
 import {
   networkClusterKeys,
   type ProfileAssessment,
@@ -65,6 +66,9 @@ export async function persistProviderEvidence(
         result.provider,
         result.lookupKey,
         result.requestId ?? null,
+        result.status,
+        result.errorCode ?? null,
+        result.response ?? null,
       ]),
     )
     .digest("hex");
@@ -72,8 +76,13 @@ export async function persistProviderEvidence(
     `
       INSERT INTO profile_provider_evidence (
         user_id, provider, lookup_key, evidence_key, request_id, outcome, failure_kind,
-        raw_evidence, normalized_signals, provider_score, observed_at
-      ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9::jsonb,$10,now())
+        completeness, raw_evidence, normalized_signals, provider_score,
+        provider_model, provider_version, native_score, native_rank,
+        native_confidence, provenance, error_code, observed_at
+      ) VALUES (
+        $1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10::jsonb,$11,$12,$13,$14,$15,
+        $16,$17::jsonb,$18,now()
+      )
       ON CONFLICT (user_id, provider, evidence_key) DO NOTHING
     `,
     [
@@ -83,26 +92,24 @@ export async function persistProviderEvidence(
       evidenceKey,
       result.requestId ?? null,
       result.status,
-      result.status === "failed" ? classifyProviderFailure(result.errorCode) : null,
+      result.status === "failed" || result.status === "skipped"
+        ? result.failureKind ?? classifyProviderFailure(result.errorCode)
+        : null,
+      result.completeness,
       // EnrichmentResult.response is the allowlisted, sanitized parser output.
       // This boundary must never receive or persist an unrestricted upstream body.
       JSON.stringify(result.response ?? null),
       JSON.stringify(result.signals),
       result.score ?? null,
+      result.providerModel,
+      result.providerVersion,
+      result.nativeScore ?? null,
+      result.nativeRank ?? null,
+      result.nativeConfidence ?? null,
+      JSON.stringify(result.provenance),
+      result.errorCode ?? null,
     ],
   );
-}
-
-function classifyProviderFailure(
-  errorCode: string | undefined,
-): "timeout" | "rate_limited" | "authentication" | "invalid_response" | "upstream" | "unknown" {
-  const code = errorCode?.toLowerCase() ?? "";
-  if (/timeout|abort/.test(code)) return "timeout";
-  if (/429|rate/.test(code)) return "rate_limited";
-  if (/401|403|auth|key/.test(code)) return "authentication";
-  if (/parse|invalid|schema/.test(code)) return "invalid_response";
-  if (/5\d\d|upstream/.test(code)) return "upstream";
-  return "unknown";
 }
 
 export async function persistProfileAssessment(

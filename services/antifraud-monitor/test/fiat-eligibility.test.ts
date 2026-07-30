@@ -17,7 +17,10 @@ import {
   fiatEligibilityRequestSchema,
   registerFiatEligibilityRoutes,
 } from "../src/fiat-eligibility-routes.js";
-import type { EnrichmentResult } from "../src/enrichment.js";
+import {
+  providerContractMetadata,
+  type EnrichmentResult,
+} from "../src/enrichment.js";
 
 const DEV_KEY = "dev-fiat-key-that-is-at-least-32-characters";
 const PROD_KEY = "prod-fiat-key-that-is-at-least-32-characters";
@@ -44,6 +47,7 @@ function provider(
     status: "success",
     lookupKey: "lookup",
     score: 0,
+    ...providerContractMetadata(providerName, "live", "complete"),
     signals: [],
     ...overrides,
   };

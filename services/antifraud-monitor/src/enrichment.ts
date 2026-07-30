@@ -12,9 +12,23 @@ import {
   scorePoints,
   type ScoreWeights,
 } from "./score-catalog.js";
+import {
+  classifyProviderFailure,
+  PROVIDER_CONTRACTS,
+  type ProviderCompleteness,
+  type ProviderFailureKind,
+  type SignupProvider,
+} from "./provider-contracts.js";
 import type { Signal, Signup } from "./types.js";
 
 type JsonObject = Record<string, unknown>;
+type ProviderProvenance = {
+  endpoint: string;
+  method: string;
+  source: "live" | "cache" | "input";
+  independent: true;
+  tag?: ProxycheckTag;
+};
 
 /**
  * Wall-clock bound for the Fingerprint Server API. The SDK exposes no
@@ -145,6 +159,8 @@ function proxycheckResultNode(
   raw: JsonObject,
   signupIp: string,
 ): JsonObject {
+  const normalized = object(raw.result);
+  if (Object.keys(normalized).length > 0) return normalized;
   const expected = canonicalIp(signupIp);
   for (const source of [raw, object(raw.data)]) {
     const direct = source[signupIp];
@@ -158,22 +174,210 @@ function proxycheckResultNode(
 }
 
 export type EnrichmentResult = {
-  provider:
-    | "fingerprint"
-    | "proxycheck"
-    | "abstract_ip"
-    | "abstract_email"
-    | "opportify";
+  provider: SignupProvider;
   status: "success" | "skipped" | "failed";
   lookupKey: string;
   requestId?: string;
   score?: number;
+  nativeScore?: number;
+  nativeRank?: string;
+  nativeConfidence?: number;
+  completeness: ProviderCompleteness;
+  providerModel: string;
+  providerVersion: string;
+  provenance: ProviderProvenance;
+  failureKind?: ProviderFailureKind;
   response?: JsonObject;
   errorCode?: string;
   signals: Signal[];
 };
 
 export type ProxycheckTag = "signup" | "fiat-eligibility";
+
+export function providerContractMetadata(
+  provider: SignupProvider,
+  source: ProviderProvenance["source"],
+  completeness: ProviderCompleteness,
+  extras: {
+    tag?: ProxycheckTag;
+    nativeScore?: number;
+    nativeRank?: string;
+    nativeConfidence?: number;
+    errorCode?: string;
+  } = {},
+): Pick<
+  EnrichmentResult,
+  | "providerModel"
+  | "providerVersion"
+  | "provenance"
+  | "completeness"
+  | "nativeScore"
+  | "nativeRank"
+  | "nativeConfidence"
+  | "failureKind"
+> {
+  const contract = PROVIDER_CONTRACTS[provider];
+  return {
+    providerModel: contract.model,
+    providerVersion: contract.version,
+    completeness,
+    provenance: {
+      endpoint: contract.endpoint,
+      method: contract.method,
+      source,
+      independent: true,
+      ...(extras.tag ? { tag: extras.tag } : {}),
+    },
+    ...(extras.nativeScore !== undefined
+      ? { nativeScore: extras.nativeScore }
+      : {}),
+    ...(extras.nativeRank !== undefined
+      ? { nativeRank: extras.nativeRank }
+      : {}),
+    ...(extras.nativeConfidence !== undefined
+      ? { nativeConfidence: extras.nativeConfidence }
+      : {}),
+    ...(extras.errorCode
+      ? { failureKind: classifyProviderFailure(extras.errorCode) }
+      : {}),
+  };
+}
+
+function boundedSanitizedObject(
+  value: unknown,
+  blockedKeys: ReadonlySet<string>,
+  depth = 0,
+): unknown {
+  if (depth > 8) return "[truncated]";
+  if (Array.isArray(value)) {
+    return value.slice(0, 100).map((entry) =>
+      boundedSanitizedObject(entry, blockedKeys, depth + 1)
+    );
+  }
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as JsonObject)
+      .filter(([key]) => !blockedKeys.has(key.toLowerCase()))
+      .slice(0, 150)
+      .map(([key, entry]) => [
+        key,
+        boundedSanitizedObject(entry, blockedKeys, depth + 1),
+      ]),
+  );
+}
+
+export function sanitizeFingerprintResponse(raw: JsonObject): JsonObject {
+  const products = object(raw.products);
+  const allowedProducts = [
+    "identification",
+    "botd",
+    "vpn",
+    "proxy",
+    "tor",
+    "ipInfo",
+    "ipBlocklist",
+    "incognito",
+    "tampering",
+    "virtualMachine",
+    "highActivity",
+    "privacySettings",
+    "developerTools",
+    "rareDevice",
+    "velocity",
+    "suspectScore",
+    "rootApps",
+    "emulator",
+    "clonedApp",
+    "jailbroken",
+    "frida",
+    "locationSpoofing",
+    "mitmAttack",
+    "factoryReset",
+    "proximity",
+  ];
+  const blocked = new Set([
+    "ip",
+    "address",
+    "linkedid",
+    "visitorid",
+    "requestid",
+    "id",
+    "latitude",
+    "longitude",
+  ]);
+  return {
+    evidence_contract: "fingerprint-pro-plus-sanitized-v1",
+    products: Object.fromEntries(
+      allowedProducts
+        .filter((key) => products[key] !== undefined)
+        .map((key) => [
+          key,
+          boundedSanitizedObject(products[key], blocked),
+        ]),
+    ),
+  };
+}
+
+export function sanitizeProxycheckResponse(
+  raw: JsonObject,
+  signupIp: string,
+): JsonObject {
+  const node = proxycheckResultNode(raw, signupIp);
+  const allowed = [
+    "last_updated",
+    "risk",
+    "risk_score",
+    "proxy",
+    "anonymous",
+    "type",
+    "asn",
+    "provider",
+    "detections",
+    "network",
+    "location",
+    "device_estimate",
+    "detection_history",
+    "attack_history",
+    "operator",
+  ];
+  const blocked = new Set([
+    "ip",
+    "address",
+    "hostname",
+    "url",
+    "city",
+    "latitude",
+    "longitude",
+    "postal",
+    "postal_code",
+  ]);
+  return {
+    evidence_contract: "proxycheck-v3-sanitized-v1",
+    status: raw.status,
+    result: Object.fromEntries(
+      allowed
+        .filter((key) => node[key] !== undefined)
+        .map((key) => [
+          key,
+          boundedSanitizedObject(node[key], blocked),
+        ]),
+    ),
+  };
+}
+
+export function sanitizeAbstractIpResponse(raw: JsonObject): JsonObject {
+  const location = object(raw.location);
+  return {
+    evidence_contract: "abstract-ip-sanitized-v1",
+    security: object(raw.security),
+    asn: object(raw.asn),
+    company: object(raw.company),
+    location: {
+      country_code: location.country_code,
+      region: location.region,
+    },
+  };
+}
 
 export function reweightFingerprintSignals(
   signals: Signal[],
@@ -1241,8 +1445,7 @@ export function sanitizeAbstractEmailResponse(raw: JsonObject): JsonObject {
   const risk = object(raw.email_risk);
   const breaches = object(raw.email_breaches);
   return {
-    email_address: raw.email_address,
-    suggested_correction: raw.suggested_correction,
+    evidence_contract: "abstract-email-sanitized-v1",
     email_deliverability: {
       status: deliverability.status,
       status_detail: deliverability.status_detail,
@@ -1615,17 +1818,39 @@ export class EnrichmentService {
     );
   }
 
+  private providerErrorCode(error: unknown): string {
+    if (!(error instanceof Error)) return "unknown_error";
+    const candidate = error as Error & {
+      status?: unknown;
+      statusCode?: unknown;
+      code?: unknown;
+    };
+    const status = numberValue(candidate.status ?? candidate.statusCode);
+    const code = stringValue(candidate.code);
+    const detail = [
+      status ? `http_${status}` : null,
+      code,
+      error.name,
+      error.message,
+    ].filter((value): value is string => Boolean(value)).join(":");
+    return this.scrub(detail || "unknown_error").slice(0, 100);
+  }
+
   async fingerprintCheck(
     signup: Signup,
     weights: ScoreWeights = defaultScoreWeights(),
   ): Promise<EnrichmentResult> {
     const SCORE_POINTS = scorePoints(weights);
     if (!signup.fingerprint_request_id) {
+      const errorCode = "missing_request_id";
       return {
         provider: "fingerprint",
         status: "skipped",
         lookupKey: `user:${signup.id}`,
-        errorCode: "missing_request_id",
+        errorCode,
+        ...providerContractMetadata("fingerprint", "input", "unknown", {
+          errorCode,
+        }),
         signals: [{
           key: "fingerprint_missing",
           title: "Fingerprint missing",
@@ -1642,7 +1867,18 @@ export class EnrichmentService {
         "fingerprint",
       );
       const raw = JSON.parse(JSON.stringify(event)) as JsonObject;
+      if (
+        Object.keys(
+          object(path(raw, "products", "identification", "data")),
+        ).length === 0
+      ) {
+        throw new Error("invalid_response");
+      }
       const parsed = parseFingerprintResponse(raw, signup, weights);
+      const nativeConfidence =
+        numberValue(path(raw, "products", "identification", "data", "confidence", "score"))
+        ?? signup.fingerprint_confidence
+        ?? undefined;
 
       return {
         provider: "fingerprint",
@@ -1650,16 +1886,24 @@ export class EnrichmentService {
         lookupKey: signup.fingerprint_request_id,
         requestId: signup.fingerprint_request_id,
         score: parsed.score,
-        response: raw,
+        ...providerContractMetadata("fingerprint", "live", "complete", {
+          nativeScore: parsed.score,
+          nativeConfidence,
+        }),
+        response: sanitizeFingerprintResponse(raw),
         signals: parsed.signals,
       };
     } catch (error) {
+      const errorCode = this.providerErrorCode(error);
       return {
         provider: "fingerprint",
         status: "failed",
         lookupKey: signup.fingerprint_request_id,
         requestId: signup.fingerprint_request_id,
-        errorCode: error instanceof Error ? error.name : "unknown_error",
+        errorCode,
+        ...providerContractMetadata("fingerprint", "live", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1671,11 +1915,16 @@ export class EnrichmentService {
     tag: ProxycheckTag = "signup",
   ): Promise<EnrichmentResult> {
     if (!signup.signup_ip) {
+      const errorCode = "missing_ip";
       return {
         provider: "proxycheck",
         status: "skipped",
         lookupKey: `user:${signup.id}`,
-        errorCode: "missing_ip",
+        errorCode,
+        ...providerContractMetadata("proxycheck", "input", "unknown", {
+          tag,
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1708,26 +1957,36 @@ export class EnrichmentService {
         signup.signup_ip,
         weights,
       );
+      const nativeConfidence = numberValue(
+        path(resultNode, "detections", "confidence"),
+      );
 
       return {
         provider: "proxycheck",
         status: "success",
         lookupKey: signup.signup_ip,
         score: risk,
-        response: raw,
+        ...providerContractMetadata("proxycheck", "live", "complete", {
+          tag,
+          nativeScore: risk,
+          nativeConfidence,
+        }),
+        response: sanitizeProxycheckResponse(raw, signup.signup_ip),
         signals,
       };
     } catch (error) {
+      const errorCode = this.providerErrorCode(error);
       return {
         provider: "proxycheck",
         status: "failed",
         lookupKey: signup.signup_ip,
         // The request URL carries the proxycheck API key, and fetch errors can
         // echo it back — never persist or surface an unscrubbed message.
-        errorCode:
-          error instanceof Error
-            ? this.scrub(error.message).slice(0, 100)
-            : "unknown_error",
+        errorCode,
+        ...providerContractMetadata("proxycheck", "live", "unknown", {
+          tag,
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1738,11 +1997,15 @@ export class EnrichmentService {
     weights: ScoreWeights = defaultScoreWeights(),
   ): Promise<EnrichmentResult> {
     if (!signup.signup_ip) {
+      const errorCode = "missing_ip";
       return {
         provider: "abstract_ip",
         status: "skipped",
         lookupKey: `user:${signup.id}`,
-        errorCode: "missing_ip",
+        errorCode,
+        ...providerContractMetadata("abstract_ip", "input", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1772,18 +2035,20 @@ export class EnrichmentService {
         status: "success",
         lookupKey: signup.signup_ip,
         score: parsed.score,
-        response: raw,
+        ...providerContractMetadata("abstract_ip", "live", "complete"),
+        response: sanitizeAbstractIpResponse(raw),
         signals: parsed.signals,
       };
     } catch (error) {
+      const errorCode = this.providerErrorCode(error);
       return {
         provider: "abstract_ip",
         status: "failed",
         lookupKey: signup.signup_ip,
-        errorCode:
-          error instanceof Error
-            ? this.scrub(error.message).slice(0, 100)
-            : "unknown_error",
+        errorCode,
+        ...providerContractMetadata("abstract_ip", "live", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1795,11 +2060,15 @@ export class EnrichmentService {
   ): Promise<EnrichmentResult> {
     const email = signup.email?.trim().toLowerCase();
     if (!email) {
+      const errorCode = "missing_email";
       return {
         provider: "abstract_email",
         status: "skipped",
         lookupKey: `user:${signup.id}`,
-        errorCode: "missing_email",
+        errorCode,
+        ...providerContractMetadata("abstract_email", "input", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1830,23 +2099,38 @@ export class EnrichmentService {
       }
       const sanitized = sanitizeAbstractEmailResponse(raw);
       const parsed = parseAbstractEmailResponse(sanitized, weights);
+      const quality = object(sanitized.email_quality);
+      const risk = object(sanitized.email_risk);
+      const addressRank = emailRiskLevel(risk.address_risk_status);
+      const domainRank = emailRiskLevel(risk.domain_risk_status);
+      const nativeRank =
+        addressRank === "high" || domainRank === "high"
+          ? "high"
+          : addressRank === "medium" || domainRank === "medium"
+            ? "medium"
+            : addressRank ?? domainRank ?? undefined;
       return {
         provider: "abstract_email",
         status: "success",
         lookupKey: email,
         score: parsed.score,
+        ...providerContractMetadata("abstract_email", "live", "complete", {
+          nativeScore: numberValue(quality.score),
+          nativeRank,
+        }),
         response: sanitized,
         signals: parsed.signals,
       };
     } catch (error) {
+      const errorCode = this.providerErrorCode(error);
       return {
         provider: "abstract_email",
         status: "failed",
         lookupKey: email,
-        errorCode:
-          error instanceof Error
-            ? this.scrub(error.message).slice(0, 100)
-            : "unknown_error",
+        errorCode,
+        ...providerContractMetadata("abstract_email", "live", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1859,11 +2143,15 @@ export class EnrichmentService {
     const email = signup.email?.trim().toLowerCase() || undefined;
     const userIp = canonicalIp(signup.signup_ip);
     if (!email && !userIp) {
+      const errorCode = "missing_email_and_ip";
       return {
         provider: "opportify",
         status: "skipped",
         lookupKey: `user:${signup.id}`,
-        errorCode: "missing_email_and_ip",
+        errorCode,
+        ...providerContractMetadata("opportify", "input", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }
@@ -1900,23 +2188,39 @@ export class EnrichmentService {
       if (text.length > 512_000) throw new Error("response_too_large");
       const raw = object(JSON.parse(text));
       const parsed = parseOpportifyResponse(raw, weights);
+      const sources = object(parsed.response.sources);
+      const expectedSources = [
+        email ? "email" : null,
+        userIp ? "ip" : null,
+        signup.name || signup.username ? "content" : null,
+      ].filter((value): value is string => Boolean(value));
+      const missingSources = expectedSources.filter(
+        (source) => Object.keys(object(sources[source])).length === 0,
+      );
+      const completeness: ProviderCompleteness =
+        missingSources.length === 0 ? "complete" : "partial";
       return {
         provider: "opportify",
         status: "success",
         lookupKey: `user:${signup.id}`,
         score: parsed.score,
+        ...providerContractMetadata("opportify", "live", completeness, {
+          nativeScore: parsed.score,
+          nativeRank: parsed.level,
+        }),
         response: parsed.response,
         signals: parsed.signals,
       };
     } catch (error) {
+      const errorCode = this.providerErrorCode(error);
       return {
         provider: "opportify",
         status: "failed",
         lookupKey: `user:${signup.id}`,
-        errorCode:
-          error instanceof Error
-            ? this.scrub(error.message).slice(0, 100)
-            : "unknown_error",
+        errorCode,
+        ...providerContractMetadata("opportify", "live", "unknown", {
+          errorCode,
+        }),
         signals: [],
       };
     }

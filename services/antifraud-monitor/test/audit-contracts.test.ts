@@ -275,6 +275,18 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     abstractEmailConfigured: true,
     opportifyConfigured: true,
   });
+  assert.equal(
+    status.providerContracts.fingerprint.model,
+    "Fingerprint Pro Plus",
+  );
+  assert.equal(
+    status.providerContracts.proxycheck.version,
+    "24-June-2026",
+  );
+  assert.equal(
+    status.providerContracts.opportify.requiredDatum,
+    "email_or_signup_ip",
+  );
   assert.deepEqual(status.live, {
     redisConfigured: true,
     readTokenConfigured: true,

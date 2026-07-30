@@ -146,6 +146,20 @@ async function IntegrationSection() {
         ? "partial"
         : "missing"
     : "unknown";
+  const contractNote = (
+    provider:
+      | "fingerprint"
+      | "proxycheck"
+      | "abstract_ip"
+      | "abstract_email"
+      | "opportify",
+    fallback: string,
+  ) => {
+    const contract = runtimeData?.providerContracts[provider];
+    return contract
+      ? `${contract.model} · ${contract.version} · ${contract.method} ${contract.endpoint} · required input: ${contract.requiredDatum.replaceAll("_", " ")}. Each compatible signup check runs independently.`
+      : fallback;
+  };
 
   const integrations: Array<{
     name: string;
@@ -185,35 +199,49 @@ async function IntegrationSection() {
           : "Authoritative status reported by the deployed monitor; values are never returned.",
     },
     {
-      name: "Fingerprint Pro",
+      name: "Fingerprint Pro Plus",
       envs: ["FINGERPRINT_SECRET_API_KEY"],
       status: reportedStatus(runtimeData?.providers.fingerprintConfigured),
-      note: "Provider presence reported by the deployed monitor service.",
+      note: contractNote(
+        "fingerprint",
+        "Provider presence reported by the deployed monitor service.",
+      ),
     },
     {
-      name: "Proxycheck",
+      name: "ProxyCheck v3 Pro",
       envs: ["PROXYCHECK_API_KEY"],
       status: reportedStatus(runtimeData?.providers.proxycheckConfigured),
-      note: "Provider presence reported by the deployed monitor service.",
+      note: contractNote(
+        "proxycheck",
+        "Provider presence reported by the deployed monitor service.",
+      ),
     },
     {
       name: "Abstract IP Intelligence",
       envs: ["ABSTRACT_IP_INTELLIGENCE_API_KEY"],
       status: reportedStatus(runtimeData?.providers.abstractIpConfigured),
-      note: "Signup IP security, network, and location evidence.",
+      note: contractNote(
+        "abstract_ip",
+        "Signup IP security, network, and location evidence.",
+      ),
     },
     {
       name: "Abstract Email Reputation",
       envs: ["ABSTRACT_EMAIL_REPUTATION_API_KEY"],
       status: reportedStatus(runtimeData?.providers.abstractEmailConfigured),
-      note: "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
+      note: contractNote(
+        "abstract_email",
+        "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
+      ),
     },
     {
-      name: "Opportify Fraud Protection",
+      name: "Opportify Full Fraud Check",
       envs: ["OPPORTIFY_API_KEY"],
       status: reportedStatus(runtimeData?.providers.opportifyConfigured),
-      note:
+      note: contractNote(
+        "opportify",
         "Private server-side signup analysis across email, IP, username content, provider velocity, and geographic consistency.",
+      ),
     },
     {
       name: "Discord alert webhook",

@@ -15,9 +15,11 @@ audit history.
 - Existing provider checks are copied idempotently. A missing historical check
   is `unknown`, never `success` or clean evidence.
 - Provider evidence is append-only per stable check occurrence. Repeating a
-  provider and lookup stores another row; retrying the same occurrence is an
-  idempotent no-op. `raw_evidence` accepts only the existing sanitized provider
-  response, never credentials or unrestricted upstream payloads.
+  provider and lookup stores another row; retrying the same occurrence with
+  the same outcome/evidence is an idempotent no-op. A changed failure or later
+  success appends a new row instead of overwriting the first result.
+  `raw_evidence` accepts only the existing sanitized provider response, never
+  credentials or unrestricted upstream payloads.
 - The migration records pre/post counts, duplicate counts, and assessment
   parity in `antifraud_backfill_runs`.
 - Existing withdrawal provenance is copied through a bounded 365-day,
@@ -61,6 +63,46 @@ Representative bounded reads should use:
 - `signup_identity_snapshot_fingerprint_idx` for device clustering.
 - `profile_provider_evidence_user_time_idx` for a user's latest provider checks.
 - `funding_trace_restricted_idx` for restricted-source downstream tracing.
+
+## Provider contract extension 039
+
+Migration 039 additively extends each append-only provider occurrence with
+request outcome, failure kind, completeness, safe provenance, provider
+model/version, native score/rank/confidence, and the existing normalized
+signals. It does not change or delete `provider_checks`.
+
+The compiled signup contracts are:
+
+- Fingerprint Pro Plus: identification replay/IP/account/confidence plus bot,
+  VPN, proxy, Tor, IP blocklist/datacenter, VM/tamper, velocity, browser and
+  mobile-integrity products.
+- ProxyCheck v3 Pro: pinned `24-June-2026` status/result semantics, native risk
+  and detection confidence, all current boolean detection types, network and
+  coarse location, device estimates, detection/attack history, and operator
+  evidence.
+- Abstract IP Intelligence: echoed-IP validation, security booleans, ASN,
+  company, and country/region evidence.
+- Abstract Email Reputation: echoed-email validation, deliverability,
+  SMTP/MX, catch-all, disposable/subaddress/role, quality score, address/domain
+  risk ranks, domain age/TLD, and breach counts/dates.
+- Opportify Full Fraud Check: composite score/level/factors and the sanitized
+  email, IP, content, velocity, geographic, and session source groups.
+
+Direct email/IP/request/account identifiers, exact coordinates, hostnames,
+mail hosts, provider contacts, and opaque unknown provider products are not
+copied into sanitized raw evidence. Exact facts already needed by normalized
+fraud signals remain in those bounded signals.
+
+A missing compatible datum is explicit `skipped` evidence with
+`missing_compatible_datum`; it is not success. Timeout, rate limit,
+authentication, invalid-response, upstream, and unknown failures remain
+distinct. A successful response missing a compatible Opportify source group is
+`partial`, which keeps the overall profile incomplete.
+
+Version note: Fingerprint exposes the pinned server SDK contract, not a claimed
+upstream fraud-model version. Abstract `v1` and Opportify
+`intel-v1-fraud-analyze` are endpoint contract identifiers. No native score,
+rank, or confidence is invented when a response family does not provide one.
 
 ## Recovery
 

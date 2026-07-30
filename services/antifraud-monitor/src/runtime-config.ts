@@ -1,5 +1,6 @@
 import type { Config } from "./config.js";
 import { discordRuntimeStatus } from "./discord.js";
+import { PROVIDER_CONTRACTS } from "./provider-contracts.js";
 
 export function sanitizedRuntimeConfig(
   config: Config,
@@ -13,6 +14,7 @@ export function sanitizedRuntimeConfig(
     abstractEmailConfigured: boolean;
     opportifyConfigured: boolean;
   };
+  providerContracts: typeof PROVIDER_CONTRACTS;
   live: {
     redisConfigured: boolean;
     readTokenConfigured: boolean;
@@ -48,6 +50,7 @@ export function sanitizedRuntimeConfig(
       ),
       opportifyConfigured: Boolean(config.OPPORTIFY_API_KEY),
     },
+    providerContracts: PROVIDER_CONTRACTS,
     live: {
       redisConfigured: Boolean(config.REDIS_URL),
       readTokenConfigured: Boolean(config.API_TOKEN),

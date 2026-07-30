@@ -87,16 +87,19 @@ test("OWNER DIVERGENCE: operator IP and fingerprint blocklists are absent", asyn
   assert.doesNotMatch(server, /\/v1\/(?:ip|fingerprint)-blocklist/);
 });
 
-test("OWNER DIVERGENCE: identity-provider and unified relationship evidence are incomplete", async () => {
+test("identity-provider evidence is explicit; unified relationship evidence remains incomplete", async () => {
   const sourceReader = await source("../src/source.ts");
+  const identity = await source("../src/types.ts");
+  const profileStore = await source("../src/profile-store.ts");
   const network = await source("../src/network-risk.ts");
 
   for (const provider of ["google", "discord", "steam"]) {
-    assert.doesNotMatch(
-      sourceReader,
-      new RegExp(`(?:oauth|credential|identity).{0,80}${provider}`, "i"),
-    );
+    assert.match(identity, new RegExp(`"${provider}"`));
   }
+  assert.match(identity, /"credential"/);
+  assert.match(sourceReader, /jsonb_agg[\s\S]*?'provider', a\.provider_id/);
+  assert.match(sourceReader, /'linkedAt', \(a\.created_at/);
+  assert.match(profileStore, /auth_provider_timeline/);
   assert.match(network, /type: "shared_ip" \| "shared_device"/);
   assert.doesNotMatch(network, /session_hop|session_hopping/);
   assert.doesNotMatch(network, /downstream_value|fund_movement/);

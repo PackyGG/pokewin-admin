@@ -10,7 +10,12 @@ import {
   parseFingerprintResponse,
   parseOpportifyResponse,
   parseProxycheckResponse,
+  providerContractMetadata,
   reweightFingerprintSignals,
+  sanitizeAbstractEmailResponse,
+  sanitizeAbstractIpResponse,
+  sanitizeFingerprintResponse,
+  sanitizeProxycheckResponse,
   type EnrichmentResult,
 } from "./enrichment.js";
 import {
@@ -52,11 +57,12 @@ import {
   signupContext,
   type SourceActivity,
 } from "./source.js";
-import type {
-  ActiveSession,
-  LiveEventType,
-  Signal,
-  Signup,
+import {
+  isOauthSignupProvider,
+  type ActiveSession,
+  type LiveEventType,
+  type Signal,
+  type Signup,
 } from "./types.js";
 import { adjustFiatRiskForPaymentMethod } from "./whop-payment-method.js";
 
@@ -890,8 +896,15 @@ export class MonitorEngine {
             ? "failed"
             : "unknown",
       required: true,
+      completeness: result.completeness,
       ...(result.status === "failed"
-        ? { failureKind: "unknown" as const }
+        ? { failureKind: result.failureKind ?? "unknown" }
+        : result.status === "skipped"
+          ? {
+              outcome: "unknown" as const,
+              failureKind:
+                result.failureKind ?? "missing_compatible_datum" as const,
+            }
         : {}),
     }));
   }
@@ -906,11 +919,7 @@ export class MonitorEngine {
       providers: this.providerCoverage(providers),
       assessedAt: signup.created_at,
       isCreator: signup.is_creator ?? false,
-      oauthSignup:
-        Boolean(signup.auth_provider)
-        && !["credential", "credentials", "email"].includes(
-          signup.auth_provider!.toLowerCase(),
-        ),
+      oauthSignup: isOauthSignupProvider(signup.auth_provider),
       hasFingerprint: Boolean(
         signup.fingerprint_request_id && signup.visitor_id,
       ),
@@ -1016,11 +1025,7 @@ export class MonitorEngine {
       ]),
       assessedAt: signup.created_at,
       isCreator: signup.is_creator ?? false,
-      oauthSignup:
-        Boolean(signup.auth_provider)
-        && !["credential", "credentials", "email"].includes(
-          signup.auth_provider!.toLowerCase(),
-        ),
+      oauthSignup: isOauthSignupProvider(signup.auth_provider),
       hasFingerprint: Boolean(signup.fingerprint_request_id && signup.visitor_id),
     });
     const score = assessment.score;
@@ -1662,22 +1667,48 @@ export class MonitorEngine {
       return this.enrichment.fingerprintCheck(signup, weights);
     }
     const response = cached.rows[0].response ?? {};
-    const parsed = Object.hasOwn(response, "products")
+    const products =
+      response.products && typeof response.products === "object"
+        ? response.products as Record<string, unknown>
+        : {};
+    const identification =
+      products.identification && typeof products.identification === "object"
+        ? products.identification as Record<string, unknown>
+        : {};
+    const identificationData =
+      identification.data && typeof identification.data === "object"
+        ? identification.data as Record<string, unknown>
+        : {};
+    if (Object.keys(identificationData).length === 0) {
+      return this.enrichment.fingerprintCheck(signup, weights);
+    }
+    const isSanitized =
+      response.evidence_contract === "fingerprint-pro-plus-sanitized-v1";
+    const parsed = Object.hasOwn(response, "products") && !isSanitized
       ? parseFingerprintResponse(response, signup, weights)
       : null;
+    const signals =
+      parsed?.signals
+      ?? reweightFingerprintSignals(
+        storedSignals(cached.rows[0].signals),
+        weights,
+      );
+    const nativeConfidence = signals
+      .map((signal) => signal.payload?.confidence)
+      .find((value): value is number => typeof value === "number");
+    const nativeScore = parsed?.score ?? Number(cached.rows[0].score ?? 0);
     return {
       provider: "fingerprint",
       status: "success",
       lookupKey: signup.fingerprint_request_id,
       requestId: signup.fingerprint_request_id,
-      score: parsed?.score ?? Number(cached.rows[0].score ?? 0),
-      response,
-      signals:
-        parsed?.signals
-        ?? reweightFingerprintSignals(
-          storedSignals(cached.rows[0].signals),
-          weights,
-        ),
+      score: nativeScore,
+      ...providerContractMetadata("fingerprint", "cache", "complete", {
+        nativeScore,
+        nativeConfidence,
+      }),
+      response: isSanitized ? response : sanitizeFingerprintResponse(response),
+      signals,
     };
   }
 
@@ -1766,8 +1797,24 @@ export class MonitorEngine {
     );
     if (!cached.rows[0]) return this.enrichment.proxycheck(signup, weights);
     const response = cached.rows[0].response ?? {};
+    const sanitized =
+      response.evidence_contract === "proxycheck-v3-sanitized-v1"
+        ? response
+        : sanitizeProxycheckResponse(response, signup.signup_ip);
+    const result =
+      sanitized.result && typeof sanitized.result === "object"
+        ? sanitized.result as Record<string, unknown>
+        : {};
+    if (
+      Object.keys(result).length === 0
+      || !["ok", "warning"].includes(
+        String(sanitized.status ?? "").toLowerCase(),
+      )
+    ) {
+      return this.enrichment.proxycheck(signup, weights);
+    }
     const parsed = parseProxycheckResponse(
-      response,
+      sanitized,
       signup.signup_ip,
       weights,
     );
@@ -1776,7 +1823,14 @@ export class MonitorEngine {
       status: "success",
       lookupKey: signup.signup_ip,
       score: parsed.risk,
-      response,
+      ...providerContractMetadata("proxycheck", "cache", "complete", {
+        tag: "signup",
+        nativeScore: parsed.risk,
+        nativeConfidence: parsed.signals
+          .map((signal) => signal.payload?.confidence)
+          .find((value): value is number => typeof value === "number"),
+      }),
+      response: sanitized,
       signals: parsed.signals,
     };
   }
@@ -1807,13 +1861,25 @@ export class MonitorEngine {
       return this.enrichment.abstractIpCheck(signup, weights);
     }
     const response = cached.rows[0].response ?? {};
-    const parsed = parseAbstractIpResponse(response, signup, weights);
+    const sanitized =
+      response.evidence_contract === "abstract-ip-sanitized-v1"
+        ? response
+        : sanitizeAbstractIpResponse(response);
+    const security =
+      sanitized.security && typeof sanitized.security === "object"
+        ? sanitized.security as Record<string, unknown>
+        : {};
+    if (Object.keys(security).length === 0) {
+      return this.enrichment.abstractIpCheck(signup, weights);
+    }
+    const parsed = parseAbstractIpResponse(sanitized, signup, weights);
     return {
       provider: "abstract_ip",
       status: "success",
       lookupKey: signup.signup_ip,
       score: parsed.score,
-      response,
+      ...providerContractMetadata("abstract_ip", "cache", "complete"),
+      response: sanitized,
       signals: parsed.signals,
     };
   }
@@ -1845,13 +1911,50 @@ export class MonitorEngine {
       return this.enrichment.abstractEmailCheck(signup, weights);
     }
     const response = cached.rows[0].response ?? {};
-    const parsed = parseAbstractEmailResponse(response, weights);
+    const sanitized =
+      response.evidence_contract === "abstract-email-sanitized-v1"
+        ? response
+        : sanitizeAbstractEmailResponse(response);
+    for (const section of [
+      "email_deliverability",
+      "email_quality",
+      "email_domain",
+      "email_risk",
+    ]) {
+      const value = response[section];
+      if (
+        !value
+        || typeof value !== "object"
+        || Object.keys(value as Record<string, unknown>).length === 0
+      ) {
+        return this.enrichment.abstractEmailCheck(signup, weights);
+      }
+    }
+    const parsed = parseAbstractEmailResponse(sanitized, weights);
+    const quality = sanitized.email_quality;
+    const risk = sanitized.email_risk;
+    const nativeScore =
+      quality && typeof quality === "object"
+        && typeof (quality as Record<string, unknown>).score === "number"
+        ? (quality as Record<string, unknown>).score as number
+        : undefined;
+    const riskValues =
+      risk && typeof risk === "object"
+        ? Object.values(risk as Record<string, unknown>)
+        : [];
+    const nativeRank = ["high", "medium", "low"].find((rank) =>
+      riskValues.includes(rank)
+    );
     return {
       provider: "abstract_email",
       status: "success",
       lookupKey: email,
       score: parsed.score,
-      response,
+      ...providerContractMetadata("abstract_email", "cache", "complete", {
+        nativeScore,
+        nativeRank,
+      }),
+      response: sanitized,
       signals: parsed.signals,
     };
   }
@@ -1882,11 +1985,35 @@ export class MonitorEngine {
         cached.rows[0].response ?? {},
         weights,
       );
+      const sources =
+        parsed.response.sources
+        && typeof parsed.response.sources === "object"
+          ? parsed.response.sources as Record<string, unknown>
+          : {};
+      const expectedSources = [
+        signup.email ? "email" : null,
+        signup.signup_ip ? "ip" : null,
+        signup.name || signup.username ? "content" : null,
+      ].filter((value): value is string => Boolean(value));
+      const completeness = expectedSources.every((source) => {
+        const value = sources[source];
+        return Boolean(
+          value
+          && typeof value === "object"
+          && Object.keys(value as Record<string, unknown>).length > 0,
+        );
+      })
+        ? "complete"
+        : "partial";
       return {
         provider: "opportify",
         status: "success",
         lookupKey: `user:${signup.id}`,
         score: parsed.score,
+        ...providerContractMetadata("opportify", "cache", completeness, {
+          nativeScore: parsed.score,
+          nativeRank: parsed.level,
+        }),
         response: parsed.response,
         signals: parsed.signals,
       };

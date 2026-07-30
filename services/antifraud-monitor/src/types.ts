@@ -24,6 +24,36 @@ export type Signup = {
   is_creator?: boolean;
 };
 
+export const SIGNUP_AUTH_PROVIDERS = [
+  "credential",
+  "google",
+  "discord",
+  "steam",
+] as const;
+
+export type SignupAuthProvider = (typeof SIGNUP_AUTH_PROVIDERS)[number];
+
+export function signupAuthProvider(
+  value: string | null | undefined,
+): SignupAuthProvider | "other" | "unknown" {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return "unknown";
+  if (normalized === "credentials" || normalized === "email") {
+    return "credential";
+  }
+  return (SIGNUP_AUTH_PROVIDERS as readonly string[]).includes(normalized)
+    ? normalized as SignupAuthProvider
+    : "other";
+}
+
+export function isOauthSignupProvider(
+  value: string | null | undefined,
+): boolean {
+  return ["google", "discord", "steam", "other"].includes(
+    signupAuthProvider(value),
+  );
+}
+
 export type Signal = {
   key: string;
   title: string;
