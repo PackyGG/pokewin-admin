@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
@@ -46,6 +46,8 @@ import type {
   DiscordNotificationEvent,
 } from "@/lib/discord-notifications/config";
 import { APPROVED_DISCORD_CATEGORY_IDS } from "@/lib/discord-notifications/antifraud-policy";
+import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
+import { getMyPasskeyStepUpState } from "@/lib/passkey-step-up-actions";
 import { cn } from "@/lib/utils";
 import {
   createDiscordChannelAction,
@@ -56,6 +58,12 @@ import {
 type ChannelEditorState = {
   channelId: string;
   eventKeys: string[];
+};
+
+type PendingMutation = {
+  operation: (credential: string) => Promise<void>;
+  successMessage: string;
+  onSuccess?: () => void;
 };
 
 export function DiscordRoutingWorkspace({
@@ -71,10 +79,33 @@ export function DiscordRoutingWorkspace({
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [credential, setCredential] = useState("");
+  const [pendingMutation, setPendingMutation] =
+    useState<PendingMutation | null>(null);
   const approvedCategoryIds = useMemo(
     () => new Set<string>(APPROVED_DISCORD_CATEGORY_IDS),
     [],
   );
+  const graceExpiresAt = useRef<number | null>(null);
+
+  // An active passkey grace window already covers these changes, so no prompt
+  // is shown until it is missing or expired.
+  useEffect(() => {
+    let active = true;
+    getMyPasskeyStepUpState()
+      .then((state) => {
+        if (!active || !state.graceExpiresAt) return;
+        const expiresAt = new Date(state.graceExpiresAt).getTime();
+        if (expiresAt <= Date.now()) return;
+        graceExpiresAt.current = expiresAt;
+        setCredential(PASSKEY_GRACE_CREDENTIAL);
+      })
+      .catch(() => {
+        // Without the optional state check the prompt simply appears.
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   const activeChannels = useMemo(() => {
     if (!initialConfig) return [];
@@ -170,21 +201,20 @@ export function DiscordRoutingWorkspace({
     );
   });
 
-  function runMutation(
-    operation: () => Promise<void>,
-    successMessage: string,
-    onSuccess?: () => void,
-  ) {
-    if (!credential) {
-      toast.error("Approve this routing change with a passkey or 2FA code.");
-      return;
-    }
+  function activeCredential(): string {
+    if (credential !== PASSKEY_GRACE_CREDENTIAL) return credential;
+    const expiresAt = graceExpiresAt.current;
+    return expiresAt && expiresAt > Date.now() ? credential : "";
+  }
+
+  function execute(mutation: PendingMutation, approval: string) {
     startTransition(async () => {
       try {
-        await operation();
-        toast.success(successMessage);
-        setCredential("");
-        onSuccess?.();
+        await mutation.operation(approval);
+        toast.success(mutation.successMessage);
+        // Only a grace window is reusable; a one-use proof is dropped.
+        if (approval !== PASSKEY_GRACE_CREDENTIAL) setCredential("");
+        mutation.onSuccess?.();
         router.refresh();
       } catch (error) {
         toast.error(
@@ -192,6 +222,20 @@ export function DiscordRoutingWorkspace({
         );
       }
     });
+  }
+
+  function runMutation(
+    operation: (approval: string) => Promise<void>,
+    successMessage: string,
+    onSuccess?: () => void,
+  ) {
+    const mutation = { operation, successMessage, onSuccess };
+    const approval = activeCredential();
+    if (!approval) {
+      setPendingMutation(mutation);
+      return;
+    }
+    execute(mutation, approval);
   }
 
   function openNewChannel() {
@@ -241,11 +285,11 @@ export function DiscordRoutingWorkspace({
     if (!editor?.channelId || editor.eventKeys.length === 0) return;
 
     runMutation(
-      () =>
+      (approval) =>
         replaceChannelRoutesAction({
           channelId: editor.channelId,
           eventKeys: editor.eventKeys,
-          credential,
+          credential: approval,
         }),
       editingChannelId ? "Channel updated" : "Channel added",
       closeEditor,
@@ -261,11 +305,11 @@ export function DiscordRoutingWorkspace({
       return;
     }
     runMutation(
-      () =>
+      (approval) =>
         replaceChannelRoutesAction({
           channelId: channel.id,
           eventKeys: [],
-          credential,
+          credential: approval,
         }),
       "Channel removed",
       closeEditor,
@@ -318,16 +362,6 @@ export function DiscordRoutingWorkspace({
           Refresh
         </Button>
       </div>
-
-      <section className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
-        <StepUpField
-          id="discord-routing-step-up"
-          value={credential}
-          onChange={setCredential}
-          disabled={pending}
-          label="Approve Discord configuration changes"
-        />
-      </section>
 
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
         <div className="flex flex-col gap-3 border-b border-border/60 p-3 sm:flex-row sm:items-center sm:p-4">
@@ -507,8 +541,11 @@ export function DiscordRoutingWorkspace({
         pending={pending}
         onCreate={(input) =>
           runMutation(
-            async () => {
-              await createDiscordChannelAction({ ...input, credential });
+            async (approval) => {
+              await createDiscordChannelAction({
+                ...input,
+                credential: approval,
+              });
             },
             "Channel creation queued",
             () => setCreateChannelOpen(false),
@@ -523,13 +560,92 @@ export function DiscordRoutingWorkspace({
         pending={pending}
         onCreate={(input) =>
           runMutation(
-            () => createCustomEventAction({ ...input, credential }),
+            (approval) =>
+              createCustomEventAction({ ...input, credential: approval }),
             "Event created",
             () => setCreateEventOpen(false),
           )
         }
       />
+
+      <ApprovalDialog
+        open={pendingMutation !== null}
+        pending={pending}
+        onCancel={() => setPendingMutation(null)}
+        onApprove={(approval) => {
+          if (approval === PASSKEY_GRACE_CREDENTIAL) {
+            setCredential(PASSKEY_GRACE_CREDENTIAL);
+            // Take the real expiry from the server rather than assuming one.
+            getMyPasskeyStepUpState()
+              .then((state) => {
+                graceExpiresAt.current = state.graceExpiresAt
+                  ? new Date(state.graceExpiresAt).getTime()
+                  : null;
+              })
+              .catch(() => {
+                graceExpiresAt.current = null;
+              });
+          }
+          const mutation = pendingMutation;
+          setPendingMutation(null);
+          if (mutation) execute(mutation, approval);
+        }}
+      />
     </div>
+  );
+}
+
+/** Asks for a second factor only when no approval is already in hand. */
+function ApprovalDialog({
+  open,
+  pending,
+  onCancel,
+  onApprove,
+}: {
+  open: boolean;
+  pending: boolean;
+  onCancel: () => void;
+  onApprove: (credential: string) => void;
+}) {
+  const [value, setValue] = useState("");
+
+  useEffect(() => {
+    if (!open) setValue("");
+  }, [open]);
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle>Approve this change</DialogTitle>
+          <DialogDescription>
+            Confirm with a passkey or your 2FA code to save this Discord routing
+            change.
+          </DialogDescription>
+        </DialogHeader>
+        {open && (
+          <StepUpField
+            id="discord-routing-step-up"
+            value={value}
+            onChange={setValue}
+            disabled={pending}
+            autoFocus
+            label="Approval"
+          />
+        )}
+        <DialogFooter>
+          <Button variant="outline" disabled={pending} onClick={onCancel}>
+            Cancel
+          </Button>
+          <Button
+            disabled={pending || value.trim().length === 0}
+            onClick={() => onApprove(value)}
+          >
+            Approve
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
