@@ -6,6 +6,7 @@ import {
   AlertTriangle,
   Bot,
   CheckCircle2,
+  ChevronDown,
   CircleOff,
   FolderPlus,
   Hash,
@@ -134,6 +135,58 @@ export function DiscordRoutingWorkspace({
       );
   }, [approvedCategoryIds, initialConfig]);
 
+  // Mirrors the Discord sidebar: channels sit under their own category, in the
+  // same order the server shows them.
+  const activeChannelGroups = useMemo(() => {
+    const categoryMeta = new Map<string, { name: string; position: number }>();
+    for (const channel of initialConfig?.channels ?? []) {
+      if (channel.type === "category") {
+        categoryMeta.set(channel.id, {
+          name: channel.name,
+          position: channel.position,
+        });
+      }
+    }
+
+    const groups = new Map<
+      string,
+      {
+        id: string;
+        name: string;
+        position: number;
+        channels: DiscordNotificationChannel[];
+      }
+    >();
+    for (const channel of activeChannels) {
+      const groupId = channel.parentId ?? "uncategorized";
+      let group = groups.get(groupId);
+      if (!group) {
+        const meta = channel.parentId
+          ? categoryMeta.get(channel.parentId)
+          : undefined;
+        group = {
+          id: groupId,
+          name: meta?.name ?? channel.parentName ?? "No category",
+          position: meta?.position ?? Number.MAX_SAFE_INTEGER,
+          channels: [],
+        };
+        groups.set(groupId, group);
+      }
+      group.channels.push(channel);
+    }
+
+    return [...groups.values()]
+      .sort(
+        (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+      )
+      .map((group) => ({
+        ...group,
+        channels: [...group.channels].sort(
+          (a, b) => a.position - b.position || a.name.localeCompare(b.name),
+        ),
+      }));
+  }, [activeChannels, initialConfig]);
+
   const availableChannels = useMemo(() => {
     if (!initialConfig) return [];
     const activeIds = new Set(activeChannels.map((channel) => channel.id));
@@ -190,14 +243,26 @@ export function DiscordRoutingWorkspace({
 
   const config = initialConfig;
   const enabledEvents = initialConfig.events.filter((event) => event.enabled);
+  const assignedElsewhere = new Set(
+    initialConfig.routes
+      .filter(
+        (route) =>
+          route.enabled &&
+          route.channelId !== editor?.channelId,
+      )
+      .map((route) => route.eventKey),
+  );
   const filteredEvents = enabledEvents.filter((event) => {
     const normalized = eventQuery.trim().toLowerCase();
     return (
-      !normalized ||
-      event.label.toLowerCase().includes(normalized) ||
-      event.description.toLowerCase().includes(normalized) ||
-      event.category.toLowerCase().includes(normalized) ||
-      event.key.includes(normalized)
+      !assignedElsewhere.has(event.key) &&
+      (
+        !normalized ||
+        event.label.toLowerCase().includes(normalized) ||
+        event.description.toLowerCase().includes(normalized) ||
+        event.category.toLowerCase().includes(normalized) ||
+        event.key.includes(normalized)
+      )
     );
   });
 
@@ -374,7 +439,8 @@ export function DiscordRoutingWorkspace({
               </Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
-              Every configured channel and the events it receives.
+              Grouped by Discord category, with the events each channel
+              receives.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -432,79 +498,103 @@ export function DiscordRoutingWorkspace({
           </div>
         ) : (
           <div className="divide-y divide-border/60">
-            {activeChannels.map((channel) => {
-              const routes = initialConfig.routes.filter(
-                (route) =>
-                  route.channelId === channel.id &&
-                  route.enabled &&
-                  initialConfig.events.some(
-                    (event) => event.key === route.eventKey && event.enabled,
-                  ),
-              );
-              const events = routes.map(
-                (route) =>
-                  initialConfig.events.find(
-                    (event) => event.key === route.eventKey,
-                  ) ?? {
-                    key: route.eventKey,
-                    label: route.eventKey,
-                    description: "This event is no longer in the catalog.",
-                    category: "Unavailable",
-                    custom: false,
-                    enabled: false,
-                  },
-              );
-
-              return (
-                <div
-                  key={channel.id}
-                  className="flex flex-col gap-4 p-3 sm:flex-row sm:items-start sm:p-4"
-                >
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#5865F2]/10 text-[#5865F2]">
-                    <Hash className="size-4" />
+            {activeChannelGroups.map((group) => (
+              <div key={group.id}>
+                <div className="flex items-center gap-2 bg-muted/40 px-3 py-2 sm:px-4">
+                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                    {group.name}
                   </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <h3 className="font-semibold">#{channel.name}</h3>
-                      <DeliveryBadge channel={channel} />
-                      <span className="text-xs text-muted-foreground">
-                        {channel.parentName ?? "No category"}
-                      </span>
-                    </div>
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {events.map((event) => (
-                        <Badge
-                          key={event.key}
-                          variant={event.enabled ? "secondary" : "destructive"}
-                          title={event.description}
-                        >
-                          {event.label}
-                        </Badge>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="flex shrink-0 gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => openExistingChannel(channel.id)}
-                    >
-                      <Pencil />
-                      Edit
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      aria-label={`Remove #${channel.name}`}
-                      disabled={pending}
-                      onClick={() => removeChannel(channel)}
-                    >
-                      <Trash2 className="text-destructive" />
-                    </Button>
-                  </div>
+                  <span className="text-[11px] tabular-nums text-muted-foreground/70">
+                    {group.channels.length}
+                  </span>
                 </div>
-              );
-            })}
+                <div className="divide-y divide-border/40">
+                  {group.channels.map((channel) => {
+                    const routes = initialConfig.routes.filter(
+                      (route) =>
+                        route.channelId === channel.id &&
+                        route.enabled &&
+                        initialConfig.events.some(
+                          (event) =>
+                            event.key === route.eventKey && event.enabled,
+                        ),
+                    );
+                    const events = routes.map(
+                      (route) =>
+                        initialConfig.events.find(
+                          (event) => event.key === route.eventKey,
+                        ) ?? {
+                          key: route.eventKey,
+                          label: route.eventKey,
+                          description: "This event is no longer in the catalog.",
+                          category: "Unavailable",
+                          custom: false,
+                          enabled: false,
+                        },
+                    );
+
+                    return (
+                      <div
+                        key={channel.id}
+                        className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+                      >
+                        <div className="flex min-w-0 flex-1 items-start gap-3">
+                          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
+                            <Hash className="size-4" />
+                          </span>
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <h3 className="truncate text-sm font-semibold">
+                                #{channel.name}
+                              </h3>
+                              <DeliveryBadge channel={channel} />
+                              <span className="text-[11px] tabular-nums text-muted-foreground">
+                                {events.length}{" "}
+                                {events.length === 1 ? "event" : "events"}
+                              </span>
+                            </div>
+                            <div className="mt-2 flex flex-wrap gap-1.5">
+                              {events.map((event) => (
+                                <Badge
+                                  key={event.key}
+                                  variant={
+                                    event.enabled ? "outline" : "destructive"
+                                  }
+                                  className="px-1.5 py-0 text-[11px] font-normal"
+                                  title={event.description}
+                                >
+                                  {event.label}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => openExistingChannel(channel.id)}
+                          >
+                            <Pencil />
+                            Edit
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon-sm"
+                            aria-label={`Remove #${channel.name}`}
+                            disabled={pending}
+                            onClick={() => removeChannel(channel)}
+                          >
+                            <Trash2 className="text-destructive" />
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>
