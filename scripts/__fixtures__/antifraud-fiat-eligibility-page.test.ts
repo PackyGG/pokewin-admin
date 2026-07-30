@@ -31,15 +31,17 @@ test("the automatic Fiat eligibility explainer remains a guarded direct route", 
 });
 
 test("the page documents the service's canonical binary threshold", async () => {
-  const service = await source(
-    "services/antifraud-monitor/src/fiat-eligibility.ts",
-  );
+  const [service, policy] = await Promise.all([
+    source("services/antifraud-monitor/src/fiat-eligibility.ts"),
+    source("services/antifraud-monitor/src/fiat-eligibility-policy.ts"),
+  ]);
 
-  assert.match(service, /const AUTOMATIC_DENY_SCORE = 50/);
+  assert.match(service, /AUTOMATIC_DENY_SCORE,/);
+  assert.match(policy, /export const AUTOMATIC_DENY_SCORE = 50/);
   assert.match(
-    service,
-    /deduped\.some\(\(signal\) => signal\.blocking\)[\s\S]*?riskScore >= AUTOMATIC_DENY_SCORE[\s\S]*?\? "deny"[\s\S]*?: "allow"/,
+    policy,
+    /deduped\.some\(\(signal\) => signal\.blocking\)[\s\S]*?blocked \|\| riskScore >= AUTOMATIC_DENY_SCORE[\s\S]*?\? "deny"[\s\S]*?: "allow"/,
   );
-  assert.match(service, /const DECISION_TTL_MS = 60_000/);
-  assert.match(service, /const MAX_REQUEST_AGE_MS = 120_000/);
+  assert.match(policy, /export const DECISION_TTL_MS = 60_000/);
+  assert.match(policy, /export const MAX_REQUEST_AGE_MS = 120_000/);
 });
