@@ -17,6 +17,8 @@ import {
   type RefundBatchProgress,
 } from "./refund-actions";
 import type {
+  RefundBatchAccountSummary,
+  RefundBatchItemSummary,
   RefundBatchSummary,
   RefundCandidate,
 } from "@/lib/queries/whop-refunds";
@@ -50,7 +52,12 @@ function money(cents: number, currency: string) {
   }).format(cents / 100);
 }
 
-function accountLocation(candidate: RefundCandidate): string {
+function accountLocation(
+  candidate: Pick<
+    RefundCandidate,
+    "city" | "state" | "country" | "countryCode"
+  >,
+): string {
   const parts = [candidate.city, candidate.state, candidate.country]
     .map((part) => part?.trim())
     .filter((part): part is string => Boolean(part));
@@ -59,6 +66,27 @@ function accountLocation(candidate: RefundCandidate): string {
 
   if (location && countryCode) return `${location} (${countryCode})`;
   return location || countryCode || "Location unknown";
+}
+
+function readableStatus(status: string): string {
+  return status.replaceAll("_", " ");
+}
+
+function refundTotals(items: RefundBatchItemSummary[]): string {
+  const totals = new Map<string, number>();
+  for (const item of items) {
+    totals.set(
+      item.currency,
+      (totals.get(item.currency) ?? 0) + item.originalAmountCents,
+    );
+  }
+  return [...totals.entries()]
+    .map(([currency, cents]) => money(cents, currency))
+    .join(" + ");
+}
+
+function accountIdentity(account: RefundBatchAccountSummary): string {
+  return account.username || account.email || account.userId;
 }
 
 export function RefundsPanel({
@@ -334,7 +362,8 @@ export function RefundsPanel({
 
       {grouped.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center text-sm text-muted-foreground">
-          No refundable Whop deposits were found for banned or fraud-confirmed accounts.
+          No refundable Whop deposits were found for banned or fraud-confirmed
+          accounts.
         </div>
       ) : (
         <div className="space-y-4">
@@ -500,40 +529,162 @@ export function RefundsPanel({
                 </Button>
               )}
           </div>
-          <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="space-y-3">
             {recentBatches.map((batch) => (
               <div
                 key={batch.batchId}
-                className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm sm:px-4"
+                className="overflow-hidden rounded-xl border border-border/60 bg-card"
               >
-                <div>
-                  <p className="font-medium">
-                    <span className="font-mono">
-                      {batch.batchId.slice(0, 8)}
-                    </span>{" "}
-                    · {batch.requestedCount} payments
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    {new Date(batch.createdAt).toLocaleString()}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge
-                    variant={batch.issues > 0 ? "destructive" : "secondary"}
-                  >
-                    {batch.succeeded} done · {batch.issues} issues
-                  </Badge>
-                  {canExecute && batch.pending > 0 && (
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      disabled={working}
-                      onClick={() => runBatch(batch.batchId)}
+                <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3 text-sm sm:px-4">
+                  <div className="min-w-0 space-y-1">
+                    <p className="font-medium">
+                      <span className="font-mono">
+                        {batch.batchId.slice(0, 8)}
+                      </span>{" "}
+                      · {batch.accounts.length}{" "}
+                      {batch.accounts.length === 1 ? "account" : "accounts"} ·{" "}
+                      {batch.requestedCount} payments
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Created {new Date(batch.createdAt).toLocaleString()}
+                      {batch.completedAt &&
+                        ` · Completed ${new Date(batch.completedAt).toLocaleString()}`}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {readableStatus(batch.selectionMode)} selection ·{" "}
+                      {batch.reason}
+                    </p>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge variant="outline">
+                      {readableStatus(batch.status)}
+                    </Badge>
+                    <Badge
+                      variant={batch.issues > 0 ? "destructive" : "secondary"}
                     >
-                      <RotateCcw className="size-4" />
-                      Resume
-                    </Button>
-                  )}
+                      {batch.succeeded} done · {batch.issues} issues
+                    </Badge>
+                    {canExecute && batch.pending > 0 && (
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        disabled={working}
+                        onClick={() => runBatch(batch.batchId)}
+                      >
+                        <RotateCcw className="size-4" />
+                        Resume
+                      </Button>
+                    )}
+                  </div>
+                </div>
+
+                <div className="divide-y divide-border/60 border-t border-border/60">
+                  {batch.accounts.map((account) => (
+                    <details
+                      key={account.userId}
+                      className="group px-3 py-3 sm:px-4"
+                    >
+                      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+                        <div className="min-w-0">
+                          <p className="truncate font-medium">
+                            {accountIdentity(account)}
+                          </p>
+                          <p className="truncate font-mono text-[11px] text-muted-foreground">
+                            {account.userId}
+                          </p>
+                          {account.username && account.email && (
+                            <p className="truncate text-xs text-muted-foreground">
+                              {account.email}
+                            </p>
+                          )}
+                          <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                            <MapPin className="size-3 shrink-0" />
+                            {accountLocation(account)}
+                          </p>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Badge variant="outline">
+                            {account.items.length}{" "}
+                            {account.items.length === 1
+                              ? "payment"
+                              : "payments"}
+                          </Badge>
+                          <span className="font-semibold tabular-nums">
+                            {refundTotals(account.items)}
+                          </span>
+                          <span
+                            aria-hidden
+                            className="text-muted-foreground transition-transform group-open:rotate-180"
+                          >
+                            ⌄
+                          </span>
+                        </div>
+                      </summary>
+
+                      <div className="mt-3 space-y-2">
+                        {account.items.map((item) => (
+                          <div
+                            key={item.itemId}
+                            className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-xs sm:grid-cols-[minmax(0,1fr)_auto]"
+                          >
+                            <div className="min-w-0 space-y-1">
+                              <p className="break-all font-mono">
+                                {item.providerPaymentId}
+                              </p>
+                              <p className="break-all font-mono text-[10px] text-muted-foreground">
+                                Deposit {item.depositIntentId}
+                              </p>
+                              <p className="text-muted-foreground">
+                                Added{" "}
+                                {new Date(item.createdAt).toLocaleString()}
+                                {item.completedAt &&
+                                  ` · Finished ${new Date(item.completedAt).toLocaleString()}`}
+                                {" · "}
+                                {item.attemptCount}{" "}
+                                {item.attemptCount === 1
+                                  ? "attempt"
+                                  : "attempts"}
+                              </p>
+                              {(item.providerStatus ||
+                                item.providerSubstatus) && (
+                                <p className="text-muted-foreground">
+                                  Provider:{" "}
+                                  {[item.providerStatus, item.providerSubstatus]
+                                    .filter(Boolean)
+                                    .join(" · ")}
+                                </p>
+                              )}
+                              {(item.errorCode || item.errorMessage) && (
+                                <p className="text-rose-600 dark:text-rose-400">
+                                  {[item.errorCode, item.errorMessage]
+                                    .filter(Boolean)
+                                    .join(": ")}
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex items-start gap-2 sm:flex-col sm:items-end">
+                              <span className="font-semibold tabular-nums">
+                                {money(item.originalAmountCents, item.currency)}
+                              </span>
+                              <Badge
+                                variant={
+                                  [
+                                    "failed",
+                                    "unknown",
+                                    "not_refundable",
+                                  ].includes(item.status)
+                                    ? "destructive"
+                                    : "secondary"
+                                }
+                              >
+                                {readableStatus(item.status)}
+                              </Badge>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </details>
+                  ))}
                 </div>
               </div>
             ))}

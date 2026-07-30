@@ -35,12 +35,44 @@ export type RefundCandidate = {
 export type RefundBatchSummary = {
   batchId: string;
   status: string;
+  selectionMode: string;
   reason: string;
   createdAt: string;
+  completedAt: string | null;
   requestedCount: number;
   pending: number;
   succeeded: number;
   issues: number;
+  accounts: RefundBatchAccountSummary[];
+};
+
+export type RefundBatchAccountSummary = {
+  userId: string;
+  username: string | null;
+  email: string | null;
+  country: string | null;
+  countryCode: string | null;
+  state: string | null;
+  city: string | null;
+  items: RefundBatchItemSummary[];
+};
+
+export type RefundBatchItemSummary = {
+  itemId: string;
+  depositIntentId: string;
+  providerPaymentId: string;
+  currency: string;
+  originalAmountCents: number;
+  status: WhopRefundState;
+  attemptCount: number;
+  providerStatus: string | null;
+  providerSubstatus: string | null;
+  refundedAmount: string | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
 };
 
 export type WhopRefundState =
@@ -147,9 +179,7 @@ export async function getWhopRefundStates(
     WHERE provider_payment_id =
       ANY(${pgArrayParam(uniqueIds)}::text[])
   `);
-  return new Map(
-    rows.rows.map((row) => [row.provider_payment_id, row.status]),
-  );
+  return new Map(rows.rows.map((row) => [row.provider_payment_id, row.status]));
 }
 
 async function queryCandidates(
@@ -322,10 +352,12 @@ export async function getRefundCandidates(): Promise<RefundCandidate[]> {
   return candidates.filter((candidate) => !candidate.alreadyQueued);
 }
 
-export async function resolveRefundSelection(input:
-  | { mode: "all" }
-  | { mode: "users"; ids: readonly string[] }
-  | { mode: "payments"; ids: readonly string[] }): Promise<RefundCandidate[]> {
+export async function resolveRefundSelection(
+  input:
+    | { mode: "all" }
+    | { mode: "users"; ids: readonly string[] }
+    | { mode: "payments"; ids: readonly string[] },
+): Promise<RefundCandidate[]> {
   const flagged = await currentlyFlaggedUsers();
   const candidates = await queryCandidates(
     flagged,
@@ -336,11 +368,13 @@ export async function resolveRefundSelection(input:
 }
 
 export async function getRecentRefundBatches(): Promise<RefundBatchSummary[]> {
-  const result = await adminDrizzle.execute<{
+  const batchResult = await adminDrizzle.execute<{
     batch_id: string;
     status: string;
+    selection_mode: string;
     reason: string;
     created_at: string;
+    completed_at: string | null;
     requested_count: number;
     pending: number;
     succeeded: number;
@@ -349,8 +383,10 @@ export async function getRecentRefundBatches(): Promise<RefundBatchSummary[]> {
     SELECT
       b.id::text AS batch_id,
       b.status,
+      b.selection_mode,
       b.reason,
       b.created_at::text,
+      b.completed_at::text,
       b.requested_count,
       COUNT(i.id) FILTER (
         WHERE i.status IN ('pending', 'processing')
@@ -367,14 +403,153 @@ export async function getRecentRefundBatches(): Promise<RefundBatchSummary[]> {
     ORDER BY b.created_at DESC
     LIMIT 10
   `);
-  return result.rows.map((row) => ({
+
+  const batchIds = batchResult.rows.map((row) => row.batch_id);
+  if (batchIds.length === 0) return [];
+
+  const itemResult = await adminDrizzle.execute<{
+    item_id: string;
+    batch_id: string;
+    user_id: string;
+    deposit_intent_id: string;
+    provider_payment_id: string;
+    currency: string;
+    original_amount_cents: number;
+    status: WhopRefundState;
+    attempt_count: number;
+    provider_status: string | null;
+    provider_substatus: string | null;
+    refunded_amount: string | null;
+    error_code: string | null;
+    error_message: string | null;
+    created_at: string;
+    updated_at: string;
+    completed_at: string | null;
+  }>(sql`
+    SELECT
+      id::text AS item_id,
+      batch_id::text,
+      user_id,
+      deposit_intent_id::text,
+      provider_payment_id,
+      currency,
+      original_amount_cents,
+      status,
+      attempt_count,
+      provider_status,
+      provider_substatus,
+      refunded_amount::text,
+      error_code,
+      error_message,
+      created_at::text,
+      updated_at::text,
+      completed_at::text
+    FROM admin_whop_refund_items
+    WHERE batch_id = ANY(${pgArrayParam(batchIds)}::uuid[])
+    ORDER BY created_at, id
+  `);
+
+  const userIds = [...new Set(itemResult.rows.map((row) => row.user_id))];
+  const users = new Map<
+    string,
+    {
+      username: string | null;
+      email: string | null;
+      country: string | null;
+      countryCode: string | null;
+      state: string | null;
+      city: string | null;
+    }
+  >();
+  if (userIds.length > 0) {
+    const db = readDrizzleForEnv(await readDbEnv());
+    const userResult = await db.execute<{
+      user_id: string;
+      username: string | null;
+      email: string | null;
+      country: string | null;
+      country_code: string | null;
+      state: string | null;
+      city: string | null;
+    }>(sql`
+      SELECT
+        id AS user_id,
+        username,
+        email,
+        country,
+        country_code,
+        state,
+        city
+      FROM "user"
+      WHERE id = ANY(${pgArrayParam(userIds)}::text[])
+    `);
+    for (const row of userResult.rows) {
+      users.set(row.user_id, {
+        username: row.username,
+        email: row.email,
+        country: row.country,
+        countryCode: row.country_code,
+        state: row.state,
+        city: row.city,
+      });
+    }
+  }
+
+  const accountsByBatch = new Map<
+    string,
+    Map<string, RefundBatchAccountSummary>
+  >();
+  for (const row of itemResult.rows) {
+    let accounts = accountsByBatch.get(row.batch_id);
+    if (!accounts) {
+      accounts = new Map();
+      accountsByBatch.set(row.batch_id, accounts);
+    }
+    let account = accounts.get(row.user_id);
+    if (!account) {
+      const profile = users.get(row.user_id);
+      account = {
+        userId: row.user_id,
+        username: profile?.username ?? null,
+        email: profile?.email ?? null,
+        country: profile?.country ?? null,
+        countryCode: profile?.countryCode ?? null,
+        state: profile?.state ?? null,
+        city: profile?.city ?? null,
+        items: [],
+      };
+      accounts.set(row.user_id, account);
+    }
+    account.items.push({
+      itemId: row.item_id,
+      depositIntentId: row.deposit_intent_id,
+      providerPaymentId: row.provider_payment_id,
+      currency: row.currency,
+      originalAmountCents: Number(row.original_amount_cents),
+      status: row.status,
+      attemptCount: Number(row.attempt_count),
+      providerStatus: row.provider_status,
+      providerSubstatus: row.provider_substatus,
+      refundedAmount: row.refunded_amount,
+      errorCode: row.error_code,
+      errorMessage: row.error_message,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      completedAt: row.completed_at,
+    });
+  }
+
+  return batchResult.rows.map((row) => ({
     batchId: row.batch_id,
     status: row.status,
+    selectionMode: row.selection_mode,
     reason: row.reason,
     createdAt: row.created_at,
+    completedAt: row.completed_at,
     requestedCount: Number(row.requested_count),
     pending: Number(row.pending),
     succeeded: Number(row.succeeded),
     issues: Number(row.issues),
+    accounts: [...(accountsByBatch.get(row.batch_id)?.values() ?? [])],
   }));
 }

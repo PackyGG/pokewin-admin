@@ -82,7 +82,10 @@ const middleware = readFileSync(
 test("Whop refunds are visible to Fraud staff and executable by managers", () => {
   assert.match(refundPage, /await requireAntifraudPageAccess\(\)/);
   assert.match(refundPage, /canExecute=\{canManageAntifraud\(session\)\}/);
-  assert.match(refundsPanel, /Whop refunds for banned or fraud-confirmed accounts/);
+  assert.match(
+    refundsPanel,
+    /Whop refunds for banned or fraud-confirmed accounts/,
+  );
   assert.match(refundsPanel, /<Badge variant="outline">View only<\/Badge>/);
   assert.match(sidebar, /label: "Refunds"/);
   assert.doesNotMatch(sidebar, /OWNER_TRANSACTION_NAV|isOwner/);
@@ -242,6 +245,24 @@ test("Fiat review surfaces retain the durable refund outcome", () => {
   assert.match(fiatList, /Refund needs review/);
   assert.match(fiatDetail, /getWhopRefundStates/);
   assert.match(fiatDetail, /Refunded/);
+});
+
+test("recent refund batches retain every account and payment detail", () => {
+  assert.match(queries, /export type RefundBatchAccountSummary/);
+  assert.match(queries, /export type RefundBatchItemSummary/);
+  assert.match(
+    queries,
+    /FROM admin_whop_refund_items[\s\S]*WHERE batch_id = ANY/,
+  );
+  assert.match(queries, /FROM "user"[\s\S]*WHERE id = ANY/);
+  assert.match(queries, /accountsByBatch/);
+  assert.match(refundsPanel, /batch\.accounts\.length/);
+  assert.match(refundsPanel, /batch\.reason/);
+  assert.match(refundsPanel, /accountIdentity\(account\)/);
+  assert.match(refundsPanel, /item\.providerPaymentId/);
+  assert.match(refundsPanel, /item\.depositIntentId/);
+  assert.match(refundsPanel, /item\.providerStatus/);
+  assert.match(refundsPanel, /item\.errorMessage/);
 });
 
 test("refund candidates expose the account location and KYC state", () => {
