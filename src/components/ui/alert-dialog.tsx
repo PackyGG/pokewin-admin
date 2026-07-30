@@ -6,8 +6,35 @@ import { AlertDialog as AlertDialogPrimitive } from "@base-ui/react/alert-dialog
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 
-function AlertDialog({ ...props }: AlertDialogPrimitive.Root.Props) {
-  return <AlertDialogPrimitive.Root data-slot="alert-dialog" {...props} />
+/**
+ * Base UI hard-locks `disablePointerDismissal` on AlertDialog, so an outside
+ * click can never close it natively. We keep a handle on the root's imperative
+ * actions and close from the backdrop's click handler instead, so alert dialogs
+ * dismiss on outside click like every other popup in the app.
+ */
+const AlertDialogActionsContext =
+  React.createContext<React.RefObject<AlertDialogPrimitive.Root.Actions | null> | null>(
+    null
+  )
+
+function AlertDialog({
+  actionsRef,
+  ...props
+}: AlertDialogPrimitive.Root.Props) {
+  const fallbackRef = React.useRef<AlertDialogPrimitive.Root.Actions | null>(
+    null
+  )
+  const actions = actionsRef ?? fallbackRef
+
+  return (
+    <AlertDialogActionsContext.Provider value={actions}>
+      <AlertDialogPrimitive.Root
+        data-slot="alert-dialog"
+        actionsRef={actions}
+        {...props}
+      />
+    </AlertDialogActionsContext.Provider>
+  )
 }
 
 function AlertDialogTrigger({ ...props }: AlertDialogPrimitive.Trigger.Props) {
@@ -24,11 +51,22 @@ function AlertDialogPortal({ ...props }: AlertDialogPrimitive.Portal.Props) {
 
 function AlertDialogOverlay({
   className,
+  onClick,
   ...props
 }: AlertDialogPrimitive.Backdrop.Props) {
+  const actions = React.useContext(AlertDialogActionsContext)
+
   return (
     <AlertDialogPrimitive.Backdrop
       data-slot="alert-dialog-overlay"
+      onClick={(event) => {
+        onClick?.(event)
+        // A click that started inside the popup resolves on the portal root,
+        // not the backdrop, so this only fires for genuine outside clicks.
+        if (!event.defaultPrevented) {
+          actions?.current?.close()
+        }
+      }}
       className={cn(
         "fixed inset-0 isolate z-50 bg-black/40 duration-150 supports-backdrop-filter:backdrop-blur-sm data-open:animate-in data-open:fade-in-0 data-closed:animate-out data-closed:fade-out-0 sm:bg-black/10",
         className
