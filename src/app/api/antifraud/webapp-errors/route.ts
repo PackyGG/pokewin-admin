@@ -97,6 +97,8 @@ export async function POST(request: Request): Promise<Response> {
 
   const report = parsed.data;
   const correlationId = randomUUID();
+  // Repeat crashes stay visible once per hour without flooding Discord on
+  // every render retry or reconnect loop.
   const hourBucket = new Date().toISOString().slice(0, 13);
   const fingerprint = createHash("sha256")
     .update(
