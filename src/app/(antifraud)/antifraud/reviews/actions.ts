@@ -236,6 +236,8 @@ const updateStatusSchema = z
 export type WithdrawalReleaseStatus =
   | "released"
   | "already_open"
+  /** Withdrawals stay locked: only an owner/admin can lift a KYC gate. */
+  | "kyc_gated"
   | "failed"
   /** Not a clearing transition — nothing was attempted. */
   | "not_applicable";
@@ -297,6 +299,9 @@ function assertStatusReplayMatches(
  * `__can_toggle_feature_locks` would silently turn most clears back into the
  * old lock-survives-the-verdict behaviour. The release is fully audited and
  * reversible from /users/[id].
+ *
+ * The ONE thing a clear cannot lift is a KYC gate — that stays owner/admin +
+ * 2FA only, enforced inside the release helper.
  */
 async function releaseClearedCaseWithdrawals(params: {
   reviewId: string;
@@ -328,6 +333,21 @@ async function releaseClearedCaseWithdrawals(params: {
       console.error("[antifraud] release note failed:", error);
     }
     revalidateTag(userDetailTag(params.targetUserId));
+  } else if (outcome.status === "kyc_gated") {
+    // Worth a trail entry: the case is closed but the account is still locked,
+    // and the trail should say why rather than look like a missing release.
+    try {
+      await adminDrizzle.insert(antifraud_review_notes).values({
+        review_id: params.reviewId,
+        admin_user_id: params.adminUserId,
+        kind: "action",
+        body:
+          "Cleared, but withdrawals stay locked: this account is awaiting a " +
+          "KYC decision, which only an owner or admin can make.",
+      });
+    } catch (error) {
+      console.error("[antifraud] kyc-gated release note failed:", error);
+    }
   }
 
   return outcome.status;

@@ -97,8 +97,18 @@ test("clearing a case releases the player's withdrawal locks", () => {
   assert.match(release, /locked_withdrawals_crypto_disabled/);
   assert.match(release, /locked_withdrawals_items_disabled/);
   assert.match(release, /antifraud_withdrawals_unlocked/);
-  // Deposit locks and the backend-owned KYC gate are separate decisions.
-  assert.doesNotMatch(release, /locked_deposits|user_kyc/);
+  // Deposit locks stay untouched — only the two withdrawal channels move.
+  assert.doesNotMatch(release, /locked_deposits/);
+  // A KYC gate is owner/admin + 2FA only. An analyst's clear must never lift
+  // it, and an unreadable KYC state fails CLOSED.
+  assert.match(
+    release,
+    /kyc\?\.required === true && kyc\.decision !== "safe"[\s\S]*?return \{ status: "kyc_gated" \}/,
+  );
+  assert.match(
+    release,
+    /KYC gate check failed[\s\S]*?return \{ status: "failed" \}/,
+  );
   // The verdict is already committed — a MAIN failure must not throw past it.
   assert.match(release, /return \{ status: "failed" \}/);
 

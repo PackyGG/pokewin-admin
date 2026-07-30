@@ -140,6 +140,10 @@ function QuickActionButton({
           toast.warning(
             "Account marked fine, but withdrawals could not be unlocked — unlock them on the user page.",
           );
+        } else if (result.withdrawalRelease === "kyc_gated") {
+          toast.warning(
+            "Account marked fine. Withdrawals stay locked until an owner or admin approves KYC.",
+          );
         } else {
           toast.success(
             result.withdrawalRelease === "released"

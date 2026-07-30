@@ -1,9 +1,10 @@
 import "server-only";
 
-import { sql } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
-import { getPrimaryDrizzleDb } from "@/lib/db";
+import { getPrimaryDrizzleDb, getReadDrizzleDb } from "@/lib/db";
+import { user_kyc } from "@/lib/db-schema/main/schema";
 import { logError } from "@/lib/errors/logger";
 
 /**
@@ -30,6 +31,12 @@ import { logError } from "@/lib/errors/logger";
  *   duplicate audit rows.
  * - It releases withdrawals ONLY. Deposit locks, opening/exchange/vault locks
  *   and the backend-owned KYC gate are separate decisions and are untouched.
+ * - A KYC-gated account is NEVER released here. Requiring and reviewing KYC is
+ *   owner/admin-only with fresh 2FA (`requireAntifraudManager` in
+ *   `antifraud/kyc/actions.ts`); letting an analyst's case verdict lift that
+ *   gate as a side effect would route around it. Such a case still clears —
+ *   the withdrawals just stay locked until an owner or admin marks the
+ *   verification cycle `safe`.
  */
 
 export type WithdrawalReleaseOutcome =
@@ -37,6 +44,8 @@ export type WithdrawalReleaseOutcome =
   | { status: "released"; previousCrypto: string[]; previousItems: boolean }
   /** Nothing to do — no lock row, or withdrawals were already open. */
   | { status: "already_open" }
+  /** KYC is pending an owner/admin decision — only they may lift this. */
+  | { status: "kyc_gated" }
   /** MAIN rejected the write. The verdict stands; the lock does too. */
   | { status: "failed" };
 
@@ -62,6 +71,30 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
   idempotencyKey?: string;
 }): Promise<WithdrawalReleaseOutcome> {
   const { userId, adminUserId, reviewId, idempotencyKey } = params;
+
+  // KYC gate first, and fail CLOSED: if we cannot prove the account is not
+  // awaiting an owner/admin KYC decision, we do not touch the lock.
+  try {
+    const read = await getReadDrizzleDb();
+    const [kyc] = await read
+      .select({
+        required: user_kyc.kyc_required,
+        decision: user_kyc.admin_decision,
+      })
+      .from(user_kyc)
+      .where(eq(user_kyc.user_id, userId))
+      .limit(1);
+    if (kyc?.required === true && kyc.decision !== "safe") {
+      return { status: "kyc_gated" };
+    }
+  } catch (error) {
+    logError(
+      "antifraud.review.releaseWithdrawals",
+      `KYC gate check failed for review ${reviewId}; leaving locks in place`,
+      error,
+    );
+    return { status: "failed" };
+  }
 
   let row: ReleaseRow | undefined;
   try {

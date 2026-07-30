@@ -141,6 +141,10 @@ export function CaseControls({
         toast.warning(
           "Case cleared, but withdrawals could not be unlocked — unlock them on the user page.",
         );
+      } else if (result.withdrawalRelease === "kyc_gated") {
+        toast.warning(
+          "Case cleared. Withdrawals stay locked until an owner or admin approves KYC.",
+        );
       } else {
         toast.success(
           result.withdrawalRelease === "released"
@@ -213,8 +217,9 @@ export function CaseControls({
         </div>
         <p className="text-[11px] text-muted-foreground">
           Clear and Flag require a conclusion. Clearing also unlocks crypto and
-          item withdrawals for this player. Reopening withdraws the previous
-          verdict but keeps the append-only trail — it does not re-lock.
+          item withdrawals — unless the account is awaiting KYC, which only an
+          owner or admin can approve. Reopening withdraws the previous verdict
+          but keeps the append-only trail — it does not re-lock.
         </p>
       </div>
 
