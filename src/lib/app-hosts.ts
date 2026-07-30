@@ -98,6 +98,55 @@ const HOST_PATH_ALIASES = [
   { prefix: "/marketing", host: `marketing.${ROOT_DOMAIN}` },
 ] as const;
 
+/**
+ * Top-level path segments the MAIN admin app owns at the apex — the directory
+ * names under `src/app/(admin)`, plus the dev-only fixture route.
+ *
+ * Used only by the apex self-heal below: a segment listed here always renders
+ * on the apex, even when a sub-app claims the same name (`/packs`, `/cards`,
+ * `/creators`, `/rewards`, `/settings`, `/profile`, `/notifications`,
+ * `/withdrawals`). Everything else that exactly one segment host claims is a
+ * sub-app path that only 404s at the apex, so it gets redirected to its owner.
+ *
+ * Kept honest by `scripts/__fixtures__/apex-subapp-path-selfheal.test.ts`.
+ */
+const APEX_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
+  "admin-users",
+  "analytics",
+  "analytics-2",
+  "cards",
+  "challenges",
+  "chat",
+  "chat-raffle",
+  "creator-rewards",
+  "creators",
+  "dashboard",
+  "fiat",
+  "insights",
+  "keno",
+  "my-profile",
+  "notifications",
+  "packs",
+  "profile",
+  "promo-codes",
+  "rain",
+  "responsive-fixture",
+  "rewards",
+  "salaries",
+  "security",
+  "sets",
+  "settings",
+  "system",
+  "test",
+  "transactions",
+  "upgrader",
+  "users",
+  "vips",
+  "vouchers",
+  "withdrawals",
+  "xp-sales",
+]);
+
 export const APP_HOSTS: readonly AppHostConfig[] = [
   {
     host: ROOT_DOMAIN,
@@ -160,6 +209,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "fingerprint-blacklist",
       "banned-users",
       "audit",
+      "profiles",
       "risky-locations",
       "reviews",
       "kyc",
@@ -314,6 +364,29 @@ function ownedPublicPath(pathname: string): OwnedPublicPath | null {
   return null;
 }
 
+/**
+ * The segment host that owns a clean path seen on a LANDING host, or null.
+ *
+ * `packydash.com/banned-users` is a Fraud page opened on the apex: the apex is a
+ * landing host, so it never rewrites, and the main app has no such route — the
+ * request 404s with no hint that the page exists one hostname over. Resolving it
+ * here makes every sub-app bookmark, pasted link, and typed URL self-heal in the
+ * same direction the segment→apex case already does.
+ *
+ * Deliberately conservative: a segment the apex owns itself (`/packs`,
+ * `/creators`, `/settings`, …) always stays on the apex, and a segment claimed
+ * by more than one sub-app is left alone rather than guessed at.
+ */
+function segmentHostForApexPath(pathname: string): AppHostConfig | null {
+  const first = pathname.split("/")[1] ?? "";
+  if (!first || APEX_ROUTE_SEGMENTS.has(first)) return null;
+  const owners = APP_HOSTS.filter(
+    (entry) => entry.basePath && entry.segmentRoutes.includes(first),
+  );
+  const hosts = new Set(owners.map((entry) => entry.host));
+  return hosts.size === 1 ? owners[0] : null;
+}
+
 function isPassthrough(pathname: string): boolean {
   if (PASSTHROUGH_EXACT.has(pathname)) return true;
   if (PASSTHROUGH_PREFIXES.some((p) => pathname.startsWith(p))) return true;
@@ -389,6 +462,13 @@ export function redirectTargetForHost(
     if (!config.segmentRoutes.includes(first)) {
       return `https://${APP_HOSTS[0].host}${pathname}`;
     }
+  }
+
+  // (3) The mirror image: a sub-app path on a landing host, which the main app
+  // has no route for. Send it to the hostname that actually serves it.
+  if (!config.basePath && pathname !== "/") {
+    const owner = segmentHostForApexPath(pathname);
+    if (owner) return `https://${owner.host}${pathname}`;
   }
 
   return null;
