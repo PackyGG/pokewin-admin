@@ -379,7 +379,7 @@ export function AntifraudSidebar({
   return (
     <Sidebar collapsible="icon">
       {/* Packy wordmark — same assets + sizing as the main AppSidebar header. */}
-      <SidebarHeader className="border-b border-border px-4 py-3 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-14 group-data-[collapsible=icon]:py-0">
+      <SidebarHeader className="border-b border-border px-4 h-16 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link
           href={toHref("/antifraud")}
           onClick={handleNavTap}
