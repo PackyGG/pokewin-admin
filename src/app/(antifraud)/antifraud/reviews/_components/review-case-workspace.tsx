@@ -22,7 +22,7 @@ import { ReviewStatusBadge } from "../../_components/badges";
 import { CaseControls } from "./case-controls";
 import { QuickReviewActions } from "./quick-review-actions";
 import { ReviewSignalBadge } from "./review-signal-badge";
-import { listAssignableAnalysts } from "../actions";
+import { listAssignableAnalysts } from "@/lib/antifraud/review-analysts";
 import {
   REVIEW_QUEUE_LABELS,
   type ReviewWorkflow,
