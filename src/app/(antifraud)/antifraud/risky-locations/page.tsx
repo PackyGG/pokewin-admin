@@ -50,7 +50,7 @@ async function RiskyLocationsContent() {
         />
         <KpiTile
           label="Default monitor"
-          value="3 min"
+          value="7.5 min"
           icon={RadioTower}
           accent="emerald"
         />
