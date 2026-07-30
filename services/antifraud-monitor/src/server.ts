@@ -562,15 +562,28 @@ app.get("/ready", {
     const poller = engine.healthSnapshot();
     const liveStatus = live.stats();
     const webappMonitor = dashboardOpsTick.status();
-    const reason =
-      poller.status === "starting" || poller.status === "degraded"
-        ? `poller_${poller.status}`
-        : !liveStatus.subscribed
-          ? "live_unsubscribed"
-          : config.NODE_ENV === "production" &&
-              webappMonitor.status === "degraded"
-            ? `webapp_monitor_${webappMonitor.status}`
-            : null;
+    // Readiness gates only on HARD poller faults: no successful tick yet,
+    // repeated tick failures, or a stale tick. The snapshot also reports
+    // "degraded" for pending signup dead-letters awaiting STAFF review —
+    // an operator queue item, not an infrastructure fault; a service that
+    // ticks cleanly must stay ready while one sits in the queue.
+    const lastTickMs = poller.lastSuccessfulTickAt
+      ? Date.parse(poller.lastSuccessfulTickAt)
+      : Number.NaN;
+    const pollerStale =
+      !Number.isFinite(lastTickMs) || Date.now() - lastTickMs > 5 * 60_000;
+    const pollerBroken =
+      poller.status === "starting" ||
+      poller.consecutiveFailures > 0 ||
+      (poller.status === "degraded" && pollerStale);
+    const reason = pollerBroken
+      ? `poller_${poller.status}`
+      : !liveStatus.subscribed
+        ? "live_unsubscribed"
+        : config.NODE_ENV === "production" &&
+            webappMonitor.status === "degraded"
+          ? `webapp_monitor_${webappMonitor.status}`
+          : null;
     if (reason !== null) {
       return reply.code(503).send({ status: "not_ready", reason });
     }
