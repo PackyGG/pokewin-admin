@@ -46,8 +46,10 @@ test("badge counts use bounded indexed event timestamps", async () => {
   assert.match(actions, /gt\(antifraud_reviews\.created_at/);
   assert.match(actions, /lte\(antifraud_reviews\.created_at/);
   assert.match(monitor, /"\/v1\/signups\/unseen-count"/);
-  assert.match(monitor, /source_created_at > \$1::timestamptz/);
-  assert.match(monitor, /source_created_at <= \$2::timestamptz/);
-  assert.match(monitor, /LEAST\(COUNT\(\*\), 100\)/);
+  assert.match(monitor, /first_seen_at > \$1::timestamptz/);
+  assert.match(monitor, /first_seen_at <= \$2::timestamptz/);
+  // The badge cap now bounds the count work itself: LIMIT 100 inside the
+  // subselect instead of LEAST() over a full count.
+  assert.match(monitor, /LIMIT 100\s*\)\s*bounded/);
   assert.match(signups, /until: checkedAt\.toISOString\(\)/);
 });
