@@ -94,7 +94,9 @@ function text(value: unknown, fallback = ""): string {
 function score(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? Math.round(parsed) : null;
+  return Number.isFinite(parsed)
+    ? Math.max(0, Math.min(100, Math.round(parsed)))
+    : null;
 }
 
 function isTransportState(value: string): value is MonitorTransportState {

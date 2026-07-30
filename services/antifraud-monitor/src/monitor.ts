@@ -45,7 +45,7 @@ import {
   persistSignupIdentitySnapshot,
 } from "./profile-store.js";
 import { RiskyLocationStore } from "./risky-locations.js";
-import { baseSignupSignals, severity } from "./scoring.js";
+import { baseSignupSignals, clampRiskScore, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
@@ -2167,6 +2167,7 @@ export class MonitorEngine {
     score: number,
     durationSeconds: number,
   ): Promise<{ caseId: string; sessionId: string }> {
+    const boundedScore = clampRiskScore(score);
     const caseResult = await client.query<{ id: string }>(
         `
           INSERT INTO cases(
@@ -2184,8 +2185,8 @@ export class MonitorEngine {
         `,
         [
           signup.id,
-          severity(score),
-          score,
+          severity(boundedScore),
+          boundedScore,
           signals.map((signal) => signal.title).slice(0, 3).join(", "),
         ],
     );
@@ -2212,7 +2213,7 @@ export class MonitorEngine {
           caseId,
           signup.id,
           durationSeconds,
-          score,
+          boundedScore,
           signup.created_at,
         ],
     );
@@ -2237,7 +2238,7 @@ export class MonitorEngine {
 
     let runningScore = 0;
     for (const signal of signals) {
-      runningScore += signal.points;
+      runningScore = clampRiskScore(runningScore + signal.points);
       await client.query(
           `
             INSERT INTO risk_events (

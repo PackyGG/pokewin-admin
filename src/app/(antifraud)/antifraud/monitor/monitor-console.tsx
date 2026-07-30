@@ -190,10 +190,16 @@ function number(value: unknown, fallback = 0): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function optionalNumber(value: unknown): number | null {
+function riskScore(value: unknown, fallback = 0): number {
+  return Math.max(0, Math.min(100, Math.round(number(value, fallback))));
+}
+
+function optionalRiskScore(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = typeof value === "number" ? value : Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
+  return Number.isFinite(parsed)
+    ? Math.max(0, Math.min(100, Math.round(parsed)))
+    : null;
 }
 
 function parseFlowCoverage(value: unknown): FlowCoverage {
@@ -210,7 +216,7 @@ function parseFlowCoverage(value: unknown): FlowCoverage {
 function parseSession(value: unknown): MonitorSession | null {
   const row = record(value);
   if (!row || typeof row.session_id !== "string") return null;
-  const currentScore = number(row.current_score);
+  const currentScore = riskScore(row.current_score);
   return {
     session_id: row.session_id,
     case_id: text(row.case_id),
@@ -219,7 +225,7 @@ function parseSession(value: unknown): MonitorSession | null {
     started_at: text(row.started_at, new Date().toISOString()),
     ends_at: text(row.ends_at, new Date().toISOString()),
     current_score: currentScore,
-    peak_score: number(row.peak_score),
+    peak_score: riskScore(row.peak_score),
     event_count: number(row.event_count),
     severity: isSeverity(row.severity)
       ? row.severity
@@ -231,7 +237,7 @@ function parseSession(value: unknown): MonitorSession | null {
 function parseCase(value: unknown): MonitorCase | null {
   const row = record(value);
   if (!row || typeof row.id !== "string") return null;
-  const score = number(row.score);
+  const score = riskScore(row.score);
   return {
     id: row.id,
     user_id: text(row.user_id),
@@ -239,7 +245,7 @@ function parseCase(value: unknown): MonitorCase | null {
     status: text(row.status, "open"),
     severity: isSeverity(row.severity) ? row.severity : severityForScore(score),
     score,
-    peak_score: number(row.peak_score),
+    peak_score: riskScore(row.peak_score),
     summary: typeof row.summary === "string" ? row.summary : null,
     updated_at: text(row.updated_at, new Date().toISOString()),
     proxycheck_signals: row.proxycheck_signals,
@@ -731,7 +737,7 @@ export function MonitorConsole() {
 
       const sessionId = text(data.sessionId);
       const caseId = text(data.caseId);
-      const frameScore = optionalNumber(data.score);
+      const frameScore = optionalRiskScore(data.score);
       const frameSeverity = isSeverity(data.severity)
         ? data.severity
         : frameScore === null

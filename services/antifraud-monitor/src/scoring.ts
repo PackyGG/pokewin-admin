@@ -24,6 +24,11 @@ export type SignupContext = {
   sameCountry15m: number;
 };
 
+export function clampRiskScore(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}
+
 function generatedLooking(value: string | null): boolean {
   if (!value) return false;
   const text = value.toLowerCase().replace(/[^a-z0-9]/g, "");

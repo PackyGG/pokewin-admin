@@ -70,6 +70,7 @@ import {
   SEVERITY_BANDS,
   signupScoreDefinitions,
 } from "./score-catalog.js";
+import { clampRiskScore } from "./scoring.js";
 import type { LiveEventType } from "./types.js";
 import {
   ScoreWeightConflictError,
@@ -462,7 +463,9 @@ app.get("/v1/monitors/live", async () => {
     `
       SELECT
         ms.id AS session_id, ms.case_id, ms.user_id, s.username,
-        ms.started_at, ms.ends_at, ms.current_score, ms.peak_score,
+        ms.started_at, ms.ends_at,
+        LEAST(100, GREATEST(0, ms.current_score))::int AS current_score,
+        LEAST(100, GREATEST(0, ms.peak_score))::int AS peak_score,
         ms.event_count, c.severity,
         (
           SELECT pc.signals
@@ -546,8 +549,8 @@ app.get("/v1/overview", async () => {
           ms.started_at,
           ms.ends_at,
           ms.ended_at,
-          ms.current_score,
-          ms.peak_score,
+          LEAST(100, GREATEST(0, ms.current_score))::int AS current_score,
+          LEAST(100, GREATEST(0, ms.peak_score))::int AS peak_score,
           ms.event_count,
           c.status AS case_status,
           c.severity
@@ -587,7 +590,7 @@ app.get("/v1/signups", async (request) => {
           s.user_id, s.username, s.email, s.avatar_url, s.signup_ip::text,
           s.country, s.country_code, s.state, s.city, s.affiliate_code,
           s.referred_by, s.source_created_at,
-          COALESCE(sa.score, 0)::int AS score,
+          LEAST(100, GREATEST(0, COALESCE(sa.score, 0)))::int AS score,
           COALESCE(sa.severity, 'low') AS severity,
           COALESCE(sa.signals, '[]'::jsonb) AS signals,
           sa.assessed_at,
@@ -762,6 +765,8 @@ app.get("/v1/cases", async (request) => {
   return {
     data: result.rows.slice(0, query.limit).map((row) => ({
       ...row,
+      score: clampRiskScore(Number(row.score)),
+      peak_score: clampRiskScore(Number(row.peak_score)),
       status: row.status === "escalated" ? "in_review" : row.status,
     })),
     pagination: {
@@ -777,7 +782,9 @@ app.get("/v1/cases/:id", async (request, reply) => {
     db.antifraud.query(
       `
         SELECT
-          c.id, c.user_id, c.status, c.severity, c.score, c.peak_score,
+          c.id, c.user_id, c.status, c.severity,
+          LEAST(100, GREATEST(0, c.score))::int AS score,
+          LEAST(100, GREATEST(0, c.peak_score))::int AS peak_score,
           c.summary, c.assigned_to, c.resolution, c.opened_at, c.updated_at,
           c.resolved_at, c.subject_type, c.network_key, c.network_snapshot_id,
           s.username, s.email, s.signup_ip::text,
@@ -789,7 +796,9 @@ app.get("/v1/cases/:id", async (request, reply) => {
     ),
     db.antifraud.query(
       `SELECT id, case_id, session_id, user_id, event_type, source, source_ref,
-              score_delta, score_after, title, detail, occurred_at, recorded_at
+              score_delta,
+              LEAST(100, GREATEST(0, score_after))::int AS score_after,
+              title, detail, occurred_at, recorded_at
          FROM risk_events
         WHERE case_id=$1
         ORDER BY occurred_at, recorded_at
@@ -808,7 +817,10 @@ app.get("/v1/cases/:id", async (request, reply) => {
     ),
     db.antifraud.query(
       `SELECT id, case_id, user_id, status, started_at, ends_at, ended_at,
-              initial_score, current_score, peak_score, event_count
+              LEAST(100, GREATEST(0, initial_score))::int AS initial_score,
+              LEAST(100, GREATEST(0, current_score))::int AS current_score,
+              LEAST(100, GREATEST(0, peak_score))::int AS peak_score,
+              event_count
          FROM monitor_sessions
         WHERE case_id=$1
         ORDER BY started_at

@@ -12,13 +12,14 @@ export function RiskScoreBar({
   className?: string;
 }) {
   const safeMax = Math.max(1, max);
-  const position = Math.min(100, Math.max(0, (score / safeMax) * 100));
+  const boundedScore = Math.max(0, Math.min(safeMax, score));
+  const position = Math.min(100, Math.max(0, (boundedScore / safeMax) * 100));
 
   return (
     <div
       className={cn("min-w-28", className)}
       role="progressbar"
-      aria-label={`Risk score ${score}`}
+      aria-label={`Risk score ${boundedScore}`}
       aria-valuemin={0}
       aria-valuemax={safeMax}
       aria-valuenow={Math.min(safeMax, Math.max(0, score))}

@@ -2,6 +2,7 @@ import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
 import { sendBotDiscordEvent } from "./discord-events.js";
+import { clampRiskScore } from "./scoring.js";
 
 export const SUPPORT_USER_IDS = [
   "1302882250391818311",
@@ -237,11 +238,12 @@ export function buildDiscordAlertPayload(
     });
   }
   if (alert.score !== undefined) {
+    const score = clampRiskScore(alert.score);
     fields.push({
       name: "Risk score",
       value: alert.severity
-        ? `**${alert.score} points**\n${severityLabel(alert.severity)} risk`
-        : `**${alert.score} points**`,
+        ? `**${score} points**\n${severityLabel(alert.severity)} risk`
+        : `**${score} points**`,
       inline: true,
     });
   }
