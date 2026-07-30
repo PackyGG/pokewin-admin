@@ -10,9 +10,7 @@ import {
   PageHero,
   PageHeroIdentity,
 } from "@/components/modern-panels";
-import { Badge } from "@/components/ui/badge";
 import {
-  fiatPerksConfigured,
   listFiatPerkCandidates,
   listFiatPerkGrants,
   listFiatPerkRuns,
@@ -151,24 +149,6 @@ export default async function FiatPerksPage({
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-
-      <header className="space-y-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <h1 className="text-2xl font-semibold tracking-tight sm:text-3xl">
-            Fiat perks
-          </h1>
-          <Badge variant="outline">
-            {fiatPerksConfigured() ? "Live" : "Not configured"}
-          </Badge>
-        </div>
-        <p className="max-w-3xl text-sm leading-6 text-muted-foreground">
-          Card deposits are earned, not default. Screen a scope of accounts
-          against age, standing, blacklists, device and IP intelligence, and
-          reward-farming behaviour — then approve or decline each one yourself.
-          An approved account holds a perk the live checkout gate reads on every
-          deposit; declining or revoking takes effect immediately.
-        </p>
-      </header>
 
       <Suspense
         key={`${params.run ?? "latest"}-${params.verdict ?? "all"}-${
