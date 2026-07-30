@@ -55,7 +55,8 @@ import {
 import { sanitizedRuntimeConfig } from "./runtime-config.js";
 import { notificationRouteStatuses } from "./notification-routes.js";
 import { registerFiatRoutes } from "./fiat-routes.js";
-import { FiatRiskService } from "./fiat-risk.js";
+import { FIAT_ASSESSMENT_STATUSES, FiatRiskService } from "./fiat-risk.js";
+import { cachedCreatorUserIds, excludedUserIds } from "./route-helpers.js";
 import { EnrichmentService } from "./enrichment.js";
 import { FiatEligibilityAccess } from "./fiat-eligibility-auth.js";
 import {
@@ -676,12 +677,18 @@ app.get("/v1/monitors/live", async () => {
 type OverviewPayload = {
   data: Record<string, unknown>;
 };
+/**
+ * Keyed on the serialized ignore list so the cache stays shared for identical
+ * scopes instead of leaking one caller's exclusions into another's numbers.
+ */
 const cachedOverview = createPromiseCache<string, OverviewPayload>(
-  () => loadOverview(),
+  (key) => loadOverview(JSON.parse(key) as string[]),
   OVERVIEW_CACHE_MS,
 );
 
-async function loadOverview(): Promise<OverviewPayload> {
+async function loadOverview(
+  ignoredFiatUsers: string[],
+): Promise<OverviewPayload> {
   const [reviewCounts, blacklistCounts, recentSessions, fiatFraud] =
     await Promise.allSettled([
     db.antifraud.query<{
@@ -756,24 +763,39 @@ async function loadOverview(): Promise<OverviewPayload> {
       `,
     ),
     db.antifraud.query<{
-      lifetime_cents: number;
-      last_24_hours_cents: number;
-      days: Array<{ date: string; amountCents: number }>;
+      legitimate_lifetime_cents: number;
+      fraudulent_lifetime_cents: number;
+      legitimate_last_24_hours_cents: number;
+      fraudulent_last_24_hours_cents: number;
+      days: Array<{
+        date: string;
+        legitimateCents: number;
+        fraudulentCents: number;
+      }>;
     }>(
       `
-        WITH fraudulent_fiat AS (
+        WITH scoped_fiat AS (
           SELECT
             occurred_at,
-            COALESCE(customer_total_usd, credited_amount_usd) AS amount_usd
+            verdict = 'bad' AS is_fraud,
+            credited_amount_usd AS amount_usd
           FROM fiat_deposit_assessments
-          WHERE verdict = 'bad'
+          WHERE status = ANY($1::text[])
             AND status NOT IN ('refunded', 'partially_refunded')
+            AND user_id <> ALL($2::text[])
         ),
         daily AS (
           SELECT
             (occurred_at AT TIME ZONE 'UTC')::date AS bucket,
-            ROUND(SUM(amount_usd) * 100)::float8 AS amount_cents
-          FROM fraudulent_fiat
+            COALESCE(
+              ROUND(SUM(amount_usd) FILTER (WHERE NOT is_fraud) * 100),
+              0
+            )::float8 AS legitimate_cents,
+            COALESCE(
+              ROUND(SUM(amount_usd) FILTER (WHERE is_fraud) * 100),
+              0
+            )::float8 AS fraudulent_cents
+          FROM scoped_fiat
           WHERE occurred_at >=
               date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
             AND occurred_at <
@@ -782,21 +804,31 @@ async function loadOverview(): Promise<OverviewPayload> {
           ORDER BY 1
         )
         SELECT
-          COALESCE(ROUND(SUM(amount_usd) * 100), 0)::float8
-            AS lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE NOT is_fraud) * 100), 0)
+            ::float8 AS legitimate_lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE is_fraud) * 100), 0)
+            ::float8 AS fraudulent_lifetime_cents,
           COALESCE(ROUND(SUM(amount_usd) FILTER (
-            WHERE occurred_at >= now() - interval '24 hours'
+            WHERE NOT is_fraud
+              AND occurred_at >= now() - interval '24 hours'
               AND occurred_at < now()
-          ) * 100), 0)::float8 AS last_24_hours_cents,
+          ) * 100), 0)::float8 AS legitimate_last_24_hours_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (
+            WHERE is_fraud
+              AND occurred_at >= now() - interval '24 hours'
+              AND occurred_at < now()
+          ) * 100), 0)::float8 AS fraudulent_last_24_hours_cents,
           COALESCE((
             SELECT json_agg(json_build_object(
               'date', bucket::text,
-              'amountCents', amount_cents
+              'legitimateCents', legitimate_cents,
+              'fraudulentCents', fraudulent_cents
             ) ORDER BY bucket)
             FROM daily
           ), '[]'::json)::json AS days
-        FROM fraudulent_fiat
+        FROM scoped_fiat
       `,
+      [FIAT_ASSESSMENT_STATUSES, ignoredFiatUsers],
     ),
   ]);
 
@@ -819,7 +851,7 @@ async function loadOverview(): Promise<OverviewPayload> {
   const reviewRows = section("reviews", reviewCounts);
   const blacklistRows = section("blacklists", blacklistCounts);
   const sessionRows = section("recentSessions", recentSessions);
-  const fiatRows = section("fraudulentFiat", fiatFraud);
+  const fiatRows = section("fiat", fiatFraud);
   const reviews = reviewRows?.[0];
   const blacklists = blacklistRows?.[0];
   const fiat = fiatRows?.[0];
@@ -836,11 +868,26 @@ async function loadOverview(): Promise<OverviewPayload> {
         ? blacklists?.blocked_ip_catches ?? 0
         : null,
       recentSessions: sessionRows,
+      fiat: fiatRows
+        ? {
+          legitimateLifetimeCents: fiat?.legitimate_lifetime_cents ?? 0,
+          fraudulentLifetimeCents: fiat?.fraudulent_lifetime_cents ?? 0,
+          legitimateLast24HoursCents:
+            fiat?.legitimate_last_24_hours_cents ?? 0,
+          fraudulentLast24HoursCents:
+            fiat?.fraudulent_last_24_hours_cents ?? 0,
+          days: fiat?.days ?? [],
+        }
+        : null,
+      /** Kept for dashboard builds deployed before the two-leg fiat split. */
       fraudulentFiat: fiatRows
         ? {
-          lifetimeCents: fiat?.lifetime_cents ?? 0,
-          last24HoursCents: fiat?.last_24_hours_cents ?? 0,
-          days: fiat?.days ?? [],
+          lifetimeCents: fiat?.fraudulent_lifetime_cents ?? 0,
+          last24HoursCents: fiat?.fraudulent_last_24_hours_cents ?? 0,
+          days: (fiat?.days ?? []).map((day) => ({
+            date: day.date,
+            amountCents: day.fraudulentCents,
+          })),
         }
         : null,
       ...(Object.keys(degraded).length > 0 ? { degraded } : {}),
@@ -848,7 +895,20 @@ async function loadOverview(): Promise<OverviewPayload> {
   };
 }
 
-app.get("/v1/overview", async () => cachedOverview("overview"));
+app.get("/v1/overview", async (request) => {
+  // The dashboard KPI has to reconcile with /v1/fiat-deposits, so the fiat
+  // split uses that route's scope: settled-or-paid assessments only, refunds
+  // dropped from both legs, creators and excluded users ignored.
+  const ignoredFiatUsers = [
+    ...new Set([
+      ...(request.headers["x-antifraud-excluded-users"] === undefined
+        ? []
+        : excludedUserIds(request.headers)),
+      ...(await cachedCreatorUserIds(db.source)),
+    ]),
+  ].sort();
+  return cachedOverview(JSON.stringify(ignoredFiatUsers));
+});
 
 app.get("/v1/signups", async (request) => {
   const query = z.object({

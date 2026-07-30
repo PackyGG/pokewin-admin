@@ -694,6 +694,33 @@ export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData>
       : computeAntifraudOverviewData(env),
     getAntifraudMonitorOverview(),
   ]);
+  const split = monitor.data?.fiat;
+  if (split) {
+    // Both legs come from the same assessment scope, so the KPI adds up and
+    // matches /antifraud/fiat-deposits. Never derive one leg by subtracting
+    // the other from a MAIN total — the two sources cover different rows and
+    // the difference used to clamp "legitimate" to zero.
+    const splitByDay = new Map(split.days.map((day) => [day.date, day]));
+    return {
+      ...overview,
+      metrics: {
+        ...overview.metrics,
+        legitimateFiatDepositCents: split.legitimateLifetimeCents,
+        fraudulentFiatDepositCents: split.fraudulentLifetimeCents,
+      },
+      live: {
+        ...overview.live,
+        legitimateFiatCents24h: split.legitimateLast24HoursCents,
+        fraudulentFiatCents24h: split.fraudulentLast24HoursCents,
+      },
+      days: overview.days.map((day) => ({
+        ...day,
+        legitimateFiatCents: splitByDay.get(day.date)?.legitimateCents ?? 0,
+        fraudulentFiatCents: splitByDay.get(day.date)?.fraudulentCents ?? 0,
+      })),
+    };
+  }
+
   const canonical = monitor.data?.fraudulentFiat;
   if (!canonical) return overview;
 

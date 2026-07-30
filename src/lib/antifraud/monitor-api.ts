@@ -3,6 +3,8 @@ import "server-only";
 import { cache } from "react";
 import { z } from "zod";
 
+import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
+
 const scoreOptionSchema = z.object({
   key: z.string(),
   label: z.string(),
@@ -227,6 +229,29 @@ const monitorOverviewSchema = z.object({
     .max(40)
     .nullish()
     .transform((value) => value ?? []),
+  /**
+   * Both fiat legs come from the same assessment scope as
+   * `/antifraud/fiat-deposits`, so the KPI reconciles with that page. Absent
+   * while a monitor build without the split may still be serving, and null
+   * when that aggregate degraded.
+   */
+  fiat: z
+    .object({
+      legitimateLifetimeCents: z.number().nonnegative(),
+      fraudulentLifetimeCents: z.number().nonnegative(),
+      legitimateLast24HoursCents: z.number().nonnegative(),
+      fraudulentLast24HoursCents: z.number().nonnegative(),
+      days: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            legitimateCents: z.number().nonnegative(),
+            fraudulentCents: z.number().nonnegative(),
+          }),
+        )
+        .max(30),
+    })
+    .nullish(),
   fraudulentFiat: z
     .object({
       lifetimeCents: z.number().nonnegative(),
@@ -366,6 +391,9 @@ export const getAntifraudMonitorOverview = cache(async (): Promise<{
       headers: {
         accept: "application/json",
         authorization: `Bearer ${token}`,
+        "x-antifraud-excluded-users": JSON.stringify(
+          await getExcludedUserIdsStrict(),
+        ),
       },
       cache: "no-store",
       signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
