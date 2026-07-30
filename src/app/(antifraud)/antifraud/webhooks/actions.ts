@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { queueDiscordChannelCreation } from "@/lib/discord-notifications/channel-operations";
 import {
   createDiscordNotificationEvent,
   deleteDiscordNotificationRoute,
@@ -46,6 +47,35 @@ const channelRoutesSchema = z.object({
 });
 
 const routeIdSchema = z.string().uuid("Invalid routing rule");
+const createChannelSchema = z.object({
+  parentId: snowflakeSchema,
+  name: z.string().trim().min(1).max(100),
+});
+
+export async function createDiscordChannelAction(
+  input: unknown,
+): Promise<{ requestId: string; name: string }> {
+  const session = await requireAntifraudManager();
+  const parsed = createChannelSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+
+  const queued = await queueDiscordChannelCreation({
+    parentId: parsed.data.parentId,
+    name: parsed.data.name,
+    actorId: session.userId,
+  });
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "discord_notification_channel_creation_queued",
+    metadata: {
+      requestId: queued.id,
+      parentId: parsed.data.parentId,
+      channelName: queued.name,
+    },
+  });
+  revalidatePath("/antifraud/webhooks");
+  return { requestId: queued.id, name: queued.name };
+}
 
 export async function createCustomEventAction(input: unknown): Promise<void> {
   const session = await requireAntifraudManager();

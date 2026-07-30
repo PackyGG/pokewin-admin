@@ -29,6 +29,9 @@ test("Discord Routing exposes active channels with add and edit event flows", ()
   assert.match(workspace, /initialConfig\.routes/);
   assert.match(workspace, />Active channels</);
   assert.match(workspace, /New channel/);
+  assert.match(workspace, /Create Discord channel/);
+  assert.match(workspace, />Main section</);
+  assert.match(workspace, /createDiscordChannelAction/);
   assert.match(workspace, /Save changes/);
   assert.match(workspace, /replaceChannelRoutesAction/);
   assert.match(workspace, /createCustomEventAction/);
@@ -41,9 +44,10 @@ test("every Discord route mutation is permission-gated and audited", () => {
 
   assert.equal(
     actions.match(/requireAntifraudManager\(\)/g)?.length,
-    5,
+    6,
   );
-  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 5);
+  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 6);
   assert.match(actions, /discord_notification_channel_routes_replaced/);
+  assert.match(actions, /discord_notification_channel_creation_queued/);
   assert.doesNotMatch(actions, /WEBHOOK_URL|DISCORD_TOKEN/);
 });

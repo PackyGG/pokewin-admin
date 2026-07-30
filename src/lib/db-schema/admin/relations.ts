@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, admin_whop_refund_batches, admin_whop_refund_items, discord_notification_guilds } from "./schema";
+import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, admin_whop_refund_batches, admin_whop_refund_items, discord_notification_guilds, discord_notification_channel_settings, discord_notification_channel_jobs } from "./schema";
 
 export const admin_giveaway_actionsRelations = relations(admin_giveaway_actions, ({one}) => ({
 	admin_user: one(admin_users, {
@@ -53,6 +53,8 @@ export const admin_usersRelations = relations(admin_users, ({one, many}) => ({
 	discord_notification_events: many(discord_notification_events),
 	discord_notification_routes: many(discord_notification_routes),
 	admin_whop_refund_batches: many(admin_whop_refund_batches),
+	discord_notification_channel_settings: many(discord_notification_channel_settings),
+	discord_notification_channel_jobs: many(discord_notification_channel_jobs),
 }));
 
 export const admin_rolesRelations = relations(admin_roles, ({many}) => ({
@@ -433,6 +435,8 @@ export const discord_notification_eventsRelations = relations(discord_notificati
 	}),
 	discord_notification_routes: many(discord_notification_routes),
 	discord_notification_jobs: many(discord_notification_jobs),
+	discord_notification_channel_settings: many(discord_notification_channel_settings),
+	discord_notification_channel_jobs: many(discord_notification_channel_jobs),
 }));
 
 export const discord_notification_routesRelations = relations(discord_notification_routes, ({one}) => ({
@@ -499,4 +503,43 @@ export const admin_whop_refund_itemsRelations = relations(admin_whop_refund_item
 
 export const discord_notification_guildsRelations = relations(discord_notification_guilds, ({many}) => ({
 	discord_notification_channels: many(discord_notification_channels),
+	discord_notification_channel_settings: many(discord_notification_channel_settings),
+}));
+
+export const discord_notification_channel_settingsRelations = relations(discord_notification_channel_settings, ({one}) => ({
+	discord_notification_guild: one(discord_notification_guilds, {
+		fields: [discord_notification_channel_settings.guild_id],
+		references: [discord_notification_guilds.guild_id]
+	}),
+	discord_notification_channel: one(discord_notification_channels, {
+		fields: [
+			discord_notification_channel_settings.guild_id,
+			discord_notification_channel_settings.default_parent_id,
+		],
+		references: [
+			discord_notification_channels.guild_id,
+			discord_notification_channels.channel_id,
+		]
+	}),
+	admin_user: one(admin_users, {
+		fields: [discord_notification_channel_settings.updated_by],
+		references: [admin_users.id]
+	}),
+}));
+
+export const discord_notification_channel_jobsRelations = relations(discord_notification_channel_jobs, ({one}) => ({
+	admin_user: one(admin_users, {
+		fields: [discord_notification_channel_jobs.created_by],
+		references: [admin_users.id]
+	}),
+	discord_notification_channel: one(discord_notification_channels, {
+		fields: [
+			discord_notification_channel_jobs.guild_id,
+			discord_notification_channel_jobs.parent_id,
+		],
+		references: [
+			discord_notification_channels.guild_id,
+			discord_notification_channels.channel_id,
+		]
+	}),
 }));

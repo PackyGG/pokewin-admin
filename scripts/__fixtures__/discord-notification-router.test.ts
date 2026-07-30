@@ -38,14 +38,43 @@ test("bot API is scoped, guild-bound, and matches the worker contract", () => {
   const ack = read(
     "src/app/api/v1/discord/antifraud/jobs/[id]/ack/route.ts",
   );
+  const channelClaim = read(
+    "src/app/api/v1/discord/antifraud/channel-jobs/claim/route.ts",
+  );
+  const channelAck = read(
+    "src/app/api/v1/discord/antifraud/channel-jobs/[id]/ack/route.ts",
+  );
 
   assert.match(scopes, /"discord:antifraud"/);
-  for (const route of [sync, claim, ack]) {
+  for (const route of [sync, claim, ack, channelClaim, channelAck]) {
     assert.match(route, /scopes: \["discord:antifraud"\]/);
     assert.match(route, /process\.env\.ADMIN_GUILD_ID/);
   }
   assert.match(claim, /return \{ jobs: await claimDiscordJobs/);
   assert.match(ack, /z\.enum\(\["delivered", "failed"\]\)/);
+  assert.match(channelClaim, /claimDiscordChannelCreationJobs/);
+  assert.match(channelAck, /z\.enum\(\["created", "failed"\]\)/);
+});
+
+test("channel creation has a durable manager request and leased bot execution", () => {
+  const migration = read(
+    "drizzle/admin/migrations/20260730_discord_channel_creation.sql",
+  );
+  const operations = read(
+    "src/lib/discord-notifications/channel-operations.ts",
+  );
+  const actions = read(
+    "src/app/(antifraud)/antifraud/webhooks/actions.ts",
+  );
+
+  assert.match(migration, /discord_notification_channel_settings/);
+  assert.match(migration, /discord_notification_channel_jobs/);
+  assert.match(migration, /WHERE "status" IN \('pending', 'leased'\)/);
+  assert.match(operations, /FOR UPDATE SKIP LOCKED/);
+  assert.match(operations, /type = 'category'/);
+  assert.match(operations, /leased_until = now\(\) \+ interval '60 seconds'/);
+  assert.match(actions, /requireAntifraudManager\(\)/);
+  assert.match(actions, /queueDiscordChannelCreation/);
 });
 
 test("monitor enqueue is bounded, signed, replay-safe, and webhook-free", () => {

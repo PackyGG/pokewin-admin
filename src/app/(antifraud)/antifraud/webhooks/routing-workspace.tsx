@@ -7,6 +7,8 @@ import {
   Bot,
   CheckCircle2,
   CircleOff,
+  Clock3,
+  FolderPlus,
   Hash,
   Pencil,
   Plus,
@@ -45,6 +47,7 @@ import type {
 } from "@/lib/discord-notifications/config";
 import { cn } from "@/lib/utils";
 import {
+  createDiscordChannelAction,
   createCustomEventAction,
   replaceChannelRoutesAction,
 } from "./actions";
@@ -65,6 +68,7 @@ export function DiscordRoutingWorkspace({
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [eventQuery, setEventQuery] = useState("");
   const [createEventOpen, setCreateEventOpen] = useState(false);
+  const [createChannelOpen, setCreateChannelOpen] = useState(false);
 
   const activeChannels = useMemo(() => {
     if (!initialConfig) return [];
@@ -101,6 +105,17 @@ export function DiscordRoutingWorkspace({
         channel.canEmbed,
     );
   }, [activeChannels, initialConfig]);
+
+  const availableCategories = useMemo(
+    () =>
+      initialConfig?.channels
+        .filter((channel) => channel.type === "category" && channel.canView)
+        .sort(
+          (a, b) =>
+            a.position - b.position || a.name.localeCompare(b.name),
+        ) ?? [],
+    [initialConfig],
+  );
 
   if (!initialConfig) {
     return (
@@ -281,6 +296,10 @@ export function DiscordRoutingWorkspace({
         </Button>
       </div>
 
+      <ChannelCreationHistory
+        requests={initialConfig.channelCreation.recentRequests}
+      />
+
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
           <div className="min-w-0 flex-1">
@@ -293,7 +312,15 @@ export function DiscordRoutingWorkspace({
               Every configured channel and the events it receives.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="outline"
+              onClick={() => setCreateChannelOpen(true)}
+              disabled={pending || availableCategories.length === 0}
+            >
+              <FolderPlus />
+              Create Discord channel
+            </Button>
             <Button
               variant="outline"
               onClick={() => setCreateEventOpen(true)}
@@ -310,7 +337,7 @@ export function DiscordRoutingWorkspace({
               }
             >
               <Plus />
-              New channel
+              Add existing
             </Button>
           </div>
         </div>
@@ -335,7 +362,7 @@ export function DiscordRoutingWorkspace({
               }
             >
               <Plus />
-              New channel
+              Add existing channel
             </Button>
           </div>
         ) : (
@@ -441,6 +468,23 @@ export function DiscordRoutingWorkspace({
         }
       />
 
+      <CreateDiscordChannelDialog
+        open={createChannelOpen}
+        onOpenChange={setCreateChannelOpen}
+        categories={availableCategories}
+        defaultParentId={initialConfig.channelCreation.defaultParentId}
+        pending={pending}
+        onCreate={(input) =>
+          runMutation(
+            async () => {
+              await createDiscordChannelAction(input);
+            },
+            "Channel creation queued",
+            () => setCreateChannelOpen(false),
+          )
+        }
+      />
+
       <CreateEventDialog
         open={createEventOpen}
         onOpenChange={setCreateEventOpen}
@@ -455,6 +499,144 @@ export function DiscordRoutingWorkspace({
         }
       />
     </div>
+  );
+}
+
+function ChannelCreationHistory({
+  requests,
+}: {
+  requests: DiscordNotificationConfig["channelCreation"]["recentRequests"];
+}) {
+  if (requests.length === 0) return null;
+
+  return (
+    <section className="rounded-xl border bg-card px-4 py-3">
+      <div className="flex items-center gap-2">
+        <Clock3 className="size-4 text-violet-500" />
+        <h2 className="text-sm font-semibold">Recent channel creation</h2>
+      </div>
+      <div className="mt-3 space-y-2">
+        {requests.slice(0, 5).map((request) => (
+          <div
+            key={request.id}
+            className="flex flex-col gap-1 rounded-lg border px-3 py-2 sm:flex-row sm:items-center"
+          >
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">
+                #{request.createdChannelName ?? request.requestedName}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {request.parentName ?? "Unknown section"} ·{" "}
+                {formatTimestamp(request.createdAt)}
+              </p>
+            </div>
+            <Badge
+              variant={request.status === "dead" ? "destructive" : "secondary"}
+            >
+              {request.status === "created"
+                ? "Created"
+                : request.status === "dead"
+                  ? "Failed"
+                  : "Queued"}
+            </Badge>
+            {request.errorMessage && request.status === "dead" ? (
+              <p className="max-w-sm text-xs text-destructive">
+                {request.errorMessage}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function CreateDiscordChannelDialog({
+  open,
+  onOpenChange,
+  categories,
+  defaultParentId,
+  pending,
+  onCreate,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  categories: DiscordNotificationChannel[];
+  defaultParentId: string | null;
+  pending: boolean;
+  onCreate: (input: { parentId: string; name: string }) => void;
+}) {
+  const preferredParentId = categories.some(
+    (category) => category.id === defaultParentId,
+  )
+    ? defaultParentId
+    : categories[0]?.id;
+  const [parentId, setParentId] = useState(preferredParentId ?? "");
+  const [name, setName] = useState("");
+
+  function handleOpenChange(next: boolean) {
+    if (next) {
+      setParentId(preferredParentId ?? "");
+      setName("");
+    }
+    onOpenChange(next);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={handleOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>Create Discord channel</DialogTitle>
+          <DialogDescription>
+            The bot creates a text channel in the selected main section. This
+            section becomes the default for the next channel.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4 py-1">
+          <div className="space-y-1.5">
+            <Label htmlFor="channel-parent">Main section</Label>
+            <Select
+              value={parentId}
+              onValueChange={(value) => setParentId(value ?? "")}
+            >
+              <SelectTrigger id="channel-parent">
+                <SelectValue placeholder="Choose a Discord category" />
+              </SelectTrigger>
+              <SelectContent>
+                {categories.map((category) => (
+                  <SelectItem key={category.id} value={category.id}>
+                    {category.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="channel-name">Channel name</Label>
+            <Input
+              id="channel-name"
+              value={name}
+              maxLength={100}
+              placeholder="fraud-alerts"
+              autoComplete="off"
+              onChange={(event) => setName(event.target.value)}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Spaces are converted to dashes.
+            </p>
+          </div>
+        </div>
+        <DialogFooter showCloseButton>
+          <Button
+            disabled={pending || !parentId || name.trim().length === 0}
+            onClick={() => onCreate({ parentId, name })}
+          >
+            <FolderPlus />
+            Create channel
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 

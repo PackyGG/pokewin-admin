@@ -3,6 +3,7 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import type { DiscordChannelCreationRequest } from "./channel-operations";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -47,6 +48,10 @@ export type DiscordNotificationConfig = {
   channels: DiscordNotificationChannel[];
   events: DiscordNotificationEvent[];
   routes: DiscordNotificationRoute[];
+  channelCreation: {
+    defaultParentId: string | null;
+    recentRequests: DiscordChannelCreationRequest[];
+  };
 };
 
 function requireSnowflake(value: string, field: string): string {
@@ -86,7 +91,14 @@ export async function getDiscordNotificationConfig(
   guildId?: string,
 ): Promise<DiscordNotificationConfig> {
   const id = configuredGuildId(guildId);
-  const [guildResult, channelResult, eventResult, routeResult] =
+  const [
+    guildResult,
+    channelResult,
+    eventResult,
+    routeResult,
+    settingsResult,
+    creationResult,
+  ] =
     await Promise.all([
       adminDrizzle.execute<{
         guild_id: string;
@@ -147,6 +159,43 @@ export async function getDiscordNotificationConfig(
         ORDER BY event_key, created_at, id
         LIMIT 2000
       `),
+      adminDrizzle.execute<{ default_parent_id: string | null }>(sql`
+        SELECT default_parent_id
+        FROM discord_notification_channel_settings
+        WHERE guild_id = ${id}
+        LIMIT 1
+      `),
+      adminDrizzle.execute<{
+        id: string;
+        parent_id: string;
+        parent_name: string | null;
+        requested_name: string;
+        status: "pending" | "leased" | "created" | "dead";
+        created_channel_id: string | null;
+        created_channel_name: string | null;
+        last_error_message: string | null;
+        created_at: string;
+        completed_at: string | null;
+      }>(sql`
+        SELECT
+          job.id::text,
+          job.parent_id,
+          parent.name AS parent_name,
+          job.requested_name,
+          job.status,
+          job.created_channel_id,
+          job.created_channel_name,
+          job.last_error_message,
+          job.created_at::text,
+          job.completed_at::text
+        FROM discord_notification_channel_jobs AS job
+        LEFT JOIN discord_notification_channels AS parent
+          ON parent.guild_id = job.guild_id
+         AND parent.channel_id = job.parent_id
+        WHERE job.guild_id = ${id}
+        ORDER BY job.created_at DESC, job.id DESC
+        LIMIT 10
+      `),
     ]);
 
   const guild = guildResult.rows[0];
@@ -184,6 +233,21 @@ export async function getDiscordNotificationConfig(
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     })),
+    channelCreation: {
+      defaultParentId: settingsResult.rows[0]?.default_parent_id ?? null,
+      recentRequests: creationResult.rows.map((row) => ({
+        id: row.id,
+        parentId: row.parent_id,
+        parentName: row.parent_name,
+        requestedName: row.requested_name,
+        status: row.status,
+        createdChannelId: row.created_channel_id,
+        createdChannelName: row.created_channel_name,
+        errorMessage: row.last_error_message,
+        createdAt: row.created_at,
+        completedAt: row.completed_at,
+      })),
+    },
   };
 }
 

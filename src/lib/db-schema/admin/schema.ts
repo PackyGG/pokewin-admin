@@ -1850,3 +1850,66 @@ export const discord_notification_channels = pgTable("discord_notification_chann
 	primaryKey({ columns: [table.channel_id, table.guild_id], name: "discord_notification_channels_pkey"}),
 	check("discord_notification_channels_id_check", sql`channel_id ~ '^[0-9]{15,21}$'::text`),
 ]);
+
+export const discord_notification_channel_settings = pgTable("discord_notification_channel_settings", {
+	guild_id: text().primaryKey().notNull(),
+	default_parent_id: text(),
+	updated_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.guild_id],
+			foreignColumns: [discord_notification_guilds.guild_id],
+			name: "discord_notification_channel_settings_guild_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.guild_id, table.default_parent_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_channel_settings_parent_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.updated_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_channel_settings_updated_by_fkey"
+		}).onDelete("set null"),
+]);
+
+export const discord_notification_channel_jobs = pgTable("discord_notification_channel_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	parent_id: text().notNull(),
+	requested_name: text().notNull(),
+	status: text().default('pending').notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(5).notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_channel_id: text(),
+	created_channel_name: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_notification_channel_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_notification_channel_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_channel_jobs_created_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.guild_id, table.parent_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_channel_jobs_parent_fk"
+		}).onDelete("restrict"),
+	check("discord_notification_channel_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_notification_channel_jobs_created_id_check", sql`(created_channel_id IS NULL) OR (created_channel_id ~ '^[0-9]{15,21}$'::text)`),
+	check("discord_notification_channel_jobs_name_check", sql`((char_length(requested_name) >= 1) AND (char_length(requested_name) <= 100)) AND (requested_name ~ '^[a-z0-9][a-z0-9-]*$'::text)`),
+	check("discord_notification_channel_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'created'::text, 'dead'::text])`),
+]);
