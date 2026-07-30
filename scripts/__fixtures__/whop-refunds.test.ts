@@ -177,6 +177,10 @@ test("completed-batch recovery is manager-only, step-up gated, and visible", () 
 test("the database prevents one Whop payment entering two refund batches", () => {
   assert.match(migration, /UNIQUE \(provider_payment_id\)/);
   assert.match(actions, /ON CONFLICT \(provider_payment_id\) DO NOTHING/);
+  assert.match(
+    queries,
+    /getRefundCandidates[\s\S]*return candidates\.filter\(\s*\(candidate\) => !candidate\.alreadyQueued\s*\)/,
+  );
 });
 
 test("refund scope includes banned, analyst-confirmed, and fraud-contained accounts", () => {

@@ -313,12 +313,13 @@ async function queryCandidates(
 
 export async function getRefundCandidates(): Promise<RefundCandidate[]> {
   const flagged = await currentlyFlaggedUsers();
-  return queryCandidates(
+  const candidates = await queryCandidates(
     flagged,
     { mode: "all" },
     MAX_VISIBLE_DEPOSITS,
     false,
   );
+  return candidates.filter((candidate) => !candidate.alreadyQueued);
 }
 
 export async function resolveRefundSelection(input:
