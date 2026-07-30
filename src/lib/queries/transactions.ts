@@ -169,6 +169,7 @@ async function computeDepositTransactions(
     perPage?: number;
     search?: string;
     status?: string;
+    method?: "fiat" | "crypto";
     /**
      * USD threshold — only return rows with `amount >= minAmount`. Used
      * by the Deposits page's "$200+" filter to surface big-ticket
@@ -184,6 +185,7 @@ async function computeDepositTransactions(
     perPage = 20,
     search,
     status,
+    method,
     minAmount,
   } = params;
   const safePerPage = Math.max(1, Math.min(200, Math.floor(perPage)));
@@ -239,6 +241,17 @@ async function computeDepositTransactions(
     minAmountFilter = `AND t.amount::numeric >= $${idx}`;
   }
 
+  const methodFilter =
+    method === "crypto"
+      ? `AND t.crypto_asset IS NOT NULL
+         AND UPPER(t.crypto_asset) NOT IN ('FIAT', 'CARD')`
+      : method === "fiat"
+        ? `AND (
+             t.crypto_asset IS NULL
+             OR UPPER(t.crypto_asset) IN ('FIAT', 'CARD')
+           )`
+        : "";
+
   // Lean "Deposits" view — ONLY raw deposit rows. We no longer pull the
   // standalone deposit_bonus / shipping-fee rows or run the correlated
   // bonus-pair EXISTS exclusion; that scan across deposit + bonus +
@@ -250,6 +263,7 @@ async function computeDepositTransactions(
       ${userScopeFilter}
       ${searchFilter}
       ${statusFilter}
+      ${methodFilter}
       ${minAmountFilter}
   `;
 
@@ -432,6 +446,7 @@ export async function getDepositTransactions(params: {
   perPage?: number;
   search?: string;
   status?: string;
+  method?: "fiat" | "crypto";
   minAmount?: number;
 }): Promise<PaginatedResult<TransactionListItem>> {
   const env = await readDbEnv();

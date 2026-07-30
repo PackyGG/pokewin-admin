@@ -223,6 +223,12 @@ const responseSchema = z.object({
     in_review: z.number().default(0),
     block_recommended: z.number().default(0),
     amount_usd: numeric,
+    fiat: z.number(),
+    crypto: z.number(),
+    pending_fiat: z.number(),
+    pending_crypto: z.number(),
+    confirmed_fiat: z.number(),
+    confirmed_crypto: z.number(),
   }),
 });
 
@@ -303,6 +309,8 @@ async function monitorHeaders(token: string): Promise<Record<string, string>> {
 
 export async function listWithdrawalAssessments(input: {
   page: number;
+  rail?: "fiat" | "crypto";
+  lifecycle?: "pending" | "confirmed" | "all";
   status?: string;
   verdict?: WithdrawalVerdict;
   reviewStatus?: WithdrawalReviewStatus;
@@ -331,6 +339,8 @@ export async function listWithdrawalAssessments(input: {
     limit: "20",
   });
   if (input.status) params.set("status", input.status);
+  if (input.rail) params.set("rail", input.rail);
+  if (input.lifecycle) params.set("lifecycle", input.lifecycle);
   if (input.verdict) params.set("verdict", input.verdict);
   if (input.reviewStatus) params.set("reviewStatus", input.reviewStatus);
   if (input.search) params.set("search", input.search);

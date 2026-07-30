@@ -26,6 +26,7 @@ const querySchema = z.object({
   status: z.enum(FIAT_ASSESSMENT_STATUSES).optional(),
   verdict: z.enum(["good", "review", "bad"]).optional(),
   reviewStatus: z.enum(reviewStatuses).optional(),
+  view: z.enum(["normal", "fraud", "refunded"]).default("normal"),
   search: z.string().trim().max(100).optional(),
   excludeKycRequired: z
     .enum(["true", "false"])
@@ -92,7 +93,9 @@ export async function registerFiatRoutes(
   app.get("/v1/fiat-deposits", async (request) => {
     const query = querySchema.parse(request.query);
     const excluded = excludedUserIds(request.headers);
-    const usesAssessmentFilter = Boolean(query.verdict || query.reviewStatus);
+    const usesAssessmentFilter = Boolean(
+      query.verdict || query.reviewStatus || query.view,
+    );
     const excludeKycRequired =
       query.excludeKycRequired && !query.search;
     const refreshed = await service.refresh({
@@ -116,6 +119,14 @@ export async function registerFiatRoutes(
     } else {
       values.push(FIAT_ASSESSMENT_STATUSES);
       conditions.push(`status=ANY($${values.length}::text[])`);
+    }
+    if (query.view === "fraud") {
+      conditions.push(`verdict='bad'`);
+      conditions.push(`status NOT IN ('refunded','partially_refunded')`);
+    } else if (query.view === "refunded") {
+      conditions.push(`status IN ('refunded','partially_refunded')`);
+    } else {
+      conditions.push(`status NOT IN ('refunded','partially_refunded')`);
     }
     if (query.verdict) {
       values.push(query.verdict);
@@ -214,6 +225,16 @@ export async function registerFiatRoutes(
             COUNT(*) FILTER (WHERE three_ds_verified=false)::int
               AS three_ds_failed,
             COUNT(*) FILTER (WHERE status='disputed')::int AS disputed,
+            COUNT(*) FILTER (
+              WHERE status NOT IN ('refunded','partially_refunded')
+            )::int AS normal,
+            COUNT(*) FILTER (
+              WHERE verdict='bad'
+                AND status NOT IN ('refunded','partially_refunded')
+            )::int AS fraud,
+            COUNT(*) FILTER (
+              WHERE status IN ('refunded','partially_refunded')
+            )::int AS refunded,
             COALESCE(SUM(credited_amount_usd),0)::float8 AS amount_usd
           FROM fiat_deposit_assessments
           ${summaryWhere}

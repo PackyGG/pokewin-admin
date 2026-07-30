@@ -82,7 +82,7 @@ const middleware = readFileSync(
 test("Whop refunds are visible to Fraud staff and executable by managers", () => {
   assert.match(refundPage, /await requireAntifraudPageAccess\(\)/);
   assert.match(refundPage, /canExecute=\{canManageAntifraud\(session\)\}/);
-  assert.match(refundsPanel, /Whop refunds for currently flagged accounts/);
+  assert.match(refundsPanel, /Whop refunds for banned or fraud-confirmed accounts/);
   assert.match(refundsPanel, /<Badge variant="outline">View only<\/Badge>/);
   assert.match(sidebar, /label: "Refunds"/);
   assert.doesNotMatch(sidebar, /OWNER_TRANSACTION_NAV|isOwner/);
@@ -179,13 +179,14 @@ test("the database prevents one Whop payment entering two refund batches", () =>
   assert.match(actions, /ON CONFLICT \(provider_payment_id\) DO NOTHING/);
 });
 
-test("refund scope includes every current KYC requirement and paid deposit state", () => {
+test("refund scope includes banned, analyst-confirmed, and fraud-contained accounts", () => {
   assert.match(queries, /antifraud_reviews\.status, "flagged"/);
+  assert.match(queries, /WHERE is_banned = true/);
   assert.match(queries, /kyc_required = true/);
-  assert.doesNotMatch(
-    queries,
-    /system:antifraud-|kyc_required_reason[\s\S]*~\*/,
-  );
+  assert.match(queries, /system:antifraud-/);
+  assert.match(queries, /kyc_required_reason[\s\S]*~\*/);
+  assert.match(refundsPanel, /Banned/);
+  assert.match(refundsPanel, /Fraud confirmed/);
   assert.match(queries, /i\.status IN \('completed', 'partially_refunded'\)/);
 });
 

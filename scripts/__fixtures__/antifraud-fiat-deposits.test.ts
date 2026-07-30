@@ -39,8 +39,14 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   );
   assert.doesNotMatch(page, /checkout_ready/);
   assert.match(page, /Prior crypto/);
-  assert.match(page, /Whop checkout:/);
-  assert.match(page, /Payment option/);
+  assert.match(page, /Checkout email/);
+  assert.match(page, /label="Card"/);
+  assert.match(page, /cardLast4/);
+  assert.match(page, /label="Fees"/);
+  assert.match(page, /score_breakdown/);
+  assert.match(page, /TransactionRailTabs/);
+  assert.match(page, /method: "crypto"/);
+  assert.match(page, /Fraud tagged/);
   assert.match(page, /whopPaymentMethodLabel/);
   assert.match(page, /Show KYC required/);
   assert.match(page, /Hide KYC required/);
@@ -53,6 +59,8 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(detail, /Payment option/);
   assert.match(detail, /whopPaymentMethodLabel/);
   assert.match(api, /checkoutEmail/);
+  assert.match(api, /cardBrand/);
+  assert.match(api, /cardLast4/);
   assert.match(page, /Six-point flow/);
   assert.match(page, /Risk score guide/);
   assert.match(page, /Good[\s\S]*0–29/);
@@ -150,6 +158,8 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   assert.match(routes, /provider_evidence->>'paymentMethodType'/);
   assert.match(routes, /provider_evidence->>'checkoutEmail'/);
   assert.match(routes, /normalizeWhopPaymentMethod\(query\.search\)/);
+  assert.match(routes, /view: z\.enum\(\["normal", "fraud", "refunded"\]\)/);
+  assert.match(routes, /status IN \('refunded','partially_refunded'\)/);
   assert.match(service, /payment_webhook_events checkout_event/);
   assert.match(service, /payload#>>'\{data,user,email\}'/);
   assert.match(service, /paid\.checkout_email/);

@@ -1,7 +1,7 @@
 import type { Pool } from "pg";
 
 import type { Databases } from "./db.js";
-import { whopPaymentMethodFromPayload } from "./whop-payment-method.js";
+import { whopPaymentMethodInfo } from "./whop-payment-method.js";
 
 export type FiatVerdict = "good" | "review" | "bad";
 export type FiatRiskCategory =
@@ -51,6 +51,8 @@ export type FiatProviderEvidence = {
   autoRefunded: boolean;
   billingCountry: string | null;
   paymentMethodType: string | null;
+  cardBrand?: string | null;
+  cardLast4?: string | null;
 };
 
 export type FiatFundingEvidence = {
@@ -259,6 +261,7 @@ export function parseWhopEvidence(
       };
     })
     .filter((item): item is WhopRiskSignal => item !== null);
+  const paymentMethod = whopPaymentMethodInfo(payload);
   return {
     eventType,
     eventReceivedAt: receivedAt,
@@ -276,7 +279,9 @@ export function parseWhopEvidence(
       typeof record(data.billing_address).country === "string"
         ? String(record(data.billing_address).country).slice(0, 8)
         : null,
-    paymentMethodType: whopPaymentMethodFromPayload(payload),
+    paymentMethodType: paymentMethod.type,
+    cardBrand: paymentMethod.cardBrand,
+    cardLast4: paymentMethod.cardLast4,
   };
 }
 
@@ -1172,6 +1177,8 @@ const EMPTY_PROVIDER: FiatProviderEvidence = {
   autoRefunded: false,
   billingCountry: null,
   paymentMethodType: null,
+  cardBrand: null,
+  cardLast4: null,
 };
 
 function contextFunding(

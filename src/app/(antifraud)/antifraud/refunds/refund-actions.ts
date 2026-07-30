@@ -597,7 +597,7 @@ function validateSelection(selection: Selection): Selection {
 function actionErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (
-    /(?:2FA|passkey|verification|already used|confirmation|reason|select at least|select at most|currently flagged selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
+    /(?:2FA|passkey|verification|already used|confirmation|reason|select at least|select at most|eligible selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
       message,
     )
   ) {
@@ -629,7 +629,7 @@ export async function createRefundBatch(input: {
     const candidates = await resolveRefundSelection(selection);
     if (candidates.length === 0) {
       throw new Error(
-        "No new refundable deposits remain in that currently flagged selection.",
+        "No new refundable deposits remain in that eligible selection.",
       );
     }
 

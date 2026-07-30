@@ -252,7 +252,7 @@ export function RefundsPanel({
           <div className="max-w-3xl space-y-1">
             <h2 className="flex items-center gap-2 font-semibold">
               <AlertTriangle className="size-4 text-destructive" />
-              Whop refunds for currently flagged accounts
+              Whop refunds for banned or fraud-confirmed accounts
             </h2>
             <p className="text-sm text-muted-foreground">
               Every payment is checked live with Whop before its full refund.
@@ -295,7 +295,7 @@ export function RefundsPanel({
               >
                 {reconciliationOnly
                   ? "Refund all reconciliation failures"
-                  : "Refund all flagged"}
+                  : "Refund all eligible"}
               </Button>
             </div>
           ) : (
@@ -308,7 +308,7 @@ export function RefundsPanel({
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
           Payment <span className="font-mono">{requestedPaymentId}</span> is not
           currently refundable here. The account must first meet the active
-          fraud/KYC refund policy.
+          banned/fraud refund policy.
         </div>
       )}
 
@@ -333,7 +333,7 @@ export function RefundsPanel({
 
       {grouped.length === 0 ? (
         <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
-          No refundable Whop deposits were found for currently flagged accounts.
+          No refundable Whop deposits were found for banned or fraud-confirmed accounts.
         </div>
       ) : (
         <div className="space-y-4">
@@ -366,7 +366,12 @@ export function RefundsPanel({
                         {first?.kycRequired && (
                           <Badge variant="destructive">KYC required</Badge>
                         )}
-                        <Badge variant="destructive">Flagged</Badge>
+                        {first?.isBanned && (
+                          <Badge variant="destructive">Banned</Badge>
+                        )}
+                        {!first?.isBanned && (
+                          <Badge variant="destructive">Fraud confirmed</Badge>
+                        )}
                       </div>
                       <p className="mt-1 break-all text-xs text-muted-foreground">
                         {userId}
@@ -545,8 +550,8 @@ export function RefundsPanel({
               Confirm irreversible Whop refunds
             </AlertDialogTitle>
             <AlertDialogDescription>
-              This creates full refunds for the selected currently flagged
-              accounts. The operation cannot be undone.
+              This creates full refunds for the selected banned or
+              fraud-confirmed accounts. The operation cannot be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <div>

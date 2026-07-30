@@ -40,6 +40,11 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
   assert.match(page, /Review flow/);
   assert.match(page, /90-day account activity/);
   assert.match(page, /Gross wagered/);
+  assert.match(page, /TransactionRailTabs/);
+  assert.match(page, /lifecycle: "pending"/);
+  assert.match(page, /label="Confirmed"/);
+  assert.match(page, /fundingTrace\.entries/);
+  assert.match(page, /restricted source/);
   assert.match(page, /WithdrawalReviewDialog/);
   assert.doesNotMatch(page, /href=\{`\/antifraud\/withdrawals\/\$\{/);
   assert.match(dialog, /Allocated funding for this withdrawal/);
@@ -99,6 +104,10 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(risk, /restricted_funding_account/);
   assert.match(routes, /excludedUserIds/);
   assert.match(routes, /userIsCreator/);
+  assert.match(routes, /rail: z\.enum\(\["fiat", "crypto"\]\)/);
+  assert.match(routes, /lifecycle: z\.enum\(\["pending", "confirmed", "all"\]\)/);
+  assert.match(routes, /method<>'crypto'/);
+  assert.match(routes, /method='crypto'/);
   assert.match(routeHelpers, /excludedUsersHeaderSchema/);
   assert.match(routeHelpers, /cachedCreatorUserIds/);
   assert.doesNotMatch(routes, /SELECT DISTINCT user_id/);

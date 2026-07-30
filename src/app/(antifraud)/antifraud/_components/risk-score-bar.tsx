@@ -4,12 +4,15 @@ const CRITICAL_SCORE = 120;
 
 export function RiskScoreBar({
   score,
+  max = CRITICAL_SCORE,
   className,
 }: {
   score: number;
+  max?: number;
   className?: string;
 }) {
-  const position = Math.min(100, Math.max(0, (score / CRITICAL_SCORE) * 100));
+  const safeMax = Math.max(1, max);
+  const position = Math.min(100, Math.max(0, (score / safeMax) * 100));
 
   return (
     <div
@@ -17,8 +20,8 @@ export function RiskScoreBar({
       role="progressbar"
       aria-label={`Risk score ${score}`}
       aria-valuemin={0}
-      aria-valuemax={CRITICAL_SCORE}
-      aria-valuenow={Math.min(CRITICAL_SCORE, Math.max(0, score))}
+      aria-valuemax={safeMax}
+      aria-valuenow={Math.min(safeMax, Math.max(0, score))}
     >
       <div className="relative h-2 rounded-full bg-gradient-to-r from-emerald-500 via-amber-400 to-rose-500">
         <span
@@ -29,9 +32,12 @@ export function RiskScoreBar({
       </div>
       <div className="mt-1 flex justify-between text-[9px] font-medium tabular-nums text-muted-foreground">
         <span>0</span>
-        <span>40</span>
-        <span>80</span>
-        <span>120+</span>
+        <span>{Math.round(safeMax / 3)}</span>
+        <span>{Math.round((safeMax * 2) / 3)}</span>
+        <span>
+          {safeMax}
+          {safeMax === CRITICAL_SCORE ? "+" : ""}
+        </span>
       </div>
     </div>
   );

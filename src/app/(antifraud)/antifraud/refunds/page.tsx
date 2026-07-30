@@ -39,7 +39,10 @@ export default async function RefundsPage({
       </PageHero>
 
       <div className="space-y-3">
-        <SectionHeading icon={RotateCcw} title="Flagged account refunds" />
+        <SectionHeading
+          icon={RotateCcw}
+          title="Banned and fraud-account refunds"
+        />
         <Suspense
           fallback={
             <>

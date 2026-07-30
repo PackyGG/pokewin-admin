@@ -28,6 +28,7 @@ export type RefundCandidate = {
   createdAt: string;
   flagReason: string;
   kycRequired: boolean;
+  isBanned: boolean;
   alreadyQueued: boolean;
 };
 
@@ -54,6 +55,7 @@ export type WhopRefundState =
 type RefundFlag = {
   reason: string;
   kycRequired: boolean;
+  isBanned: boolean;
 };
 
 async function currentlyFlaggedUsers(): Promise<Map<string, RefundFlag>> {
@@ -70,23 +72,49 @@ async function currentlyFlaggedUsers(): Promise<Map<string, RefundFlag>> {
     reasons.set(row.userId, {
       reason: row.reason || "Flagged by Antifraud",
       kycRequired: false,
+      isBanned: false,
     });
   }
 
   const db = readDrizzleForEnv(await readDbEnv());
-  const automated = await db.execute<{
+  const sourceFlags = await db.execute<{
     user_id: string;
     reason: string | null;
+    kyc_required: boolean;
+    is_banned: boolean;
   }>(sql`
-    SELECT user_id, kyc_required_reason AS reason
+    SELECT
+      id AS user_id,
+      NULLIF(BTRIM(banned_reason), '') AS reason,
+      false AS kyc_required,
+      true AS is_banned
+    FROM "user"
+    WHERE is_banned = true
+
+    UNION ALL
+
+    SELECT
+      user_id,
+      kyc_required_reason AS reason,
+      true AS kyc_required,
+      false AS is_banned
     FROM user_kyc
     WHERE kyc_required = true
+      AND (
+        kyc_required_by LIKE 'system:antifraud-%'
+        OR COALESCE(kyc_required_reason, '') ~*
+          '(fraud|abuse|chargeback|scam|stolen|alt[ -]?account)'
+      )
   `);
-  for (const row of automated.rows) {
+  for (const row of sourceFlags.rows) {
     const existing = reasons.get(row.user_id);
     reasons.set(row.user_id, {
-      reason: existing?.reason || row.reason || "KYC verification required",
-      kycRequired: true,
+      reason:
+        existing?.reason ||
+        row.reason ||
+        (row.is_banned ? "Banned account" : "Fraud-specific KYC containment"),
+      kycRequired: existing?.kycRequired || row.kyc_required,
+      isBanned: existing?.isBanned || row.is_banned,
     });
   }
   return reasons;
@@ -277,6 +305,7 @@ async function queryCandidates(
       createdAt: row.created_at,
       flagReason: flag?.reason ?? "Flagged by Antifraud",
       kycRequired: flag?.kycRequired ?? false,
+      isBanned: flag?.isBanned ?? false,
       alreadyQueued: queued.has(row.provider_payment_id),
     };
   });

@@ -4,6 +4,7 @@ import {
   ArrowRight,
   BadgeCheck,
   Banknote,
+  Bitcoin,
   CircleAlert,
   CreditCard,
   Eye,
@@ -45,6 +46,10 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
 import {
+  getDepositTransactions,
+  type TransactionListItem,
+} from "@/lib/queries/transactions";
+import {
   EmptyState,
   FactCell,
   FilterButton,
@@ -56,6 +61,8 @@ import {
   verdictStyle,
 } from "../_components/list-page";
 import { QueueReviewDrawer } from "../_components/review-drawer";
+import { RiskScoreBar } from "../_components/risk-score-bar";
+import { TransactionRailTabs } from "../_components/transaction-tabs";
 import { FiatKycAction } from "./fiat-kyc-action";
 import { FiatReview } from "./[id]/review-workspace";
 
@@ -78,6 +85,8 @@ const REVIEWS = [
 
 type Filters = {
   page: number;
+  rail: "fiat" | "crypto";
+  view: "normal" | "fraud" | "refunded";
   status?: string;
   verdict?: FiatVerdict;
   reviewStatus?: FiatReviewStatus;
@@ -97,6 +106,11 @@ export default async function FiatDepositsPage({
     typeof params[key] === "string" ? params[key] : undefined;
   const state: Filters = {
     page: parsePageParam(value("page")),
+    rail: value("rail") === "crypto" ? "crypto" : "fiat",
+    view:
+      value("view") === "fraud" || value("view") === "refunded"
+        ? (value("view") as "fraud" | "refunded")
+        : "normal",
     status: STATUSES.includes(value("status") as (typeof STATUSES)[number])
       ? value("status")
       : undefined,
@@ -119,7 +133,26 @@ export default async function FiatDepositsPage({
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-      <FiltersBar state={state} viewerCanManage={canManageKyc} />
+      <TransactionRailTabs
+        active={state.rail}
+        label="Deposits"
+        hrefFor={(rail) =>
+          href({
+            ...state,
+            page: 1,
+            rail,
+            view: "normal",
+            status: undefined,
+            verdict: undefined,
+            reviewStatus: undefined,
+          })
+        }
+      />
+      {state.rail === "fiat" ? (
+        <FiltersBar state={state} viewerCanManage={canManageKyc} />
+      ) : (
+        <CryptoFilters state={state} />
+      )}
       <Suspense
         key={JSON.stringify(state)}
         fallback={
@@ -130,12 +163,16 @@ export default async function FiatDepositsPage({
           />
         }
       >
-        <FiatContent
-          state={state}
-          canManageKyc={canManageKyc}
-          selectedReviewId={selectedReviewId}
-          canRefund={canManageKyc}
-        />
+        {state.rail === "fiat" ? (
+          <FiatContent
+            state={state}
+            canManageKyc={canManageKyc}
+            selectedReviewId={selectedReviewId}
+            canRefund={canManageKyc}
+          />
+        ) : (
+          <CryptoDepositContent state={state} />
+        )}
       </Suspense>
     </div>
   );
@@ -157,6 +194,38 @@ function FiltersBar({
     <div className="rounded-xl border border-border/70 bg-card p-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div className="flex flex-wrap items-start gap-x-5 gap-y-3">
+          <FilterGroup label="View">
+            <FilterButton
+              label="Normal"
+              active={state.view === "normal"}
+              href={href({
+                ...state,
+                page: 1,
+                view: "normal",
+                status: undefined,
+              })}
+            />
+            <FilterButton
+              label="Fraud tagged"
+              active={state.view === "fraud"}
+              href={href({
+                ...state,
+                page: 1,
+                view: "fraud",
+                status: undefined,
+              })}
+            />
+            <FilterButton
+              label="Refunded"
+              active={state.view === "refunded"}
+              href={href({
+                ...state,
+                page: 1,
+                view: "refunded",
+                status: undefined,
+              })}
+            />
+          </FilterGroup>
           <FilterGroup label="Risk">
             <FilterButton
               label="All"
@@ -206,16 +275,6 @@ function FiltersBar({
               label="Completed"
               active={state.status === "completed"}
               href={filterHref({ status: "completed" })}
-            />
-            <FilterButton
-              label="Refunded"
-              active={state.status === "refunded"}
-              href={filterHref({ status: "refunded" })}
-            />
-            <FilterButton
-              label="Partial refund"
-              active={state.status === "partially_refunded"}
-              href={filterHref({ status: "partially_refunded" })}
             />
             <FilterButton
               label="Disputed"
@@ -312,6 +371,7 @@ async function FiatContent({
 }) {
   const result = await listFiatAssessments({
     page: state.page,
+    view: state.view,
     status: state.status,
     verdict: state.verdict,
     reviewStatus: state.reviewStatus,
@@ -492,6 +552,148 @@ function Summary({ summary }: { summary: FiatSummary }) {
   );
 }
 
+function CryptoFilters({ state }: { state: Filters }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card p-3">
+      <form
+        className="flex w-full max-w-xl gap-2"
+        action="/antifraud/fiat-deposits"
+      >
+        <input type="hidden" name="rail" value="crypto" />
+        <Input
+          name="search"
+          defaultValue={state.search}
+          placeholder="User, username, or transaction ID"
+          maxLength={100}
+          aria-label="Search crypto deposits"
+        />
+        <Button type="submit" variant="outline">
+          <Search className="size-4" />
+          Search
+        </Button>
+      </form>
+    </div>
+  );
+}
+
+async function CryptoDepositContent({ state }: { state: Filters }) {
+  const result = await safeQuery(
+    () =>
+      getDepositTransactions({
+        page: state.page,
+        perPage: 20,
+        search: state.search || undefined,
+        method: "crypto",
+      }),
+    { data: [], total: 0, page: state.page, perPage: 20, totalPages: 0 },
+    "antifraud.cryptoDeposits.list",
+    12_000,
+  );
+  if (result.error) {
+    return (
+      <EmptyState
+        icon={Bitcoin}
+        text="Crypto deposits could not be loaded from the MAIN mirror."
+      />
+    );
+  }
+  if (result.data.data.length === 0) {
+    return (
+      <EmptyState icon={Bitcoin} text="No crypto deposits match this search." />
+    );
+  }
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <KpiTile
+          icon={Bitcoin}
+          accent="cyan"
+          label="Crypto deposits"
+          value={result.data.total.toLocaleString()}
+          sub="Completed ledger deposit history"
+        />
+        <KpiTile
+          icon={Banknote}
+          accent="emerald"
+          label="Visible volume"
+          value={formatCurrency(
+            result.data.data.reduce((sum, row) => sum + row.amount, 0),
+          )}
+          sub={`Current page · ${result.data.data.length} deposits`}
+        />
+      </div>
+      <div className="space-y-2">
+        {result.data.data.map((deposit) => (
+          <CryptoDepositRow key={deposit.id} deposit={deposit} />
+        ))}
+      </div>
+      <ListPagination
+        page={result.data.page}
+        pages={Math.max(1, result.data.totalPages)}
+        total={result.data.total}
+        unitLabel="crypto deposits"
+        previousHref={
+          result.data.page > 1
+            ? href({ ...state, page: result.data.page - 1 })
+            : undefined
+        }
+        nextHref={
+          result.data.page < result.data.totalPages
+            ? href({ ...state, page: result.data.page + 1 })
+            : undefined
+        }
+      />
+    </div>
+  );
+}
+
+function CryptoDepositRow({ deposit }: { deposit: TransactionListItem }) {
+  const name = deposit.username ?? deposit.userId;
+  return (
+    <article className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-center gap-3">
+        <Avatar className="size-9">
+          {deposit.image && <AvatarImage src={deposit.image} alt="" />}
+          <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+        </Avatar>
+        <div className="min-w-0">
+          <HostLink
+            href={`/users/${deposit.userId}`}
+            className="block truncate text-sm font-semibold hover:underline"
+          >
+            {name}
+          </HostLink>
+          <p className="truncate font-mono text-[10px] text-muted-foreground">
+            {deposit.id}
+          </p>
+        </div>
+        <Badge variant="secondary">{deposit.cryptoAsset ?? "Crypto"}</Badge>
+      </div>
+      <div className="flex items-center justify-between gap-6 sm:justify-end">
+        <div className="text-right">
+          <p className="font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+            {formatCurrency(deposit.amount)}
+          </p>
+          <p className="text-[10px] text-muted-foreground">
+            {deposit.cryptoAmount?.toLocaleString(undefined, {
+              maximumFractionDigits: 8,
+            }) ?? "—"}{" "}
+            {deposit.cryptoAsset}
+          </p>
+        </div>
+        <div className="text-right">
+          <Badge variant="outline" className="capitalize">
+            {deposit.status}
+          </Badge>
+          <p className="mt-1 text-[10px] text-muted-foreground">
+            {formatDateTime(deposit.createdAt)}
+          </p>
+        </div>
+      </div>
+    </article>
+  );
+}
+
 function FiatRiskScoreGuide() {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-4">
@@ -645,26 +847,28 @@ function FiatRow({
               {formatDateTime(item.occurred_at)}
             </p>
           </div>
-          <div
-            className={cn(
-              "flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2",
-              style.box,
-            )}
-          >
-            <VerdictIcon className={cn("size-5", style.text)} />
-            <span>
-              <span
-                className={cn(
-                  "block text-sm font-semibold capitalize",
-                  style.text,
-                )}
-              >
-                {item.verdict}
+          <div className={cn("min-w-40 rounded-lg border px-3 py-2", style.box)}>
+            <div className="flex items-center gap-2">
+              <VerdictIcon className={cn("size-5", style.text)} />
+              <span>
+                <span
+                  className={cn(
+                    "block text-sm font-semibold capitalize",
+                    style.text,
+                  )}
+                >
+                  {item.verdict}
+                </span>
+                <span className="block text-[10px] text-muted-foreground">
+                  {item.risk_score}/100 risk
+                </span>
               </span>
-              <span className="block text-[10px] text-muted-foreground">
-                {item.risk_score}/100 risk
-              </span>
-            </span>
+            </div>
+            <RiskScoreBar
+              score={item.risk_score}
+              max={100}
+              className="mt-2 min-w-36"
+            />
           </div>
           {canManageKyc && (
             <FiatKycAction
@@ -711,10 +915,16 @@ function FiatRow({
           alert={item.three_ds_verified === false}
         />
         <FactCell
-          label="Payment option"
-          value={whopPaymentMethodLabel(
-            item.provider_evidence.paymentMethodType,
-          )}
+          label="Card"
+          value={[
+            whopPaymentMethodLabel(item.provider_evidence.paymentMethodType),
+            item.provider_evidence.cardBrand?.toUpperCase(),
+            item.provider_evidence.cardLast4
+              ? `•••• ${item.provider_evidence.cardLast4}`
+              : null,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         />
         <FactCell
           label="Prior crypto"
@@ -725,9 +935,34 @@ function FiatRow({
           value={`${funding.priorFiatDeposits} · ${formatCurrency(funding.priorFiatUsd)}`}
         />
         <FactCell
-          label="Whop checkout:"
+          label="Checkout email"
           value={item.provider_evidence.checkoutEmail ?? "unavailable"}
         />
+        <FactCell
+          label="Fees"
+          value={
+            item.customer_total_usd !== null && item.provider_net_usd !== null
+              ? formatCurrency(
+                  Math.max(0, item.customer_total_usd - item.provider_net_usd),
+                )
+              : "Unavailable"
+          }
+        />
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1.5">
+        {Object.entries(item.score_breakdown)
+          .filter(([, score]) => score > 0)
+          .sort((a, b) => b[1] - a[1])
+          .map(([category, score]) => (
+            <Badge key={category} variant="outline" className="capitalize">
+              {category} +{score}
+            </Badge>
+          ))}
+        {Object.values(item.score_breakdown).every((score) => score === 0) && (
+          <span className="text-xs text-muted-foreground">
+            No scored risk evidence.
+          </span>
+        )}
       </div>
     </article>
   );
@@ -736,6 +971,8 @@ function FiatRow({
 function href(state: Filters) {
   const params = new URLSearchParams();
   if (state.page > 1) params.set("page", String(state.page));
+  if (state.rail === "crypto") params.set("rail", "crypto");
+  if (state.view !== "normal") params.set("view", state.view);
   if (state.status) params.set("status", state.status);
   if (state.verdict) params.set("verdict", state.verdict);
   if (state.reviewStatus) params.set("reviewStatus", state.reviewStatus);

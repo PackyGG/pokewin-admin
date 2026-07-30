@@ -34,6 +34,8 @@ const querySchema = z.object({
       "block_recommended",
     ])
     .optional(),
+  rail: z.enum(["fiat", "crypto"]).default("fiat"),
+  lifecycle: z.enum(["pending", "confirmed", "all"]).default("pending"),
   search: z.string().trim().max(100).optional(),
 });
 
@@ -84,7 +86,9 @@ export async function registerWithdrawalRoutes(
   app.get("/v1/withdrawals", async (request) => {
     const query = querySchema.parse(request.query);
     const excluded = excludedUserIds(request.headers);
-    const usesAssessmentFilter = Boolean(query.verdict || query.reviewStatus);
+    const usesAssessmentFilter = Boolean(
+      query.verdict || query.reviewStatus || query.rail || query.lifecycle,
+    );
     const refreshed = await service.refreshPage(
       usesAssessmentFilter
         ? { ...query, page: 1, limit: 100, excludedUserIds: excluded }
@@ -103,7 +107,14 @@ export async function registerWithdrawalRoutes(
     if (query.status) {
       values.push(query.status);
       conditions.push(`status=$${values.length}`);
+    } else if (query.lifecycle === "pending") {
+      conditions.push(`status IN ('pending','processing')`);
+    } else if (query.lifecycle === "confirmed") {
+      conditions.push(`status IN ('shipped','completed')`);
     }
+    conditions.push(
+      query.rail === "crypto" ? `method='crypto'` : `method<>'crypto'`,
+    );
     if (query.verdict) {
       values.push(query.verdict);
       conditions.push(`verdict=$${values.length}`);
@@ -170,6 +181,12 @@ export async function registerWithdrawalRoutes(
         in_review: number;
         block_recommended: number;
         amount_usd: number;
+        fiat: number;
+        crypto: number;
+        pending_fiat: number;
+        pending_crypto: number;
+        confirmed_fiat: number;
+        confirmed_crypto: number;
       }>(
         `
           SELECT
@@ -183,6 +200,20 @@ export async function registerWithdrawalRoutes(
             )::int AS in_review,
             COUNT(*) FILTER (WHERE review_status='block_recommended')::int
               AS block_recommended,
+            COUNT(*) FILTER (WHERE method<>'crypto')::int AS fiat,
+            COUNT(*) FILTER (WHERE method='crypto')::int AS crypto,
+            COUNT(*) FILTER (
+              WHERE method<>'crypto' AND status IN ('pending','processing')
+            )::int AS pending_fiat,
+            COUNT(*) FILTER (
+              WHERE method='crypto' AND status IN ('pending','processing')
+            )::int AS pending_crypto,
+            COUNT(*) FILTER (
+              WHERE method<>'crypto' AND status IN ('shipped','completed')
+            )::int AS confirmed_fiat,
+            COUNT(*) FILTER (
+              WHERE method='crypto' AND status IN ('shipped','completed')
+            )::int AS confirmed_crypto,
             COALESCE(SUM(amount_usd),0)::float8 AS amount_usd
           FROM withdrawal_assessments
           ${summaryWhere}
@@ -210,6 +241,12 @@ export async function registerWithdrawalRoutes(
         in_review: 0,
         block_recommended: 0,
         amount_usd: 0,
+        fiat: 0,
+        crypto: 0,
+        pending_fiat: 0,
+        pending_crypto: 0,
+        confirmed_fiat: 0,
+        confirmed_crypto: 0,
       },
     };
   });

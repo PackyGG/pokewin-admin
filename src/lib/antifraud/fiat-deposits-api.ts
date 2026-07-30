@@ -64,6 +64,8 @@ const providerEvidenceSchema = z.object({
   autoRefunded: z.boolean(),
   billingCountry: z.string().nullable(),
   paymentMethodType: z.string().nullable(),
+  cardBrand: z.string().nullable().optional().default(null),
+  cardLast4: z.string().nullable().optional().default(null),
 });
 const fundingEvidenceSchema = z.object({
   priorCryptoDeposits: z.number(),
@@ -187,6 +189,9 @@ const summarySchema = z.object({
   provider_high_risk: z.number(),
   three_ds_failed: z.number(),
   disputed: z.number(),
+  normal: z.number(),
+  fraud: z.number(),
+  refunded: z.number(),
   amount_usd: numeric,
 });
 const listResponseSchema = z.object({
@@ -239,6 +244,7 @@ function config(admin = false): { baseUrl: string; token: string } | null {
 
 export async function listFiatAssessments(input: {
   page: number;
+  view?: "normal" | "fraud" | "refunded";
   status?: string;
   verdict?: FiatVerdict;
   reviewStatus?: FiatReviewStatus;
@@ -260,6 +266,7 @@ export async function listFiatAssessments(input: {
     limit: "20",
   });
   if (input.status) params.set("status", input.status);
+  if (input.view) params.set("view", input.view);
   if (input.verdict) params.set("verdict", input.verdict);
   if (input.reviewStatus) params.set("reviewStatus", input.reviewStatus);
   if (input.search) params.set("search", input.search);

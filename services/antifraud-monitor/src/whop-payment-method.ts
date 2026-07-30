@@ -1,6 +1,14 @@
 export const APPLE_PAY_RISK_MULTIPLIER = 0.8;
 
 const METHOD_KEYS = new Set(["payment_method_type", "paymentMethodType"]);
+const CARD_BRAND_KEYS = new Set(["card_brand", "cardBrand"]);
+const CARD_LAST4_KEYS = new Set(["card_last4", "cardLast4"]);
+
+export type WhopPaymentMethodInfo = {
+  type: string | null;
+  cardBrand: string | null;
+  cardLast4: string | null;
+};
 
 export function normalizeWhopPaymentMethod(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -15,35 +23,55 @@ export function normalizeWhopPaymentMethod(value: unknown): string | null {
   return normalized;
 }
 
-function findPaymentMethod(value: unknown, depth = 0): string | null {
+function scalarString(value: unknown): string | null {
+  if (typeof value !== "string" && typeof value !== "number") return null;
+  const normalized = String(value).trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function findValue(
+  value: unknown,
+  keys: ReadonlySet<string>,
+  depth = 0,
+): string | null {
   if (!value || typeof value !== "object" || depth > 6) return null;
   if (Array.isArray(value)) {
     for (const entry of value) {
-      const match = findPaymentMethod(entry, depth + 1);
+      const match = findValue(entry, keys, depth + 1);
       if (match) return match;
     }
     return null;
   }
   const item = value as Record<string, unknown>;
-  for (const key of METHOD_KEYS) {
-    const match = normalizeWhopPaymentMethod(item[key]);
+  for (const key of keys) {
+    const match = scalarString(item[key]);
     if (match) return match;
   }
   for (const nested of Object.values(item)) {
-    const match = findPaymentMethod(nested, depth + 1);
+    const match = findValue(nested, keys, depth + 1);
     if (match) return match;
   }
   return null;
 }
 
+export function whopPaymentMethodInfo(
+  ...sources: unknown[]
+): WhopPaymentMethodInfo {
+  for (const source of sources) {
+    const type = normalizeWhopPaymentMethod(findValue(source, METHOD_KEYS));
+    const cardBrand = findValue(source, CARD_BRAND_KEYS)?.toLowerCase() ?? null;
+    const cardLast4 = findValue(source, CARD_LAST4_KEYS);
+    if (type || cardBrand || cardLast4) {
+      return { type, cardBrand, cardLast4 };
+    }
+  }
+  return { type: null, cardBrand: null, cardLast4: null };
+}
+
 export function whopPaymentMethodFromPayload(
   ...sources: unknown[]
 ): string | null {
-  for (const source of sources) {
-    const match = findPaymentMethod(source);
-    if (match) return match;
-  }
-  return null;
+  return whopPaymentMethodInfo(...sources).type;
 }
 
 export function whopPaymentMethodLabel(value: unknown): string {

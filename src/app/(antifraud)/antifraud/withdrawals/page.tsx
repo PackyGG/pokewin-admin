@@ -39,6 +39,8 @@ import {
   verdictStyle,
 } from "../_components/list-page";
 import { QueueReviewDrawer } from "../_components/review-drawer";
+import { RiskScoreBar } from "../_components/risk-score-bar";
+import { TransactionRailTabs } from "../_components/transaction-tabs";
 import { WithdrawalReviewDialog } from "./review-dialog";
 
 export const metadata = { title: "Withdrawals · Antifraud" };
@@ -61,6 +63,8 @@ const REVIEW_STATUSES = [
 
 type FilterState = {
   page: number;
+  rail: "fiat" | "crypto";
+  lifecycle: "pending" | "confirmed" | "all";
   status?: string;
   verdict?: WithdrawalVerdict;
   reviewStatus?: WithdrawalReviewStatus;
@@ -77,12 +81,19 @@ export default async function WithdrawalsPage({
     reviewStatus?: string;
     search?: string;
     review?: string;
+    rail?: string;
+    lifecycle?: string;
   }>;
 }) {
   await requireAntifraudPageAccess();
   const params = await searchParams;
   const state: FilterState = {
     page: parsePageParam(params.page),
+    rail: params.rail === "crypto" ? "crypto" : "fiat",
+    lifecycle:
+      params.lifecycle === "confirmed" || params.lifecycle === "all"
+        ? params.lifecycle
+        : "pending",
     status: STATUSES.includes(params.status as (typeof STATUSES)[number])
       ? params.status
       : undefined,
@@ -106,10 +117,22 @@ export default async function WithdrawalsPage({
         <PageHeroIdentity />
       </PageHero>
 
+      <TransactionRailTabs
+        active={state.rail}
+        label="Withdrawals"
+        hrefFor={(rail) =>
+          withdrawalHref({
+            ...state,
+            rail,
+            page: 1,
+            status: undefined,
+          })
+        }
+      />
       <Filters state={state} />
 
       <Suspense
-        key={`${state.page}-${state.status}-${state.verdict}-${state.reviewStatus}-${state.search}`}
+        key={`${state.rail}-${state.lifecycle}-${state.page}-${state.status}-${state.verdict}-${state.reviewStatus}-${state.search}`}
         fallback={<ListPageSkeleton />}
       >
         <WithdrawalContent
@@ -155,7 +178,36 @@ function Filters({ state }: { state: FilterState }) {
             />
           </FilterGroup>
           <FilterGroup label="Payout status">
-            <FilterButton label="Any" active={!state.status} href={filterHref({ status: null })} />
+            <FilterButton
+              label="Pending"
+              active={!state.status && state.lifecycle === "pending"}
+              href={withdrawalHref({
+                ...state,
+                page: 1,
+                status: undefined,
+                lifecycle: "pending",
+              })}
+            />
+            <FilterButton
+              label="Confirmed"
+              active={!state.status && state.lifecycle === "confirmed"}
+              href={withdrawalHref({
+                ...state,
+                page: 1,
+                status: undefined,
+                lifecycle: "confirmed",
+              })}
+            />
+            <FilterButton
+              label="All"
+              active={!state.status && state.lifecycle === "all"}
+              href={withdrawalHref({
+                ...state,
+                page: 1,
+                status: undefined,
+                lifecycle: "all",
+              })}
+            />
             <FilterButton label="Pending" active={state.status === "pending"} href={filterHref({ status: "pending" })} />
             <FilterButton label="Processing" active={state.status === "processing"} href={filterHref({ status: "processing" })} />
             <FilterButton label="Completed" active={state.status === "completed"} href={filterHref({ status: "completed" })} />
@@ -163,6 +215,8 @@ function Filters({ state }: { state: FilterState }) {
         </div>
         <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/withdrawals">
           {state.status && <input type="hidden" name="status" value={state.status} />}
+          <input type="hidden" name="rail" value={state.rail} />
+          <input type="hidden" name="lifecycle" value={state.lifecycle} />
           {state.verdict && <input type="hidden" name="verdict" value={state.verdict} />}
           {state.reviewStatus && (
             <input type="hidden" name="reviewStatus" value={state.reviewStatus} />
@@ -193,6 +247,8 @@ async function WithdrawalContent({
 }) {
   const result = await listWithdrawalAssessments({
     page: state.page,
+    rail: state.rail,
+    lifecycle: state.lifecycle,
     status: state.status,
     verdict: state.verdict,
     reviewStatus: state.reviewStatus,
@@ -209,7 +265,7 @@ async function WithdrawalContent({
   }
   return (
     <div className="space-y-4">
-      {result.summary && <SummaryCards summary={result.summary} />}
+      {result.summary && <SummaryCards summary={result.summary} rail={state.rail} />}
       <div className="space-y-3">
         {result.data.map((withdrawal) => (
           <WithdrawalRow
@@ -288,6 +344,7 @@ async function WithdrawalReviewOverlay({
 
 function SummaryCards({
   summary,
+  rail,
 }: {
   summary: {
     total: number;
@@ -298,8 +355,19 @@ function SummaryCards({
     in_review: number;
     block_recommended: number;
     amount_usd: number;
+    fiat: number;
+    crypto: number;
+    pending_fiat: number;
+    pending_crypto: number;
+    confirmed_fiat: number;
+    confirmed_crypto: number;
   };
+  rail: "fiat" | "crypto";
 }) {
+  const pending =
+    rail === "fiat" ? summary.pending_fiat : summary.pending_crypto;
+  const confirmed =
+    rail === "fiat" ? summary.confirmed_fiat : summary.confirmed_crypto;
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
       <KpiTile
@@ -307,7 +375,7 @@ function SummaryCards({
         accent="cyan"
         label="Analyzed"
         value={summary.total.toLocaleString()}
-        sub={`${formatCurrency(summary.amount_usd)} requested`}
+        sub={`${pending.toLocaleString()} pending · ${confirmed.toLocaleString()} confirmed`}
       />
       <KpiTile
         icon={ShieldCheck}
@@ -345,6 +413,9 @@ function WithdrawalRow({
   const verdict = verdictStyle(withdrawal.verdict);
   const VerdictIcon = verdict.icon;
   const flow = withdrawal.flow;
+  const linkedSources = new Map(
+    flow.linkedAccounts.map((account) => [account.userId, account]),
+  );
   const flagged = withdrawal.flow_checks.filter(
     (check) => check.status === "watch" || check.status === "alert",
   );
@@ -397,16 +468,19 @@ function WithdrawalRow({
               {formatDateTime(withdrawal.requested_at)}
             </p>
           </div>
-          <div className={cn("flex min-w-32 items-center gap-2 rounded-lg border px-3 py-2", verdict.box)}>
-            <VerdictIcon className={cn("size-5", verdict.text)} />
-            <span>
-              <span className={cn("block text-sm font-semibold capitalize", verdict.text)}>
-                {withdrawal.verdict}
+          <div className={cn("min-w-40 rounded-lg border px-3 py-2", verdict.box)}>
+            <div className="flex items-center gap-2">
+              <VerdictIcon className={cn("size-5", verdict.text)} />
+              <span>
+                <span className={cn("block text-sm font-semibold capitalize", verdict.text)}>
+                  {withdrawal.verdict}
+                </span>
+                <span className="block text-[10px] text-muted-foreground">
+                  {withdrawal.risk_score}/100 risk
+                </span>
               </span>
-              <span className="block text-[10px] text-muted-foreground">
-                {withdrawal.risk_score}/100 risk
-              </span>
-            </span>
+            </div>
+            <RiskScoreBar score={withdrawal.risk_score} max={100} className="mt-2 min-w-36" />
           </div>
           {withdrawal.flow_checks.length > 0 ? (
             <Button size="sm" render={<HostLink href={reviewHref} scroll={false} />}>
@@ -461,6 +535,42 @@ function WithdrawalRow({
       <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
         {withdrawal.summary}
       </p>
+      {withdrawal.flow.fundingTrace.entries.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {withdrawal.flow.fundingTrace.entries.slice(0, 6).map((entry) => {
+            const linked = entry.counterpartyUserId
+              ? linkedSources.get(entry.counterpartyUserId)
+              : undefined;
+            const restrictions = linked
+              ? [
+                  linked.isBanned && "banned",
+                  linked.isLocked && "locked",
+                  linked.isSuspectedAlt && "suspected alt",
+                  linked.isSelfExcluded && "self-excluded",
+                  linked.withdrawalsLocked && "withdrawals locked",
+                  linked.kycRequired && "KYC required",
+                  linked.activeFraudCase && "active fraud case",
+                  ...linked.adminTags,
+                ].filter(Boolean)
+              : [];
+            return (
+              <Badge
+                key={entry.id}
+                variant={restrictions.length > 0 ? "destructive" : "outline"}
+                title={restrictions.join(", ")}
+              >
+                {entry.label} · {formatCurrency(entry.allocatedUsd)}
+                {restrictions.length > 0 ? " · restricted source" : ""}
+              </Badge>
+            );
+          })}
+          {withdrawal.flow.fundingTrace.entries.length > 6 && (
+            <Badge variant="secondary">
+              +{withdrawal.flow.fundingTrace.entries.length - 6} more
+            </Badge>
+          )}
+        </div>
+      )}
     </article>
   );
 }
@@ -468,6 +578,8 @@ function WithdrawalRow({
 function withdrawalHref(state: FilterState): string {
   const params = new URLSearchParams();
   if (state.page > 1) params.set("page", String(state.page));
+  if (state.rail === "crypto") params.set("rail", "crypto");
+  if (state.lifecycle !== "pending") params.set("lifecycle", state.lifecycle);
   if (state.status) params.set("status", state.status);
   if (state.verdict) params.set("verdict", state.verdict);
   if (state.reviewStatus) params.set("reviewStatus", state.reviewStatus);
