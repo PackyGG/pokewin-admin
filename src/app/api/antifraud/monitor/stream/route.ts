@@ -41,6 +41,20 @@ export const maxDuration = 300;
  *   7. Replay is best-effort: after 2 consecutive replay failures the route
  *      goes live without history, and a replay overflow or truncated replay
  *      is surfaced to the UI instead of wedging the reconnect loop.
+ *   8. Upstream `resync` frames (the service noticed its own Redis pub/sub
+ *      gap) are INTERCEPTED, never forwarded: the route re-runs replay from
+ *      its own cursor to recover the missed window, deduped against what was
+ *      already delivered. A resync during a running replay is ignored — that
+ *      replay already covers the gap.
+ *   9. Planned upstream closes are not failures: 1012 (hourly session
+ *      rotation) reconnects immediately without touching the backoff or the
+ *      circuit breaker; 1001 (service redeploy) reconnects after a short
+ *      fixed grace so the new replica can come up, also without feeding the
+ *      breaker. Only unplanned closes escalate.
+ *  10. SSE writes respect backpressure: when the browser stops reading and
+ *      the response queue backs up past a bounded threshold, the route closes
+ *      the stream instead of buffering without limit — the EventSource
+ *      reconnects and resumes via `Last-Event-ID`.
  */
 
 const HEARTBEAT_MS = 15_000;
@@ -59,7 +73,22 @@ const REPLAY_FAILURE_LIMIT = 2;
 /** Pending live frames beyond this during replay → drop the replay, go live. */
 const REPLAY_PENDING_LIMIT = 500;
 const REPLAY_TRUNCATED_MESSAGE = "History truncated — refresh for full state";
+const RESYNC_GAP_MESSAGE = "History may have gaps — refresh for full state";
 const CAPACITY_RETRY_MIN_MS = 15_000;
+/** Grace before reconnecting into a 1001 close so the new replica can boot. */
+const SHUTDOWN_RETRY_MIN_MS = 4_000;
+/**
+ * Backpressure bound for the SSE response queue, in CHUNKS. This is a default
+ * `ReadableStream<Uint8Array>` (not `type: "bytes"`), so `desiredSize` counts
+ * queued chunks against the default `highWaterMark` of 1 — one chunk per
+ * `write()` call, i.e. per SSE frame. A healthy browser drains continuously
+ * and `desiredSize` hovers around 0/1; a stalled reader lets it go negative
+ * without bound. 500 undrained frames (~0.5MB at typical frame sizes, hard
+ * ceiling 500 × MAX_FRAME_BYTES) is far beyond any transient TCP stall, so at
+ * that point the client is treated as not consuming and the stream is closed —
+ * its EventSource reconnects and resumes via `Last-Event-ID`.
+ */
+const BACKPRESSURE_CHUNK_LIMIT = -500;
 /** Reconnect delay advertised to the browser's own EventSource retry. */
 const CLIENT_RETRY_MS = 15_000;
 
@@ -315,6 +344,20 @@ export async function GET(request: Request): Promise<Response> {
       const write = (chunk: string) => {
         if (closed) return;
         try {
+          const desiredSize = controller.desiredSize;
+          if (desiredSize === null) {
+            // The stream already errored/closed underneath us.
+            close();
+            return;
+          }
+          if (desiredSize < BACKPRESSURE_CHUNK_LIMIT) {
+            // The browser stopped reading (stalled tab, dead TCP peer the
+            // runtime hasn't noticed yet). Buffering further frames only
+            // grows this function instance without bound — close instead;
+            // the EventSource reconnects and resumes via Last-Event-ID.
+            close();
+            return;
+          }
           controller.enqueue(encoder.encode(chunk));
         } catch {
           close();
@@ -395,6 +438,7 @@ export async function GET(request: Request): Promise<Response> {
           .then((ticket) => {
             if (closed) return;
             let replaying = true;
+            let resyncing = false;
             const pending: unknown[] = [];
             const next = new WebSocket(
               websocketUrl(baseUrl),
@@ -407,6 +451,46 @@ export async function GET(request: Request): Promise<Response> {
               },
             );
             socket = next;
+            /**
+             * The service noticed a gap in its own Redis pub/sub feed: events
+             * may have been published to the stream without being broadcast.
+             * Re-run replay from our own cursor to recover the window. Skipped
+             * while the initial replay runs — it already covers the gap — and
+             * while a previous resync replay is still in flight.
+             */
+            const handleResync = () => {
+              if (replaying || resyncing) return;
+              if (!lastDeliveredId) {
+                // Nothing delivered yet means there is no cursor to recover
+                // from — the snapshot the page loaded may now be stale.
+                send(transport("open", RESYNC_GAP_MESSAGE));
+                return;
+              }
+              resyncing = true;
+              void replayEvents(baseUrl, token, lastDeliveredId)
+                .then(({ events: recovered, truncated }) => {
+                  if (closed || socket !== next) return;
+                  let forwarded = 0;
+                  for (const event of recovered) {
+                    if (deliveredIds.has(event.id)) continue;
+                    forwarded += 1;
+                    forward(event);
+                  }
+                  if (truncated) {
+                    send(transport("open", RESYNC_GAP_MESSAGE));
+                  } else if (forwarded > 0) {
+                    send(transport("open", "Recovered missed events"));
+                  }
+                })
+                .catch(() => {
+                  console.error("[antifraud-monitor] resync replay failed");
+                  if (closed || socket !== next) return;
+                  send(transport("open", RESYNC_GAP_MESSAGE));
+                })
+                .finally(() => {
+                  resyncing = false;
+                });
+            };
             next.on("open", () => {
               if (closed || socket !== next) return;
               // Zombie detection: ping the upstream on an interval and
@@ -482,6 +566,14 @@ export async function GET(request: Request): Promise<Response> {
                 const value = JSON.parse(payload) as unknown;
                 const envelope = parseEnvelope(value);
                 if (!envelope) return;
+                if (envelope.type === "resync") {
+                  // Never forwarded to the browser: its id is the service's
+                  // stream TIP, not an event we delivered — forwarding (or
+                  // recording it as the cursor) would skip the very gap the
+                  // frame is reporting.
+                  handleResync();
+                  return;
+                }
                 if (replaying) {
                   pending.push(envelope);
                   if (pending.length > REPLAY_PENDING_LIMIT) {
@@ -517,7 +609,27 @@ export async function GET(request: Request): Promise<Response> {
               }
               if (closed || socket !== next) return;
               socket = null;
-              if (code === 1013) {
+              if (code === 1012) {
+                // Planned hourly session rotation — routine, not a failure.
+                // Reconnect immediately WITHOUT touching attempt or
+                // consecutiveFailures so the backoff schedule and circuit
+                // breaker only ever see real faults.
+                if (retryTimer) return;
+                setState("connecting", "Refreshing live session");
+                retryTimer = setTimeout(() => {
+                  retryTimer = null;
+                  connectUpstream();
+                }, 0);
+              } else if (code === 1001) {
+                // Planned shutdown/redeploy. Reset the breaker (planned closes
+                // must not accumulate toward it) and wait out a short grace so
+                // the replacement replica has time to boot.
+                consecutiveFailures = 0;
+                scheduleReconnect(
+                  "Monitor service restarting, reconnecting",
+                  SHUTDOWN_RETRY_MIN_MS,
+                );
+              } else if (code === 1013) {
                 scheduleReconnect(
                   "Live stream capacity reached, retrying",
                   CAPACITY_RETRY_MIN_MS,

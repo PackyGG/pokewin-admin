@@ -76,6 +76,12 @@ const schema = z.object({
   API_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(10).max(10_000).default(300),
   API_WRITE_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),
   WS_TICKET_RATE_LIMIT_PER_MINUTE: z.coerce.number().int().min(1).max(1_000).default(30),
+  // Live websocket transport tuning. Deliberately optional: the operational
+  // defaults live in LiveBus (8 per actor, 500 global, 60 minute sessions) so
+  // partial Config literals in tests keep compiling.
+  LIVE_MAX_CONNECTIONS_PER_ACTOR: z.coerce.number().int().min(1).max(100).optional(),
+  LIVE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(10_000).optional(),
+  LIVE_SESSION_MAX_AGE_MINUTES: z.coerce.number().int().min(1).max(1_440).optional(),
   POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(1_000),
   POLL_SIGNUP_BATCH_SIZE: z.coerce.number().int().min(10).max(1_000).default(100),
   POLL_MAX_SIGNUP_BATCHES: z.coerce.number().int().min(1).max(20).default(5),

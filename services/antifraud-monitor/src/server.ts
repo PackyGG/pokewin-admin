@@ -159,7 +159,17 @@ const app = Fastify({
   },
 });
 const db = createDatabases(config);
-const live = new LiveBus(config.REDIS_URL, app.log);
+const live = new LiveBus(config.REDIS_URL, app.log, {
+  // Durable publish fallback: frames Redis rejects are parked in the
+  // Antifraud-DB live_outbox and republished by the bus drain loop.
+  outboxPool: db.antifraud,
+  maxConnectionsPerActor: config.LIVE_MAX_CONNECTIONS_PER_ACTOR,
+  maxConnections: config.LIVE_MAX_CONNECTIONS,
+  sessionMaxAgeMs:
+    config.LIVE_SESSION_MAX_AGE_MINUTES !== undefined
+      ? config.LIVE_SESSION_MAX_AGE_MINUTES * 60_000
+      : undefined,
+});
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
 const withdrawalRisk = new WithdrawalRiskService(db, app.log);
@@ -460,10 +470,7 @@ app.get("/ready", async (_request, reply) => {
   try {
     await assertDatabaseConnections(db);
     const poller = engine.healthSnapshot();
-    const liveStatus = {
-      subscribed: live.isSubscribed(),
-      publishFailures: live.publishFailureCount,
-    };
+    const liveStatus = live.stats();
     const webappMonitor = dashboardOpsTick.status();
     if (
       poller.status === "starting" ||
@@ -488,6 +495,11 @@ app.get("/ready", async (_request, reply) => {
 
 app.get("/v1/operations/poller", async () => ({
   data: engine.healthSnapshot(),
+}));
+
+/** Live transport observability: clients, per-actor counts, outbox depth. */
+app.get("/v1/operations/live", async () => ({
+  data: live.stats(),
 }));
 
 /**
@@ -1380,7 +1392,21 @@ app.get("/v1/live/replay", async (request) => {
   };
 });
 
-app.get("/v1/live", { websocket: true }, async (socket, request) => {
+app.get("/v1/live", {
+  websocket: true,
+  config: {
+    rateLimit: {
+      // Every admin arrives via the same Vercel egress IP, so the global
+      // IP-keyed limiter (with its 5-strike ban) would let one reconnect
+      // storm ban the whole team. The real admission controls here are the
+      // single-use ticket and the per-actor/global connection caps; this
+      // per-route limiter only blunts raw upgrade floods and never bans.
+      max: 120,
+      timeWindow: "1 minute",
+      ban: -1,
+    },
+  },
+}, async (socket, request) => {
   const origin = request.headers.origin;
   if (!origin || !allowedOrigins.has(origin)) {
     request.log.warn(
