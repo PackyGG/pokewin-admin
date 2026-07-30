@@ -13,6 +13,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
+import { isDiscordBotSuperuser } from "@/lib/discord-bot-superusers";
 
 export const CREATOR_SETUP_GUILD_ID = "1402743122789929022";
 
@@ -295,6 +296,7 @@ export async function requireLinkedSetupActor(input: {
     );
   }
   if (
+    !isDiscordBotSuperuser(input.actorDiscordUserId) &&
     input.actorDiscordUserId !== setup.creator_discord_user_id &&
     input.actorDiscordUserId !== setup.created_by_discord_user_id
   ) {
@@ -704,6 +706,7 @@ export async function linkCreatorSetup(input: {
       );
     }
     if (
+      !isDiscordBotSuperuser(input.actorDiscordUserId) &&
       input.actorDiscordUserId !== setup.creator_discord_user_id &&
       input.actorDiscordUserId !== setup.created_by_discord_user_id
     ) {
@@ -716,6 +719,7 @@ export async function linkCreatorSetup(input: {
 
     await requireActiveCreator(input.creatorUserId);
     if (
+      !isDiscordBotSuperuser(input.actorDiscordUserId) &&
       input.actorDiscordUserId === setup.creator_discord_user_id &&
       input.actorDiscordUserId !== setup.created_by_discord_user_id
     ) {

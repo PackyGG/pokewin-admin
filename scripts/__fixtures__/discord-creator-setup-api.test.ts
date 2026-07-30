@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, prepare, complete, repair, cancel, link, stats, deal, rewards, migration, linkMigration, scopes, endpoints] =
+  const [service, superusers, prepare, complete, repair, cancel, link, stats, deal, rewards, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
+      read("src/lib/discord-bot-superusers.ts"),
       read("src/app/api/v1/discord/creator-setups/prepare/route.ts"),
       read("src/app/api/v1/discord/creator-setups/complete/route.ts"),
       read("src/app/api/v1/discord/creator-setups/repair/route.ts"),
@@ -31,6 +32,9 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   );
 
   assert.match(service, /CREATOR_SETUP_GUILD_ID = "1402743122789929022"/);
+  assert.match(superusers, /"660132586630414338"/);
+  assert.match(superusers, /"934854938641715240"/);
+  assert.match(service, /isDiscordBotSuperuser\(input\.actorDiscordUserId\)/);
   assert.doesNotMatch(prepareService, /getProdReadDrizzleDb\(\)/);
   assert.doesNotMatch(prepareService, /requireActiveCreator/);
   assert.doesNotMatch(prepareService, /creator_not_found/);
