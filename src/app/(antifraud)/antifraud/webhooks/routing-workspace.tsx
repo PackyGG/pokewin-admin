@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { StepUpField } from "@/components/step-up-field";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -45,6 +46,7 @@ import type {
   DiscordNotificationConfig,
   DiscordNotificationEvent,
 } from "@/lib/discord-notifications/config";
+import { APPROVED_DISCORD_CATEGORY_IDS } from "@/lib/discord-notifications/antifraud-policy";
 import { cn } from "@/lib/utils";
 import {
   createDiscordChannelAction,
@@ -69,6 +71,11 @@ export function DiscordRoutingWorkspace({
   const [eventQuery, setEventQuery] = useState("");
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [credential, setCredential] = useState("");
+  const approvedCategoryIds = useMemo(
+    () => new Set<string>(APPROVED_DISCORD_CATEGORY_IDS),
+    [],
+  );
 
   const activeChannels = useMemo(() => {
     if (!initialConfig) return [];
@@ -78,13 +85,16 @@ export function DiscordRoutingWorkspace({
         .map((event) => event.key),
     );
     return initialConfig.channels
-      .filter((channel) =>
-        initialConfig.routes.some(
-          (route) =>
-            route.channelId === channel.id &&
-            route.enabled &&
-            enabledEventKeys.has(route.eventKey),
-        ),
+      .filter(
+        (channel) =>
+          channel.parentId !== null &&
+          approvedCategoryIds.has(channel.parentId) &&
+          initialConfig.routes.some(
+            (route) =>
+              route.channelId === channel.id &&
+              route.enabled &&
+              enabledEventKeys.has(route.eventKey),
+          ),
       )
       .sort(
         (a, b) =>
@@ -92,7 +102,7 @@ export function DiscordRoutingWorkspace({
           a.position - b.position ||
           a.name.localeCompare(b.name),
       );
-  }, [initialConfig]);
+  }, [approvedCategoryIds, initialConfig]);
 
   const availableChannels = useMemo(() => {
     if (!initialConfig) return [];
@@ -100,21 +110,28 @@ export function DiscordRoutingWorkspace({
     return initialConfig.channels.filter(
       (channel) =>
         !activeIds.has(channel.id) &&
+        channel.parentId !== null &&
+        approvedCategoryIds.has(channel.parentId) &&
         channel.canView &&
         channel.canSend &&
         channel.canEmbed,
     );
-  }, [activeChannels, initialConfig]);
+  }, [activeChannels, approvedCategoryIds, initialConfig]);
 
   const availableCategories = useMemo(
     () =>
       initialConfig?.channels
-        .filter((channel) => channel.type === "category" && channel.canView)
+        .filter(
+          (channel) =>
+            channel.type === "category" &&
+            channel.canView &&
+            approvedCategoryIds.has(channel.id),
+        )
         .sort(
           (a, b) =>
             a.position - b.position || a.name.localeCompare(b.name),
         ) ?? [],
-    [initialConfig],
+    [approvedCategoryIds, initialConfig],
   );
 
   if (!initialConfig) {
@@ -159,10 +176,15 @@ export function DiscordRoutingWorkspace({
     successMessage: string,
     onSuccess?: () => void,
   ) {
+    if (!credential) {
+      toast.error("Approve this routing change with a passkey or 2FA code.");
+      return;
+    }
     startTransition(async () => {
       try {
         await operation();
         toast.success(successMessage);
+        setCredential("");
         onSuccess?.();
         router.refresh();
       } catch (error) {
@@ -224,6 +246,7 @@ export function DiscordRoutingWorkspace({
         replaceChannelRoutesAction({
           channelId: editor.channelId,
           eventKeys: editor.eventKeys,
+          credential,
         }),
       editingChannelId ? "Channel updated" : "Channel added",
       closeEditor,
@@ -243,6 +266,7 @@ export function DiscordRoutingWorkspace({
         replaceChannelRoutesAction({
           channelId: channel.id,
           eventKeys: [],
+          credential,
         }),
       "Channel removed",
       closeEditor,
@@ -299,6 +323,20 @@ export function DiscordRoutingWorkspace({
       <ChannelCreationHistory
         requests={initialConfig.channelCreation.recentRequests}
       />
+
+      <section className="rounded-xl border bg-card p-4">
+        <StepUpField
+          id="discord-routing-step-up"
+          value={credential}
+          onChange={setCredential}
+          disabled={pending}
+          label="Approve Discord configuration changes"
+        />
+        <p className="mt-2 text-xs text-muted-foreground">
+          All create, edit, and remove operations require a current passkey or
+          authenticator approval. Reads and refreshes do not.
+        </p>
+      </section>
 
       <section className="overflow-hidden rounded-xl border bg-card">
         <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
@@ -477,7 +515,7 @@ export function DiscordRoutingWorkspace({
         onCreate={(input) =>
           runMutation(
             async () => {
-              await createDiscordChannelAction(input);
+              await createDiscordChannelAction({ ...input, credential });
             },
             "Channel creation queued",
             () => setCreateChannelOpen(false),
@@ -492,7 +530,7 @@ export function DiscordRoutingWorkspace({
         pending={pending}
         onCreate={(input) =>
           runMutation(
-            () => createCustomEventAction(input),
+            () => createCustomEventAction({ ...input, credential }),
             "Event created",
             () => setCreateEventOpen(false),
           )

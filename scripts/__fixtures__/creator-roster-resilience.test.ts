@@ -82,22 +82,18 @@ test("upgrader and announcement reads also recover from PostgreSQL", () => {
   assert.match(announcements, /count\(\*\)::int/);
 });
 
-test("legacy antifraud notifications leave the segment host explicitly", () => {
+test("Fraud dashboard notifications remain inside the Fraud workspace", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/notifications/page.tsx",
   );
   const middleware = read("src/middleware.ts");
 
-  assert.match(page, /hrefFrom\(resolveAppHost\(host\)/);
-  assert.match(page, /"\/system\/staff-notifications"/);
-  assert.doesNotMatch(page, /redirect\("\/system\/staff-notifications"\)/);
-  assert.match(
+  assert.match(page, /DashboardNotificationWorkspace/);
+  assert.match(page, /requireAntifraudManagerPage\(\)/);
+  assert.doesNotMatch(page, /system\/staff-notifications/);
+  assert.doesNotMatch(
     middleware,
     /appHost\?\.basePath === "\/antifraud" && pathname === "\/notifications"/,
-  );
-  assert.match(
-    middleware,
-    /https:\/\/\$\{apex\.host\}\/system\/staff-notifications/,
   );
   assert.match(
     middleware,

@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { require2FA } from "@/lib/require-2fa";
 import { queueDiscordChannelCreation } from "@/lib/discord-notifications/channel-operations";
 import {
   createDiscordNotificationEvent,
@@ -27,12 +28,14 @@ const createEventSchema = z.object({
   label: z.string().trim().min(2).max(80),
   description: z.string().trim().min(2).max(240),
   category: z.string().trim().min(2).max(60),
+  credential: z.string().trim().min(1).max(4096),
 });
 
 const routeSchema = z.object({
   eventKey: eventKeySchema,
   channelId: snowflakeSchema,
   enabled: z.boolean(),
+  credential: z.string().trim().min(1).max(4096),
 });
 
 const channelRoutesSchema = z.object({
@@ -44,12 +47,14 @@ const channelRoutesSchema = z.object({
       (keys) => new Set(keys).size === keys.length,
       "Choose each event only once",
     ),
+  credential: z.string().trim().min(1).max(4096),
 });
 
 const routeIdSchema = z.string().uuid("Invalid routing rule");
 const createChannelSchema = z.object({
   parentId: snowflakeSchema,
   name: z.string().trim().min(1).max(100),
+  credential: z.string().trim().min(1).max(4096),
 });
 
 export async function createDiscordChannelAction(
@@ -58,6 +63,7 @@ export async function createDiscordChannelAction(
   const session = await requireAntifraudManager();
   const parsed = createChannelSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
   const queued = await queueDiscordChannelCreation({
     parentId: parsed.data.parentId,
@@ -81,9 +87,13 @@ export async function createCustomEventAction(input: unknown): Promise<void> {
   const session = await requireAntifraudManager();
   const parsed = createEventSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
   await createDiscordNotificationEvent({
-    ...parsed.data,
+    key: parsed.data.key,
+    label: parsed.data.label,
+    description: parsed.data.description,
+    category: parsed.data.category,
     actorId: session.userId,
   });
   await createAdminAuditEvent({
@@ -102,15 +112,22 @@ export async function upsertRouteAction(input: unknown): Promise<void> {
   const session = await requireAntifraudManager();
   const parsed = routeSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
   await upsertDiscordNotificationRoute({
-    ...parsed.data,
+    eventKey: parsed.data.eventKey,
+    channelId: parsed.data.channelId,
+    enabled: parsed.data.enabled,
     actorId: session.userId,
   });
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "discord_notification_route_upserted",
-    metadata: parsed.data,
+    metadata: {
+      eventKey: parsed.data.eventKey,
+      channelId: parsed.data.channelId,
+      enabled: parsed.data.enabled,
+    },
   });
   revalidatePath("/antifraud/webhooks");
 }
@@ -119,9 +136,11 @@ export async function replaceChannelRoutesAction(input: unknown): Promise<void> 
   const session = await requireAntifraudManager();
   const parsed = channelRoutesSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
   await replaceDiscordNotificationChannelRoutes({
-    ...parsed.data,
+    channelId: parsed.data.channelId,
+    eventKeys: parsed.data.eventKeys,
     actorId: session.userId,
   });
   await createAdminAuditEvent({
@@ -139,29 +158,41 @@ export async function replaceChannelRoutesAction(input: unknown): Promise<void> 
 export async function setRouteEnabledAction(input: unknown): Promise<void> {
   const session = await requireAntifraudManager();
   const parsed = z
-    .object({ id: routeIdSchema, enabled: z.boolean() })
+    .object({
+      id: routeIdSchema,
+      enabled: z.boolean(),
+      credential: z.string().trim().min(1).max(4096),
+    })
     .safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
-  await setDiscordNotificationRouteEnabled(parsed.data);
+  await setDiscordNotificationRouteEnabled({
+    id: parsed.data.id,
+    enabled: parsed.data.enabled,
+  });
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "discord_notification_route_toggled",
-    metadata: parsed.data,
+    metadata: { id: parsed.data.id, enabled: parsed.data.enabled },
   });
   revalidatePath("/antifraud/webhooks");
 }
 
 export async function deleteRouteAction(input: unknown): Promise<void> {
   const session = await requireAntifraudManager();
-  const parsed = z.object({ id: routeIdSchema }).safeParse(input);
+  const parsed = z.object({
+    id: routeIdSchema,
+    credential: z.string().trim().min(1).max(4096),
+  }).safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
 
-  await deleteDiscordNotificationRoute(parsed.data);
+  await deleteDiscordNotificationRoute({ id: parsed.data.id });
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "discord_notification_route_deleted",
-    metadata: parsed.data,
+    metadata: { id: parsed.data.id },
   });
   revalidatePath("/antifraud/webhooks");
 }

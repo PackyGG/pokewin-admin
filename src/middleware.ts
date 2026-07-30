@@ -223,18 +223,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/pack-studio", request.url), 307);
     }
 
-    // Legacy Antifraud inbox URL -> canonical shared System inbox. This must
-    // happen before the App Router renders the redirect page: a cross-origin
-    // redirect emitted from an RSC response makes React try an impossible
-    // cross-host RSC fetch first, producing React #310 before the hard
-    // navigation succeeds.
-    if (appHost?.basePath === "/antifraud" && pathname === "/notifications") {
-      const apex = APP_HOSTS[0];
-      return NextResponse.redirect(
-        new URL(`https://${apex.host}/system/staff-notifications`),
-        308,
-      );
-    }
     if (appHost?.basePath === "/antifraud" && pathname === "/settings/api") {
       return NextResponse.redirect(new URL("/api", request.url), 308);
     }

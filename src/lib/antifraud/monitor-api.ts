@@ -137,9 +137,41 @@ const runtimeConfigSchema = z.object({
     endpointConfigured: z.boolean(),
     secretConfigured: z.boolean(),
   }),
+  externalWebappMonitor: z.object({
+    endpointConfigured: z.boolean(),
+    independentAlertSinkConfigured: z.boolean(),
+  }).optional(),
+  fiatEligibility: z.object({
+    devCredentialConfigured: z.boolean(),
+    prodCredentialConfigured: z.boolean(),
+    devSourceConfigured: z.boolean(),
+    devIpAllowlistConfigured: z.boolean(),
+    prodIpAllowlistConfigured: z.boolean(),
+  }).optional(),
 });
 
 export type AntifraudRuntimeConfig = z.infer<typeof runtimeConfigSchema>;
+
+const pollerHealthSchema = z.object({
+  status: z.enum(["starting", "healthy", "degraded", "standby"]),
+  running: z.boolean(),
+  leader: z.boolean(),
+  lastTickStartedAt: z.string().nullable(),
+  lastTickCompletedAt: z.string().nullable(),
+  lastSuccessfulTickAt: z.string().nullable(),
+  lastTickDurationMs: z.number().nullable(),
+  consecutiveFailures: z.number().int().nonnegative(),
+  skippedTicks: z.number().int().nonnegative(),
+  signupsProcessed: z.number().int().nonnegative(),
+  signupsRecovered: z.number().int().nonnegative(),
+  signupFailuresPending: z.number().int().nonnegative(),
+  activitiesProcessed: z.number().int().nonnegative(),
+  signupBacklogPossible: z.boolean(),
+  signupCursorLagMs: z.number().nullable(),
+  lastError: z.string().nullable(),
+});
+
+export type AntifraudPollerHealth = z.infer<typeof pollerHealthSchema>;
 
 const notificationRoutesSchema = z.object({
   routes: z.array(
@@ -224,6 +256,35 @@ export const getAntifraudNotificationRoutes = cache(async (): Promise<{
     return { configured: true, data: payload.data, error: false };
   } catch {
     console.error("[antifraud-monitor] notification routes request failed");
+    return { configured: true, data: null, error: true };
+  }
+});
+
+export const getAntifraudPollerHealth = cache(async (): Promise<{
+  configured: boolean;
+  data: AntifraudPollerHealth | null;
+  error: boolean;
+}> => {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: null, error: false };
+  }
+  try {
+    const response = await fetch(`${baseUrl}/v1/operations/poller`, {
+      headers: {
+        accept: "application/json",
+        authorization: `Bearer ${token}`,
+      },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Monitor API returned ${response.status}`);
+    const payload = z
+      .object({ data: pollerHealthSchema })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch {
+    console.error("[antifraud-monitor] poller health request failed");
     return { configured: true, data: null, error: true };
   }
 });

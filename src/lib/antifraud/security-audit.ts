@@ -314,3 +314,136 @@ export async function finishAntifraudAction(input: {
     },
   });
 }
+
+export type AntifraudSecurityAuditEvent = {
+  id: string;
+  correlationId: string;
+  actorUsername: string | null;
+  actorRoles: string[];
+  eventKind: AntifraudAuditKind;
+  action: string;
+  outcome: AntifraudAuditOutcome;
+  targetType: string | null;
+  targetId: string | null;
+  reasonCode: string | null;
+  requestPath: string | null;
+  requestMethod: string | null;
+  modelVersion: string;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+};
+
+const AUDIT_KINDS = new Set<AntifraudAuditKind>([
+  "view",
+  "search",
+  "export",
+  "action",
+]);
+const AUDIT_OUTCOMES = new Set<AntifraudAuditOutcome>([
+  "allowed",
+  "denied",
+  "succeeded",
+  "failed",
+  "rate_limited",
+]);
+
+export async function listAntifraudSecurityAuditEvents(input: {
+  action?: string;
+  kind?: string;
+  outcome?: string;
+  correlationId?: string;
+  before?: string;
+  limit?: number;
+}): Promise<{
+  events: AntifraudSecurityAuditEvent[];
+  nextCursor: string | null;
+}> {
+  const action = input.action?.trim().slice(0, 160) || null;
+  const kind =
+    input.kind && AUDIT_KINDS.has(input.kind as AntifraudAuditKind)
+      ? (input.kind as AntifraudAuditKind)
+      : null;
+  const outcome =
+    input.outcome && AUDIT_OUTCOMES.has(input.outcome as AntifraudAuditOutcome)
+      ? (input.outcome as AntifraudAuditOutcome)
+      : null;
+  const correlationId = /^[0-9a-f-]{36}$/i.test(input.correlationId ?? "")
+    ? input.correlationId!
+    : null;
+  const before = input.before ? new Date(input.before) : null;
+  const validBefore =
+    before && Number.isFinite(before.getTime()) ? before.toISOString() : null;
+  const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
+
+  const result = await adminDrizzle.execute<{
+    id: string;
+    correlation_id: string;
+    actor_username: string | null;
+    actor_roles: string[];
+    event_kind: AntifraudAuditKind;
+    action: string;
+    outcome: AntifraudAuditOutcome;
+    target_type: string | null;
+    target_id: string | null;
+    reason_code: string | null;
+    request_path: string | null;
+    request_method: string | null;
+    model_version: string;
+    metadata: Record<string, unknown>;
+    created_at: string;
+  }>(sql`
+    SELECT
+      id::text,
+      correlation_id::text,
+      actor_username,
+      actor_roles,
+      event_kind,
+      action,
+      outcome,
+      target_type,
+      target_id,
+      reason_code,
+      request_path,
+      request_method,
+      model_version,
+      metadata,
+      created_at::text
+    FROM antifraud_security_audit_events
+    WHERE (${action}::text IS NULL OR action ILIKE '%' || ${action} || '%')
+      AND (${kind}::text IS NULL OR event_kind = ${kind})
+      AND (${outcome}::text IS NULL OR outcome = ${outcome})
+      AND (
+        ${correlationId}::uuid IS NULL
+        OR correlation_id = ${correlationId}::uuid
+      )
+      AND (
+        ${validBefore}::timestamptz IS NULL
+        OR created_at < ${validBefore}::timestamptz
+      )
+    ORDER BY created_at DESC, id DESC
+    LIMIT ${limit + 1}
+  `);
+
+  const rows = result.rows.slice(0, limit);
+  return {
+    events: rows.map((row) => ({
+      id: row.id,
+      correlationId: row.correlation_id,
+      actorUsername: row.actor_username,
+      actorRoles: row.actor_roles,
+      eventKind: row.event_kind,
+      action: row.action,
+      outcome: row.outcome,
+      targetType: row.target_type,
+      targetId: row.target_id,
+      reasonCode: row.reason_code,
+      requestPath: row.request_path,
+      requestMethod: row.request_method,
+      modelVersion: row.model_version,
+      metadata: row.metadata,
+      createdAt: row.created_at,
+    })),
+    nextCursor:
+      result.rows.length > limit ? (rows.at(-1)?.created_at ?? null) : null,
+  };
+}

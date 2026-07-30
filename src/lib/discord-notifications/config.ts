@@ -4,7 +4,10 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import type { DiscordChannelCreationRequest } from "./channel-operations";
-import { APPROVED_DISCORD_CATEGORIES } from "./antifraud-policy";
+import {
+  APPROVED_DISCORD_CATEGORIES,
+  DISCORD_BOUNDARY_MARKERS,
+} from "./antifraud-policy";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -324,7 +327,23 @@ export async function upsertDiscordNotificationRoute(input: {
        ${APPROVED_DISCORD_CATEGORIES.transactions},
        ${APPROVED_DISCORD_CATEGORIES.errors}
      )
+    JOIN discord_notification_channels AS parent
+      ON parent.guild_id = channel.guild_id
+     AND parent.channel_id = channel.parent_id
+     AND parent.available = true
+     AND parent.type = 'category'
+    JOIN discord_notification_channels AS boundary_top
+      ON boundary_top.guild_id = channel.guild_id
+     AND boundary_top.channel_id = ${DISCORD_BOUNDARY_MARKERS.top}
+     AND boundary_top.available = true
+    JOIN discord_notification_channels AS boundary_bottom
+      ON boundary_bottom.guild_id = channel.guild_id
+     AND boundary_bottom.channel_id = ${DISCORD_BOUNDARY_MARKERS.bottom}
+     AND boundary_bottom.available = true
     WHERE event.event_key = ${eventKey} AND event.enabled = true
+      AND boundary_top.position < boundary_bottom.position
+      AND parent.position > boundary_top.position
+      AND parent.position < boundary_bottom.position
     ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
       enabled = EXCLUDED.enabled,
       updated_at = now()
@@ -364,16 +383,32 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
 
   await adminDrizzle.transaction(async (tx) => {
     const channelResult = await tx.execute<{ channel_id: string }>(sql`
-      SELECT channel_id
-      FROM discord_notification_channels
-      WHERE guild_id = ${guildId}
-        AND channel_id = ${channelId}
-        AND available = true
-        AND parent_id IN (
+      SELECT channel.channel_id
+      FROM discord_notification_channels AS channel
+      JOIN discord_notification_channels AS parent
+        ON parent.guild_id = channel.guild_id
+       AND parent.channel_id = channel.parent_id
+       AND parent.available = true
+       AND parent.type = 'category'
+      JOIN discord_notification_channels AS boundary_top
+        ON boundary_top.guild_id = channel.guild_id
+       AND boundary_top.channel_id = ${DISCORD_BOUNDARY_MARKERS.top}
+       AND boundary_top.available = true
+      JOIN discord_notification_channels AS boundary_bottom
+        ON boundary_bottom.guild_id = channel.guild_id
+       AND boundary_bottom.channel_id = ${DISCORD_BOUNDARY_MARKERS.bottom}
+       AND boundary_bottom.available = true
+      WHERE channel.guild_id = ${guildId}
+        AND channel.channel_id = ${channelId}
+        AND channel.available = true
+        AND channel.parent_id IN (
           ${APPROVED_DISCORD_CATEGORIES.accounts},
           ${APPROVED_DISCORD_CATEGORIES.transactions},
           ${APPROVED_DISCORD_CATEGORIES.errors}
         )
+        AND boundary_top.position < boundary_bottom.position
+        AND parent.position > boundary_top.position
+        AND parent.position < boundary_bottom.position
       LIMIT 1
       FOR UPDATE
     `);
@@ -404,6 +439,22 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
            ${APPROVED_DISCORD_CATEGORIES.transactions},
            ${APPROVED_DISCORD_CATEGORIES.errors}
          )
+        JOIN discord_notification_channels AS parent
+          ON parent.guild_id = channel.guild_id
+         AND parent.channel_id = channel.parent_id
+         AND parent.available = true
+         AND parent.type = 'category'
+        JOIN discord_notification_channels AS boundary_top
+          ON boundary_top.guild_id = channel.guild_id
+         AND boundary_top.channel_id = ${DISCORD_BOUNDARY_MARKERS.top}
+         AND boundary_top.available = true
+        JOIN discord_notification_channels AS boundary_bottom
+          ON boundary_bottom.guild_id = channel.guild_id
+         AND boundary_bottom.channel_id = ${DISCORD_BOUNDARY_MARKERS.bottom}
+         AND boundary_bottom.available = true
+        WHERE boundary_top.position < boundary_bottom.position
+          AND parent.position > boundary_top.position
+          AND parent.position < boundary_bottom.position
         ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
           enabled = true,
           updated_at = now()

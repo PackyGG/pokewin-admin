@@ -123,7 +123,6 @@ const NOTIFICATION_NAV: NavItem[] = [
     label: "Dashboard",
     href: "/antifraud/notifications",
     icon: Activity,
-    disabledReason: "Automatic dashboard rule storage is not available yet",
   },
 ];
 
@@ -160,7 +159,7 @@ const BLACKLIST_NAV: NavItem[] = [
 ];
 
 const SYSTEM_NAV: NavItem[] = [
-  { label: "System health", href: "/antifraud/api", icon: RadioTower },
+  { label: "System health", href: "/antifraud/system", icon: RadioTower },
   {
     label: "Providers",
     href: "/antifraud/settings#integrations",
@@ -177,8 +176,6 @@ const SYSTEM_NAV: NavItem[] = [
     label: "Audit log",
     href: "/antifraud/audit",
     icon: Activity,
-    disabledReason:
-      "Unified append-only Fraud audit reads need a service contract",
   },
   {
     label: "Access & permissions",
