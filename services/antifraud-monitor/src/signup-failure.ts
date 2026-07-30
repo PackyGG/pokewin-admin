@@ -26,6 +26,12 @@ const failedSignupSchema = z.object({
   fingerprint_confidence: z.number().nullable(),
   fingerprint_ip: nullableString,
   user_agent: nullableString,
+  auth_provider: nullableString.optional().default(null),
+  auth_providers: z.array(z.object({
+    provider: z.string(),
+    linkedAt: z.string().nullable(),
+  })).default([]),
+  is_creator: z.boolean().default(false),
 });
 
 export function parseFailedSignup(value: unknown): Signup | null {

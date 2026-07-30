@@ -1,5 +1,17 @@
 import { z } from "zod";
 
+const fiatEligibilityEnabledSchema = z
+  .enum(["true", "false"])
+  .optional()
+  .transform((value) => value === "true");
+
+export function parseFiatEligibilityGloballyEnabled(
+  value: unknown,
+): boolean {
+  const parsed = fiatEligibilityEnabledSchema.safeParse(value);
+  return parsed.success ? parsed.data : false;
+}
+
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   TZ: z.string().min(1).default("UTC"),
@@ -33,6 +45,7 @@ const schema = z.object({
   FIAT_ELIGIBILITY_PROD_API_KEY: z.string().min(32).optional(),
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: z.string().default(""),
+  FIAT_ELIGIBILITY_GLOBALLY_ENABLED: fiatEligibilityEnabledSchema,
   FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: z.coerce
     .number()
     .int()
@@ -79,8 +92,8 @@ const schema = z.object({
     .min(30_000)
     .max(900_000)
     .default(120_000),
-  MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(180),
-  MONITOR_START_SCORE: z.coerce.number().int().min(0).max(500).default(25),
+  MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(600),
+  MONITOR_START_SCORE: z.coerce.number().int().min(0).max(100).default(21),
 });
 
 export type Config = z.infer<typeof schema>;

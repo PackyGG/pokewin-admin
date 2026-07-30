@@ -78,7 +78,13 @@ export async function fetchNewSignups(
         fp.visitor_id,
         fp.confidence AS fingerprint_confidence,
         fp.ip::text AS fingerprint_ip,
-        ae.user_agent
+        ae.user_agent,
+        auth.auth_provider,
+        COALESCE(auth.auth_providers, '[]'::jsonb) AS auth_providers,
+        (
+          COALESCE(u.role::text, '') = 'creator'
+          OR 'creator' = ANY(COALESCE(u.roles::text[], ARRAY[]::text[]))
+        ) AS is_creator
       FROM "user" u
       LEFT JOIN LATERAL (
         SELECT request_id, visitor_id, confidence, ip
@@ -94,9 +100,23 @@ export async function fetchNewSignups(
         ORDER BY created_at DESC
         LIMIT 1
       ) ae ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          (array_agg(a.provider_id ORDER BY a.created_at NULLS LAST, a.id))[1]
+            AS auth_provider,
+          jsonb_agg(
+            jsonb_build_object(
+              'provider', a.provider_id,
+              'linkedAt', (a.created_at ${UTC})
+            )
+            ORDER BY a.created_at NULLS LAST, a.id
+          ) AS auth_providers
+        FROM account a
+        WHERE a.user_id = u.id
+      ) auth ON true
       WHERE (${CURSOR_MILLISECONDS}, u.id) >
         (date_trunc('milliseconds', $1::timestamptz ${UTC}), $2::text)
-        AND u.created_at <= (now() ${UTC}) - interval '5 seconds'
+        AND u.created_at <= (now() ${UTC}) - interval '30 seconds'
       ORDER BY ${CURSOR_MILLISECONDS}, u.id
       LIMIT $3
     `,

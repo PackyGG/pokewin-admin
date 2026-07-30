@@ -7,8 +7,8 @@ import {
   highRiskSignupMarker,
 } from "../src/signup-alerts.js";
 
-test("60 is the inclusive high-risk signup delivery floor", () => {
-  assert.equal(HIGH_RISK_SIGNUP_SCORE, 60);
+test("50 is the inclusive signup review notification floor", () => {
+  assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
 
   const marker = highRiskSignupMarker({
     userId: "user-1",

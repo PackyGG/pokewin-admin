@@ -1,6 +1,6 @@
 import type { Signal } from "./types.js";
 
-export const HIGH_RISK_SIGNUP_SCORE = 60;
+export const HIGH_RISK_SIGNUP_SCORE = 50;
 
 export function highRiskSignupMarker(input: {
   userId: string;

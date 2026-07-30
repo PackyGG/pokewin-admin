@@ -196,6 +196,7 @@ const runtimeConfig: Config = {
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
   FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "",
+  FIAT_ELIGIBILITY_GLOBALLY_ENABLED: false,
   FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 120,
   PUBLIC_BASE_URL: "https://monitor.example.com",
   ANTIFRAUD_DASHBOARD_URL: "https://fraud.packydash.com/monitor",

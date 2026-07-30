@@ -10,6 +10,7 @@ import {
   FingerprintReuseError,
   fiatEligibilityInternals,
 } from "../src/fiat-eligibility.js";
+import { parseFiatEligibilityGloballyEnabled } from "../src/config.js";
 import { FiatEligibilityAccess } from "../src/fiat-eligibility-auth.js";
 import {
   authenticateFiatEligibilityRequest,
@@ -581,6 +582,7 @@ test("concurrent identical requests share one automatic provider review", async 
     } as never,
     { get: async () => ({}) } as never,
     enrichment as never,
+    true,
   );
 
   const first = service.assess(request, now);
@@ -596,4 +598,64 @@ test("concurrent identical requests share one automatic provider review", async 
   assert.equal(follower.decisionId, primary.decisionId);
   assert.equal(follower.idempotent, true);
   assert.equal(sourceCalls, 2);
+});
+
+test("missing or false global Fiat config can never return allow", async () => {
+  assert.equal(parseFiatEligibilityGloballyEnabled(undefined), false);
+  assert.equal(parseFiatEligibilityGloballyEnabled("false"), false);
+  assert.equal(parseFiatEligibilityGloballyEnabled("true"), true);
+  assert.equal(parseFiatEligibilityGloballyEnabled("yes"), false);
+
+  for (const env of ["dev", "prod"] as const) {
+    let sourceCalls = 0;
+    const now = new Date("2026-07-30T12:00:00.000Z");
+    const request = {
+      env,
+      createdAt: now.toISOString(),
+      ipAddress: "203.0.113.20",
+      fingerprint: `disabled-${env}-fingerprint`,
+      userID: "user-1",
+    };
+    const antifraud = {
+      async query(sql: string) {
+        if (sql.includes("INSERT INTO fiat_eligibility_gate_events")) {
+          return {
+            rowCount: 1,
+            rows: [{
+              id: `disabled-${env}`,
+              request_hash: fiatEligibilityInternals.requestHash(
+                request,
+                request.ipAddress,
+              ),
+              created_at: now,
+            }],
+          };
+        }
+        throw new Error("disabled gate must not run another query");
+      },
+    };
+    const service = new FiatEligibilityService(
+      {
+        source: { query: async () => { sourceCalls += 1; } },
+        fiatDevSource: { query: async () => { sourceCalls += 1; } },
+        antifraud,
+      } as never,
+      { get: async () => { throw new Error("weights must not load"); } } as never,
+      {
+        fingerprintCheck: async () => {
+          throw new Error("provider must not run");
+        },
+        proxycheck: async () => {
+          throw new Error("provider must not run");
+        },
+      } as never,
+      false,
+    );
+    const decision = await service.assess(request, now);
+    assert.equal(decision.allowed, false);
+    assert.equal(decision.decision, "deny");
+    assert.equal(decision.riskScore, 0);
+    assert.deepEqual(decision.reasonCodes, ["fiat_globally_disabled"]);
+    assert.equal(sourceCalls, 0);
+  }
 });

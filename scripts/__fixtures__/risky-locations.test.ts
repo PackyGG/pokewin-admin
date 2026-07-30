@@ -37,14 +37,15 @@ test("Risk locations is editable by verified Fraud users with audited reasons", 
   assert.match(client, /window\.confirm/);
 });
 
-test("risky countries start monitoring with their configured duration", () => {
+test("risky countries extend only an eligible score-based monitor", () => {
   const monitor = read("services/antifraud-monitor/src/monitor.ts");
   const migration = read(
     "services/antifraud-monitor/migrations/018_risky_locations.sql",
   );
 
   assert.match(monitor, /riskyLocations\.forCountry/);
-  assert.match(monitor, /locationPolicy \|\|/);
+  assert.match(monitor, /assessment\.monitorDurationSeconds > 0/);
+  assert.match(monitor, /Math\.max\(/);
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
   assert.match(migration, /monitor_duration_seconds BETWEEN 60 AND 3600/);
 });

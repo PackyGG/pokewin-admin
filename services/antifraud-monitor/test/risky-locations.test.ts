@@ -42,7 +42,7 @@ test("risky location writes require the admin token", () => {
   );
 });
 
-test("risky location monitoring is bounded and overrides only the session duration", async () => {
+test("risky location adds risk and only extends an eligible score-based session", async () => {
   const [migration, monitor] = await Promise.all([
     readFile(
       new URL("../migrations/018_risky_locations.sql", import.meta.url),
@@ -52,7 +52,8 @@ test("risky location monitoring is bounded and overrides only the session durati
   ]);
   assert.match(migration, /BETWEEN 60 AND 3600/);
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
-  assert.match(monitor, /locationPolicy \|\|/);
+  assert.doesNotMatch(monitor, /locationPolicy \|\|/);
+  assert.match(monitor, /Math\.max\(/);
   assert.match(monitor, /points: weights\.risky_location/);
   assert.match(monitor, /durationSeconds: opened\.durationSeconds/);
 });

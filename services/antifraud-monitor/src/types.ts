@@ -19,6 +19,9 @@ export type Signup = {
   fingerprint_confidence: number | null;
   fingerprint_ip: string | null;
   user_agent: string | null;
+  auth_provider?: string | null;
+  auth_providers?: Array<{ provider: string; linkedAt: string | null }>;
+  is_creator?: boolean;
 };
 
 export type Signal = {

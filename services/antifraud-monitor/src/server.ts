@@ -166,6 +166,7 @@ const fiatEligibility = new FiatEligibilityService(
   db,
   scoreWeights,
   new EnrichmentService(config),
+  config.FIAT_ELIGIBILITY_GLOBALLY_ENABLED,
 );
 const sumsub =
   config.SUMSUB_ADMIN_TOKEN && config.SUMSUB_ADMIN_KEY

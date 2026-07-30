@@ -27,6 +27,16 @@ import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { drainOutbox } from "./outbox.js";
 import { PollerHealth, type PollerHealthSnapshot } from "./poller-health.js";
+import {
+  assessProfile,
+  normalizeSignupSignals,
+  type ProviderCoverage,
+} from "./profile-risk.js";
+import {
+  persistProfileAssessment,
+  persistProviderEvidence,
+  persistSignupIdentitySnapshot,
+} from "./profile-store.js";
 import { RiskyLocationStore } from "./risky-locations.js";
 import { baseSignupSignals, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
@@ -769,6 +779,7 @@ export class MonitorEngine {
         signup.created_at,
       ],
     );
+    await persistSignupIdentitySnapshot(this.db.antifraud, signup);
   }
 
   private async prepareSignup(signup: Signup): Promise<PreparedSignup> {
@@ -791,11 +802,11 @@ export class MonitorEngine {
       this.cachedOpportify(signup, weights),
     ]);
     await Promise.all([
-      this.saveProviderCheck(signup.id, fingerprint),
-      this.saveProviderCheck(signup.id, proxycheck),
-      this.saveProviderCheck(signup.id, abstractIp),
-      this.saveProviderCheck(signup.id, abstractEmail),
-      this.saveProviderCheck(signup.id, opportify),
+      this.saveProviderCheck(signup.id, fingerprint, signup.created_at),
+      this.saveProviderCheck(signup.id, proxycheck, signup.created_at),
+      this.saveProviderCheck(signup.id, abstractIp, signup.created_at),
+      this.saveProviderCheck(signup.id, abstractEmail, signup.created_at),
+      this.saveProviderCheck(signup.id, opportify, signup.created_at),
     ]);
     const unavailable = [
       fingerprint,
@@ -821,7 +832,10 @@ export class MonitorEngine {
       if (catchallSignal) {
         const score = Math.max(
           0,
-          signals.reduce((total, signal) => total + signal.points, 0),
+          Math.min(
+            100,
+            signals.reduce((total, signal) => total + signal.points, 0),
+          ),
         );
         await persistAbstractCatchallContainment(
           this.db.antifraud,
@@ -842,6 +856,13 @@ export class MonitorEngine {
             ),
         );
       }
+      await this.persistIncompleteSignupProfile(signup, signals, [
+        fingerprint,
+        proxycheck,
+        abstractIp,
+        abstractEmail,
+        opportify,
+      ]);
       throw new Error(
         `Provider enrichment unavailable: ${unavailable.join(",")}`,
       );
@@ -855,6 +876,99 @@ export class MonitorEngine {
       opportify,
       weights,
     };
+  }
+
+  private providerCoverage(
+    results: EnrichmentResult[],
+  ): ProviderCoverage[] {
+    return results.map((result) => ({
+      provider: result.provider,
+      outcome:
+        result.status === "success"
+          ? "success"
+          : result.status === "failed"
+            ? "failed"
+            : "unknown",
+      required: true,
+      ...(result.status === "failed"
+        ? { failureKind: "unknown" as const }
+        : {}),
+    }));
+  }
+
+  private async persistIncompleteSignupProfile(
+    signup: Signup,
+    signals: Signal[],
+    providers: EnrichmentResult[],
+  ): Promise<void> {
+    const assessment = assessProfile({
+      signals: normalizeSignupSignals(signals, signup.created_at),
+      providers: this.providerCoverage(providers),
+      assessedAt: signup.created_at,
+      isCreator: signup.is_creator ?? false,
+      oauthSignup:
+        Boolean(signup.auth_provider)
+        && !["credential", "credentials", "email"].includes(
+          signup.auth_provider!.toLowerCase(),
+        ),
+      hasFingerprint: Boolean(
+        signup.fingerprint_request_id && signup.visitor_id,
+      ),
+    });
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      await persistProfileAssessment(client, {
+        userId: signup.id,
+        sourceRef: `signup:${signup.created_at.toISOString()}`,
+        assessment,
+        assessedAt: signup.created_at,
+      });
+      await client.query(
+        `
+          INSERT INTO signup_assessments (
+            user_id, score, severity, signals, assessed_at, raw_score,
+            assessment_version, outcome, completeness, confidence,
+            provider_status, policy_matches, explanation
+          ) VALUES (
+            $1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb
+          )
+          ON CONFLICT (user_id) DO UPDATE SET
+            score=EXCLUDED.score,
+            severity=EXCLUDED.severity,
+            signals=EXCLUDED.signals,
+            raw_score=EXCLUDED.raw_score,
+            assessment_version=EXCLUDED.assessment_version,
+            outcome=EXCLUDED.outcome,
+            completeness=EXCLUDED.completeness,
+            confidence=EXCLUDED.confidence,
+            provider_status=EXCLUDED.provider_status,
+            policy_matches=EXCLUDED.policy_matches,
+            explanation=EXCLUDED.explanation,
+            assessed_at=now()
+        `,
+        [
+          signup.id,
+          assessment.score,
+          assessment.severity,
+          JSON.stringify(assessment.signals),
+          assessment.rawScore,
+          assessment.version,
+          assessment.outcome,
+          assessment.completeness,
+          assessment.confidence,
+          JSON.stringify(assessment.providerStatus),
+          JSON.stringify(assessment.policyMatches),
+          JSON.stringify(assessment.explanation),
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 
   private async persistSignup(
@@ -891,10 +1005,29 @@ export class MonitorEngine {
           ]
         : []),
     ];
-    const score = Math.max(
-      0,
-      signals.reduce((total, signal) => total + signal.points, 0),
-    );
+    const assessment = assessProfile({
+      signals: normalizeSignupSignals(signals, signup.created_at),
+      providers: this.providerCoverage([
+        fingerprint,
+        proxycheck,
+        abstractIp,
+        abstractEmail,
+        opportify,
+      ]),
+      assessedAt: signup.created_at,
+      isCreator: signup.is_creator ?? false,
+      oauthSignup:
+        Boolean(signup.auth_provider)
+        && !["credential", "credentials", "email"].includes(
+          signup.auth_provider!.toLowerCase(),
+        ),
+      hasFingerprint: Boolean(signup.fingerprint_request_id && signup.visitor_id),
+    });
+    const score = assessment.score;
+    const scoredSignals = assessment.signals.map((signal) => ({
+      ...signal,
+      points: signal.effectivePoints,
+    }));
     const catchallSignal = abstractEmail.signals.find(
       (signal) => signal.key === "abstract_email_catchall",
     );
@@ -910,43 +1043,75 @@ export class MonitorEngine {
       await client.query(
         `
           INSERT INTO signup_assessments (
-            user_id, score, severity, signals, assessed_at
-          ) VALUES ($1,$2,$3,$4,now())
+            user_id, score, severity, signals, assessed_at, raw_score,
+            assessment_version, outcome, completeness, confidence,
+            provider_status, policy_matches, explanation
+          ) VALUES (
+            $1,$2,$3,$4,now(),$5,$6,$7,$8,$9,$10::jsonb,$11::jsonb,$12::jsonb
+          )
           ON CONFLICT (user_id) DO UPDATE SET
             score = EXCLUDED.score,
             severity = EXCLUDED.severity,
             signals = EXCLUDED.signals,
+            raw_score = EXCLUDED.raw_score,
+            assessment_version = EXCLUDED.assessment_version,
+            outcome = EXCLUDED.outcome,
+            completeness = EXCLUDED.completeness,
+            confidence = EXCLUDED.confidence,
+            provider_status = EXCLUDED.provider_status,
+            policy_matches = EXCLUDED.policy_matches,
+            explanation = EXCLUDED.explanation,
             assessed_at = now()
         `,
-        [signup.id, score, severity(score), JSON.stringify(signals)],
+        [
+          signup.id,
+          score,
+          assessment.severity,
+          JSON.stringify(assessment.signals),
+          assessment.rawScore,
+          assessment.version,
+          assessment.outcome,
+          assessment.completeness,
+          assessment.confidence,
+          JSON.stringify(assessment.providerStatus),
+          JSON.stringify(assessment.policyMatches),
+          JSON.stringify(assessment.explanation),
+        ],
       );
+      await persistProfileAssessment(client, {
+        userId: signup.id,
+        sourceRef: `signup:${signup.created_at.toISOString()}`,
+        assessment,
+        assessedAt: signup.created_at,
+      });
       if (
-        catchallSignal ||
-        locationPolicy ||
-        score >= this.config.MONITOR_START_SCORE ||
+        assessment.monitorDurationSeconds > 0 ||
         score >= HIGH_RISK_SIGNUP_SCORE
       ) {
         const durationSeconds =
-          locationPolicy?.monitorDurationSeconds ??
-          this.config.MONITOR_DURATION_SECONDS;
+          Math.max(
+            locationPolicy?.monitorDurationSeconds ?? 0,
+            assessment.monitorDurationSeconds,
+          );
         opened = {
           ...(await this.openMonitor(
             client,
             signup,
-            signals,
+            scoredSignals,
             score,
             durationSeconds,
           )),
           durationSeconds,
         };
       }
-      if (score >= HIGH_RISK_SIGNUP_SCORE) {
+      if (assessment.recommendedActions.includes("notify_standard")
+        || assessment.recommendedActions.includes("notify_priority")) {
         if (!opened) throw new Error("High-risk signup did not open a case");
         const marker = highRiskSignupMarker({
           userId: signup.id,
           caseId: opened.caseId,
           score,
-          signals,
+          signals: scoredSignals,
         });
         await client.query(
           `
@@ -966,7 +1131,7 @@ export class MonitorEngine {
             opened.caseId,
             signup.username,
             score,
-            JSON.stringify(signals),
+            JSON.stringify(scoredSignals),
             signup.created_at,
           ],
         );
@@ -992,6 +1157,39 @@ export class MonitorEngine {
             marker.title,
             marker.detail,
             JSON.stringify(marker.payload),
+            signup.created_at,
+          ],
+        );
+      }
+      if (assessment.recommendedActions.length > 0 && opened) {
+        await client.query(
+          `
+            INSERT INTO risk_events (
+              case_id, session_id, user_id, event_type, source, source_ref,
+              score_delta, score_after, title, detail, payload, occurred_at
+            ) VALUES (
+              $1,$2,$3,'signup_policy_recommendation','signup_policy',$4,
+              0,$5,'Signup policy recommendation',
+              'The versioned signup policy produced auditable recommended actions.',
+              $6::jsonb,$7
+            )
+            ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+            DO NOTHING
+          `,
+          [
+            opened.caseId,
+            opened.sessionId,
+            signup.id,
+            `${signup.id}:${assessment.version}`,
+            score,
+            JSON.stringify({
+              assessmentVersion: assessment.version,
+              actions: assessment.recommendedActions,
+              policyMatches: assessment.policyMatches,
+              automaticKyc: false,
+              automaticBan:
+                assessment.recommendedActions.includes("ban"),
+            }),
             signup.created_at,
           ],
         );
@@ -1048,7 +1246,7 @@ export class MonitorEngine {
       username: signup.username,
       score,
       severity: severity(score),
-      signals,
+      signals: assessment.signals,
     });
     if (this.onSignupAssessed) {
       try {
@@ -1070,7 +1268,7 @@ export class MonitorEngine {
       score,
       severity: severity(score),
       durationSeconds: opened.durationSeconds,
-      signals,
+      signals: assessment.signals,
     });
     await this.evaluateRules({
       id: opened.sessionId,
@@ -1700,6 +1898,7 @@ export class MonitorEngine {
   private async saveProviderCheck(
     userId: string,
     result: EnrichmentResult,
+    assessmentOccurredAt: Date,
   ): Promise<void> {
     await this.db.antifraud.query(
       `
@@ -1734,6 +1933,12 @@ export class MonitorEngine {
         result.response ? JSON.stringify(result.response) : null,
         result.errorCode ?? null,
       ],
+    );
+    await persistProviderEvidence(
+      this.db.antifraud,
+      userId,
+      result,
+      `signup:${assessmentOccurredAt.toISOString()}`,
     );
   }
 

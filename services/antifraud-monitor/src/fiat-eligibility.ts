@@ -531,6 +531,7 @@ export class FiatEligibilityService {
     private readonly db: Databases,
     private readonly scoreWeights: ScoreWeightStore,
     enrichment: EnrichmentService,
+    private readonly globallyEnabled: boolean,
   ) {
     this.enrichment = enrichment;
   }
@@ -593,6 +594,9 @@ export class FiatEligibilityService {
     requestIp: string,
     hash: string,
   ): Promise<FiatEligibilityDecision> {
+    if (!this.globallyEnabled) {
+      return this.denyGloballyDisabled(input, now, hash);
+    }
     const previous = await this.existing(input.fingerprint);
     if (previous) {
       if (previous.request_hash !== hash) throw new FingerprintReuseError();
@@ -757,6 +761,57 @@ export class FiatEligibilityService {
     if (!row) throw new Error("fiat_eligibility_persistence_failed");
     if (row.request_hash !== hash) throw new FingerprintReuseError();
     return storedDecision(row, inserted.rows.length === 0);
+  }
+
+  private async denyGloballyDisabled(
+    input: FiatEligibilityRequest,
+    now: Date,
+    hash: string,
+  ): Promise<FiatEligibilityDecision> {
+    const inserted = await this.db.antifraud.query<{
+      id: string;
+      request_hash: string;
+      created_at: Date;
+    }>(
+      `
+        INSERT INTO fiat_eligibility_gate_events (
+          environment, user_id, fingerprint_request_id, request_hash,
+          decision, reason_code, created_at
+        ) VALUES ($1,$2,$3,$4,'deny','fiat_globally_disabled',$5)
+        ON CONFLICT (fingerprint_request_id) DO NOTHING
+        RETURNING id, request_hash, created_at
+      `,
+      [input.env, input.userID, input.fingerprint, hash, now],
+    );
+    let row = inserted.rows[0];
+    if (!row) {
+      const existing = await this.db.antifraud.query<{
+        id: string;
+        request_hash: string;
+        created_at: Date;
+      }>(
+        `
+          SELECT id, request_hash, created_at
+          FROM fiat_eligibility_gate_events
+          WHERE fingerprint_request_id=$1
+          LIMIT 1
+        `,
+        [input.fingerprint],
+      );
+      row = existing.rows[0];
+    }
+    if (!row) throw new Error("fiat_disabled_decision_persistence_failed");
+    if (row.request_hash !== hash) throw new FingerprintReuseError();
+    return {
+      decisionId: row.id,
+      decision: "deny",
+      allowed: false,
+      timestamp: row.created_at.toISOString(),
+      riskScore: 0,
+      reasonCodes: ["fiat_globally_disabled"],
+      expiresAt: row.created_at.toISOString(),
+      idempotent: (inserted.rowCount ?? 0) === 0,
+    };
   }
 }
 
