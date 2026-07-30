@@ -30,7 +30,7 @@ test("legacy aggregates are repaired before database score constraints apply", a
 });
 
 test("monitor snapshot and stream boundaries clamp legacy scores", async () => {
-  const [server, consoleSource, stream] = await Promise.all([
+  const [server, consoleSource, stream, riskBar] = await Promise.all([
     readFile(new URL("../src/server.ts", import.meta.url), "utf8"),
     readFile(
       new URL(
@@ -46,10 +46,19 @@ test("monitor snapshot and stream boundaries clamp legacy scores", async () => {
       ),
       "utf8",
     ),
+    readFile(
+      new URL(
+        "../../../src/app/(antifraud)/antifraud/_components/risk-score-bar.tsx",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   ]);
 
   assert.match(server, /LEAST\(100, GREATEST\(0, ms\.current_score\)\)/);
   assert.match(server, /score: clampRiskScore\(Number\(row\.score\)\)/);
   assert.match(consoleSource, /function riskScore\(/);
   assert.match(stream, /Math\.max\(0, Math\.min\(100, Math\.round\(parsed\)\)\)/);
+  assert.match(riskBar, /const MAX_RISK_SCORE = 100/);
+  assert.doesNotMatch(riskBar, /120\+?/);
 });

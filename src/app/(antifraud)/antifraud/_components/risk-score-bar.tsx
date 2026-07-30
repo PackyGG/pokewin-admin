@@ -1,10 +1,10 @@
 import { cn } from "@/lib/utils";
 
-const CRITICAL_SCORE = 120;
+const MAX_RISK_SCORE = 100;
 
 export function RiskScoreBar({
   score,
-  max = CRITICAL_SCORE,
+  max = MAX_RISK_SCORE,
   className,
 }: {
   score: number;
@@ -35,10 +35,7 @@ export function RiskScoreBar({
         <span>0</span>
         <span>{Math.round(safeMax / 3)}</span>
         <span>{Math.round((safeMax * 2) / 3)}</span>
-        <span>
-          {safeMax}
-          {safeMax === CRITICAL_SCORE ? "+" : ""}
-        </span>
+        <span>{safeMax}</span>
       </div>
     </div>
   );
