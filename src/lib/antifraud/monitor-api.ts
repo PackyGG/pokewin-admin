@@ -76,11 +76,9 @@ const UPSTREAM_TIMEOUT_MS = 8_000;
 
 const runtimeConfigSchema = z.object({
   discord: z.object({
-    webhookConfigured: z.boolean(),
-    withdrawalHoldWebhookConfigured: z.boolean().default(false),
-    fiatProblemWebhookConfigured: z.boolean().default(false),
-    fiatHighRiskWebhookConfigured: z.boolean().default(false),
-    fiatEmailBlacklistWebhookConfigured: z.boolean().default(false),
+    // Optional, not defaulted: a monitor build that predates the bot-only
+    // migration simply omits it, and "unknown" must not render as "off".
+    botQueueConfigured: z.boolean().optional(),
     dashboardUrlConfigured: z.boolean(),
     supportRecipientIds: z.array(z.string()),
     urgentRecipientIds: z.array(z.string()),
@@ -141,7 +139,7 @@ const runtimeConfigSchema = z.object({
   }),
   externalWebappMonitor: z.object({
     endpointConfigured: z.boolean(),
-    independentAlertSinkConfigured: z.boolean(),
+    alertRouteConfigured: z.boolean(),
   }).optional(),
   fiatEligibility: z.object({
     devCredentialConfigured: z.boolean(),

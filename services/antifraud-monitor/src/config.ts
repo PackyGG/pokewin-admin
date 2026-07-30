@@ -63,7 +63,6 @@ const schema = z.object({
     .string()
     .url()
     .default("https://fraud.packydash.com/api/health/antifraud-webapp"),
-  DISCORD_WEBAPP_ERRORS_WEBHOOK_URL: z.string().url().optional(),
   ADMIN_GUILD_ID: z
     .string()
     .regex(/^\d{15,21}$/)
@@ -180,19 +179,6 @@ export function loadConfig(): Config {
       "Invalid configuration: ANTIFRAUD_WEBAPP_HEALTH_URL must be credential-free and use HTTPS in production",
     );
   }
-  if (config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL) {
-    const webhookUrl = new URL(config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL);
-    if (
-      webhookUrl.protocol !== "https:" ||
-      !["discord.com", "discordapp.com"].includes(webhookUrl.hostname) ||
-      !webhookUrl.pathname.startsWith("/api/webhooks/")
-    ) {
-      throw new Error(
-        "Invalid configuration: DISCORD_WEBAPP_ERRORS_WEBHOOK_URL must be a Discord HTTPS webhook",
-      );
-    }
-  }
-
   for (const rawOrigin of config.ALLOWED_ORIGINS.split(",")) {
     const origin = rawOrigin.trim();
     if (!origin || origin === "*") {

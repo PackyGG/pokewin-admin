@@ -27,7 +27,8 @@ export function sanitizedRuntimeConfig(
   };
   externalWebappMonitor: {
     endpointConfigured: boolean;
-    independentAlertSinkConfigured: boolean;
+    /** Outage alerts ride the shared Discord bot queue, not a private sink. */
+    alertRouteConfigured: boolean;
   };
   fiatEligibility: {
     devCredentialConfigured: boolean;
@@ -63,8 +64,10 @@ export function sanitizedRuntimeConfig(
     },
     externalWebappMonitor: {
       endpointConfigured: Boolean(config.ANTIFRAUD_WEBAPP_HEALTH_URL),
-      independentAlertSinkConfigured: Boolean(
-        config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL,
+      alertRouteConfigured: Boolean(
+        config.ANTIFRAUD_INGEST_URL &&
+          config.ANTIFRAUD_INGEST_SECRET &&
+          config.ADMIN_GUILD_ID,
       ),
     },
     fiatEligibility: {

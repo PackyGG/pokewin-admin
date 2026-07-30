@@ -261,11 +261,8 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   const status = sanitizedRuntimeConfig(runtimeConfig, 1);
   const serialized = JSON.stringify(status);
 
-  assert.equal(status.discord.webhookConfigured, true);
-  assert.equal(status.discord.withdrawalHoldWebhookConfigured, true);
-  assert.equal(status.discord.fiatProblemWebhookConfigured, true);
-  assert.equal(status.discord.fiatHighRiskWebhookConfigured, true);
-  assert.equal(status.discord.fiatEmailBlacklistWebhookConfigured, true);
+  assert.equal(status.discord.botQueueConfigured, true);
+  assert.equal(status.externalWebappMonitor.alertRouteConfigured, true);
   assert.equal(status.discord.dashboardUrlConfigured, true);
   assert.equal(status.discord.supportRecipientIds.length, 3);
   assert.equal(status.discord.urgentRecipientIds.length, 4);

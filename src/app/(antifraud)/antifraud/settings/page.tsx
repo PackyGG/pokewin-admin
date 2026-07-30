@@ -202,42 +202,14 @@ async function IntegrationSection() {
       ),
     },
     {
-      name: "Discord alert webhook",
-      envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
-      status: reportedStatus(runtimeData?.discord.webhookConfigured),
-      note: "General signup, scoring, rule, and high-risk fiat alerts.",
-    },
-    {
-      name: "Email-block Discord webhook",
-      envs: ["FIAT_EMAIL_BLACKLIST_DISCORD_WEBHOOK_URL"],
-      status: reportedStatus(
-        runtimeData?.discord.fiatEmailBlacklistWebhookConfigured,
-      ),
-      note: "Dedicated destination for blacklisted signup and Whop checkout email-domain containment.",
-    },
-    {
-      name: "Account containment Discord webhook",
-      envs: ["ANTIFRAUD_WITHDRAWAL_HOLD_DISCORD_WEBHOOK_URL"],
-      status: reportedStatus(
-        runtimeData?.discord.withdrawalHoldWebhookConfigured,
-      ),
-      note: "Dedicated destination for non-email account lock/ban containment, including automatic lifetime-deposit withdrawal holds.",
-    },
-    {
-      name: "High-risk fiat Discord webhook",
-      envs: ["FIAT_HIGH_RISK_DISCORD_WEBHOOK_URL"],
-      status: reportedStatus(
-        runtimeData?.discord.fiatHighRiskWebhookConfigured,
-      ),
-      note: "Dedicated supplemental destination for canonical high-risk fiat verdicts.",
-    },
-    {
-      name: "Fiat problem Discord webhook",
-      envs: ["FIAT_ALERT_DISCORD_WEBHOOK_URL"],
-      status: reportedStatus(
-        runtimeData?.discord.fiatProblemWebhookConfigured,
-      ),
-      note: "Dedicated destination for failed, stale, disputed, refunded, or otherwise operational fiat problems.",
+      name: "Discord bot delivery",
+      envs: [
+        "ADMIN_GUILD_ID",
+        "ANTIFRAUD_INGEST_URL",
+        "ANTIFRAUD_INGEST_SECRET",
+      ],
+      status: reportedStatus(runtimeData?.discord.botQueueConfigured),
+      note: "Every antifraud alert — signups, rules, fiat, containment, errors, webapp outages — is queued for the Discord bot and posted to the channel assigned on Discord Routing. There are no per-destination webhook URLs any more.",
     },
   ];
 

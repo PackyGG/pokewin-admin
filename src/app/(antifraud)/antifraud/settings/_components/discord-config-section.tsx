@@ -81,7 +81,7 @@ function RecipientList({
 export async function DiscordConfigSection() {
   const runtime = await getAntifraudRuntimeConfig();
   const discord = runtime.data?.discord ?? null;
-  const webhookReady = discord?.webhookConfigured ?? null;
+  const botQueueReady = discord?.botQueueConfigured ?? null;
   const deliveryFacts = DELIVERY_FACTS.map((fact) =>
     fact.label === "Button destination"
       ? {
@@ -100,8 +100,10 @@ export async function DiscordConfigSection() {
       <div>
         <SectionHeading icon={BellRing} title="Discord alerts" />
         <p className="mt-2 text-xs text-muted-foreground">
-          Readiness and recipients come from the deployed monitor service. The
-          webhook URL, shared secret, and provider credentials are never returned.
+          Alerts are queued for the Discord bot and posted to the channel each
+          event is assigned on Discord Routing. Readiness and recipients come
+          from the deployed monitor service; the shared secret and provider
+          credentials are never returned.
         </p>
       </div>
 
@@ -116,34 +118,34 @@ export async function DiscordConfigSection() {
               <div>
                 <p className="text-sm font-semibold">PackyGG Fraud</p>
                 <p className="text-[11px] text-muted-foreground">
-                  Discord webhook identity
+                  Discord bot delivery
                 </p>
               </div>
               <span
                 className={cn(
                   "ml-auto rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide",
-                  webhookReady === true
+                  botQueueReady === true
                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-                    : webhookReady === false
+                    : botQueueReady === false
                       ? "bg-rose-500/10 text-rose-600 dark:text-rose-400"
                       : "bg-muted text-muted-foreground",
                 )}
               >
-                {webhookReady === true
+                {botQueueReady === true
                   ? "Configured"
-                  : webhookReady === false
+                  : botQueueReady === false
                     ? "Not configured"
                     : "Unavailable"}
               </span>
             </div>
 
-            {webhookReady === false && (
+            {botQueueReady === false && (
               <p className="mt-3 rounded-lg border border-rose-500/25 bg-rose-500/5 px-3 py-2 text-xs text-rose-600 dark:text-rose-400">
-                No webhook URL is set on the deployed monitor, so every
-                antifraud alert is dropped instead of delivered.
+                The deployed monitor cannot reach the bot delivery queue, so
+                every antifraud alert is dropped instead of delivered.
               </p>
             )}
-            {webhookReady === null && (
+            {botQueueReady === null && (
               <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-xs text-amber-600 dark:text-amber-400">
                 The monitor configuration could not be read. Delivery status is
                 unknown; this page will not guess.

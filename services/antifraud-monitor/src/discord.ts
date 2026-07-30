@@ -62,26 +62,22 @@ export function discordRuntimeStatus(config: Pick<
   | "ADMIN_GUILD_ID"
   | "ANTIFRAUD_DASHBOARD_URL"
 >): {
-  webhookConfigured: boolean;
-  withdrawalHoldWebhookConfigured: boolean;
-  fiatProblemWebhookConfigured: boolean;
-  fiatHighRiskWebhookConfigured: boolean;
-  fiatEmailBlacklistWebhookConfigured: boolean;
+  /**
+   * Every antifraud alert goes onto the Discord bot's delivery queue, so there
+   * is ONE readiness fact, not one per destination. The old per-webhook flags
+   * were five copies of this same boolean and are gone.
+   */
+  botQueueConfigured: boolean;
   dashboardUrlConfigured: boolean;
   supportRecipientIds: readonly string[];
   urgentRecipientIds: readonly string[];
 } {
-  const botQueueConfigured = Boolean(
-    config.ANTIFRAUD_INGEST_URL &&
-      config.ANTIFRAUD_INGEST_SECRET &&
-      config.ADMIN_GUILD_ID,
-  );
   return {
-    webhookConfigured: botQueueConfigured,
-    withdrawalHoldWebhookConfigured: botQueueConfigured,
-    fiatProblemWebhookConfigured: botQueueConfigured,
-    fiatHighRiskWebhookConfigured: botQueueConfigured,
-    fiatEmailBlacklistWebhookConfigured: botQueueConfigured,
+    botQueueConfigured: Boolean(
+      config.ANTIFRAUD_INGEST_URL &&
+        config.ANTIFRAUD_INGEST_SECRET &&
+        config.ADMIN_GUILD_ID,
+    ),
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
     supportRecipientIds: SUPPORT_USER_IDS,
     urgentRecipientIds: URGENT_USER_IDS,

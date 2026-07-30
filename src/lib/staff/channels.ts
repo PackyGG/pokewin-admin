@@ -1,17 +1,21 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
+
+import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
+
 /**
- * Outbound notification channels for staff pings — Discord (default) and
- * Telegram (opt-in).
+ * Outbound notification channels for staff pings — Discord (default, delivered
+ * by the Discord bot) and Telegram (opt-in, Bot API).
  *
  * Both are OPTIONAL integrations: an unconfigured channel is a valid state, the
  * feature is simply off for it, and the in-app bell keeps working regardless.
  * Nothing here ever throws at a call site — every send resolves to a result
- * object so a dead webhook can never break a quiz submit or a review update.
+ * object so a dead channel can never break a quiz submit or a review update.
  *
- * SECURITY: the bot token / webhook URL are read from the environment at send
- * time and NEVER returned, logged, or surfaced in a status string. The
- * `configured` helpers report only presence.
+ * SECURITY: the Telegram bot token is read from the environment at send time
+ * and NEVER returned, logged, or surfaced in a status string. The `configured`
+ * helpers report only presence.
  */
 
 export type ChannelKind = "discord" | "telegram";
@@ -60,28 +64,31 @@ async function postJson(
 // ─── Discord ──────────────────────────────────────────────────────────────
 
 /**
- * Discord delivery goes through a channel WEBHOOK, and the message opens with
- * a `<@id>` mention — which is exactly the "basically ping them" behaviour the
- * staff notification system is for, without needing a bot process, gateway
- * connection or per-user DM consent.
+ * Discord delivery goes through the BOT, not a raw channel webhook. The ping is
+ * queued as a `staff.announcement` event and the bot posts it to whichever
+ * channel that event is assigned to on Fraud → Discord Routing, opening with a
+ * `<@id>` mention — the same "basically ping them" behaviour as before, with
+ * one delivery path for the whole dashboard instead of a private webhook URL.
  *
- * `ANTIFRAUD_DISCORD_WEBHOOK_URL` — a Discord channel webhook URL.
+ * The old `ANTIFRAUD_DISCORD_WEBHOOK_URL` is gone. `ADMIN_GUILD_ID` is the only
+ * thing this needs; an unset guild means the integration is simply off.
  */
-function discordWebhookUrl(): string | undefined {
-  return process.env.ANTIFRAUD_DISCORD_WEBHOOK_URL || undefined;
+const STAFF_ANNOUNCEMENT_EVENT_KEY = "staff.announcement";
+
+function adminGuildId(): string | undefined {
+  return process.env.ADMIN_GUILD_ID || undefined;
 }
 
 export function isDiscordChannelConfigured(): boolean {
-  return Boolean(discordWebhookUrl());
+  return Boolean(adminGuildId());
 }
 
 /**
  * Ping one staff member on Discord. `target` is their Discord user id
  * (snowflake) — 17–20 digits.
  *
- * `allowed_mentions` is pinned to exactly the one user id we intend to ping, so
- * a title or body containing `@everyone` (or any other mention-looking text)
- * can never escalate into a mass ping.
+ * The bot pins `allowed_mentions` to the ids it is given when it posts, so a
+ * title or body containing `@everyone` can never escalate into a mass ping.
  */
 export async function sendDiscordPing(params: {
   target: string;
@@ -89,8 +96,8 @@ export async function sendDiscordPing(params: {
   body?: string | null;
   href?: string | null;
 }): Promise<ChannelSendResult> {
-  const url = discordWebhookUrl();
-  if (!url) {
+  const guildId = adminGuildId();
+  if (!guildId) {
     return {
       ok: false,
       skipped: true,
@@ -101,26 +108,39 @@ export async function sendDiscordPing(params: {
     return { ok: false, error: "Invalid Discord user id" };
   }
 
-  const lines = [`<@${params.target}> **${params.title}**`];
+  const lines = [params.title];
   if (params.body) lines.push(params.body);
-  if (params.href) lines.push(params.href);
 
   try {
-    const res = await postJson(url, {
-      content: truncate(lines.join("\n")),
-      allowed_mentions: { parse: [], users: [params.target] },
+    const { enqueued } = await enqueueDiscordEvent({
+      guildId,
+      eventKey: STAFF_ANNOUNCEMENT_EVENT_KEY,
+      // Unique per send: two identical announcements to the same person are two
+      // real pings, and the queue's own retry handles redelivery.
+      dedupeKey: `staff:${params.target}:${randomUUID()}`,
+      content: truncate(`<@${params.target}>`),
+      embed: {
+        title: truncate(params.title),
+        description: truncate(lines.slice(1).join("\n")) || undefined,
+        ...(params.href ? { url: params.href } : {}),
+        color: 0x5865f2,
+        timestamp: new Date().toISOString(),
+      },
     });
-    if (!res.ok) {
-      return { ok: false, error: `Discord returned ${res.status}` };
+    if (enqueued === 0) {
+      // The event exists but no channel is assigned to it, so nothing would
+      // ever be posted. Say so instead of reporting a delivery that isn't one.
+      return {
+        ok: false,
+        error:
+          "No Discord channel is assigned to staff announcements — set one on Discord Routing",
+      };
     }
     return { ok: true };
   } catch (err) {
     return {
       ok: false,
-      error:
-        err instanceof Error && err.name === "AbortError"
-          ? "Discord timed out"
-          : "Discord delivery failed",
+      error: err instanceof Error ? err.message : "Discord delivery failed",
     };
   }
 }

@@ -114,7 +114,6 @@ const SECRET_VALUES = [
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
-  config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL,
   config.SUMSUB_ADMIN_TOKEN,
   config.SUMSUB_ADMIN_KEY,
 ].filter(
@@ -569,8 +568,7 @@ app.get("/ready", {
         : !liveStatus.subscribed
           ? "live_unsubscribed"
           : config.NODE_ENV === "production" &&
-              (webappMonitor.status === "disabled" ||
-                webappMonitor.status === "degraded")
+              webappMonitor.status === "degraded"
             ? `webapp_monitor_${webappMonitor.status}`
             : null;
     if (reason !== null) {

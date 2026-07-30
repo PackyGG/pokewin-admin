@@ -3,6 +3,7 @@ import { createHmac, randomUUID } from "node:crypto";
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
+import { sendBotDiscordEvent } from "./discord-events.js";
 import { SUPPORT_USER_IDS } from "./discord.js";
 
 const INTERVAL_MS = 60_000;
@@ -10,6 +11,16 @@ const TIMEOUT_MS = 8_000;
 const OUTAGE_THRESHOLD = 3;
 const ALERT_COOLDOWN_MS = 30 * 60_000;
 
+/**
+ * Webapp health probe + outage alerting.
+ *
+ * The alert goes out as an `antifraud.error.webapp` event on the Discord bot's
+ * delivery queue, the same route every other antifraud alert takes. That queue
+ * is reached through the dashboard's signed ingest endpoint, so a TOTAL webapp
+ * outage also blocks the alert about it — the probe keeps retrying every minute
+ * and the alert lands as soon as ingest answers again. The previous independent
+ * raw Discord webhook is gone.
+ */
 export class DashboardOpsTick {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
@@ -18,6 +29,9 @@ export class DashboardOpsTick {
   private lastAlertAt = 0;
   private outageOpen = false;
   private lastCheckedAt: string | null = null;
+  /** Bumped per outage episode so a later outage is never deduped away. */
+  private episode = 0;
+  private episodeAlerts = 0;
 
   constructor(
     private readonly config: Pick<
@@ -25,7 +39,7 @@ export class DashboardOpsTick {
       | "ANTIFRAUD_INGEST_URL"
       | "ANTIFRAUD_INGEST_SECRET"
       | "ANTIFRAUD_WEBAPP_HEALTH_URL"
-      | "DISCORD_WEBAPP_ERRORS_WEBHOOK_URL"
+      | "ADMIN_GUILD_ID"
     >,
     private readonly log: FastifyBaseLogger,
   ) {}
@@ -42,14 +56,13 @@ export class DashboardOpsTick {
   }
 
   status(): {
-    status: "disabled" | "starting" | "healthy" | "degraded";
+    status: "starting" | "healthy" | "degraded";
     consecutiveFailures: number;
     lastCheckedAt: string | null;
   } {
     return {
-      status: !this.config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL
-        ? "disabled"
-        : this.lastCheckedAt === null
+      status:
+        this.lastCheckedAt === null
           ? "starting"
           : this.outageOpen
             ? "degraded"
@@ -131,10 +144,11 @@ export class DashboardOpsTick {
         throw new Error("health_contract_invalid");
       }
       if (this.outageOpen) {
-        await this.sendDirectAlert(
+        await this.sendAlert(
           correlationId,
+          `webapp_recovered_${this.episode}`,
           "✅ Antifraud webapp recovered",
-          "The independent Railway probe can reach the antifraud webapp again.",
+          "The Railway probe can reach the antifraud webapp again.",
           0x57f287,
         );
       }
@@ -151,10 +165,16 @@ export class DashboardOpsTick {
         this.healthFailures >= OUTAGE_THRESHOLD &&
         (!this.outageOpen || now - this.lastAlertAt >= ALERT_COOLDOWN_MS)
       ) {
-        const sent = await this.sendDirectAlert(
+        if (!this.outageOpen) {
+          this.episode += 1;
+          this.episodeAlerts = 0;
+        }
+        this.episodeAlerts += 1;
+        const sent = await this.sendAlert(
           correlationId,
+          `webapp_outage_${this.episode}_${this.episodeAlerts}`,
           "🚨 Antifraud webapp outage",
-          "The independent Railway probe cannot reach the antifraud webapp. Investigate Vercel and webapp runtime health.",
+          "The Railway probe cannot reach the antifraud webapp. Investigate Vercel and webapp runtime health.",
           0xed4245,
         );
         if (sent) this.lastAlertAt = now;
@@ -163,47 +183,34 @@ export class DashboardOpsTick {
     }
   }
 
-  private async sendDirectAlert(
+  /**
+   * Queue the alert on the Discord bot route. Mentions stay pinned to the
+   * compiled support ids — the bot applies `allowed_mentions` when it posts, so
+   * the content string here can never widen into an @everyone.
+   */
+  private async sendAlert(
     correlationId: string,
+    dedupeKey: string,
     title: string,
     description: string,
     color: number,
   ): Promise<boolean> {
-    const webhook = this.config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL;
-    if (!webhook) {
-      this.log.error(
-        { correlationId },
-        "Independent webapp alert sink is not configured",
-      );
-      return false;
-    }
-    try {
-      const response = await fetch(webhook, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          content: SUPPORT_USER_IDS.map((id) => `<@${id}>`).join(" "),
-          allowed_mentions: { parse: [], users: SUPPORT_USER_IDS },
-          embeds: [
-            {
-              title,
-              description,
-              url: "https://fraud.packydash.com",
-              color,
-              footer: { text: `Correlation ${correlationId}` },
-              timestamp: new Date().toISOString(),
-            },
-          ],
-        }),
-        signal: AbortSignal.timeout(TIMEOUT_MS),
-      });
-      return response.ok;
-    } catch (error) {
-      this.log.error(
-        { err: error, correlationId },
-        "Independent webapp alert delivery failed",
-      );
-      return false;
-    }
+    return sendBotDiscordEvent(this.config, this.log, {
+      eventKey: "antifraud.error.webapp",
+      dedupeKey,
+      payload: {
+        content: SUPPORT_USER_IDS.map((id) => `<@${id}>`).join(" "),
+        embeds: [
+          {
+            title,
+            description,
+            url: "https://fraud.packydash.com",
+            color,
+            footer: { text: `Correlation ${correlationId}` },
+            timestamp: new Date().toISOString(),
+          },
+        ],
+      },
+    });
   }
 }
