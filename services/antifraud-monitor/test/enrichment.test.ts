@@ -153,6 +153,35 @@ test("a clean deliverable non-catch-all email adds no Abstract risk", () => {
   assert.deepEqual(result.signals, []);
 });
 
+test("email address age never makes an established domain look new", () => {
+  const result = parseAbstractEmailResponse({
+    email_deliverability: {
+      status: "deliverable",
+      is_smtp_valid: true,
+      is_mx_valid: true,
+    },
+    email_quality: {
+      score: 0.92,
+      is_catchall: false,
+      minimum_age: 2,
+    },
+    email_domain: {
+      domain: "example.com",
+      domain_age: 8_000,
+      is_risky_tld: false,
+    },
+    email_risk: {
+      address_risk_status: "low",
+      domain_risk_status: "low",
+    },
+  });
+
+  assert.equal(
+    result.signals.some((signal) => signal.key === "abstract_email_new_domain"),
+    false,
+  );
+});
+
 test("stored Abstract email evidence strips sender and raw mail-host identity", () => {
   const sanitized = sanitizeAbstractEmailResponse({
     email_address: SIGNUP.email,

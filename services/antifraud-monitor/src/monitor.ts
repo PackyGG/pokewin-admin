@@ -102,6 +102,96 @@ type RuleMatchWrite = {
   alert: DiscordAlert;
 };
 
+type CatchallContainmentWrite = {
+  signup: Signup;
+  catchallSignal: Signal;
+  signals: Signal[];
+  score: number;
+  durationSeconds: number;
+};
+
+type OpenSignupMonitor = (
+  client: pg.PoolClient,
+  signup: Signup,
+  signals: Signal[],
+  score: number,
+  durationSeconds: number,
+) => Promise<{ caseId: string; sessionId: string }>;
+
+/**
+ * Durably queue confirmed catch-all containment before unrelated provider
+ * failures dead-letter the wider signup assessment.
+ */
+export async function persistAbstractCatchallContainment(
+  pool: pg.Pool,
+  input: CatchallContainmentWrite,
+  openMonitor: OpenSignupMonitor,
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const sourceRef = `${input.signup.id}:abstract_email_catchall`;
+    const existing = await client.query<{ exists: boolean }>(
+      `
+        SELECT EXISTS (
+          SELECT 1
+          FROM risk_events
+          WHERE source = 'abstract_email' AND source_ref = $1
+        ) AS exists
+      `,
+      [sourceRef],
+    );
+    if (existing.rows[0]?.exists === true) {
+      await client.query("COMMIT");
+      return;
+    }
+    const opened = await openMonitor(
+      client,
+      input.signup,
+      input.signals,
+      input.score,
+      input.durationSeconds,
+    );
+    const emailDomain =
+      input.signup.email?.trim().toLowerCase().split("@").at(-1) ?? null;
+    await client.query(
+      `
+        INSERT INTO risk_events (
+          case_id, session_id, user_id, event_type, source, source_ref,
+          score_delta, score_after, title, detail, payload, occurred_at
+        ) VALUES (
+          $1,$2,$3,'abstract_email_catchall','abstract_email',$4,
+          0,$5,$6,$7,$8::jsonb,$9
+        )
+        ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+        DO NOTHING
+      `,
+      [
+        opened.caseId,
+        opened.sessionId,
+        input.signup.id,
+        sourceRef,
+        input.score,
+        input.catchallSignal.title,
+        input.catchallSignal.detail,
+        JSON.stringify({
+          containmentRequired: true,
+          emailDomain,
+          provider: "abstract_email",
+          evidence: input.catchallSignal.payload ?? {},
+        }),
+        input.signup.created_at,
+      ],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 /**
  * Persist a first-time rule match and its score/state effects as one unit.
  *
@@ -712,6 +802,41 @@ export class MonitorEngine {
       .filter((result) => result.status === "failed")
       .map((result) => result.provider);
     if (unavailable.length > 0) {
+      const signals = [
+        ...baseSignupSignals(signup, context, weights),
+        ...fingerprint.signals,
+        ...proxycheck.signals,
+        ...abstractIp.signals,
+        ...abstractEmail.signals,
+        ...opportify.signals,
+      ];
+      const catchallSignal = abstractEmail.signals.find(
+        (signal) => signal.key === "abstract_email_catchall",
+      );
+      if (catchallSignal) {
+        const score = Math.max(
+          0,
+          signals.reduce((total, signal) => total + signal.points, 0),
+        );
+        await persistAbstractCatchallContainment(
+          this.db.antifraud,
+          {
+            signup,
+            catchallSignal,
+            signals,
+            score,
+            durationSeconds: this.config.MONITOR_DURATION_SECONDS,
+          },
+          (client, containedSignup, containedSignals, containedScore, duration) =>
+            this.openMonitor(
+              client,
+              containedSignup,
+              containedSignals,
+              containedScore,
+              duration,
+            ),
+        );
+      }
       throw new Error(
         `Provider enrichment unavailable: ${unavailable.join(",")}`,
       );

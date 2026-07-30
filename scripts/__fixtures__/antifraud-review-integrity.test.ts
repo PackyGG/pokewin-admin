@@ -167,6 +167,9 @@ test("free-battle containment requires two battles and applies KYC plus withdraw
 
 test("Abstract catch-all signup containment requires signed provider evidence", () => {
   const source = read("src/app/api/antifraud/ingest/route.ts");
+  const helper = read(
+    "src/lib/antifraud/abstract-catchall-containment.ts",
+  );
   const containmentStart = source.indexOf(
     "async function containAbstractCatchallAccount",
   );
@@ -179,8 +182,8 @@ test("Abstract catch-all signup containment requires signed provider evidence", 
   const ingestEnd = source.indexOf("/**\n * Health probe", ingestStart);
   const ingest = source.slice(ingestStart, ingestEnd);
 
-  assert.match(containment, /containmentRequired !== true/);
-  assert.match(containment, /provider !== "abstract_email"/);
+  assert.match(helper, /containmentRequired !== true/);
+  assert.match(helper, /provider !== "abstract_email"/);
   assert.match(containment, /UPDATE "user"/);
   assert.match(containment, /is_locked = TRUE/);
   assert.match(containment, /WHEN is_locked THEN locked_by ELSE NULL/);

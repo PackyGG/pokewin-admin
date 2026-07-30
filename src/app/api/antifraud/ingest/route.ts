@@ -16,6 +16,11 @@ import {
   shouldOpenReviewForSignal,
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
+import {
+  abstractCatchallContainmentTarget,
+  applyAbstractCatchallContainment,
+  type AbstractCatchallContainmentTarget,
+} from "@/lib/antifraud/abstract-catchall-containment";
 import { isPostgresError } from "@/lib/postgres-errors";
 
 /**
@@ -319,100 +324,95 @@ async function containBlacklistedEmailDomainAccount(
 async function containAbstractCatchallAccount(
   signal: AntifraudSignalEvent,
 ): Promise<"locked" | "skipped"> {
-  const userId = signal.userId;
-  const domain = blacklistDomainFromSignal(signal);
-  if (
-    !userId
-    || !domain
-    || signal.payload?.containmentRequired !== true
-    || signal.payload?.provider !== "abstract_email"
-  ) {
+  if (!abstractCatchallContainmentTarget(signal)) {
     console.error(
       "[antifraud-ingest] skipping invalid Abstract catch-all containment signal",
       { externalId: signal.id || null, userId: signal.userId ?? null },
     );
     return "skipped";
   }
-
-  const reason = (
-    `Automatic fraud lock: signup used an Abstract-confirmed catch-all email domain (${domain})`
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    WITH locked_account AS (
-      UPDATE "user"
-      SET
-        is_locked = TRUE,
-        locked_reason = CASE
-          WHEN is_locked THEN COALESCE(locked_reason, ${reason})
-          ELSE ${reason}
-        END,
-        locked_at = CASE
-          WHEN is_locked THEN COALESCE(locked_at, NOW())
-          ELSE NOW()
-        END,
-        locked_by = CASE WHEN is_locked THEN locked_by ELSE NULL END,
-        locked_until = CASE WHEN is_locked THEN locked_until ELSE NULL END,
-        updated_at = NOW()
-      WHERE id = ${userId}
-      RETURNING id
-    )
-    INSERT INTO user_feature_locks (
-      id,
-      user_id,
-      locked_withdrawals_crypto,
-      locked_withdrawals_items,
-      locked_withdrawals_at,
-      locked_withdrawals_by,
-      locked_withdrawals_reason,
-      created_at,
-      updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()},
-      u.id,
-      ARRAY['all']::text[],
-      TRUE,
-      NOW(),
-      NULL,
-      ${reason},
-      NOW(),
-      NOW()
-    FROM locked_account u
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  if (locked.rows.length === 0) {
-    console.error(
-      "[antifraud-ingest] Abstract catch-all account no longer exists, skipping containment",
-      { externalId: signal.id || null, userId },
-    );
-    return "skipped";
-  }
-
-  const current = await getUserKyc(userId);
-  if (!current.kycRequired) {
-    await requireUserKyc({
-      userId,
-      adminId: AUTOMATED_ABSTRACT_EMAIL_KYC_ACTOR_ID,
-      reason: reason.replace(
-        "Automatic fraud lock:",
-        "Automatic fraud KYC:",
-      ),
-    });
-  }
-  return "locked";
+  return applyAbstractCatchallContainment(signal, {
+    lockAccount: async (
+      target: AbstractCatchallContainmentTarget,
+    ): Promise<boolean> => {
+      const db = getProdPrimaryDrizzleDb();
+      const locked = await db.execute<{ user_id: string }>(sql`
+        WITH locked_account AS (
+          UPDATE "user"
+          SET
+            is_locked = TRUE,
+            locked_reason = CASE
+              WHEN is_locked THEN COALESCE(locked_reason, ${target.reason})
+              ELSE ${target.reason}
+            END,
+            locked_at = CASE
+              WHEN is_locked THEN COALESCE(locked_at, NOW())
+              ELSE NOW()
+            END,
+            locked_by = CASE WHEN is_locked THEN locked_by ELSE NULL END,
+            locked_until = CASE WHEN is_locked THEN locked_until ELSE NULL END,
+            updated_at = NOW()
+          WHERE id = ${target.userId}
+          RETURNING id
+        )
+        INSERT INTO user_feature_locks (
+          id,
+          user_id,
+          locked_withdrawals_crypto,
+          locked_withdrawals_items,
+          locked_withdrawals_at,
+          locked_withdrawals_by,
+          locked_withdrawals_reason,
+          created_at,
+          updated_at
+        )
+        SELECT
+          ${crypto.randomUUID()},
+          u.id,
+          ARRAY['all']::text[],
+          TRUE,
+          NOW(),
+          NULL,
+          ${target.reason},
+          NOW(),
+          NOW()
+        FROM locked_account u
+        ON CONFLICT (user_id) DO UPDATE SET
+          locked_withdrawals_crypto = ARRAY['all']::text[],
+          locked_withdrawals_items = TRUE,
+          locked_withdrawals_at = COALESCE(
+            user_feature_locks.locked_withdrawals_at,
+            EXCLUDED.locked_withdrawals_at
+          ),
+          locked_withdrawals_reason = COALESCE(
+            user_feature_locks.locked_withdrawals_reason,
+            EXCLUDED.locked_withdrawals_reason
+          ),
+          updated_at = NOW()
+        RETURNING user_id
+      `);
+      if (locked.rows.length > 0) return true;
+      console.error(
+        "[antifraud-ingest] Abstract catch-all account no longer exists, skipping containment",
+        { externalId: signal.id || null, userId: target.userId },
+      );
+      return false;
+    },
+    isKycRequired: async (userId: string): Promise<boolean> =>
+      (await getUserKyc(userId)).kycRequired,
+    requireKyc: async (
+      target: AbstractCatchallContainmentTarget,
+    ): Promise<void> => {
+      await requireUserKyc({
+        userId: target.userId,
+        adminId: AUTOMATED_ABSTRACT_EMAIL_KYC_ACTOR_ID,
+        reason: target.reason.replace(
+          "Automatic fraud lock:",
+          "Automatic fraud KYC:",
+        ),
+      });
+    },
+  });
 }
 
 function containmentCount(value: unknown): number | null {

@@ -1118,8 +1118,8 @@ export function parseAbstractEmailResponse(
   const status = stringValue(deliverability.status)?.toLowerCase();
   const statusDetail = stringValue(deliverability.status_detail);
   const qualityScore = numberValue(quality.score);
-  const minimumAge = numberValue(quality.minimum_age)
-    ?? numberValue(domain.domain_age);
+  const emailAddressMinimumAge = numberValue(quality.minimum_age);
+  const domainAge = numberValue(domain.domain_age);
   const addressRisk = emailRiskLevel(risk.address_risk_status);
   const domainRisk = emailRiskLevel(risk.domain_risk_status);
   const evidence = signalPayload({
@@ -1127,7 +1127,8 @@ export function parseAbstractEmailResponse(
     statusDetail,
     qualityScore,
     domain: domain.domain,
-    domainAgeDays: minimumAge,
+    emailAddressMinimumAgeDays: emailAddressMinimumAge,
+    domainAgeDays: domainAge,
     addressRisk,
     domainRisk,
     suggestedCorrection: raw.suggested_correction,
@@ -1217,12 +1218,12 @@ export function parseAbstractEmailResponse(
       points.lowQuality,
     );
   }
-  if (minimumAge !== undefined && minimumAge >= 0 && minimumAge < 30) {
+  if (domainAge !== undefined && domainAge >= 0 && domainAge < 30) {
     add(
       true,
       "abstract_email_new_domain",
       "New email domain",
-      `Abstract reports that the email domain is only ${Math.round(minimumAge)} days old.`,
+      `Abstract reports that the email domain is only ${Math.round(domainAge)} days old.`,
       points.newDomain,
     );
   }
