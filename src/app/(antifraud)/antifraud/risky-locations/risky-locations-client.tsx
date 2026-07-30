@@ -22,7 +22,6 @@ import {
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -33,6 +32,9 @@ import type { RiskyLocation } from "@/lib/antifraud/risky-locations-api";
 import { addRiskyLocation, setRiskyLocation } from "./actions";
 
 type CountryOption = { code: string; name: string };
+
+const MONITOR_DURATION_MINUTES = 15;
+const DEFAULT_RISK_WEIGHT = 20;
 
 function flag(code: string): string {
   return String.fromCodePoint(
@@ -50,34 +52,12 @@ export function RiskyLocationsClient({
   const [locations, setLocations] = useState(initialLocations);
   const [countryCode, setCountryCode] = useState("");
   const [countryOpen, setCountryOpen] = useState(false);
-  const [duration, setDuration] = useState(60);
-  const [riskWeight, setRiskWeight] = useState(20);
-  const [expiresAt, setExpiresAt] = useState("");
-  const [reason, setReason] = useState("");
-  const [draftDurations, setDraftDurations] = useState<Record<string, number>>(
-    Object.fromEntries(
-      initialLocations.map((location) => [
-        location.countryCode,
-        location.monitorDurationMinutes,
-      ]),
-    ),
-  );
   const [isPending, startTransition] = useTransition();
   const [draftWeights, setDraftWeights] = useState<Record<string, number>>(
     Object.fromEntries(
       initialLocations.map((location) => [
         location.countryCode,
         location.riskWeight,
-      ]),
-    ),
-  );
-  const [draftExpiries, setDraftExpiries] = useState<Record<string, string>>(
-    Object.fromEntries(
-      initialLocations.map((location) => [
-        location.countryCode,
-        location.expiresAt
-          ? new Date(location.expiresAt).toISOString().slice(0, 16)
-          : "",
       ]),
     ),
   );
@@ -91,13 +71,8 @@ export function RiskyLocationsClient({
 
   function addLocation(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!countryCode || duration < 1 || duration > 60) {
-      toast.error("Choose a country and a monitor time from 1 to 60 minutes.");
-      return;
-    }
-    const submittedReason = reason.trim();
-    if (submittedReason.length < 4) {
-      toast.error("Enter a reason with at least 4 characters.");
+    if (!countryCode) {
+      toast.error("Choose a country.");
       return;
     }
     if (
@@ -111,10 +86,8 @@ export function RiskyLocationsClient({
       try {
         const saved = await addRiskyLocation({
           countryCode,
-          monitorDurationMinutes: duration,
-          reason: submittedReason,
-          riskWeight,
-          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
+          monitorDurationMinutes: MONITOR_DURATION_MINUTES,
+          riskWeight: DEFAULT_RISK_WEIGHT,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) => [
@@ -123,23 +96,11 @@ export function RiskyLocationsClient({
           ),
           saved,
         ]);
-        setDraftDurations((current) => ({
-          ...current,
-          [saved.countryCode]: saved.monitorDurationMinutes,
-        }));
         setDraftWeights((current) => ({
           ...current,
           [saved.countryCode]: saved.riskWeight,
         }));
-        setDraftExpiries((current) => ({
-          ...current,
-          [saved.countryCode]: saved.expiresAt
-            ? new Date(saved.expiresAt).toISOString().slice(0, 16)
-            : "",
-        }));
         setCountryCode("");
-        setReason("");
-        setExpiresAt("");
         toast.success(
           `${countryNames.get(saved.countryCode) ?? saved.countryCode} now uses a ${saved.monitorDurationMinutes}-minute monitor.`,
         );
@@ -154,20 +115,8 @@ export function RiskyLocationsClient({
   }
 
   function saveLocation(location: RiskyLocation, enabled = location.enabled) {
-    const monitorDurationMinutes =
-      draftDurations[location.countryCode] ?? location.monitorDurationMinutes;
     const selectedWeight =
       draftWeights[location.countryCode] ?? location.riskWeight;
-    const selectedExpiry = draftExpiries[location.countryCode] ?? "";
-    if (monitorDurationMinutes < 1 || monitorDurationMinutes > 60) {
-      toast.error("Monitor time must be between 1 and 60 minutes.");
-      return;
-    }
-    const submittedReason = reason.trim();
-    if (submittedReason.length < 4) {
-      toast.error("Enter a reason with at least 4 characters.");
-      return;
-    }
     if (
       !window.confirm(
         `${enabled ? "Save" : "Disable"} ${countryNames.get(location.countryCode) ?? location.countryCode}? This change will be audited.`,
@@ -180,12 +129,8 @@ export function RiskyLocationsClient({
         const saved = await setRiskyLocation({
           countryCode: location.countryCode,
           enabled,
-          monitorDurationMinutes,
-          reason: submittedReason,
+          monitorDurationMinutes: MONITOR_DURATION_MINUTES,
           riskWeight: selectedWeight,
-          expiresAt: selectedExpiry
-            ? new Date(selectedExpiry).toISOString()
-            : null,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) =>
@@ -193,26 +138,15 @@ export function RiskyLocationsClient({
             entry.countryCode === saved.countryCode ? saved : entry,
           ),
         );
-        setDraftDurations((current) => ({
-          ...current,
-          [saved.countryCode]: saved.monitorDurationMinutes,
-        }));
         setDraftWeights((current) => ({
           ...current,
           [saved.countryCode]: saved.riskWeight,
-        }));
-        setDraftExpiries((current) => ({
-          ...current,
-          [saved.countryCode]: saved.expiresAt
-            ? new Date(saved.expiresAt).toISOString().slice(0, 16)
-            : "",
         }));
         toast.success(
           saved.enabled
             ? `${countryNames.get(saved.countryCode) ?? saved.countryCode} will be monitored for ${saved.monitorDurationMinutes} minutes.`
             : `${countryNames.get(saved.countryCode) ?? saved.countryCode} is disabled.`,
         );
-        setReason("");
       } catch (error) {
         toast.error(
           error instanceof Error
@@ -235,8 +169,9 @@ export function RiskyLocationsClient({
             Add risky location
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            New accounts from this country enter the live monitor even when they
-            have no other risk points.
+            New accounts from this country enter the live monitor for{" "}
+            {MONITOR_DURATION_MINUTES} minutes even when they have no other risk
+            points.
           </p>
         </div>
         <div className="space-y-2">
@@ -300,60 +235,10 @@ export function RiskyLocationsClient({
             </PopoverContent>
           </Popover>
         </div>
-        <div className="grid grid-cols-2 gap-3">
-          <div className="space-y-2">
-            <Label htmlFor="risky-weight">Risk weight</Label>
-            <Input
-              id="risky-weight"
-              type="number"
-              min={0}
-              max={49}
-              value={riskWeight}
-              onChange={(event) => setRiskWeight(Number(event.target.value))}
-              disabled={isPending}
-            />
-          </div>
-          <div className="space-y-2">
-            <Label htmlFor="risky-expiry">Optional expiry</Label>
-            <Input
-              id="risky-expiry"
-              type="datetime-local"
-              value={expiresAt}
-              onChange={(event) => setExpiresAt(event.target.value)}
-              disabled={isPending}
-            />
-          </div>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="risky-location-reason">Change reason</Label>
-          <Textarea
-            id="risky-location-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Why this location should be added or changed"
-            maxLength={500}
-            disabled={isPending}
-          />
-          <p className="text-xs text-muted-foreground">
-            Required for adds and rule changes. Saved in the audit log.
-          </p>
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="risky-duration">Monitor time (minutes)</Label>
-          <Input
-            id="risky-duration"
-            type="number"
-            min={1}
-            max={60}
-            value={duration}
-            onChange={(event) => setDuration(Number(event.target.value))}
-            disabled={isPending}
-          />
-          <p className="text-xs text-muted-foreground">
-            60 minutes is supported, but it keeps matching accounts active 20×
-            longer than the 3-minute default. Use long windows selectively.
-          </p>
-        </div>
+        <p className="text-xs text-muted-foreground">
+          Risk weight starts at {DEFAULT_RISK_WEIGHT} and can be changed in the
+          rules list.
+        </p>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? (
             <Loader2 className="size-4 animate-spin" />
@@ -394,7 +279,7 @@ export function RiskyLocationsClient({
               .map((location) => (
                 <div
                   key={location.countryCode}
-                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_96px_96px_170px_auto] md:items-end"
+                  className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_96px_auto] md:items-end"
                 >
                   <div className="min-w-0 space-y-1 self-center">
                     <div className="flex flex-wrap items-center gap-2">
@@ -420,9 +305,6 @@ export function RiskyLocationsClient({
                       {location.averageRisk ?? "unknown"} avg risk ·{" "}
                       {location.reviewCount} reviews · bans/locks unknown
                     </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {location.reason}
-                    </p>
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor={`weight-${location.countryCode}`}>Weight</Label>
@@ -434,43 +316,6 @@ export function RiskyLocationsClient({
                       value={draftWeights[location.countryCode] ?? location.riskWeight}
                       onChange={(event) =>
                         setDraftWeights((current) => ({
-                          ...current,
-                          [location.countryCode]: Number(event.target.value),
-                        }))
-                      }
-                      disabled={isPending}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`expiry-${location.countryCode}`}>Expiry</Label>
-                    <Input
-                      id={`expiry-${location.countryCode}`}
-                      type="datetime-local"
-                      value={draftExpiries[location.countryCode] ?? ""}
-                      onChange={(event) =>
-                        setDraftExpiries((current) => ({
-                          ...current,
-                          [location.countryCode]: event.target.value,
-                        }))
-                      }
-                      disabled={isPending}
-                    />
-                  </div>
-                  <div className="space-y-1.5">
-                    <Label htmlFor={`duration-${location.countryCode}`}>
-                      Minutes
-                    </Label>
-                    <Input
-                      id={`duration-${location.countryCode}`}
-                      type="number"
-                      min={1}
-                      max={60}
-                      value={
-                        draftDurations[location.countryCode] ??
-                        location.monitorDurationMinutes
-                      }
-                      onChange={(event) =>
-                        setDraftDurations((current) => ({
                           ...current,
                           [location.countryCode]: Number(event.target.value),
                         }))
