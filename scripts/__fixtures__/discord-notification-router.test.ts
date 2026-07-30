@@ -80,6 +80,19 @@ test("channel creation has a durable manager request and leased bot execution", 
   assert.match(actions, /queueDiscordChannelCreation/);
 });
 
+test("an enabled event can only be assigned to one Discord channel", () => {
+  const config = read("src/lib/discord-notifications/config.ts");
+  const workspace = read(
+    "src/app/(antifraud)/antifraud/webhooks/routing-workspace.tsx",
+  );
+
+  assert.match(config, /pg_advisory_xact_lock/);
+  assert.match(config, /route\.channel_id <> \$\{channelId\}/);
+  assert.match(config, /Remove it there first/);
+  assert.match(workspace, /assignedElsewhere/);
+  assert.match(workspace, /!assignedElsewhere\.has\(event\.key\)/);
+});
+
 test("approved Discord categories moved outside the live boundary are rejected", () => {
   const router = read("src/lib/discord-notifications/router.ts");
   const operations = read(
