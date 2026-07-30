@@ -35,7 +35,7 @@ const querySchema = z.object({
     ])
     .optional(),
   rail: z.enum(["fiat", "crypto"]).default("fiat"),
-  lifecycle: z.enum(["pending", "confirmed", "all"]).default("pending"),
+  lifecycle: z.enum(["pending", "confirmed", "all"]).default("all"),
   search: z.string().trim().max(100).optional(),
 });
 
@@ -86,35 +86,47 @@ export async function registerWithdrawalRoutes(
   app.get("/v1/withdrawals", async (request) => {
     const query = querySchema.parse(request.query);
     const excluded = excludedUserIds(request.headers);
-    const usesAssessmentFilter = Boolean(
-      query.verdict || query.reviewStatus || query.rail || query.lifecycle,
-    );
-    const refreshed = await service.refreshPage(
-      usesAssessmentFilter
-        ? { ...query, page: 1, limit: 100, excludedUserIds: excluded }
-        : { ...query, excludedUserIds: excluded },
-    );
+    await service.refreshPage({
+      ...query,
+      page: 1,
+      limit: 100,
+      excludedUserIds: excluded,
+    });
     const ignoredUserIds = [
       ...new Set([...excluded, ...(await cachedCreatorUserIds(db.source))]),
     ];
 
-    const conditions: string[] = ["model_version=$1"];
-    const values: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
-    if (!usesAssessmentFilter) {
-      values.push(refreshed.ids);
-      conditions.push(`withdrawal_id=ANY($${values.length}::uuid[])`);
-    }
+    // Scope = what the queue is looking at: rail, payout lifecycle, search and
+    // hidden users. The risk/workflow filters narrow the listed rows only, so
+    // the counters stay a truthful breakdown of that same scope.
+    const scopeValues: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
+    const scopeConditions: string[] = ["model_version=$1"];
     if (query.status) {
-      values.push(query.status);
-      conditions.push(`status=$${values.length}`);
+      scopeValues.push(query.status);
+      scopeConditions.push(`status=$${scopeValues.length}`);
     } else if (query.lifecycle === "pending") {
-      conditions.push(`status IN ('pending','processing')`);
+      scopeConditions.push(`status IN ('pending','processing')`);
     } else if (query.lifecycle === "confirmed") {
-      conditions.push(`status IN ('shipped','completed')`);
+      scopeConditions.push(`status IN ('shipped','completed')`);
     }
-    conditions.push(
+    scopeConditions.push(
       query.rail === "crypto" ? `method='crypto'` : `method<>'crypto'`,
     );
+    if (query.search) {
+      scopeValues.push(`%${query.search.toLowerCase()}%`);
+      scopeConditions.push(`(
+        lower(user_id) LIKE $${scopeValues.length}
+        OR lower(COALESCE(username,'')) LIKE $${scopeValues.length}
+        OR lower(COALESCE(email,'')) LIKE $${scopeValues.length}
+      )`);
+    }
+    if (ignoredUserIds.length > 0) {
+      scopeValues.push(ignoredUserIds);
+      scopeConditions.push(`user_id<>ALL($${scopeValues.length}::text[])`);
+    }
+
+    const conditions = [...scopeConditions];
+    const values = [...scopeValues];
     if (query.verdict) {
       values.push(query.verdict);
       conditions.push(`verdict=$${values.length}`);
@@ -127,29 +139,18 @@ export async function registerWithdrawalRoutes(
         conditions.push(`review_status=$${values.length}`);
       }
     }
-    if (query.search) {
-      values.push(`%${query.search.toLowerCase()}%`);
-      conditions.push(`(
-        lower(user_id) LIKE $${values.length}
-        OR lower(COALESCE(username,'')) LIKE $${values.length}
-        OR lower(COALESCE(email,'')) LIKE $${values.length}
-      )`);
-    }
-    if (ignoredUserIds.length > 0) {
-      values.push(ignoredUserIds);
-      conditions.push(`user_id<>ALL($${values.length}::text[])`);
-    }
-    const where = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
-    const offset = usesAssessmentFilter ? (query.page - 1) * query.limit : 0;
+    const where = `WHERE ${conditions.join(" AND ")}`;
+    const scopeWhere = `WHERE ${scopeConditions.join(" AND ")}`;
+    const offset = (query.page - 1) * query.limit;
     values.push(query.limit, offset);
-    const summaryValues: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
-    const summaryConditions = ["model_version=$1"];
+    const railValues: unknown[] = [WITHDRAWAL_RISK_MODEL_VERSION];
+    const railConditions = ["model_version=$1"];
     if (ignoredUserIds.length > 0) {
-      summaryValues.push(ignoredUserIds);
-      summaryConditions.push(`user_id<>ALL($2::text[])`);
+      railValues.push(ignoredUserIds);
+      railConditions.push(`user_id<>ALL($2::text[])`);
     }
-    const summaryWhere = `WHERE ${summaryConditions.join(" AND ")}`;
-    const [rows, total, summary] = await Promise.all([
+    const railWhere = `WHERE ${railConditions.join(" AND ")}`;
+    const [rows, total, summary, rails] = await Promise.all([
       db.antifraud.query(
         `
           SELECT withdrawal_id, user_id, username, email, avatar_url, method,
@@ -181,12 +182,6 @@ export async function registerWithdrawalRoutes(
         in_review: number;
         block_recommended: number;
         amount_usd: number;
-        fiat: number;
-        crypto: number;
-        pending_fiat: number;
-        pending_crypto: number;
-        confirmed_fiat: number;
-        confirmed_crypto: number;
       }>(
         `
           SELECT
@@ -200,6 +195,22 @@ export async function registerWithdrawalRoutes(
             )::int AS in_review,
             COUNT(*) FILTER (WHERE review_status='block_recommended')::int
               AS block_recommended,
+            COALESCE(SUM(amount_usd),0)::float8 AS amount_usd
+          FROM withdrawal_assessments
+          ${scopeWhere}
+        `,
+        scopeValues,
+      ),
+      db.antifraud.query<{
+        fiat: number;
+        crypto: number;
+        pending_fiat: number;
+        pending_crypto: number;
+        confirmed_fiat: number;
+        confirmed_crypto: number;
+      }>(
+        `
+          SELECT
             COUNT(*) FILTER (WHERE method<>'crypto')::int AS fiat,
             COUNT(*) FILTER (WHERE method='crypto')::int AS crypto,
             COUNT(*) FILTER (
@@ -213,17 +224,22 @@ export async function registerWithdrawalRoutes(
             )::int AS confirmed_fiat,
             COUNT(*) FILTER (
               WHERE method='crypto' AND status IN ('shipped','completed')
-            )::int AS confirmed_crypto,
-            COALESCE(SUM(amount_usd),0)::float8 AS amount_usd
+            )::int AS confirmed_crypto
           FROM withdrawal_assessments
-          ${summaryWhere}
+          ${railWhere}
         `,
-        summaryValues,
+        railValues,
       ),
     ]);
-    const count = usesAssessmentFilter
-      ? (total.rows[0]?.count ?? 0)
-      : refreshed.total;
+    const count = total.rows[0]?.count ?? 0;
+    const railCounts = rails.rows[0] ?? {
+      fiat: 0,
+      crypto: 0,
+      pending_fiat: 0,
+      pending_crypto: 0,
+      confirmed_fiat: 0,
+      confirmed_crypto: 0,
+    };
     return {
       data: rows.rows,
       pagination: {
@@ -232,21 +248,18 @@ export async function registerWithdrawalRoutes(
         total: count,
         pages: Math.max(1, Math.ceil(count / query.limit)),
       },
-      summary: summary.rows[0] ?? {
-        total: 0,
-        good: 0,
-        review: 0,
-        bad: 0,
-        unreviewed: 0,
-        in_review: 0,
-        block_recommended: 0,
-        amount_usd: 0,
-        fiat: 0,
-        crypto: 0,
-        pending_fiat: 0,
-        pending_crypto: 0,
-        confirmed_fiat: 0,
-        confirmed_crypto: 0,
+      summary: {
+        ...(summary.rows[0] ?? {
+          total: 0,
+          good: 0,
+          review: 0,
+          bad: 0,
+          unreviewed: 0,
+          in_review: 0,
+          block_recommended: 0,
+          amount_usd: 0,
+        }),
+        ...railCounts,
       },
     };
   });

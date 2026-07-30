@@ -91,9 +91,9 @@ export default async function WithdrawalsPage({
     page: parsePageParam(params.page),
     rail: params.rail === "crypto" ? "crypto" : "fiat",
     lifecycle:
-      params.lifecycle === "confirmed" || params.lifecycle === "all"
+      params.lifecycle === "confirmed" || params.lifecycle === "pending"
         ? params.lifecycle
-        : "pending",
+        : "all",
     status: STATUSES.includes(params.status as (typeof STATUSES)[number])
       ? params.status
       : undefined,
@@ -605,7 +605,7 @@ function withdrawalHref(state: FilterState): string {
   const params = new URLSearchParams();
   if (state.page > 1) params.set("page", String(state.page));
   if (state.rail === "crypto") params.set("rail", "crypto");
-  if (state.lifecycle !== "pending") params.set("lifecycle", state.lifecycle);
+  if (state.lifecycle !== "all") params.set("lifecycle", state.lifecycle);
   if (state.status) params.set("status", state.status);
   if (state.verdict) params.set("verdict", state.verdict);
   if (state.reviewStatus) params.set("reviewStatus", state.reviewStatus);

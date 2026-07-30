@@ -41,7 +41,13 @@ test("the page reads the monitor service and never imports MAIN DB access", () =
   assert.doesNotMatch(page, /90-day account activity/);
   assert.match(page, /Gross wagered/);
   assert.match(page, /TransactionRailTabs/);
-  assert.match(page, /lifecycle: "pending"/);
+  // The queue lists every withdrawal on the selected rail by default; the
+  // pending/confirmed payout filters narrow it, they never hide it.
+  assert.match(
+    page,
+    /params\.lifecycle === "confirmed" \|\| params\.lifecycle === "pending"/,
+  );
+  assert.match(page, /: "all",/);
   assert.match(page, /label="Confirmed"/);
   assert.match(page, /trace\.entries/);
   assert.match(page, /restricted source/);
@@ -105,7 +111,13 @@ test("the monitor service keeps the source pool read-only and persists assessmen
   assert.match(routes, /excludedUserIds/);
   assert.match(routes, /userIsCreator/);
   assert.match(routes, /rail: z\.enum\(\["fiat", "crypto"\]\)/);
-  assert.match(routes, /lifecycle: z\.enum\(\["pending", "confirmed", "all"\]\)/);
+  assert.match(
+    routes,
+    /lifecycle: z\.enum\(\["pending", "confirmed", "all"\]\)\.default\("all"\)/,
+  );
+  // KPI counters follow the same rail/lifecycle scope as the listed rows.
+  assert.match(routes, /\$\{scopeWhere\}/);
+  assert.match(routes, /\$\{railWhere\}/);
   assert.match(routes, /method<>'crypto'/);
   assert.match(routes, /method='crypto'/);
   assert.match(routeHelpers, /excludedUsersHeaderSchema/);
