@@ -356,7 +356,7 @@ export function assessProfile(input: {
   let monitorDurationSeconds = 0;
   if (score >= 21) {
     recommendedActions.add("monitor");
-    monitorDurationSeconds = score >= 50 ? 900 : 600;
+    monitorDurationSeconds = score >= 50 ? 900 : 450;
   }
   if (score >= 50) {
     recommendedActions.add("notify_standard");

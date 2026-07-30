@@ -125,7 +125,7 @@ test("score 21 starts the standard monitoring outcome band", () => {
   });
   assert.equal(assessment.score, 21);
   assert.equal(assessment.outcome, "monitor");
-  assert.equal(assessment.monitorDurationSeconds, 600);
+  assert.equal(assessment.monitorDurationSeconds, 450);
 });
 
 test("creator exception suppresses expected funding but not identity hard policy", () => {

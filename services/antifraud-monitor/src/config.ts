@@ -98,7 +98,7 @@ const schema = z.object({
     .min(30_000)
     .max(900_000)
     .default(120_000),
-  MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(600),
+  MONITOR_DURATION_SECONDS: z.coerce.number().int().min(30).max(3_600).default(450),
   MONITOR_START_SCORE: z.coerce.number().int().min(0).max(100).default(21),
 });
 
