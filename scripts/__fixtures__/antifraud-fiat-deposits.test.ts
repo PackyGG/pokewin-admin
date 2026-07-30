@@ -66,7 +66,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /Good[\s\S]*0–29/);
   assert.match(page, /Review[\s\S]*30–59/);
   assert.match(page, /High risk[\s\S]*60–100/);
-  assert.match(page, /xl:grid-cols-5/);
+  assert.match(page, /sm:grid-cols-2 lg:grid-cols-4/);
   assert.match(page, /canManageAntifraud\(session\)/);
   assert.match(page, /<FiatKycAction/);
   assert.match(page, /getFiatStaffCheckedWithdrawalUserIds/);

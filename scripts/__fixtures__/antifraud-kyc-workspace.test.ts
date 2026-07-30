@@ -63,7 +63,7 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.doesNotMatch(page, /How KYC works here/);
   assert.match(page, /Active \/ Waiting/);
   assert.match(page, /History \/ Finished/);
-  assert.match(page, /historical verification\s+records/);
+  assert.match(page, /Finished KYC history/);
   assert.match(page, /Ready for admin decision/);
   assert.match(page, /<AccountRowEvidence account=\{account\}/);
   assert.match(page, /label:\s*"Decline type"/);
@@ -187,7 +187,7 @@ test("finished KYC records save and expose account-country mismatches", () => {
   assert.match(query, /account\.status === "approved"/);
   assert.match(page, /Country mismatch/);
   assert.match(page, /Country evidence saved/);
-  assert.match(page, /saved country mismatch/);
+  assert.match(page, /Review the saved country evidence/);
 });
 
 test("account reviews keep KYC users in the explicit waiting workflow", () => {

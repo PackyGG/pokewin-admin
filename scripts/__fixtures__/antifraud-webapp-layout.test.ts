@@ -36,8 +36,8 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Fingerprints",
     "Banned users",
     "Risk locations",
-    "Providers",
     "Risk engine",
+    "Audit log",
     "Settings",
   ]) {
     assert.match(
@@ -59,6 +59,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   }
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
+  assert.doesNotMatch(sidebar, /label: "Providers"/);
   for (const removedItem of [
     "System health",
     "API",
