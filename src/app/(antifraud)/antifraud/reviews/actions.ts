@@ -51,8 +51,8 @@ const uuid = z.string().uuid("Invalid id");
 /**
  * The statuses covered by the `antifraud_reviews_open_target_uniq` partial
  * unique index — ONE live case per player. Deliberately NOT
- * `OPEN_REVIEW_STATUSES` (which also contains 'escalated' and describes the
- * queue's "needs work" filter): if these two ever drift, the pre-check stops
+ * `OPEN_REVIEW_STATUSES` (which describes the queue's "needs work" filter):
+ * if these two ever drift, the pre-check stops
  * matching the constraint and the raw Postgres error leaks to the analyst.
  */
 const LIVE_CASE_STATUSES = ["open", "in_review"] as const;
@@ -271,7 +271,7 @@ function assertStatusReplayMatches(
 /**
  * Move a case along. Setting a terminal status (cleared / flagged) stamps the
  * resolver + timestamp and stores the written conclusion; any NON-terminal
- * transition (re-opening, escalating) clears resolver, timestamp AND the
+ * transition (re-opening or returning to review) clears resolver, timestamp AND the
  * conclusion together — a withdrawn verdict must not survive as the case's
  * standing conclusion under an "In review" badge.
  *

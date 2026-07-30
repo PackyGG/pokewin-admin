@@ -25,7 +25,6 @@ import {
 } from "@/lib/utils/format";
 import { listRecentSignals, listReviews } from "@/lib/antifraud/reviews";
 import { getAntifraudOverviewMetrics } from "@/lib/antifraud/overview";
-import { LiveFeed } from "./_components/live-feed";
 import { OverviewLiveSync } from "./_components/overview-live-sync";
 import { ReviewSeverityBadge, ReviewStatusBadge } from "./_components/badges";
 
@@ -62,11 +61,6 @@ export default async function AntifraudOverviewPage() {
       <Suspense fallback={<KpiSkeleton />}>
         <OverviewKpis />
       </Suspense>
-
-      {/* Client island — subscribes to /api/antifraud/monitor/stream. Rendered outside
-          Suspense on purpose: it has no server data to wait for and it is the
-          one part of the page that should appear instantly. */}
-      <LiveFeed />
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Suspense fallback={<ListSkeleton title="Needs attention" />}>
