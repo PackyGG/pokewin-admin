@@ -35,7 +35,9 @@ test("Fiat is globally disabled before cached approvals are considered", async (
   const config = await source("../src/config.ts");
   const eligibility = await source("../src/fiat-eligibility.ts");
   const globalGate = eligibility.indexOf("if (!this.globallyEnabled)");
-  const cachedDecisionLookup = eligibility.indexOf("const previous = await this.existing");
+  const cachedDecisionLookup = eligibility.indexOf(
+    "this.existing(input.fingerprint)",
+  );
 
   assert.match(config, /FIAT_ELIGIBILITY_GLOBALLY_ENABLED/);
   assert.ok(globalGate >= 0);

@@ -179,6 +179,7 @@ const signup: Signup = {
 
 const runtimeConfig: Config = {
   NODE_ENV: "test",
+  FIAT_ELIGIBILITY_CONTAINMENT_ENABLED: true,
   TZ: "UTC",
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",

@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import type pg from "pg";
 import type { Pool } from "pg";
 
 import type { Databases } from "./db.js";
@@ -10,6 +11,26 @@ import {
   type EnrichmentResult,
 } from "./enrichment.js";
 import type { FiatEligibilityEnvironment } from "./fiat-eligibility-auth.js";
+import {
+  FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
+  queueFiatEligibilityContainment,
+} from "./fiat-eligibility-containment.js";
+import {
+  AUTOMATIC_DENY_SCORE,
+  DECISION_TTL_MS,
+  evaluateFiatEligibility,
+  MAX_FUTURE_SKEW_MS,
+  MAX_REQUEST_AGE_MS,
+  accountAgeDays,
+  badDeviceReputation,
+  badIpReputation,
+  behaviourSignals,
+  type FiatEligibilityBehaviour,
+  type FiatEligibilityBlocklistMatch,
+  type FiatEligibilityNetwork,
+  type FiatEligibilityPolicyOutcome,
+  type FiatEligibilitySignal,
+} from "./fiat-eligibility-policy.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import type { Signal, Signup } from "./types.js";
 
@@ -30,9 +51,54 @@ export type FiatEligibilityDecision = {
   reasonCodes: string[];
   expiresAt: string;
   idempotent: boolean;
+  /** True when this assessment queued account containment. */
+  contained: boolean;
+  enforcementReasons: string[];
 };
 
-type SourceSubject = Signup & {
+/**
+ * Deposit / play / reward lookback for the behaviour leg. Long enough that a
+ * real customer's funding history counts, bounded so one account can never turn
+ * a checkout into an unbounded ledger scan.
+ */
+const BEHAVIOUR_LOOKBACK_DAYS = 365;
+
+const GAME_WAGER_TYPES = [
+  "pack_opening",
+  "battle_bet",
+  "battle_sponsorship",
+  "keno_bet",
+  "upgrader_bet",
+];
+const GAME_PAYOUT_TYPES = [
+  "battle_refund",
+  "battle_excess_to_voucher",
+  "keno_payout",
+  "upgrader_payout",
+];
+const REWARD_TYPES = [
+  "deposit_bonus",
+  "rakeback_claim",
+  "gift_card_redeemed",
+  "promo_code_redeemed",
+  "race_prize",
+  "rain_win",
+  "waitlist_prize",
+  "balance_reward_claim",
+  "affiliate_claim",
+  "affiliate_leaderboard_prize",
+];
+
+/**
+ * Wall-clock ceilings for the checkout path. The source and Antifraud pools
+ * carry 10s/15s statement timeouts for background work; a checkout cannot wait
+ * that long, so every read gets its own deadline and a breach fails closed.
+ */
+const SOURCE_READ_TIMEOUT_MS = 3_000;
+const ANTIFRAUD_READ_TIMEOUT_MS = 2_500;
+const PERSIST_TIMEOUT_MS = 5_000;
+
+type SourceSubjectRow = Signup & {
   is_banned: boolean;
   is_locked: boolean;
   is_self_excluded: boolean;
@@ -43,11 +109,16 @@ type SourceSubject = Signup & {
   kyc_status: string;
   kyc_admin_decision: string;
   prior_paid_fiat: number;
-};
-
-type NetworkEvidence = {
-  sharedCheckoutVisitorUsers: number;
-  sharedCurrentIpUsers: number;
+  last_paid_fiat_at: Date | null;
+  crypto_deposits: number;
+  crypto_deposit_usd: string;
+  fiat_deposits: number;
+  fiat_deposit_usd: string;
+  wager_usd: string;
+  game_events: number;
+  reward_usd: string;
+  rain_wins: number;
+  withdrawal_requests: number;
 };
 
 type StoredAssessment = {
@@ -56,50 +127,11 @@ type StoredAssessment = {
   decision: "allow" | "deny";
   risk_score: number;
   reason_codes: string[];
+  enforcement_reasons: string[] | null;
+  enforcement: string | null;
   expires_at: Date;
   created_at: Date;
 };
-
-export type FiatEligibilitySignal = {
-  key: string;
-  detail: string;
-  points: number;
-  blocking: boolean;
-  source: "account" | "request" | "fingerprint" | "ip" | "network" | "history";
-};
-
-type AutomaticReviewInput = {
-  now: Date;
-  requestCreatedAt: Date;
-  subject: SourceSubject;
-  requestIp: string;
-  fingerprint: EnrichmentResult;
-  proxycheck: EnrichmentResult;
-  fingerprintIdentity: ReturnType<typeof fingerprintEventIdentity>;
-  network: NetworkEvidence;
-  signupRiskScore: number;
-  activeCaseSeverity: string | null;
-  attempts10m: number;
-  deniedAttempts24h: number;
-};
-
-const DECISION_TTL_MS = 60_000;
-const MAX_REQUEST_AGE_MS = 120_000;
-const MAX_FUTURE_SKEW_MS = 30_000;
-const AUTOMATIC_DENY_SCORE = 50;
-const HARD_FINGERPRINT_SIGNALS = new Set([
-  "fingerprint_event_replayed",
-  "fingerprint_linked_id_mismatch",
-  "fingerprint_bad_bot",
-  "fingerprint_tor",
-  "fingerprint_ip_attack_source",
-  "fingerprint_mobile_rooted",
-  "fingerprint_mobile_cloned_app",
-  "fingerprint_mobile_jailbroken",
-  "fingerprint_mobile_frida",
-  "fingerprint_mobile_location_spoofing",
-  "fingerprint_mobile_mitm",
-]);
 
 export class FingerprintReuseError extends Error {
   constructor() {
@@ -108,301 +140,79 @@ export class FingerprintReuseError extends Error {
   }
 }
 
-function clampScore(value: number): number {
-  return Math.max(0, Math.min(100, Math.round(value)));
+class DeadlineError extends Error {
+  constructor(label: string) {
+    super(`${label}_timeout`);
+    this.name = "DeadlineError";
+  }
 }
 
-function ageDays(createdAt: Date, now: Date): number {
-  return Math.max(0, (now.getTime() - createdAt.getTime()) / 86_400_000);
+/**
+ * Bound one awaited step. A breached deadline rejects; the underlying query is
+ * still capped by the pool's own `statement_timeout`, so nothing leaks past it.
+ */
+async function withDeadline<T>(
+  work: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new DeadlineError(label)), timeoutMs);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
-function automaticReview(input: AutomaticReviewInput): {
-  decision: "allow" | "deny";
-  riskScore: number;
-  signals: FiatEligibilitySignal[];
-} {
-  const signals: FiatEligibilitySignal[] = [];
-  const add = (
-    hit: boolean,
-    signal: Omit<FiatEligibilitySignal, "blocking"> & { blocking?: boolean },
-  ) => {
-    if (hit) signals.push({ ...signal, blocking: signal.blocking ?? false });
+function usd(value: string | number | null | undefined): number {
+  const parsed = typeof value === "number" ? value : Number(value ?? 0);
+  return Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+}
+
+function behaviourFrom(
+  row: SourceSubjectRow,
+  now: Date,
+): FiatEligibilityBehaviour {
+  const lastPaid = row.last_paid_fiat_at
+    ? new Date(row.last_paid_fiat_at).getTime()
+    : null;
+  return {
+    cryptoDeposits: row.crypto_deposits ?? 0,
+    cryptoDepositUsd: usd(row.crypto_deposit_usd),
+    fiatDeposits: row.fiat_deposits ?? 0,
+    fiatDepositUsd: usd(row.fiat_deposit_usd),
+    wagerUsd: usd(row.wager_usd),
+    gameEvents: row.game_events ?? 0,
+    rewardUsd: usd(row.reward_usd),
+    rainWins: row.rain_wins ?? 0,
+    withdrawalRequests: row.withdrawal_requests ?? 0,
+    msSinceLastPaidFiat:
+      lastPaid !== null && Number.isFinite(lastPaid)
+        ? now.getTime() - lastPaid
+        : null,
   };
-  const accountAgeDays = ageDays(input.subject.created_at, input.now);
-  const established = accountAgeDays >= 7;
-
-  add(input.subject.is_banned, {
-    key: "account_banned",
-    detail: "The account is banned.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
-  add(input.subject.is_locked, {
-    key: "account_locked",
-    detail: "The account is locked.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
-  add(input.subject.is_self_excluded, {
-    key: "account_self_excluded",
-    detail: "The account is self-excluded.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
-  add(input.subject.fiat_locked, {
-    key: "fiat_disabled_for_user",
-    detail: "Fiat deposits are disabled by the per-user controller.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
-  add(input.subject.country_blocked || input.subject.country_fiat_locked, {
-    key: "fiat_disabled_for_country",
-    detail: "Fiat deposits are unavailable for the account country.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
-  add(
-    input.subject.kyc_required
-      && (
-        input.subject.kyc_status !== "approved"
-        || input.subject.kyc_admin_decision === "rejected"
-      ),
-    {
-      key: "kyc_not_cleared",
-      detail: "Required KYC has not been approved.",
-      points: 100,
-      blocking: true,
-      source: "account",
-    },
-  );
-  add(input.subject.is_suspected_alt, {
-    key: "suspected_alt_account",
-    detail: "The account is marked as a suspected alternate account.",
-    points: 55,
-    source: "account",
-  });
-  add(accountAgeDays < 1, {
-    key: "account_younger_than_one_day",
-    detail: "The account is less than one day old.",
-    points: 30,
-    source: "account",
-  });
-  add(accountAgeDays >= 1 && accountAgeDays < 7, {
-    key: "account_younger_than_seven_days",
-    detail: "The account is less than seven days old.",
-    points: 15,
-    source: "account",
-  });
-
-  const requestAge = input.now.getTime() - input.requestCreatedAt.getTime();
-  add(
-    requestAge > MAX_REQUEST_AGE_MS || requestAge < -MAX_FUTURE_SKEW_MS,
-    {
-      key: "stale_request",
-      detail: "The backend request timestamp is outside the accepted window.",
-      points: 100,
-      blocking: true,
-      source: "request",
-    },
-  );
-  add(
-    Boolean(
-      input.subject.signup_ip
-      && canonicalIp(input.subject.signup_ip) !== input.requestIp
-    ),
-    {
-      key: "signup_ip_changed",
-      detail: "The checkout IP differs from the signup IP.",
-      points: established ? 10 : 25,
-      source: "network",
-    },
-  );
-
-  add(input.fingerprint.status !== "success", {
-    key: "fingerprint_check_unavailable",
-    detail: "The full Fingerprint event check did not succeed.",
-    points: 100,
-    blocking: true,
-    source: "fingerprint",
-  });
-  add(input.proxycheck.status !== "success", {
-    key: "ip_check_unavailable",
-    detail: "The full independent IP check did not succeed.",
-    points: 100,
-    blocking: true,
-    source: "ip",
-  });
-
-  if (input.fingerprint.status === "success") {
-    const identity = input.fingerprintIdentity;
-    add(identity.linkedId !== input.subject.id, {
-      key: identity.linkedId
-        ? "fingerprint_linked_id_mismatch"
-        : "fingerprint_linked_id_missing",
-      detail: identity.linkedId
-        ? "The Fingerprint event is linked to another user."
-        : "The Fingerprint event is not linked to the requested user.",
-      points: 100,
-      blocking: true,
-      source: "fingerprint",
-    });
-    add(identity.eventIp !== input.requestIp, {
-      key: "fingerprint_ip_mismatch",
-      detail: "The Fingerprint event IP differs from the backend-captured IP.",
-      points: 100,
-      blocking: true,
-      source: "fingerprint",
-    });
-    const eventAge = identity.eventTime
-      ? input.now.getTime() - identity.eventTime.getTime()
-      : Number.POSITIVE_INFINITY;
-    add(
-      eventAge > MAX_REQUEST_AGE_MS || eventAge < -MAX_FUTURE_SKEW_MS,
-      {
-        key: "fingerprint_event_stale",
-        detail: "The Fingerprint event is missing a fresh trusted timestamp.",
-        points: 100,
-        blocking: true,
-        source: "fingerprint",
-      },
-    );
-    add(identity.replayed, {
-      key: "fingerprint_event_replayed",
-      detail: "Fingerprint marked the event as replayed.",
-      points: 100,
-      blocking: true,
-      source: "fingerprint",
-    });
-    add(
-      Boolean(
-        input.subject.visitor_id
-        && identity.visitorId
-        && input.subject.visitor_id !== identity.visitorId
-      ),
-      {
-        key: "signup_fingerprint_changed",
-        detail: "The checkout device differs from the signup device.",
-        points: established ? 20 : 35,
-        source: "fingerprint",
-      },
-    );
-  }
-
-  for (const providerSignal of input.fingerprint.signals) {
-    add(providerSignal.points > 0, {
-      key: providerSignal.key,
-      detail: providerSignal.detail,
-      points: providerSignal.points,
-      blocking: HARD_FINGERPRINT_SIGNALS.has(providerSignal.key),
-      source: "fingerprint",
-    });
-  }
-  for (const providerSignal of input.proxycheck.signals) {
-    add(providerSignal.points > 0, {
-      key: providerSignal.key,
-      detail: providerSignal.detail,
-      points: providerSignal.points,
-      source: "ip",
-    });
-  }
-
-  add(input.network.sharedCheckoutVisitorUsers > 0, {
-    key: "checkout_device_shared",
-    detail: `${input.network.sharedCheckoutVisitorUsers} other account(s) use the checkout device.`,
-    points: input.network.sharedCheckoutVisitorUsers >= 3 ? 70 : 40,
-    source: "network",
-  });
-  add(input.network.sharedCurrentIpUsers >= 3, {
-    key: "checkout_ip_shared",
-    detail: `${input.network.sharedCurrentIpUsers} other account(s) signed up from the checkout IP.`,
-    points: input.network.sharedCurrentIpUsers >= 10 ? 40 : 15,
-    source: "network",
-  });
-  add(input.signupRiskScore >= 25, {
-    key: "signup_risk_history",
-    detail: `The signup assessment score is ${input.signupRiskScore}.`,
-    points: input.signupRiskScore >= 60 ? 45 : 20,
-    source: "history",
-  });
-  add(
-    input.activeCaseSeverity === "high"
-      || input.activeCaseSeverity === "critical",
-    {
-      key: "active_high_risk_case",
-      detail: `The account has an active ${input.activeCaseSeverity} Antifraud case.`,
-      points: 60,
-      source: "history",
-    },
-  );
-  add(input.attempts10m >= 5, {
-    key: "fiat_eligibility_velocity",
-    detail: `${input.attempts10m} Fiat eligibility attempts were made in ten minutes.`,
-    points: input.attempts10m >= 10 ? 70 : 35,
-    source: "history",
-  });
-  add(input.deniedAttempts24h >= 3, {
-    key: "repeated_fiat_denials",
-    detail: `${input.deniedAttempts24h} Fiat eligibility attempts were denied in 24 hours.`,
-    points: input.deniedAttempts24h >= 6 ? 60 : 25,
-    source: "history",
-  });
-
-  const deduped = [...new Map(
-    signals.map((signal) => [
-      signal.key,
-      {
-        ...signal,
-        points: Math.max(
-          signal.points,
-          ...signals
-            .filter((candidate) => candidate.key === signal.key)
-            .map((candidate) => candidate.points),
-        ),
-        blocking: signals.some(
-          (candidate) => candidate.key === signal.key && candidate.blocking,
-        ),
-      },
-    ]),
-  ).values()];
-  const trustCredit =
-    established
-    && input.subject.prior_paid_fiat > 0
-    && !deduped.some((signal) => signal.blocking)
-      ? Math.min(15, 5 + input.subject.prior_paid_fiat)
-      : 0;
-  if (trustCredit > 0) {
-    deduped.push({
-      key: "established_fiat_history",
-      detail: `The established account has ${input.subject.prior_paid_fiat} completed Fiat deposit(s).`,
-      points: -trustCredit,
-      blocking: false,
-      source: "history",
-    });
-  }
-  const riskScore = clampScore(
-    deduped.reduce((total, signal) => total + signal.points, 0),
-  );
-  const decision =
-    deduped.some((signal) => signal.blocking)
-    || riskScore >= AUTOMATIC_DENY_SCORE
-      ? "deny"
-      : "allow";
-  return { decision, riskScore, signals: deduped };
 }
 
+/**
+ * One round trip for everything the source database can answer: account state,
+ * locks, KYC, country policy, the signup device, and the deposit / play /
+ * reward history the behaviour leg needs. Every aggregate rides the
+ * `(user_id, created_at)` covering index the mirror already carries.
+ */
 async function loadSourceSubject(
   source: Pool,
   userId: string,
-): Promise<SourceSubject | null> {
-  const result = await source.query<SourceSubject>(
+): Promise<SourceSubjectRow | null> {
+  const result = await source.query<SourceSubjectRow>(
     `
       SELECT
-        u.id, u.username, u.email, u.image, u.signup_ip, u.country,
+        u.id, u.name, u.username, u.email, u.image, u.signup_ip, u.country,
         u.country_code, u.continent_code, u.state, u.city, u.affiliate_code,
         u.referred_by, u.is_suspected_alt,
         u.created_at AT TIME ZONE 'UTC' AS created_at,
@@ -419,12 +229,17 @@ async function loadSourceSubject(
         COALESCE(uk.kyc_required, false) AS kyc_required,
         COALESCE(uk.status::text, 'none') AS kyc_status,
         COALESCE(uk.admin_decision::text, 'pending') AS kyc_admin_decision,
-        (
-          SELECT COUNT(*)::int
-          FROM fiat_deposit_intents fdi
-          WHERE fdi.user_id = u.id
-            AND fdi.paid_at IS NOT NULL
-        ) AS prior_paid_fiat
+        COALESCE(paid.prior_paid_fiat, 0)::int AS prior_paid_fiat,
+        paid.last_paid_fiat_at,
+        COALESCE(dep.crypto_deposits, 0)::int AS crypto_deposits,
+        COALESCE(dep.crypto_deposit_usd, 0)::text AS crypto_deposit_usd,
+        COALESCE(dep.fiat_deposits, 0)::int AS fiat_deposits,
+        COALESCE(dep.fiat_deposit_usd, 0)::text AS fiat_deposit_usd,
+        COALESCE(act.wager_usd, 0)::text AS wager_usd,
+        COALESCE(act.game_events, 0)::int AS game_events,
+        COALESCE(act.reward_usd, 0)::text AS reward_usd,
+        COALESCE(act.rain_wins, 0)::int AS rain_wins,
+        COALESCE(cash.withdrawal_requests, 0)::int AS withdrawal_requests
       FROM "user" u
       LEFT JOIN user_feature_locks ufl ON ufl.user_id = u.id
       LEFT JOIN user_kyc uk ON uk.user_id = u.id
@@ -444,10 +259,83 @@ async function loadSourceSubject(
         ORDER BY created_at DESC
         LIMIT 1
       ) ae ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS prior_paid_fiat,
+          MAX(fdi.paid_at) AS last_paid_fiat_at
+        FROM fiat_deposit_intents fdi
+        WHERE fdi.user_id = u.id
+          AND fdi.paid_at IS NOT NULL
+      ) paid ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (
+            WHERE intent.id IS NULL
+              AND (
+                lt.crypto_asset IS NOT NULL
+                OR lt.blockchain_tx_hash IS NOT NULL
+                OR lt.fireblocks_tx_id IS NOT NULL
+              )
+          ) AS crypto_deposits,
+          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+            WHERE intent.id IS NULL
+              AND (
+                lt.crypto_asset IS NOT NULL
+                OR lt.blockchain_tx_hash IS NOT NULL
+                OR lt.fireblocks_tx_id IS NOT NULL
+              )
+          ), 0) AS crypto_deposit_usd,
+          COUNT(*) FILTER (WHERE intent.id IS NOT NULL) AS fiat_deposits,
+          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+            WHERE intent.id IS NOT NULL
+          ), 0) AS fiat_deposit_usd
+        FROM ledger_transactions lt
+        LEFT JOIN fiat_deposit_intents intent
+          ON intent.completed_ledger_id = lt.id
+        WHERE lt.user_id = u.id
+          AND lt.type::text = 'deposit'
+          AND lt.status::text = 'completed'
+          AND lt.created_at >= now() - ($2::int * interval '1 day')
+      ) dep ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+            WHERE lt.type::text = ANY($3::text[])
+          ), 0) AS wager_usd,
+          COUNT(*) FILTER (
+            WHERE lt.type::text = ANY($3::text[])
+              OR lt.type::text = ANY($4::text[])
+          ) AS game_events,
+          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+            WHERE lt.type::text = ANY($5::text[])
+          ), 0) AS reward_usd,
+          COUNT(*) FILTER (WHERE lt.type::text = 'rain_win') AS rain_wins
+        FROM ledger_transactions lt
+        WHERE lt.user_id = u.id
+          AND lt.status::text = 'completed'
+          AND lt.created_at >= now() - ($2::int * interval '1 day')
+          AND (
+            lt.type::text = ANY($3::text[])
+            OR lt.type::text = ANY($4::text[])
+            OR lt.type::text = ANY($5::text[])
+          )
+      ) act ON true
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*)::int AS withdrawal_requests
+        FROM card_withdrawal_requests cwr
+        WHERE cwr.user_id = u.id
+          AND cwr.requested_at >= now() - ($2::int * interval '1 day')
+      ) cash ON true
       WHERE u.id = $1
       LIMIT 1
     `,
-    [userId],
+    [
+      userId,
+      BEHAVIOUR_LOOKBACK_DAYS,
+      GAME_WAGER_TYPES,
+      GAME_PAYOUT_TYPES,
+      REWARD_TYPES,
+    ],
   );
   return result.rows[0] ?? null;
 }
@@ -459,7 +347,7 @@ async function loadNetworkEvidence(
     requestIp: string;
     checkoutVisitorId: string | null;
   },
-): Promise<NetworkEvidence> {
+): Promise<FiatEligibilityNetwork> {
   const result = await source.query<{
     shared_checkout_visitor_users: number;
     shared_current_ip_users: number;
@@ -489,6 +377,46 @@ async function loadNetworkEvidence(
   };
 }
 
+/**
+ * Active operator IP / fingerprint blocklist rules matching this checkout.
+ * Read-only: the match row is written later, and only when the checkout is
+ * actually contained.
+ */
+async function loadBlocklistMatches(
+  antifraud: Pool,
+  input: { requestIp: string; visitorId: string | null },
+): Promise<FiatEligibilityBlocklistMatch[]> {
+  const result = await antifraud.query<FiatEligibilityBlocklistMatch>(
+    `
+      SELECT
+        id,
+        kind,
+        CASE
+          WHEN kind = 'ip' AND match_mode = 'exact' THEN host(ip_network)
+          WHEN kind = 'ip' THEN ip_network::text
+          ELSE fingerprint_id
+        END AS value,
+        reason
+      FROM identifier_blocklists
+      WHERE enabled
+        AND (expires_at IS NULL OR expires_at > now())
+        AND (
+          (
+            kind = 'ip'
+            AND pg_input_is_valid($1::text, 'inet')
+            AND $1::inet <<= ip_network
+          )
+          OR (kind = 'fingerprint' AND $2::text IS NOT NULL
+              AND fingerprint_id = $2)
+        )
+      ORDER BY kind, created_at
+      LIMIT 20
+    `,
+    [input.requestIp, input.visitorId],
+  );
+  return result.rows;
+}
+
 function requestHash(input: FiatEligibilityRequest, requestIp: string): string {
   return createHash("sha256")
     .update([
@@ -514,6 +442,8 @@ function storedDecision(
     reasonCodes: row.reason_codes,
     expiresAt: row.expires_at.toISOString(),
     idempotent,
+    contained: row.enforcement === "contained",
+    enforcementReasons: row.enforcement_reasons ?? [],
   };
 }
 
@@ -532,6 +462,12 @@ export class FiatEligibilityService {
     private readonly scoreWeights: ScoreWeightStore,
     enrichment: EnrichmentService,
     private readonly globallyEnabled: boolean,
+    /**
+     * Master switch for automatic account containment. Assessment and deny
+     * behaviour are unaffected when it is off — only the MAIN lock command is
+     * withheld, so the endpoint can run in observe-only mode.
+     */
+    private readonly containmentEnabled: boolean = true,
   ) {
     this.enrichment = enrichment;
   }
@@ -549,7 +485,7 @@ export class FiatEligibilityService {
       `
         SELECT
           id, request_hash, decision, risk_score, reason_codes,
-          expires_at, created_at
+          enforcement_reasons, enforcement, expires_at, created_at
         FROM fiat_eligibility_assessments
         WHERE fingerprint_request_id = $1
         LIMIT 1
@@ -569,16 +505,10 @@ export class FiatEligibilityService {
     const active = this.inFlight.get(input.fingerprint);
     if (active) {
       if (active.requestHash !== hash) throw new FingerprintReuseError();
-      return {
-        ...await active.promise,
-        idempotent: true,
-      };
+      return { ...await active.promise, idempotent: true };
     }
     const promise = this.assessOnce(input, now, requestIp, hash);
-    this.inFlight.set(input.fingerprint, {
-      requestHash: hash,
-      promise,
-    });
+    this.inFlight.set(input.fingerprint, { requestHash: hash, promise });
     try {
       return await promise;
     } finally {
@@ -597,56 +527,176 @@ export class FiatEligibilityService {
     if (!this.globallyEnabled) {
       return this.denyGloballyDisabled(input, now, hash);
     }
-    const previous = await this.existing(input.fingerprint);
+    const previous = await withDeadline(
+      this.existing(input.fingerprint),
+      ANTIFRAUD_READ_TIMEOUT_MS,
+      "fiat_replay_lookup",
+    );
     if (previous) {
       if (previous.request_hash !== hash) throw new FingerprintReuseError();
       return storedDecision(previous, true);
     }
 
     const source = this.sourceFor(input.env);
-    const subject = await loadSourceSubject(source, input.userID);
-    if (!subject) {
-      throw new Error("fiat_subject_not_found");
-    }
+    const subject = await withDeadline(
+      loadSourceSubject(source, input.userID),
+      SOURCE_READ_TIMEOUT_MS,
+      "fiat_subject_read",
+    );
+    if (!subject) throw new Error("fiat_subject_not_found");
+
     const requestCreatedAt = new Date(input.createdAt);
     const weights = await this.scoreWeights.get();
+    // Providers are asked about the CHECKOUT, not the signup: the request IP and
+    // the fresh Fingerprint request id replace the stored signup values.
     const providerSubject: Signup = {
       ...subject,
       signup_ip: requestIp,
       fingerprint_ip: null,
       fingerprint_request_id: input.fingerprint,
     };
-    const [fingerprint, proxycheck, fraudHistory, velocity] = await Promise.all([
-      this.enrichment.fingerprintCheck(providerSubject, weights),
+
+    const fingerprintPromise = this.enrichment.fingerprintCheck(
+      providerSubject,
+      weights,
+    );
+    // The shared-device count needs the visitor id from the Fingerprint event,
+    // so it is chained onto that one call instead of waiting for the whole fan-
+    // out. Never rejects: shared-network evidence degrades to zero rather than
+    // failing a checkout the providers themselves answered.
+    const networkPromise = fingerprintPromise.then(
+      (result) =>
+        withDeadline(
+          loadNetworkEvidence(source, {
+            userId: input.userID,
+            requestIp,
+            checkoutVisitorId: fingerprintEventIdentity(result.response)
+              .visitorId,
+          }),
+          SOURCE_READ_TIMEOUT_MS,
+          "fiat_network_read",
+        ).catch(() => ({
+          sharedCheckoutVisitorUsers: 0,
+          sharedCurrentIpUsers: 0,
+        })),
+      () => ({ sharedCheckoutVisitorUsers: 0, sharedCurrentIpUsers: 0 }),
+    );
+
+    const [
+      fingerprint,
+      proxycheck,
+      abstractIp,
+      opportify,
+      network,
+      history,
+      velocity,
+      blocklistMatches,
+    ] = await Promise.all([
+      fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
-      input.env === "prod"
-        ? this.db.antifraud.query<{
-            signup_risk_score: number;
-            active_case_severity: string | null;
-          }>(
-            `
-              SELECT
-                COALESCE((
-                  SELECT score FROM signup_assessments WHERE user_id=$1
-                ), 0)::int AS signup_risk_score,
-                (
-                  SELECT severity
-                  FROM cases
-                  WHERE user_id=$1 AND status <> 'resolved'
-                  ORDER BY
-                    CASE severity
-                      WHEN 'critical' THEN 4
-                      WHEN 'high' THEN 3
-                      WHEN 'medium' THEN 2
-                      ELSE 1
-                    END DESC,
-                    updated_at DESC
-                  LIMIT 1
-                ) AS active_case_severity
-            `,
-            [input.userID],
-          )
-        : Promise.resolve({ rows: [] }),
+      this.enrichment.abstractIpCheck(providerSubject, weights),
+      this.enrichment.opportifyCheck(providerSubject, weights),
+      networkPromise,
+      this.loadFraudHistory(input),
+      this.loadVelocity(input),
+      withDeadline(
+        loadBlocklistMatches(this.db.antifraud, {
+          requestIp,
+          visitorId: subject.visitor_id,
+        }),
+        ANTIFRAUD_READ_TIMEOUT_MS,
+        "fiat_blocklist_read",
+      ),
+    ]);
+
+    const identity = fingerprintEventIdentity(fingerprint.response);
+    const providers = [fingerprint, proxycheck, abstractIp, opportify];
+    const behaviour = behaviourFrom(subject, now);
+    const outcome = evaluateFiatEligibility({
+      now,
+      requestCreatedAt,
+      requestIp,
+      subject: {
+        ...subject,
+        signup_ip: subject.signup_ip
+          ? canonicalIp(subject.signup_ip) ?? subject.signup_ip
+          : null,
+      },
+      identity,
+      providers,
+      behaviour,
+      network,
+      blocklistMatches,
+      signupRiskScore: history.signupRiskScore,
+      activeCaseSeverity: history.activeCaseSeverity,
+      attempts10m: velocity.attempts10m,
+      deniedAttempts24h: velocity.deniedAttempts24h,
+    });
+
+    return this.persist({
+      input,
+      now,
+      requestIp,
+      hash,
+      subject,
+      identity,
+      providers,
+      behaviour,
+      network,
+      blocklistMatches,
+      outcome,
+    });
+  }
+
+  private async loadFraudHistory(input: FiatEligibilityRequest): Promise<{
+    signupRiskScore: number;
+    activeCaseSeverity: string | null;
+  }> {
+    // Signup assessments and cases only exist for the production population.
+    if (input.env !== "prod") {
+      return { signupRiskScore: 0, activeCaseSeverity: null };
+    }
+    const result = await withDeadline(
+      this.db.antifraud.query<{
+        signup_risk_score: number;
+        active_case_severity: string | null;
+      }>(
+        `
+          SELECT
+            COALESCE((
+              SELECT score FROM signup_assessments WHERE user_id=$1
+            ), 0)::int AS signup_risk_score,
+            (
+              SELECT severity
+              FROM cases
+              WHERE user_id=$1 AND status <> 'resolved'
+              ORDER BY
+                CASE severity
+                  WHEN 'critical' THEN 4
+                  WHEN 'high' THEN 3
+                  WHEN 'medium' THEN 2
+                  ELSE 1
+                END DESC,
+                updated_at DESC
+              LIMIT 1
+            ) AS active_case_severity
+        `,
+        [input.userID],
+      ),
+      ANTIFRAUD_READ_TIMEOUT_MS,
+      "fiat_history_read",
+    );
+    return {
+      signupRiskScore: result.rows[0]?.signup_risk_score ?? 0,
+      activeCaseSeverity: result.rows[0]?.active_case_severity ?? null,
+    };
+  }
+
+  private async loadVelocity(input: FiatEligibilityRequest): Promise<{
+    attempts10m: number;
+    deniedAttempts24h: number;
+  }> {
+    const result = await withDeadline(
       this.db.antifraud.query<{
         attempts_10m: number;
         denied_attempts_24h: number;
@@ -666,101 +716,227 @@ export class FiatEligibilityService {
         `,
         [input.env, input.userID],
       ),
-    ]);
-    const identity = fingerprintEventIdentity(fingerprint.response);
-    const network = await loadNetworkEvidence(source, {
-      userId: input.userID,
-      requestIp,
-      checkoutVisitorId: identity.visitorId,
-    });
-    const reviewed = automaticReview({
-      now,
-      requestCreatedAt,
-      subject,
-      requestIp,
-      fingerprint,
-      proxycheck,
-      fingerprintIdentity: identity,
-      network,
-      signupRiskScore: fraudHistory.rows[0]?.signup_risk_score ?? 0,
-      activeCaseSeverity:
-        fraudHistory.rows[0]?.active_case_severity ?? null,
-      attempts10m: velocity.rows[0]?.attempts_10m ?? 0,
-      deniedAttempts24h: velocity.rows[0]?.denied_attempts_24h ?? 0,
-    });
-    const expiresAt = new Date(now.getTime() + DECISION_TTL_MS);
-    const providerSignals = [
-      ...fingerprint.signals,
-      ...proxycheck.signals,
-    ].map((signal: Signal) => ({
-      key: signal.key,
-      title: signal.title,
-      detail: signal.detail,
-      points: signal.points,
-      payload: signal.payload ?? {},
-    }));
-    const inserted = await this.db.antifraud.query<StoredAssessment>(
-      `
-        INSERT INTO fiat_eligibility_assessments (
-          environment, user_id, request_hash, request_created_at, request_ip,
-          fingerprint_request_id, signup_ip, signup_visitor_id,
-          checkout_visitor_id, account_age_days, fingerprint_status,
-          proxycheck_status, risk_score, decision, reason_codes, signals,
-          provider_evidence, expires_at
-        )
-        VALUES (
-          $1, $2, $3, $4, $5::inet,
-          $6, $7, $8,
-          $9, $10, $11,
-          $12, $13, $14, $15::text[], $16::jsonb,
-          $17::jsonb, $18
-        )
-        ON CONFLICT (fingerprint_request_id) DO NOTHING
-        RETURNING
-          id, request_hash, decision, risk_score, reason_codes,
-          expires_at, created_at
-      `,
-      [
-        input.env,
-        input.userID,
-        hash,
-        requestCreatedAt,
-        requestIp,
-        input.fingerprint,
-        subject.signup_ip,
-        subject.visitor_id,
-        identity.visitorId,
-        ageDays(subject.created_at, now),
-        fingerprint.status,
-        proxycheck.status,
-        reviewed.riskScore,
-        reviewed.decision,
-        reviewed.signals
-          .filter((signal) => signal.points > 0)
-          .map((signal) => signal.key),
-        JSON.stringify(reviewed.signals),
-        JSON.stringify({
-          fingerprint: {
-            status: fingerprint.status,
-            score: fingerprint.score ?? null,
-            errorCode: fingerprint.errorCode ?? null,
-            identity,
-          },
-          proxycheck: {
-            status: proxycheck.status,
-            score: proxycheck.score ?? null,
-            errorCode: proxycheck.errorCode ?? null,
-          },
-          providerSignals,
-          network,
-        }),
-        expiresAt,
-      ],
+      ANTIFRAUD_READ_TIMEOUT_MS,
+      "fiat_velocity_read",
     );
-    const row = inserted.rows[0] ?? await this.existing(input.fingerprint);
-    if (!row) throw new Error("fiat_eligibility_persistence_failed");
-    if (row.request_hash !== hash) throw new FingerprintReuseError();
-    return storedDecision(row, inserted.rows.length === 0);
+    return {
+      attempts10m: result.rows[0]?.attempts_10m ?? 0,
+      deniedAttempts24h: result.rows[0]?.denied_attempts_24h ?? 0,
+    };
+  }
+
+  /**
+   * Store the assessment and, when the policy demands it, queue containment in
+   * the same transaction. Either both land or neither does.
+   */
+  private async persist(context: {
+    input: FiatEligibilityRequest;
+    now: Date;
+    requestIp: string;
+    hash: string;
+    subject: SourceSubjectRow;
+    identity: ReturnType<typeof fingerprintEventIdentity>;
+    providers: EnrichmentResult[];
+    behaviour: FiatEligibilityBehaviour;
+    network: FiatEligibilityNetwork;
+    blocklistMatches: FiatEligibilityBlocklistMatch[];
+    outcome: FiatEligibilityPolicyOutcome;
+  }): Promise<FiatEligibilityDecision> {
+    const { input, now, providers, outcome } = context;
+    const byName = new Map(
+      providers.map((provider) => [provider.provider, provider]),
+    );
+    const expiresAt = new Date(now.getTime() + DECISION_TTL_MS);
+    // Containment writes to the production account population, so a dev
+    // credential can never trigger one no matter what its source data says.
+    const contain =
+      outcome.enforce
+      && this.containmentEnabled
+      && input.env === "prod";
+    const providerSignals = providers.flatMap((provider) =>
+      provider.signals.map((signal: Signal) => ({
+        provider: provider.provider,
+        key: signal.key,
+        title: signal.title,
+        detail: signal.detail,
+        points: signal.points,
+        payload: signal.payload ?? {},
+      })),
+    );
+
+    const client = await this.db.antifraud.connect();
+    try {
+      return await withDeadline(
+        this.persistWithin(client, {
+          ...context,
+          byName,
+          expiresAt,
+          contain,
+          providerSignals,
+        }),
+        PERSIST_TIMEOUT_MS,
+        "fiat_persist",
+      );
+    } finally {
+      client.release();
+    }
+  }
+
+  private async persistWithin(
+    client: pg.PoolClient,
+    context: {
+      input: FiatEligibilityRequest;
+      now: Date;
+      requestIp: string;
+      hash: string;
+      subject: SourceSubjectRow;
+      identity: ReturnType<typeof fingerprintEventIdentity>;
+      behaviour: FiatEligibilityBehaviour;
+      network: FiatEligibilityNetwork;
+      blocklistMatches: FiatEligibilityBlocklistMatch[];
+      outcome: FiatEligibilityPolicyOutcome;
+      byName: Map<string, EnrichmentResult>;
+      expiresAt: Date;
+      contain: boolean;
+      providerSignals: Array<Record<string, unknown>>;
+    },
+  ): Promise<FiatEligibilityDecision> {
+    const { input, outcome, subject, byName } = context;
+    let open = false;
+    try {
+      await client.query("BEGIN");
+      open = true;
+      const inserted = await client.query<StoredAssessment>(
+        `
+          INSERT INTO fiat_eligibility_assessments (
+            environment, user_id, request_hash, request_created_at, request_ip,
+            fingerprint_request_id, signup_ip, signup_visitor_id,
+            checkout_visitor_id, account_age_days, fingerprint_status,
+            proxycheck_status, abstract_ip_status, opportify_status,
+            risk_score, decision, enforcement, reason_codes,
+            enforcement_reasons, signals, behaviour_evidence,
+            provider_evidence, expires_at
+          )
+          VALUES (
+            $1, $2, $3, $4, $5::inet,
+            $6, $7, $8,
+            $9, $10, $11,
+            $12, $13, $14,
+            $15, $16, $17, $18::text[],
+            $19::text[], $20::jsonb, $21::jsonb,
+            $22::jsonb, $23
+          )
+          ON CONFLICT (fingerprint_request_id) DO NOTHING
+          RETURNING
+            id, request_hash, decision, risk_score, reason_codes,
+            enforcement_reasons, enforcement, expires_at, created_at
+        `,
+        [
+          input.env,
+          input.userID,
+          context.hash,
+          new Date(input.createdAt),
+          context.requestIp,
+          input.fingerprint,
+          subject.signup_ip,
+          subject.visitor_id,
+          context.identity.visitorId,
+          accountAgeDays(subject.created_at, context.now),
+          byName.get("fingerprint")?.status ?? "skipped",
+          byName.get("proxycheck")?.status ?? "skipped",
+          byName.get("abstract_ip")?.status ?? "skipped",
+          byName.get("opportify")?.status ?? "skipped",
+          outcome.riskScore,
+          outcome.decision,
+          context.contain
+            ? "contained"
+            : outcome.enforce
+              ? "suppressed"
+              : "none",
+          outcome.signals
+            .filter((signal) => signal.points > 0)
+            .map((signal) => signal.key),
+          outcome.enforcementReasons,
+          JSON.stringify(outcome.signals),
+          JSON.stringify(context.behaviour),
+          JSON.stringify({
+            providers: Object.fromEntries(
+              [...byName.entries()].map(([name, provider]) => [name, {
+                status: provider.status,
+                score: provider.score ?? null,
+                errorCode: provider.errorCode ?? null,
+                completeness: provider.completeness,
+              }]),
+            ),
+            identity: context.identity,
+            network: context.network,
+            reputation: {
+              badIp: badIpReputation([...byName.values()]),
+              badDevice: badDeviceReputation([...byName.values()]),
+            },
+            blocklistMatches: context.blocklistMatches.map((match) => ({
+              kind: match.kind,
+              value: match.value,
+            })),
+            providerSignals: context.providerSignals,
+          }),
+          context.expiresAt,
+        ],
+      );
+
+      const row = inserted.rows[0];
+      if (!row) {
+        // Another delivery of the same Fingerprint event won the insert.
+        await client.query("ROLLBACK");
+        open = false;
+        const existing = await this.existing(input.fingerprint);
+        if (!existing) throw new Error("fiat_eligibility_persistence_failed");
+        if (existing.request_hash !== context.hash) {
+          throw new FingerprintReuseError();
+        }
+        return storedDecision(existing, true);
+      }
+
+      if (context.contain) {
+        await queueFiatEligibilityContainment(client, {
+          assessmentId: row.id,
+          environment: "prod",
+          subject: {
+            id: subject.id,
+            username: subject.username,
+            email: subject.email,
+            image: subject.image,
+            signup_ip: subject.signup_ip,
+            country: subject.country,
+            country_code: subject.country_code,
+            continent_code: subject.continent_code,
+            state: subject.state,
+            city: subject.city,
+            affiliate_code: subject.affiliate_code,
+            referred_by: subject.referred_by,
+            created_at: subject.created_at,
+          },
+          reasonCodes: outcome.enforcementReasons,
+          riskScore: outcome.riskScore,
+          occurredAt: context.now,
+          blocklistMatches: context.blocklistMatches,
+          evidence: {
+            requestIpFamily: context.requestIp.includes(":") ? 6 : 4,
+            accountAgeDays: Number(
+              accountAgeDays(subject.created_at, context.now).toFixed(4),
+            ),
+            behaviour: context.behaviour,
+          },
+        });
+      }
+
+      await client.query("COMMIT");
+      open = false;
+      return storedDecision(row, false);
+    } catch (error) {
+      if (open) await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    }
   }
 
   private async denyGloballyDisabled(
@@ -811,13 +987,25 @@ export class FiatEligibilityService {
       reasonCodes: ["fiat_globally_disabled"],
       expiresAt: row.created_at.toISOString(),
       idempotent: (inserted.rowCount ?? 0) === 0,
+      contained: false,
+      enforcementReasons: [],
     };
   }
 }
 
 export const fiatEligibilityInternals = {
-  automaticReview,
+  automaticReview: evaluateFiatEligibility,
+  behaviourSignals,
+  badIpReputation,
+  badDeviceReputation,
   requestHash,
   AUTOMATIC_DENY_SCORE,
   MAX_REQUEST_AGE_MS,
+  MAX_FUTURE_SKEW_MS,
+  CONTAINMENT_EVENT: FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
+  GAME_WAGER_TYPES,
+  GAME_PAYOUT_TYPES,
+  REWARD_TYPES,
 };
+
+export type { FiatEligibilitySignal };

@@ -46,6 +46,13 @@ const schema = z.object({
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_GLOBALLY_ENABLED: fiatEligibilityEnabledSchema,
+  // Automatic account containment for enforced denials. Defaults to ON: an
+  // unset variable must not silently downgrade the endpoint to observe-only.
+  // Set it to "false" to keep assessing and denying while withholding locks.
+  FIAT_ELIGIBILITY_CONTAINMENT_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value !== "false"),
   FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: z.coerce
     .number()
     .int()

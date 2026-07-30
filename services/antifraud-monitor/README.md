@@ -131,10 +131,53 @@ environment is rejected.
 `fingerprint` is a fresh Fingerprint event `requestId`, not a visitor ID. The
 event must be no more than two minutes old, must be linked to `userID`, and its
 authoritative IP must match `ipAddress`. Every valid assessment performs the
-full Fingerprint Pro Plus event lookup and an independent proxycheck.io lookup.
-It compares the checkout with signup IP/device, account age, account and Fiat
-locks, KYC, country policy, shared networks, signup/case history, previous Fiat
-history and recent eligibility velocity.
+full Fingerprint Pro Plus event lookup, an independent proxycheck.io lookup, and
+corroborating Abstract IP-intelligence and Opportify lookups. Fingerprint and
+proxycheck are mandatory and fail closed; Abstract and Opportify only add points
+when they degrade. It compares the checkout with signup IP/device, account age,
+account and Fiat locks, KYC, country policy, operator IP/fingerprint
+blocklists, shared networks, signup/case history, deposit, play and reward
+behaviour, previous Fiat history and recent eligibility velocity.
+
+### Hard containment rules
+
+A denial normally touches nothing. These rules additionally CONTAIN the account
+— Fiat deposits off, withdrawals locked — and cannot be out-scored:
+
+- the checkout IP differs from signup and the account is younger than 7 days;
+- the checkout device differs from signup and the account is younger than 36
+  hours;
+- the checkout IP *and* device both differ from signup and either carries a bad
+  provider reputation, at any account age;
+- a Fiat deposit for the account was paid less than 60 seconds ago;
+- the checkout IP or device matches an active operator blocklist rule;
+- Fingerprint reports the event as replayed, linked to a different account, or
+  driven by a bad bot.
+
+Containment is queued as a durable `fiat_eligibility_containment` risk event and
+applied by the dashboard's signed ingest route under an advisory lock, so the
+endpoint answers in provider latency and the lock retries until it lands. The
+dashboard independently re-validates the reason codes, the `prod` environment
+and the risk floor before it writes. It never bans, never sets `is_locked`,
+never kills sessions and never touches KYC — staff resolve the review it opens.
+`env=dev` assessments never contain anything: dev reads a different source
+database, so a dev-driven lock would hit the wrong account population.
+`FIAT_ELIGIBILITY_CONTAINMENT_ENABLED=false` keeps assessing and denying while
+withholding the locks (`enforcement='suppressed'` on the stored row).
+
+Account state that is already correct — banned, locked, self-excluded, Fiat or
+country locked, KYC not cleared — denies without containment, as do provider
+outages and stale requests.
+
+### Behaviour trust
+
+Older, self-funded, actually-playing accounts buy headroom in the scored band:
+account age tiers, completed crypto volume (the strongest good-faith evidence
+we hold), completed Fiat history and real paid play all credit points, capped at
+30 combined and dropped entirely once anything blocking fires. Reward-farmed
+accounts pay instead — rain/promo/claim value with no completed deposit,
+withdrawals with no deposit, or funding that never played. The lookback is
+bounded to 365 days and rides the mirror's covering ledger index.
 
 Successful assessments return only the persisted decision ID, the binary
 result, and the immutable decision timestamp:
@@ -153,6 +196,10 @@ an expired decision, any non-200 response, timeout or transport error.
 Repeating the exact payload with the same Fingerprint request ID returns the
 stored result; reusing that event with changed input returns
 `409 fingerprint_reused`.
+
+`migrations/source-mirror-indexes.sql` gained the per-user paid-intent and
+withdrawal indexes this path needs; apply them with
+`npm run db:index:mirrors -- all` from the repository root.
 
 Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
 `FIAT_ELIGIBILITY_PROD_ALLOWED_IPS`. Development additionally requires

@@ -131,3 +131,16 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fiat_completed_ledger_idx
     credited_amount_cents
   )
   WHERE completed_ledger_id IS NOT NULL;
+
+-- Automatic Fiat checkout eligibility: the per-user paid-deposit probe (the
+-- 60-second repeat rule and the prior-Fiat trust credit) and the behaviour
+-- leg's withdrawal count. The deposit / play / reward aggregates ride
+-- antifraud_ledger_user_time_idx above.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fiat_intent_user_paid_idx
+  ON fiat_deposit_intents (user_id, paid_at DESC)
+  INCLUDE (status, credited_amount_cents)
+  WHERE paid_at IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_withdrawal_user_requested_idx
+  ON card_withdrawal_requests (user_id, requested_at DESC)
+  INCLUDE (status, total_value_usd);

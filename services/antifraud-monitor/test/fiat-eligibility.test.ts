@@ -21,6 +21,12 @@ import {
   providerContractMetadata,
   type EnrichmentResult,
 } from "../src/enrichment.js";
+import {
+  CONTAINING_FINGERPRINT_SIGNALS,
+  type FiatEligibilityBehaviour,
+  type FiatEligibilityPolicyInput,
+  type FiatEligibilitySubject,
+} from "../src/fiat-eligibility-policy.js";
 
 const DEV_KEY = "dev-fiat-key-that-is-at-least-32-characters";
 const PROD_KEY = "prod-fiat-key-that-is-at-least-32-characters";
@@ -39,7 +45,7 @@ function access(): FiatEligibilityAccess {
 }
 
 function provider(
-  providerName: "fingerprint" | "proxycheck",
+  providerName: "fingerprint" | "proxycheck" | "abstract_ip" | "opportify",
   overrides: Partial<EnrichmentResult> = {},
 ): EnrichmentResult {
   return {
@@ -53,61 +59,106 @@ function provider(
   };
 }
 
-function reviewInput(overrides: Record<string, unknown> = {}) {
+/** A clean, established, self-funded account checking out from signup state. */
+function subjectFixture(
+  overrides: Partial<FiatEligibilitySubject> = {},
+): FiatEligibilitySubject & Record<string, unknown> {
+  return {
+    id: "user-1",
+    username: "safe-user",
+    email: "safe@example.com",
+    image: null,
+    signup_ip: "203.0.113.20",
+    country: "Germany",
+    country_code: "DE",
+    continent_code: "EU",
+    state: null,
+    city: "Berlin",
+    affiliate_code: null,
+    referred_by: null,
+    is_suspected_alt: false,
+    created_at: new Date("2026-01-01T00:00:00.000Z"),
+    fingerprint_request_id: "signup-request",
+    visitor_id: "visitor-1",
+    fingerprint_confidence: 0.99,
+    fingerprint_ip: "203.0.113.20",
+    user_agent: null,
+    is_banned: false,
+    is_locked: false,
+    is_self_excluded: false,
+    fiat_locked: false,
+    country_blocked: false,
+    country_fiat_locked: false,
+    kyc_required: false,
+    kyc_status: "none",
+    kyc_admin_decision: "pending",
+    prior_paid_fiat: 2,
+    ...overrides,
+  };
+}
+
+function behaviourFixture(
+  overrides: Partial<FiatEligibilityBehaviour> = {},
+): FiatEligibilityBehaviour {
+  return {
+    cryptoDeposits: 3,
+    cryptoDepositUsd: 150,
+    fiatDeposits: 2,
+    fiatDepositUsd: 80,
+    wagerUsd: 400,
+    gameEvents: 60,
+    rewardUsd: 12,
+    rainWins: 1,
+    withdrawalRequests: 0,
+    msSinceLastPaidFiat: 86_400_000,
+    ...overrides,
+  };
+}
+
+function reviewInput(
+  overrides: Partial<FiatEligibilityPolicyInput> = {},
+): FiatEligibilityPolicyInput {
   const now = new Date("2026-07-29T12:00:00.000Z");
   return {
     now,
     requestCreatedAt: new Date("2026-07-29T11:59:30.000Z"),
-    subject: {
-      id: "user-1",
-      username: "safe-user",
-      email: "safe@example.com",
-      image: null,
-      signup_ip: "203.0.113.20",
-      country: "Germany",
-      country_code: "DE",
-      continent_code: "EU",
-      state: null,
-      city: "Berlin",
-      affiliate_code: null,
-      referred_by: null,
-      is_suspected_alt: false,
-      created_at: new Date("2026-01-01T00:00:00.000Z"),
-      fingerprint_request_id: "signup-request",
-      visitor_id: "visitor-1",
-      fingerprint_confidence: 0.99,
-      fingerprint_ip: "203.0.113.20",
-      user_agent: null,
-      is_banned: false,
-      is_locked: false,
-      is_self_excluded: false,
-      fiat_locked: false,
-      country_blocked: false,
-      country_fiat_locked: false,
-      kyc_required: false,
-      kyc_status: "none",
-      kyc_admin_decision: "pending",
-      prior_paid_fiat: 2,
-    },
+    subject: subjectFixture(),
     requestIp: "203.0.113.20",
-    fingerprint: provider("fingerprint"),
-    proxycheck: provider("proxycheck"),
-    fingerprintIdentity: {
+    providers: [provider("fingerprint"), provider("proxycheck")],
+    identity: {
       visitorId: "visitor-1",
       linkedId: "user-1",
       eventIp: "203.0.113.20",
       eventTime: new Date("2026-07-29T11:59:35.000Z"),
       replayed: false,
     },
+    behaviour: behaviourFixture(),
     network: {
       sharedCheckoutVisitorUsers: 0,
       sharedCurrentIpUsers: 0,
     },
+    blocklistMatches: [],
     signupRiskScore: 0,
     activeCaseSeverity: null,
     attempts10m: 0,
     deniedAttempts24h: 0,
     ...overrides,
+  };
+}
+
+/** A provider result carrying one named signal, for reputation coverage. */
+function providerWithSignal(
+  providerName: "fingerprint" | "proxycheck" | "abstract_ip" | "opportify",
+  key: string,
+  points = 40,
+): EnrichmentResult {
+  return {
+    provider: providerName,
+    status: "success",
+    lookupKey: "lookup",
+    score: 0,
+    ...providerContractMetadata(providerName, "live", "complete"),
+    signals: [{ key, title: key, detail: key, points }],
   };
 }
 
@@ -406,58 +457,239 @@ test("Fiat endpoint logs safe rejection, replay, and failure classifications", a
 test("established matching account is automatically allowed", () => {
   const reviewed = fiatEligibilityInternals.automaticReview(reviewInput());
   assert.equal(reviewed.decision, "allow");
+  assert.equal(reviewed.enforce, false);
   assert.equal(reviewed.riskScore, 0);
-  assert.equal(
-    reviewed.signals.some((signal) => signal.key === "established_fiat_history"),
-    true,
-  );
+  assert.deepEqual(reviewed.enforcementReasons, []);
+  // Behaviour credit is what earns the headroom, and it is capped as a group.
+  const credit = reviewed.signals
+    .filter((signal) => signal.points < 0)
+    .reduce((total, signal) => total + signal.points, 0);
+  assert.ok(credit < 0);
+  assert.ok(credit >= -30);
 });
 
-test("new account with changed IP and device is automatically denied", () => {
+test("changed checkout IP contains an account younger than seven days", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
-    subject: {
-      ...base.subject,
-      created_at: new Date("2026-07-29T06:00:00.000Z"),
+    // Six days old, same device, but a different IP than signup.
+    subject: subjectFixture({
+      created_at: new Date("2026-07-23T12:00:00.000Z"),
       signup_ip: "198.51.100.4",
-      visitor_id: "signup-device",
-      prior_paid_fiat: 0,
-    },
-    fingerprintIdentity: {
-      ...base.fingerprintIdentity,
-      visitorId: "checkout-device",
-    },
+    }),
   });
   assert.equal(reviewed.decision, "deny");
-  assert.ok(reviewed.riskScore >= 50);
-  assert.deepEqual(
-    reviewed.signals
-      .filter((signal) =>
-        ["account_younger_than_one_day", "signup_ip_changed", "signup_fingerprint_changed"]
-          .includes(signal.key)
-      )
-      .map((signal) => signal.key)
-      .sort(),
-    [
-      "account_younger_than_one_day",
-      "signup_fingerprint_changed",
-      "signup_ip_changed",
-    ],
+  assert.equal(reviewed.enforce, true);
+  assert.deepEqual(reviewed.enforcementReasons, [
+    "new_account_checkout_ip_changed",
+  ]);
+
+  // Eight days old, identical evidence: scored, not contained.
+  const older = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({
+      created_at: new Date("2026-07-21T12:00:00.000Z"),
+      signup_ip: "198.51.100.4",
+    }),
+  });
+  assert.equal(older.enforce, false);
+  assert.equal(older.decision, "allow");
+});
+
+test("changed checkout device contains an account younger than 36 hours", () => {
+  const base = reviewInput();
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...base,
+    // 35 hours old, same IP, different device.
+    subject: subjectFixture({
+      created_at: new Date("2026-07-28T01:00:00.000Z"),
+    }),
+    identity: { ...base.identity, visitorId: "checkout-device" },
+  });
+  assert.equal(reviewed.decision, "deny");
+  assert.equal(reviewed.enforce, true);
+  assert.ok(
+    reviewed.enforcementReasons.includes(
+      "new_account_checkout_device_changed",
+    ),
   );
+
+  // 40 hours old: past the device window, and the IP window does not apply
+  // because the IP still matches signup.
+  const older = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({
+      created_at: new Date("2026-07-27T20:00:00.000Z"),
+    }),
+    identity: { ...base.identity, visitorId: "checkout-device" },
+  });
+  assert.deepEqual(older.enforcementReasons, []);
+});
+
+test("changed IP and device plus bad reputation contains at any age", () => {
+  const base = reviewInput();
+  const drifted = {
+    subject: subjectFixture({ signup_ip: "198.51.100.4" }),
+    identity: { ...base.identity, visitorId: "checkout-device" },
+  };
+
+  // Two years old, both identifiers changed, clean providers: scored only.
+  const clean = fiatEligibilityInternals.automaticReview({
+    ...base,
+    ...drifted,
+  });
+  assert.deepEqual(clean.enforcementReasons, []);
+
+  for (const [label, providers] of [
+    ["bad IP", [
+      provider("fingerprint"),
+      providerWithSignal("proxycheck", "proxycheck_anonymous", 55),
+    ]],
+    ["bad device", [
+      providerWithSignal("fingerprint", "fingerprint_tampering", 70),
+      provider("proxycheck"),
+    ]],
+    ["bad corroborating IP", [
+      provider("fingerprint"),
+      provider("proxycheck"),
+      providerWithSignal("abstract_ip", "abstract_ip_abuse", 80),
+    ]],
+  ] as const) {
+    const reviewed = fiatEligibilityInternals.automaticReview({
+      ...base,
+      ...drifted,
+      providers,
+    });
+    assert.equal(reviewed.decision, "deny", label);
+    assert.ok(
+      reviewed.enforcementReasons.includes(
+        "checkout_identity_changed_with_bad_reputation",
+      ),
+      label,
+    );
+  }
+});
+
+test("a live provider risk score alone counts as bad reputation", () => {
+  assert.equal(
+    fiatEligibilityInternals.badIpReputation([
+      provider("proxycheck", { score: 51 }),
+    ]),
+    true,
+  );
+  assert.equal(
+    fiatEligibilityInternals.badIpReputation([
+      provider("proxycheck", { score: 50 }),
+    ]),
+    false,
+  );
+  assert.equal(
+    fiatEligibilityInternals.badDeviceReputation([
+      provider("fingerprint", { score: 40 }),
+    ]),
+    true,
+  );
+  // A failed provider has no opinion — it must never read as clean OR as bad.
+  assert.equal(
+    fiatEligibilityInternals.badIpReputation([
+      provider("proxycheck", { status: "failed", score: 99 }),
+    ]),
+    false,
+  );
+});
+
+test("a second checkout within 60s of a paid deposit is contained", () => {
+  const base = reviewInput();
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...base,
+    behaviour: behaviourFixture({ msSinceLastPaidFiat: 12_000 }),
+  });
+  assert.equal(reviewed.decision, "deny");
+  assert.deepEqual(reviewed.enforcementReasons, [
+    "repeat_fiat_within_sixty_seconds",
+  ]);
+
+  const later = fiatEligibilityInternals.automaticReview({
+    ...base,
+    behaviour: behaviourFixture({ msSinceLastPaidFiat: 61_000 }),
+  });
+  assert.deepEqual(later.enforcementReasons, []);
+  assert.equal(later.decision, "allow");
+});
+
+test("an operator blocklist hit on the checkout IP or device contains", () => {
+  for (const kind of ["ip", "fingerprint"] as const) {
+    const reviewed = fiatEligibilityInternals.automaticReview({
+      ...reviewInput(),
+      blocklistMatches: [{
+        id: "rule-1",
+        kind,
+        value: kind === "ip" ? "203.0.113.20" : "visitor-1",
+        reason: "manual fraud rule",
+      }],
+    });
+    assert.equal(reviewed.decision, "deny");
+    assert.deepEqual(reviewed.enforcementReasons, [`blocklist_${kind}_match`]);
+  }
+});
+
+test("behaviour rewards self-funded play and punishes reward farming", () => {
+  const farmed = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({
+      created_at: new Date("2026-07-01T12:00:00.000Z"),
+      prior_paid_fiat: 0,
+    }),
+    behaviour: behaviourFixture({
+      cryptoDeposits: 0,
+      cryptoDepositUsd: 0,
+      fiatDeposits: 0,
+      fiatDepositUsd: 0,
+      wagerUsd: 0,
+      gameEvents: 0,
+      rewardUsd: 40,
+      rainWins: 9,
+      withdrawalRequests: 2,
+      msSinceLastPaidFiat: null,
+    }),
+  });
+  assert.equal(farmed.decision, "deny");
+  assert.equal(farmed.enforce, false, "farming is scored, never contained");
+  const farmedKeys = farmed.signals.map((signal) => signal.key);
+  assert.ok(farmedKeys.includes("behaviour_reward_farmed_never_funded"));
+  assert.ok(farmedKeys.includes("behaviour_withdrawing_without_funding"));
+
+  // Higher crypto volume buys strictly more headroom than a small deposit.
+  const scoreFor = (cryptoDepositUsd: number): number =>
+    fiatEligibilityInternals.automaticReview({
+      ...reviewInput(),
+      subject: subjectFixture({ signup_ip: "198.51.100.4" }),
+      behaviour: behaviourFixture({ cryptoDepositUsd }),
+    }).riskScore;
+  assert.ok(scoreFor(600) <= scoreFor(120));
+  assert.ok(scoreFor(120) <= scoreFor(30));
+
+  // Credits never apply once anything blocking fired.
+  const blocked = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({ is_banned: true }),
+  });
+  assert.equal(blocked.signals.some((signal) => signal.points < 0), false);
+  assert.equal(blocked.riskScore, 100);
 });
 
 test("manual Fiat-off controller and provider failures fail closed", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
-    subject: { ...base.subject, fiat_locked: true },
-    proxycheck: provider("proxycheck", {
-      status: "failed",
-      errorCode: "timeout",
-    }),
+    subject: subjectFixture({ fiat_locked: true }),
+    providers: [
+      provider("fingerprint"),
+      provider("proxycheck", { status: "failed", errorCode: "timeout" }),
+    ],
   });
   assert.equal(reviewed.decision, "deny");
+  assert.equal(reviewed.enforce, false, "a refusal is not an account offence");
   assert.equal(
     reviewed.signals.find((signal) => signal.key === "fiat_disabled_for_user")
       ?.blocking,
@@ -470,12 +702,30 @@ test("manual Fiat-off controller and provider failures fail closed", () => {
   );
 });
 
+test("a degraded corroborating provider scores but never blocks", () => {
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    providers: [
+      provider("fingerprint"),
+      provider("proxycheck"),
+      provider("abstract_ip", { status: "failed", errorCode: "timeout" }),
+      provider("opportify", { status: "failed", errorCode: "timeout" }),
+    ],
+  });
+  assert.equal(reviewed.decision, "allow");
+  for (const key of ["abstract_ip_check_degraded", "opportify_check_degraded"]) {
+    const signal = reviewed.signals.find((candidate) => candidate.key === key);
+    assert.equal(signal?.blocking, false);
+    assert.equal(signal?.points, 10);
+  }
+});
+
 test("fresh Fingerprint identity is mandatory and replay-safe", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
-    fingerprintIdentity: {
-      ...base.fingerprintIdentity,
+    identity: {
+      ...base.identity,
       linkedId: null,
       eventTime: new Date("2026-07-29T11:55:00.000Z"),
       replayed: true,
@@ -492,7 +742,55 @@ test("fresh Fingerprint identity is mandatory and replay-safe", () => {
       true,
     );
   }
+  // A replayed event is forgery: contain. A missing link is a broken
+  // integration: deny only.
+  assert.deepEqual(reviewed.enforcementReasons, ["fingerprint_event_replayed"]);
   assert.equal(new FingerprintReuseError().name, "FingerprintReuseError");
+
+  const foreignDevice = fiatEligibilityInternals.automaticReview({
+    ...base,
+    identity: { ...base.identity, linkedId: "another-user" },
+  });
+  assert.deepEqual(foreignDevice.enforcementReasons, [
+    "fingerprint_linked_id_mismatch",
+  ]);
+});
+
+test("every containment reason is one the dashboard will honour", () => {
+  // The ingest route re-validates reason codes before it touches MAIN. A rule
+  // the policy can emit but the route rejects would deny and silently never
+  // lock, so the two lists must not drift.
+  const dashboardReasons = new Set(
+    [...readFileSync(
+      new URL(
+        "../../../src/app/api/antifraud/ingest/route.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ).matchAll(
+      /FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set\(\[([\s\S]*?)\]\)/g,
+    )].flatMap((match) =>
+      [...(match[1] ?? "").matchAll(/"([a-z0-9_]+)"/g)]
+        .map((entry) => entry[1] ?? ""),
+    ),
+  );
+  assert.ok(dashboardReasons.size >= 9);
+
+  const emitted = new Set<string>([
+    "new_account_checkout_ip_changed",
+    "new_account_checkout_device_changed",
+    "checkout_identity_changed_with_bad_reputation",
+    "repeat_fiat_within_sixty_seconds",
+    "blocklist_ip_match",
+    "blocklist_fingerprint_match",
+    ...CONTAINING_FINGERPRINT_SIGNALS,
+  ]);
+  for (const reason of emitted) {
+    assert.ok(
+      dashboardReasons.has(reason),
+      `${reason} is not accepted by the ingest route`,
+    );
+  }
 });
 
 test("concurrent identical requests share one automatic provider review", async () => {
@@ -504,7 +802,19 @@ test("concurrent identical requests share one automatic provider review", async 
   let proxycheckCalls = 0;
   let sourceCalls = 0;
   const now = new Date("2026-07-29T12:00:00.000Z");
-  const subject = reviewInput().subject;
+  const subject = {
+    ...subjectFixture(),
+    last_paid_fiat_at: null,
+    crypto_deposits: 3,
+    crypto_deposit_usd: "150.00",
+    fiat_deposits: 2,
+    fiat_deposit_usd: "80.00",
+    wager_usd: "400.00",
+    game_events: 60,
+    reward_usd: "12.00",
+    rain_wins: 1,
+    withdrawal_requests: 0,
+  };
   const source = {
     query: async () => {
       sourceCalls += 1;
@@ -524,35 +834,41 @@ test("concurrent identical requests share one automatic provider review", async 
     fingerprint: "concurrent-fingerprint-request",
     userID: "user-1",
   };
+  const storedRow = {
+    id: "decision-concurrent",
+    request_hash: fiatEligibilityInternals.requestHash(
+      request,
+      request.ipAddress,
+    ),
+    decision: "allow",
+    risk_score: 0,
+    reason_codes: [],
+    enforcement: "none",
+    enforcement_reasons: [],
+    expires_at: new Date(now.getTime() + 60_000),
+    created_at: now,
+  };
+  const statements: string[] = [];
+  const answer = async (text: string) => {
+    statements.push((text.trim().split("\n")[0] ?? "").trim());
+    if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
+    if (text.includes("signup_risk_score")) return { rows: [] };
+    if (text.includes("attempts_10m")) {
+      return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
+    }
+    if (text.includes("FROM identifier_blocklists")) return { rows: [] };
+    if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
+      return { rows: [storedRow] };
+    }
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text.trim())) return { rows: [] };
+    throw new Error(`unexpected antifraud query: ${text.slice(0, 60)}`);
+  };
   const antifraud = {
-    query: async (sql: string) => {
-      if (sql.includes("WHERE fingerprint_request_id = $1")) {
-        return { rows: [] };
-      }
-      if (sql.includes("signup_risk_score")) return { rows: [] };
-      if (sql.includes("attempts_10m")) {
-        return {
-          rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }],
-        };
-      }
-      if (sql.includes("INSERT INTO fiat_eligibility_assessments")) {
-        return {
-          rows: [{
-            id: "decision-concurrent",
-            request_hash: fiatEligibilityInternals.requestHash(
-              request,
-              request.ipAddress,
-            ),
-            decision: "allow",
-            risk_score: 0,
-            reason_codes: [],
-            expires_at: new Date(now.getTime() + 60_000),
-            created_at: now,
-          }],
-        };
-      }
-      throw new Error("unexpected antifraud query");
-    },
+    query: (text: string) => answer(text),
+    connect: async () => ({
+      query: (text: string) => answer(text),
+      release: () => undefined,
+    }),
   };
   const enrichment = {
     fingerprintCheck: async () => {
@@ -577,6 +893,8 @@ test("concurrent identical requests share one automatic provider review", async 
       proxycheckCalls += 1;
       return provider("proxycheck");
     },
+    abstractIpCheck: async () => provider("abstract_ip"),
+    opportifyCheck: async () => provider("opportify"),
   };
   const service = new FiatEligibilityService(
     {
@@ -602,6 +920,9 @@ test("concurrent identical requests share one automatic provider review", async 
   assert.equal(follower.decisionId, primary.decisionId);
   assert.equal(follower.idempotent, true);
   assert.equal(sourceCalls, 2);
+  // The assessment insert and its containment decision share one transaction.
+  assert.ok(statements.includes("BEGIN"));
+  assert.ok(statements.includes("COMMIT"));
 });
 
 test("missing or false global Fiat config can never return allow", async () => {
