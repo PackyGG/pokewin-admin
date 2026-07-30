@@ -377,7 +377,11 @@ export async function fetchSessionActivity(
           'fiat_card_last4', whop.card_last4
         ) AS payload
       FROM ledger_transactions lt
-      LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id = lt.id
+      -- fdi.user_id is redundant on paper; without it the planner seq-scans the
+      -- whole intents table per ledger row (no mirror index on
+      -- completed_ledger_id).
+      LEFT JOIN fiat_deposit_intents fdi
+        ON fdi.completed_ledger_id = lt.id AND fdi.user_id = $1
       LEFT JOIN LATERAL (
         SELECT
           NULLIF(COALESCE(

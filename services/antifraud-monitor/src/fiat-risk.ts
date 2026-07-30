@@ -995,8 +995,13 @@ async function loadContexts(
           COALESCE(AVG(ABS(lt.amount::numeric)), 0)
             AS prior_deposit_average_usd
         FROM ledger_transactions lt
+        -- The user_id predicate is redundant on paper but it is what lets the
+        -- planner use the intents' (user_id, ...) index instead of seq-scanning
+        -- the whole table once per deposit row (no mirror index covers
+        -- completed_ledger_id).
         LEFT JOIN fiat_deposit_intents prior_fiat
           ON prior_fiat.completed_ledger_id=lt.id
+          AND prior_fiat.user_id=t.user_id
         WHERE lt.user_id=t.user_id
           AND lt.type='deposit'
           AND lt.status='completed'
@@ -1595,7 +1600,8 @@ export class FiatRiskService {
                    )
                  ) AS is_crypto
           FROM ledger_transactions lt
-          LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id=lt.id
+          LEFT JOIN fiat_deposit_intents fdi
+            ON fdi.completed_ledger_id=lt.id AND fdi.user_id=$1
           WHERE lt.user_id=$1
             AND lt.type='deposit'
             AND lt.status='completed'
@@ -1616,7 +1622,8 @@ export class FiatRiskService {
                    )
                  ) AS is_crypto
           FROM ledger_transactions lt
-          LEFT JOIN fiat_deposit_intents fdi ON fdi.completed_ledger_id=lt.id
+          LEFT JOIN fiat_deposit_intents fdi
+            ON fdi.completed_ledger_id=lt.id AND fdi.user_id=$1
           WHERE lt.user_id=$1
             AND lt.status='completed'
             AND lt.created_at>=$2::timestamptz
