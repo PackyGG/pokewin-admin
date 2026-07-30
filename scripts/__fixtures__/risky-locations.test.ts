@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Risk locations is editable by verified Fraud users with audited reasons", () => {
+test("Risk locations uses fixed audited reasons and permanent rules", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -26,14 +26,14 @@ test("Risk locations is editable by verified Fraud users with audited reasons", 
   assert.match(page, /<Suspense/);
   assert.match(actions, /requireAntifraudAccess/);
   assert.match(actions, /\.min\(1\)\.max\(60\)/);
-  assert.match(
-    actions,
-    /reason: z\.string\(\)\.trim\(\)\.min\(4\)\.max\(500\)/,
-  );
+  assert.match(actions, /const CREATE_REASON = "Added from the risky locations page"/);
+  assert.match(actions, /const UPDATE_REASON = "Updated from the risky locations page"/);
+  assert.match(actions, /expiresAt: null/);
   const client = read(
     "src/app/(antifraud)/antifraud/risky-locations/risky-locations-client.tsx",
   );
-  assert.match(client, /risky-location-reason/);
+  assert.match(client, /const MONITOR_DURATION_MINUTES = 15/);
+  assert.doesNotMatch(client, /risky-location-reason/);
   assert.match(client, /window\.confirm/);
 });
 
