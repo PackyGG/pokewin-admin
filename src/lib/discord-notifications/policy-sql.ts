@@ -3,7 +3,10 @@ import "server-only";
 import { sql, type SQL } from "drizzle-orm";
 
 import {
+  ANTIFRAUD_TEAM_IDS,
   APPROVED_DISCORD_CATEGORY_IDS,
+  DISCORD_ESCALATION_GROUP_KEYS,
+  DISCORD_MENTION_GROUPS,
   SILENT_DISCORD_CATEGORY_IDS,
 } from "./antifraud-policy";
 
@@ -25,4 +28,27 @@ export function approvedCategoryIds(): SQL {
 
 export function silentCategoryIds(): SQL {
   return idList(SILENT_DISCORD_CATEGORY_IDS);
+}
+
+/**
+ * The group -> Discord user id membership as parameterised `VALUES` rows, for
+ * joining against `discord_notification_channel_mentions.group_key`.
+ *
+ * Membership stays a reviewed code fact in `ANTIFRAUD_TEAM_IDS`; only the
+ * per-channel SELECTION is stored in the database. That means a teammate is
+ * added or removed in one place and every channel that selected the group picks
+ * the change up on its next alert, with no data migration.
+ */
+export function mentionGroupMemberRows(): SQL {
+  const rows = DISCORD_MENTION_GROUPS.flatMap((group) =>
+    ANTIFRAUD_TEAM_IDS[group.key].map(
+      (userId) => sql`(${group.key}, ${userId})`,
+    ),
+  );
+  return sql.join(rows, sql`, `);
+}
+
+/** Group keys that urgent alerts add on top of a channel's own selection. */
+export function escalationGroupKeys(): SQL {
+  return idList(DISCORD_ESCALATION_GROUP_KEYS);
 }

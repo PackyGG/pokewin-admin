@@ -1,7 +1,12 @@
-import { ExternalLink, ShieldCheck, Siren, Users } from "lucide-react";
+import Link from "next/link";
+import { ExternalLink, ShieldCheck, Users } from "lucide-react";
 
 import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
-import { ANTIFRAUD_TEAM_IDS } from "@/lib/discord-notifications/antifraud-policy";
+import {
+  ANTIFRAUD_TEAM_IDS,
+  DISCORD_ESCALATION_GROUP_KEYS,
+  DISCORD_MENTION_GROUPS,
+} from "@/lib/discord-notifications/antifraud-policy";
 import { cn } from "@/lib/utils";
 
 /**
@@ -18,64 +23,23 @@ const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   // Replaced with the monitor-reported presence state inside the component.
   { label: "Button destination", value: null },
   { label: "Automatic trigger", value: "Signup score 50+ or matched rule" },
-  { label: "Urgent trigger", value: "Not defined yet" },
+  // Was "Not defined yet" while urgent was already live: free-battle risk marks
+  // an alert urgent whenever its alert level is critical.
+  { label: "Urgent trigger", value: "Critical alert level" },
+  {
+    label: "Urgent adds",
+    value: DISCORD_ESCALATION_GROUP_KEYS.map(
+      (key) =>
+        DISCORD_MENTION_GROUPS.find((group) => group.key === key)?.label ?? key,
+    ).join(" + "),
+  },
 ];
 
-const TEAM_ROLES = [
-  { label: "Owner", ids: ANTIFRAUD_TEAM_IDS.owner },
-  { label: "Manager", ids: ANTIFRAUD_TEAM_IDS.managers },
-  { label: "Developer", ids: ANTIFRAUD_TEAM_IDS.dev },
-  { label: "Support", ids: ANTIFRAUD_TEAM_IDS.support },
-] as const;
-
-function RecipientList({
-  title,
-  description,
-  ids,
-  urgent = false,
-}: {
-  title: string;
-  description: string;
-  ids: readonly string[] | null;
-  urgent?: boolean;
-}) {
-  return (
-    <div className="rounded-xl border border-border/60 bg-card p-4">
-      <div className="flex items-start gap-3">
-        <span
-          className={
-            urgent
-              ? "flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-500"
-              : "flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]"
-          }
-        >
-          {urgent ? <Siren className="size-4" /> : <Users className="size-4" />}
-        </span>
-        <div>
-          <p className="text-sm font-semibold">{title}</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
-        </div>
-      </div>
-      <ul className="mt-4 space-y-2">
-        {ids ? (
-          ids.map((id) => (
-            <li
-              key={id}
-              className="flex items-center gap-2 rounded-lg border border-border/50 bg-muted/30 px-3 py-2"
-            >
-              <span className="size-1.5 rounded-full bg-muted-foreground/40" />
-              <code className="font-mono text-xs">{id}</code>
-            </li>
-          ))
-        ) : (
-          <li className="rounded-lg border border-border/50 bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-            Unavailable from the monitor service
-          </li>
-        )}
-      </ul>
-    </div>
-  );
-}
+const TEAM_ROLES = DISCORD_MENTION_GROUPS.map((group) => ({
+  label: group.label,
+  description: group.description,
+  ids: ANTIFRAUD_TEAM_IDS[group.key],
+}));
 
 export async function DiscordConfigSection() {
   const runtime = await getAntifraudRuntimeConfig();
@@ -209,29 +173,22 @@ export async function DiscordConfigSection() {
         </div>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <RecipientList
-          title="Always tag support"
-          description="Mentioned on every signup and rule alert."
-          ids={discord?.supportRecipientIds ?? null}
-        />
-        <RecipientList
-          title="Urgent alerts"
-          description="Added only when a future trigger is explicitly marked urgent."
-          ids={discord?.urgentRecipientIds ?? null}
-          urgent
-        />
-      </div>
-
       <div className="rounded-xl border border-border/60 bg-card p-4">
         <div className="flex items-start gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
             <Users className="size-4" />
           </span>
           <div>
-            <p className="text-sm font-semibold">Discord team roles</p>
+            <p className="text-sm font-semibold">Mention groups</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Every supplied Discord user ID with its assigned antifraud role.
+              Each channel picks the groups it tags on{" "}
+              <Link
+                href="/antifraud/discord"
+                className="font-medium underline underline-offset-2"
+              >
+                Discord Routing
+              </Link>
+              . These are the members of each group.
             </p>
           </div>
         </div>
@@ -242,6 +199,9 @@ export async function DiscordConfigSection() {
               className="rounded-lg border border-border/50 bg-muted/20 p-3"
             >
               <p className="text-xs font-semibold">{role.label}</p>
+              <p className="mt-0.5 text-[11px] text-muted-foreground">
+                {role.description}
+              </p>
               <ul className="mt-2 space-y-2">
                 {role.ids.map((id) => (
                   <li
@@ -265,12 +225,17 @@ export async function DiscordConfigSection() {
           <ShieldCheck className="size-3.5" />
         </span>
         <div>
-          <p className="text-sm font-semibold">Mention scope is pinned in code</p>
+          <p className="text-sm font-semibold">
+            Mention text is built by the queue, never by alert content
+          </p>
           <p className="mt-0.5 text-xs text-muted-foreground">
-            The alert payload sends <code className="font-mono">allowed_mentions</code>{" "}
-            restricted to exactly the ids reported above, so alert text cannot
-            create extra user, role, here, or everyone pings. The deployed
-            service is the source of truth.
+            Tags are resolved when the alert is queued, from the destination
+            channel&apos;s selected groups and the member ids above — never from
+            anything inside the alert. Each job carries a matching{" "}
+            <code className="font-mono">allowed_mentions</code> allowlist with{" "}
+            <code className="font-mono">parse: []</code>, so no alert can produce
+            an @everyone, @here, or role ping. Channels under Errors and KYC post
+            silently and tag nobody.
           </p>
         </div>
       </div>

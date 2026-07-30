@@ -13,9 +13,15 @@ let consecutiveFailures = 0;
 let circuitOpenUntil = 0;
 
 export type BotDiscordPayload = {
-  content?: string;
   embeds: Array<Record<string, unknown>>;
   components?: Array<Record<string, unknown>>;
+  /**
+   * Adds the escalation groups (owner + managers) on top of whatever mention
+   * groups the destination channel selected. This is the ONLY tagging input a
+   * producer still has — the rest is resolved from per-channel configuration by
+   * `enqueueDiscordEvent`, so operators can retarget alerts without a deploy.
+   */
+  escalate?: boolean;
 };
 
 function eventsUrl(ingestUrl: string): string {
@@ -54,7 +60,7 @@ export async function sendBotDiscordEvent(
     dedupeKey: input.dedupeKey,
     embed,
     components: input.payload.components ?? [],
-    ...(input.payload.content ? { content: input.payload.content } : {}),
+    ...(input.payload.escalate ? { escalate: true } : {}),
   });
   const timestamp = String(Date.now());
   const signature =

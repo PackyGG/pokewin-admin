@@ -7,7 +7,12 @@ import {
   DISCORD_BOUNDARY_MARKERS,
   assertApprovedCategoryBoundary,
 } from "./antifraud-policy";
-import { approvedCategoryIds, silentCategoryIds } from "./policy-sql";
+import {
+  approvedCategoryIds,
+  escalationGroupKeys,
+  mentionGroupMemberRows,
+  silentCategoryIds,
+} from "./policy-sql";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -32,6 +37,12 @@ export type DiscordDeliveryJob = {
   embed: Record<string, unknown>;
   components: Array<Record<string, unknown>>;
   content?: string;
+  /**
+   * The mention allowlist the delivering bot must pass to Discord verbatim.
+   * Always present, always `parse: []`, so alert text can never produce an
+   * @everyone, @here, or role ping.
+   */
+  allowedMentions: Record<string, unknown>;
   createdAt: string;
   attempt: number;
 };
@@ -144,13 +155,26 @@ export async function syncDiscordChannels(input: {
   return { channels: unique.size };
 }
 
+/**
+ * Queues one alert onto every channel the event is routed to.
+ *
+ * WHO GETS TAGGED IS DECIDED HERE, not by the caller. Each channel selects its
+ * own mention groups (`discord_notification_channel_mentions`) and this query
+ * resolves them to Discord user ids per channel. Producers previously passed a
+ * pre-rendered `content` string, which meant one hardcoded tag list applied to
+ * every destination and operators could not change it without a deploy.
+ *
+ * `escalate` is the one thing a producer still controls: an urgent alert adds
+ * the escalation groups on top of whatever a channel selected, so a paged
+ * incident cannot be silenced by misconfiguring a single channel.
+ */
 export async function enqueueDiscordEvent(input: {
   guildId: string;
   eventKey: string;
   dedupeKey: string;
   embed: Record<string, unknown>;
   components?: Array<Record<string, unknown>>;
-  content?: string;
+  escalate?: boolean;
 }): Promise<{ enqueued: number; duplicate: number }> {
   const guildId = snowflake(input.guildId, "guildId");
   const key = eventKey(input.eventKey);
@@ -158,7 +182,7 @@ export async function enqueueDiscordEvent(input: {
   if (!dedupeKey || dedupeKey.length > 200) {
     throw new Error("dedupeKey must contain 1-200 characters.");
   }
-  const content = input.content?.trim().slice(0, 2000) || null;
+  const escalate = input.escalate === true;
   const embedJson = JSON.stringify(input.embed);
   if (embedJson.length > 24_000) throw new Error("embed is too large.");
   const componentsJson = JSON.stringify(input.components ?? []);
@@ -204,9 +228,44 @@ export async function enqueueDiscordEvent(input: {
           AND parent.position > boundary_top.position
           AND parent.position < boundary_bottom.position
       ),
+      -- Every group that should be tagged in each destination channel: the
+      -- operator's own selection, plus the escalation groups when the producer
+      -- marked this alert urgent. UNION dedupes a group picked by both paths.
+      channel_groups AS (
+        SELECT eligible.channel_id, selection.group_key
+        FROM eligible
+        JOIN discord_notification_channel_mentions AS selection
+          ON selection.guild_id = ${guildId}
+         AND selection.channel_id = eligible.channel_id
+        UNION
+        SELECT eligible.channel_id, escalation.group_key
+        FROM eligible
+        CROSS JOIN unnest(
+          ARRAY[${escalationGroupKeys()}]::text[]
+        ) AS escalation(group_key)
+        WHERE ${escalate}::boolean
+      ),
+      -- DISTINCT on the id, not the group: one teammate can sit in two selected
+      -- groups and must still be tagged exactly once.
+      mentions AS (
+        SELECT
+          channel_groups.channel_id,
+          string_agg(
+            DISTINCT '<@' || member.user_id || '>',
+            ' '
+            ORDER BY '<@' || member.user_id || '>'
+          ) AS content,
+          jsonb_agg(DISTINCT member.user_id) AS user_ids
+        FROM channel_groups
+        JOIN (VALUES ${mentionGroupMemberRows()})
+          AS member(group_key, user_id)
+          ON member.group_key = channel_groups.group_key
+        GROUP BY channel_groups.channel_id
+      ),
       inserted AS (
         INSERT INTO discord_notification_jobs (
-          guild_id, event_key, channel_id, dedupe_key, content, embed, components
+          guild_id, event_key, channel_id, dedupe_key, content, embed,
+          components, allowed_mentions
         )
         SELECT
           ${guildId}, ${key}, eligible.channel_id, ${dedupeKey},
@@ -214,10 +273,23 @@ export async function enqueueDiscordEvent(input: {
           -- dropped here so no routing change can reintroduce a ping.
           CASE
             WHEN eligible.parent_id IN (${silentCategoryIds()}) THEN NULL
-            ELSE ${content}::text
+            ELSE mentions.content
           END,
-          ${embedJson}::jsonb, ${componentsJson}::jsonb
+          ${embedJson}::jsonb, ${componentsJson}::jsonb,
+          -- The allowlist travels with the job so the delivering bot can pin
+          -- allowed_mentions to exactly these ids. An empty parse list blocks
+          -- @everyone/@here and role pings even if the text ever contained one.
+          CASE
+            WHEN eligible.parent_id IN (${silentCategoryIds()})
+              OR mentions.user_ids IS NULL
+            THEN jsonb_build_object('parse', '[]'::jsonb)
+            ELSE jsonb_build_object(
+              'parse', '[]'::jsonb,
+              'users', mentions.user_ids
+            )
+          END
         FROM eligible
+        LEFT JOIN mentions ON mentions.channel_id = eligible.channel_id
         ON CONFLICT (guild_id, event_key, dedupe_key, channel_id) DO NOTHING
         RETURNING 1
       )
@@ -251,6 +323,7 @@ export async function claimDiscordJobs(input: {
     embed: Record<string, unknown>;
     components: Array<Record<string, unknown>>;
     content: string | null;
+    allowed_mentions: Record<string, unknown> | null;
     created_at: string;
     attempt_count: number;
   }>(sql`
@@ -305,6 +378,7 @@ export async function claimDiscordJobs(input: {
       job.embed,
       job.components,
       job.content,
+      job.allowed_mentions,
       job.created_at::text,
       job.attempt_count
   `);
@@ -317,6 +391,9 @@ export async function claimDiscordJobs(input: {
     embed: row.embed,
     components: row.components,
     ...(row.content ? { content: row.content } : {}),
+    // Jobs queued before the allowlist column existed fall back to the
+    // strictest value rather than letting Discord parse the text.
+    allowedMentions: row.allowed_mentions ?? { parse: [] },
     createdAt: row.created_at,
     attempt: row.attempt_count,
   }));

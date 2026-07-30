@@ -267,8 +267,10 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   assert.equal(status.discord.botQueueConfigured, true);
   assert.equal(status.externalWebappMonitor.alertRouteConfigured, true);
   assert.equal(status.discord.dashboardUrlConfigured, true);
-  assert.equal(status.discord.supportRecipientIds.length, 3);
-  assert.equal(status.discord.urgentRecipientIds.length, 4);
+  // Recipient ids are no longer reported: they were a second, drift-prone copy
+  // of ANTIFRAUD_TEAM_IDS. Tag membership is admin-app configuration now.
+  assert.ok(!("supportRecipientIds" in status.discord));
+  assert.ok(!("urgentRecipientIds" in status.discord));
   assert.deepEqual(status.providers, {
     fingerprintConfigured: true,
     proxycheckConfigured: true,

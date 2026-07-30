@@ -4,7 +4,10 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import type { DiscordChannelCreationRequest } from "./channel-operations";
-import { DISCORD_BOUNDARY_MARKERS } from "./antifraud-policy";
+import {
+  DISCORD_BOUNDARY_MARKERS,
+  isDiscordMentionGroup,
+} from "./antifraud-policy";
 import { approvedCategoryIds } from "./policy-sql";
 
 const SNOWFLAKE = /^\d{15,21}$/;
@@ -40,6 +43,12 @@ export type DiscordNotificationRoute = {
   updatedAt: string;
 };
 
+/** The mention groups one channel tags, as group keys from ANTIFRAUD_TEAM_IDS. */
+export type DiscordNotificationChannelMention = {
+  channelId: string;
+  groupKeys: string[];
+};
+
 export type DiscordNotificationConfig = {
   guild: {
     id: string;
@@ -50,6 +59,7 @@ export type DiscordNotificationConfig = {
   channels: DiscordNotificationChannel[];
   events: DiscordNotificationEvent[];
   routes: DiscordNotificationRoute[];
+  channelMentions: DiscordNotificationChannelMention[];
   channelCreation: {
     defaultParentId: string | null;
     recentRequests: DiscordChannelCreationRequest[];
@@ -98,6 +108,7 @@ export async function getDiscordNotificationConfig(
     channelResult,
     eventResult,
     routeResult,
+    mentionResult,
     settingsResult,
     creationResult,
   ] =
@@ -160,6 +171,17 @@ export async function getDiscordNotificationConfig(
         WHERE guild_id = ${id}
         ORDER BY event_key, created_at, id
         LIMIT 2000
+      `),
+      adminDrizzle.execute<{
+        channel_id: string;
+        group_keys: string[];
+      }>(sql`
+        SELECT channel_id, array_agg(group_key ORDER BY group_key) AS group_keys
+        FROM discord_notification_channel_mentions
+        WHERE guild_id = ${id}
+        GROUP BY channel_id
+        ORDER BY channel_id
+        LIMIT 1000
       `),
       adminDrizzle.execute<{ default_parent_id: string | null }>(sql`
         SELECT default_parent_id
@@ -234,6 +256,10 @@ export async function getDiscordNotificationConfig(
       enabled: row.enabled,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
+    })),
+    channelMentions: mentionResult.rows.map((row) => ({
+      channelId: row.channel_id,
+      groupKeys: row.group_keys,
     })),
     channelCreation: {
       defaultParentId: settingsResult.rows[0]?.default_parent_id ?? null,
@@ -389,6 +415,12 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
   guildId?: string;
   channelId: string;
   eventKeys: string[];
+  /**
+   * The mention groups this channel should tag. Replaced wholesale, in the same
+   * transaction as the routes, so a channel's events and its tag list can never
+   * be left half-applied against each other.
+   */
+  mentionGroupKeys: string[];
   actorId: string;
 }): Promise<void> {
   const guildId = configuredGuildId(input.guildId);
@@ -397,7 +429,18 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
   if (eventKeys.length !== input.eventKeys.length || eventKeys.length > 500) {
     throw new Error("Choose up to 500 unique events.");
   }
+  const mentionGroupKeys = [...new Set(input.mentionGroupKeys)];
+  if (mentionGroupKeys.length !== input.mentionGroupKeys.length) {
+    throw new Error("Choose each mention group only once.");
+  }
+  // Reject unknown keys here rather than leaning on the CHECK constraint, so a
+  // typo surfaces as a clear message instead of a raw constraint violation.
+  const unknownGroup = mentionGroupKeys.find(
+    (key) => !isDiscordMentionGroup(key),
+  );
+  if (unknownGroup) throw new Error("Unknown mention group.");
   const eventKeysJson = JSON.stringify(eventKeys);
+  const mentionGroupKeysJson = JSON.stringify(mentionGroupKeys);
 
   await adminDrizzle.transaction(async (tx) => {
     await tx.execute(sql`
@@ -531,6 +574,32 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
           SELECT 1
           FROM jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
           WHERE desired.event_key = route.event_key
+        )
+    `);
+
+    // Replace the channel's mention groups. Insert first, then drop what is no
+    // longer selected, so the channel is never momentarily untagged.
+    if (mentionGroupKeys.length > 0) {
+      await tx.execute(sql`
+        INSERT INTO discord_notification_channel_mentions (
+          guild_id, channel_id, group_key, created_by
+        )
+        SELECT
+          ${guildId}, ${channelId}, desired.group_key, ${input.actorId}::uuid
+        FROM jsonb_array_elements_text(${mentionGroupKeysJson}::jsonb)
+          AS desired(group_key)
+        ON CONFLICT (guild_id, channel_id, group_key) DO NOTHING
+      `);
+    }
+    await tx.execute(sql`
+      DELETE FROM discord_notification_channel_mentions AS selection
+      WHERE selection.guild_id = ${guildId}
+        AND selection.channel_id = ${channelId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM jsonb_array_elements_text(${mentionGroupKeysJson}::jsonb)
+            AS desired(group_key)
+          WHERE desired.group_key = selection.group_key
         )
     `);
   });

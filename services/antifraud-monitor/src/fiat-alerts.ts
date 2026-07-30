@@ -400,8 +400,9 @@ export function buildFiatDiscordPayload(
 
   return {
     username: "PackyGG Fiat",
-    content: "",
-    allowed_mentions: { parse: [] },
+    // Fiat alerts never escalate on their own; the destination channel's
+    // mention groups decide who is tagged.
+    escalate: false,
     embeds: [
       {
         title: patternMatch

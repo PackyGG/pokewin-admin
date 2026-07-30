@@ -24,7 +24,13 @@ const BodySchema = z.object({
   dedupeKey: z.string().trim().min(1).max(200),
   embed: z.record(z.string(), z.unknown()),
   components: z.array(z.record(z.string(), z.unknown())).max(5).default([]),
+  // Producers no longer supply mention text. The queue resolves who to tag from
+  // the destination channel's own mention groups; `escalate` is the only tag
+  // input a producer keeps, and it only ever ADDS the escalation groups.
+  // `content` is still accepted so an older monitor build cannot start failing
+  // signature-valid posts mid-deploy, but its value is deliberately ignored.
   content: z.string().trim().max(2000).optional(),
+  escalate: z.boolean().optional(),
 });
 
 function json(body: unknown, status: number, correlationId?: string): Response {
@@ -104,7 +110,16 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const result = await enqueueDiscordEvent(parsed.data);
+    // Passed field by field so a legacy `content` in the body cannot leak into
+    // the queue as mention text.
+    const result = await enqueueDiscordEvent({
+      guildId: parsed.data.guildId,
+      eventKey: parsed.data.eventKey,
+      dedupeKey: parsed.data.dedupeKey,
+      embed: parsed.data.embed,
+      components: parsed.data.components,
+      escalate: parsed.data.escalate,
+    });
     return json(
       { ok: true, correlationId: parsed.data.correlationId, ...result },
       200,

@@ -4,25 +4,16 @@ import type { Config } from "./config.js";
 import { sendBotDiscordEvent } from "./discord-events.js";
 import { clampRiskScore } from "./scoring.js";
 
-export const SUPPORT_USER_IDS = [
-  "1302882250391818311",
-  "976564661820481606",
-  "620373461256110112",
-] as const;
-
-export const OWNER_USER_IDS = ["660132586630414338"] as const;
-
-export const MANAGER_USER_IDS = [
-  "276098533629755392",
-  "188051599099297802",
-  "934854938641715240",
-] as const;
-
-export const DEV_USER_IDS = ["617341813296070684"] as const;
-export const URGENT_USER_IDS = [
-  ...OWNER_USER_IDS,
-  ...MANAGER_USER_IDS,
-] as const;
+/**
+ * This service no longer carries a copy of the Discord recipient ids.
+ *
+ * It used to duplicate OWNER/MANAGER/DEV/SUPPORT_USER_IDS from
+ * `src/lib/discord-notifications/antifraud-policy.ts` with no shared source and
+ * no test pinning them equal, so the two could silently drift. Tagging is now
+ * resolved once, at enqueue time, from the destination channel's configured
+ * mention groups — `ANTIFRAUD_TEAM_IDS` in the admin app is the only place the
+ * ids live.
+ */
 
 const DISCORD_DESCRIPTION_LIMIT = 1_200;
 const DISCORD_FIELD_LIMIT = 1_024;
@@ -51,8 +42,6 @@ export type DiscordAlert = {
   signals?: readonly DiscordAlertSignal[];
   occurredAt?: Date;
   url?: string;
-  mentionGroups?: readonly ("owner" | "managers" | "dev")[];
-  lowRiskSignupReview?: boolean;
 };
 
 export function discordRuntimeStatus(config: Pick<
@@ -69,8 +58,6 @@ export function discordRuntimeStatus(config: Pick<
    */
   botQueueConfigured: boolean;
   dashboardUrlConfigured: boolean;
-  supportRecipientIds: readonly string[];
-  urgentRecipientIds: readonly string[];
 } {
   return {
     botQueueConfigured: Boolean(
@@ -79,19 +66,23 @@ export function discordRuntimeStatus(config: Pick<
         config.ADMIN_GUILD_ID,
     ),
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
-    supportRecipientIds: SUPPORT_USER_IDS,
-    urgentRecipientIds: URGENT_USER_IDS,
   };
 }
 
-/** Webhook payload shape shared by every Discord alert producer. */
+/**
+ * Payload shape shared by every Discord alert producer.
+ *
+ * There is deliberately no `content` or `allowed_mentions` here. The previous
+ * version built both and then dropped them: `sendBotDiscordEvent` forwarded only
+ * embed/components/content, the ingest schema had no `allowed_mentions` field,
+ * and the jobs table had no column for it — so the mention restriction never
+ * reached Discord despite the settings page claiming it did. Mention text and
+ * its allowlist are now produced once, per destination channel, by
+ * `enqueueDiscordEvent`.
+ */
 export type DiscordWebhookPayload = {
   username: string;
-  content: string;
-  allowed_mentions: {
-    parse: [];
-    users?: string[];
-  };
+  escalate: boolean;
   embeds: Array<{
     title: string;
     description: string;
@@ -209,17 +200,6 @@ export function buildDiscordAlertPayload(
   dashboardUrl: string,
   alert: DiscordAlert,
 ): DiscordPayload {
-  const selectedGroups = new Set(alert.mentionGroups ?? []);
-  if (alert.urgent) {
-    selectedGroups.add("owner");
-    selectedGroups.add("managers");
-  }
-  const mentionIds = [...new Set([
-    ...(alert.lowRiskSignupReview ? [] : SUPPORT_USER_IDS),
-    ...(selectedGroups.has("owner") ? OWNER_USER_IDS : []),
-    ...(selectedGroups.has("managers") ? MANAGER_USER_IDS : []),
-    ...(selectedGroups.has("dev") ? DEV_USER_IDS : []),
-  ])];
   const url = alertUrl(
     alert.url ?? dashboardUrl,
     alert.url ? undefined : alert.caseId,
@@ -281,8 +261,9 @@ export function buildDiscordAlertPayload(
 
   return {
     username: "PackyGG Fraud",
-    content: mentionIds.map((id) => `<@${id}>`).join(" "),
-    allowed_mentions: { parse: [], users: mentionIds },
+    // Urgent alerts add the escalation groups on top of the destination
+    // channel's own mention groups; everything else the channel decides.
+    escalate: alert.urgent === true,
     embeds: [
       {
         title: clean(`${alertEmoji(alert)} ${alert.title}`, 256),

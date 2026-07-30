@@ -80,8 +80,12 @@ const runtimeConfigSchema = z.object({
     // migration simply omits it, and "unknown" must not render as "off".
     botQueueConfigured: z.boolean().optional(),
     dashboardUrlConfigured: z.boolean(),
-    supportRecipientIds: z.array(z.string()),
-    urgentRecipientIds: z.array(z.string()),
+    // Recipient ids are deliberately absent. Who gets tagged is per-channel
+    // admin-DB configuration now, read directly by the settings page, so the
+    // monitor no longer carries a second copy that could drift. Kept optional
+    // so a monitor build that still reports them parses instead of failing.
+    supportRecipientIds: z.array(z.string()).optional(),
+    urgentRecipientIds: z.array(z.string()).optional(),
   }),
   providers: z.object({
     fingerprintConfigured: z.boolean(),

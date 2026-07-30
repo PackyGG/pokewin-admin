@@ -2128,7 +2128,6 @@ await registerSumsubRoutes(
                 ? new Date(review.providerReviewedAt)
                 : new Date(),
               url: url.toString(),
-              mentionGroups: ["managers"],
             },
           );
         },

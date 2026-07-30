@@ -83,7 +83,11 @@ test("Discord recipients and error destinations match the owner contract", () =>
   ]) {
     assert.match(policy, new RegExp(`"${destination}"`));
   }
-  assert.match(discord, /alert\.lowRiskSignupReview \? \[\] : SUPPORT_USER_IDS/);
+  // The producer no longer picks recipients at all: it only reports whether the
+  // alert escalates, and the queue resolves tags from the channel's own groups.
+  assert.match(discord, /escalate: alert\.urgent === true/);
+  // The compiled-in recipient arrays are gone; only prose may mention them.
+  assert.doesNotMatch(discord, /^export const SUPPORT_USER_IDS/m);
   assert.match(discord, /components:/);
   assert.match(discord, /Why it was flagged/);
 });

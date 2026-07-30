@@ -3,7 +3,6 @@ import { createHash, randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
-import { ANTIFRAUD_TEAM_IDS } from "@/lib/discord-notifications/antifraud-policy";
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
 import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 
@@ -139,7 +138,6 @@ export async function POST(request: Request): Promise<Response> {
       guildId,
       eventKey: "antifraud.error.webapp",
       dedupeKey: `browser:${fingerprint}`,
-      content: ANTIFRAUD_TEAM_IDS.support.map((id) => `<@${id}>`).join(" "),
       embed: {
         title: "🚨 Fraud webapp runtime error",
         description:

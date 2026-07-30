@@ -46,7 +46,12 @@ import type {
   DiscordNotificationConfig,
   DiscordNotificationEvent,
 } from "@/lib/discord-notifications/config";
-import { APPROVED_DISCORD_CATEGORY_IDS } from "@/lib/discord-notifications/antifraud-policy";
+import {
+  APPROVED_DISCORD_CATEGORY_IDS,
+  DISCORD_ESCALATION_GROUP_KEYS,
+  DISCORD_MENTION_GROUPS,
+  isSilentDiscordCategory,
+} from "@/lib/discord-notifications/antifraud-policy";
 import type { ServerActionResult } from "@/lib/errors/server-action-result";
 import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
 import { getMyPasskeyStepUpState } from "@/lib/passkey-step-up-actions";
@@ -60,6 +65,7 @@ import {
 type ChannelEditorState = {
   channelId: string;
   eventKeys: string[];
+  mentionGroupKeys: string[];
 };
 
 type PendingMutation = {
@@ -326,6 +332,9 @@ export function DiscordRoutingWorkspace({
     setEditor({
       channelId: availableChannels[0]?.id ?? "",
       eventKeys: [],
+      // Matches the seeded default for existing channels: first-line support.
+      // Silent categories drop tags at enqueue time regardless of this.
+      mentionGroupKeys: ["support"],
     });
   }
 
@@ -344,6 +353,10 @@ export function DiscordRoutingWorkspace({
             ),
         )
         .map((route) => route.eventKey),
+      mentionGroupKeys:
+        config.channelMentions.find(
+          (mention) => mention.channelId === channelId,
+        )?.groupKeys ?? [],
     });
   }
 
@@ -363,6 +376,16 @@ export function DiscordRoutingWorkspace({
     });
   }
 
+  function toggleMentionGroup(groupKey: string, checked: boolean) {
+    if (!editor) return;
+    setEditor({
+      ...editor,
+      mentionGroupKeys: checked
+        ? [...new Set([...editor.mentionGroupKeys, groupKey])]
+        : editor.mentionGroupKeys.filter((key) => key !== groupKey),
+    });
+  }
+
   function saveChannel() {
     if (!editor?.channelId || editor.eventKeys.length === 0) return;
 
@@ -371,6 +394,7 @@ export function DiscordRoutingWorkspace({
         replaceChannelRoutesAction({
           channelId: editor.channelId,
           eventKeys: editor.eventKeys,
+          mentionGroupKeys: editor.mentionGroupKeys,
           credential: approval,
         }),
       editingChannelId ? "Channel updated" : "Channel added",
@@ -391,6 +415,7 @@ export function DiscordRoutingWorkspace({
         replaceChannelRoutesAction({
           channelId: channel.id,
           eventKeys: [],
+          mentionGroupKeys: [],
           credential: approval,
         }),
       "Channel removed",
@@ -631,6 +656,7 @@ export function DiscordRoutingWorkspace({
         onEventQueryChange={setEventQuery}
         onEditorChange={setEditor}
         onToggleEvent={toggleEvent}
+        onToggleMentionGroup={toggleMentionGroup}
         onClose={closeEditor}
         onSave={saveChannel}
         onRemove={
@@ -859,6 +885,7 @@ function ChannelEditorDialog({
   onEventQueryChange,
   onEditorChange,
   onToggleEvent,
+  onToggleMentionGroup,
   onClose,
   onSave,
   onRemove,
@@ -872,11 +899,13 @@ function ChannelEditorDialog({
   onEventQueryChange: (value: string) => void;
   onEditorChange: (value: ChannelEditorState) => void;
   onToggleEvent: (eventKey: string, checked: boolean) => void;
+  onToggleMentionGroup: (groupKey: string, checked: boolean) => void;
   onClose: () => void;
   onSave: () => void;
   onRemove?: () => void;
 }) {
   const channel = channels.find((candidate) => candidate.id === editor?.channelId);
+  const silentChannel = isSilentDiscordCategory(channel?.parentId ?? null);
 
   return (
     <Dialog open={editor !== null} onOpenChange={(open) => !open && onClose()}>
@@ -913,6 +942,67 @@ function ChannelEditorDialog({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <Label>Tag these groups</Label>
+                <span className="text-xs tabular-nums text-muted-foreground">
+                  {editor.mentionGroupKeys.length === 0
+                    ? "Nobody tagged"
+                    : `${editor.mentionGroupKeys.length} selected`}
+                </span>
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                {DISCORD_MENTION_GROUPS.map((group) => {
+                  const checked = editor.mentionGroupKeys.includes(group.key);
+                  return (
+                    <label
+                      key={group.key}
+                      className={cn(
+                        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
+                        checked
+                          ? "border-cyan-500/30 bg-cyan-500/5"
+                          : "border-border/60 hover:bg-muted/60",
+                      )}
+                    >
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={checked}
+                        onCheckedChange={(value) =>
+                          onToggleMentionGroup(group.key, value === true)
+                        }
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="text-sm font-medium">
+                          {group.label}
+                        </span>
+                        <span className="mt-0.5 block text-xs text-muted-foreground">
+                          {group.description}
+                        </span>
+                      </span>
+                    </label>
+                  );
+                })}
+              </div>
+              {silentChannel ? (
+                <p className="text-xs text-muted-foreground">
+                  This channel sits under {channel?.parentName ?? "a silent"}{" "}
+                  category, so it always posts silently and tags nobody
+                  regardless of the selection above.
+                </p>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  Urgent alerts always add{" "}
+                  {DISCORD_ESCALATION_GROUP_KEYS.map(
+                    (key) =>
+                      DISCORD_MENTION_GROUPS.find(
+                        (group) => group.key === key,
+                      )?.label ?? key,
+                  ).join(" and ")}
+                  , even if they are not selected here.
+                </p>
+              )}
             </div>
 
             <div className="space-y-2">

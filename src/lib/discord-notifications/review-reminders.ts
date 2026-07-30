@@ -5,10 +5,7 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { enqueueDiscordEvent } from "./router";
-import {
-  ANTIFRAUD_TEAM_IDS,
-  REVIEW_REMINDER_DELAYS_MS,
-} from "./antifraud-policy";
+import { REVIEW_REMINDER_DELAYS_MS } from "./antifraud-policy";
 
 const MAX_REMINDERS_PER_TICK = 25;
 
@@ -27,10 +24,6 @@ function reviewUrl(reviewId: string): string {
   const url = new URL("https://fraud.packydash.com/reviews");
   url.searchParams.set("review", reviewId);
   return url.toString();
-}
-
-function supportMentions(): string {
-  return ANTIFRAUD_TEAM_IDS.support.map((id) => `<@${id}>`).join(" ");
 }
 
 function safeDiscordText(value: string, max: number): string {
@@ -160,7 +153,9 @@ export async function enqueueDueReviewReminders(): Promise<{
       guildId: process.env.ADMIN_GUILD_ID ?? "",
       eventKey: "antifraud.review_reminder",
       dedupeKey: `review-reminder:${row.review_id}:${row.next_reminder_at}`,
-      content: supportMentions(),
+      // Who gets tagged is the destination channel's own configuration now;
+      // urgent reminders escalate on top of it.
+      escalate: row.reminder_kind === "urgent",
       embed: reminderEmbed(row, correlationId),
       components: [
         {

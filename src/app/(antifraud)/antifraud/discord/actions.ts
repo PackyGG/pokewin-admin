@@ -12,6 +12,7 @@ import {
 } from "@/lib/errors/server-action-result";
 import { postgresErrorCode } from "@/lib/postgres-errors";
 import { require2FA } from "@/lib/require-2fa";
+import { DISCORD_MENTION_GROUP_KEYS } from "@/lib/discord-notifications/antifraud-policy";
 import { queueDiscordChannelCreation } from "@/lib/discord-notifications/channel-operations";
 import {
   createDiscordNotificationEvent,
@@ -53,6 +54,13 @@ const channelRoutesSchema = z.object({
     .refine(
       (keys) => new Set(keys).size === keys.length,
       "Choose each event only once",
+    ),
+  mentionGroupKeys: z
+    .array(z.enum(DISCORD_MENTION_GROUP_KEYS))
+    .max(DISCORD_MENTION_GROUP_KEYS.length)
+    .refine(
+      (keys) => new Set(keys).size === keys.length,
+      "Choose each mention group only once",
     ),
   credential: z.string().trim().min(1).max(4096),
 });
@@ -184,6 +192,7 @@ export async function replaceChannelRoutesAction(
     await replaceDiscordNotificationChannelRoutes({
       channelId: parsed.data.channelId,
       eventKeys: parsed.data.eventKeys,
+      mentionGroupKeys: parsed.data.mentionGroupKeys,
       actorId: session.userId,
     });
     await createAdminAuditEvent({
@@ -193,6 +202,7 @@ export async function replaceChannelRoutesAction(
         channelId: parsed.data.channelId,
         eventKeys: parsed.data.eventKeys,
         eventCount: parsed.data.eventKeys.length,
+        mentionGroupKeys: parsed.data.mentionGroupKeys,
       },
     });
     revalidatePath("/antifraud/discord");

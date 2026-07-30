@@ -4,7 +4,6 @@ import type { FastifyBaseLogger } from "fastify";
 
 import type { Config } from "./config.js";
 import { sendBotDiscordEvent } from "./discord-events.js";
-import { SUPPORT_USER_IDS } from "./discord.js";
 
 const INTERVAL_MS = 60_000;
 const TIMEOUT_MS = 8_000;
@@ -184,9 +183,10 @@ export class DashboardOpsTick {
   }
 
   /**
-   * Queue the alert on the Discord bot route. Mentions stay pinned to the
-   * compiled support ids — the bot applies `allowed_mentions` when it posts, so
-   * the content string here can never widen into an @everyone.
+   * Queue the alert on the Discord bot route. This producer does not choose who
+   * gets tagged: `enqueueDiscordEvent` resolves that from the destination
+   * channel's configured mention groups and stores the matching
+   * `allowed_mentions` allowlist with the job.
    */
   private async sendAlert(
     correlationId: string,
@@ -199,7 +199,6 @@ export class DashboardOpsTick {
       eventKey: "antifraud.error.webapp",
       dedupeKey,
       payload: {
-        content: SUPPORT_USER_IDS.map((id) => `<@${id}>`).join(" "),
         embeds: [
           {
             title,

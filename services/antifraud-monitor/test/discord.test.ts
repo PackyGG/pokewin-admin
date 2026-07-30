@@ -3,20 +3,11 @@ import test from "node:test";
 
 import { buildDiscordAlertPayload } from "../src/discord.js";
 
-const supportIds = [
-  "1302882250391818311",
-  "976564661820481606",
-  "620373461256110112",
-];
+// This service no longer decides who is tagged, so it no longer carries a copy
+// of the recipient ids. Mention text and its `allowed_mentions` allowlist are
+// built per destination channel by `enqueueDiscordEvent` in the admin app.
 
-const urgentIds = [
-  "660132586630414338",
-  "276098533629755392",
-  "188051599099297802",
-  "934854938641715240",
-];
-
-test("regular alerts mention only support and include the dashboard button", () => {
+test("regular alerts do not escalate and include the dashboard button", () => {
   const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
@@ -25,9 +16,12 @@ test("regular alerts mention only support and include the dashboard button", () 
     },
   );
 
-  assert.deepEqual(payload.allowed_mentions.users, supportIds);
+  assert.equal(payload.escalate, false);
   assert.equal(payload.username, "PackyGG Fraud");
-  assert.equal(payload.content, supportIds.map((id) => `<@${id}>`).join(" "));
+  // No content and no allowed_mentions: both used to be built here and then
+  // silently dropped before the payload ever reached Discord.
+  assert.ok(!("content" in payload));
+  assert.ok(!("allowed_mentions" in payload));
   assert.equal(payload.embeds[0]?.color, 0x5865f2);
   assert.equal(
     payload.components[0]?.components[0]?.url,
@@ -142,7 +136,7 @@ test("rule alerts show the score change and review outcome", () => {
   );
 });
 
-test("urgent alerts add only the urgent recipients", () => {
+test("urgent alerts ask the queue to add the escalation groups", () => {
   const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
@@ -152,10 +146,7 @@ test("urgent alerts add only the urgent recipients", () => {
     },
   );
 
-  assert.deepEqual(payload.allowed_mentions.users, [
-    ...supportIds,
-    ...urgentIds,
-  ]);
+  assert.equal(payload.escalate, true);
 });
 
 test("untrusted alert text cannot create extra mentions", () => {
@@ -175,7 +166,7 @@ test("untrusted alert text cannot create extra mentions", () => {
     payload.embeds[0]?.description,
     "here role 123456789012345678",
   );
-  assert.deepEqual(payload.allowed_mentions.users, supportIds);
+  assert.equal(payload.escalate, false);
 });
 
 test("long evidence stays inside Discord field limits", () => {
@@ -219,5 +210,5 @@ test("an alert can link directly to Account Review", () => {
     payload.components[0]?.components[0]?.url,
     "https://fraud.packydash.com/antifraud/reviews",
   );
-  assert.deepEqual(payload.allowed_mentions.users, supportIds);
+  assert.equal(payload.escalate, false);
 });
