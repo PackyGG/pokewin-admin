@@ -302,6 +302,22 @@ export async function upsertDiscordNotificationRoute(input: {
   const guildId = configuredGuildId(input.guildId);
   const eventKey = normalizeEventKey(input.eventKey);
   const channelId = requireSnowflake(input.channelId, "channelId");
+  if (input.enabled) {
+    // One event, one channel — the same claim rule the editor enforces.
+    const taken = await adminDrizzle.execute<{ channel_id: string }>(sql`
+      SELECT channel_id
+      FROM discord_notification_routes
+      WHERE guild_id = ${guildId}
+        AND event_key = ${eventKey}
+        AND channel_id <> ${channelId}
+      LIMIT 1
+    `);
+    if (taken.rows.length > 0) {
+      throw new Error(
+        "That event is already assigned to another channel. Remove it there first.",
+      );
+    }
+  }
   const result = await adminDrizzle.execute<{
     id: string;
     event_key: string;
@@ -421,9 +437,23 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
     }
 
     if (eventKeys.length > 0) {
-      // An event may fan out to several channels: the delivery router already
-      // enqueues one message per eligible route, so channels are edited
-      // independently and never claim an event exclusively.
+      // An event belongs to exactly one channel. The advisory lock above
+      // serializes per guild, so this claim check cannot be raced.
+      const taken = await tx.execute<{ event_key: string }>(sql`
+        SELECT route.event_key
+        FROM discord_notification_routes AS route
+        JOIN jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
+          ON desired.event_key = route.event_key
+        WHERE route.guild_id = ${guildId}
+          AND route.channel_id <> ${channelId}
+      `);
+      if (taken.rows.length > 0) {
+        const claimed = [...new Set(taken.rows.map((row) => row.event_key))];
+        throw new Error(
+          `Already assigned to another channel: ${claimed.join(", ")}. Remove it there first.`,
+        );
+      }
+
       const inserted = await tx.execute<{ event_key: string }>(sql`
         INSERT INTO discord_notification_routes (
           guild_id, event_key, channel_id, enabled, created_by
