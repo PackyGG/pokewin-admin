@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  getKenoCappedPayout,
+  getKenoEffectiveRtp,
   getKenoHitProbability,
   getKenoHouseEdge,
   getKenoMultiplier,
@@ -55,4 +57,14 @@ test("Keno configured RTP and house edge match the backend reference profile", (
       assert.ok(Math.abs(rtp + edge - 1) < 1e-12);
     }
   }
+});
+
+test("Keno applies the dynamic maximum win after the multiplier", () => {
+  assert.equal(getKenoCappedPayout(10, 3.7, 20_000), 37);
+  assert.equal(getKenoCappedPayout(1_000, 1_000, 20_000), 20_000);
+  assert.equal(getKenoCappedPayout(0, 1_000, 20_000), 0);
+
+  const uncappedRtp = getKenoRtp("high", 10);
+  const effectiveRtp = getKenoEffectiveRtp("high", 10, 1_000, 20_000);
+  assert.ok(effectiveRtp < uncappedRtp);
 });

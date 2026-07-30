@@ -27,6 +27,7 @@ const InputSchema = z.object({
     .finite()
     .min(KENO_MIN_BET_USD)
     .max(KENO_MAX_CONFIGURABLE_BET_USD),
+  max_win_usd: z.number().finite().positive(),
 });
 
 export async function updateKenoConfigAction(

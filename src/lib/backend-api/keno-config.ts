@@ -13,10 +13,12 @@ import { backendApi } from "./client";
  */
 export type KenoConfig = {
   max_bet_usd: number;
+  max_win_usd: number;
 };
 
 export type UpdateKenoConfigInput = {
   max_bet_usd: number;
+  max_win_usd: number;
 };
 
 type Success<T> = { success: boolean; data: T };

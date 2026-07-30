@@ -25,6 +25,7 @@ import type { LeaderboardWagerWeights } from "@/lib/backend-api/leaderboard-wage
 import type { RakebackWagerWeights } from "@/lib/backend-api/rakeback-wager-weights";
 import {
   KENO_DEFAULT_MAX_BET_USD,
+  KENO_DEFAULT_MAX_WIN_USD,
   KENO_MAX_CONFIGURABLE_BET_USD,
   KENO_MIN_BET_USD,
 } from "@/lib/keno/payouts";
@@ -32,11 +33,11 @@ import {
 /**
  * Every admin-editable keno setting, in one place.
  *
- * Keno's maximum bet and three live weights are exposed by four backend
- * admin endpoints. This card consolidates them in the dedicated Content →
- * Keno workspace.
+ * Keno's maximum bet, maximum win, and three live weights are exposed by four
+ * backend admin endpoints. This card consolidates them in the dedicated
+ * Content → Keno workspace.
  *
- * It is the sole editor for all four Keno keys. The destination-oriented
+ * It is the sole editor for all five Keno keys. The destination-oriented
  * cards and generic site_config table on /security deliberately omit them,
  * so each key has exactly one editable surface.
  *
@@ -140,6 +141,12 @@ export function KenoSettingsCard({
   const [maxBetValue, setMaxBetValue] = useState(
     () => kenoConfig?.max_bet_usd.toString() ?? "",
   );
+  const [maxWinBaseline, setMaxWinBaseline] = useState<number | undefined>(
+    () => kenoConfig?.max_win_usd,
+  );
+  const [maxWinValue, setMaxWinValue] = useState(
+    () => kenoConfig?.max_win_usd.toString() ?? "",
+  );
 
   // All four reads failed (or the backend predates Keno config entirely) —
   // there is nothing meaningful to edit, so degrade to a notice rather than
@@ -196,6 +203,7 @@ export function KenoSettingsCard({
     }
 
     let changedMaxBet: number | undefined;
+    let parsedMaxBet = maxBetBaseline;
     if (maxBetBaseline !== undefined) {
       const raw = maxBetValue.trim();
       if (raw === "") {
@@ -216,10 +224,31 @@ export function KenoSettingsCard({
       if (parsed !== maxBetBaseline) {
         changedMaxBet = parsed;
       }
+      parsedMaxBet = parsed;
+    }
+
+    let changedMaxWin: number | undefined;
+    let parsedMaxWin = maxWinBaseline;
+    if (maxWinBaseline !== undefined) {
+      const raw = maxWinValue.trim();
+      if (raw === "") {
+        toast.error("Maximum win is required");
+        return;
+      }
+      const parsed = Number(raw);
+      if (!Number.isFinite(parsed) || parsed <= 0) {
+        toast.error("Maximum win must be greater than $0");
+        return;
+      }
+      if (parsed !== maxWinBaseline) {
+        changedMaxWin = parsed;
+      }
+      parsedMaxWin = parsed;
     }
 
     if (
       changedMaxBet === undefined &&
+      changedMaxWin === undefined &&
       Object.keys(changedWeights).length === 0
     ) {
       toast.info("No changes to save");
@@ -235,13 +264,23 @@ export function KenoSettingsCard({
       const failures: string[] = [];
       const savedWeights = { ...weightBaseline };
       let savedMaxBet = maxBetBaseline;
+      let savedMaxWin = maxWinBaseline;
 
-      if (changedMaxBet !== undefined) {
+      if (
+        (changedMaxBet !== undefined || changedMaxWin !== undefined) &&
+        parsedMaxBet !== undefined &&
+        parsedMaxWin !== undefined
+      ) {
         const result = await updateKenoConfigAction({
-          max_bet_usd: changedMaxBet,
+          max_bet_usd: parsedMaxBet,
+          max_win_usd: parsedMaxWin,
         });
-        if (result.success) savedMaxBet = result.data.max_bet_usd;
-        else failures.push(`Maximum bet: ${result.error}`);
+        if (result.success) {
+          savedMaxBet = result.data.max_bet_usd;
+          savedMaxWin = result.data.max_win_usd;
+        } else {
+          failures.push(`Bet and win limits: ${result.error}`);
+        }
       }
 
       if (changedWeights.withdrawal !== undefined) {
@@ -276,6 +315,8 @@ export function KenoSettingsCard({
       // because a sibling field failed.
       setMaxBetBaseline(savedMaxBet);
       setMaxBetValue(savedMaxBet?.toString() ?? "");
+      setMaxWinBaseline(savedMaxWin);
+      setMaxWinValue(savedMaxWin?.toString() ?? "");
       setWeightBaseline(savedWeights);
       setWeightValues({
         withdrawal: bpsToX(savedWeights.withdrawal),
@@ -298,12 +339,12 @@ export function KenoSettingsCard({
           <CardTitle className="text-sm font-medium">
             Keno system configuration
           </CardTitle>
-          <Badge variant="secondary">All 4 active settings</Badge>
+          <Badge variant="secondary">All 5 active settings</Badge>
         </div>
         <CardDescription>
-          Maximum bet plus every Keno wager weight. Weight values are
-          multipliers (1× = 10000 bps). All saves go through the backend admin
-          API and the admin audit trail.
+          Maximum bet, maximum win, and every Keno wager weight. Weight values
+          are multipliers (1× = 10000 bps). All saves go through the backend
+          admin API and the admin audit trail.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -315,11 +356,12 @@ export function KenoSettingsCard({
             re-price existing progress or standings. The rakeback weight is
             live: it also re-prices still-unclaimed periods, but never settled
             claims. The maximum bet applies immediately to new games. Existing
-            games and settled results are unchanged.
+            games and settled results are unchanged. The maximum win caps the
+            final payout after its multiplier is applied.
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
           <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
             <div className="space-y-1">
               <p className="text-sm font-medium">Maximum bet</p>
@@ -356,6 +398,45 @@ export function KenoSettingsCard({
                   Allowed range ${KENO_MIN_BET_USD.toFixed(2)}–$
                   {KENO_MAX_CONFIGURABLE_BET_USD.toLocaleString("en-US")}.
                   Applies immediately to future games.
+                </>
+              )}
+            </p>
+          </div>
+
+          <div className="space-y-3 rounded-lg border bg-muted/20 p-4">
+            <div className="space-y-1">
+              <p className="text-sm font-medium">Maximum win</p>
+              <code className="block truncate text-[10px] text-muted-foreground">
+                keno_max_win_usd
+              </code>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <Label htmlFor="keno-max-win">USD per game</Label>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                Default ${KENO_DEFAULT_MAX_WIN_USD.toLocaleString("en-US")}
+              </span>
+            </div>
+            <Input
+              id="keno-max-win"
+              type="number"
+              step="0.01"
+              min="0.01"
+              value={maxWinValue}
+              onChange={(event) => setMaxWinValue(event.target.value)}
+              disabled={
+                isPending || maxWinBaseline === undefined || !canEdit
+              }
+            />
+            <p className="text-[11px] text-muted-foreground">
+              {maxWinBaseline === undefined ? (
+                <span className="text-amber-600 dark:text-amber-400">
+                  Current value unavailable — the Keno config endpoint
+                  didn&apos;t return a win cap.
+                </span>
+              ) : (
+                <>
+                  Caps the final payout after the selected multiplier. Applies
+                  immediately to future games.
                 </>
               )}
             </p>

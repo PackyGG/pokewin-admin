@@ -23,6 +23,7 @@ import {
   KENO_DRAW_COUNT,
   KENO_GRID_SIZE,
   KENO_DEFAULT_MAX_BET_USD,
+  KENO_DEFAULT_MAX_WIN_USD,
   KENO_MAX_CONFIGURABLE_BET_USD,
   KENO_MAX_PICKS,
   KENO_MIN_BET_USD,
@@ -69,7 +70,7 @@ export async function KenoConfigurationTab({
           title="System configuration"
           action={
             <Badge variant="outline" className="font-normal">
-              4 live settings · {canEdit ? "Editing enabled" : "Read only"}
+              5 live settings · {canEdit ? "Editing enabled" : "Read only"}
             </Badge>
           }
         />
@@ -110,8 +111,20 @@ export async function KenoConfigurationTab({
               }
             />
             <PanelRow
-              label="Default / allowed cap"
+              label="Maximum win"
+              value={
+                kenoConfig
+                  ? `$${kenoConfig.max_win_usd.toLocaleString("en-US", { minimumFractionDigits: 2 })}`
+                  : "Unavailable"
+              }
+            />
+            <PanelRow
+              label="Bet default / allowed cap"
               value={`$${KENO_DEFAULT_MAX_BET_USD.toFixed(2)} / $${KENO_MAX_CONFIGURABLE_BET_USD.toLocaleString("en-US")}`}
+            />
+            <PanelRow
+              label="Win default"
+              value={`$${KENO_DEFAULT_MAX_WIN_USD.toLocaleString("en-US")}`}
             />
           </StatPanel>
           <StatPanel title="Risk" icon={ShieldCheck} accent="cyan">
@@ -130,9 +143,10 @@ export async function KenoConfigurationTab({
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
           The grid, draws, picks, minimum bet, risk modes, and payout curves
-          are compile-time backend constants. The current maximum bet and
-          three wager weights above are database-backed and change through the
-          backend admin API.
+          are compile-time backend constants. The maximum bet, maximum win,
+          and three wager weights above are database-backed and change through
+          the backend admin API. The win cap limits the final payout after the
+          selected multiplier is applied.
         </p>
       </section>
 

@@ -9,7 +9,7 @@ export const KENO_CONFIG_CACHE_TAG = "keno-config";
 
 const cachedKenoConfig = unstable_cache(
   () => getKenoConfig(),
-  ["keno-config-v1"],
+  ["keno-config-v2"],
   { revalidate: 300, tags: [KENO_CONFIG_CACHE_TAG] },
 );
 

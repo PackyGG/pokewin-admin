@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   KENO_DEFAULT_MAX_BET_USD,
+  KENO_DEFAULT_MAX_WIN_USD,
   KENO_MAX_CONFIGURABLE_BET_USD,
   KENO_MIN_BET_USD,
 } from "@/lib/keno/payouts";
@@ -12,9 +13,10 @@ const repoRoot = process.cwd();
 const source = (path: string) =>
   readFileSync(`${repoRoot}/${path}`, "utf8");
 
-test("Keno max-bet limits mirror the backend contract", () => {
+test("Keno bet and win defaults mirror the backend contract", () => {
   assert.equal(KENO_MIN_BET_USD, 0.25);
   assert.equal(KENO_DEFAULT_MAX_BET_USD, 20);
+  assert.equal(KENO_DEFAULT_MAX_WIN_USD, 20_000);
   assert.equal(KENO_MAX_CONFIGURABLE_BET_USD, 1_000);
 });
 
@@ -29,10 +31,11 @@ test("Keno config reads and writes through the dedicated backend endpoint", () =
   );
   assert.match(action, /requirePageAccess\("\/keno"\)/);
   assert.match(action, /eventType: "keno_config_updated"/);
+  assert.match(action, /max_win_usd: z\.number\(\)\.finite\(\)\.positive\(\)/);
   assert.match(action, /revalidateTag\(KENO_CONFIG_CACHE_TAG\)/);
 });
 
-test("Keno Configuration owns the live maximum bet and hides its raw key", () => {
+test("Keno Configuration owns the live bet and win caps and hides their raw keys", () => {
   const tab = source(
     "src/app/(admin)/keno/_components/configuration-tab.tsx",
   );
@@ -48,7 +51,9 @@ test("Keno Configuration owns the live maximum bet and hides its raw key", () =>
   assert.match(tab, /kenoConfig=\{kenoConfig\}/);
   assert.match(card, /updateKenoConfigAction\(/);
   assert.match(card, /keno_max_bet_usd/);
-  assert.match(card, /All 4 active settings/);
+  assert.match(card, /keno_max_win_usd/);
+  assert.match(card, /All 5 active settings/);
   assert.match(keys, /"keno_max_bet_usd"/);
+  assert.match(keys, /"keno_max_win_usd"/);
   assert.match(security, /\.\.\.KENO_SITE_CONFIG_KEYS/);
 });

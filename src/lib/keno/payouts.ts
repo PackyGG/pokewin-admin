@@ -17,6 +17,7 @@ export const KENO_MIN_PICKS = 1;
 export const KENO_MAX_PICKS = 10;
 export const KENO_MIN_BET_USD = 0.25;
 export const KENO_DEFAULT_MAX_BET_USD = 20;
+export const KENO_DEFAULT_MAX_WIN_USD = 20_000;
 export const KENO_MAX_CONFIGURABLE_BET_USD = 1_000;
 
 export const KENO_RISK_MODES = ["low", "medium", "high"] as const;
@@ -129,4 +130,30 @@ export function getKenoHouseEdge(
   picks: number,
 ): number {
   return 1 - getKenoRtp(risk, picks);
+}
+
+export function getKenoCappedPayout(
+  bet: number,
+  multiplier: number,
+  maxWin: number,
+): number {
+  if (bet <= 0 || multiplier <= 0 || maxWin <= 0) return 0;
+  return Math.min(bet * multiplier, maxWin);
+}
+
+export function getKenoEffectiveRtp(
+  risk: KenoRiskMode,
+  picks: number,
+  bet: number,
+  maxWin: number,
+): number {
+  if (bet <= 0) return 0;
+
+  return getKenoPayoutRow(risk, picks).reduce(
+    (rtp, multiplier, hits) =>
+      rtp +
+      getKenoHitProbability(picks, hits) *
+        (getKenoCappedPayout(bet, multiplier, maxWin) / bet),
+    0,
+  );
 }
