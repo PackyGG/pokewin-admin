@@ -43,8 +43,11 @@ const signup: Signup = {
 const normalContext: SignupContext = {
   sameIp10m: 1,
   sameIp30m: 1,
+  sameExactIp30d: 1,
   sameIpv6Subnet30m: 0,
   sameDeviceAllTime: 1,
+  sameDevice30d: 1,
+  sameDeviceDistinctIps30d: 1,
   sameAffiliate30m: 0,
   sameAffiliateIp30m: 0,
   sameCountry15m: 1,
@@ -62,6 +65,36 @@ test("normal signup has no baseline risk", () => {
   const signals = baseSignupSignals(signup, normalContext);
   assert.equal(signals.length, 0);
   assert.equal(severity(0), "low");
+});
+
+test("the third exact IP or fingerprint account in 30 days is a hard policy", () => {
+  const signals = baseSignupSignals(signup, {
+    ...normalContext,
+    sameExactIp30d: 3,
+    sameDeviceAllTime: 3,
+    sameDevice30d: 3,
+    sameDeviceDistinctIps30d: 2,
+  });
+  for (const key of [
+    "exact_ip_third_account_30d",
+    "fingerprint_third_account_30d",
+  ]) {
+    const signal = signals.find((candidate) => candidate.key === key);
+    assert.equal(signal?.points, 100);
+    assert.equal(signal?.payload?.containmentRequired, true);
+    assert.equal(signal?.payload?.windowDays, 30);
+  }
+});
+
+test("one fingerprint across changing IPs is elevated without hard containment", () => {
+  const signal = baseSignupSignals(signup, {
+    ...normalContext,
+    sameDeviceAllTime: 2,
+    sameDevice30d: 2,
+    sameDeviceDistinctIps30d: 4,
+  }).find((candidate) => candidate.key === "fingerprint_changing_ip_30d");
+  assert.equal(signal?.points, 50);
+  assert.equal(signal?.payload?.containmentRequired, undefined);
 });
 
 test("custom signup and activity weights drive new scores", () => {
@@ -86,7 +119,7 @@ test("requested signup and provider defaults use the live point values", () => {
   assert.equal(weights.generated_username, 25);
   assert.equal(weights.country_cluster_ten_plus, 25);
   assert.equal(weights.country_cluster_twenty_five_plus, 50);
-  assert.equal(weights.risky_location, 20);
+  assert.equal(weights.risky_location, 15);
   assert.equal(weights.proxycheck_risk_medium, 40);
   assert.equal(weights.proxycheck_risk_high, 80);
 });
@@ -194,13 +227,15 @@ test("welcome reward rush does not match after a fiat deposit", () => {
   ]), false);
 });
 
-test("live behavior uses real deposit, game, and reward programs", () => {
-  assert.equal(activityScoreFor("fiat_deposit"), 20);
+test("live behavior uses bounded trust credits and strong crypto evidence", () => {
+  assert.equal(activityScoreFor("fiat_deposit"), -5);
   assert.equal(activityScoreFor("crypto_deposit"), -20);
-  assert.equal(activityScoreFor("paid_pack_opened"), -5);
-  assert.equal(activityScoreFor("ledger_battle_bet"), -5);
-  assert.equal(activityScoreFor("ledger_battle_sponsorship"), -5);
-  assert.equal(activityScoreFor("ledger_upgrader_bet"), -5);
+  assert.equal(activityScoreFor("paid_pack_opened"), -3);
+  assert.equal(activityScoreFor("ledger_battle_bet"), -3);
+  assert.equal(activityScoreFor("ledger_battle_sponsorship"), -3);
+  assert.equal(activityScoreFor("ledger_upgrader_bet"), -3);
+  assert.equal(activityScoreFor("session_hopping"), 50);
+  assert.equal(activityScoreFor("dormant_device_switch"), 60);
   assert.equal(activityScoreFor("daily_reward_opened"), -10);
   assert.equal(activityScoreFor("ledger_deposit_bonus"), -10);
   assert.equal(activityScoreFor("ledger_rakeback_claim"), -10);

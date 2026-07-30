@@ -131,15 +131,15 @@ export function classifyCreatorRisk(
 export function crossedRiskBand(
   previousScore: number,
   nextScore: number,
-): 40 | 80 | 120 | null {
-  for (const threshold of [120, 80, 40] as const) {
+): 40 | 80 | 100 | null {
+  for (const threshold of [100, 80, 40] as const) {
     if (previousScore < threshold && nextScore >= threshold) return threshold;
   }
   return null;
 }
 
 export function relationshipScoreForBattleCount(battleCount: number): number {
-  return Math.min(120, Math.max(0, Math.trunc(battleCount)) * 40);
+  return Math.min(100, Math.max(0, Math.trunc(battleCount)) * 40);
 }
 
 export function serializeCreatorRisks(
@@ -599,7 +599,7 @@ export class FreeBattleRiskMonitor {
         `,
         [
           candidate.participant_user_id,
-          nextScore >= 120 ? "critical" : "high",
+          nextScore >= 100 ? "critical" : "high",
           eventId,
           {
             ...payload,

@@ -141,3 +141,24 @@ test("an existing rule match is an idempotent no-op", async () => {
   );
   assert.equal(fixture.statements.at(-1), "COMMIT");
 });
+
+test("a hard behavior rule durably reserves signed containment in the same transaction", async () => {
+  const fixture = rulePoolFixture();
+  const score = await persistRuleMatch(fixture.pool, {
+    ...ruleWrite,
+    actionType: "lock_withdrawals",
+    scoreDelta: 100,
+    alert: {
+      ...ruleWrite.alert,
+      trigger: "fresh-third-promo-redemption",
+    },
+  });
+
+  assert.equal(score, 45);
+  assert.equal(
+    fixture.statements.some((statement) =>
+      statement.startsWith("INSERT INTO risk_events")),
+    true,
+  );
+  assert.equal(fixture.statements.at(-1), "COMMIT");
+});

@@ -233,6 +233,28 @@ test("score bands produce the owner-approved monitor and notification policy", (
   assert.ok(!priority.recommendedActions.includes("ban"));
 });
 
+test("risky country alone stays below the no-monitor ceiling", () => {
+  const assessment = assessProfile({
+    signals: normalizeSignupSignals(
+      [{
+        key: "risky_location_monitor",
+        title: "Risky signup location",
+        detail: "CZ",
+        points: 15,
+      }],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  assert.equal(assessment.score, 15);
+  assert.equal(assessment.monitorDurationSeconds, 0);
+  assert.deepEqual(assessment.recommendedActions, []);
+});
+
 test("only deterministic approved email rules recommend an automatic ban", () => {
   const catchall = assessProfile({
     signals: normalizeSignupSignals(

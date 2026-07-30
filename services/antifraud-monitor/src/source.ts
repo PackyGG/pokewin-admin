@@ -131,8 +131,11 @@ export async function signupContext(
 ): Promise<{
   sameIp10m: number;
   sameIp30m: number;
+  sameExactIp30d: number;
   sameIpv6Subnet30m: number;
   sameDeviceAllTime: number;
+  sameDevice30d: number;
+  sameDeviceDistinctIps30d: number;
   sameAffiliate30m: number;
   sameAffiliateIp30m: number;
   sameCountry15m: number;
@@ -142,6 +145,7 @@ export async function signupContext(
       ? source.query<{
           same_ip_10m: string;
           same_ip_30m: string;
+          same_ip_30d: string;
         }>(
           `
             SELECT
@@ -153,10 +157,15 @@ export async function signupContext(
                 WHERE created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 minutes'
                                     AND ($2::timestamptz ${UTC}) + interval '30 minutes'
               )::text AS same_ip_30m
+              ,
+              COUNT(*) FILTER (
+                WHERE created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 days'
+                                    AND ($2::timestamptz ${UTC}) + interval '30 seconds'
+              )::text AS same_ip_30d
             FROM "user"
             WHERE signup_ip = $1
-            AND created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 minutes'
-                                AND ($2::timestamptz ${UTC}) + interval '30 minutes'
+            AND created_at BETWEEN ($2::timestamptz ${UTC}) - interval '30 days'
+                                AND ($2::timestamptz ${UTC}) + interval '30 seconds'
           `,
           [signup.signup_ip, signup.created_at],
         )
@@ -179,9 +188,26 @@ export async function signupContext(
         )
       : Promise.resolve({ rows: [] }),
     signup.visitor_id
-      ? source.query<{ count: string }>(
-          "SELECT COUNT(DISTINCT user_id)::text AS count FROM fingerprints WHERE visitor_id = $1 AND confidence >= 0.9",
-          [signup.visitor_id],
+      ? source.query<{
+          count: string;
+          count_30d: string;
+          distinct_ips_30d: string;
+        }>(
+          `
+            SELECT
+              COUNT(DISTINCT user_id)::text AS count,
+              COUNT(DISTINCT user_id) FILTER (
+                WHERE created_at BETWEEN $2::timestamptz - interval '30 days'
+                                     AND $2::timestamptz + interval '30 seconds'
+              )::text AS count_30d,
+              COUNT(DISTINCT ip) FILTER (
+                WHERE created_at BETWEEN $2::timestamptz - interval '30 days'
+                                     AND $2::timestamptz + interval '30 seconds'
+              )::text AS distinct_ips_30d
+            FROM fingerprints
+            WHERE visitor_id = $1 AND confidence >= 0.9
+          `,
+          [signup.visitor_id, signup.created_at],
         )
       : Promise.resolve({ rows: [] }),
     signup.affiliate_code || signup.country_code
@@ -227,8 +253,13 @@ export async function signupContext(
   return {
     sameIp10m: Number(ip.rows[0]?.same_ip_10m ?? 0),
     sameIp30m: Number(ip.rows[0]?.same_ip_30m ?? 0),
+    sameExactIp30d: Number(ip.rows[0]?.same_ip_30d ?? 0),
     sameIpv6Subnet30m: Number(ipv6.rows[0]?.same_ipv6_30m ?? 0),
     sameDeviceAllTime: Number(device.rows[0]?.count ?? 0),
+    sameDevice30d: Number(device.rows[0]?.count_30d ?? 0),
+    sameDeviceDistinctIps30d: Number(
+      device.rows[0]?.distinct_ips_30d ?? 0,
+    ),
     sameAffiliate30m: Number(
       clusters.rows[0]?.same_affiliate_30m ?? 0,
     ),
@@ -436,12 +467,20 @@ export async function fetchSessionActivity(
         bp.created_at ${UTC},
         jsonb_build_object(
           'battle_id', bp.battle_id::text,
+          'creator_user_id', b.user_id,
+          'creator_has_site_role', (
+            COALESCE(creator.role::text, '') = 'creator'
+            OR 'creator' = ANY(
+              COALESCE(creator.roles::text[], ARRAY[]::text[])
+            )
+          ),
           'sponsorship_percentage', b.sponsorship_percentage,
           'sponsorship_amount_paid', b.sponsorship_amount_paid::text,
           'creator_session_id', bp.source_session_id::text
         )
       FROM battle_participants bp
       JOIN battles b ON b.id = bp.battle_id
+      JOIN "user" creator ON creator.id = b.user_id
       WHERE bp.user_id = $1
         AND (
           b.sponsorship_percentage > 0
@@ -450,6 +489,128 @@ export async function fetchSessionActivity(
         AND bp.created_at >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
         AND bp.created_at <= ($6::timestamptz ${UTC})
+
+      UNION ALL
+
+      SELECT
+        lt.user_id,
+        'minimum_withdrawal_runup',
+        'ledger',
+        lt.id::text || ':minimum-withdrawal-runup',
+        'Quick run-up to minimum withdrawal',
+        'Fresh reward-derived value reached the minimum withdrawal level before a deposit.',
+        lt.created_at ${UTC},
+        jsonb_build_object(
+          'type', lt.type::text,
+          'amount', lt.amount::text,
+          'balance_after', lt.balance_after::text,
+          'minimum_withdrawal_usd', 10
+        )
+      FROM ledger_transactions lt
+      WHERE lt.user_id = $1
+        AND lt.status::text = 'completed'
+        AND lt.type::text IN (
+          'promo_code_redeemed',
+          'balance_reward_claim',
+          'gift_card_redeemed',
+          'creator_tip',
+          'challenge_prize',
+          'race_prize',
+          'affiliate_leaderboard_prize'
+        )
+        AND lt.amount > 0
+        AND lt.balance_after >= 10
+        AND NOT EXISTS (
+          SELECT 1
+          FROM ledger_transactions deposit
+          WHERE deposit.user_id = lt.user_id
+            AND deposit.type::text = 'deposit'
+            AND deposit.status::text = 'completed'
+            AND deposit.created_at <= lt.created_at
+        )
+        AND lt.created_at >=
+          ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+        AND lt.created_at <= ($6::timestamptz ${UTC})
+
+      UNION ALL
+
+      SELECT
+        ses."userId",
+        CASE
+          WHEN account.created_at < ses.created_at - interval '30 days'
+            AND previous.created_at < ses.created_at - interval '30 days'
+            AND COALESCE(previous.user_agent, '') <> COALESCE(ses."userAgent", '')
+            THEN 'dormant_device_switch'
+          ELSE 'session_hopping'
+        END,
+        'session',
+        ses.id,
+        CASE
+          WHEN account.created_at < ses.created_at - interval '30 days'
+            AND previous.created_at < ses.created_at - interval '30 days'
+            AND COALESCE(previous.user_agent, '') <> COALESCE(ses."userAgent", '')
+            THEN 'Dormant account activated on a new device'
+          ELSE 'Rapid session hopping'
+        END,
+        CASE
+          WHEN account.created_at < ses.created_at - interval '30 days'
+            AND previous.created_at < ses.created_at - interval '30 days'
+            AND COALESCE(previous.user_agent, '') <> COALESCE(ses."userAgent", '')
+            THEN 'The account returned after at least 30 inactive days using a different device signature.'
+          ELSE 'The account changed device, exact IP, or country repeatedly within 30 minutes.'
+        END,
+        ses.created_at ${UTC},
+        jsonb_build_object(
+          'device_key', md5(COALESCE(ses."userAgent", 'unknown')),
+          'ip_key', md5(COALESCE(ses."ipAddress", 'unknown')),
+          'country_code', ses.country_code,
+          'device_count_30m', recent.device_count,
+          'ip_count_30m', recent.ip_count,
+          'country_count_30m', recent.country_count,
+          'previous_session_at', previous.created_at,
+          'inactivity_days', FLOOR(
+            EXTRACT(EPOCH FROM (ses.created_at - previous.created_at)) / 86400
+          )
+        )
+      FROM session ses
+      JOIN "user" account ON account.id = ses."userId"
+      JOIN LATERAL (
+        SELECT prior.created_at, prior."userAgent" AS user_agent
+        FROM session prior
+        WHERE prior."userId" = ses."userId"
+          AND (prior.created_at, prior.id) < (ses.created_at, ses.id)
+        ORDER BY prior.created_at DESC, prior.id DESC
+        LIMIT 1
+      ) previous ON true
+      JOIN LATERAL (
+        SELECT
+          COUNT(DISTINCT md5(COALESCE(recent_session."userAgent", 'unknown')))::int
+            AS device_count,
+          COUNT(DISTINCT md5(COALESCE(recent_session."ipAddress", 'unknown')))::int
+            AS ip_count,
+          COUNT(DISTINCT UPPER(recent_session.country_code)) FILTER (
+            WHERE recent_session.country_code IS NOT NULL
+          )::int AS country_count
+        FROM session recent_session
+        WHERE recent_session."userId" = ses."userId"
+          AND recent_session.created_at BETWEEN
+            ses.created_at - interval '30 minutes' AND ses.created_at
+      ) recent ON true
+      WHERE ses."userId" = $1
+        AND (
+          (
+            recent.device_count >= 3
+            AND (recent.ip_count >= 3 OR recent.country_count >= 2)
+          )
+          OR (
+            account.created_at < ses.created_at - interval '30 days'
+            AND previous.created_at < ses.created_at - interval '30 days'
+            AND COALESCE(previous.user_agent, '') <> COALESCE(ses."userAgent", '')
+          )
+        )
+        AND ses.created_at >=
+          ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
+        AND ses.created_at <= ($6::timestamptz ${UTC})
       )
       SELECT *
       FROM candidate_activity

@@ -95,6 +95,7 @@ const HARD_POLICIES: Record<string, string> = {
   exact_ip_third_account_30d: "cluster.exact_ip_third_account",
   fresh_account_third_promo_redemption: "promotion.third_redemption",
   fingerprint_tor: "network.tor",
+  abstract_ip_tor: "network.tor",
   fingerprint_virtual_machine: "device.confirmed_vm",
   fingerprint_event_replayed: "fingerprint.replayed",
   fingerprint_linked_id_mismatch: "fingerprint.identity_mismatch",

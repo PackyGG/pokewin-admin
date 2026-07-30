@@ -17,7 +17,7 @@ export const DEFAULT_SCORE_WEIGHTS = {
   affiliate_cluster_ten_plus: 25,
   country_cluster_ten_plus: 25,
   country_cluster_twenty_five_plus: 50,
-  risky_location: 20,
+  risky_location: 15,
   fingerprint_missing: 15,
   fingerprint_event_replayed: 120,
   fingerprint_ip_mismatch: 90,
@@ -25,11 +25,11 @@ export const DEFAULT_SCORE_WEIGHTS = {
   fingerprint_low_confidence: 10,
   fingerprint_bad_bot: 80,
   fingerprint_vpn: 20,
-  fingerprint_proxy: 35,
+  fingerprint_proxy: 55,
   fingerprint_tor: 65,
   fingerprint_ip_attack_source: 80,
   fingerprint_ip_email_spam: 35,
-  fingerprint_datacenter: 25,
+  fingerprint_datacenter: 35,
   fingerprint_incognito: 10,
   fingerprint_tampering: 70,
   fingerprint_virtual_machine: 25,
@@ -56,9 +56,9 @@ export const DEFAULT_SCORE_WEIGHTS = {
   proxycheck_risk_medium: 40,
   proxycheck_risk_high: 80,
   abstract_ip_vpn: 20,
-  abstract_ip_proxy: 35,
+  abstract_ip_proxy: 55,
   abstract_ip_tor: 65,
-  abstract_ip_hosting: 20,
+  abstract_ip_hosting: 35,
   abstract_ip_relay: 25,
   abstract_ip_abuse: 80,
   abstract_ip_country_mismatch: 30,
@@ -77,11 +77,11 @@ export const DEFAULT_SCORE_WEIGHTS = {
   opportify_risk_high: 60,
   opportify_risk_highest: 100,
   crypto_deposit: -20,
-  fiat_deposit: 20,
-  paid_pack_opened: -5,
-  ledger_battle_bet: -5,
-  ledger_battle_sponsorship: -5,
-  ledger_upgrader_bet: -5,
+  fiat_deposit: -5,
+  paid_pack_opened: -3,
+  ledger_battle_bet: -3,
+  ledger_battle_sponsorship: -3,
+  ledger_upgrader_bet: -3,
   welcome_reward_opened: 0,
   level_one_reward_opened: 0,
   daily_reward_opened: -10,
@@ -93,6 +93,8 @@ export const DEFAULT_SCORE_WEIGHTS = {
   ledger_challenge_prize: -10,
   ledger_creator_tip: 0,
   creator_sponsored_battle_received: 0,
+  session_hopping: 50,
+  dormant_device_switch: 60,
 } as const;
 
 export type ScoreWeightKey = keyof typeof DEFAULT_SCORE_WEIGHTS;
@@ -815,6 +817,20 @@ export function activityScoreDefinitions(
         option(weights, "creator_sponsored_battle_received", "Recorded"),
       ],
     },
+    {
+      key: "session_hopping",
+      title: "Session hopping",
+      description:
+        "Several device signatures plus exact IP or country changes occur within 30 minutes.",
+      options: [option(weights, "session_hopping", "Recorded")],
+    },
+    {
+      key: "dormant_device_switch",
+      title: "Dormant activation on new device",
+      description:
+        "An account returns after at least 30 inactive days on a different device signature.",
+      options: [option(weights, "dormant_device_switch", "Recorded")],
+    },
   ];
 }
 
@@ -852,6 +868,8 @@ export function activityScoreFor(
           ledger_challenge_prize: true,
           ledger_creator_tip: true,
           creator_sponsored_battle_received: true,
+          session_hopping: true,
+          dormant_device_switch: true,
         },
         eventType,
       )

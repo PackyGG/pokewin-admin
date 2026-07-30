@@ -39,6 +39,32 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_network_device_id
   ON fingerprints (visitor_id, user_id)
   WHERE confidence >= 0.9;
 
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_device_30d_idx
+  ON fingerprints (visitor_id, created_at DESC, user_id)
+  INCLUDE (ip)
+  WHERE confidence >= 0.9;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_signup_affiliate_time_idx
+  ON "user" (LOWER(affiliate_code), created_at)
+  INCLUDE (signup_ip)
+  WHERE affiliate_code IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_signup_country_time_idx
+  ON "user" (UPPER(country_code), created_at)
+  WHERE country_code IS NOT NULL;
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_session_user_time_idx
+  ON session ("userId", created_at DESC, id)
+  INCLUDE ("ipAddress", "userAgent", country_code);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_session_behavior_cursor_idx
+  ON session (created_at, id)
+  INCLUDE ("userId", "ipAddress", "userAgent", country_code);
+
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_battle_participant_cursor_idx
+  ON battle_participants (created_at, id)
+  INCLUDE (battle_id, game_session_id, user_id, bot_id, source_session_id);
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_audit_register_latest_idx
   ON audit_events (user_id, event_type, created_at DESC)
   INCLUDE (user_agent);

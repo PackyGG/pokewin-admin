@@ -195,6 +195,10 @@ export class IngestDelivery {
               re.event_type = 'abstract_email_catchall'
               AND re.dashboard_delivered_at IS NULL
             )
+            OR (
+              re.event_type = 'behavioral_withdrawal_containment'
+              AND re.dashboard_delivered_at IS NULL
+            )
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,

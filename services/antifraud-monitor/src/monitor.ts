@@ -29,6 +29,7 @@ import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { captureIdentifierBlocklistMatches } from "./identifier-blocklists.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
 import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
+import { FreshBehaviorMonitor } from "./fresh-behavior.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { drainOutbox } from "./outbox.js";
@@ -101,7 +102,7 @@ type SequenceRule = {
 
 type RuleSession = Pick<
   ActiveSession,
-  "id" | "case_id" | "user_id" | "current_score"
+  "id" | "case_id" | "user_id" | "initial_score" | "current_score"
 >;
 
 type PreparedSignup = {
@@ -251,10 +252,10 @@ export async function persistRuleMatch(
     const sessionUpdate = await client.query<{ current_score: number }>(
       `
         UPDATE monitor_sessions
-        SET current_score=GREATEST(0,current_score+$2),
+        SET current_score=LEAST(100,GREATEST(0,current_score+$2)),
             peak_score=GREATEST(
               peak_score,
-              GREATEST(0,current_score+$2)
+              LEAST(100,GREATEST(0,current_score+$2))
             )
         WHERE id=$1
         RETURNING current_score
@@ -272,7 +273,8 @@ export async function persistRuleMatch(
         SET score=$2, peak_score=GREATEST(peak_score,$2),
             severity=$3,
             status=CASE
-              WHEN $4 = 'manual_review' AND status IN ('monitoring','escalated')
+              WHEN $4 IN ('manual_review','lock_withdrawals')
+                AND status IN ('monitoring','escalated')
                 THEN 'in_review'
               ELSE status
             END,
@@ -305,6 +307,38 @@ export async function persistRuleMatch(
         },
       ],
     );
+    if (input.actionType === "lock_withdrawals") {
+      await client.query(
+        `
+          INSERT INTO risk_events (
+            case_id, session_id, user_id, event_type, source, source_ref,
+            score_delta, score_after, title, detail, payload, occurred_at
+          ) VALUES (
+            $1,$2,$3,'behavioral_withdrawal_containment',
+            'rule_matches',$4,0,$5,
+            'Behavioral withdrawal containment',
+            'A specific fresh-account behavior rule requires an idempotent withdrawal and item lock.',
+            $6::jsonb,now()
+          )
+          ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+          DO NOTHING
+        `,
+        [
+          input.caseId,
+          input.sessionId,
+          input.alert.userId,
+          `rule-match:${match.rows[0]!.id}`,
+          nextScore,
+          JSON.stringify({
+            containmentRequired: true,
+            modelVersion: "behavior-v1",
+            reasonCode: input.alert.trigger ?? "fresh_account_behavior",
+            ruleId: input.ruleId,
+            evidence: input.evidence,
+          }),
+        ],
+      );
+    }
 
     await client.query("COMMIT");
     return nextScore;
@@ -326,6 +360,7 @@ const SIGNUP_CONCURRENCY = 4;
 const FAILED_SIGNUP_REPLAY_BATCH_SIZE = 20;
 const FAILED_SIGNUP_REPLAY_DELAY_SECONDS = 60;
 const FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS = 5;
+const CONTEXT_RISK_COUNTRIES = new Set(["CZ", "SK", "SI", "IN"]);
 
 export class MonitorEngine {
   private running = false;
@@ -337,6 +372,7 @@ export class MonitorEngine {
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
   private readonly freeBattleRisk: FreeBattleRiskMonitor;
+  private readonly freshBehavior: FreshBehaviorMonitor;
   readonly riskyLocations: RiskyLocationStore;
   private readonly health = new PollerHealth();
 
@@ -353,6 +389,7 @@ export class MonitorEngine {
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
     this.freeBattleRisk = new FreeBattleRiskMonitor(config, db, log);
+    this.freshBehavior = new FreshBehaviorMonitor(db, log);
     this.riskyLocations = new RiskyLocationStore(db);
   }
 
@@ -361,6 +398,7 @@ export class MonitorEngine {
     await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
     await this.freeBattleRisk.ensureCursor();
+    await this.freshBehavior.ensureCursor();
     await this.tick();
     this.timer = setInterval(
       () => void this.tick(),
@@ -531,6 +569,9 @@ export class MonitorEngine {
       );
       await this.runPhase("free-battle-risk", () =>
         this.freeBattleRisk.process(),
+      );
+      await this.runPhase("fresh-behavior", () =>
+        this.freshBehavior.process(),
       );
       const activitiesProcessed = await this.runPhase("activity", () =>
         this.scanActiveSessions(),
@@ -1000,9 +1041,13 @@ export class MonitorEngine {
       weights,
       identifierBlocklistSignals,
     } = prepared;
-    const locationPolicy = await this.riskyLocations.forCountry(
-      signup.country_code,
-    );
+    const countryCode = signup.country_code?.trim().toUpperCase() ?? "";
+    const requiresContextLocationMonitor =
+      CONTEXT_RISK_COUNTRIES.has(countryCode);
+    const locationPolicy =
+      requiresContextLocationMonitor
+        ? { countryCode, monitorDurationSeconds: 900 }
+        : await this.riskyLocations.forCountry(signup.country_code);
     const signals = [
       ...baseSignupSignals(signup, context, weights),
       ...identifierBlocklistSignals,
@@ -1207,6 +1252,43 @@ export class MonitorEngine {
           ],
         );
       }
+      if (
+        opened
+        && assessment.recommendedActions.includes("lock_withdrawals")
+      ) {
+        await client.query(
+          `
+            INSERT INTO risk_events (
+              case_id, session_id, user_id, event_type, source, source_ref,
+              score_delta, score_after, title, detail, payload, occurred_at
+            ) VALUES (
+              $1,$2,$3,'behavioral_withdrawal_containment',
+              'profile_policy',$4,0,$5,
+              'Behavioral withdrawal containment',
+              'A specific versioned fraud policy requires an idempotent withdrawal and item lock.',
+              $6::jsonb,$7
+            )
+            ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+            DO NOTHING
+          `,
+          [
+            opened.caseId,
+            opened.sessionId,
+            signup.id,
+            `${signup.id}:${assessment.version}:withdrawal-containment`,
+            score,
+            JSON.stringify({
+              containmentRequired: true,
+              modelVersion: assessment.version,
+              policyMatches: assessment.policyMatches,
+              actions: assessment.recommendedActions,
+              reasonCode:
+                assessment.policyMatches[0] ?? "score_priority_policy",
+            }),
+            signup.created_at,
+          ],
+        );
+      }
       if (catchallSignal) {
         if (!opened) {
           throw new Error("Catch-all signup did not open a case");
@@ -1288,6 +1370,7 @@ export class MonitorEngine {
       case_id: opened.caseId,
       user_id: signup.id,
       current_score: score,
+      initial_score: score,
     });
   }
 
@@ -2189,7 +2272,8 @@ export class MonitorEngine {
     const result = await this.db.antifraud.query<ActiveSession>(
       `
         SELECT
-          ms.id, ms.case_id, ms.user_id, ms.current_score, ms.started_at, ms.ends_at,
+          ms.id, ms.case_id, ms.user_id, ms.initial_score, ms.current_score,
+          ms.started_at, ms.ends_at,
           COALESCE(mac.occurred_at, ms.started_at - interval '2 seconds') AS activity_cursor_at,
           COALESCE(mac.source, '') AS activity_cursor_source,
           COALESCE(mac.source_ref, '') AS activity_cursor_ref
@@ -2268,6 +2352,7 @@ export class MonitorEngine {
       scoreAfter: number;
     }> = [];
     let runningScore = session.current_score;
+    const trustFloor = Math.max(0, session.initial_score - 30);
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
@@ -2280,7 +2365,8 @@ export class MonitorEngine {
               score_delta, score_after, title, detail, payload, occurred_at
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7::int,
-              GREATEST(0, $8::int + $7::int),$9,$10,$11,$12
+              LEAST(100,GREATEST($13::int, $8::int + $7::int)),
+              $9,$10,$11,$12
             )
             ON CONFLICT (source, source_ref)
               WHERE source_ref IS NOT NULL DO NOTHING
@@ -2299,6 +2385,7 @@ export class MonitorEngine {
             activity.detail,
             activity.payload,
             activity.occurred_at,
+            trustFloor,
           ],
         );
         await this.advanceActivityCursor(client, session.id, activity);
@@ -2398,7 +2485,7 @@ export class MonitorEngine {
     const result = await this.db.antifraud.query<SequenceRule>(
       `
         SELECT id, key, name, sequence, exclude_before, window_seconds,
-               score_delta, 'manual_review'::text AS action_type
+               score_delta, action_type
         FROM rule_definitions
         WHERE enabled = true AND trigger = 'sequence'
         ORDER BY priority, key
@@ -2410,6 +2497,15 @@ export class MonitorEngine {
 
   private async evaluateRules(session: RuleSession): Promise<void> {
     const rules = await this.sequenceRules();
+    const creator = await this.db.antifraud.query<{ is_creator: boolean }>(
+      `
+        SELECT COALESCE(is_creator, false) AS is_creator
+        FROM signup_identity_snapshots
+        WHERE user_id = $1
+      `,
+      [session.user_id],
+    );
+    const isCreator = creator.rows[0]?.is_creator === true;
 
     const events = await this.db.antifraud.query<{
       event_type: string;
@@ -2425,6 +2521,15 @@ export class MonitorEngine {
     );
 
     for (const rule of rules) {
+      if (
+        isCreator
+        && (
+          rule.key === "tip-before-deposit"
+          || rule.key === "sponsored-battle-before-deposit"
+        )
+      ) {
+        continue;
+      }
       if (!sequenceMatches(
         events.rows,
         rule.sequence,

@@ -74,13 +74,13 @@ test("Abstract IP Intelligence scores security and country mismatch evidence", (
     result.signals.map((signal) => [signal.key, signal.points]),
     [
       ["abstract_ip_vpn", 20],
-      ["abstract_ip_proxy", 35],
-      ["abstract_ip_hosting", 20],
+      ["abstract_ip_proxy", 55],
+      ["abstract_ip_hosting", 35],
       ["abstract_ip_abuse", 80],
       ["abstract_ip_country_mismatch", 30],
     ],
   );
-  assert.equal(result.score, 185);
+  assert.equal(result.score, 220);
   assert.equal(result.signals[0]?.payload?.asn, 64500);
 });
 
@@ -876,7 +876,7 @@ test("Fingerprint Pro Plus browser intelligence uses detailed evidence", () => {
 
   assert.equal(result.score, 40);
   assert.equal(signals.get("fingerprint_vpn")?.points, 15);
-  assert.equal(signals.get("fingerprint_proxy")?.points, 18);
+  assert.equal(signals.get("fingerprint_proxy")?.points, 28);
   assert.equal(signals.get("fingerprint_tampering")?.points, 53);
   assert.equal(
     signals.get("fingerprint_ip_attack_source")?.points,

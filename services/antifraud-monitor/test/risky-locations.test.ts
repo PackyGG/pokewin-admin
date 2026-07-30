@@ -42,7 +42,7 @@ test("risky location writes require the admin token", () => {
   );
 });
 
-test("risky location adds risk and only extends an eligible score-based session", async () => {
+test("context-risk countries add bounded risk and only extend eligible monitors", async () => {
   const [migration, monitor] = await Promise.all([
     readFile(
       new URL("../migrations/018_risky_locations.sql", import.meta.url),
@@ -51,8 +51,10 @@ test("risky location adds risk and only extends an eligible score-based session"
     readFile(new URL("../src/monitor.ts", import.meta.url), "utf8"),
   ]);
   assert.match(migration, /BETWEEN 60 AND 3600/);
+  assert.match(monitor, /CONTEXT_RISK_COUNTRIES\.has\(countryCode\)/);
+  assert.match(monitor, /\{ countryCode, monitorDurationSeconds: 900 \}/);
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
-  assert.doesNotMatch(monitor, /locationPolicy \|\|/);
+  assert.doesNotMatch(monitor, /locationPolicy (?:!== null|\|\|)/);
   assert.match(monitor, /Math\.max\(/);
   assert.match(monitor, /points: locationPolicy\.riskWeight/);
   assert.match(monitor, /durationSeconds: opened\.durationSeconds/);

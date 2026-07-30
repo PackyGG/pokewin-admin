@@ -89,6 +89,7 @@ export type ActiveSession = {
   id: string;
   case_id: string;
   user_id: string;
+  initial_score: number;
   current_score: number;
   started_at: Date;
   ends_at: Date;

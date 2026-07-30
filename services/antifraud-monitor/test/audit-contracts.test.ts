@@ -146,6 +146,7 @@ const session: ActiveSession = {
   id: "session-1",
   case_id: "case-1",
   user_id: "user-1",
+  initial_score: 10,
   current_score: 10,
   started_at: new Date("2026-01-01T00:00:00.000Z"),
   ends_at: new Date("2026-01-01T00:03:00.000Z"),
@@ -552,6 +553,13 @@ test("editable score migration seeds every runtime weight", async () => {
     await readFile(
       new URL(
         "../migrations/036_opportify_signup_intelligence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    await readFile(
+      new URL(
+        "../migrations/041_fresh_account_behavior_policy.sql",
         import.meta.url,
       ),
       "utf8",

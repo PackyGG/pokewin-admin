@@ -68,16 +68,16 @@ test("risk events emit only when evidence crosses a review band", () => {
   assert.equal(crossedRiskBand(0, 40), 40);
   assert.equal(crossedRiskBand(0, 80), 80);
   assert.equal(crossedRiskBand(40, 80), 80);
-  assert.equal(crossedRiskBand(80, 120), 120);
-  assert.equal(crossedRiskBand(120, 120), null);
+  assert.equal(crossedRiskBand(80, 100), 100);
+  assert.equal(crossedRiskBand(100, 100), null);
 });
 
 test("two qualifying battles reach automatic containment regardless of creator count", () => {
   assert.equal(relationshipScoreForBattleCount(0), 0);
   assert.equal(relationshipScoreForBattleCount(1), 40);
   assert.equal(relationshipScoreForBattleCount(2), 80);
-  assert.equal(relationshipScoreForBattleCount(3), 120);
-  assert.equal(relationshipScoreForBattleCount(20), 120);
+  assert.equal(relationshipScoreForBattleCount(3), 100);
+  assert.equal(relationshipScoreForBattleCount(20), 100);
 });
 
 test("creator cursor input is serialized as JSON for the jsonb recordset", () => {

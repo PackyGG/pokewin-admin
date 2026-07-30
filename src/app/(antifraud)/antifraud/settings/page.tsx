@@ -155,7 +155,7 @@ async function IntegrationSection() {
       | "opportify",
     fallback: string,
   ) => {
-    const contract = runtimeData?.providerContracts[provider];
+    const contract = runtimeData?.providerContracts?.[provider];
     return contract
       ? `${contract.model} · ${contract.version} · ${contract.method} ${contract.endpoint} · required input: ${contract.requiredDatum.replaceAll("_", " ")}. Each compatible signup check runs independently.`
       : fallback;

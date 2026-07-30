@@ -52,7 +52,8 @@ import {
  *
  * Normally writes only the ADMIN DB. The dedicated
  * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
- * `signup_policy_recommendation`, and `risky_free_battle_containment`
+ * `signup_policy_recommendation`, `risky_free_battle_containment`, and
+ * `behavioral_withdrawal_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * applies deterministic MAIN containment before acknowledgement. Active
@@ -591,6 +592,79 @@ async function containIdentifierBlocklistAccount(
   return locked.rows.length > 0 ? "locked" : "skipped";
 }
 
+const BEHAVIORAL_CONTAINMENT_REASONS = new Set([
+  "cluster.fingerprint_third_account",
+  "cluster.exact_ip_third_account",
+  "promotion.third_redemption",
+  "network.tor",
+  "device.confirmed_vm",
+  "fingerprint.replayed",
+  "fingerprint.identity_mismatch",
+  "fingerprint.automation",
+  "funds.restricted_downstream_active_use",
+  "fresh-third-promo-redemption",
+  "fresh_creator_tip",
+  "fresh_sponsored_battle",
+  "score_priority_policy",
+]);
+
+async function containBehavioralRiskAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const userId = signal.userId;
+  const reasonCode =
+    typeof signal.payload?.reasonCode === "string"
+      ? signal.payload.reasonCode
+      : null;
+  if (
+    !userId ||
+    signal.riskScore == null ||
+    signal.riskScore < 70 ||
+    signal.riskScore > 100 ||
+    signal.payload?.containmentRequired !== true ||
+    !reasonCode ||
+    !BEHAVIORAL_CONTAINMENT_REASONS.has(reasonCode)
+  ) {
+    console.error(
+      "[antifraud-ingest] skipping invalid behavioral containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const reason = (
+    `Automatic fraud lock: behavioral policy ${reasonCode} ` +
+    `matched at risk ${signal.riskScore}/100`
+  ).slice(0, 500);
+  const db = getProdPrimaryDrizzleDb();
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id, user_id, locked_withdrawals_crypto, locked_withdrawals_items,
+      locked_withdrawals_at, locked_withdrawals_by,
+      locked_withdrawals_reason, created_at, updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()}, u.id, ARRAY['all']::text[], TRUE,
+      NOW(), NULL, ${reason}, NOW(), NOW()
+    FROM "user" u
+    WHERE u.id = ${userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  return locked.rows.length > 0 ? "locked" : "skipped";
+}
+
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** Containment was permanently un-appliable and acked instead of retried. */
@@ -654,7 +728,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       signal.kind === "fiat_blacklisted_email_domain" ||
       signal.kind === "abstract_email_catchall" ||
       signal.kind === "signup_policy_recommendation" ||
-      signal.kind === "risky_free_battle_containment"
+      signal.kind === "risky_free_battle_containment" ||
+      signal.kind === "behavioral_withdrawal_containment"
     )
   ) {
     // Containment lock AFTER the dedupe check, inside the transaction:
@@ -675,7 +750,9 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
         ? (await containAbstractCatchallAccount(signal)) === "skipped"
         : signal.kind === "signup_policy_recommendation"
           ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
-          : (await containRiskyFreeBattleAccount(signal)) === "skipped";
+        : signal.kind === "risky_free_battle_containment"
+          ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
+          : (await containBehavioralRiskAccount(signal)) === "skipped";
   }
 
   // Idempotency: the backend's own event id. A retried delivery hits the

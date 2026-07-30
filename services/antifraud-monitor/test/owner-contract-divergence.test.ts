@@ -117,14 +117,16 @@ test("identity-provider evidence is explicit; unified relationship evidence rema
   assert.doesNotMatch(network, /downstream_value|fund_movement/);
 });
 
-test("OWNER DIVERGENCE: country context and hard-signal actions still score instead of only classify", async () => {
-  const riskyMigration = await source(
-    "../migrations/030_risky_location_score_tuning.sql",
+test("country context is bounded below monitoring and hard policies have signed containment", async () => {
+  const behaviorMigration = await source(
+    "../migrations/041_fresh_account_behavior_policy.sql",
   );
   const weights = await source("../src/score-catalog.ts");
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
 
-  assert.match(riskyMigration, /SET points = 20/);
+  assert.match(behaviorMigration, /'risky_location', 15/);
+  assert.match(weights, /risky_location: 15/);
+  assert.match(ingest, /behavioral_withdrawal_containment/);
   for (const key of [
     "fingerprint_bad_bot",
     "fingerprint_tampering",
@@ -134,28 +136,26 @@ test("OWNER DIVERGENCE: country context and hard-signal actions still score inst
   ]) {
     assert.match(weights, new RegExp(`${key}: \\d+`));
   }
-  assert.doesNotMatch(
-    ingest,
-    /fingerprint_(?:bad_bot|tampering|event_replayed|ip_mismatch|linked_id_mismatch)/,
-    "hard Fingerprint signals have no dedicated containment command",
-  );
+  assert.match(ingest, /fingerprint\.automation/);
+  assert.match(ingest, /fingerprint\.replayed/);
 });
 
-test("OWNER DIVERGENCE: fresh-account promo, tip, and sponsorship actions are incomplete", async () => {
+test("fresh-account promo, tip, and sponsorship actions are explicit", async () => {
   const tuning = await source(
-    "../migrations/014_signup_live_behavior_tuning.sql",
+    "../migrations/041_fresh_account_behavior_policy.sql",
   );
-  const catalog = await source("../src/event-catalog.ts");
-  const freeBattle = await source("../src/free-battle-risk.ts");
+  const monitor = await source("../src/monitor.ts");
+  const sourceReader = await source("../src/source.ts");
 
-  assert.match(catalog, /ledger_promo_code_redeemed/);
-  assert.doesNotMatch(tuning, /promo/);
-  assert.match(tuning, /'tip-before-deposit'[\s\S]*?40/);
-  assert.match(tuning, /'sponsored-battle-before-deposit'[\s\S]*?40/);
-  assert.match(
-    freeBattle,
-    /relationshipScoreForBattleCount[\s\S]*?40[\s\S]*?80[\s\S]*?120/,
-  );
+  assert.match(tuning, /fresh-third-promo-redemption/);
+  assert.match(tuning, /ledger_promo_code_redeemed","ledger_promo_code_redeemed","ledger_promo_code_redeemed/);
+  assert.match(tuning, /'lock_withdrawals'/);
+  assert.match(tuning, /SET score_delta = 70/);
+  assert.match(tuning, /tip-before-deposit/);
+  assert.match(tuning, /sponsored-battle-before-deposit/);
+  assert.match(sourceReader, /creator_has_site_role/);
+  assert.match(sourceReader, /minimum_withdrawal_runup/);
+  assert.match(monitor, /expected_creator_activity|isCreator/);
 });
 
 test("KYC can only be requested from an eligible locked-account review", async () => {

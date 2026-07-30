@@ -14,8 +14,11 @@ import {
 export type SignupContext = {
   sameIp10m: number;
   sameIp30m: number;
+  sameExactIp30d: number;
   sameIpv6Subnet30m: number;
   sameDeviceAllTime: number;
+  sameDevice30d: number;
+  sameDeviceDistinctIps30d: number;
   sameAffiliate30m: number;
   sameAffiliateIp30m: number;
   sameCountry15m: number;
@@ -65,6 +68,40 @@ export function baseSignupSignals(
           : context.sameDeviceAllTime >= 3
             ? SCORE_POINTS.sharedDevice.threePlusAccounts
             : SCORE_POINTS.sharedDevice.twoAccounts,
+  });
+  add(context.sameDevice30d >= 3, {
+    key: "fingerprint_third_account_30d",
+    title: "Third account on exact fingerprint",
+    detail: `${context.sameDevice30d} accounts used this exact high-confidence fingerprint within 30 days.`,
+    points: 100,
+    payload: {
+      accountCount: context.sameDevice30d,
+      distinctIpCount: context.sameDeviceDistinctIps30d,
+      windowDays: 30,
+      containmentRequired: true,
+    },
+  });
+  add(context.sameDevice30d < 3 && context.sameDeviceDistinctIps30d >= 3, {
+    key: "fingerprint_changing_ip_30d",
+    title: "Fingerprint reused across changing IPs",
+    detail: `This fingerprint appeared from ${context.sameDeviceDistinctIps30d} exact IPs within 30 days.`,
+    points: 50,
+    payload: {
+      accountCount: context.sameDevice30d,
+      distinctIpCount: context.sameDeviceDistinctIps30d,
+      windowDays: 30,
+    },
+  });
+  add(context.sameExactIp30d >= 3, {
+    key: "exact_ip_third_account_30d",
+    title: "Third account on exact IP",
+    detail: `${context.sameExactIp30d} accounts signed up from this exact IPv4 or IPv6 address within 30 days.`,
+    points: 100,
+    payload: {
+      accountCount: context.sameExactIp30d,
+      windowDays: 30,
+      containmentRequired: true,
+    },
   });
   add(context.sameIp10m >= 3, {
     key: "ip_velocity_10m",
