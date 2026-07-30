@@ -3,10 +3,8 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import {
-  APPROVED_DISCORD_CATEGORIES,
-  DISCORD_BOUNDARY_MARKERS,
-} from "./antifraud-policy";
+import { DISCORD_BOUNDARY_MARKERS } from "./antifraud-policy";
+import { approvedCategoryIds } from "./policy-sql";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 
@@ -91,9 +89,7 @@ export async function queueDiscordChannelCreation(input: {
         AND parent.position < boundary_bottom.position
         AND boundary_top.position < boundary_bottom.position
         AND parent.channel_id IN (
-          ${APPROVED_DISCORD_CATEGORIES.accounts},
-          ${APPROVED_DISCORD_CATEGORIES.transactions},
-          ${APPROVED_DISCORD_CATEGORIES.errors}
+          ${approvedCategoryIds()}
         )
       LIMIT 1
       FOR UPDATE

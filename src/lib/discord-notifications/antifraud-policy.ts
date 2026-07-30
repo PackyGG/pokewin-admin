@@ -6,6 +6,7 @@ export const DISCORD_BOUNDARY_MARKERS = {
 export const APPROVED_DISCORD_CATEGORIES = {
   accounts: "1532207307683795026",
   transactions: "1532207461077876766",
+  kyc: "1532297417339174922",
   errors: "1532216500444856360",
   kyc: "1532297417339174922",
 } as const;
@@ -13,6 +14,22 @@ export const APPROVED_DISCORD_CATEGORIES = {
 export const APPROVED_DISCORD_CATEGORY_IDS = Object.values(
   APPROVED_DISCORD_CATEGORIES,
 );
+
+/**
+ * Categories that never ping anyone. Errors and KYC are read-when-you-work-it
+ * feeds, so their alerts post silently instead of tagging the team.
+ */
+export const SILENT_DISCORD_CATEGORY_IDS = [
+  APPROVED_DISCORD_CATEGORIES.errors,
+  APPROVED_DISCORD_CATEGORIES.kyc,
+] as const;
+
+export function isSilentDiscordCategory(categoryId: string | null): boolean {
+  return (
+    categoryId !== null &&
+    (SILENT_DISCORD_CATEGORY_IDS as readonly string[]).includes(categoryId)
+  );
+}
 
 export const PLANNED_DISCORD_CHANNELS = {
   accounts: [

@@ -4,10 +4,10 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
-  APPROVED_DISCORD_CATEGORIES,
   DISCORD_BOUNDARY_MARKERS,
   assertApprovedCategoryBoundary,
 } from "./antifraud-policy";
+import { approvedCategoryIds, silentCategoryIds } from "./policy-sql";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -169,7 +169,7 @@ export async function enqueueDiscordEvent(input: {
   const result = await adminDrizzle.execute<{ inserted: number; eligible: number }>(
     sql`
       WITH eligible AS (
-        SELECT route.channel_id
+        SELECT route.channel_id, channel.parent_id
         FROM discord_notification_routes AS route
         JOIN discord_notification_events AS event
           ON event.event_key = route.event_key
@@ -182,9 +182,7 @@ export async function enqueueDiscordEvent(input: {
          AND channel.can_send = true
          AND channel.can_embed = true
          AND channel.parent_id IN (
-           ${APPROVED_DISCORD_CATEGORIES.accounts},
-           ${APPROVED_DISCORD_CATEGORIES.transactions},
-           ${APPROVED_DISCORD_CATEGORIES.errors}
+           ${approvedCategoryIds()}
          )
         JOIN discord_notification_channels AS parent
           ON parent.guild_id = channel.guild_id
@@ -211,7 +209,13 @@ export async function enqueueDiscordEvent(input: {
           guild_id, event_key, channel_id, dedupe_key, content, embed, components
         )
         SELECT
-          ${guildId}, ${key}, eligible.channel_id, ${dedupeKey}, ${content},
+          ${guildId}, ${key}, eligible.channel_id, ${dedupeKey},
+          -- Errors and KYC channels post silently: their mention content is
+          -- dropped here so no routing change can reintroduce a ping.
+          CASE
+            WHEN eligible.parent_id IN (${silentCategoryIds()}) THEN NULL
+            ELSE ${content}::text
+          END,
           ${embedJson}::jsonb, ${componentsJson}::jsonb
         FROM eligible
         ON CONFLICT (guild_id, event_key, dedupe_key, channel_id) DO NOTHING

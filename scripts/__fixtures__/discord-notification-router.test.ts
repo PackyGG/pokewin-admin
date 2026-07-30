@@ -128,3 +128,15 @@ test("monitor enqueue is bounded, signed, replay-safe, and webhook-free", () => 
   assert.match(sender, /\/api\/antifraud\/discord-events/);
   assert.doesNotMatch(monitorConfig, /DISCORD_WEBHOOK_URL/);
 });
+
+test("errors and KYC channels post without tagging anyone", () => {
+  const policy = read("src/lib/discord-notifications/antifraud-policy.ts");
+  const router = read("src/lib/discord-notifications/router.ts");
+
+  assert.match(policy, /SILENT_DISCORD_CATEGORY_IDS/);
+  assert.match(policy, /APPROVED_DISCORD_CATEGORIES\.errors/);
+  assert.match(policy, /APPROVED_DISCORD_CATEGORIES\.kyc/);
+  // The mention content is dropped at enqueue, so no routing change can
+  // reintroduce a ping in those categories.
+  assert.match(router, /eligible\.parent_id IN \(\$\{silentCategoryIds\(\)\}\) THEN NULL/);
+});

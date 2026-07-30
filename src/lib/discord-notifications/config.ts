@@ -4,10 +4,8 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import type { DiscordChannelCreationRequest } from "./channel-operations";
-import {
-  APPROVED_DISCORD_CATEGORIES,
-  DISCORD_BOUNDARY_MARKERS,
-} from "./antifraud-policy";
+import { DISCORD_BOUNDARY_MARKERS } from "./antifraud-policy";
+import { approvedCategoryIds } from "./policy-sql";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -339,9 +337,7 @@ export async function upsertDiscordNotificationRoute(input: {
      AND channel.can_send = true
      AND channel.can_embed = true
      AND channel.parent_id IN (
-       ${APPROVED_DISCORD_CATEGORIES.accounts},
-       ${APPROVED_DISCORD_CATEGORIES.transactions},
-       ${APPROVED_DISCORD_CATEGORIES.errors}
+       ${approvedCategoryIds()}
      )
     JOIN discord_notification_channels AS parent
       ON parent.guild_id = channel.guild_id
@@ -422,9 +418,7 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
         AND channel.channel_id = ${channelId}
         AND channel.available = true
         AND channel.parent_id IN (
-          ${APPROVED_DISCORD_CATEGORIES.accounts},
-          ${APPROVED_DISCORD_CATEGORIES.transactions},
-          ${APPROVED_DISCORD_CATEGORIES.errors}
+          ${approvedCategoryIds()}
         )
         AND boundary_top.position < boundary_bottom.position
         AND parent.position > boundary_top.position
@@ -472,9 +466,7 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
          AND channel.can_send = true
          AND channel.can_embed = true
          AND channel.parent_id IN (
-           ${APPROVED_DISCORD_CATEGORIES.accounts},
-           ${APPROVED_DISCORD_CATEGORIES.transactions},
-           ${APPROVED_DISCORD_CATEGORIES.errors}
+           ${approvedCategoryIds()}
          )
         JOIN discord_notification_channels AS parent
           ON parent.guild_id = channel.guild_id
