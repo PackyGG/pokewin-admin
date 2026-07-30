@@ -29,6 +29,10 @@ import {
 import { canManageAntifraud } from "@/lib/antifraud/access";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { getFiatStaffCheckedWithdrawalUserIds } from "@/lib/queries/fiat-withdrawal-review";
+import {
+  getWhopRefundStates,
+  type WhopRefundState,
+} from "@/lib/queries/whop-refunds";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
@@ -238,6 +242,17 @@ async function FiatContent({
     3_000,
   );
   const checkedWithdrawalUsers = new Set(checkedWithdrawalUserIds);
+  const { data: refundStates } = await safeQuery(
+    () =>
+      getWhopRefundStates(
+        result.data.flatMap((item) =>
+          item.provider_payment_id ? [item.provider_payment_id] : [],
+        ),
+      ),
+    new Map<string, WhopRefundState>(),
+    "antifraud.fiatDeposits.refundStates",
+    3_000,
+  );
   return (
     <div className="space-y-4">
       {result.summary && <Summary summary={result.summary} />}
@@ -254,6 +269,11 @@ async function FiatContent({
               item={item}
               canManageKyc={canManageKyc}
               staffChecked={checkedWithdrawalUsers.has(item.user_id)}
+              refundState={
+                item.provider_payment_id
+                  ? refundStates.get(item.provider_payment_id)
+                  : undefined
+              }
             />
           ))}
         </div>
@@ -364,10 +384,12 @@ function FiatRow({
   item,
   canManageKyc,
   staffChecked,
+  refundState,
 }: {
   item: FiatAssessment;
   canManageKyc: boolean;
   staffChecked: boolean;
+  refundState?: WhopRefundState;
 }) {
   const style = verdictStyle(item.verdict);
   const VerdictIcon = style.icon;
@@ -435,6 +457,26 @@ function FiatRow({
           <Badge variant="secondary" className="shrink-0 capitalize">
             {item.review_status.replaceAll("_", " ")}
           </Badge>
+          {refundState && (
+            <Badge
+              variant={
+                refundState === "succeeded" ||
+                refundState === "already_refunded"
+                  ? "secondary"
+                  : refundState === "pending" || refundState === "processing"
+                    ? "outline"
+                    : "destructive"
+              }
+              className="shrink-0"
+            >
+              {refundState === "succeeded" ||
+              refundState === "already_refunded"
+                ? "Refunded"
+                : refundState === "pending" || refundState === "processing"
+                  ? "Refund queued"
+                  : "Refund needs review"}
+            </Badge>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-3 xl:justify-end">
           <div className="min-w-24 text-right">

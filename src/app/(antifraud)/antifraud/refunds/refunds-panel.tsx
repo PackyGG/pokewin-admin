@@ -61,13 +61,32 @@ function accountLocation(candidate: RefundCandidate): string {
 export function RefundsPanel({
   candidates,
   recentBatches,
+  requestedPaymentId,
 }: {
   candidates: RefundCandidate[];
   recentBatches: RefundBatchSummary[];
+  requestedPaymentId?: string;
 }) {
-  const [payments, setPayments] = useState<Set<string>>(new Set());
+  const requestedCandidate = requestedPaymentId
+    ? candidates.find(
+        (candidate) => candidate.providerPaymentId === requestedPaymentId,
+      )
+    : undefined;
+  const requestedPaymentAvailable =
+    requestedCandidate && !requestedCandidate.alreadyQueued;
+  const [payments, setPayments] = useState<Set<string>>(
+    new Set(
+      requestedPaymentAvailable
+        ? [requestedCandidate.providerPaymentId]
+        : [],
+    ),
+  );
   const [users, setUsers] = useState<Set<string>>(new Set());
-  const [selection, setSelection] = useState<RefundSelection | null>(null);
+  const [selection, setSelection] = useState<RefundSelection | null>(
+    requestedPaymentAvailable
+      ? { mode: "payments", ids: [requestedCandidate.providerPaymentId] }
+      : null,
+  );
   const [credential, setCredential] = useState("");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<RefundBatchProgress | null>(null);
@@ -226,7 +245,9 @@ export function RefundsPanel({
             </h2>
             <p className="text-sm text-muted-foreground">
               Every payment is checked live with Whop before its full refund.
-              Webhooks update the game ledger after Whop accepts it.
+              This includes successful payments whose balance-credit
+              reconciliation failed. Webhooks update the game ledger after
+              Whop accepts the refund.
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -254,6 +275,14 @@ export function RefundsPanel({
           </div>
         </div>
       </div>
+
+      {requestedPaymentId && !requestedCandidate && (
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+          Payment <span className="font-mono">{requestedPaymentId}</span> is not
+          currently refundable here. The account must first meet the active
+          fraud/KYC refund policy.
+        </div>
+      )}
 
       {progress && (
         <div className="rounded-lg border p-4 text-sm">
@@ -360,12 +389,28 @@ export function RefundsPanel({
                           </p>
                           <p className="text-xs text-muted-foreground">
                             {new Date(deposit.createdAt).toLocaleString()} ·{" "}
-                            {deposit.status}
+                            {deposit.status === "paid_unreconciled"
+                              ? "paid · balance credit failed"
+                              : deposit.status}
                           </p>
+                          {deposit.status === "paid_unreconciled" && (
+                            <p className="mt-1 text-xs text-rose-600 dark:text-rose-400">
+                              Customer was charged, but no completed ledger
+                              credit exists. Refund uses the successful Whop
+                              payment ID shown above.
+                            </p>
+                          )}
                         </div>
-                        <span className="font-semibold">
-                          {money(deposit.amountCents, deposit.currency)}
-                        </span>
+                        <div className="text-right">
+                          <span className="font-semibold">
+                            {money(deposit.amountCents, deposit.currency)}
+                          </span>
+                          {deposit.status === "paid_unreconciled" && (
+                            <p className="text-[10px] text-muted-foreground">
+                              expected credit
+                            </p>
+                          )}
+                        </div>
                         {deposit.alreadyQueued ? (
                           <Badge variant="secondary">Already queued</Badge>
                         ) : (

@@ -110,6 +110,7 @@ const assessmentSchema = z.object({
   email: z.string().nullable(),
   avatar_url: z.string().nullable(),
   provider: z.string(),
+  provider_payment_id: z.string().nullable(),
   provider_payment_status: z.string().nullable(),
   status: z.string(),
   currency: z.string(),

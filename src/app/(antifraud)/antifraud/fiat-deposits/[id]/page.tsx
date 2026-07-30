@@ -9,6 +9,7 @@ import {
   History,
   ListChecks,
   Network,
+  RotateCcw,
   ShieldAlert,
   ShieldCheck,
   TriangleAlert,
@@ -35,6 +36,12 @@ import {
   type FiatReviewStatus,
 } from "@/lib/antifraud/fiat-deposits-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { isOwner } from "@/lib/owners";
+import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  getWhopRefundStates,
+  type WhopRefundState,
+} from "@/lib/queries/whop-refunds";
 import { cn } from "@/lib/utils";
 import {
   formatCurrency,
@@ -51,7 +58,7 @@ export default async function FiatDepositReviewPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await requireAntifraudPageAccess();
+  const session = await requireAntifraudPageAccess();
   const { id } = await params;
   if (!z.string().uuid().safeParse(id).success) notFound();
   const result = await getFiatAssessment(id);
@@ -62,10 +69,31 @@ export default async function FiatDepositReviewPage({
   if (result.error || !result.data) {
     return <Unavailable text="This fiat deposit review could not be loaded." />;
   }
-  return <FiatReview detail={result.data} />;
+  const paymentId = result.data.assessment.provider_payment_id;
+  const { data: refundStates } = await safeQuery(
+    () => getWhopRefundStates(paymentId ? [paymentId] : []),
+    new Map<string, WhopRefundState>(),
+    "antifraud.fiatDeposit.refundState",
+    3_000,
+  );
+  return (
+    <FiatReview
+      detail={result.data}
+      canRefund={isOwner(session)}
+      refundState={paymentId ? refundStates.get(paymentId) : undefined}
+    />
+  );
 }
 
-function FiatReview({ detail }: { detail: FiatDetail }) {
+function FiatReview({
+  detail,
+  canRefund,
+  refundState,
+}: {
+  detail: FiatDetail;
+  canRefund: boolean;
+  refundState?: WhopRefundState;
+}) {
   const item = detail.assessment;
   const name = item.username ?? item.user_id;
   const unreconciled = item.status === "paid_unreconciled";
@@ -99,6 +127,22 @@ function FiatReview({ detail }: { detail: FiatDetail }) {
                 <Network className="size-4" />
                 Account network
               </Button>
+              {canRefund &&
+                unreconciled &&
+                item.provider_payment_id && (
+                  <Button
+                    size="sm"
+                    variant="destructive"
+                    render={
+                      <HostLink
+                        href={`/antifraud/refunds?payment=${encodeURIComponent(item.provider_payment_id)}`}
+                      />
+                    }
+                  >
+                    <RotateCcw className="size-4" />
+                    Review refund
+                  </Button>
+                )}
             </>
           }
         />
@@ -135,6 +179,27 @@ function FiatReview({ detail }: { detail: FiatDetail }) {
                 : item.status.replaceAll("_", " ")}
             </Badge>
             <ReviewStatusBadge status={item.review_status} />
+            {refundState && (
+              <Badge
+                variant={
+                  refundState === "succeeded" ||
+                  refundState === "already_refunded"
+                    ? "secondary"
+                    : refundState === "pending" ||
+                        refundState === "processing"
+                      ? "outline"
+                      : "destructive"
+                }
+              >
+                {refundState === "succeeded" ||
+                refundState === "already_refunded"
+                  ? "Refunded"
+                  : refundState === "pending" ||
+                      refundState === "processing"
+                    ? "Refund queued"
+                    : "Refund needs review"}
+              </Badge>
+            )}
           </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">

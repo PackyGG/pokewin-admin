@@ -17,8 +17,18 @@ import { RefundsPanel } from "./refunds-panel";
 
 export const metadata = { title: "Whop Refunds · Antifraud" };
 
-export default async function RefundsPage() {
+export default async function RefundsPage({
+  searchParams,
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
+}) {
   await requireOwner();
+  const params = await searchParams;
+  const payment =
+    typeof params.payment === "string" &&
+    /^pay_[A-Za-z0-9]+$/.test(params.payment)
+      ? params.payment
+      : undefined;
 
   return (
     <div className="space-y-6">
@@ -36,14 +46,18 @@ export default async function RefundsPage() {
             </>
           }
         >
-          <RefundsSection />
+          <RefundsSection requestedPaymentId={payment} />
         </Suspense>
       </div>
     </div>
   );
 }
 
-async function RefundsSection() {
+async function RefundsSection({
+  requestedPaymentId,
+}: {
+  requestedPaymentId?: string;
+}) {
   const [candidates, recentBatches] = await Promise.all([
     getRefundCandidates(),
     getRecentRefundBatches(),
@@ -53,6 +67,7 @@ async function RefundsSection() {
     <RefundsPanel
       candidates={candidates}
       recentBatches={recentBatches}
+      requestedPaymentId={requestedPaymentId}
     />
   );
 }

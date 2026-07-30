@@ -42,6 +42,15 @@ export type RefundBatchSummary = {
   issues: number;
 };
 
+export type WhopRefundState =
+  | "pending"
+  | "processing"
+  | "succeeded"
+  | "already_refunded"
+  | "not_refundable"
+  | "failed"
+  | "unknown";
+
 type RefundFlag = {
   reason: string;
   kycRequired: boolean;
@@ -96,6 +105,25 @@ async function existingRefundPayments(
   return new Set(rows.rows.map((row) => row.provider_payment_id));
 }
 
+export async function getWhopRefundStates(
+  paymentIds: readonly string[],
+): Promise<Map<string, WhopRefundState>> {
+  const uniqueIds = [...new Set(paymentIds.filter(Boolean))];
+  if (uniqueIds.length === 0) return new Map();
+  const rows = await adminDrizzle.execute<{
+    provider_payment_id: string;
+    status: WhopRefundState;
+  }>(sql`
+    SELECT provider_payment_id, status
+    FROM admin_whop_refund_items
+    WHERE provider_payment_id =
+      ANY(${pgArrayParam(uniqueIds)}::text[])
+  `);
+  return new Map(
+    rows.rows.map((row) => [row.provider_payment_id, row.status]),
+  );
+}
+
 async function queryCandidates(
   flagged: Map<string, RefundFlag>,
   filter:
@@ -117,7 +145,7 @@ async function queryCandidates(
 
   const paymentFilter =
     filter.mode === "payments"
-      ? sql`AND i.provider_payment_id =
+      ? sql`AND refundable.provider_payment_id =
           ANY(${pgArrayParam(filter.ids)}::text[])`
       : sql``;
   const db = readDrizzleForEnv(await readDbEnv());
@@ -137,30 +165,87 @@ async function queryCandidates(
     provider_status: string | null;
     created_at: string;
   }>(sql`
+    WITH paid_unreconciled AS (
+      SELECT DISTINCT ON (
+        payload#>>'{data,metadata,deposit_intent_id}'
+      )
+        payload#>>'{data,metadata,deposit_intent_id}' AS intent_id,
+        provider_resource_id AS provider_payment_id,
+        payload#>>'{data,status}' AS provider_status,
+        received_at
+      FROM payment_webhook_events
+      WHERE provider = 'whop'
+        AND event_type = 'payment.succeeded'
+        AND processing_status = 'failed'
+        AND received_at >=
+          (CURRENT_TIMESTAMP AT TIME ZONE 'UTC') - INTERVAL '30 days'
+        AND COALESCE(
+          payload#>>'{data,metadata,deposit_intent_id}',
+          ''
+        ) <> ''
+      ORDER BY
+        payload#>>'{data,metadata,deposit_intent_id}',
+        received_at DESC,
+        id DESC
+    ),
+    refundable AS (
+      SELECT
+        i.id,
+        i.provider_payment_id,
+        i.user_id,
+        i.currency,
+        COALESCE(i.actual_customer_total_cents, i.requested_amount_cents)
+          AS amount_cents,
+        i.status::text AS status,
+        i.provider_payment_status AS provider_status,
+        i.created_at
+      FROM fiat_deposit_intents i
+      WHERE i.provider = 'whop'
+        AND i.status IN ('completed', 'partially_refunded')
+        AND i.provider_payment_id IS NOT NULL
+
+      UNION ALL
+
+      SELECT
+        i.id,
+        paid.provider_payment_id,
+        i.user_id,
+        i.currency,
+        i.requested_amount_cents AS amount_cents,
+        'paid_unreconciled'::text AS status,
+        COALESCE(paid.provider_status, 'paid') AS provider_status,
+        paid.received_at AS created_at
+      FROM paid_unreconciled paid
+      JOIN fiat_deposit_intents i ON i.id::text = paid.intent_id
+      WHERE i.provider = 'whop'
+        AND i.status NOT IN (
+          'completed',
+          'partially_refunded',
+          'refunded',
+          'disputed'
+        )
+    )
     SELECT
-      i.id::text AS deposit_intent_id,
-      i.provider_payment_id,
-      i.user_id,
+      refundable.id::text AS deposit_intent_id,
+      refundable.provider_payment_id,
+      refundable.user_id,
       u.username,
       u.email,
       u.country,
       u.country_code,
       u.state,
       u.city,
-      i.currency,
-      COALESCE(i.actual_customer_total_cents, i.requested_amount_cents)
-        AS amount_cents,
-      i.status,
-      i.provider_payment_status AS provider_status,
-      i.created_at::text
-    FROM fiat_deposit_intents i
-    JOIN "user" u ON u.id = i.user_id
-    WHERE i.provider = 'whop'
-      AND i.status IN ('completed', 'partially_refunded')
-      AND i.provider_payment_id IS NOT NULL
-      AND i.user_id = ANY(${pgArrayParam(scopedUserIds)}::text[])
+      refundable.currency,
+      refundable.amount_cents,
+      refundable.status,
+      refundable.provider_status,
+      refundable.created_at::text
+    FROM refundable
+    JOIN "user" u ON u.id = refundable.user_id
+    WHERE refundable.user_id =
+      ANY(${pgArrayParam(scopedUserIds)}::text[])
       ${paymentFilter}
-    ORDER BY i.created_at DESC, i.id DESC
+    ORDER BY refundable.created_at DESC, refundable.id DESC
     LIMIT ${limit + 1}
   `);
 

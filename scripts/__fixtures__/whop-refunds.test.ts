@@ -38,6 +38,27 @@ const refundsPanel = readFileSync(
   ),
   "utf8",
 );
+const fiatDetail = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const fiatList = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/fiat-deposits/page.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const fiatApi = readFileSync(
+  new URL(
+    "../../src/lib/antifraud/fiat-deposits-api.ts",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const transactionsPage = readFileSync(
   new URL(
     "../../src/app/(admin)/transactions/deposits/page.tsx",
@@ -170,6 +191,45 @@ test("refund scope includes every current KYC requirement and paid deposit state
     /system:antifraud-|kyc_required_reason[\s\S]*~\*/,
   );
   assert.match(queries, /i\.status IN \('completed', 'partially_refunded'\)/);
+});
+
+test("paid-but-uncredited Whop payments use the successful payment ID for refunds", () => {
+  assert.match(queries, /WITH paid_unreconciled AS/);
+  assert.match(queries, /event_type = 'payment\.succeeded'/);
+  assert.match(queries, /processing_status = 'failed'/);
+  assert.match(
+    queries,
+    /provider_resource_id AS provider_payment_id/,
+  );
+  assert.match(queries, /'paid_unreconciled'::text AS status/);
+  assert.match(
+    queries,
+    /i\.status NOT IN \([\s\S]*'completed',[\s\S]*'refunded',[\s\S]*'disputed'/,
+  );
+  assert.match(refundsPanel, /paid · balance credit failed/);
+  assert.match(refundsPanel, /no completed ledger[\s\S]*successful Whop/);
+});
+
+test("the Fiat review links owners into the exact guarded refund", () => {
+  assert.match(fiatApi, /provider_payment_id: z\.string\(\)\.nullable\(\)/);
+  assert.match(fiatDetail, /canRefund=\{isOwner\(session\)\}/);
+  assert.match(fiatDetail, /unreconciled[\s\S]*item\.provider_payment_id/);
+  assert.match(
+    fiatDetail,
+    /\/antifraud\/refunds\?payment=\$\{encodeURIComponent\(item\.provider_payment_id\)\}/,
+  );
+  assert.match(refundPage, /\^pay_\[A-Za-z0-9\]\+\$/);
+  assert.match(refundsPanel, /requestedPaymentAvailable[\s\S]*mode: "payments"/);
+});
+
+test("Fiat review surfaces retain the durable refund outcome", () => {
+  assert.match(queries, /export async function getWhopRefundStates/);
+  assert.match(queries, /FROM admin_whop_refund_items/);
+  assert.match(fiatList, /getWhopRefundStates/);
+  assert.match(fiatList, /Refund queued/);
+  assert.match(fiatList, /Refund needs review/);
+  assert.match(fiatDetail, /getWhopRefundStates/);
+  assert.match(fiatDetail, /Refunded/);
 });
 
 test("refund candidates expose the account location and KYC state", () => {
