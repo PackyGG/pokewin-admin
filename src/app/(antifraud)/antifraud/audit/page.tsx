@@ -1,12 +1,10 @@
 import { Suspense } from "react";
-import { CalendarClock, ScrollText, Search, UserRoundCog } from "lucide-react";
+import { CalendarClock, ScrollText, UserRoundCog } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   ANTIFRAUD_AUDIT_CATEGORY_LABELS,
@@ -26,6 +24,7 @@ import {
   ListPagination,
   parsePageParam,
 } from "../_components/list-page";
+import { ListSearchForm } from "../_components/list-search-form";
 
 export const metadata = { title: "Audit Log · Antifraud" };
 
@@ -326,29 +325,20 @@ function Filters({ state }: { state: FilterState }) {
             />
           ))}
         </FilterGroup>
-        <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/audit">
-          {state.category && (
-            <input type="hidden" name="category" value={state.category} />
-          )}
-          {state.event && (
-            <input type="hidden" name="event" value={state.event} />
-          )}
-          {state.actor && (
-            <input type="hidden" name="actor" value={state.actor} />
-          )}
-          <Input
-            name="search"
-            defaultValue={state.search}
-            placeholder="Target user, username or email"
-            maxLength={100}
-            aria-label="Search audited users"
-            className="xl:w-72"
-          />
-          <Button type="submit" variant="outline">
-            <Search className="size-4" />
-            Search
-          </Button>
-        </form>
+        <ListSearchForm
+          action="/antifraud/audit"
+          placeholder="Target user, username or email"
+          ariaLabel="Search audited users"
+          defaultValue={state.search}
+          carry={{
+            category: state.category,
+            event: state.event,
+            actor: state.actor,
+          }}
+          submitLabel="Search"
+          className="w-full xl:w-auto"
+          inputClassName="xl:w-72"
+        />
       </div>
     </div>
   );
