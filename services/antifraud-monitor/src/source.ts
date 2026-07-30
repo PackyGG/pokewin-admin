@@ -102,17 +102,17 @@ export async function fetchNewSignups(
       ) ae ON true
       LEFT JOIN LATERAL (
         SELECT
-          (array_agg(a.provider_id ORDER BY a.created_at NULLS LAST, a.id))[1]
+          (array_agg(a."providerId" ORDER BY a.created_at NULLS LAST, a.id))[1]
             AS auth_provider,
           jsonb_agg(
             jsonb_build_object(
-              'provider', a.provider_id,
+              'provider', a."providerId",
               'linkedAt', (a.created_at ${UTC})
             )
             ORDER BY a.created_at NULLS LAST, a.id
           ) AS auth_providers
         FROM account a
-        WHERE a.user_id = u.id
+        WHERE a."userId" = u.id
       ) auth ON true
       WHERE (${CURSOR_MILLISECONDS}, u.id) >
         (date_trunc('milliseconds', $1::timestamptz ${UTC}), $2::text)

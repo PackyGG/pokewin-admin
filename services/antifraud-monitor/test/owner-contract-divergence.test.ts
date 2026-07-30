@@ -109,7 +109,8 @@ test("identity-provider evidence is explicit; unified relationship evidence rema
     assert.match(identity, new RegExp(`"${provider}"`));
   }
   assert.match(identity, /"credential"/);
-  assert.match(sourceReader, /jsonb_agg[\s\S]*?'provider', a\.provider_id/);
+  assert.match(sourceReader, /jsonb_agg[\s\S]*?'provider', a\."providerId"/);
+  assert.match(sourceReader, /WHERE a\."userId" = u\.id/);
   assert.match(sourceReader, /'linkedAt', \(a\.created_at/);
   assert.match(profileStore, /auth_provider_timeline/);
   assert.match(network, /type: "shared_ip" \| "shared_device"/);
