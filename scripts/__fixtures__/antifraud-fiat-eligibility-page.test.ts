@@ -6,7 +6,7 @@ async function source(path: string): Promise<string> {
   return readFile(new URL(`../../${path}`, import.meta.url), "utf8");
 }
 
-test("Fraud System exposes the automatic Fiat eligibility explainer", async () => {
+test("the automatic Fiat eligibility explainer remains a guarded direct route", async () => {
   const [page, sidebar, hosts] = await Promise.all([
     source("src/app/(antifraud)/antifraud/fiat-eligibility/page.tsx"),
     source("src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx"),
@@ -15,15 +15,15 @@ test("Fraud System exposes the automatic Fiat eligibility explainer", async () =
 
   assert.match(page, /requireAntifraudManagerPage\(\)/);
   assert.match(page, /Automatic Fiat eligibility/);
-  assert.match(page, /allowed = no blocking signal AND final risk score &lt; 50/);
+  assert.match(
+    page,
+    /allowed = no blocking signal AND final risk score &lt; 50/,
+  );
   assert.match(page, /Fingerprint Pro Plus/);
   assert.match(page, /proxycheck\.io/);
   assert.match(page, /Single-use Fingerprint event/);
   assert.match(page, /Fail closed/);
-  assert.match(
-    sidebar,
-    /label:\s*"Fiat Eligibility",[\s\S]*?href:\s*"\/antifraud\/fiat-eligibility"/,
-  );
+  assert.doesNotMatch(sidebar, /href:\s*"\/antifraud\/fiat-eligibility"/);
   assert.match(
     hosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"fiat-eligibility"/,

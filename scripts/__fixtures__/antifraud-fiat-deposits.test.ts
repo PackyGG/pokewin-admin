@@ -18,7 +18,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
     "src/app/(antifraud)/antifraud/fiat-deposits/page.tsx",
   );
   const detail = read(
-    "src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
+    "src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-workspace.tsx",
   );
   const api = read("src/lib/antifraud/fiat-deposits-api.ts");
   const actions = read(
@@ -27,7 +27,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   const kycAction = read(
     "src/app/(antifraud)/antifraud/fiat-deposits/fiat-kyc-action.tsx",
   );
-  assert.match(sidebar, /Fiat Deposits/);
+  assert.match(sidebar, /label: "Deposits"/);
   assert.match(sidebar, /\/antifraud\/fiat-deposits/);
   assert.match(hosts, /"fiat-deposits"/);
   assert.match(page, /All paid/);

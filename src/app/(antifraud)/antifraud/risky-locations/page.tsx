@@ -3,10 +3,17 @@ import countries from "i18n-iso-countries";
 import enLocale from "i18n-iso-countries/langs/en.json";
 import { Clock3, MapPin, RadioTower } from "lucide-react";
 
-import { KpiStripSkeleton, FormCardSkeleton } from "@/components/loading-skeletons";
-import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  KpiStripSkeleton,
+  FormCardSkeleton,
+} from "@/components/loading-skeletons";
+import {
+  KpiTile,
+  PageHero,
+  PageHeroIdentity,
+} from "@/components/modern-panels";
 import { listRiskyLocations } from "@/lib/antifraud/risky-locations-api";
-import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { RiskyLocationsClient } from "./risky-locations-client";
 
 countries.registerLocale(enLocale);
@@ -17,11 +24,12 @@ async function RiskyLocationsContent() {
   const result = await listRiskyLocations();
   const active = result.data.filter((location) => location.enabled);
   const longest = active.reduce(
-    (maximum, location) =>
-      Math.max(maximum, location.monitorDurationMinutes),
+    (maximum, location) => Math.max(maximum, location.monitorDurationMinutes),
     0,
   );
-  const countryOptions = Object.entries(countries.getNames("en", { select: "official" }))
+  const countryOptions = Object.entries(
+    countries.getNames("en", { select: "official" }),
+  )
     .map(([code, name]) => ({ code, name }))
     .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -79,7 +87,7 @@ function RiskyLocationsFallback() {
 }
 
 export default async function RiskyLocationsPage() {
-  await requireAntifraudManagerPage();
+  await requireAntifraudPageAccess();
   return (
     <div className="space-y-6">
       <PageHero>

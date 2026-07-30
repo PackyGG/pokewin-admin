@@ -23,7 +23,7 @@ test("Creator Fraud is owned by Marketing while Antifraud keeps network routes",
   assert.match(marketingHost, /"creator-fraud"/);
 });
 
-test("account networks are user-linked drill-downs, not a standalone workspace", () => {
+test("account networks support exact-id lookup and user-linked drill-downs", () => {
   const sidebar = readFileSync(
     join(
       root,
@@ -49,8 +49,10 @@ test("account networks are user-linked drill-downs, not a standalone workspace",
   );
 
   assert.doesNotMatch(sidebar, /SidebarGroupLabel>Network/);
-  assert.doesNotMatch(sidebar, /href:\s*"\/antifraud\/networks"/);
-  assert.match(page, /if \(!userId\) notFound\(\)/);
+  assert.match(sidebar, /href:\s*"\/antifraud\/networks"/);
+  assert.doesNotMatch(page, /if \(!userId\) notFound\(\)/);
+  assert.match(page, /name="user"/);
+  assert.match(page, /Find connections/);
   assert.match(page, /getAccountNetwork\(userId\)/);
   assert.doesNotMatch(page, /searchNetworkAccounts|name="q"|Search accounts/);
   assert.doesNotMatch(dashboardApi, /searchNetworkAccounts/);

@@ -34,6 +34,9 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 
 type RefundSelection =
   | { mode: "all" }
@@ -63,11 +66,13 @@ export function RefundsPanel({
   recentBatches,
   requestedPaymentId,
   reconciliationOnly,
+  canExecute,
 }: {
   candidates: RefundCandidate[];
   recentBatches: RefundBatchSummary[];
   requestedPaymentId?: string;
   reconciliationOnly: boolean;
+  canExecute: boolean;
 }) {
   const requestedCandidate = requestedPaymentId
     ? candidates.find(
@@ -75,12 +80,10 @@ export function RefundsPanel({
       )
     : undefined;
   const requestedPaymentAvailable =
-    requestedCandidate && !requestedCandidate.alreadyQueued;
+    canExecute && requestedCandidate && !requestedCandidate.alreadyQueued;
   const [payments, setPayments] = useState<Set<string>>(
     new Set(
-      requestedPaymentAvailable
-        ? [requestedCandidate.providerPaymentId]
-        : [],
+      requestedPaymentAvailable ? [requestedCandidate.providerPaymentId] : [],
     ),
   );
   const [users, setUsers] = useState<Set<string>>(new Set());
@@ -90,6 +93,8 @@ export function RefundsPanel({
       : null,
   );
   const [credential, setCredential] = useState("");
+  const [confirmation, setConfirmation] = useState("");
+  const [reason, setReason] = useState("");
   const [working, setWorking] = useState(false);
   const [progress, setProgress] = useState<RefundBatchProgress | null>(null);
   const [recoveryOpen, setRecoveryOpen] = useState(false);
@@ -119,6 +124,8 @@ export function RefundsPanel({
   function open(selectionValue: RefundSelection) {
     setSelection(selectionValue);
     setCredential("");
+    setConfirmation("");
+    setReason("");
   }
 
   async function runBatch(batchId: string, initial?: RefundBatchProgress) {
@@ -165,6 +172,8 @@ export function RefundsPanel({
       const result = await createRefundBatch({
         selection,
         credential,
+        confirmation,
+        reason,
       });
       if (!result.success) {
         toast.error(result.error);
@@ -248,46 +257,50 @@ export function RefundsPanel({
             <p className="text-sm text-muted-foreground">
               Every payment is checked live with Whop before its full refund.
               This includes successful payments whose balance-credit
-              reconciliation failed. Webhooks update the game ledger after
-              Whop accepts the refund.
+              reconciliation failed. Webhooks update the game ledger after Whop
+              accepts the refund.
             </p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <Button
-              variant="outline"
-              disabled={users.size === 0 || working}
-              onClick={() => open({ mode: "users", ids: [...users] })}
-            >
-              Refund selected users ({users.size})
-            </Button>
-            <Button
-              variant="outline"
-              disabled={payments.size === 0 || working}
-              onClick={() => open({ mode: "payments", ids: [...payments] })}
-            >
-              Refund selected deposits ({payments.size})
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={selectableCount === 0 || working}
-              onClick={() =>
-                open(
-                  reconciliationOnly
-                    ? {
-                        mode: "payments",
-                        ids: candidates
-                          .filter((candidate) => !candidate.alreadyQueued)
-                          .map((candidate) => candidate.providerPaymentId),
-                      }
-                    : { mode: "all" },
-                )
-              }
-            >
-              {reconciliationOnly
-                ? "Refund all reconciliation failures"
-                : "Refund all flagged"}
-            </Button>
-          </div>
+          {canExecute ? (
+            <div className="flex flex-wrap gap-2">
+              <Button
+                variant="outline"
+                disabled={users.size === 0 || working}
+                onClick={() => open({ mode: "users", ids: [...users] })}
+              >
+                Refund selected users ({users.size})
+              </Button>
+              <Button
+                variant="outline"
+                disabled={payments.size === 0 || working}
+                onClick={() => open({ mode: "payments", ids: [...payments] })}
+              >
+                Refund selected deposits ({payments.size})
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={selectableCount === 0 || working}
+                onClick={() =>
+                  open(
+                    reconciliationOnly
+                      ? {
+                          mode: "payments",
+                          ids: candidates
+                            .filter((candidate) => !candidate.alreadyQueued)
+                            .map((candidate) => candidate.providerPaymentId),
+                        }
+                      : { mode: "all" },
+                  )
+                }
+              >
+                {reconciliationOnly
+                  ? "Refund all reconciliation failures"
+                  : "Refund all flagged"}
+              </Button>
+            </div>
+          ) : (
+            <Badge variant="outline">View only</Badge>
+          )}
         </div>
       </div>
 
@@ -337,12 +350,14 @@ export function RefundsPanel({
               >
                 <div className="flex flex-wrap items-start justify-between gap-3 bg-muted/35 p-4">
                   <div className="flex items-start gap-3">
-                    <Checkbox
-                      aria-label={`Select user ${first?.username ?? userId}`}
-                      checked={selectedUser}
-                      disabled={available.length === 0}
-                      onCheckedChange={() => toggle(setUsers, users, userId)}
-                    />
+                    {canExecute && (
+                      <Checkbox
+                        aria-label={`Select user ${first?.username ?? userId}`}
+                        checked={selectedUser}
+                        disabled={available.length === 0}
+                        onCheckedChange={() => toggle(setUsers, users, userId)}
+                      />
+                    )}
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">
@@ -368,15 +383,17 @@ export function RefundsPanel({
                       </p>
                     </div>
                   </div>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    disabled={available.length === 0 || working}
-                    onClick={() => open({ mode: "users", ids: [userId] })}
-                  >
-                    <Users className="size-4" />
-                    Refund all for user
-                  </Button>
+                  {canExecute && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={available.length === 0 || working}
+                      onClick={() => open({ mode: "users", ids: [userId] })}
+                    >
+                      <Users className="size-4" />
+                      Refund all for user
+                    </Button>
+                  )}
                 </div>
                 <div className="divide-y">
                   {deposits.map((deposit) => {
@@ -386,18 +403,20 @@ export function RefundsPanel({
                         key={deposit.providerPaymentId}
                         className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
                       >
-                        <Checkbox
-                          aria-label={`Select payment ${deposit.providerPaymentId}`}
-                          checked={selected}
-                          disabled={deposit.alreadyQueued}
-                          onCheckedChange={() =>
-                            toggle(
-                              setPayments,
-                              payments,
-                              deposit.providerPaymentId,
-                            )
-                          }
-                        />
+                        {canExecute && (
+                          <Checkbox
+                            aria-label={`Select payment ${deposit.providerPaymentId}`}
+                            checked={selected}
+                            disabled={deposit.alreadyQueued}
+                            onCheckedChange={() =>
+                              toggle(
+                                setPayments,
+                                payments,
+                                deposit.providerPaymentId,
+                              )
+                            }
+                          />
+                        )}
                         <div className="min-w-0">
                           <p className="truncate font-mono text-xs">
                             {deposit.providerPaymentId}
@@ -428,6 +447,8 @@ export function RefundsPanel({
                         </div>
                         {deposit.alreadyQueued ? (
                           <Badge variant="secondary">Already queued</Badge>
+                        ) : !canExecute ? (
+                          <Badge variant="outline">Eligible</Badge>
                         ) : (
                           <Button
                             size="sm"
@@ -457,20 +478,21 @@ export function RefundsPanel({
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <h2 className="font-semibold">Recent refund batches</h2>
-            {recentBatches.some((batch) => batch.succeeded > 0) && (
-              <Button
-                size="sm"
-                variant="destructive"
-                disabled={working}
-                onClick={() => {
-                  setRecoveryOpen(true);
-                  setRecoveryCredential("");
-                }}
-              >
-                <ShieldBan className="size-4" />
-                Ban &amp; recover all successful refunds
-              </Button>
-            )}
+            {canExecute &&
+              recentBatches.some((batch) => batch.succeeded > 0) && (
+                <Button
+                  size="sm"
+                  variant="destructive"
+                  disabled={working}
+                  onClick={() => {
+                    setRecoveryOpen(true);
+                    setRecoveryCredential("");
+                  }}
+                >
+                  <ShieldBan className="size-4" />
+                  Ban &amp; recover all successful refunds
+                </Button>
+              )}
           </div>
           <div className="divide-y rounded-xl border">
             {recentBatches.map((batch) => (
@@ -493,7 +515,7 @@ export function RefundsPanel({
                   >
                     {batch.succeeded} done · {batch.issues} issues
                   </Badge>
-                  {batch.pending > 0 && (
+                  {canExecute && batch.pending > 0 && (
                     <Button
                       size="sm"
                       variant="outline"
@@ -512,7 +534,7 @@ export function RefundsPanel({
       )}
 
       <AlertDialog
-        open={selection !== null}
+        open={canExecute && selection !== null}
         onOpenChange={(openValue) => {
           if (!openValue && !working) setSelection(null);
         }}
@@ -533,14 +555,40 @@ export function RefundsPanel({
               value={credential}
               onChange={setCredential}
               disabled={working}
-              label="Owner verification"
+              label="Owner or admin verification"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="refund-reason">Reason</Label>
+            <Textarea
+              id="refund-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              maxLength={500}
+              placeholder="Why these provider refunds are required"
+              disabled={working}
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="refund-confirmation">Type REFUND to confirm</Label>
+            <Input
+              id="refund-confirmation"
+              value={confirmation}
+              onChange={(event) => setConfirmation(event.target.value)}
+              autoComplete="off"
+              disabled={working}
             />
           </div>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={working}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               variant="destructive"
-              disabled={working || !credential}
+              disabled={
+                working ||
+                !credential ||
+                reason.trim().length < 4 ||
+                confirmation !== "REFUND"
+              }
               onClick={submit}
             >
               {working ? "Starting…" : "Start full refunds"}
@@ -550,7 +598,7 @@ export function RefundsPanel({
       </AlertDialog>
 
       <AlertDialog
-        open={recoveryOpen}
+        open={canExecute && recoveryOpen}
         onOpenChange={(openValue) => {
           if (!openValue && !working) setRecoveryOpen(false);
         }}
@@ -573,7 +621,7 @@ export function RefundsPanel({
               value={recoveryCredential}
               onChange={setRecoveryCredential}
               disabled={working}
-              label="Owner verification"
+              label="Owner or admin verification"
             />
           </div>
           <AlertDialogFooter>

@@ -9,7 +9,7 @@ function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
 
-test("the Antifraud sidebar exposes KYC as its own Home workspace", () => {
+test("the Antifraud sidebar exposes KYC reviews in its own section", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -17,8 +17,11 @@ test("the Antifraud sidebar exposes KYC as its own Home workspace", () => {
   const loading = source("src/app/(antifraud)/antifraud/kyc/loading.tsx");
   const appHosts = source("src/lib/app-hosts.ts");
 
-  assert.match(sidebar, /const KYC_NAV[\s\S]*?label:\s*"Home",\s*href:\s*"\/antifraud\/kyc"/);
-  assert.match(sidebar, /<SidebarGroupLabel>KYC<\/SidebarGroupLabel>[\s\S]*?items=\{KYC_NAV\}/);
+  assert.match(
+    sidebar,
+    /const KYC_NAV[\s\S]*?label:\s*"KYC reviews",\s*href:\s*"\/antifraud\/kyc"/,
+  );
+  assert.match(sidebar, /label="KYC"[\s\S]*?items=\{KYC_NAV\}/);
   assert.doesNotMatch(page, /max-w-7xl/);
   assert.doesNotMatch(loading, /max-w-7xl/);
   assert.match(page, /<h1[^>]*>KYC review<\/h1>/);
@@ -38,9 +41,7 @@ test("the KYC page is workspace-gated and never renders raw provider payloads", 
 });
 
 test("KYC mutations are manager-only and preserve the verification-cycle guard", () => {
-  const actions = source(
-    "src/app/(antifraud)/antifraud/kyc/actions.ts",
-  );
+  const actions = source("src/app/(antifraud)/antifraud/kyc/actions.ts");
 
   assert.match(actions, /requireAntifraudManager\(/);
   assert.match(actions, /requireUserKyc\(/);
@@ -149,12 +150,18 @@ test("live Sumsub details stay admin-only, read-only, and sanitized", () => {
   assert.match(client, /requiredIdDocsStatus/);
   assert.match(client, /review\/history/);
   assert.doesNotMatch(client, /firstName|lastName|dob|documentNumber|imageIds/);
-  assert.match(routes, /app\.get\("\/v1\/kyc\/applicants\/:applicantId\/review"/);
+  assert.match(
+    routes,
+    /app\.get\("\/v1\/kyc\/applicants\/:applicantId\/review"/,
+  );
   assert.match(auth, /pathname\.startsWith\("\/v1\/kyc\/applicants\/"\)/);
   assert.match(dashboardApi, /ANTIFRAUD_MONITOR_API_ADMIN_TOKEN/);
   assert.match(card, /Live Sumsub review evidence/);
   assert.match(card, /Country mismatch/);
-  assert.match(card, /Names, birth dates, document numbers, addresses and images are not/);
+  assert.match(
+    card,
+    /Names, birth dates, document numbers, addresses and images are not/,
+  );
 });
 
 test("finished KYC records save and expose account-country mismatches", () => {

@@ -6,28 +6,35 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Risky Locations is a manager-only System page with bounded duration controls", () => {
+test("Risk locations is editable by verified Fraud users with audited reasons", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
-  const page = read(
-    "src/app/(antifraud)/antifraud/risky-locations/page.tsx",
-  );
+  const page = read("src/app/(antifraud)/antifraud/risky-locations/page.tsx");
   const actions = read(
     "src/app/(antifraud)/antifraud/risky-locations/actions.ts",
   );
   const hosts = read("src/lib/app-hosts.ts");
 
-  assert.match(sidebar, /label: "Risky Locations"/);
+  assert.match(sidebar, /label: "Risk locations"/);
   assert.match(sidebar, /href: "\/antifraud\/risky-locations"/);
   assert.match(
     hosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"risky-locations"/,
   );
-  assert.match(page, /requireAntifraudManagerPage/);
+  assert.match(page, /requireAntifraudPageAccess/);
   assert.match(page, /<Suspense/);
-  assert.match(actions, /requireAntifraudManager/);
+  assert.match(actions, /requireAntifraudAccess/);
   assert.match(actions, /\.min\(1\)\.max\(60\)/);
+  assert.match(
+    actions,
+    /reason: z\.string\(\)\.trim\(\)\.min\(4\)\.max\(500\)/,
+  );
+  const client = read(
+    "src/app/(antifraud)/antifraud/risky-locations/risky-locations-client.tsx",
+  );
+  assert.match(client, /risky-location-reason/);
+  assert.match(client, /window\.confirm/);
 });
 
 test("risky countries start monitoring with their configured duration", () => {

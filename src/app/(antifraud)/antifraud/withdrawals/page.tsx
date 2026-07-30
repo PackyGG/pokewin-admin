@@ -1,6 +1,8 @@
 import { Suspense } from "react";
+import { z } from "zod";
 import {
   AlertTriangle,
+  ArrowRight,
   Search,
   ShieldAlert,
   ShieldCheck,
@@ -14,8 +16,10 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   listWithdrawalAssessments,
+  getWithdrawalAssessment,
   type WithdrawalAssessment,
   type WithdrawalReviewStatus,
   type WithdrawalVerdict,
@@ -34,6 +38,7 @@ import {
   parsePageParam,
   verdictStyle,
 } from "../_components/list-page";
+import { QueueReviewDrawer } from "../_components/review-drawer";
 import { WithdrawalReviewDialog } from "./review-dialog";
 
 export const metadata = { title: "Withdrawals · Antifraud" };
@@ -71,6 +76,7 @@ export default async function WithdrawalsPage({
     verdict?: string;
     reviewStatus?: string;
     search?: string;
+    review?: string;
   }>;
 }) {
   await requireAntifraudPageAccess();
@@ -90,6 +96,9 @@ export default async function WithdrawalsPage({
       : undefined,
     search: params.search?.trim().slice(0, 100) ?? "",
   };
+  const selectedReviewId = z.string().uuid().safeParse(params.review).success
+    ? params.review
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -103,7 +112,10 @@ export default async function WithdrawalsPage({
         key={`${state.page}-${state.status}-${state.verdict}-${state.reviewStatus}-${state.search}`}
         fallback={<ListPageSkeleton />}
       >
-        <WithdrawalContent state={state} />
+        <WithdrawalContent
+          state={state}
+          selectedReviewId={selectedReviewId}
+        />
       </Suspense>
     </div>
   );
@@ -172,7 +184,13 @@ function Filters({ state }: { state: FilterState }) {
   );
 }
 
-async function WithdrawalContent({ state }: { state: FilterState }) {
+async function WithdrawalContent({
+  state,
+  selectedReviewId,
+}: {
+  state: FilterState;
+  selectedReviewId?: string;
+}) {
   const result = await listWithdrawalAssessments({
     page: state.page,
     status: state.status,
@@ -194,7 +212,11 @@ async function WithdrawalContent({ state }: { state: FilterState }) {
       {result.summary && <SummaryCards summary={result.summary} />}
       <div className="space-y-3">
         {result.data.map((withdrawal) => (
-          <WithdrawalRow key={withdrawal.withdrawal_id} withdrawal={withdrawal} />
+          <WithdrawalRow
+            key={withdrawal.withdrawal_id}
+            withdrawal={withdrawal}
+            reviewHref={`${withdrawalHref(state)}${withdrawalHref(state).includes("?") ? "&" : "?"}review=${encodeURIComponent(withdrawal.withdrawal_id)}`}
+          />
         ))}
       </div>
       {result.pagination && (
@@ -215,7 +237,52 @@ async function WithdrawalContent({ state }: { state: FilterState }) {
           }
         />
       )}
+      {selectedReviewId && (
+        <Suspense
+          fallback={
+            <QueueReviewDrawer
+              title="Withdrawal review"
+              description="Loading the source-of-funds trace without leaving the queue."
+              closeHref={withdrawalHref(state)}
+            >
+              <Skeleton className="h-[38rem] rounded-xl" />
+            </QueueReviewDrawer>
+          }
+        >
+          <WithdrawalReviewOverlay
+            withdrawalId={selectedReviewId}
+            closeHref={withdrawalHref(state)}
+          />
+        </Suspense>
+      )}
     </div>
+  );
+}
+
+async function WithdrawalReviewOverlay({
+  withdrawalId,
+  closeHref,
+}: {
+  withdrawalId: string;
+  closeHref: string;
+}) {
+  const result = await getWithdrawalAssessment(withdrawalId);
+  if (!result.configured || result.error || result.notFound || !result.data) {
+    return (
+      <QueueReviewDrawer
+        title="Withdrawal review"
+        description="The selected assessment could not be loaded."
+        closeHref={closeHref}
+      >
+        <EmptyState text="Close this review and try again. The queue and filters are unchanged." />
+      </QueueReviewDrawer>
+    );
+  }
+  return (
+    <WithdrawalReviewDialog
+      withdrawal={result.data.assessment}
+      closeHref={closeHref}
+    />
   );
 }
 
@@ -267,7 +334,13 @@ function SummaryCards({
   );
 }
 
-function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
+function WithdrawalRow({
+  withdrawal,
+  reviewHref,
+}: {
+  withdrawal: WithdrawalAssessment;
+  reviewHref: string;
+}) {
   const name = withdrawal.username ?? withdrawal.user_id;
   const verdict = verdictStyle(withdrawal.verdict);
   const VerdictIcon = verdict.icon;
@@ -336,7 +409,10 @@ function WithdrawalRow({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
             </span>
           </div>
           {withdrawal.flow_checks.length > 0 ? (
-            <WithdrawalReviewDialog withdrawal={withdrawal} />
+            <Button size="sm" render={<HostLink href={reviewHref} scroll={false} />}>
+              Open review
+              <ArrowRight className="size-3.5" />
+            </Button>
           ) : (
             <Button size="sm" disabled>
               Assessment pending

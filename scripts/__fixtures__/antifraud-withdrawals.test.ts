@@ -13,7 +13,7 @@ test("withdrawals are exposed as their own Fraud transaction section", () => {
   const hosts = read("src/lib/app-hosts.ts");
   const middleware = read("src/middleware.ts");
   const nextConfig = read("next.config.ts");
-  assert.match(sidebar, /SidebarGroupLabel>Transactions/);
+  assert.match(sidebar, /label="Transactions"/);
   assert.match(sidebar, /\/antifraud\/withdrawals/);
   assert.match(hosts, /"withdrawals"/);
   assert.match(

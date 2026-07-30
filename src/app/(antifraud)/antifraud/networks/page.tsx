@@ -1,11 +1,11 @@
 import { Suspense } from "react";
-import { notFound } from "next/navigation";
 import {
   ChevronLeft,
   ChevronRight,
   Fingerprint,
   Gauge,
   Network,
+  Search,
   ShieldAlert,
   Users,
   Wifi,
@@ -14,6 +14,7 @@ import {
 import { HostLink } from "@/components/host-link";
 import { KpiTile, PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   getAccountNetwork,
@@ -36,7 +37,6 @@ export default async function AccountNetworksPage({
   await requireAntifraudPageAccess();
   const params = await searchParams;
   const userId = params.user?.trim().slice(0, 100) ?? "";
-  if (!userId) notFound();
   const rawPage = Number(params.page ?? "1");
   const page = Number.isInteger(rawPage) && rawPage > 0 ? rawPage : 1;
   return (
@@ -45,9 +45,25 @@ export default async function AccountNetworksPage({
         <PageHeroIdentity />
       </PageHero>
 
-      <Suspense key={`${userId}-${page}`} fallback={<NetworkSkeleton />}>
-        <NetworkContent userId={userId} page={page} />
-      </Suspense>
+      <form className="flex max-w-xl gap-2" action="/antifraud/networks">
+        <Input
+          name="user"
+          defaultValue={userId}
+          maxLength={100}
+          placeholder="Exact player ID"
+          aria-label="Player ID for connection search"
+        />
+        <Button type="submit" variant="outline">
+          <Search className="size-4" />
+          Find connections
+        </Button>
+      </form>
+
+      {userId && (
+        <Suspense key={`${userId}-${page}`} fallback={<NetworkSkeleton />}>
+          <NetworkContent userId={userId} page={page} />
+        </Suspense>
+      )}
     </div>
   );
 }

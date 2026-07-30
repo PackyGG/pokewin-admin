@@ -1,8 +1,8 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  ArrowRight,
   CircleCheck,
   Link2,
   ShieldAlert,
@@ -12,38 +12,42 @@ import {
 
 import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 import type { WithdrawalAssessment } from "@/lib/antifraud/withdrawals-api";
+import { hrefForCurrentHost } from "@/lib/use-app-host";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { WithdrawalReviewControls } from "./[id]/review-controls";
 
 export function WithdrawalReviewDialog({
   withdrawal,
+  closeHref,
 }: {
   withdrawal: WithdrawalAssessment;
+  closeHref: string;
 }) {
+  const router = useRouter();
   const trace = withdrawal.flow.fundingTrace;
   const riskyAccounts = withdrawal.flow.linkedAccounts.filter(hasRisk);
+
+  function close() {
+    router.replace(hrefForCurrentHost(closeHref), { scroll: false });
+  }
+
   return (
-    <Dialog>
-      <DialogTrigger
-        render={
-          <Button size="sm">
-            Open review
-            <ArrowRight className="size-3.5" />
-          </Button>
-        }
-      />
-      <DialogContent className="sm:max-w-4xl">
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) close();
+      }}
+    >
+      <DialogContent className="sm:h-[min(92vh,60rem)] sm:max-h-[92vh] sm:w-[min(64rem,calc(100%-2rem))] sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>
             Withdrawal review · {formatCurrency(withdrawal.amount_usd)}

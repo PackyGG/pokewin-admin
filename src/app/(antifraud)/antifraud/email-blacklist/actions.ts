@@ -9,16 +9,18 @@ import {
   updateFiatEmailDomain,
   type FiatEmailDomainRule,
 } from "@/lib/antifraud/fiat-email-domains-api";
-import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 
 const createSchema = z.object({
   domain: z.string().trim().min(1).max(253),
+  reason: z.string().trim().min(4).max(500),
   idempotencyKey: z.string().uuid(),
 });
 
 const updateSchema = z.object({
   id: z.string().uuid(),
   enabled: z.boolean(),
+  reason: z.string().trim().min(4).max(500),
   idempotencyKey: z.string().uuid(),
 });
 
@@ -30,12 +32,13 @@ function revalidateBlacklistSurfaces(): void {
 export async function addFiatEmailDomain(
   input: unknown,
 ): Promise<FiatEmailDomainRule> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudAccess();
   const parsed = createSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
   const saved = await createFiatEmailDomain({
-    ...parsed.data,
+    domain: parsed.data.domain,
+    idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
   });
@@ -46,6 +49,7 @@ export async function addFiatEmailDomain(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
+        reason: parsed.data.reason,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });
@@ -57,12 +61,14 @@ export async function addFiatEmailDomain(
 export async function setFiatEmailDomainState(
   input: unknown,
 ): Promise<FiatEmailDomainRule> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
   const saved = await updateFiatEmailDomain({
-    ...parsed.data,
+    id: parsed.data.id,
+    enabled: parsed.data.enabled,
+    idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
   });
@@ -75,6 +81,7 @@ export async function setFiatEmailDomainState(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
+        reason: parsed.data.reason,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });

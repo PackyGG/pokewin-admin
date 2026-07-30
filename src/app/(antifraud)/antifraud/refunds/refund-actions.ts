@@ -13,7 +13,7 @@ import {
   resolveRefundSelection,
 } from "@/lib/queries/whop-refunds";
 import { require2FA } from "@/lib/require-2fa";
-import { requireOwner } from "@/lib/owners";
+import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { safeWhopError, whopAdminClient } from "@/lib/whop-admin";
 import {
   fail,
@@ -25,9 +25,6 @@ type Selection =
   | { mode: "all"; ids?: never }
   | { mode: "users"; ids: string[] }
   | { mode: "payments"; ids: string[] };
-
-const REFUND_BATCH_AUDIT_REASON =
-  "Owner initiated refund for a currently flagged or KYC-required account";
 
 export type RefundBatchProgress = {
   batchId: string;
@@ -600,7 +597,7 @@ function validateSelection(selection: Selection): Selection {
 function actionErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "";
   if (
-    /(?:2FA|passkey|verification|already used|select at least|select at most|currently flagged selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
+    /(?:2FA|passkey|verification|already used|confirmation|reason|select at least|select at most|currently flagged selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
       message,
     )
   ) {
@@ -612,9 +609,18 @@ function actionErrorMessage(error: unknown): string {
 export async function createRefundBatch(input: {
   selection: Selection;
   credential: string;
+  confirmation: string;
+  reason: string;
 }): Promise<ServerActionResult<RefundBatchProgress>> {
-  const session = await requireOwner();
+  const session = await requireAntifraudManager();
   try {
+    if (input.confirmation !== "REFUND") {
+      throw new Error("Type REFUND exactly to confirm.");
+    }
+    const reason = input.reason.trim();
+    if (reason.length < 4 || reason.length > 500) {
+      throw new Error("Enter a refund reason from 4 to 500 characters.");
+    }
     await require2FA(session.userId, input.credential);
 
     const selection = validateSelection(input.selection);
@@ -633,7 +639,7 @@ export async function createRefundBatch(input: {
       VALUES (
         ${session.userId}::uuid,
         ${selection.mode},
-        ${REFUND_BATCH_AUDIT_REASON},
+        ${reason},
         'pending',
         ${candidates.length}
       )
@@ -683,7 +689,7 @@ export async function createRefundBatch(input: {
         batchId: batch.id,
         selectionMode: selection.mode,
         paymentCount: batch.count,
-        reason: REFUND_BATCH_AUDIT_REASON,
+        reason,
       },
     });
     revalidatePath("/antifraud/refunds");
@@ -754,7 +760,7 @@ async function finalizeBatch(
 export async function processNextRefund(
   batchId: string,
 ): Promise<ServerActionResult<RefundBatchProgress>> {
-  const session = await requireOwner();
+  const session = await requireAntifraudManager();
   try {
     if (!/^[0-9a-f-]{36}$/i.test(batchId)) throw new Error("Invalid batch.");
 
@@ -884,7 +890,7 @@ export async function recoverRefundedBatch(input: {
   batchId: string;
   credential: string;
 }): Promise<ServerActionResult<RefundRecoveryResult>> {
-  const session = await requireOwner();
+  const session = await requireAntifraudManager();
   try {
     if (!/^[0-9a-f-]{36}$/i.test(input.batchId)) {
       throw new Error("Invalid batch.");
@@ -905,7 +911,7 @@ export async function recoverRefundedBatch(input: {
 export async function recoverAllRefundedAccounts(input: {
   credential: string;
 }): Promise<ServerActionResult<RefundRecoveryResult>> {
-  const session = await requireOwner();
+  const session = await requireAntifraudManager();
   try {
     await require2FA(session.userId, input.credential);
     const targets = await loadAllRefundRecoveryTargets();
@@ -925,7 +931,7 @@ export async function recoverAllRefundedAccounts(input: {
 export async function getRefundBatchProgress(
   batchId: string,
 ): Promise<RefundBatchProgress> {
-  await requireOwner();
+  await requireAntifraudManager();
   if (!/^[0-9a-f-]{36}$/i.test(batchId)) throw new Error("Invalid batch.");
   const result = await adminDrizzle.execute<{
     pending: number;

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { AlertTriangle, Ban, LockKeyhole} from "lucide-react";
+import { AlertTriangle, Ban, LockKeyhole } from "lucide-react";
 
 import {
   FormCardSkeleton,
@@ -11,7 +11,7 @@ import {
   PageHeroIdentity,
 } from "@/components/modern-panels";
 import { listFiatEmailDomains } from "@/lib/antifraud/fiat-email-domains-api";
-import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { EmailBlacklistClient } from "./email-blacklist-client";
 
 export const metadata = { title: "Email Blacklist · Antifraud" };
@@ -84,7 +84,7 @@ function EmailBlacklistFallback() {
 }
 
 export default async function EmailBlacklistPage() {
-  await requireAntifraudManagerPage();
+  await requireAntifraudPageAccess();
   return (
     <div className="space-y-6">
       <PageHero>

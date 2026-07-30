@@ -22,6 +22,7 @@ import {
 } from "@/components/ui/command";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -50,6 +51,7 @@ export function RiskyLocationsClient({
   const [countryCode, setCountryCode] = useState("");
   const [countryOpen, setCountryOpen] = useState(false);
   const [duration, setDuration] = useState(60);
+  const [reason, setReason] = useState("");
   const [draftDurations, setDraftDurations] = useState<Record<string, number>>(
     Object.fromEntries(
       initialLocations.map((location) => [
@@ -73,11 +75,24 @@ export function RiskyLocationsClient({
       toast.error("Choose a country and a monitor time from 1 to 60 minutes.");
       return;
     }
+    const submittedReason = reason.trim();
+    if (submittedReason.length < 4) {
+      toast.error("Enter a reason with at least 4 characters.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Add ${countryNames.get(countryCode) ?? countryCode} as a risk location? This change will be audited.`,
+      )
+    ) {
+      return;
+    }
     startTransition(async () => {
       try {
         const saved = await addRiskyLocation({
           countryCode,
           monitorDurationMinutes: duration,
+          reason: submittedReason,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) => [
@@ -91,6 +106,7 @@ export function RiskyLocationsClient({
           [saved.countryCode]: saved.monitorDurationMinutes,
         }));
         setCountryCode("");
+        setReason("");
         toast.success(
           `${countryNames.get(saved.countryCode) ?? saved.countryCode} now uses a ${saved.monitorDurationMinutes}-minute monitor.`,
         );
@@ -106,10 +122,21 @@ export function RiskyLocationsClient({
 
   function saveLocation(location: RiskyLocation, enabled = location.enabled) {
     const monitorDurationMinutes =
-      draftDurations[location.countryCode] ??
-      location.monitorDurationMinutes;
+      draftDurations[location.countryCode] ?? location.monitorDurationMinutes;
     if (monitorDurationMinutes < 1 || monitorDurationMinutes > 60) {
       toast.error("Monitor time must be between 1 and 60 minutes.");
+      return;
+    }
+    const submittedReason = reason.trim();
+    if (submittedReason.length < 4) {
+      toast.error("Enter a reason with at least 4 characters.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `${enabled ? "Save" : "Disable"} ${countryNames.get(location.countryCode) ?? location.countryCode}? This change will be audited.`,
+      )
+    ) {
       return;
     }
     startTransition(async () => {
@@ -118,6 +145,7 @@ export function RiskyLocationsClient({
           countryCode: location.countryCode,
           enabled,
           monitorDurationMinutes,
+          reason: submittedReason,
           idempotencyKey: crypto.randomUUID(),
         });
         setLocations((current) =>
@@ -134,6 +162,7 @@ export function RiskyLocationsClient({
             ? `${countryNames.get(saved.countryCode) ?? saved.countryCode} will be monitored for ${saved.monitorDurationMinutes} minutes.`
             : `${countryNames.get(saved.countryCode) ?? saved.countryCode} is disabled.`,
         );
+        setReason("");
       } catch (error) {
         toast.error(
           error instanceof Error
@@ -156,8 +185,8 @@ export function RiskyLocationsClient({
             Add risky location
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            New accounts from this country enter the live monitor even when
-            they have no other risk points.
+            New accounts from this country enter the live monitor even when they
+            have no other risk points.
           </p>
         </div>
         <div className="space-y-2">
@@ -222,6 +251,20 @@ export function RiskyLocationsClient({
           </Popover>
         </div>
         <div className="space-y-2">
+          <Label htmlFor="risky-location-reason">Change reason</Label>
+          <Textarea
+            id="risky-location-reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why this location should be added or changed"
+            maxLength={500}
+            disabled={isPending}
+          />
+          <p className="text-xs text-muted-foreground">
+            Required for adds and rule changes. Saved in the audit log.
+          </p>
+        </div>
+        <div className="space-y-2">
           <Label htmlFor="risky-duration">Monitor time (minutes)</Label>
           <Input
             id="risky-duration"
@@ -262,7 +305,9 @@ export function RiskyLocationsClient({
           <div className="divide-y">
             {locations
               .toSorted((a, b) =>
-                (countryNames.get(a.countryCode) ?? a.countryCode).localeCompare(
+                (
+                  countryNames.get(a.countryCode) ?? a.countryCode
+                ).localeCompare(
                   countryNames.get(b.countryCode) ?? b.countryCode,
                 ),
               )

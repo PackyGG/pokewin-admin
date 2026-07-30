@@ -9,12 +9,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import type { FiatEmailDomainRule } from "@/lib/antifraud/fiat-email-domains-api";
 import { formatRelative } from "@/lib/utils/format";
-import {
-  addFiatEmailDomain,
-  setFiatEmailDomainState,
-} from "./actions";
+import { addFiatEmailDomain, setFiatEmailDomainState } from "./actions";
 
 export function EmailBlacklistClient({
   initialRules,
@@ -24,6 +22,7 @@ export function EmailBlacklistClient({
   const router = useRouter();
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
+  const [reason, setReason] = useState("");
   const [isPending, startTransition] = useTransition();
   const isCheckingHistory = rules.some(
     (rule) => rule.enabled && !rule.backfillComplete,
@@ -42,10 +41,23 @@ export function EmailBlacklistClient({
       toast.error("Enter an email domain.");
       return;
     }
+    const submittedReason = reason.trim();
+    if (submittedReason.length < 4) {
+      toast.error("Enter a reason with at least 4 characters.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `Block @${submittedDomain}? This will affect matching accounts and will be audited.`,
+      )
+    ) {
+      return;
+    }
     startTransition(async () => {
       try {
         const saved = await addFiatEmailDomain({
           domain: submittedDomain,
+          reason: submittedReason,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) => [
@@ -53,22 +65,38 @@ export function EmailBlacklistClient({
           ...current.filter((rule) => rule.id !== saved.id),
         ]);
         setDomain("");
+        setReason("");
         toast.success(`${saved.domain} is now blocked.`);
         router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : "The domain could not be added.",
+          error instanceof Error
+            ? error.message
+            : "The domain could not be added.",
         );
       }
     });
   }
 
   function toggleRule(rule: FiatEmailDomainRule) {
+    const submittedReason = reason.trim();
+    if (submittedReason.length < 4) {
+      toast.error("Enter a reason with at least 4 characters.");
+      return;
+    }
+    if (
+      !window.confirm(
+        `${rule.enabled ? "Disable" : "Enable"} @${rule.domain}? This change will be audited.`,
+      )
+    ) {
+      return;
+    }
     startTransition(async () => {
       try {
         const saved = await setFiatEmailDomainState({
           id: rule.id,
           enabled: !rule.enabled,
+          reason: submittedReason,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) =>
@@ -80,6 +108,7 @@ export function EmailBlacklistClient({
             : `${saved.domain} is disabled.`,
         );
         router.refresh();
+        setReason("");
       } catch (error) {
         toast.error(
           error instanceof Error
@@ -118,6 +147,20 @@ export function EmailBlacklistClient({
             spellCheck={false}
             disabled={isPending}
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email-domain-reason">Change reason</Label>
+          <Textarea
+            id="email-domain-reason"
+            value={reason}
+            onChange={(event) => setReason(event.target.value)}
+            placeholder="Why this domain should be blocked or changed"
+            maxLength={500}
+            disabled={isPending}
+          />
+          <p className="text-xs text-muted-foreground">
+            Required for adds, enables, and disables. Saved in the audit log.
+          </p>
         </div>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? (
@@ -172,7 +215,8 @@ export function EmailBlacklistClient({
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    {rule.affectedUsers} affected users · {rule.matchCount} matches
+                    {rule.affectedUsers} affected users · {rule.matchCount}{" "}
+                    matches
                     {rule.pendingLocks > 0
                       ? ` · ${rule.pendingLocks} locks pending`
                       : ""}{" "}

@@ -8,7 +8,8 @@ import {
 } from "@/components/modern-panels";
 import { TableSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
-import { requireOwner } from "@/lib/owners";
+import { canManageAntifraud } from "@/lib/antifraud/access";
+import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import {
   getRecentRefundBatches,
   getRefundCandidates,
@@ -22,7 +23,7 @@ export default async function RefundsPage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  await requireOwner();
+  const session = await requireAntifraudPageAccess();
   const params = await searchParams;
   const payment =
     typeof params.payment === "string" &&
@@ -50,6 +51,7 @@ export default async function RefundsPage({
           <RefundsSection
             requestedPaymentId={payment}
             reconciliationOnly={reconciliationOnly}
+            canExecute={canManageAntifraud(session)}
           />
         </Suspense>
       </div>
@@ -60,18 +62,18 @@ export default async function RefundsPage({
 async function RefundsSection({
   requestedPaymentId,
   reconciliationOnly,
+  canExecute,
 }: {
   requestedPaymentId?: string;
   reconciliationOnly: boolean;
+  canExecute: boolean;
 }) {
   const [candidates, recentBatches] = await Promise.all([
     getRefundCandidates(),
     getRecentRefundBatches(),
   ]);
   const visibleCandidates = reconciliationOnly
-    ? candidates.filter(
-        (candidate) => candidate.status === "paid_unreconciled",
-      )
+    ? candidates.filter((candidate) => candidate.status === "paid_unreconciled")
     : candidates;
 
   return (
@@ -80,6 +82,7 @@ async function RefundsSection({
       recentBatches={recentBatches}
       requestedPaymentId={requestedPaymentId}
       reconciliationOnly={reconciliationOnly}
+      canExecute={canExecute}
     />
   );
 }

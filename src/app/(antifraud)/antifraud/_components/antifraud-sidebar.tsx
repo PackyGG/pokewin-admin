@@ -1,5 +1,6 @@
 "use client";
 
+import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -7,16 +8,19 @@ import {
   ArrowUpFromLine,
   Banknote,
   Braces,
+  ChevronRight,
   Fingerprint,
   Gauge,
   LayoutDashboard,
   MailWarning,
   MapPinned,
+  Network,
   RadioTower,
   RotateCcw,
   Settings,
   ShieldAlert,
   ShieldCheck,
+  UsersRound,
   UserRoundSearch,
   Webhook,
   type LucideIcon,
@@ -34,6 +38,11 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { LinkPending } from "@/components/ux";
@@ -61,58 +70,121 @@ type NavItem = {
   label: string;
   href: string;
   icon: LucideIcon;
+  disabledReason?: string;
 };
 
-const WORKSPACE_NAV: NavItem[] = [
-  { label: "Overview", href: "/antifraud", icon: LayoutDashboard },
-  { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
-  { label: "Live Monitor", href: "/antifraud/monitor", icon: RadioTower },
-  { label: "Account Review", href: "/antifraud/reviews", icon: ShieldAlert },
+function persistSectionState(storageKey: string, open: boolean) {
+  try {
+    window.localStorage.setItem(storageKey, open ? "open" : "closed");
+  } catch {
+    // Storage can be unavailable in hardened/private browser contexts.
+  }
+}
+
+const OVERVIEW_NAV: NavItem[] = [
+  { label: "Dashboard", href: "/antifraud", icon: LayoutDashboard },
+  { label: "Live events", href: "/antifraud/monitor", icon: RadioTower },
+  { label: "Account reviews", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
 const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
 
-const TRANSACTION_NAV: NavItem[] = [
-  { label: "Fiat Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
-  { label: "Fiat Fraud", href: "/antifraud/fiat-fraud", icon: ShieldAlert },
-  { label: "Withdrawals", href: "/antifraud/withdrawals", icon: ArrowUpFromLine },
+const ACCOUNT_NAV: NavItem[] = [
+  {
+    label: "Profiles",
+    href: "/antifraud/profiles",
+    icon: UserRoundSearch,
+    disabledReason: "The Fraud profile index is not available yet",
+  },
+  { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
+  {
+    label: "Connections & clusters",
+    href: "/antifraud/networks",
+    icon: UsersRound,
+  },
 ];
 
-const OWNER_TRANSACTION_NAV: NavItem = {
-  label: "Whop Refunds",
-  href: "/antifraud/refunds",
-  icon: RotateCcw,
-};
+const TRANSACTION_NAV: NavItem[] = [
+  { label: "Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
+  {
+    label: "Withdrawals",
+    href: "/antifraud/withdrawals",
+    icon: ArrowUpFromLine,
+  },
+  { label: "Refunds", href: "/antifraud/refunds", icon: RotateCcw },
+];
 
 const KYC_NAV: NavItem[] = [
-  { label: "Home", href: "/antifraud/kyc", icon: Fingerprint },
+  { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 
 const NOTIFICATION_NAV: NavItem[] = [
-  { label: "Webhooks", href: "/antifraud/webhooks", icon: Webhook },
+  { label: "Discord", href: "/antifraud/webhooks", icon: Webhook },
+  {
+    label: "Dashboard",
+    href: "/antifraud/notifications",
+    icon: Activity,
+    disabledReason: "Automatic dashboard rule storage is not available yet",
+  },
 ];
 
-/**
- * Owner/admin-only antifraud settings.
- */
-const MANAGE_NAV: NavItem[] = [
+const BLACKLIST_NAV: NavItem[] = [
   {
-    label: "Risky Locations",
-    href: "/antifraud/risky-locations",
-    icon: MapPinned,
-  },
-  {
-    label: "Email Blacklist",
+    label: "Domains",
     href: "/antifraud/email-blacklist",
     icon: MailWarning,
   },
-  { label: "Risk Scoring", href: "/antifraud/points", icon: Gauge },
   {
-    label: "Fiat Eligibility",
-    href: "/antifraud/fiat-eligibility",
+    label: "IPs",
+    href: "/antifraud/networks?focus=ip",
+    icon: Network,
+    disabledReason: "Editable IP blacklist storage is not available yet",
+  },
+  {
+    label: "Fingerprints",
+    href: "/antifraud/networks?focus=fingerprint",
+    icon: Fingerprint,
+    disabledReason:
+      "Editable fingerprint blacklist storage is not available yet",
+  },
+  {
+    label: "Banned users",
+    href: "/antifraud/banned-users",
+    icon: ShieldAlert,
+    disabledReason: "The Fraud-only banned-user index is not available yet",
+  },
+  {
+    label: "Risk locations",
+    href: "/antifraud/risky-locations",
+    icon: MapPinned,
+  },
+];
+
+const SYSTEM_NAV: NavItem[] = [
+  { label: "System health", href: "/antifraud/api", icon: RadioTower },
+  {
+    label: "Providers",
+    href: "/antifraud/settings#integrations",
     icon: ShieldCheck,
   },
-  { label: "Events & Triggers", href: "/antifraud/events", icon: Activity },
+  { label: "Risk engine", href: "/antifraud/points", icon: Gauge },
   { label: "API", href: "/antifraud/api", icon: Braces },
+  {
+    label: "Errors",
+    href: "/antifraud/api#signup-failures",
+    icon: ShieldAlert,
+  },
+  {
+    label: "Audit log",
+    href: "/antifraud/audit",
+    icon: Activity,
+    disabledReason:
+      "Unified append-only Fraud audit reads need a service contract",
+  },
+  {
+    label: "Access & permissions",
+    href: "/antifraud/settings?tab=general",
+    icon: UsersRound,
+  },
   { label: "Settings", href: "/antifraud/settings", icon: Settings },
 ];
 
@@ -167,8 +239,16 @@ function NavMenu({
             <SidebarMenuButton
               isActive={isActive}
               tooltip={item.label}
-              render={<Link href={href} />}
+              render={item.disabledReason ? undefined : <Link href={href} />}
+              disabled={Boolean(item.disabledReason)}
+              aria-label={
+                item.disabledReason
+                  ? `${item.label}. ${item.disabledReason}`
+                  : item.label
+              }
+              title={item.disabledReason}
               onClick={() => {
+                if (item.disabledReason) return;
                 if (alertKey) onAlertSeen?.(alertKey);
                 onNavTap();
               }}
@@ -197,17 +277,98 @@ function NavMenu({
   );
 }
 
+function NavSection({
+  label,
+  items,
+  pathname,
+  onNavTap,
+  alertCounts,
+  onAlertSeen,
+  toHref,
+  defaultOpen = false,
+  storageKey,
+}: {
+  label: string;
+  items: NavItem[];
+  pathname: string;
+  onNavTap: () => void;
+  alertCounts?: Partial<Record<NavAlertKey, number>>;
+  onAlertSeen?: (key: NavAlertKey) => void;
+  toHref: (path: string) => string;
+  defaultOpen?: boolean;
+  storageKey: string;
+}) {
+  const active = items.some((item) => {
+    const href = toHref(item.href);
+    const root = toHref("/antifraud");
+    return (
+      pathname === href || (href !== root && pathname.startsWith(`${href}/`))
+    );
+  });
+  const [open, setOpen] = React.useState(defaultOpen || active);
+
+  React.useEffect(() => {
+    if (active) {
+      setOpen(true);
+      persistSectionState(storageKey, true);
+      return;
+    }
+    try {
+      const saved = window.localStorage.getItem(storageKey);
+      if (saved) setOpen(saved === "open");
+    } catch {
+      // The default/active state remains usable without persistence.
+    }
+  }, [active, storageKey]);
+
+  function updateOpen(next: boolean) {
+    setOpen(next);
+    persistSectionState(storageKey, next);
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={updateOpen}>
+      <SidebarGroup className="px-2 py-1 group-data-[collapsible=icon]:hidden">
+        <CollapsibleTrigger
+          className="flex w-full items-center rounded-md pr-1 text-left outline-none hover:bg-sidebar-accent focus-visible:ring-2 focus-visible:ring-sidebar-ring group-data-[collapsible=icon]:hidden"
+          aria-label={`${open ? "Collapse" : "Expand"} ${label} navigation`}
+        >
+          <SidebarGroupLabel className="flex-1 cursor-pointer">
+            {label}
+          </SidebarGroupLabel>
+          <ChevronRight
+            className={cn(
+              "size-3.5 text-muted-foreground transition-transform motion-reduce:transition-none",
+              open && "rotate-90",
+            )}
+            aria-hidden
+          />
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <SidebarGroupContent>
+            <NavMenu
+              items={items}
+              pathname={pathname}
+              onNavTap={onNavTap}
+              alertCounts={alertCounts}
+              onAlertSeen={onAlertSeen}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
+  );
+}
+
 export function AntifraudSidebar({
   viewerId,
   canManage = false,
-  isOwner = false,
   access = { creatorHub: false, packStudio: false, antifraud: true },
 }: {
   viewerId: string;
   /** Owner / admin — reveals the authoring + settings group. */
   canManage?: boolean;
-  /** Refund execution is owner-only, so non-owners never see its entry. */
-  isOwner?: boolean;
   /** Server-computed workspace entitlement for the footer switcher. */
   access?: AppSwitcherAccess;
 }) {
@@ -283,76 +444,93 @@ export function AntifraudSidebar({
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Fraud Operations</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavMenu
-              items={WORKSPACE_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              alertCounts={navAlertCounts}
-              onAlertSeen={markNavAlertSeen}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>Transactions</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavMenu
-              items={
-                isOwner
-                  ? [...TRANSACTION_NAV, OWNER_TRANSACTION_NAV]
-                  : TRANSACTION_NAV
-              }
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              alertCounts={navAlertCounts}
-              onAlertSeen={markNavAlertSeen}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup className="px-2 py-1">
-          <SidebarGroupLabel>KYC</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <NavMenu
-              items={KYC_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-            />
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <NavSection
+          label="Overview"
+          items={OVERVIEW_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          alertCounts={navAlertCounts}
+          onAlertSeen={markNavAlertSeen}
+          toHref={toHref}
+          defaultOpen
+          storageKey={`antifraud-nav:v1:${viewerId}:overview`}
+        />
+        <NavSection
+          label="Accounts"
+          items={ACCOUNT_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          alertCounts={navAlertCounts}
+          onAlertSeen={markNavAlertSeen}
+          toHref={toHref}
+          storageKey={`antifraud-nav:v1:${viewerId}:accounts`}
+        />
+        <NavSection
+          label="Transactions"
+          items={TRANSACTION_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          alertCounts={navAlertCounts}
+          onAlertSeen={markNavAlertSeen}
+          toHref={toHref}
+          storageKey={`antifraud-nav:v1:${viewerId}:transactions`}
+        />
+        <NavSection
+          label="KYC"
+          items={KYC_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          toHref={toHref}
+          storageKey={`antifraud-nav:v1:${viewerId}:kyc`}
+        />
+        <NavSection
+          label="Blacklists"
+          items={BLACKLIST_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          toHref={toHref}
+          storageKey={`antifraud-nav:v1:${viewerId}:blacklists`}
+        />
 
         {canManage && (
           <>
-            <SidebarGroup className="px-2 py-1">
-              <SidebarGroupLabel>Notifications</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <NavMenu
-                  items={NOTIFICATION_NAV}
-                  pathname={pathname}
-                  onNavTap={handleNavTap}
-                  toHref={toHref}
-                />
-              </SidebarGroupContent>
-            </SidebarGroup>
-            <SidebarGroup className="px-2 py-1">
-              <SidebarGroupLabel>System</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <NavMenu
-                  items={MANAGE_NAV}
-                  pathname={pathname}
-                  onNavTap={handleNavTap}
-                  toHref={toHref}
-                />
-              </SidebarGroupContent>
-            </SidebarGroup>
+            <NavSection
+              label="Notifications"
+              items={NOTIFICATION_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+              storageKey={`antifraud-nav:v1:${viewerId}:notifications`}
+            />
+            <NavSection
+              label="System"
+              items={SYSTEM_NAV}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              toHref={toHref}
+              storageKey={`antifraud-nav:v1:${viewerId}:system`}
+            />
           </>
         )}
+        <SidebarGroup className="hidden px-1 py-1 group-data-[collapsible=icon]:block">
+          <SidebarGroupContent>
+            <NavMenu
+              items={[
+                ...OVERVIEW_NAV,
+                ...ACCOUNT_NAV,
+                ...TRANSACTION_NAV,
+                ...KYC_NAV,
+                ...BLACKLIST_NAV,
+                ...(canManage ? [...NOTIFICATION_NAV, ...SYSTEM_NAV] : []),
+              ]}
+              pathname={pathname}
+              onNavTap={handleNavTap}
+              alertCounts={navAlertCounts}
+              onAlertSeen={markNavAlertSeen}
+              toHref={toHref}
+            />
+          </SidebarGroupContent>
+        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-border">

@@ -40,7 +40,7 @@ const refundsPanel = readFileSync(
 );
 const fiatDetail = readFileSync(
   new URL(
-    "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
+    "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-workspace.tsx",
     import.meta.url,
   ),
   "utf8",
@@ -53,10 +53,7 @@ const fiatList = readFileSync(
   "utf8",
 );
 const fiatApi = readFileSync(
-  new URL(
-    "../../src/lib/antifraud/fiat-deposits-api.ts",
-    import.meta.url,
-  ),
+  new URL("../../src/lib/antifraud/fiat-deposits-api.ts", import.meta.url),
   "utf8",
 );
 const transactionsPage = readFileSync(
@@ -82,14 +79,13 @@ const middleware = readFileSync(
   "utf8",
 );
 
-test("Whop refunds live only in the owner-only Fraud workspace", () => {
-  assert.match(refundPage, /await requireOwner\(\)/);
+test("Whop refunds are visible to Fraud staff and executable by managers", () => {
+  assert.match(refundPage, /await requireAntifraudPageAccess\(\)/);
+  assert.match(refundPage, /canExecute=\{canManageAntifraud\(session\)\}/);
   assert.match(refundsPanel, /Whop refunds for currently flagged accounts/);
-  assert.match(sidebar, /label: "Whop Refunds"/);
-  assert.match(
-    sidebar,
-    /isOwner\s*\?\s*\[\.\.\.TRANSACTION_NAV, OWNER_TRANSACTION_NAV\]/,
-  );
+  assert.match(refundsPanel, /<Badge variant="outline">View only<\/Badge>/);
+  assert.match(sidebar, /label: "Refunds"/);
+  assert.doesNotMatch(sidebar, /OWNER_TRANSACTION_NAV|isOwner/);
   assert.match(appHosts, /"refunds"/);
   assert.doesNotMatch(transactionsPage, /RefundsPanel|value: "refunds"/);
   assert.match(
@@ -100,24 +96,24 @@ test("Whop refunds live only in the owner-only Fraud workspace", () => {
   assert.doesNotMatch(actions, /revalidatePath\("\/transactions\/deposits"\)/);
 });
 
-test("refund batches require owner access and fresh step-up before expansion", () => {
-  const owner = actions.indexOf("await requireOwner()");
+test("refund batches require manager access and fresh step-up before expansion", () => {
+  const manager = actions.indexOf("await requireAntifraudManager()");
   const stepUp = actions.indexOf("await require2FA");
   const expansion = actions.indexOf("await resolveRefundSelection");
-  assert.ok(owner >= 0);
-  assert.ok(stepUp > owner);
+  assert.ok(manager >= 0);
+  assert.ok(stepUp > manager);
   assert.ok(expansion > stepUp);
 });
 
-test("refund confirmation needs only owner step-up", () => {
-  assert.doesNotMatch(
-    refundsPanel,
-    /refund-reason|refund-confirmation|Type REFUND/,
-  );
-  assert.doesNotMatch(refundsPanel, /Textarea|@\/components\/ui\/input/);
-  assert.match(refundsPanel, /disabled=\{working \|\| !credential\}/);
-  assert.match(actions, /REFUND_BATCH_AUDIT_REASON/);
-  assert.doesNotMatch(actions, /reason:\s*string/);
+test("refund confirmation requires reason, typed confirmation, and manager step-up", () => {
+  assert.match(refundsPanel, /refund-reason/);
+  assert.match(refundsPanel, /refund-confirmation/);
+  assert.match(refundsPanel, /Type REFUND to confirm/);
+  assert.match(refundsPanel, /confirmation !== "REFUND"/);
+  assert.match(actions, /confirmation:\s*string/);
+  assert.match(actions, /reason:\s*string/);
+  assert.match(actions, /input\.confirmation !== "REFUND"/);
+  assert.match(actions, /reason\.length < 4 \|\| reason\.length > 500/);
 });
 
 test("Whop mutations disable SDK retries and retrieve before refunding", () => {
@@ -163,15 +159,15 @@ test("account recovery is atomic per user and continues after a failure", () => 
   assert.match(refundsPanel, /account recoveries need a retry/);
 });
 
-test("completed-batch recovery is owner-only, step-up gated, and visible", () => {
+test("completed-batch recovery is manager-only, step-up gated, and visible", () => {
   const recovery = actions.indexOf(
     "export async function recoverRefundedBatch",
   );
-  const owner = actions.indexOf("await requireOwner()", recovery);
+  const manager = actions.indexOf("await requireAntifraudManager()", recovery);
   const stepUp = actions.indexOf("await require2FA", recovery);
   assert.ok(recovery >= 0);
-  assert.ok(owner > recovery);
-  assert.ok(stepUp > owner);
+  assert.ok(manager > recovery);
+  assert.ok(stepUp > manager);
   assert.match(actions, /export async function recoverAllRefundedAccounts/);
   assert.match(actions, /await loadAllRefundRecoveryTargets\(\)/);
   assert.match(refundsPanel, /Ban &amp; recover all successful refunds/);
@@ -197,10 +193,7 @@ test("paid-but-uncredited Whop payments use the successful payment ID for refund
   assert.match(queries, /WITH paid_unreconciled AS/);
   assert.match(queries, /event_type = 'payment\.succeeded'/);
   assert.match(queries, /processing_status = 'failed'/);
-  assert.match(
-    queries,
-    /provider_resource_id AS provider_payment_id/,
-  );
+  assert.match(queries, /provider_resource_id AS provider_payment_id/);
   assert.match(queries, /'paid_unreconciled'::text AS status/);
   assert.match(
     queries,
@@ -210,25 +203,25 @@ test("paid-but-uncredited Whop payments use the successful payment ID for refund
   assert.match(refundsPanel, /no completed ledger[\s\S]*successful Whop/);
 });
 
-test("the Fiat review links owners into the exact guarded refund", () => {
+test("the Fiat review links managers into the exact guarded refund", () => {
   assert.match(fiatApi, /provider_payment_id: z\.string\(\)\.nullable\(\)/);
-  assert.match(fiatDetail, /canRefund=\{isOwner\(session\)\}/);
+  assert.match(fiatDetail, /canRefund=\{canManageAntifraud\(session\)\}/);
   assert.match(fiatDetail, /unreconciled[\s\S]*item\.provider_payment_id/);
   assert.match(
     fiatDetail,
     /\/antifraud\/refunds\?payment=\$\{encodeURIComponent\(item\.provider_payment_id\)\}/,
   );
   assert.match(refundPage, /\^pay_\[A-Za-z0-9\]\+\$/);
-  assert.match(refundsPanel, /requestedPaymentAvailable[\s\S]*mode: "payments"/);
+  assert.match(
+    refundsPanel,
+    /requestedPaymentAvailable[\s\S]*mode: "payments"/,
+  );
   assert.match(
     fiatList,
-    /isOwner\(session\)[\s\S]*\/antifraud\/refunds\?scope=paid_unreconciled/,
+    /canManageKyc[\s\S]*\/antifraud\/refunds\?scope=paid_unreconciled/,
   );
   assert.match(refundPage, /params\.scope === "paid_unreconciled"/);
-  assert.match(
-    refundPage,
-    /candidate\.status === "paid_unreconciled"/,
-  );
+  assert.match(refundPage, /candidate\.status === "paid_unreconciled"/);
   assert.match(
     refundsPanel,
     /reconciliationOnly[\s\S]*mode: "payments"[\s\S]*providerPaymentId/,

@@ -9,7 +9,7 @@ function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
 
-test("fraud navigation owns a manager-only Notifications webhooks route", () => {
+test("fraud navigation owns a manager-only Notifications Discord route", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -19,17 +19,15 @@ test("fraud navigation owns a manager-only Notifications webhooks route", () => 
       /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[([\s\S]*?)\]/,
     )?.[1] ?? "";
 
-  assert.match(sidebar, /SidebarGroupLabel>Notifications/);
-  assert.match(sidebar, /label:\s*"Webhooks"/);
+  assert.match(sidebar, /label="Notifications"/);
+  assert.match(sidebar, /label:\s*"Discord"/);
   assert.match(sidebar, /href:\s*"\/antifraud\/webhooks"/);
   assert.match(sidebar, /\{canManage && \([\s\S]*NOTIFICATION_NAV/);
   assert.match(antifraudHost, /"webhooks"/);
 });
 
 test("webhooks page is manager-gated and renders the bot routing workspace", () => {
-  const page = source(
-    "src/app/(antifraud)/antifraud/webhooks/page.tsx",
-  );
+  const page = source("src/app/(antifraud)/antifraud/webhooks/page.tsx");
 
   assert.match(page, /await requireAntifraudManagerPage\(\)/);
   assert.match(page, /getDiscordNotificationConfig\(\)/);

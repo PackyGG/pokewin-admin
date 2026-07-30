@@ -30,7 +30,6 @@ import { DEFAULT_PREFERENCES } from "@/lib/admin-preferences-types";
 import { readDbEnvFromCookie, isDevDbConfigured } from "@/lib/db-env";
 import { readTzCookie } from "@/lib/timezone/server";
 import { resolveAppAccess } from "@/lib/app-access";
-import { isOwner } from "@/lib/owners";
 
 // scroll-to-top island lives in the (admin) group; reused 1:1 here. The
 // (antifraud) and (admin) route groups are sibling directories on disk, so this
@@ -70,11 +69,15 @@ async function loadHeaderProfile(userId: string): Promise<{
   profileFieldsAvailable: boolean;
 }> {
   try {
-    const [row] = await adminDrizzle.select({
-      display_username: admin_users.display_username,
-      profile_image_mime: admin_users.profile_image_mime,
-      email: admin_users.email,
-    }).from(admin_users).where(eq(admin_users.id, userId)).limit(1);
+    const [row] = await adminDrizzle
+      .select({
+        display_username: admin_users.display_username,
+        profile_image_mime: admin_users.profile_image_mime,
+        email: admin_users.email,
+      })
+      .from(admin_users)
+      .where(eq(admin_users.id, userId))
+      .limit(1);
     return {
       displayUsername: row?.display_username ?? null,
       hasAvatar: Boolean(row?.profile_image_mime),
@@ -87,8 +90,11 @@ async function loadHeaderProfile(userId: string): Promise<{
       (err instanceof Error && /column .* does not exist/i.test(err.message));
     if (missingColumn) {
       try {
-        const [row] = await adminDrizzle.select({ email: admin_users.email })
-          .from(admin_users).where(eq(admin_users.id, userId)).limit(1);
+        const [row] = await adminDrizzle
+          .select({ email: admin_users.email })
+          .from(admin_users)
+          .where(eq(admin_users.id, userId))
+          .limit(1);
         return {
           displayUsername: null,
           hasAvatar: false,
@@ -249,7 +255,6 @@ export default async function AntifraudLayout({
         <AntifraudSidebar
           viewerId={session.userId}
           canManage={canManage}
-          isOwner={isOwner(session)}
           access={appAccess}
         />
         <SidebarInset className="min-w-0">

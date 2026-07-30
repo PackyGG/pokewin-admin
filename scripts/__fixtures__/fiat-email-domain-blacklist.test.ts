@@ -6,28 +6,29 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Fraud System owns the manager-only email blacklist without a reason field", () => {
+test("every verified Fraud user can edit the audited email blacklist", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
   const hosts = read("src/lib/app-hosts.ts");
-  const page = read(
-    "src/app/(antifraud)/antifraud/email-blacklist/page.tsx",
-  );
+  const page = read("src/app/(antifraud)/antifraud/email-blacklist/page.tsx");
   const actions = read(
     "src/app/(antifraud)/antifraud/email-blacklist/actions.ts",
   );
 
-  assert.match(sidebar, /SidebarGroupLabel>System/);
+  assert.match(sidebar, /label="Blacklists"/);
   assert.match(sidebar, /\/antifraud\/email-blacklist/);
   assert.match(hosts, /"email-blacklist"/);
-  assert.match(page, /requireAntifraudManagerPage/);
-  assert.match(actions, /requireAntifraudManager/);
+  assert.match(page, /requireAntifraudPageAccess/);
+  assert.match(actions, /requireAntifraudAccess/);
   assert.match(actions, /fiat_email_domain_blacklisted/);
   const client = read(
     "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
   );
-  assert.doesNotMatch(client, /blacklist-reason|<Textarea|rule\.reason/);
+  assert.match(client, /email-domain-reason/);
+  assert.match(client, /<Textarea/);
+  assert.match(client, /window\.confirm/);
+  assert.match(actions, /reason: parsed\.data\.reason/);
   assert.match(page, /key=\{result\.data/);
   assert.match(page, /rule\.updatedAt/);
   assert.match(client, /isCheckingHistory/);
@@ -35,9 +36,7 @@ test("Fraud System owns the manager-only email blacklist without a reason field"
 });
 
 test("blacklisted signup and Whop signals apply withdrawal and KYC containment through signed ingest", () => {
-  const monitor = read(
-    "services/antifraud-monitor/src/fiat-email-domains.ts",
-  );
+  const monitor = read("services/antifraud-monitor/src/fiat-email-domains.ts");
   const ingest = read("src/app/api/antifraud/ingest/route.ts");
   const client = read(
     "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
@@ -95,9 +94,7 @@ test("Fraud Fiat deposits force blacklist matches to the critical score", () => 
 test("email blacklist alerts have a dedicated bot event destination", () => {
   const config = read("services/antifraud-monitor/src/config.ts");
   const alerts = read("services/antifraud-monitor/src/fiat-alerts.ts");
-  const transport = read(
-    "services/antifraud-monitor/src/discord-events.ts",
-  );
+  const transport = read("services/antifraud-monitor/src/discord-events.ts");
 
   assert.match(config, /ADMIN_GUILD_ID/);
   assert.match(alerts, /case "email_blacklist":/);

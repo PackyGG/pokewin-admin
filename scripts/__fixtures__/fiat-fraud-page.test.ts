@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Fraud Transactions owns the permission-gated canonical Fiat Fraud page", () => {
+test("the permission-gated Fiat Fraud route remains available without duplicate nav", () => {
   const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
   const page = read("src/app/(antifraud)/antifraud/fiat-fraud/page.tsx");
   const sidebar = read(
@@ -15,8 +15,8 @@ test("Fraud Transactions owns the permission-gated canonical Fiat Fraud page", (
   const hosts = read("src/lib/app-hosts.ts");
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(page, /<FiatFraudContent/);
-  assert.match(sidebar, /label: "Fiat Fraud"/);
-  assert.match(sidebar, /href: "\/antifraud\/fiat-fraud"/);
+  assert.doesNotMatch(sidebar, /label: "Fiat Fraud"/);
+  assert.doesNotMatch(sidebar, /href: "\/antifraud\/fiat-fraud"/);
   assert.match(hosts, /"fiat-fraud"/);
   assert.doesNotMatch(adminPage, /value: "fiat-fraud"/);
   assert.doesNotMatch(adminPage, /<FiatFraud(?:Tab|Content)/);
@@ -35,10 +35,7 @@ test("The retired Admin deep link redirects to Fraud with query state intact", (
   assert.match(adminPage, /destination\.searchParams\.append\(key, value\)/);
   assert.match(adminPage, /redirect\(destination\.toString\(\)\)/);
   assert.match(middleware, /pathname === "\/transactions\/deposits"/);
-  assert.match(
-    middleware,
-    /retiredTransactionsTab === "fiat-fraud"/,
-  );
+  assert.match(middleware, /retiredTransactionsTab === "fiat-fraud"/);
   assert.match(middleware, /fraudTransactionsRoute/);
   assert.match(middleware, /entry\.basePath === "\/antifraud"/);
   assert.match(middleware, /key !== "tab"/);
@@ -129,13 +126,13 @@ test("Fiat Fraud groups catches per user with total fiat deposits", () => {
   const query = read("src/lib/queries/fiat-fraud.ts");
 
   assert.match(table, /key=\{row\.userId\}/);
-  assert.match(table, /new Map\(rows\.map\(\(row\) => \[row\.userId, row\]\)\)/);
-  assert.match(table, /<FiatFraudCard key=\{row\.userId\}/);
-  assert.doesNotMatch(table, /<Table(?:Head|Body|Row|Cell)?\b/);
   assert.match(
     table,
-    /rounded-2xl border border-border\/70 bg-card shadow-sm/,
+    /new Map\(rows\.map\(\(row\) => \[row\.userId, row\]\)\)/,
   );
+  assert.match(table, /<FiatFraudCard key=\{row\.userId\}/);
+  assert.doesNotMatch(table, /<Table(?:Head|Body|Row|Cell)?\b/);
+  assert.match(table, /rounded-2xl border border-border\/70 bg-card shadow-sm/);
   assert.doesNotMatch(table, /h-1 bg-rose-500/);
   assert.match(table, /Total fiat deposits/);
   assert.match(table, /row\.catchCount/);
