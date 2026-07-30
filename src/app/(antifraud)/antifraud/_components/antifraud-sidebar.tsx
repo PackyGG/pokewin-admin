@@ -414,14 +414,6 @@ export function AntifraudSidebar({
             alt="PackyGG"
             className="h-7 w-7 hidden group-data-[collapsible=icon]:block"
           />
-          <span className="mt-1 min-w-0 text-center group-data-[collapsible=icon]:hidden">
-            <span className="block truncate text-xs font-semibold text-foreground">
-              Antifraud
-            </span>
-            <span className="block truncate text-[11px] text-muted-foreground">
-              Risk workspace
-            </span>
-          </span>
         </Link>
       </SidebarHeader>
 
