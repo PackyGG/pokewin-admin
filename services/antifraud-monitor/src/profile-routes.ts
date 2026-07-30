@@ -350,7 +350,7 @@ export async function registerProfileRoutes(
               OR lower(COALESCE(username,'')) LIKE $2
               OR lower(COALESCE(email,'')) LIKE $2
             )
-          ORDER BY role,is_banned DESC,is_locked DESC,id
+          ORDER BY banned_at DESC NULLS LAST,created_at DESC,id
           LIMIT $3 OFFSET $4
         `,
         [roles, search, query.limit, offset],
