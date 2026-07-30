@@ -3,6 +3,10 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import {
+  APPROVED_DISCORD_CATEGORIES,
+  DISCORD_BOUNDARY_MARKERS,
+} from "./antifraud-policy";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 
@@ -68,13 +72,29 @@ export async function queueDiscordChannelCreation(input: {
 
   return adminDrizzle.transaction(async (tx) => {
     const parent = await tx.execute<{ channel_id: string }>(sql`
-      SELECT channel_id
-      FROM discord_notification_channels
-      WHERE guild_id = ${configuredGuildId}
-        AND channel_id = ${parentId}
-        AND available = true
-        AND type = 'category'
-        AND can_view = true
+      SELECT parent.channel_id
+      FROM discord_notification_channels AS parent
+      JOIN discord_notification_channels AS boundary_top
+        ON boundary_top.guild_id = parent.guild_id
+       AND boundary_top.channel_id = ${DISCORD_BOUNDARY_MARKERS.top}
+       AND boundary_top.available = true
+      JOIN discord_notification_channels AS boundary_bottom
+        ON boundary_bottom.guild_id = parent.guild_id
+       AND boundary_bottom.channel_id = ${DISCORD_BOUNDARY_MARKERS.bottom}
+       AND boundary_bottom.available = true
+      WHERE parent.guild_id = ${configuredGuildId}
+        AND parent.channel_id = ${parentId}
+        AND parent.available = true
+        AND parent.type = 'category'
+        AND parent.can_view = true
+        AND parent.position > boundary_top.position
+        AND parent.position < boundary_bottom.position
+        AND boundary_top.position < boundary_bottom.position
+        AND parent.channel_id IN (
+          ${APPROVED_DISCORD_CATEGORIES.accounts},
+          ${APPROVED_DISCORD_CATEGORIES.transactions},
+          ${APPROVED_DISCORD_CATEGORIES.errors}
+        )
       LIMIT 1
       FOR UPDATE
     `);

@@ -202,6 +202,8 @@ const runtimeConfig: Config = {
   ANTIFRAUD_INGEST_URL:
     "https://fraud.packydash.com/api/antifraud/ingest",
   ANTIFRAUD_INGEST_SECRET: "ingest-secret-that-is-at-least-32-characters",
+  ANTIFRAUD_WEBAPP_HEALTH_URL:
+    "https://fraud.packydash.com/api/health/antifraud-webapp",
   ADMIN_GUILD_ID: "1483064422778798112",
   FIAT_ALERT_DASHBOARD_URL:
     "https://fraud.packydash.com/fiat-deposits",
@@ -665,6 +667,8 @@ test("live replay envelopes require valid ids and object payloads", () => {
     ),
     {
       id: "1720000000000-7",
+      schemaVersion: 1,
+      correlationId: "legacy:1720000000000-7",
       type: "monitor.event",
       at: "2026-01-01T00:00:00.000Z",
       data: { caseId: "case-1" },

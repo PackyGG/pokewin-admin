@@ -42,7 +42,12 @@ import {
   signupContext,
   type SourceActivity,
 } from "./source.js";
-import type { ActiveSession, Signal, Signup } from "./types.js";
+import type {
+  ActiveSession,
+  LiveEventType,
+  Signal,
+  Signup,
+} from "./types.js";
 import { adjustFiatRiskForPaymentMethod } from "./whop-payment-method.js";
 
 export function storedSignals(value: unknown): Signal[] {
@@ -424,7 +429,7 @@ export class MonitorEngine {
    * completion.
    */
   private async broadcast(
-    type: string,
+    type: LiveEventType,
     data: Record<string, unknown>,
   ): Promise<void> {
     try {

@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import type { DiscordChannelCreationRequest } from "./channel-operations";
+import { APPROVED_DISCORD_CATEGORIES } from "./antifraud-policy";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -318,6 +319,11 @@ export async function upsertDiscordNotificationRoute(input: {
      AND channel.can_view = true
      AND channel.can_send = true
      AND channel.can_embed = true
+     AND channel.parent_id IN (
+       ${APPROVED_DISCORD_CATEGORIES.accounts},
+       ${APPROVED_DISCORD_CATEGORIES.transactions},
+       ${APPROVED_DISCORD_CATEGORIES.errors}
+     )
     WHERE event.event_key = ${eventKey} AND event.enabled = true
     ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
       enabled = EXCLUDED.enabled,
@@ -363,6 +369,11 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
       WHERE guild_id = ${guildId}
         AND channel_id = ${channelId}
         AND available = true
+        AND parent_id IN (
+          ${APPROVED_DISCORD_CATEGORIES.accounts},
+          ${APPROVED_DISCORD_CATEGORIES.transactions},
+          ${APPROVED_DISCORD_CATEGORIES.errors}
+        )
       LIMIT 1
       FOR UPDATE
     `);
@@ -388,6 +399,11 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
          AND channel.can_view = true
          AND channel.can_send = true
          AND channel.can_embed = true
+         AND channel.parent_id IN (
+           ${APPROVED_DISCORD_CATEGORIES.accounts},
+           ${APPROVED_DISCORD_CATEGORIES.transactions},
+           ${APPROVED_DISCORD_CATEGORIES.errors}
+         )
         ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
           enabled = true,
           updated_at = now()

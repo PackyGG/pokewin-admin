@@ -68,6 +68,7 @@ import {
   SEVERITY_BANDS,
   signupScoreDefinitions,
 } from "./score-catalog.js";
+import type { LiveEventType } from "./types.js";
 import {
   ScoreWeightConflictError,
   ScoreWeightStore,
@@ -82,6 +83,8 @@ import { WithdrawalRiskService } from "./withdrawal-risk.js";
 import { SumsubClient } from "./sumsub-client.js";
 import { registerSumsubRoutes } from "./sumsub-routes.js";
 import { KycCountryReviewService } from "./kyc-country-reviews.js";
+import { DashboardOpsTick } from "./ops-tick.js";
+import { DiscordAlerts } from "./discord.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -102,6 +105,7 @@ const SECRET_VALUES = [
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
+  config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL,
   config.SUMSUB_ADMIN_TOKEN,
   config.SUMSUB_ADMIN_KEY,
 ].filter(
@@ -175,6 +179,8 @@ const ingestDelivery = new IngestDelivery(
   db.antifraud,
   app.log,
 );
+const dashboardOpsTick = new DashboardOpsTick(config, app.log);
+const discordAlerts = new DiscordAlerts(config, app.log);
 const engine = new MonitorEngine(
   config,
   db,
@@ -255,7 +261,7 @@ function stringArray(value: unknown): string[] {
 }
 
 async function publishCommittedMutation(
-  type: string,
+  type: LiveEventType,
   data: Record<string, unknown>,
 ): Promise<void> {
   try {
@@ -306,6 +312,7 @@ await app.register(websocket, {
 });
 
 app.addHook("onSend", async (request, reply, payload) => {
+  reply.header("x-correlation-id", request.id);
   if (request.url === "/health" || request.url.startsWith("/v1/")) {
     reply.header("Cache-Control", "no-store");
   }
@@ -374,6 +381,7 @@ app.addHook("onRequest", async (request, reply) => {
 
 app.get("/health", async (_request, reply) => {
   const poller = engine.healthSnapshot();
+  const webappMonitor = dashboardOpsTick.status();
   const stalledForMs = pollerStalledFor(
     poller,
     config.POLLER_LIVENESS_TIMEOUT_MS,
@@ -393,6 +401,7 @@ app.get("/health", async (_request, reply) => {
       signupsRecovered: poller.signupsRecovered,
       signupFailuresPending: poller.signupFailuresPending,
     },
+    webappMonitor,
   };
   // A wedged engine must fail the platform healthcheck so the process is
   // restarted instead of serving a permanently silent monitor.
@@ -404,14 +413,23 @@ app.get("/ready", async (_request, reply) => {
     await assertDatabaseConnections(db);
     const poller = engine.healthSnapshot();
     const liveStatus = { subscribed: live.isSubscribed() };
+    const webappMonitor = dashboardOpsTick.status();
     if (
       poller.status === "starting" ||
       poller.status === "degraded" ||
-      !liveStatus.subscribed
+      !liveStatus.subscribed ||
+      (config.NODE_ENV === "production" &&
+        (webappMonitor.status === "disabled" ||
+          webappMonitor.status === "degraded"))
     ) {
-      return reply.code(503).send({ status: "not_ready", poller, live: liveStatus });
+      return reply.code(503).send({
+        status: "not_ready",
+        poller,
+        live: liveStatus,
+        webappMonitor,
+      });
     }
-    return { status: "ready", poller, live: liveStatus };
+    return { status: "ready", poller, live: liveStatus, webappMonitor };
   } catch {
     return reply.code(503).send({ status: "not_ready" });
   }
@@ -1251,7 +1269,33 @@ await registerFiatRoutes(app, db, fiatRisk);
 await registerSumsubRoutes(
   app,
   sumsub,
-  sumsub ? new KycCountryReviewService(db.antifraud, sumsub) : undefined,
+  sumsub
+    ? new KycCountryReviewService(
+        db.antifraud,
+        sumsub,
+        () => new Date(),
+        async (review) => {
+          const url = new URL("/kyc", config.ANTIFRAUD_DASHBOARD_URL);
+          url.searchParams.set("user", review.userId);
+          await discordAlerts.sendSumsubReady(
+            `sumsub-ready:${review.applicantId}:${review.providerReviewedAt}`,
+            {
+              title: "Sumsub result ready",
+              description:
+                "A Sumsub result is ready for immediate staff review.",
+              userId: review.userId,
+              severity: review.reviewAnswer === "RED" ? "high" : "medium",
+              outcome: review.reviewAnswer ?? review.reviewStatus ?? "ready",
+              occurredAt: review.providerReviewedAt
+                ? new Date(review.providerReviewedAt)
+                : new Date(),
+              url: url.toString(),
+              mentionGroups: ["managers"],
+            },
+          );
+        },
+      )
+    : undefined,
 );
 await registerFiatEligibilityRoutes(app, {
   config,
@@ -1282,6 +1326,7 @@ app.setErrorHandler((error, request, reply) => {
 
 app.addHook("onClose", async () => {
   shuttingDown = true;
+  dashboardOpsTick.stop();
   await withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
@@ -1322,6 +1367,7 @@ await ingestDelivery.start();
 await networkRisk.start();
 withdrawalRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
+dashboardOpsTick.start();
 
 // The MAIN mirror role is shared with other read-only consumers and can
 // temporarily exhaust its connection allowance during a rolling deployment.

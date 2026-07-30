@@ -45,6 +45,7 @@ export const MONITOR_EVENT_TYPES = [
   "rule.matched",
   "monitor.completed",
   "case.decided",
+  "rule.created",
   "rule.updated",
 ] as const;
 export type MonitorEventType = (typeof MONITOR_EVENT_TYPES)[number];
@@ -54,6 +55,7 @@ export type MonitorSeverity = "low" | "medium" | "high" | "critical";
 /** One normalised activity frame, ready to render. */
 export type MonitorActivityEvent = {
   id: string;
+  correlationId: string;
   type: MonitorEventType;
   at: string;
   /** `null` when the frame carries neither a severity nor a score. */
@@ -179,6 +181,11 @@ function describe(
         title: `Case decision recorded · ${player}`,
         detail: text(data.decision, "Updated by staff"),
       };
+    case "rule.created":
+      return {
+        title: "Monitor flow created",
+        detail: "A new scoring configuration is available",
+      };
     case "rule.updated":
       return {
         title: "Monitor flow updated",
@@ -220,7 +227,13 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
   if (!isEventType(frame.type)) {
     return { kind: "unsupported", eventType: frame.type };
   }
-  if (typeof frame.id !== "string" || frame.id.length === 0) {
+  if (
+    frame.schemaVersion !== 1 ||
+    typeof frame.correlationId !== "string" ||
+    frame.correlationId.length === 0 ||
+    typeof frame.id !== "string" ||
+    frame.id.length === 0
+  ) {
     return {
       kind: "transport",
       state: "error",
@@ -234,6 +247,7 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
     kind: "activity",
     event: {
       id: frame.id,
+      correlationId: frame.correlationId,
       type: frame.type,
       at,
       severity: severityOf(data),

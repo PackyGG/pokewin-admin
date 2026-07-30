@@ -41,6 +41,7 @@ type Subscriber<T> = {
   onRow: (row: T) => void;
   onReconnect?: () => void;
   onGiveUp?: () => void;
+  onStale?: () => void;
 };
 
 type Connection = {
@@ -63,6 +64,8 @@ type Connection = {
    * the next row.
    */
   lastInit: unknown[] | null;
+  staleAfterMs: number | null;
+  staleTimer: ReturnType<typeof setTimeout> | null;
 };
 
 const connections = new Map<string, Connection>();
@@ -88,6 +91,8 @@ function getConnection(
       visibilityBound: false,
       onVisibility: null,
       lastInit: null,
+      staleAfterMs: null,
+      staleTimer: null,
     };
     connections.set(url, conn);
   } else if (!conn.resumeParam && resumeParam) {
@@ -136,6 +141,26 @@ function emitGiveUp(conn: Connection) {
   }
 }
 
+function armStaleTimer(conn: Connection) {
+  if (!conn.staleAfterMs) return;
+  if (conn.staleTimer) clearTimeout(conn.staleTimer);
+  conn.staleTimer = setTimeout(() => {
+    conn.staleTimer = null;
+    for (const sub of conn.subscribers) {
+      try {
+        sub.onStale?.();
+      } catch {
+        // One subscriber cannot block transport recovery.
+      }
+    }
+    const wasOpen = closeSource(conn);
+    if (wasOpen && conn.subscribers.size > 0) {
+      emitReconnect(conn);
+      connect(conn);
+    }
+  }, conn.staleAfterMs);
+}
+
 function closeSource(conn: Connection): boolean {
   const wasOpened = conn.opened;
   if (conn.source) {
@@ -147,6 +172,10 @@ function closeSource(conn: Connection): boolean {
     conn.source = null;
   }
   conn.opened = false;
+  if (conn.staleTimer) {
+    clearTimeout(conn.staleTimer);
+    conn.staleTimer = null;
+  }
   return wasOpened;
 }
 
@@ -183,6 +212,7 @@ function connect(conn: Connection) {
     if (conn.source !== source) return;
     conn.opened = true;
     conn.failures = 0;
+    armStaleTimer(conn);
   });
 
   source.addEventListener("init", (ev) => {
@@ -190,6 +220,7 @@ function connect(conn: Connection) {
     try {
       const parsed = JSON.parse((ev as MessageEvent<string>).data);
       if (Array.isArray(parsed)) {
+        armStaleTimer(conn);
         conn.lastInit = parsed as unknown[];
         emitInit(conn, parsed);
       }
@@ -204,6 +235,7 @@ function connect(conn: Connection) {
       const message = ev as MessageEvent<string>;
       if (message.lastEventId) conn.lastEventId = message.lastEventId;
       const parsed = JSON.parse(message.data);
+      armStaleTimer(conn);
       emitRow(conn, parsed);
     } catch {
       // Ignore malformed row.
@@ -302,6 +334,10 @@ function teardownConnection(conn: Connection) {
     clearTimeout(conn.backoffTimer);
     conn.backoffTimer = null;
   }
+  if (conn.staleTimer) {
+    clearTimeout(conn.staleTimer);
+    conn.staleTimer = null;
+  }
   if (conn.visibilityBound && conn.onVisibility && typeof document !== "undefined") {
     document.removeEventListener("visibilitychange", conn.onVisibility);
   }
@@ -314,11 +350,17 @@ function subscribe<T>(
   url: string,
   maxFailures: number,
   resumeParam: string | null,
+  staleAfterMs: number | null,
   sub: Subscriber<T>,
 ): () => void {
   const conn = getConnection(url, maxFailures, resumeParam);
   // Keep the tightest give-up threshold any active subscriber asked for.
   conn.maxFailures = Math.min(conn.maxFailures, maxFailures);
+  if (staleAfterMs) {
+    conn.staleAfterMs = conn.staleAfterMs
+      ? Math.min(conn.staleAfterMs, staleAfterMs)
+      : staleAfterMs;
+  }
 
   conn.subscribers.add(sub as Subscriber<unknown>);
   ensureVisibilityBinding(conn);
@@ -360,17 +402,21 @@ export function useSseStream<T>(
     onRow: (row: T) => void;
     onReconnect?: () => void;
     onGiveUp?: () => void;
+    onStale?: () => void;
   },
   options?: {
     enabled?: boolean;
     maxFailures?: number;
     /** Query key used to resume when visibility creates a fresh EventSource. */
     resumeParam?: string;
+    /** Reopen a silently wedged stream when no frame arrives in this window. */
+    staleAfterMs?: number;
   },
 ): void {
   const enabled = options?.enabled ?? true;
   const maxFailures = options?.maxFailures ?? 8;
   const resumeParam = options?.resumeParam ?? null;
+  const staleAfterMs = options?.staleAfterMs ?? null;
 
   // Pin handlers in a ref so the shared subscriber object always calls
   // the latest callbacks without re-subscribing on every parent render.
@@ -392,8 +438,9 @@ export function useSseStream<T>(
       onRow: (row) => handlersRef.current.onRow(row),
       onReconnect: () => handlersRef.current.onReconnect?.(),
       onGiveUp: () => handlersRef.current.onGiveUp?.(),
+      onStale: () => handlersRef.current.onStale?.(),
     };
 
-    return subscribe<T>(url, maxFailures, resumeParam, sub);
-  }, [url, enabled, maxFailures, resumeParam]);
+    return subscribe<T>(url, maxFailures, resumeParam, staleAfterMs, sub);
+  }, [url, enabled, maxFailures, resumeParam, staleAfterMs]);
 }

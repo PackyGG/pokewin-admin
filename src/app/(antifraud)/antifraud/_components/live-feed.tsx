@@ -110,8 +110,12 @@ export function LiveFeed() {
         );
         setMessage((current) => current ?? "Offline — reload to reconnect.");
       },
+      onStale: () => {
+        setConnection("offline");
+        setMessage("Live heartbeat became stale. Reconnecting automatically.");
+      },
     },
-    { resumeParam: "after" },
+    { resumeParam: "after", staleAfterMs: 45_000 },
   );
 
   const label =

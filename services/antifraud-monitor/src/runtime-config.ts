@@ -23,6 +23,10 @@ export function sanitizedRuntimeConfig(
     endpointConfigured: boolean;
     secretConfigured: boolean;
   };
+  externalWebappMonitor: {
+    endpointConfigured: boolean;
+    independentAlertSinkConfigured: boolean;
+  };
   fiatEligibility: {
     devCredentialConfigured: boolean;
     prodCredentialConfigured: boolean;
@@ -53,6 +57,12 @@ export function sanitizedRuntimeConfig(
     ingest: {
       endpointConfigured: Boolean(config.ANTIFRAUD_INGEST_URL),
       secretConfigured: Boolean(config.ANTIFRAUD_INGEST_SECRET),
+    },
+    externalWebappMonitor: {
+      endpointConfigured: Boolean(config.ANTIFRAUD_WEBAPP_HEALTH_URL),
+      independentAlertSinkConfigured: Boolean(
+        config.DISCORD_WEBAPP_ERRORS_WEBHOOK_URL,
+      ),
     },
     fiatEligibility: {
       devCredentialConfigured: Boolean(

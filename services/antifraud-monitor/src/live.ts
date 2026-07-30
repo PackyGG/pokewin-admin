@@ -1,10 +1,15 @@
-import { randomBytes } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 
 import type { FastifyBaseLogger } from "fastify";
 import { Redis } from "ioredis";
 import type { WebSocket } from "ws";
 
-import type { LiveMessage } from "./types.js";
+import {
+  LIVE_EVENT_TYPES,
+  LIVE_SCHEMA_VERSION,
+  type LiveEventType,
+  type LiveMessage,
+} from "./types.js";
 
 const CHANNEL = "antifraud:live";
 const STREAM = "antifraud:live:stream";
@@ -36,6 +41,11 @@ return id
 export type LiveEnvelope = LiveMessage & { id: string };
 
 export const STREAM_ID_PATTERN = /^\d{1,20}-\d{1,20}$/;
+const CORRELATION_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function isLiveEventType(value: string): value is LiveEventType {
+  return (LIVE_EVENT_TYPES as readonly string[]).includes(value);
+}
 
 export function parseEnvelope(id: string, raw: string): LiveEnvelope | null {
   let parsed: unknown;
@@ -48,6 +58,7 @@ export function parseEnvelope(id: string, raw: string): LiveEnvelope | null {
   const value = parsed as Partial<LiveMessage>;
   if (
     typeof value.type !== "string" ||
+    !isLiveEventType(value.type) ||
     typeof value.at !== "string" ||
     value.data === null ||
     typeof value.data !== "object" ||
@@ -55,8 +66,15 @@ export function parseEnvelope(id: string, raw: string): LiveEnvelope | null {
   ) {
     return null;
   }
+  const correlationId =
+    typeof value.correlationId === "string" &&
+    CORRELATION_ID_PATTERN.test(value.correlationId)
+      ? value.correlationId
+      : `legacy:${id}`;
   return {
     id,
+    schemaVersion: LIVE_SCHEMA_VERSION,
+    correlationId,
     type: value.type,
     at: value.at,
     data: value.data as Record<string, unknown>,
@@ -161,8 +179,17 @@ export class LiveBus {
     }
   }
 
-  async publish(type: string, data: Record<string, unknown>): Promise<void> {
+  async publish(
+    type: LiveEventType,
+    data: Record<string, unknown>,
+    correlationId = randomUUID(),
+  ): Promise<void> {
+    if (!CORRELATION_ID_PATTERN.test(correlationId)) {
+      throw new Error("Invalid antifraud live correlation id");
+    }
     const message: LiveMessage = {
+      schemaVersion: LIVE_SCHEMA_VERSION,
+      correlationId,
       type,
       at: new Date().toISOString(),
       data,
@@ -262,10 +289,12 @@ export class LiveBus {
     client.send(
       JSON.stringify({
         id: "",
+        schemaVersion: LIVE_SCHEMA_VERSION,
+        correlationId: randomUUID(),
         type: "connected",
         at: new Date().toISOString(),
         data: {},
-      } satisfies LiveEnvelope),
+      }),
       (error?: Error) => {
         if (error) terminate();
       },

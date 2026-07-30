@@ -52,12 +52,17 @@ const SSE_HEADERS: Record<string, string> = {
 type TransportState = "connecting" | "open" | "closed" | "unconfigured" | "error";
 type LiveEnvelope = {
   id: string;
+  schemaVersion: 1;
+  correlationId: string;
   type: string;
   at: string;
   data: Record<string, unknown>;
 };
 
 const REPLAY_ID = /^\d+-\d+$/;
+const CORRELATION_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const CIRCUIT_FAILURE_THRESHOLD = 5;
+const CIRCUIT_OPEN_MS = 60_000;
 
 function monitorConfig(): { baseUrl?: string; token?: string } {
   return {
@@ -131,6 +136,9 @@ function parseEnvelope(value: unknown): LiveEnvelope | null {
   if (
     typeof row.id !== "string" ||
     !REPLAY_ID.test(row.id) ||
+    row.schemaVersion !== 1 ||
+    typeof row.correlationId !== "string" ||
+    !CORRELATION_ID.test(row.correlationId) ||
     typeof row.type !== "string" ||
     typeof row.at !== "string" ||
     !row.data ||
@@ -252,6 +260,7 @@ export async function GET(request: Request): Promise<Response> {
       let rotation: ReturnType<typeof setTimeout> | null = null;
       let retryTimer: ReturnType<typeof setTimeout> | null = null;
       let attempt = 0;
+      let consecutiveFailures = 0;
       let state: TransportState = "connecting";
       let closed = false;
       let lastDeliveredId = resumeAfter;
@@ -306,16 +315,26 @@ export async function GET(request: Request): Promise<Response> {
       const scheduleReconnect = (message: string, minimumDelayMs = 0) => {
         if (closed || retryTimer) return;
         attempt += 1;
+        consecutiveFailures += 1;
         const backoff = Math.min(
           UPSTREAM_RETRY_MAX_MS,
           UPSTREAM_RETRY_MIN_MS * 2 ** (attempt - 1),
         );
         // Jitter so several instances don't stampede the service together.
+        const circuitOpen =
+          consecutiveFailures >= CIRCUIT_FAILURE_THRESHOLD;
         const delay = Math.max(
           minimumDelayMs,
-          Math.round(backoff * (0.5 + Math.random() * 0.5)),
+          circuitOpen
+            ? CIRCUIT_OPEN_MS
+            : Math.round(backoff * (0.5 + Math.random() * 0.5)),
         );
-        setState("connecting", message);
+        setState(
+          circuitOpen ? "error" : "connecting",
+          circuitOpen
+            ? "Monitor transport is degraded; retrying after a recovery pause"
+            : message,
+        );
         retryTimer = setTimeout(() => {
           retryTimer = null;
           connectUpstream();
@@ -361,6 +380,7 @@ export async function GET(request: Request): Promise<Response> {
                   for (const event of pending) forward(event);
                   pending.length = 0;
                   attempt = 0;
+                  consecutiveFailures = 0;
                   setState("open");
                 })
                 .catch(() => {

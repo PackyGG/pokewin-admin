@@ -126,7 +126,10 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
         current === "unconfigured" ? current : "offline",
       );
     },
-  }, { resumeParam: "after" });
+    onStale: () => {
+      setConnection("offline");
+    },
+  }, { resumeParam: "after", staleAfterMs: 45_000 });
 
   React.useEffect(
     () => () => {

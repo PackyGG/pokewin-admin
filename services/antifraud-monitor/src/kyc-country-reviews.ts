@@ -125,6 +125,9 @@ export class KycCountryReviewService {
     private readonly pool: pg.Pool,
     private readonly sumsub: SumsubClient,
     private readonly now: () => Date = () => new Date(),
+    private readonly onResultReady?: (
+      review: KycCountryReview,
+    ) => Promise<void>,
   ) {}
 
   async refresh(
@@ -206,6 +209,12 @@ export class KycCountryReviewService {
             assessment.checkedAt,
           ],
         );
+        if (
+          assessment.providerReviewedAt &&
+          assessment.providerReviewedAt !== iso(existing?.provider_reviewed_at ?? null)
+        ) {
+          await this.onResultReady?.(assessment);
+        }
         return assessment;
       } catch {
         return existing ? fromRow(existing) : null;

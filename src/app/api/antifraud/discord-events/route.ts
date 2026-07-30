@@ -11,6 +11,11 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 const MAX_BODY_BYTES = 64 * 1024;
 
 const BodySchema = z.object({
+  schemaVersion: z.literal(1),
+  correlationId: z
+    .string()
+    .trim()
+    .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
   guildId: z.string().trim().regex(/^\d{15,21}$/),
   eventKey: z
     .string()
@@ -18,15 +23,17 @@ const BodySchema = z.object({
     .regex(/^[a-z0-9][a-z0-9._-]{2,79}$/),
   dedupeKey: z.string().trim().min(1).max(200),
   embed: z.record(z.string(), z.unknown()),
+  components: z.array(z.record(z.string(), z.unknown())).max(5).default([]),
   content: z.string().trim().max(2000).optional(),
 });
 
-function json(body: unknown, status: number): Response {
+function json(body: unknown, status: number, correlationId?: string): Response {
   return Response.json(body, {
     status,
     headers: {
       "cache-control": "no-store",
       "x-content-type-options": "nosniff",
+      ...(correlationId ? { "x-correlation-id": correlationId } : {}),
     },
   });
 }
@@ -87,6 +94,9 @@ export async function POST(request: Request): Promise<Response> {
       400,
     );
   }
+  if (request.headers.get("x-correlation-id") !== parsed.data.correlationId) {
+    return json({ error: "correlation_mismatch" }, 400);
+  }
   const configuredGuildId = process.env.ADMIN_GUILD_ID;
   if (!configuredGuildId) return json({ error: "not_configured" }, 503);
   if (parsed.data.guildId !== configuredGuildId) {
@@ -95,7 +105,11 @@ export async function POST(request: Request): Promise<Response> {
 
   try {
     const result = await enqueueDiscordEvent(parsed.data);
-    return json({ ok: true, ...result }, 200);
+    return json(
+      { ok: true, correlationId: parsed.data.correlationId, ...result },
+      200,
+      parsed.data.correlationId,
+    );
   } catch (error) {
     console.error("[discord-events] enqueue failed:", error);
     return json({ error: "storage_failed" }, 500);

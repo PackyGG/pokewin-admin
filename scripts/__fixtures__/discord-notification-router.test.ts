@@ -72,9 +72,27 @@ test("channel creation has a durable manager request and leased bot execution", 
   assert.match(migration, /WHERE "status" IN \('pending', 'leased'\)/);
   assert.match(operations, /FOR UPDATE SKIP LOCKED/);
   assert.match(operations, /type = 'category'/);
+  assert.match(operations, /parent\.position > boundary_top\.position/);
+  assert.match(operations, /parent\.position < boundary_bottom\.position/);
+  assert.match(operations, /boundary_top\.position < boundary_bottom\.position/);
   assert.match(operations, /leased_until = now\(\) \+ interval '60 seconds'/);
   assert.match(actions, /requireAntifraudManager\(\)/);
   assert.match(actions, /queueDiscordChannelCreation/);
+});
+
+test("approved Discord categories moved outside the live boundary are rejected", () => {
+  const router = read("src/lib/discord-notifications/router.ts");
+  const operations = read(
+    "src/lib/discord-notifications/channel-operations.ts",
+  );
+
+  for (const source of [router, operations]) {
+    assert.match(source, /boundary_top\.channel_id/);
+    assert.match(source, /boundary_bottom\.channel_id/);
+    assert.match(source, /parent\.position > boundary_top\.position/);
+    assert.match(source, /parent\.position < boundary_bottom\.position/);
+    assert.match(source, /boundary_top\.position < boundary_bottom\.position/);
+  }
 });
 
 test("monitor enqueue is bounded, signed, replay-safe, and webhook-free", () => {

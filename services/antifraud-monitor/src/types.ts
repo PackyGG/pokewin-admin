@@ -29,8 +29,25 @@ export type Signal = {
   payload?: Record<string, unknown>;
 };
 
+export const LIVE_SCHEMA_VERSION = 1 as const;
+
+export const LIVE_EVENT_TYPES = [
+  "signup.assessed",
+  "monitor.started",
+  "monitor.event",
+  "rule.matched",
+  "monitor.completed",
+  "case.decided",
+  "rule.created",
+  "rule.updated",
+] as const;
+
+export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];
+
 export type LiveMessage = {
-  type: string;
+  schemaVersion: typeof LIVE_SCHEMA_VERSION;
+  correlationId: string;
+  type: LiveEventType;
   at: string;
   data: Record<string, unknown>;
 };

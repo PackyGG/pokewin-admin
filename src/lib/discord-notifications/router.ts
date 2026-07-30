@@ -3,6 +3,11 @@ import "server-only";
 import { sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import {
+  APPROVED_DISCORD_CATEGORIES,
+  DISCORD_BOUNDARY_MARKERS,
+  assertApprovedCategoryBoundary,
+} from "./antifraud-policy";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -25,6 +30,7 @@ export type DiscordDeliveryJob = {
   eventKey: string;
   channelId: string;
   embed: Record<string, unknown>;
+  components: Array<Record<string, unknown>>;
   content?: string;
   createdAt: string;
   attempt: number;
@@ -71,6 +77,7 @@ export async function syncDiscordChannels(input: {
       position: Math.max(-1, Math.min(100000, Math.trunc(channel.position))),
     });
   }
+  assertApprovedCategoryBoundary([...unique.values()]);
   const channelsJson = JSON.stringify([...unique.values()]);
 
   await adminDrizzle.transaction(async (tx) => {
@@ -142,6 +149,7 @@ export async function enqueueDiscordEvent(input: {
   eventKey: string;
   dedupeKey: string;
   embed: Record<string, unknown>;
+  components?: Array<Record<string, unknown>>;
   content?: string;
 }): Promise<{ enqueued: number; duplicate: number }> {
   const guildId = snowflake(input.guildId, "guildId");
@@ -153,6 +161,10 @@ export async function enqueueDiscordEvent(input: {
   const content = input.content?.trim().slice(0, 2000) || null;
   const embedJson = JSON.stringify(input.embed);
   if (embedJson.length > 24_000) throw new Error("embed is too large.");
+  const componentsJson = JSON.stringify(input.components ?? []);
+  if (componentsJson.length > 8_000) {
+    throw new Error("components are too large.");
+  }
 
   const result = await adminDrizzle.execute<{ inserted: number; eligible: number }>(
     sql`
@@ -169,17 +181,38 @@ export async function enqueueDiscordEvent(input: {
          AND channel.can_view = true
          AND channel.can_send = true
          AND channel.can_embed = true
+         AND channel.parent_id IN (
+           ${APPROVED_DISCORD_CATEGORIES.accounts},
+           ${APPROVED_DISCORD_CATEGORIES.transactions},
+           ${APPROVED_DISCORD_CATEGORIES.errors}
+         )
+        JOIN discord_notification_channels AS parent
+          ON parent.guild_id = channel.guild_id
+         AND parent.channel_id = channel.parent_id
+         AND parent.available = true
+         AND parent.type = 'category'
+        JOIN discord_notification_channels AS boundary_top
+          ON boundary_top.guild_id = channel.guild_id
+         AND boundary_top.channel_id = ${DISCORD_BOUNDARY_MARKERS.top}
+         AND boundary_top.available = true
+        JOIN discord_notification_channels AS boundary_bottom
+          ON boundary_bottom.guild_id = channel.guild_id
+         AND boundary_bottom.channel_id = ${DISCORD_BOUNDARY_MARKERS.bottom}
+         AND boundary_bottom.available = true
         WHERE route.guild_id = ${guildId}
           AND route.event_key = ${key}
           AND route.enabled = true
+          AND boundary_top.position < boundary_bottom.position
+          AND parent.position > boundary_top.position
+          AND parent.position < boundary_bottom.position
       ),
       inserted AS (
         INSERT INTO discord_notification_jobs (
-          guild_id, event_key, channel_id, dedupe_key, content, embed
+          guild_id, event_key, channel_id, dedupe_key, content, embed, components
         )
         SELECT
           ${guildId}, ${key}, eligible.channel_id, ${dedupeKey}, ${content},
-          ${embedJson}::jsonb
+          ${embedJson}::jsonb, ${componentsJson}::jsonb
         FROM eligible
         ON CONFLICT (guild_id, event_key, dedupe_key, channel_id) DO NOTHING
         RETURNING 1
@@ -212,6 +245,7 @@ export async function claimDiscordJobs(input: {
     event_key: string;
     channel_id: string;
     embed: Record<string, unknown>;
+    components: Array<Record<string, unknown>>;
     content: string | null;
     created_at: string;
     attempt_count: number;
@@ -265,6 +299,7 @@ export async function claimDiscordJobs(input: {
       job.event_key,
       job.channel_id,
       job.embed,
+      job.components,
       job.content,
       job.created_at::text,
       job.attempt_count
@@ -276,6 +311,7 @@ export async function claimDiscordJobs(input: {
     eventKey: row.event_key,
     channelId: row.channel_id,
     embed: row.embed,
+    components: row.components,
     ...(row.content ? { content: row.content } : {}),
     createdAt: row.created_at,
     attempt: row.attempt_count,

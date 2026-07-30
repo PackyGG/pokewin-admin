@@ -10,10 +10,10 @@ const supportIds = [
 ];
 
 const urgentIds = [
-  "934854938641715240",
   "660132586630414338",
   "276098533629755392",
   "188051599099297802",
+  "934854938641715240",
 ];
 
 test("regular alerts mention only support and include the dashboard button", () => {
@@ -167,7 +167,10 @@ test("untrusted alert text cannot create extra mentions", () => {
     },
   );
 
-  assert.equal(payload.embeds[0]?.title, "everyone user 123456789012345678");
+  assert.equal(
+    payload.embeds[0]?.title,
+    "🛡️ everyone user 123456789012345678",
+  );
   assert.equal(
     payload.embeds[0]?.description,
     "here role 123456789012345678",

@@ -9,11 +9,18 @@ export const SUPPORT_USER_IDS = [
   "620373461256110112",
 ] as const;
 
-export const URGENT_USER_IDS = [
-  "934854938641715240",
-  "660132586630414338",
+export const OWNER_USER_IDS = ["660132586630414338"] as const;
+
+export const MANAGER_USER_IDS = [
   "276098533629755392",
   "188051599099297802",
+  "934854938641715240",
+] as const;
+
+export const DEV_USER_IDS = ["617341813296070684"] as const;
+export const URGENT_USER_IDS = [
+  ...OWNER_USER_IDS,
+  ...MANAGER_USER_IDS,
 ] as const;
 
 const DISCORD_DESCRIPTION_LIMIT = 1_200;
@@ -43,6 +50,8 @@ export type DiscordAlert = {
   signals?: readonly DiscordAlertSignal[];
   occurredAt?: Date;
   url?: string;
+  mentionGroups?: readonly ("owner" | "managers" | "dev")[];
+  lowRiskSignupReview?: boolean;
 };
 
 export function discordRuntimeStatus(config: Pick<
@@ -192,14 +201,28 @@ function signalValue(signals: readonly DiscordAlertSignal[]): string {
   return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
 }
 
+function alertEmoji(alert: DiscordAlert): string {
+  if (alert.severity === "critical" || alert.urgent) return "🚨";
+  if (alert.severity === "high") return "⚠️";
+  if (alert.severity === "medium") return "🔎";
+  return "🛡️";
+}
+
 export function buildDiscordAlertPayload(
   dashboardUrl: string,
   alert: DiscordAlert,
 ): DiscordPayload {
-  const mentionIds = [
-    ...SUPPORT_USER_IDS,
-    ...(alert.urgent ? URGENT_USER_IDS : []),
-  ];
+  const selectedGroups = new Set(alert.mentionGroups ?? []);
+  if (alert.urgent) {
+    selectedGroups.add("owner");
+    selectedGroups.add("managers");
+  }
+  const mentionIds = [...new Set([
+    ...(alert.lowRiskSignupReview ? [] : SUPPORT_USER_IDS),
+    ...(selectedGroups.has("owner") ? OWNER_USER_IDS : []),
+    ...(selectedGroups.has("managers") ? MANAGER_USER_IDS : []),
+    ...(selectedGroups.has("dev") ? DEV_USER_IDS : []),
+  ])];
   const url = alertUrl(
     alert.url ?? dashboardUrl,
     alert.url ? undefined : alert.caseId,
@@ -264,7 +287,7 @@ export function buildDiscordAlertPayload(
     allowed_mentions: { parse: [], users: mentionIds },
     embeds: [
       {
-        title: clean(alert.title, 256),
+        title: clean(`${alertEmoji(alert)} ${alert.title}`, 256),
         description: clean(alert.description, DISCORD_DESCRIPTION_LIMIT),
         url,
         color: riskColor(alert),
@@ -312,6 +335,13 @@ export class DiscordAlerts {
     alert: DiscordAlert,
   ): Promise<boolean> {
     return this.sendTo("antifraud.withdrawal_hold", dedupeKey, alert);
+  }
+
+  async sendSumsubReady(
+    dedupeKey: string,
+    alert: DiscordAlert,
+  ): Promise<boolean> {
+    return this.sendTo("antifraud.sumsub_ready", dedupeKey, alert);
   }
 
   private async sendTo(
