@@ -135,7 +135,19 @@ export function CaseControls({
       // action silently became the rationale stored for the next one.
       statusAttempt.current = null;
       setResolution("");
-      toast.success(`Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`);
+      // Clearing a case releases the player's withdrawal locks. Say which of
+      // the two happened — especially when the release did NOT land.
+      if (result.withdrawalRelease === "failed") {
+        toast.warning(
+          "Case cleared, but withdrawals could not be unlocked — unlock them on the user page.",
+        );
+      } else {
+        toast.success(
+          result.withdrawalRelease === "released"
+            ? "Case cleared — withdrawals unlocked"
+            : `Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`,
+        );
+      }
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Something went wrong");
@@ -200,8 +212,9 @@ export function CaseControls({
           })}
         </div>
         <p className="text-[11px] text-muted-foreground">
-          Clear and Flag require a conclusion. Reopening withdraws the previous
-          verdict but keeps the append-only trail.
+          Clear and Flag require a conclusion. Clearing also unlocks crypto and
+          item withdrawals for this player. Reopening withdraws the previous
+          verdict but keeps the append-only trail — it does not re-lock.
         </p>
       </div>
 

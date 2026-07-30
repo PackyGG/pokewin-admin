@@ -60,7 +60,7 @@ test("antifraud command audit mirrors are globally idempotent", () => {
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
   assert.match(reviewAction, /idempotencyKey: z\.string\(\)\.uuid/);
-  assert.match(reviewAction, /return \{ kind: "replayed" \}/);
+  assert.match(reviewAction, /return \{ kind: "replayed", targetUserId: /);
   assert.match(
     reviewAction,
     /tx\.insert\(antifraud_review_notes\)[\s\S]*?tx\.insert\(staff_profiles\)|tx\.insert\(staff_profiles\)[\s\S]*?tx\.insert\(antifraud_review_notes\)/,
@@ -82,6 +82,50 @@ test("manual case open keeps case, trail and audit in one transaction", () => {
   assert.match(body, /tx\.insert\(admin_audit_events\)/);
   assert.match(body, /isPostgresError\(err, UNIQUE_VIOLATION\)/);
   assert.match(body, /conflictReviewId/);
+});
+
+test("clearing a case releases the player's withdrawal locks", () => {
+  const release = read("src/lib/antifraud/withdrawal-release.ts");
+  assert.match(release, /UPDATE user_feature_locks/);
+  assert.match(release, /locked_withdrawals_crypto = '\{\}'::text\[\]/);
+  assert.match(release, /locked_withdrawals_items = FALSE/);
+  // Idempotent: only a genuinely locked row is touched, so a replay is a no-op.
+  assert.match(
+    release,
+    /COALESCE\(array_length\(previous\.crypto, 1\), 0\) > 0[\s\S]*?OR previous\.items/,
+  );
+  assert.match(release, /locked_withdrawals_crypto_disabled/);
+  assert.match(release, /locked_withdrawals_items_disabled/);
+  assert.match(release, /antifraud_withdrawals_unlocked/);
+  // Deposit locks and the backend-owned KYC gate are separate decisions.
+  assert.doesNotMatch(release, /locked_deposits|user_kyc/);
+  // The verdict is already committed — a MAIN failure must not throw past it.
+  assert.match(release, /return \{ status: "failed" \}/);
+
+  const actions = read("src/app/(antifraud)/antifraud/reviews/actions.ts");
+  // ONE clearing path: the quick action delegates to updateReviewStatus, so
+  // both entry points release through the same function.
+  assert.match(
+    actions,
+    /status === "cleared"[\s\S]*?releaseClearedCaseWithdrawals\(/,
+  );
+  assert.equal(
+    actions.match(/releaseWithdrawalLocksForClearedCase\(/g)?.length,
+    1,
+  );
+  assert.match(actions, /if \(!result\.ok\) throw new Error\(result\.message\);\s*return \{ withdrawalRelease: result\.withdrawalRelease \}/);
+  // The release runs after the ADMIN transaction commits, including on a
+  // replay — that is what repairs a clear whose release never ran.
+  assert.match(actions, /kind: "replayed"; targetUserId: string/);
+
+  for (const surface of [
+    "src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
+    "src/app/(antifraud)/antifraud/reviews/_components/case-controls.tsx",
+  ]) {
+    const source = read(surface);
+    assert.match(source, /withdrawalRelease === "failed"/, `${surface} must surface a failed release`);
+    assert.match(source, /unlock/i, `${surface} must tell the analyst what clearing does`);
+  }
 });
 
 test("Antifraud revocation outages fail closed and assignments recheck access", () => {

@@ -38,7 +38,7 @@ const ACTIONS: Array<{
     label: "Fine",
     title: "Mark this account fine?",
     description: (account) =>
-      `${account} will be cleared from Account Review. This changes only the case verdict.`,
+      `${account} will be cleared from Account Review and their crypto and item withdrawals will be unlocked.`,
     confirm: "Yes, mark fine",
     success: "Account marked fine",
     icon: ShieldCheck,
@@ -126,7 +126,7 @@ function QuickActionButton({
   function handleConfirm() {
     startTransition(async () => {
       try {
-        await runQuickReviewAccountAction({
+        const result = await runQuickReviewAccountAction({
           reviewId,
           action,
           expectedStatus: status,
@@ -134,7 +134,19 @@ function QuickActionButton({
           credential: sensitive ? credential : undefined,
         });
         setCredential("");
-        toast.success(success);
+        // The verdict landed either way; a failed release is the analyst's to
+        // finish by hand, so it must not read as a plain success.
+        if (result.withdrawalRelease === "failed") {
+          toast.warning(
+            "Account marked fine, but withdrawals could not be unlocked — unlock them on the user page.",
+          );
+        } else {
+          toast.success(
+            result.withdrawalRelease === "released"
+              ? "Account marked fine — withdrawals unlocked"
+              : success,
+          );
+        }
         router.refresh();
       } catch (error) {
         toast.error(

@@ -29,6 +29,7 @@ import {
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { isAssignableAnalyst } from "@/lib/antifraud/review-analysts";
+import { releaseWithdrawalLocksForClearedCase } from "@/lib/antifraud/withdrawal-release";
 import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
 
 /**
@@ -36,7 +37,9 @@ import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud
  *
  * Most actions only touch the ADMIN review record. The explicit quick Ban and
  * Lock withdrawals commands use the established MAIN mutation client, require
- * the matching capability, and write the normal admin audit trail.
+ * the matching capability, and write the normal admin audit trail. Clearing a
+ * case additionally RELEASES the player's withdrawal locks — see
+ * `releaseClearedCaseWithdrawals` below.
  *
  * Every action re-verifies workspace access (server actions run as their own
  * request), validates with Zod, writes an append-only note describing the
@@ -225,8 +228,20 @@ const updateStatusSchema = z
     },
   );
 
+/**
+ * What the withdrawal release did, so the UI can say so instead of leaving the
+ * analyst to guess. `failed` is the one the analyst must act on: the verdict
+ * stands but the account is still locked.
+ */
+export type WithdrawalReleaseStatus =
+  | "released"
+  | "already_open"
+  | "failed"
+  /** Not a clearing transition — nothing was attempted. */
+  | "not_applicable";
+
 export type UpdateReviewStatusResult =
-  | { ok: true }
+  | { ok: true; withdrawalRelease: WithdrawalReleaseStatus }
   | {
       ok: false;
       reason: "duplicate_live_case";
@@ -267,6 +282,58 @@ function assertStatusReplayMatches(
 }
 
 /**
+ * The account consequence of a "cleared" verdict: release the withdrawal
+ * locks, record it on the case trail, and drop the cached user detail so
+ * /users/[id] stops showing a lock that no longer exists.
+ *
+ * Runs AFTER the ADMIN transaction commits — the release is a cross-database
+ * write and cannot join that transaction. It is therefore written to be
+ * re-runnable: a replayed status command runs it again, which repairs the
+ * "verdict committed, release never ran" window instead of leaving the account
+ * locked forever.
+ *
+ * No extra capability gate. Closing a case as fine IS the decision to let the
+ * player withdraw again, and gating the consequence behind
+ * `__can_toggle_feature_locks` would silently turn most clears back into the
+ * old lock-survives-the-verdict behaviour. The release is fully audited and
+ * reversible from /users/[id].
+ */
+async function releaseClearedCaseWithdrawals(params: {
+  reviewId: string;
+  targetUserId: string;
+  adminUserId: string;
+  idempotencyKey: string;
+}): Promise<WithdrawalReleaseStatus> {
+  const outcome = await releaseWithdrawalLocksForClearedCase({
+    userId: params.targetUserId,
+    adminUserId: params.adminUserId,
+    reviewId: params.reviewId,
+    idempotencyKey: params.idempotencyKey,
+  });
+
+  if (outcome.status === "released") {
+    // Best effort — the trail note must never turn a successful release into
+    // a reported failure.
+    try {
+      await adminDrizzle.insert(antifraud_review_notes).values({
+        review_id: params.reviewId,
+        admin_user_id: params.adminUserId,
+        kind: "action",
+        body:
+          "Cleared: crypto and item withdrawals unlocked " +
+          `(was ${outcome.previousCrypto.length > 0 ? "crypto" : "no crypto"}` +
+          `${outcome.previousItems ? " + items" : ""} locked).`,
+      });
+    } catch (error) {
+      console.error("[antifraud] release note failed:", error);
+    }
+    revalidateTag(userDetailTag(params.targetUserId));
+  }
+
+  return outcome.status;
+}
+
+/**
  * Move a case along. Setting a terminal status (cleared / flagged) stamps the
  * resolver + timestamp and stores the written conclusion; any NON-terminal
  * transition (re-opening or returning to review) clears resolver, timestamp AND the
@@ -294,12 +361,24 @@ export async function updateReviewStatus(
   };
   type Outcome =
     | { kind: "noop" }
-    | { kind: "replayed" }
-    | { kind: "applied"; applied: Applied }
+    // Both carry the subject so the post-commit withdrawal release can run
+    // without a second lookup — including on a replay, which is what repairs a
+    // clear whose release never got to run.
+    | { kind: "replayed"; targetUserId: string }
+    | { kind: "applied"; applied: Applied; targetUserId: string }
     | { kind: "conflict"; conflictReviewId: string | null };
 
   const runTransaction = async (): Promise<Outcome> =>
     adminDrizzle.transaction(async (tx): Promise<Outcome> => {
+      const [current] = await tx.select({
+        status: antifraud_reviews.status,
+        target_user_id: antifraud_reviews.target_user_id,
+        opened_by: antifraud_reviews.opened_by,
+        resolved_by: antifraud_reviews.resolved_by,
+        updated_at: antifraud_reviews.updated_at,
+      }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
+      if (!current) throw new Error("That case no longer exists");
+
       const replayPredicate = and(
         eq(admin_audit_events.event_type, "antifraud_review_status_changed"),
         sql`${admin_audit_events.metadata} ->> 'idempotencyKey' = ${idempotencyKey}`,
@@ -315,17 +394,8 @@ export async function updateReviewStatus(
           status,
           resolution,
         });
-        return { kind: "replayed" };
+        return { kind: "replayed", targetUserId: current.target_user_id };
       }
-
-      const [current] = await tx.select({
-        status: antifraud_reviews.status,
-        target_user_id: antifraud_reviews.target_user_id,
-        opened_by: antifraud_reviews.opened_by,
-        resolved_by: antifraud_reviews.resolved_by,
-        updated_at: antifraud_reviews.updated_at,
-      }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
-      if (!current) throw new Error("That case no longer exists");
 
       // Stale-view guard: the analyst decided against a status that is no
       // longer the truth.
@@ -371,7 +441,7 @@ export async function updateReviewStatus(
           status,
           resolution,
         });
-        return { kind: "replayed" };
+        return { kind: "replayed", targetUserId: current.target_user_id };
       }
 
       const updated = await tx.update(antifraud_reviews).set({
@@ -427,6 +497,7 @@ export async function updateReviewStatus(
 
       return {
         kind: "applied",
+        targetUserId: current.target_user_id,
         applied: {
           openedBy: current.opened_by,
         },
@@ -468,20 +539,29 @@ export async function updateReviewStatus(
       conflictReviewId: outcome.conflictReviewId,
     };
   }
-  if (outcome.kind === "noop") return { ok: true };
-  if (outcome.kind === "replayed") {
-    // A previous response may have failed during cache invalidation after the
-    // transaction committed. Re-run only the safe post-commit step.
-    revalidatePath("/antifraud/reviews");
-    revalidatePath(`/antifraud/reviews/${reviewId}`);
-    revalidatePath("/antifraud");
-    return { ok: true };
+  if (outcome.kind === "noop") {
+    return { ok: true, withdrawalRelease: "not_applicable" };
   }
 
+  // A cleared verdict releases the account's withdrawal locks. This runs on a
+  // replay too: the release is idempotent, and re-running it is what repairs a
+  // clear whose post-commit step died before the account was unlocked.
+  const withdrawalRelease: WithdrawalReleaseStatus =
+    status === "cleared"
+      ? await releaseClearedCaseWithdrawals({
+          reviewId,
+          targetUserId: outcome.targetUserId,
+          adminUserId: session.userId,
+          idempotencyKey,
+        })
+      : "not_applicable";
+
+  // On a replay a previous response may have failed during cache invalidation
+  // after the transaction committed — re-running these is safe either way.
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   revalidatePath("/antifraud");
-  return { ok: true };
+  return { ok: true, withdrawalRelease };
 }
 
 const quickAccountActionSchema = z.object({
@@ -495,13 +575,24 @@ const quickAccountActionSchema = z.object({
 export type QuickReviewAccountAction =
   z.infer<typeof quickAccountActionSchema>["action"];
 
+export type QuickReviewAccountActionResult = {
+  /** Only ever meaningful for `fine`; every other action reports `not_applicable`. */
+  withdrawalRelease: WithdrawalReleaseStatus;
+};
+
 /**
  * Account Review's deliberately small containment surface. The analyst clicks
  * once, confirms once in the client, and this action performs the mutation
  * without a second-factor prompt. Server-side workspace/capability checks,
  * MAIN audit records, and the case trail remain mandatory.
+ *
+ * `fine` clears the case, which releases the player's withdrawal locks through
+ * the shared `updateReviewStatus` path — the two entry points cannot disagree
+ * about what a clear means.
  */
-export async function runQuickReviewAccountAction(input: unknown): Promise<void> {
+export async function runQuickReviewAccountAction(
+  input: unknown,
+): Promise<QuickReviewAccountActionResult> {
   const session = await requireAntifraudAccess();
   const parsed = quickAccountActionSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
@@ -532,7 +623,7 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
       idempotencyKey,
     });
     if (!result.ok) throw new Error(result.message);
-    return;
+    return { withdrawalRelease: result.withdrawalRelease };
   }
 
   await require2FA(session.userId, parsed.data.credential);
@@ -591,7 +682,7 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
       idempotencyKey,
     });
     if (!result.ok) throw new Error(result.message);
-    return;
+    return { withdrawalRelease: "not_applicable" };
   }
 
   await requireCapability(
@@ -644,16 +735,41 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
     );
   }
 
+  const lockMetadata = {
+    source: "antifraud_review",
+    reviewId,
+    idempotencyKey,
+    crypto: "all",
+    items: true,
+  };
   await Promise.all([
     createAdminAuditEvent({
       adminUserId: session.userId,
       eventType: "antifraud_withdrawals_locked",
       targetUserId: review.targetUserId,
+      metadata: lockMetadata,
+    }),
+    // Mirror the /users feature-lock vocabulary as well. Without these the
+    // account-level "staff checked" history could never see an antifraud lock,
+    // so a later clear had no lock to pair its release against.
+    createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "locked_withdrawals_crypto_enabled",
+      targetUserId: review.targetUserId,
       metadata: {
-        reviewId,
-        idempotencyKey,
-        crypto: "all",
-        items: true,
+        ...lockMetadata,
+        feature: "locked_withdrawals_crypto",
+        locked: true,
+      },
+    }),
+    createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "locked_withdrawals_items_enabled",
+      targetUserId: review.targetUserId,
+      metadata: {
+        ...lockMetadata,
+        feature: "locked_withdrawals_items",
+        locked: true,
       },
     }),
     adminDrizzle.insert(antifraud_review_notes).values({
@@ -669,6 +785,7 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
   revalidateTag(userDetailTag(review.targetUserId));
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
+  return { withdrawalRelease: "not_applicable" };
 }
 
 const assignSchema = z.object({
