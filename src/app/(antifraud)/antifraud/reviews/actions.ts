@@ -33,6 +33,7 @@ import {
   type AntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { getEffectiveRoles } from "@/lib/admin-roles";
+import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
 
 /**
  * Account-review mutations.
@@ -785,6 +786,117 @@ const noteSchema = z.object({
     .min(2, "Write something first")
     .max(2000, "Keep notes under 2000 characters"),
 });
+
+const postponeSchema = z.object({
+  reviewId: uuid,
+  idempotencyKey: z.string().uuid("Invalid idempotency key"),
+});
+
+/** Hide a live case from active queues and reminders for exactly 2.5 hours. */
+export async function postponeReview(input: unknown): Promise<void> {
+  const session = await requireAntifraudAccess();
+  const parsed = postponeSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const { reviewId, idempotencyKey } = parsed.data;
+
+  await adminDrizzle.transaction(async (tx) => {
+    const [replay] = await tx
+      .select({ id: admin_audit_events.id })
+      .from(admin_audit_events)
+      .where(and(
+        eq(admin_audit_events.event_type, "antifraud_review_postponed"),
+        sql`${admin_audit_events.metadata} ->> 'idempotencyKey' = ${idempotencyKey}`,
+      ))
+      .limit(1);
+    if (replay) return;
+
+    const [review] = await tx
+      .select({
+        status: antifraud_reviews.status,
+        targetUserId: antifraud_reviews.target_user_id,
+      })
+      .from(antifraud_reviews)
+      .where(eq(antifraud_reviews.id, reviewId))
+      .limit(1);
+    if (!review) throw new Error("That case no longer exists");
+    if (!isLiveCaseStatus(review.status)) {
+      throw new Error("Only a live review can be postponed");
+    }
+
+    const dueAt = new Date(
+      Date.now() + REVIEW_REMINDER_DELAYS_MS.postponed,
+    );
+    const [audit] = await tx.insert(admin_audit_events).values({
+      admin_user_id: session.userId,
+      event_type: "antifraud_review_postponed",
+      target_user_id: review.targetUserId,
+      metadata: {
+        reviewId,
+        dueAt: dueAt.toISOString(),
+        idempotencyKey,
+      },
+    }).onConflictDoNothing().returning({ id: admin_audit_events.id });
+    if (!audit) return;
+
+    await tx.execute(sql`
+      INSERT INTO antifraud_review_workflow (
+        review_id,
+        queue_state,
+        evidence,
+        postponed_until,
+        postponed_by,
+        state_updated_at,
+        updated_at
+      )
+      VALUES (
+        ${reviewId}::uuid,
+        'normal',
+        '{}'::jsonb,
+        ${dueAt},
+        ${session.userId}::uuid,
+        now(),
+        now()
+      )
+      ON CONFLICT (review_id) DO UPDATE SET
+        postponed_until = EXCLUDED.postponed_until,
+        postponed_by = EXCLUDED.postponed_by,
+        updated_at = now()
+    `);
+    await tx.execute(sql`
+      INSERT INTO antifraud_review_reminder_state (
+        review_id,
+        reminder_kind,
+        next_reminder_at,
+        lease_token,
+        leased_until,
+        updated_at
+      )
+      VALUES (
+        ${reviewId}::uuid,
+        'postponed',
+        ${dueAt},
+        NULL,
+        NULL,
+        now()
+      )
+      ON CONFLICT (review_id) DO UPDATE SET
+        reminder_kind = 'postponed',
+        next_reminder_at = EXCLUDED.next_reminder_at,
+        lease_token = NULL,
+        leased_until = NULL,
+        updated_at = now()
+    `);
+    await tx.insert(antifraud_review_notes).values({
+      review_id: reviewId,
+      admin_user_id: session.userId,
+      kind: "postponed",
+      body: "Postponed for 2.5 hours. Active reminders are suppressed until due.",
+    });
+  });
+
+  revalidatePath("/antifraud/reviews");
+  revalidatePath(`/antifraud/reviews/${reviewId}`);
+}
 
 /** Append an analyst note to a case. */
 export async function addReviewNote(input: unknown): Promise<void> {

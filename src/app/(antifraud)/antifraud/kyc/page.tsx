@@ -33,19 +33,13 @@ export const metadata = { title: "KYC Review · Antifraud" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 const FILTER_LABELS: Record<KycFilter, string> = {
-  all: "All",
-  kyc_in_progress: "KYC in progress",
-  review: "Review",
-  finished: "Finished",
-  declined: "Declined",
+  active: "Active / Waiting",
+  history: "History / Finished",
 };
 
 const FILTER_TITLES: Record<KycFilter, string> = {
-  all: "KYC record history",
-  kyc_in_progress: "KYC in progress",
-  review: "Accounts ready for review",
-  finished: "Finished KYC records",
-  declined: "Declined KYC records",
+  active: "Active and waiting KYC reviews",
+  history: "Finished KYC history",
 };
 
 type SearchParams = {
@@ -60,7 +54,7 @@ export default async function AntifraudKycPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const params = await searchParams;
-  const status = isKycFilter(params.status) ? params.status : "all";
+  const status = isKycFilter(params.status) ? params.status : "active";
   const search = params.q?.trim() || undefined;
   const canManage = canManageAntifraud(session);
   const contentKey = `${status}-${search ?? ""}`;
@@ -273,12 +267,13 @@ function AccountList({
         <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
           <CheckCircle2 className="mx-auto size-5 text-muted-foreground" />
           <p className="mt-2 text-sm font-semibold">
-            {filter === "kyc_in_progress"
-              ? "No KYC checks are currently in progress"
-              : "No accounts match this view"}
+            {filter === "active"
+              ? "No KYC checks are currently active or waiting"
+              : "No finished KYC records match this view"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
-            Change the filter or search, or require KYC for an account.
+            Change the view or search, or require KYC for an eligible locked
+            account.
           </p>
         </div>
       ) : (

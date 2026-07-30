@@ -61,7 +61,8 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
   assert.doesNotMatch(page, /How KYC works here/);
-  assert.match(page, /KYC in progress/);
+  assert.match(page, /Active \/ Waiting/);
+  assert.match(page, /History \/ Finished/);
   assert.match(page, /historical verification\s+records/);
   assert.match(page, /Ready for admin decision/);
   assert.match(page, /<AccountRowEvidence account=\{account\}/);
@@ -74,15 +75,16 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.doesNotMatch(page, /<SystemDetails/);
 });
 
-test("the KYC landing view defaults to all records", () => {
+test("the KYC landing view defaults to active and waiting records", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
 
   assert.match(
     page,
-    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"all"/,
+    /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"active"/,
   );
-  assert.match(page, /all:\s*"KYC record history"/);
-  assert.match(page, /No KYC checks are currently in progress/);
+  assert.match(page, /active:\s*"Active \/ Waiting"/);
+  assert.match(page, /history:\s*"History \/ Finished"/);
+  assert.match(page, /No KYC checks are currently active or waiting/);
   assert.match(page, /completed historical cycles/);
   assert.match(
     page,
@@ -106,7 +108,7 @@ test("untouched default KYC rows stay out of the review queue and totals", () =>
   assert.match(query, /status\} <> 'none'/);
 });
 
-test("the KYC queue exposes only the five operational filters", () => {
+test("the KYC queue exposes only active and finished history views", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
   const query = source("src/lib/antifraud/kyc.ts");
   const labels = page.slice(
@@ -114,17 +116,11 @@ test("the KYC queue exposes only the five operational filters", () => {
     page.indexOf("const FILTER_TITLES"),
   );
 
-  for (const label of [
-    "All",
-    "KYC in progress",
-    "Review",
-    "Finished",
-    "Declined",
-  ]) {
+  for (const label of ["Active / Waiting", "History / Finished"]) {
     assert.match(labels, new RegExp(`\\b${label}\\b`));
   }
   for (const removed of [
-    "History",
+    "All",
     "Withdrawals locked",
     "Decision open",
     "Waiting on Sumsub",
@@ -136,7 +132,7 @@ test("the KYC queue exposes only the five operational filters", () => {
   }
   assert.match(
     query,
-    /export const KYC_FILTERS = \[[\s\S]*?"all"[\s\S]*?"kyc_in_progress"[\s\S]*?"review"[\s\S]*?"finished"[\s\S]*?"declined"[\s\S]*?\] as const/,
+    /export const KYC_FILTERS = \["active", "history"\] as const/,
   );
 });
 
@@ -194,21 +190,18 @@ test("finished KYC records save and expose account-country mismatches", () => {
   assert.match(page, /saved country mismatch/);
 });
 
-test("account reviews exclude currently KYC-required users before pagination", () => {
+test("account reviews keep KYC users in the explicit waiting workflow", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
   const reviews = source("src/lib/antifraud/reviews.ts");
-  const kyc = source("src/lib/antifraud/kyc.ts");
+  const workflow = source("src/lib/antifraud/review-workflow.ts");
+  const ops = source("src/app/api/antifraud/ops/tick/route.ts");
 
-  assert.match(kyc, /export async function listKycRequiredUserIds/);
-  assert.match(kyc, /eq\(user_kyc\.kyc_required,\s*true\)/);
-  assert.match(
-    page,
-    /const excludedTargetUserIds = await listKycRequiredUserIds\(\)/,
-  );
-  assert.match(page, /listReviewPage\(scopedFilters,\s*cursor\)/);
-  assert.match(page, /getReviewStats\(undefined,\s*excludedTargetUserIds\)/);
-  assert.match(
-    reviews,
-    /excludedTargetUserIds[\s\S]*?ANY\(\$\{pgArrayParam\(filters\.excludedTargetUserIds\)\}::text\[\]\)/,
-  );
+  assert.match(page, /REVIEW_QUEUE_STATES/);
+  assert.match(ops, /syncReviewWorkflowStates\(\)/);
+  assert.doesNotMatch(page, /syncReviewWorkflowStates\(\)/);
+  assert.doesNotMatch(page, /listKycRequiredUserIds/);
+  assert.match(reviews, /queue\?: ReviewQueueState/);
+  assert.match(workflow, /return "waiting_kyc"/);
+  assert.match(workflow, /evidence\.kycRequired/);
+  assert.match(workflow, /!evidence\.kycFinished/);
 });

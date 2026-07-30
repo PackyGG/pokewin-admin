@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import { enqueueDueReviewReminders } from "@/lib/discord-notifications/review-reminders";
+import { syncReviewWorkflowStates } from "@/lib/antifraud/review-workflow";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -70,9 +71,15 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
+    const projectedReviews = await syncReviewWorkflowStates();
     const reminders = await enqueueDueReviewReminders();
     return response(
-      { ok: true, correlationId: parsed.data.correlationId, reminders },
+      {
+        ok: true,
+        correlationId: parsed.data.correlationId,
+        projectedReviews,
+        reminders,
+      },
       200,
       parsed.data.correlationId,
     );

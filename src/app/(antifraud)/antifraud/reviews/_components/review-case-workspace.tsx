@@ -24,15 +24,22 @@ import { CaseControls } from "./case-controls";
 import { QuickReviewActions } from "./quick-review-actions";
 import { ReviewSignalBadge } from "./review-signal-badge";
 import { listAssignableAnalysts } from "../actions";
+import {
+  REVIEW_QUEUE_LABELS,
+  type ReviewWorkflow,
+} from "@/lib/antifraud/review-workflow";
+import { RequireKycDialog } from "../../kyc/_components/require-kyc-dialog";
 
 
 /** Complete evidence and controls for the queue's review dialog. */
 export async function ReviewCaseWorkspace({
   reviewId,
   viewerId,
+  canManage,
 }: {
   reviewId: string;
   viewerId: string;
+  canManage: boolean;
 }) {
   const [detail, analysts] = await Promise.all([
     getReviewDetail(reviewId),
@@ -157,6 +164,15 @@ export async function ReviewCaseWorkspace({
               targetUsername={review.targetUsername}
               status={review.status}
             />
+            {canManage &&
+              detail.detail.workflow?.evidence.fullyLocked &&
+              !detail.detail.workflow.evidence.kycRequired && (
+                <RequireKycDialog
+                  account={review.targetUserId}
+                  accountLabel={name}
+                  compact
+                />
+              )}
           </div>
         </aside>
       </div>
@@ -255,6 +271,9 @@ function WhyThisCase({ detail }: { detail: ReviewDetail }) {
         }
       />
       <div className="space-y-3 rounded-xl border bg-card p-4">
+        {detail.workflow && (
+          <WorkflowEvidence workflow={detail.workflow} />
+        )}
         <p className="text-sm leading-relaxed">{review.reason}</p>
         {review.signals.length > 0 && (
           <div className="flex flex-wrap gap-1">
@@ -271,6 +290,46 @@ function WhyThisCase({ detail }: { detail: ReviewDetail }) {
         )}
       </div>
     </section>
+  );
+}
+
+function WorkflowEvidence({ workflow }: { workflow: ReviewWorkflow }) {
+  const evidence = workflow.evidence;
+  const facts = [
+    evidence.fullyLocked
+      ? "Balance and item withdrawals fully locked"
+      : evidence.withdrawalsLocked
+        ? "One withdrawal channel is locked"
+        : "No withdrawal lock",
+    evidence.kycRequired && !evidence.kycFinished
+      ? `KYC waiting · ${evidence.kycStatus.replace("_", " ")}`
+      : null,
+    evidence.kycFinished
+      ? `KYC finished · ${evidence.kycStatus}`
+      : null,
+    evidence.riskScore != null ? `Risk score ${evidence.riskScore}/100` : null,
+  ].filter((value): value is string => Boolean(value));
+
+  return (
+    <div className="rounded-lg border border-border/60 bg-muted/25 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-xs font-semibold">
+          {REVIEW_QUEUE_LABELS[workflow.queueState]}
+        </p>
+        {workflow.postponedUntil && workflow.queueState === "postponed" && (
+          <span className="text-[11px] text-muted-foreground">
+            Due {formatRelative(workflow.postponedUntil)}
+          </span>
+        )}
+      </div>
+      {facts.length > 0 && (
+        <ul className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+          {facts.map((fact) => (
+            <li key={fact}>• {fact}</li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

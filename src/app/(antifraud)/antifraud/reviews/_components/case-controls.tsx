@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter } from "next/navigation";
-import { MessageSquarePlus, UserCheck } from "lucide-react";
+import { Clock3, MessageSquarePlus, UserCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -25,6 +25,7 @@ import {
 import {
   addReviewNote,
   assignReview,
+  postponeReview,
   updateReviewStatus,
 } from "../actions";
 
@@ -201,6 +202,36 @@ export function CaseControls({
         <p className="text-[11px] text-muted-foreground">
           Clear and Flag require a conclusion. Reopening withdraws the previous
           verdict but keeps the append-only trail.
+        </p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="w-full"
+          disabled={
+            pending !== null || status === "cleared" || status === "flagged"
+          }
+          onClick={() =>
+            run(
+              "postpone",
+              () =>
+                postponeReview({
+                  reviewId,
+                  idempotencyKey: crypto.randomUUID(),
+                }),
+              "Review postponed for 2.5 hours",
+            )
+          }
+        >
+          <Clock3 className="mr-2 size-4" />
+          {pending === "postpone" ? "Postponing…" : "Postpone 2.5 hours"}
+        </Button>
+        <p className="text-[11px] text-muted-foreground">
+          Removes this case from active tabs and suppresses reminders until it
+          is due.
         </p>
       </div>
 

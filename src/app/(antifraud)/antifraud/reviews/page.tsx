@@ -28,16 +28,19 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
-  getReviewStats,
+  getReviewQueueStats,
   listReviewPage,
   REVIEW_PAGE_SIZE,
-  REVIEW_STATUSES,
-  REVIEW_STATUS_LABELS,
   isReviewStatus,
   type ReviewFilters,
   type ReviewListItem,
 } from "@/lib/antifraud/reviews";
-import { listKycRequiredUserIds } from "@/lib/antifraud/kyc";
+import {
+  REVIEW_QUEUE_LABELS,
+  REVIEW_QUEUE_STATES,
+  type ReviewQueueState,
+} from "@/lib/antifraud/review-workflow";
+import { canManageAntifraud } from "@/lib/antifraud/access";
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { ReviewCaseDialog } from "./_components/review-case-dialog";
@@ -61,6 +64,7 @@ export const metadata = { title: "Account Review" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 type SearchParams = {
+  tab?: string;
   status?: string;
   q?: string;
   cursor?: string;
@@ -86,6 +90,11 @@ export default async function ReviewQueuePage({
       : params.status && isReviewStatus(params.status)
         ? params.status
         : "unresolved";
+  const tab = (REVIEW_QUEUE_STATES as readonly string[]).includes(
+    params.tab ?? "",
+  )
+    ? (params.tab as ReviewQueueState)
+    : "priority";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
   const selectedReviewId = z.string().uuid().safeParse(params.review).success
@@ -94,11 +103,12 @@ export default async function ReviewQueuePage({
 
   const filters: ReviewFilters = {
     status,
+    queue: tab,
     search,
     limit: REVIEW_PAGE_SIZE,
   };
 
-  const filterKey = `${status}-${search ?? ""}-${cursor ?? "first"}`;
+  const filterKey = `${tab}-${status}-${search ?? ""}-${cursor ?? "first"}`;
   return (
     <div className="space-y-6">
       <PageHero>
@@ -106,6 +116,7 @@ export default async function ReviewQueuePage({
       </PageHero>
 
       <FilterBar
+        tab={tab}
         status={status}
         search={search}
         openCaseProps={{
@@ -123,9 +134,10 @@ export default async function ReviewQueuePage({
         <QueueList
           filters={filters}
           cursor={cursor}
-          current={{ status, q: search, cursor }}
+          current={{ tab, status, q: search, cursor }}
           selectedReviewId={selectedReviewId}
           viewerId={session.userId}
+          canManage={canManageAntifraud(session)}
         />
       </Suspense>
     </div>
@@ -165,15 +177,18 @@ function FilterChip({
 }
 
 function FilterBar({
+  tab,
   status,
   search,
   openCaseProps,
 }: {
+  tab: ReviewQueueState;
   status: string;
   search?: string;
   openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
 }) {
   const current: SearchParams = {
+    tab,
     status,
     q: search,
   };
@@ -182,32 +197,23 @@ function FilterBar({
     <div className="rounded-xl border border-border/70 bg-card p-3">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
         <div className="flex flex-wrap items-center gap-1.5">
-          <FilterChip
-            href={buildHref({ status: "unresolved", cursor: undefined }, current)}
-            active={status === "unresolved"}
-          >
-            Needs work
-          </FilterChip>
-          <span className="mx-1 hidden h-8 w-px bg-border sm:block" />
-          {REVIEW_STATUSES.map((value) => (
+          {REVIEW_QUEUE_STATES.map((value) => (
             <FilterChip
               key={value}
-              href={buildHref({ status: value, cursor: undefined }, current)}
-              active={status === value}
+              href={buildHref(
+                { tab: value, status: "unresolved", cursor: undefined },
+                current,
+              )}
+              active={tab === value}
             >
-              {REVIEW_STATUS_LABELS[value]}
+              {REVIEW_QUEUE_LABELS[value]}
             </FilterChip>
           ))}
-          <FilterChip
-            href={buildHref({ status: "all", cursor: undefined }, current)}
-            active={status === "all"}
-          >
-            All
-          </FilterChip>
         </div>
         <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:flex-nowrap">
           {/* GET form — no client JS, and the URL stays shareable. */}
           <form className="flex min-w-0 flex-1 gap-2">
+            <input type="hidden" name="tab" value={tab} />
             {status && <input type="hidden" name="status" value={status} />}
             <Input
               type="search"
@@ -237,34 +243,30 @@ async function QueueList({
   current,
   selectedReviewId,
   viewerId,
+  canManage,
 }: {
   filters: ReviewFilters;
   cursor?: string;
   current: SearchParams;
   selectedReviewId?: string;
   viewerId: string;
+  canManage: boolean;
 }) {
   const { data, error } = await safeQuery(
     async () => {
-      // KYC-required accounts belong only in the dedicated KYC workspace.
-      // Resolve that scope before both ADMIN reads so pagination, totals, and
-      // queue KPIs all describe the same visible set.
-      const excludedTargetUserIds = await listKycRequiredUserIds();
-      const scopedFilters = { ...filters, excludedTargetUserIds };
       const [page, stats] = await Promise.all([
-        listReviewPage(scopedFilters, cursor),
-        getReviewStats(undefined, excludedTargetUserIds),
+        listReviewPage(filters, cursor),
+        getReviewQueueStats(),
       ]);
       return { page, stats };
     },
     {
       page: { items: [], nextCursor: null, total: 0 },
       stats: {
-        open: 0,
-        inReview: 0,
-        resolvedToday: 0,
-        flaggedTotal: 0,
-        mineOpen: 0,
+        priority: 0,
+        normal: 0,
+        waitingKyc: 0,
+        postponed: 0,
       },
     },
     "antifraud.review-queue",
@@ -275,27 +277,34 @@ async function QueueList({
 
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        <KpiTile
+          icon={ShieldAlert}
+          accent="rose"
+          label="High priority"
+          value={stats.priority.toLocaleString()}
+          sub="locked, finished KYC, or 70+"
+        />
         <KpiTile
           icon={FolderOpen}
-          accent="cyan"
-          label="Open"
-          value={stats.open.toLocaleString()}
-          sub="untouched cases"
+          accent="blue"
+          label="Normal"
+          value={stats.normal.toLocaleString()}
+          sub="unusual score, no full lock"
         />
         <KpiTile
           icon={Clock3}
-          accent="blue"
-          label="In review"
-          value={stats.inReview.toLocaleString()}
-          sub="being worked on"
+          accent="amber"
+          label="Waiting KYC"
+          value={stats.waitingKyc.toLocaleString()}
+          sub="provider result pending"
         />
         <KpiTile
-          icon={CheckCircle2}
-          accent="emerald"
-          label="Resolved today"
-          value={stats.resolvedToday.toLocaleString()}
-          sub="cleared or flagged"
+          icon={Clock3}
+          accent="cyan"
+          label="Postponed"
+          value={stats.postponed.toLocaleString()}
+          sub="hidden until due"
         />
       </div>
 
@@ -375,6 +384,7 @@ async function QueueList({
           reviews={reviews}
           current={current}
           viewerId={viewerId}
+          canManage={canManage}
         />
       )}
     </div>
@@ -400,6 +410,11 @@ function CaseRow({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-sm font-semibold">{name}</span>
               <ReviewStatusBadge status={review.status} />
+              {review.workflow && (
+                <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                  {REVIEW_QUEUE_LABELS[review.workflow.queueState]}
+                </span>
+              )}
               {review.riskScore != null && (
                 <span
                   className={cn(
@@ -478,11 +493,13 @@ function ReviewDialogFromQueue({
   reviews,
   current,
   viewerId,
+  canManage,
 }: {
   reviewId: string;
   reviews: ReviewListItem[];
   current: SearchParams;
   viewerId: string;
+  canManage: boolean;
 }) {
   const index = reviews.findIndex((review) => review.id === reviewId);
   const previous = index > 0 ? reviews[index - 1] : undefined;
@@ -499,7 +516,11 @@ function ReviewDialogFromQueue({
       nextHref={next ? buildHref({ review: next.id }, current) : undefined}
     >
       <Suspense key={reviewId} fallback={<CaseDialogSkeleton />}>
-        <ReviewCaseWorkspace reviewId={reviewId} viewerId={viewerId} />
+        <ReviewCaseWorkspace
+          reviewId={reviewId}
+          viewerId={viewerId}
+          canManage={canManage}
+        />
       </Suspense>
     </ReviewCaseDialog>
   );
@@ -525,8 +546,8 @@ function CaseDialogSkeleton() {
 function QueueSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-24 rounded-xl" />
         ))}
       </div>

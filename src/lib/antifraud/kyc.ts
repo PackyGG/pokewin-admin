@@ -5,7 +5,6 @@ import {
   desc,
   eq,
   ilike,
-  inArray,
   or,
   sql,
   type SQL,
@@ -24,13 +23,7 @@ import {
   type KycCountryReview,
 } from "@/lib/antifraud/sumsub-review-api";
 
-export const KYC_FILTERS = [
-  "all",
-  "kyc_in_progress",
-  "review",
-  "finished",
-  "declined",
-] as const;
+export const KYC_FILTERS = ["active", "history"] as const;
 
 export type KycFilter = (typeof KYC_FILTERS)[number];
 
@@ -171,27 +164,16 @@ function integrationConfig(env: DbEnv): KycOperationalConfig {
 
 function statusCondition(filter: KycFilter): SQL | undefined {
   switch (filter) {
-    case "kyc_in_progress":
-      return and(
+    case "active":
+      return or(
         eq(user_kyc.kyc_required, true),
         eq(user_kyc.admin_decision, "pending"),
-        inArray(user_kyc.status, ["none", "pending", "on_hold"]),
       );
-    case "review":
-      return and(
-        eq(user_kyc.kyc_required, true),
-        eq(user_kyc.admin_decision, "pending"),
-        inArray(user_kyc.status, ["approved", "rejected"]),
-      );
-    case "finished":
-      return and(
-        eq(user_kyc.kyc_required, false),
+    case "history":
+      return or(
         eq(user_kyc.admin_decision, "safe"),
+        eq(user_kyc.admin_decision, "rejected"),
       );
-    case "declined":
-      return eq(user_kyc.admin_decision, "rejected");
-    default:
-      return undefined;
   }
 }
 
@@ -224,7 +206,7 @@ async function listKycAccounts(
 ): Promise<KycAccount[]> {
   const db = await getReadDrizzleDb();
   const conditions: SQL[] = [meaningfulKycRecordCondition()];
-  const filter = filters.status ?? "all";
+  const filter = filters.status ?? "active";
   const status = statusCondition(filter);
   if (status) conditions.push(status);
 

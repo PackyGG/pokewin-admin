@@ -16,9 +16,9 @@ type DueReminder = {
   review_id: string;
   target_user_id: string;
   target_username: string | null;
-  severity: string;
   reason: string;
   reminder_kind: "normal" | "urgent" | "postponed";
+  queue_state: "priority" | "normal" | "waiting_kyc" | null;
   next_reminder_at: string;
   lease_token: string;
 };
@@ -62,8 +62,13 @@ function reminderEmbed(row: DueReminder, correlationId: string) {
         inline: true,
       },
       {
-        name: "Severity",
-        value: row.severity.slice(0, 40),
+        name: "Queue",
+        value:
+          row.queue_state === "priority"
+            ? "High priority"
+            : row.queue_state === "waiting_kyc"
+              ? "Waiting KYC"
+              : "Normal review",
         inline: true,
       },
       {
@@ -88,20 +93,18 @@ export async function enqueueDueReviewReminders(): Promise<{
     SELECT
       review.id,
       CASE
-        WHEN review.severity IN ('high', 'critical')
-          OR review.reason ILIKE '%locked%'
-          OR review.reason ILIKE '%kyc%'
+        WHEN workflow.queue_state IN ('priority', 'waiting_kyc')
           THEN 'urgent'
         ELSE 'normal'
       END,
       review.created_at + CASE
-        WHEN review.severity IN ('high', 'critical')
-          OR review.reason ILIKE '%locked%'
-          OR review.reason ILIKE '%kyc%'
+        WHEN workflow.queue_state IN ('priority', 'waiting_kyc')
           THEN interval '1 hour'
         ELSE interval '4 hours 30 minutes'
       END
     FROM antifraud_reviews AS review
+    LEFT JOIN antifraud_review_workflow AS workflow
+      ON workflow.review_id = review.id
     WHERE review.status IN ('open', 'in_review', 'escalated')
     ON CONFLICT (review_id) DO NOTHING
   `);
@@ -111,8 +114,11 @@ export async function enqueueDueReviewReminders(): Promise<{
       SELECT reminder.review_id
       FROM antifraud_review_reminder_state AS reminder
       JOIN antifraud_reviews AS review ON review.id = reminder.review_id
+      LEFT JOIN antifraud_review_workflow AS workflow
+        ON workflow.review_id = reminder.review_id
       WHERE review.status IN ('open', 'in_review', 'escalated')
         AND reminder.next_reminder_at <= now()
+        AND NOT COALESCE(workflow.postponed_until > now(), false)
         AND (
           reminder.leased_until IS NULL
           OR reminder.leased_until < now()
@@ -135,13 +141,15 @@ export async function enqueueDueReviewReminders(): Promise<{
       review.id::text AS review_id,
       review.target_user_id,
       review.target_username,
-      review.severity,
       review.reason,
       reminder.reminder_kind,
+      workflow.queue_state,
       reminder.next_reminder_at::text,
       reminder.lease_token::text
     FROM claimed AS reminder
     JOIN antifraud_reviews AS review ON review.id = reminder.review_id
+    LEFT JOIN antifraud_review_workflow AS workflow
+      ON workflow.review_id = reminder.review_id
     ORDER BY reminder.next_reminder_at, reminder.review_id
   `);
 
@@ -171,11 +179,9 @@ export async function enqueueDueReviewReminders(): Promise<{
     if (result.enqueued + result.duplicate === 0) continue;
     queued += result.enqueued;
     const delay =
-      row.reminder_kind === "urgent"
+      row.queue_state === "priority" || row.queue_state === "waiting_kyc"
         ? REVIEW_REMINDER_DELAYS_MS.urgent
-        : row.reminder_kind === "postponed"
-          ? REVIEW_REMINDER_DELAYS_MS.postponed
-          : REVIEW_REMINDER_DELAYS_MS.normal;
+        : REVIEW_REMINDER_DELAYS_MS.normal;
     await adminDrizzle.execute(sql`
       UPDATE antifraud_review_reminder_state
       SET
@@ -183,8 +189,13 @@ export async function enqueueDueReviewReminders(): Promise<{
         sent_count = sent_count + 1,
         next_reminder_at = now() + (${delay}::bigint * interval '1 millisecond'),
         reminder_kind = CASE
-          WHEN reminder_kind = 'postponed' THEN 'normal'
-          ELSE reminder_kind
+          WHEN EXISTS (
+            SELECT 1
+            FROM antifraud_review_workflow AS workflow
+            WHERE workflow.review_id = ${row.review_id}::uuid
+              AND workflow.queue_state IN ('priority', 'waiting_kyc')
+          ) THEN 'urgent'
+          ELSE 'normal'
         END,
         lease_token = NULL,
         leased_until = NULL,
@@ -195,21 +206,4 @@ export async function enqueueDueReviewReminders(): Promise<{
   }
 
   return { inspected: due.rows.length, queued };
-}
-
-export async function postponeReviewReminder(reviewId: string): Promise<void> {
-  await adminDrizzle.execute(sql`
-    INSERT INTO antifraud_review_reminder_state (
-      review_id, reminder_kind, next_reminder_at
-    )
-    VALUES (
-      ${reviewId}::uuid,
-      'postponed',
-      now() + (${REVIEW_REMINDER_DELAYS_MS.postponed}::bigint * interval '1 millisecond')
-    )
-    ON CONFLICT (review_id) DO UPDATE SET
-      reminder_kind = 'postponed',
-      next_reminder_at = EXCLUDED.next_reminder_at,
-      updated_at = now()
-  `);
 }

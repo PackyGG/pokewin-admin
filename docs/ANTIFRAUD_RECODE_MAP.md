@@ -74,11 +74,11 @@ There are currently two related case models:
 | Signups | Signup assessments, scores, signals, attention filters | `signups/page.tsx`, `src/lib/antifraud/signups.ts` |
 | Live Monitor | Active sessions and live Redis-backed event feed | `monitor/*`, `_components/monitor-stream.ts`, dashboard monitor APIs |
 | Monitor case | Full detection evidence, rule matches, sessions, network members, decision | `monitor/cases/[id]/*`, `src/lib/antifraud/monitor-api.ts` |
-| Account Review | Durable staff queue, modal review, assignment, notes, quick actions, status | `reviews/*`, `src/lib/antifraud/reviews.ts` |
+| Account Review | Durable staff queue, priority/normal/waiting-KYC/postponed projection, modal review, assignment, notes, quick actions, status | `reviews/*`, `src/lib/antifraud/reviews.ts`, `src/lib/antifraud/review-workflow.ts` |
 | Fiat Deposits | Canonical fiat assessments, evidence, review status, KYC action | `fiat-deposits/*`, `src/lib/antifraud/fiat-deposits-api.ts` |
 | Fiat Fraud | MAIN-derived fraud/payment investigation list | `fiat-fraud/*`, `src/lib/queries/fiat-fraud.ts` |
 | Withdrawals | Withdrawal score, provenance trace, linked restricted accounts, review | `withdrawals/*`, `src/lib/antifraud/withdrawals-api.ts` |
-| KYC | Required/in-progress/terminal KYC accounts and provider event state | `kyc/*`, `src/lib/antifraud/kyc.ts` |
+| KYC | Active/waiting and finished-history KYC views with sanitized Sumsub evidence | `kyc/*`, `src/lib/antifraud/kyc.ts`, `src/lib/antifraud/sumsub-review-api.ts` |
 | Whop Refunds | Owner-only, step-up protected, leased and auditable refund batches | `refunds/*`, `src/lib/queries/whop-refunds.ts` |
 | Account Networks | User-linked IP/device/account graph and rescan | `networks/*`, `src/lib/antifraud/network-api.ts` |
 | Risky Locations | Country-specific signup score and monitor window | `risky-locations/*`, monitor risky-location API |
@@ -281,8 +281,15 @@ so one failed phase does not suppress later cleanup.
 - Signed ingest inserts an idempotent ADMIN `antifraud_signals` row.
 - High/critical signals and score-60 signup markers open or merge one live
   review per user.
+- The signed operations tick projects each live review into one staff queue:
+  `priority` for a withdrawal lock, finished provider KYC, or risk 70+;
+  `waiting_kyc` for an unfinished required cycle; otherwise `normal`.
+- An explicit staff postponement overlays `postponed` for 2.5 hours, suppresses
+  reminders until due, and writes the review trail plus ADMIN audit atomically.
 - Staff can assign, note, mark fine, flag, ban, or lock withdrawals according
   to capability.
+- Managers can request KYC only when the account is currently fully locked;
+  the mutation rechecks this against the owning application boundary.
 - Status updates use idempotency and audit rows.
 - The queue remains visible while the case opens in a dialog.
 

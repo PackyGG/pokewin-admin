@@ -16,6 +16,12 @@ import {
   OPEN_REVIEW_STATUSES,
   type ReviewStatus,
 } from "./constants";
+import {
+  loadReviewWorkflows,
+  reviewQueueCondition,
+  type ReviewQueueState,
+  type ReviewWorkflow,
+} from "./review-workflow";
 
 const REVIEW_QUEUE_STORAGE_STATUSES = [
   ...OPEN_REVIEW_STATUSES,
@@ -76,6 +82,7 @@ export type ReviewRow = {
 export type ReviewListItem = ReviewRow & {
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
+  workflow: ReviewWorkflow | null;
 };
 
 export type ReviewNote = {
@@ -134,6 +141,8 @@ function toRow(row: {
 export type ReviewFilters = {
   /** Omit for the default "still needs work" set. "all" for everything. */
   status?: ReviewStatus | "all" | "unresolved";
+  /** Operational queue tab. Defaults to high-priority work in the page. */
+  queue?: ReviewQueueState;
   /** Limit to cases assigned to this admin. */
   assignedTo?: string;
   /** User ids owned by another operational queue, such as KYC. */
@@ -175,6 +184,7 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
   }
 
   if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
+  if (filters.queue) conditions.push(reviewQueueCondition(filters.queue));
 
   if (filters.excludedTargetUserIds?.length) {
     conditions.push(sql`
@@ -232,10 +242,12 @@ async function attachIdentities(
   const identities = await loadAdminIdentities(
     rows.flatMap((r) => [r.assigned_to, r.opened_by]),
   );
+  const workflows = await loadReviewWorkflows(rows.map((row) => row.id));
   return rows.map((row) => ({
     ...toRow(row),
     assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
     opener: row.opened_by ? identities.get(row.opened_by) ?? null : null,
+    workflow: workflows.get(row.id) ?? null,
   }));
 }
 
@@ -338,6 +350,7 @@ export async function listReviewPage(
 
 export type ReviewDetail = {
   review: ReviewRow;
+  workflow: ReviewWorkflow | null;
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
   resolver: AdminIdentity | null;
@@ -397,13 +410,14 @@ export async function getReviewDetail(
   // that quietly shows nothing is worse than an honest error.
   const body = await safeQueryOrNull(
     async () => {
-      const [notes, signals] = await Promise.all([
+      const [notes, signals, workflows] = await Promise.all([
         adminDrizzle.select().from(antifraud_review_notes)
           .where(eq(antifraud_review_notes.review_id, reviewId))
           .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
         adminDrizzle.select().from(antifraud_signals)
           .where(eq(antifraud_signals.target_user_id, review.target_user_id))
           .orderBy(desc(antifraud_signals.received_at)).limit(25),
+        loadReviewWorkflows([reviewId]),
       ]);
 
       const identities = await loadAdminIdentities([
@@ -415,6 +429,7 @@ export async function getReviewDetail(
 
       const detail: ReviewDetail = {
         review: toRow(review),
+        workflow: workflows.get(reviewId) ?? null,
         assignee: review.assigned_to
           ? identities.get(review.assigned_to) ?? null
           : null,
@@ -462,6 +477,56 @@ export type ReviewStats = {
   flaggedTotal: number;
   mineOpen: number;
 };
+
+export type ReviewQueueStats = {
+  priority: number;
+  normal: number;
+  waitingKyc: number;
+  postponed: number;
+};
+
+export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
+  const empty = { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 };
+  try {
+    const result = await adminDrizzle.execute<{
+      priority: string;
+      normal: string;
+      waiting_kyc: string;
+      postponed: string;
+    }>(sql`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE workflow.queue_state = 'priority'
+            AND NOT COALESCE(workflow.postponed_until > now(), false)
+        ) AS priority,
+        COUNT(*) FILTER (
+          WHERE COALESCE(workflow.queue_state, 'normal') = 'normal'
+            AND NOT COALESCE(workflow.postponed_until > now(), false)
+        ) AS normal,
+        COUNT(*) FILTER (
+          WHERE workflow.queue_state = 'waiting_kyc'
+            AND NOT COALESCE(workflow.postponed_until > now(), false)
+        ) AS waiting_kyc,
+        COUNT(*) FILTER (
+          WHERE workflow.postponed_until > now()
+        ) AS postponed
+      FROM antifraud_reviews AS review
+      LEFT JOIN antifraud_review_workflow AS workflow
+        ON workflow.review_id = review.id
+      WHERE review.status IN ('open', 'in_review', 'escalated')
+    `);
+    const row = result.rows[0];
+    return {
+      priority: Number(row?.priority ?? 0),
+      normal: Number(row?.normal ?? 0),
+      waitingKyc: Number(row?.waiting_kyc ?? 0),
+      postponed: Number(row?.postponed ?? 0),
+    };
+  } catch (error) {
+    console.error("[antifraud] getReviewQueueStats failed:", error);
+    return empty;
+  }
+}
 
 /** The dashboard KPI strip. One grouped count + three narrow counts. */
 export async function getReviewStats(
