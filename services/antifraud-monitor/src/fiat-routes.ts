@@ -69,7 +69,7 @@ function visibleReviewStatus(status: string): string {
 
 const assessmentSelect = `
   deposit_intent_id, user_id, username, email, avatar_url, provider,
-  provider_payment_status, status, currency,
+  provider_payment_id, provider_payment_status, status, currency,
   requested_amount_usd::float8 AS requested_amount_usd,
   credited_amount_usd::float8 AS credited_amount_usd,
   customer_total_usd::float8 AS customer_total_usd,

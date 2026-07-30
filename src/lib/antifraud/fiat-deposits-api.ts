@@ -112,7 +112,9 @@ const assessmentSchema = z.object({
   email: z.string().nullable(),
   avatar_url: z.string().nullable(),
   provider: z.string(),
-  provider_payment_id: z.string().nullable(),
+  // Optional on purpose: a monitor build that predates the stored payment id
+  // must only cost the refund badge, never the whole queue.
+  provider_payment_id: z.string().nullable().optional().default(null),
   provider_payment_status: z.string().nullable(),
   status: z.string(),
   currency: z.string(),

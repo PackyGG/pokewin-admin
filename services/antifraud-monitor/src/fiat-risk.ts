@@ -1480,11 +1480,12 @@ export class FiatRiskService {
               provider_risk_score, three_ds_verified, risk_score, verdict,
               recommendation, summary, signals, provider_evidence,
               funding_evidence, behavior_evidence, account_evidence,
-              score_breakdown, flow_checks, score_version, assessed_at
+              score_breakdown, flow_checks, provider_payment_id,
+              score_version, assessed_at
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
               $16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,
-              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,'fiat-v2',now()
+              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29,'fiat-v2',now()
             )
             ON CONFLICT (deposit_intent_id) DO UPDATE SET
               user_id=EXCLUDED.user_id,
@@ -1514,6 +1515,7 @@ export class FiatRiskService {
               account_evidence=EXCLUDED.account_evidence,
               score_breakdown=EXCLUDED.score_breakdown,
               flow_checks=EXCLUDED.flow_checks,
+              provider_payment_id=EXCLUDED.provider_payment_id,
               score_version='fiat-v2',
               assessed_at=now()
           `,
@@ -1550,6 +1552,7 @@ export class FiatRiskService {
             JSON.stringify(assessment.account),
             JSON.stringify(assessment.scoreBreakdown),
             JSON.stringify(assessment.flowChecks),
+            intent.provider_payment_id,
           ],
         );
       }

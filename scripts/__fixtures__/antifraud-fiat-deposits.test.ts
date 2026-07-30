@@ -170,6 +170,17 @@ test("fiat assessment API enforces exclusions and persists review state", () => 
   );
   assert.match(alerts, /name: "Payment option"/);
   assert.match(alerts, /whopPaymentMethodLabel/);
+  // The dashboard resolves refund state per deposit through the provider
+  // payment id, so it must be stored, upserted, and selected — a missing
+  // column silently broke the whole queue once.
+  assert.match(
+    read(
+      "services/antifraud-monitor/migrations/045_fiat_assessment_provider_payment_id.sql",
+    ),
+    /ADD COLUMN IF NOT EXISTS provider_payment_id text/,
+  );
+  assert.match(routes, /provider_payment_id, provider_payment_status/);
+  assert.match(service, /provider_payment_id=EXCLUDED\.provider_payment_id/);
   assert.match(migration, /fiat_deposit_review_events/);
   assert.match(migration, /idempotency_key uuid NOT NULL UNIQUE/);
 });
