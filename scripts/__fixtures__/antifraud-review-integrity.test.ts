@@ -181,6 +181,10 @@ test("Abstract catch-all signup containment requires signed provider evidence", 
 
   assert.match(containment, /containmentRequired !== true/);
   assert.match(containment, /provider !== "abstract_email"/);
+  assert.match(containment, /UPDATE "user"/);
+  assert.match(containment, /is_locked = TRUE/);
+  assert.match(containment, /WHEN is_locked THEN locked_by ELSE NULL/);
+  assert.match(containment, /WHEN is_locked THEN locked_until ELSE NULL/);
   assert.match(containment, /INSERT INTO user_feature_locks/);
   assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]/);
   assert.match(containment, /locked_withdrawals_items = TRUE/);

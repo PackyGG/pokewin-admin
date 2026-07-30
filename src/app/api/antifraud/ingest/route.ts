@@ -48,6 +48,8 @@ import { isPostgresError } from "@/lib/postgres-errors";
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * locks crypto and item withdrawals in MAIN before the signal is acknowledged.
+ * Abstract-confirmed catch-all email signals also apply the reversible
+ * full-account lock.
  * Re-sent duplicates deliberately do NOT re-lock —
  * staff may have reviewed and unlocked the account in between.
  */
@@ -337,6 +339,24 @@ async function containAbstractCatchallAccount(
   ).slice(0, 500);
   const db = getProdPrimaryDrizzleDb();
   const locked = await db.execute<{ user_id: string }>(sql`
+    WITH locked_account AS (
+      UPDATE "user"
+      SET
+        is_locked = TRUE,
+        locked_reason = CASE
+          WHEN is_locked THEN COALESCE(locked_reason, ${reason})
+          ELSE ${reason}
+        END,
+        locked_at = CASE
+          WHEN is_locked THEN COALESCE(locked_at, NOW())
+          ELSE NOW()
+        END,
+        locked_by = CASE WHEN is_locked THEN locked_by ELSE NULL END,
+        locked_until = CASE WHEN is_locked THEN locked_until ELSE NULL END,
+        updated_at = NOW()
+      WHERE id = ${userId}
+      RETURNING id
+    )
     INSERT INTO user_feature_locks (
       id,
       user_id,
@@ -358,8 +378,7 @@ async function containAbstractCatchallAccount(
       ${reason},
       NOW(),
       NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
+    FROM locked_account u
     ON CONFLICT (user_id) DO UPDATE SET
       locked_withdrawals_crypto = ARRAY['all']::text[],
       locked_withdrawals_items = TRUE,
