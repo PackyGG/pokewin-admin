@@ -3,6 +3,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { z } from "zod";
 
 import { enqueueDueReviewReminders } from "@/lib/discord-notifications/review-reminders";
+import { enqueueSumsubVerificationStarts } from "@/lib/discord-notifications/sumsub-started";
 import { syncReviewWorkflowStates } from "@/lib/antifraud/review-workflow";
 
 export const runtime = "nodejs";
@@ -73,12 +74,19 @@ export async function POST(request: Request): Promise<Response> {
   try {
     const projectedReviews = await syncReviewWorkflowStates();
     const reminders = await enqueueDueReviewReminders();
+    // A MAIN mirror hiccup must not fail the whole tick: review projection and
+    // reminders already ran, and the next tick rescans the same window.
+    const sumsubStarts = await enqueueSumsubVerificationStarts().catch(() => ({
+      inspected: 0,
+      queued: 0,
+    }));
     return response(
       {
         ok: true,
         correlationId: parsed.data.correlationId,
         projectedReviews,
         reminders,
+        sumsubStarts,
       },
       200,
       parsed.data.correlationId,
