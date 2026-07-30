@@ -24,7 +24,7 @@ test("the Antifraud sidebar exposes KYC reviews in its own section", () => {
   assert.match(sidebar, /label="KYC"[\s\S]*?items=\{KYC_NAV\}/);
   assert.doesNotMatch(page, /max-w-7xl/);
   assert.doesNotMatch(loading, /max-w-7xl/);
-  assert.match(page, /<h1[^>]*>KYC review<\/h1>/);
+  assert.doesNotMatch(page, /<h1[^>]*>KYC review<\/h1>/);
   assert.match(
     appHosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"kyc"/,
