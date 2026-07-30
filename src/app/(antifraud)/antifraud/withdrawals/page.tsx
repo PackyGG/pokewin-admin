@@ -29,7 +29,7 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import {
   EmptyState,
-  Fact,
+  FactCell,
   FilterButton,
   FilterGroup,
   ListPageSkeleton,
@@ -426,53 +426,151 @@ function WithdrawalRow({
   const traceableSources = withdrawal.source_breakdown.filter(
     (source) => source.traceable,
   ).length;
+  const trace = flow.fundingTrace;
+  const traceGap = trace.requestedUsd > 0 && trace.gapUsd > 0.01;
   return (
-    <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 flex-wrap items-center gap-3">
-          <Avatar className="size-10">
-            {withdrawal.avatar_url && <AvatarImage src={withdrawal.avatar_url} alt="" />}
-            <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
-          </Avatar>
-          <div className="min-w-0">
-            <div className="flex items-center gap-1.5">
-              <p className="truncate font-semibold">{name}</p>
-              <HostLink
-                href={`/users/${withdrawal.user_id}`}
-                aria-label="Open user profile"
-                title="User profile"
-                className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-              >
-                <UserRound className="size-3.5" />
-              </HostLink>
+    <article className="overflow-hidden rounded-xl border border-border/70 bg-card shadow-sm">
+      <div className="flex flex-col lg:flex-row">
+        {/* Main column — identity, metrics, trace */}
+        <div className="min-w-0 flex-1 p-4">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
+            <Avatar className="size-10 shrink-0">
+              {withdrawal.avatar_url && <AvatarImage src={withdrawal.avatar_url} alt="" />}
+              <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
+            </Avatar>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-1.5">
+                <p className="truncate font-semibold">{name}</p>
+                <HostLink
+                  href={`/users/${withdrawal.user_id}`}
+                  aria-label="Open user profile"
+                  title="User profile"
+                  className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+                >
+                  <UserRound className="size-3.5" />
+                </HostLink>
+              </div>
+              <p className="truncate text-xs text-muted-foreground">
+                {withdrawal.email ?? withdrawal.user_id}
+              </p>
             </div>
-            <p className="truncate text-xs text-muted-foreground">
-              {withdrawal.email ?? withdrawal.user_id}
-            </p>
+            <div className="flex shrink-0 flex-wrap items-center gap-1.5">
+              <Badge variant="outline" className="capitalize">
+                {withdrawal.status}
+              </Badge>
+              <Badge variant="secondary" className="capitalize">
+                {withdrawal.method}
+              </Badge>
+              <Badge variant="secondary" className="capitalize">
+                {withdrawal.review_status === "unreviewed"
+                  ? "Pending"
+                  : withdrawal.review_status.replaceAll("_", " ")}
+              </Badge>
+            </div>
           </div>
-          <Badge variant="outline" className="shrink-0 capitalize">
-            {withdrawal.status}
-          </Badge>
-          <Badge variant="secondary" className="shrink-0 capitalize">
-            {withdrawal.method}
-          </Badge>
+
+          <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-6">
+            <FactCell
+              label="Review flow"
+              value={
+                withdrawal.flow_checks.length > 0
+                  ? `${scored.length - flagged.length}/${scored.length} pass`
+                  : "Not assessed"
+              }
+              alert={flagged.length > 0}
+            />
+            <FactCell
+              label="Funding traced"
+              value={
+                trace.requestedUsd > 0
+                  ? traceGap
+                    ? `${formatCurrency(trace.gapUsd)} untraced`
+                    : "Fully covered"
+                  : "No trace"
+              }
+              alert={traceGap}
+            />
+            <FactCell
+              label="Sources"
+              value={
+                withdrawal.source_breakdown.length
+                  ? `${traceableSources}/${withdrawal.source_breakdown.length} traceable`
+                  : withdrawal.method === "balance"
+                    ? "Balance request"
+                    : "None attached"
+              }
+              alert={
+                withdrawal.source_breakdown.length > 0 &&
+                traceableSources < withdrawal.source_breakdown.length
+              }
+            />
+            <FactCell label="Deposits" value={formatCurrency(flow.depositsUsd)} />
+            <FactCell label="Gross wagered" value={formatCurrency(flow.wageredUsd)} />
+            <FactCell
+              label="Rewards / credits"
+              value={formatCurrency(flow.rewardsUsd)}
+            />
+          </div>
+
+          <p className="mt-3 line-clamp-2 text-xs text-muted-foreground">
+            {withdrawal.summary}
+          </p>
+
+          {trace.entries.length > 0 && (
+            <div className="mt-2.5 flex flex-wrap gap-1.5">
+              {trace.entries.slice(0, 6).map((entry) => {
+                const linked = entry.counterpartyUserId
+                  ? linkedSources.get(entry.counterpartyUserId)
+                  : undefined;
+                const restrictions = linked
+                  ? [
+                      linked.isBanned && "banned",
+                      linked.isLocked && "locked",
+                      linked.isSuspectedAlt && "suspected alt",
+                      linked.isSelfExcluded && "self-excluded",
+                      linked.withdrawalsLocked && "withdrawals locked",
+                      linked.kycRequired && "KYC required",
+                      linked.activeFraudCase && "active fraud case",
+                      ...linked.adminTags,
+                    ].filter(Boolean)
+                  : [];
+                return (
+                  <Badge
+                    key={entry.id}
+                    variant={restrictions.length > 0 ? "destructive" : "outline"}
+                    title={restrictions.join(", ")}
+                  >
+                    {entry.label} · {formatCurrency(entry.allocatedUsd)}
+                    {restrictions.length > 0 ? " · restricted source" : ""}
+                  </Badge>
+                );
+              })}
+              {trace.entries.length > 6 && (
+                <Badge variant="secondary">
+                  +{trace.entries.length - 6} more
+                </Badge>
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex flex-wrap items-center gap-3 lg:justify-end">
-          <div className="min-w-28 text-right">
+
+        {/* Decision rail — amount, verdict, action */}
+        <div className="flex shrink-0 flex-col gap-3 border-t border-border/60 bg-muted/20 p-4 lg:w-60 lg:border-l lg:border-t-0">
+          <div>
             <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Withdrawal
             </p>
-            <p className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
+            <p className="text-2xl font-semibold tabular-nums leading-tight text-rose-600 dark:text-rose-400">
               {formatCurrency(withdrawal.amount_usd)}
             </p>
             <p className="text-[10px] tabular-nums text-muted-foreground">
               {formatDateTime(withdrawal.requested_at)}
             </p>
           </div>
-          <div className={cn("min-w-40 rounded-lg border px-3 py-2", verdict.box)}>
+          <div className={cn("rounded-lg border px-3 py-2", verdict.box)}>
             <div className="flex items-center gap-2">
-              <VerdictIcon className={cn("size-5", verdict.text)} />
-              <span>
+              <VerdictIcon className={cn("size-5 shrink-0", verdict.text)} />
+              <span className="min-w-0">
                 <span className={cn("block text-sm font-semibold capitalize", verdict.text)}>
                   {withdrawal.verdict}
                 </span>
@@ -481,97 +579,24 @@ function WithdrawalRow({
                 </span>
               </span>
             </div>
-            <RiskScoreBar score={withdrawal.risk_score} max={100} className="mt-2 min-w-36" />
+            <RiskScoreBar score={withdrawal.risk_score} max={100} className="mt-2" />
           </div>
           {withdrawal.flow_checks.length > 0 ? (
-            <Button size="sm" render={<HostLink href={reviewHref} scroll={false} />}>
+            <Button
+              size="sm"
+              className="w-full"
+              render={<HostLink href={reviewHref} scroll={false} />}
+            >
               Open review
               <ArrowRight className="size-3.5" />
             </Button>
           ) : (
-            <Button size="sm" disabled>
+            <Button size="sm" className="w-full" disabled>
               Assessment pending
             </Button>
           )}
         </div>
       </div>
-
-      <div className="mt-3 flex flex-wrap items-center gap-x-5 gap-y-1.5 border-t border-border/60 pt-3 text-xs">
-        {withdrawal.flow_checks.length > 0 && (
-          <Fact
-            label="Review flow"
-            value={`${scored.length - flagged.length}/${scored.length} pass`}
-            alert={flagged.length > 0}
-          />
-        )}
-        <Fact
-          label="90-day account activity"
-          value={`${formatCurrency(flow.depositsUsd)} deposits`}
-        />
-        <Fact label="Gross wagered" value={formatCurrency(flow.wageredUsd)} />
-        <Fact
-          label="Rewards / credits"
-          value={formatCurrency(flow.rewardsUsd)}
-        />
-        <Fact
-          label="Sources"
-          value={
-            withdrawal.source_breakdown.length
-              ? `${traceableSources}/${withdrawal.source_breakdown.length} traceable`
-              : withdrawal.method === "balance"
-                ? "Balance request"
-                : "None attached"
-          }
-          alert={
-            withdrawal.source_breakdown.length > 0 &&
-            traceableSources < withdrawal.source_breakdown.length
-          }
-        />
-        <Badge variant="secondary" className="ml-auto shrink-0 capitalize">
-          {withdrawal.review_status === "unreviewed"
-            ? "Pending"
-            : withdrawal.review_status.replaceAll("_", " ")}
-        </Badge>
-      </div>
-      <p className="mt-2 line-clamp-1 text-xs text-muted-foreground">
-        {withdrawal.summary}
-      </p>
-      {withdrawal.flow.fundingTrace.entries.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {withdrawal.flow.fundingTrace.entries.slice(0, 6).map((entry) => {
-            const linked = entry.counterpartyUserId
-              ? linkedSources.get(entry.counterpartyUserId)
-              : undefined;
-            const restrictions = linked
-              ? [
-                  linked.isBanned && "banned",
-                  linked.isLocked && "locked",
-                  linked.isSuspectedAlt && "suspected alt",
-                  linked.isSelfExcluded && "self-excluded",
-                  linked.withdrawalsLocked && "withdrawals locked",
-                  linked.kycRequired && "KYC required",
-                  linked.activeFraudCase && "active fraud case",
-                  ...linked.adminTags,
-                ].filter(Boolean)
-              : [];
-            return (
-              <Badge
-                key={entry.id}
-                variant={restrictions.length > 0 ? "destructive" : "outline"}
-                title={restrictions.join(", ")}
-              >
-                {entry.label} · {formatCurrency(entry.allocatedUsd)}
-                {restrictions.length > 0 ? " · restricted source" : ""}
-              </Badge>
-            );
-          })}
-          {withdrawal.flow.fundingTrace.entries.length > 6 && (
-            <Badge variant="secondary">
-              +{withdrawal.flow.fundingTrace.entries.length - 6} more
-            </Badge>
-          )}
-        </div>
-      )}
     </article>
   );
 }
