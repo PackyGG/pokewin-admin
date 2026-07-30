@@ -354,6 +354,12 @@ export async function persistRuleMatch(
 const TICK_WATCHDOG_INTERVALS = 10;
 /** `rule_definitions` is re-read at most this often instead of per event. */
 const RULES_CACHE_TTL_MS = 30_000;
+/**
+ * Bound on enabled sequence rules loaded per evaluation pass. The create route
+ * caps total rules well below this; hitting it means the definitions table is
+ * unexpectedly large and is logged instead of loading unbounded rows.
+ */
+const SEQUENCE_RULES_LIMIT = 500;
 /** Signups per batch processed in parallel (each does 2 provider lookups). */
 const SIGNUP_CONCURRENCY = 4;
 /** Old failures retry in small, leader-only batches without blocking new input. */
@@ -2490,8 +2496,15 @@ export class MonitorEngine {
         FROM rule_definitions
         WHERE enabled = true AND trigger = 'sequence'
         ORDER BY priority, key
+        LIMIT ${SEQUENCE_RULES_LIMIT}
       `,
     );
+    if (result.rows.length >= SEQUENCE_RULES_LIMIT) {
+      this.log.warn(
+        { limit: SEQUENCE_RULES_LIMIT },
+        "Enabled sequence rule count hit the evaluation limit; excess rules are not evaluated",
+      );
+    }
     this.rulesCache = { at: now, rules: result.rows };
     return result.rows;
   }

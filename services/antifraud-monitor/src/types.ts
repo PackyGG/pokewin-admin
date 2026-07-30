@@ -73,6 +73,7 @@ export const LIVE_EVENT_TYPES = [
   "case.decided",
   "rule.created",
   "rule.updated",
+  "score_weight.updated",
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];

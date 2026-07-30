@@ -18,6 +18,9 @@ export function serviceRequestAuthorized(
   config: Pick<Config, "API_TOKEN" | "API_ADMIN_TOKEN">,
 ): boolean {
   const needsAdminToken =
+    // Live transport observability names admin actor ids per connection; the
+    // read token must not see them.
+    (method === "GET" && pathname === "/v1/operations/live") ||
     (method === "POST" && pathname === "/v1/rules") ||
     (method === "POST" && pathname === "/v1/fiat-email-domains") ||
     (method === "POST" && pathname === "/v1/risky-locations") ||

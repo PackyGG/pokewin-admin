@@ -986,8 +986,11 @@ test("cases index and staff actor persistence stay aligned with routes", async (
   assert.match(migration, /cases_severity_rank_updated_idx/);
   assert.match(migration, /ADD COLUMN IF NOT EXISTS actor_username text/);
   assert.match(server, /idempotency_key, actor_id, actor_username, action/);
-  assert.match(server, /signupsRecovered: poller\.signupsRecovered/);
-  assert.match(server, /signupFailuresPending: poller\.signupFailuresPending/);
+  // /health is unauthenticated and trimmed to a status shape; the poller
+  // counters (signupsRecovered etc.) are served by the authenticated
+  // operations route instead of leaking on the public probe.
+  assert.doesNotMatch(server, /signupsRecovered: poller\.signupsRecovered/);
+  assert.match(server, /app\.get\("\/v1\/operations\/poller"/);
   assert.match(
     server,
     /case_id,user_id,action_type,status,actor_id,actor_username,reason/,

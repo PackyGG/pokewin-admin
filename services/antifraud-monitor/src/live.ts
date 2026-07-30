@@ -21,7 +21,8 @@ const HEARTBEAT_MS = 30_000;
 /** Grace before a coded close escalates to terminate on an unresponsive peer. */
 const EVICTION_TERMINATE_MS = 2_000;
 const PUBLISH_RETRY_DELAY_MS = 250;
-const TICKET_TTL_SECONDS = 30;
+/** Ticket lifetime; the /v1/ws/tickets response advertises the same value. */
+export const TICKET_TTL_SECONDS = 30;
 const TICKET_CREATE_ATTEMPTS = 3;
 /** Default per-actor cap; override via LiveBusOptions.maxConnectionsPerActor. */
 export const MAX_CONNECTIONS_PER_ACTOR = 8;
@@ -66,10 +67,16 @@ export type LiveReplayResult = {
    */
   cursor: string | null;
   /**
-   * True when the requested `afterId` predates the oldest retained entry: the
-   * stream was trimmed past the caller's cursor and it must resync.
+   * True when the requested `afterId` predates the oldest retained entry (or
+   * is newer than the stream tip): the stream no longer resolves the caller's
+   * cursor and it must resync.
    */
   truncated: boolean;
+  /**
+   * Stream entries examined during this pass (parsed or not), so a caller can
+   * distinguish end-of-stream (scanned 0) from parse-skips (scanned > events).
+   */
+  scanned: number;
 };
 
 export const STREAM_ID_PATTERN = /^\d{1,20}-\d{1,20}$/;
@@ -157,6 +164,9 @@ export class LiveBus {
   private readonly sessionMaxAgeMs: number;
   private readonly drainIntervalMs: number;
   private readonly clients = new Set<WebSocket>();
+  private readonly frameListeners: Array<
+    (type: LiveEventType, data: Record<string, unknown>) => void
+  > = [];
   private readonly clientsByActor = new Map<string, number>();
   private subscribed = false;
   private closing = false;
@@ -223,8 +233,55 @@ export class LiveBus {
     });
 
     this.subscriber.on("message", (_channel: string, payload: string) => {
+      this.notifyFrameListeners(payload);
       this.broadcast(payload);
     });
+  }
+
+  /**
+   * In-process observers of frames arriving over the bus (from ANY replica,
+   * including this one). Used to drop local caches — e.g. the rule engine's
+   * definition cache — the moment another replica commits a mutation, instead
+   * of waiting out the cache TTL. Listener errors are logged, never thrown.
+   */
+  onFrame(
+    listener: (type: LiveEventType, data: Record<string, unknown>) => void,
+  ): void {
+    this.frameListeners.push(listener);
+  }
+
+  private notifyFrameListeners(payload: string): void {
+    if (this.frameListeners.length === 0) return;
+    let type: string;
+    let data: Record<string, unknown>;
+    try {
+      const parsed = JSON.parse(payload) as {
+        type?: unknown;
+        data?: unknown;
+      };
+      if (typeof parsed.type !== "string" || !isLiveEventType(parsed.type)) {
+        return;
+      }
+      type = parsed.type;
+      data =
+        parsed.data !== null &&
+        typeof parsed.data === "object" &&
+        !Array.isArray(parsed.data)
+          ? (parsed.data as Record<string, unknown>)
+          : {};
+    } catch {
+      return;
+    }
+    for (const listener of this.frameListeners) {
+      try {
+        listener(type as LiveEventType, data);
+      } catch (error) {
+        this.log.warn(
+          { err: error, liveEvent: type },
+          "Antifraud live frame listener failed",
+        );
+      }
+    }
   }
 
   private broadcast(payload: string): void {
@@ -493,14 +550,22 @@ export class LiveBus {
       const oldest = await this.publisher.xrange(STREAM, "-", "+", "COUNT", 1);
       const oldestId = oldest[0]?.[0];
       // An empty stream also means the caller's cursor no longer resolves to a
-      // retained entry: treat it as trimmed so the client resyncs.
+      // retained entry: treat it as trimmed so the client resyncs. A cursor
+      // NEWER than the stream tip is equally unresolvable (the stream was
+      // recreated or the client is ahead of it) and must also force a resync.
       truncated = !oldestId || compareStreamIds(afterId, oldestId) < 0;
+      if (!truncated) {
+        const tipId = await this.streamTipId();
+        truncated = compareStreamIds(afterId, tipId) > 0;
+      }
     }
 
     let cursor: string | null = null;
+    let scanned = 0;
     const messages: LiveEnvelope[] = [];
     for (const [id, fields] of entries) {
       if (afterId && id === afterId) continue;
+      scanned += 1;
       cursor = id;
       const index = fields.indexOf("payload");
       const raw = index >= 0 ? fields[index + 1] : undefined;
@@ -508,7 +573,7 @@ export class LiveBus {
       if (message) messages.push(message);
       if (messages.length === count) break;
     }
-    return { events: messages, cursor, truncated };
+    return { events: messages, cursor, truncated, scanned };
   }
 
   addClient(client: WebSocket, actorId: string): boolean {
@@ -639,14 +704,26 @@ export class LiveBus {
     throw new Error("Failed to reserve a unique antifraud websocket ticket");
   }
 
-  async consumeTicket(ticket: string): Promise<{ actorId: string } | null> {
+  async consumeTicket(
+    ticket: string,
+  ): Promise<{ actorId: string; actorUsername: string | null } | null> {
     const key = `antifraud:ws-ticket:${ticket}`;
     const result = await this.publisher.call("GETDEL", key);
     if (typeof result !== "string") return null;
     try {
-      const parsed = JSON.parse(result) as { actorId?: unknown };
+      const parsed = JSON.parse(result) as {
+        actorId?: unknown;
+        actorUsername?: unknown;
+      };
       return typeof parsed.actorId === "string" && parsed.actorId.length > 0
-        ? { actorId: parsed.actorId }
+        ? {
+            actorId: parsed.actorId,
+            actorUsername:
+              typeof parsed.actorUsername === "string" &&
+              parsed.actorUsername.length > 0
+                ? parsed.actorUsername
+                : null,
+          }
         : null;
     } catch {
       return null;

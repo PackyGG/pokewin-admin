@@ -57,12 +57,16 @@ const responseSchema = z.object({
     total: z.number(),
     pages: z.number(),
   }),
-  summary: z.object({
-    total: z.number(),
-    assessed: z.number(),
-    attention: z.number(),
-    monitoring: z.number(),
-  }),
+  // The service degrades the summary to null when its aggregate fails
+  // rather than failing the whole listing.
+  summary: z
+    .object({
+      total: z.number(),
+      assessed: z.number(),
+      attention: z.number(),
+      monitoring: z.number(),
+    })
+    .nullable(),
 });
 
 const countResponseSchema = z.object({

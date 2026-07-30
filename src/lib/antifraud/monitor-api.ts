@@ -204,24 +204,48 @@ const overviewSessionSchema = z.object({
   severity: z.string(),
 });
 
+/**
+ * The service degrades per section (`Promise.allSettled` upstream): a failed
+ * aggregate arrives as `null` instead of failing the whole overview. Nulls
+ * collapse to zero-values here so consumers keep rendering; the service's
+ * additive `degraded` map says which sections were affected.
+ */
+const degradedCount = z
+  .number()
+  .int()
+  .nonnegative()
+  .nullish()
+  .transform((value) => value ?? 0);
+
 const monitorOverviewSchema = z.object({
-  signupReviewsLeft: z.number().int().nonnegative(),
-  fiatReviewsLeft: z.number().int().nonnegative(),
-  activeDomainBlacklist: z.number().int().nonnegative(),
-  blockedIpCatches: z.number().int().nonnegative(),
-  recentSessions: z.array(overviewSessionSchema).max(40),
-  fraudulentFiat: z.object({
-    lifetimeCents: z.number().nonnegative(),
-    last24HoursCents: z.number().nonnegative(),
-    days: z
-      .array(
-        z.object({
-          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-          amountCents: z.number().nonnegative(),
-        }),
-      )
-      .max(30),
-  }),
+  signupReviewsLeft: degradedCount,
+  fiatReviewsLeft: degradedCount,
+  activeDomainBlacklist: degradedCount,
+  blockedIpCatches: degradedCount,
+  recentSessions: z
+    .array(overviewSessionSchema)
+    .max(40)
+    .nullish()
+    .transform((value) => value ?? []),
+  fraudulentFiat: z
+    .object({
+      lifetimeCents: z.number().nonnegative(),
+      last24HoursCents: z.number().nonnegative(),
+      days: z
+        .array(
+          z.object({
+            date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+            amountCents: z.number().nonnegative(),
+          }),
+        )
+        .max(30),
+    })
+    .nullish()
+    .transform(
+      (value) =>
+        value ?? { lifetimeCents: 0, last24HoursCents: 0, days: [] },
+    ),
+  degraded: z.record(z.string(), z.boolean()).optional(),
 });
 
 export type AntifraudMonitorOverview = z.infer<typeof monitorOverviewSchema>;
@@ -709,6 +733,8 @@ const caseDetailSchema = z.object({
   sessions: z.array(monitorSessionSchema),
   actions: z.array(staffActionSchema),
   members: z.array(networkCaseMemberSchema).default([]),
+  /** Full member count; the service caps the `members` array at 100 rows. */
+  membersTotal: z.number().int().nonnegative().optional(),
   matches: z.array(flowMatchSchema).default([]),
 });
 

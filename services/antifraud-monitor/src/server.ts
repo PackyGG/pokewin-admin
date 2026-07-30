@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import cors from "@fastify/cors";
 import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
@@ -23,7 +25,7 @@ import {
   sameDecisionIdentity,
   type StoredDecisionIdentity,
 } from "./decision-idempotency.js";
-import { LiveBus, STREAM_ID_PATTERN } from "./live.js";
+import { LiveBus, STREAM_ID_PATTERN, TICKET_TTL_SECONDS } from "./live.js";
 import { migrate } from "./migrate.js";
 import { MonitorEngine } from "./monitor.js";
 import {
@@ -67,6 +69,7 @@ import {
   activityScoreDefinitions,
   isScoreWeightKey,
   providerScoreDefinitions,
+  type ScoreDefinition,
   SEVERITY_BANDS,
   signupScoreDefinitions,
 } from "./score-catalog.js";
@@ -74,11 +77,13 @@ import { clampRiskScore } from "./scoring.js";
 import type { LiveEventType } from "./types.js";
 import {
   ScoreWeightConflictError,
+  ScoreWeightStaleError,
   ScoreWeightStore,
 } from "./score-weight-store.js";
 import { topRainWinners } from "./source.js";
 import {
   clientErrorStatus,
+  createFixedWindowIpLimiter,
   ticketRateLimitKey,
 } from "./transport-limits.js";
 import { registerWithdrawalRoutes } from "./withdrawal-routes.js";
@@ -205,15 +210,89 @@ const engine = new MonitorEngine(
 );
 let shuttingDown = false;
 
+// Cross-replica cache invalidation: rule and score-weight mutations committed
+// on OTHER replicas arrive here as live frames; drop the local caches so this
+// replica converges immediately instead of waiting out its cache TTL. The
+// publishing replica already invalidated locally — a second drop is harmless.
+live.onFrame((type) => {
+  if (type === "rule.created" || type === "rule.updated") {
+    engine.invalidateRules();
+  } else if (type === "score_weight.updated") {
+    scoreWeights.invalidate();
+  }
+});
+
 /** Lookback that bounds the resolved tail of the case list. */
 const CASES_RECENT_DAYS = 30;
 /** Fallback audit actor when a caller does not identify the human operator. */
 const SERVICE_ACTOR_ID = "service:admin-api";
+/** Hard cap on rule_definitions rows; the engine loads them all per pass. */
+const RULE_LIMIT = 200;
+/**
+ * Create-scoped advisory lock (transaction-scoped, constant key) serializing
+ * concurrent rule creates so MAX(priority)+10 cannot be computed twice.
+ */
+const RULE_CREATE_LOCK_KEY = "antifraud:rules:create";
+/** Postgres unique-violation SQLSTATE. */
+const UNIQUE_VIOLATION = "23505";
 const TOP_RAIN_CACHE_MS = 30_000;
+/** Stale window served from cache when a top-rain refresh fails. */
+const TOP_RAIN_STALE_ON_ERROR_MS = 30_000;
+const OVERVIEW_CACHE_MS = 10_000;
+/** Lookback bounding the /v1/overview blocked-IP metric. */
+const BLOCKED_IP_CATCH_DAYS = 90;
+/** /v1/monitors/live page bound (fetches one extra row to compute hasMore). */
+const MONITORS_LIVE_LIMIT = 200;
+/** Unseen-count polling window cap: reject ranges over 31 days. */
+const UNSEEN_COUNT_MAX_WINDOW_MS = 31 * 24 * 60 * 60 * 1000;
+/**
+ * Per-IP floor beneath the actor-keyed ticket limiter: rotating actorIds gets
+ * a fresh actor bucket per request, but never a fresh IP. Generous because
+ * every admin shares the Vercel egress IP.
+ */
+const ticketIpFloorAllows = createFixedWindowIpLimiter(
+  config.WS_TICKET_RATE_LIMIT_PER_MINUTE * 10,
+  60_000,
+);
+
+function pgErrorCode(error: unknown): string | null {
+  const code = (error as { code?: unknown } | null)?.code;
+  return typeof code === "string" ? code : null;
+}
+
+/**
+ * Serialize concurrent transactions that share a logical key (idempotency
+ * retries, the rule-create priority computation). Transaction-scoped: the
+ * lock releases automatically on COMMIT/ROLLBACK.
+ */
+async function takeAdvisoryTxLock(
+  client: { query: (text: string, values: unknown[]) => Promise<unknown> },
+  key: string,
+): Promise<void> {
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+    [key],
+  );
+}
+
+/**
+ * Millisecond-truncated timestamp equality for optimistic-concurrency guards:
+ * clients echo back ISO strings with ms precision and the pg driver parses
+ * timestamps to ms-precision Dates, while the column stores microseconds.
+ */
+function sameTimestampMs(expectedIso: string, stored: unknown): boolean {
+  return stored instanceof Date && Date.parse(expectedIso) === stored.getTime();
+}
+
 type TopRainRow = Awaited<ReturnType<typeof topRainWinners>>[number];
-const cachedTopRain = createPromiseCache<number, TopRainRow[]>(
-  (limit) => topRainWinners(db.source, limit),
+const cachedTopRain = createPromiseCache<string, TopRainRow[]>(
+  (key) => {
+    const [limit = 10, days = 365] = key.split(":").map(Number);
+    return topRainWinners(db.source, limit, days);
+  },
   TOP_RAIN_CACHE_MS,
+  Date.now,
+  { staleOnErrorMs: TOP_RAIN_STALE_ON_ERROR_MS },
 );
 type SignupSummary = {
   total: number;
@@ -223,20 +302,21 @@ type SignupSummary = {
 };
 const cachedSignupSummary = createPromiseCache<number, SignupSummary>(
   async (attentionScore) => {
+    // Independent scalar aggregates instead of the old whole-table join with
+    // an EXISTS probe per subject: assessed/attention come straight from
+    // signup_assessments and "monitoring" is the count of active monitor
+    // sessions, each a plain (indexed) aggregate.
     const result = await db.antifraud.query<SignupSummary>(
       `
         SELECT
-          COUNT(*)::int AS total,
-          COUNT(sa.user_id)::int AS assessed,
-          COUNT(*) FILTER (WHERE sa.score >= $1)::int AS attention,
-          COUNT(*) FILTER (
-            WHERE EXISTS (
-              SELECT 1 FROM monitor_sessions ms
-              WHERE ms.user_id = s.user_id AND ms.status = 'active'
-            )
+          (SELECT COUNT(*) FROM subjects)::int AS total,
+          (SELECT COUNT(*) FROM signup_assessments)::int AS assessed,
+          (
+            SELECT COUNT(*) FROM signup_assessments WHERE score >= $1
+          )::int AS attention,
+          (
+            SELECT COUNT(*) FROM monitor_sessions WHERE status = 'active'
           )::int AS monitoring
-        FROM subjects s
-        LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
       `,
       [attentionScore],
     );
@@ -363,13 +443,26 @@ await app.register(websocket, {
 
 app.addHook("onSend", async (request, reply, payload) => {
   reply.header("x-correlation-id", request.id);
-  if (request.url === "/health" || request.url.startsWith("/v1/")) {
+  // Default no-store, but let routes that opted into caching (the static
+  // event catalog, top-rain) keep their own Cache-Control.
+  if (
+    (request.url === "/health" || request.url.startsWith("/v1/")) &&
+    !reply.getHeader("Cache-Control")
+  ) {
     reply.header("Cache-Control", "no-store");
   }
   return payload;
 });
 
 app.addHook("onRequest", async (request, reply) => {
+  const requestPathname = request.url.split("?", 1)[0];
+  // Probe carve-out FIRST: platform healthchecks send no Origin but may send
+  // fetch metadata, and must never be blocked by the origin gate or auth.
+  // Both payloads are trimmed to status-only shapes (full detail lives on the
+  // authenticated /v1/operations/* routes).
+  if (requestPathname === "/health" || requestPathname === "/ready") {
+    return;
+  }
   const origin = request.headers.origin;
   if (
     (origin && !allowedOrigins.has(origin)) ||
@@ -388,11 +481,8 @@ app.addHook("onRequest", async (request, reply) => {
     return reply.code(403).send({ error: "origin_not_allowed" });
   }
 
-  const pathname = request.url.split("?", 1)[0];
-  if (
-    pathname === "/health" ||
-    (request.method === "GET" && pathname === "/v1/live")
-  ) {
+  const pathname = requestPathname;
+  if (request.method === "GET" && pathname === "/v1/live") {
     return;
   }
   const authorization = request.headers.authorization ?? "";
@@ -429,14 +519,21 @@ app.addHook("onRequest", async (request, reply) => {
   }
 });
 
-app.get("/health", async (_request, reply) => {
+// Probe routes are unauthenticated (see the onRequest carve-out), so their
+// payloads stay trimmed to status shapes — internal poller/webapp detail is
+// served by the authenticated /v1/operations/* routes instead. They are also
+// exempt from the global rate limiter: a platform probing aggressively (or
+// sharing an IP with a noisy client) must never be banned away from its own
+// healthcheck.
+app.get("/health", {
+  config: { rateLimit: false },
+}, async (_request, reply) => {
   // Lame-duck: a draining process must fail its checks immediately so the
   // platform stops routing to it before the listener closes.
   if (shuttingDown) {
     return reply.code(503).send({ status: "draining" });
   }
   const poller = engine.healthSnapshot();
-  const webappMonitor = dashboardOpsTick.status();
   const stalledForMs = pollerStalledFor(
     poller,
     config.POLLER_LIVENESS_TIMEOUT_MS,
@@ -448,48 +545,41 @@ app.get("/health", async (_request, reply) => {
         ? "degraded"
         : "ok",
     stalledForMs,
-    poller: {
-      status: poller.status,
-      leader: poller.leader,
-      lastSuccessfulTickAt: poller.lastSuccessfulTickAt,
-      consecutiveFailures: poller.consecutiveFailures,
-      signupsRecovered: poller.signupsRecovered,
-      signupFailuresPending: poller.signupFailuresPending,
-    },
-    webappMonitor,
   };
   // A wedged engine must fail the platform healthcheck so the process is
   // restarted instead of serving a permanently silent monitor.
   if (stalledForMs !== null) return reply.code(503).send(body);
   return body;
 });
-app.get("/ready", async (_request, reply) => {
+app.get("/ready", {
+  config: { rateLimit: false },
+}, async (_request, reply) => {
   if (shuttingDown) {
-    return reply.code(503).send({ status: "draining" });
+    return reply.code(503).send({ status: "draining", reason: "draining" });
   }
   try {
     await assertDatabaseConnections(db);
     const poller = engine.healthSnapshot();
     const liveStatus = live.stats();
     const webappMonitor = dashboardOpsTick.status();
-    if (
-      poller.status === "starting" ||
-      poller.status === "degraded" ||
-      !liveStatus.subscribed ||
-      (config.NODE_ENV === "production" &&
-        (webappMonitor.status === "disabled" ||
-          webappMonitor.status === "degraded"))
-    ) {
-      return reply.code(503).send({
-        status: "not_ready",
-        poller,
-        live: liveStatus,
-        webappMonitor,
-      });
+    const reason =
+      poller.status === "starting" || poller.status === "degraded"
+        ? `poller_${poller.status}`
+        : !liveStatus.subscribed
+          ? "live_unsubscribed"
+          : config.NODE_ENV === "production" &&
+              (webappMonitor.status === "disabled" ||
+                webappMonitor.status === "degraded")
+            ? `webapp_monitor_${webappMonitor.status}`
+            : null;
+    if (reason !== null) {
+      return reply.code(503).send({ status: "not_ready", reason });
     }
-    return { status: "ready", poller, live: liveStatus, webappMonitor };
+    return { status: "ready" };
   } catch {
-    return reply.code(503).send({ status: "not_ready" });
+    return reply
+      .code(503)
+      .send({ status: "not_ready", reason: "database_unavailable" });
   }
 });
 
@@ -518,31 +608,62 @@ app.get("/v1/operations/notifications", async () => ({
 }));
 
 app.get("/v1/monitors/live", async () => {
-  const result = await db.antifraud.query(
-    `
-      SELECT
-        ms.id AS session_id, ms.case_id, ms.user_id, s.username,
-        ms.started_at, ms.ends_at,
-        LEAST(100, GREATEST(0, ms.current_score))::int AS current_score,
-        LEAST(100, GREATEST(0, ms.peak_score))::int AS peak_score,
-        ms.event_count, c.severity,
-        (
-          SELECT pc.signals
-          FROM provider_checks pc
-          WHERE pc.user_id = ms.user_id
-            AND pc.provider = 'proxycheck'
-          ORDER BY pc.checked_at DESC
-          LIMIT 1
-        ) AS proxycheck_signals
-      FROM monitor_sessions ms
-      JOIN cases c ON c.id = ms.case_id
-      JOIN subjects s ON s.user_id = ms.user_id
-      WHERE ms.status = 'active'
-      ORDER BY ms.current_score DESC, ms.started_at
-      LIMIT 200
-    `,
-  );
-  return { data: result.rows };
+  const [result, totals] = await Promise.all([
+    db.antifraud.query(
+      `
+        SELECT
+          ms.id AS session_id, ms.case_id, ms.user_id, s.username,
+          ms.started_at, ms.ends_at,
+          LEAST(100, GREATEST(0, ms.current_score))::int AS current_score,
+          LEAST(100, GREATEST(0, ms.peak_score))::int AS peak_score,
+          ms.event_count, c.severity,
+          -- Signal projection: the console only reads each signal's key plus
+          -- payload.type / payload.detectionTypes on proxycheck_anonymous;
+          -- shipping full provider payloads ballooned this hot response.
+          (
+            SELECT COALESCE(
+              (
+                SELECT jsonb_agg(
+                  jsonb_strip_nulls(jsonb_build_object(
+                    'key', sig->>'key',
+                    'payload',
+                    CASE WHEN sig->>'key' = 'proxycheck_anonymous'
+                      THEN jsonb_strip_nulls(jsonb_build_object(
+                        'type', sig#>'{payload,type}',
+                        'detectionTypes', sig#>'{payload,detectionTypes}'
+                      ))
+                    END
+                  ))
+                )
+                FROM jsonb_array_elements(pc.signals) AS sig
+              ),
+              '[]'::jsonb
+            )
+            FROM provider_checks pc
+            WHERE pc.user_id = ms.user_id
+              AND pc.provider = 'proxycheck'
+            ORDER BY pc.checked_at DESC
+            LIMIT 1
+          ) AS proxycheck_signals
+        FROM monitor_sessions ms
+        JOIN cases c ON c.id = ms.case_id
+        JOIN subjects s ON s.user_id = ms.user_id
+        WHERE ms.status = 'active'
+        ORDER BY ms.current_score DESC, ms.started_at
+        LIMIT ${MONITORS_LIVE_LIMIT + 1}
+      `,
+    ),
+    db.antifraud.query<{ active_total: number }>(
+      `SELECT COUNT(*)::int AS active_total
+         FROM monitor_sessions
+        WHERE status = 'active'`,
+    ),
+  ]);
+  return {
+    data: result.rows.slice(0, MONITORS_LIVE_LIMIT),
+    activeTotal: totals.rows[0]?.active_total ?? 0,
+    hasMore: result.rows.length > MONITORS_LIVE_LIMIT,
+  };
 });
 
 /**
@@ -552,9 +673,17 @@ app.get("/v1/monitors/live", async () => {
  * signup, lock and payment totals stay on the dashboard's read-only mirror so
  * the two database boundaries remain explicit and independently degradable.
  */
-app.get("/v1/overview", async () => {
+type OverviewPayload = {
+  data: Record<string, unknown>;
+};
+const cachedOverview = createPromiseCache<string, OverviewPayload>(
+  () => loadOverview(),
+  OVERVIEW_CACHE_MS,
+);
+
+async function loadOverview(): Promise<OverviewPayload> {
   const [reviewCounts, blacklistCounts, recentSessions, fiatFraud] =
-    await Promise.all([
+    await Promise.allSettled([
     db.antifraud.query<{
       signup_reviews_left: number;
       fiat_reviews_left: number;
@@ -562,7 +691,9 @@ app.get("/v1/overview", async () => {
       `
         SELECT
           (
-            SELECT COUNT(DISTINCT c.id)::int
+            -- The join is 1:1 (signup_assessments is keyed by user_id and
+            -- cases.id is the outer PK), so no DISTINCT de-dup pass is needed.
+            SELECT COUNT(*)::int
             FROM cases c
             JOIN signup_assessments sa ON sa.user_id = c.user_id
             WHERE c.status IN ('open','monitoring','in_review','escalated')
@@ -595,6 +726,8 @@ app.get("/v1/overview", async () => {
             JOIN profile_assessment_history history
               ON history.id = signal.assessment_id
             WHERE signal.hard_policy = 'blocklist.ip'
+              AND history.assessed_at >=
+                now() - (${BLOCKED_IP_CATCH_DAYS} * interval '1 day')
           ) AS blocked_ip_catches
       `,
     ),
@@ -667,36 +800,80 @@ app.get("/v1/overview", async () => {
     ),
   ]);
 
-  const reviews = reviewCounts.rows[0];
-  const blacklists = blacklistCounts.rows[0];
-  const fiat = fiatFraud.rows[0];
+  // Per-section degradation: one failed aggregate nulls its own fields (and
+  // is listed under `degraded`) instead of turning the whole overview into a
+  // 500. Field names are unchanged; failed sections carry null values.
+  const degraded: Record<string, true> = {};
+  const section = <T>(
+    name: string,
+    settled: PromiseSettledResult<{ rows: T[] }>,
+  ): T[] | null => {
+    if (settled.status === "fulfilled") return settled.value.rows;
+    degraded[name] = true;
+    app.log.error(
+      { err: settled.reason, section: name },
+      "Antifraud overview section failed",
+    );
+    return null;
+  };
+  const reviewRows = section("reviews", reviewCounts);
+  const blacklistRows = section("blacklists", blacklistCounts);
+  const sessionRows = section("recentSessions", recentSessions);
+  const fiatRows = section("fraudulentFiat", fiatFraud);
+  const reviews = reviewRows?.[0];
+  const blacklists = blacklistRows?.[0];
+  const fiat = fiatRows?.[0];
   return {
     data: {
-      signupReviewsLeft: reviews?.signup_reviews_left ?? 0,
-      fiatReviewsLeft: reviews?.fiat_reviews_left ?? 0,
-      activeDomainBlacklist: blacklists?.active_domains ?? 0,
-      blockedIpCatches: blacklists?.blocked_ip_catches ?? 0,
-      recentSessions: recentSessions.rows,
-      fraudulentFiat: {
-        lifetimeCents: fiat?.lifetime_cents ?? 0,
-        last24HoursCents: fiat?.last_24_hours_cents ?? 0,
-        days: fiat?.days ?? [],
-      },
+      signupReviewsLeft: reviewRows
+        ? reviews?.signup_reviews_left ?? 0
+        : null,
+      fiatReviewsLeft: reviewRows ? reviews?.fiat_reviews_left ?? 0 : null,
+      activeDomainBlacklist: blacklistRows
+        ? blacklists?.active_domains ?? 0
+        : null,
+      blockedIpCatches: blacklistRows
+        ? blacklists?.blocked_ip_catches ?? 0
+        : null,
+      recentSessions: sessionRows,
+      fraudulentFiat: fiatRows
+        ? {
+          lifetimeCents: fiat?.lifetime_cents ?? 0,
+          last24HoursCents: fiat?.last_24_hours_cents ?? 0,
+          days: fiat?.days ?? [],
+        }
+        : null,
+      ...(Object.keys(degraded).length > 0 ? { degraded } : {}),
     },
   };
-});
+}
+
+app.get("/v1/overview", async () => cachedOverview("overview"));
 
 app.get("/v1/signups", async (request) => {
   const query = z.object({
-    page: z.coerce.number().int().min(1).max(10_000).default(1),
+    page: z.coerce.number().int().min(1).max(1_000).default(1),
     limit: z.coerce.number().int().min(1).max(100).default(50),
   }).parse(request.query);
   const offset = (query.page - 1) * query.limit;
-  const [rows, summary] = await Promise.all([
+  const [rowsSettled, summarySettled] = await Promise.allSettled([
     db.antifraud.query(
       `
+        -- Page-then-join: resolve the page of subjects FIRST (bounded
+        -- ORDER BY/LIMIT/OFFSET over one table), then run the lateral
+        -- provider/case probes against only those rows instead of the whole
+        -- subjects table.
+        WITH page AS (
+          SELECT
+            user_id, username, email, avatar_url, signup_ip::text AS signup_ip,
+            country, country_code, state, city, affiliate_code,
+            referred_by, source_created_at
+          FROM subjects
+          ORDER BY source_created_at DESC, user_id DESC
+          LIMIT $1 OFFSET $2
+        )
         SELECT
-          s.user_id, s.username, s.email, s.avatar_url, s.signup_ip::text,
+          s.user_id, s.username, s.email, s.avatar_url, s.signup_ip,
           s.country, s.country_code, s.state, s.city, s.affiliate_code,
           s.referred_by, s.source_created_at,
           LEAST(100, GREATEST(0, COALESCE(sa.score, 0)))::int AS score,
@@ -724,7 +901,7 @@ app.get("/v1/signups", async (request) => {
           latest_case.severity AS case_severity,
           latest_monitor.status AS monitor_status,
           latest_monitor.ends_at AS monitor_ends_at
-        FROM subjects s
+        FROM page s
         LEFT JOIN signup_assessments sa ON sa.user_id = s.user_id
         LEFT JOIN LATERAL (
           SELECT status, score::float8 AS score, signals
@@ -776,21 +953,35 @@ app.get("/v1/signups", async (request) => {
           LIMIT 1
         ) latest_monitor ON true
         ORDER BY s.source_created_at DESC, s.user_id DESC
-        LIMIT $1 OFFSET $2
       `,
       [query.limit, offset],
     ),
     cachedSignupSummary(config.MONITOR_START_SCORE),
   ]);
+  // The page itself is the route's contract — a failure there still 500s.
+  // The summary is decoration: degrade it to null instead of failing the list.
+  if (rowsSettled.status === "rejected") throw rowsSettled.reason;
+  const rows = rowsSettled.value.rows;
+  const summary =
+    summarySettled.status === "fulfilled" ? summarySettled.value : null;
+  if (summarySettled.status === "rejected") {
+    request.log.error(
+      { err: summarySettled.reason },
+      "Antifraud signup summary failed; serving the page without it",
+    );
+  }
+  // Without the summary the true total is unknown; a lower bound derived from
+  // the page keeps the pagination fields present and numerically sane.
+  const total = summary ? summary.total : offset + rows.length;
   return {
-    data: rows.rows,
+    data: rows,
     pagination: {
       page: query.page,
       limit: query.limit,
-      total: summary.total,
+      total,
       pages: Math.max(
         1,
-        Math.ceil(summary.total / query.limit),
+        Math.ceil(total / query.limit),
       ),
     },
     summary,
@@ -807,13 +998,26 @@ app.get("/v1/signups/unseen-count", async (request) => {
       ({ since, until }) => Date.parse(until) >= Date.parse(since),
       { message: "until must not precede since" },
     )
+    .refine(
+      ({ since, until }) =>
+        Date.parse(until) - Date.parse(since) <= UNSEEN_COUNT_MAX_WINDOW_MS,
+      { message: "window must not exceed 31 days" },
+    )
     .parse(request.query);
+  // first_seen_at is the INGESTION clock: a subject ingested late (e.g. after
+  // a poller recovery) still counts as newly seen, whereas filtering on
+  // source_created_at silently loses it forever. The LIMIT inside the
+  // subselect bounds the count work itself — the badge caps at 100 anyway.
   const result = await db.antifraud.query<{ count: number }>(
     `
-      SELECT LEAST(COUNT(*), 100)::int AS count
-      FROM subjects
-      WHERE source_created_at > $1::timestamptz
-        AND source_created_at <= $2::timestamptz
+      SELECT COUNT(*)::int AS count
+      FROM (
+        SELECT 1
+        FROM subjects
+        WHERE first_seen_at > $1::timestamptz
+          AND first_seen_at <= $2::timestamptz
+        LIMIT 100
+      ) bounded
     `,
     [query.since, query.until],
   );
@@ -833,10 +1037,10 @@ app.get("/v1/cases", async (request) => {
   // `cases` grows one row per monitored signup and is never pruned, so the list
   // is always bounded: live cases plus anything touched in the recent window.
   // The ordering matches the cases_severity_rank_updated_idx expression index.
+  const values: unknown[] = [CASES_RECENT_DAYS];
   const conditions = [
-    `(c.status <> 'resolved' OR c.updated_at >= now() - interval '${CASES_RECENT_DAYS} days')`,
+    `(c.status <> 'resolved' OR c.updated_at >= now() - ($1 * interval '1 day'))`,
   ];
-  const values: unknown[] = [];
   if (query.status) {
     if (query.status === "in_review") {
       conditions.push(`c.status IN ('in_review','escalated')`);
@@ -866,7 +1070,8 @@ app.get("/v1/cases", async (request) => {
           WHEN 'critical' THEN 4 WHEN 'high' THEN 3
           WHEN 'medium' THEN 2 ELSE 1
         END) DESC,
-        c.updated_at DESC
+        c.updated_at DESC,
+        c.id DESC
       LIMIT $${values.length}
     `,
     values,
@@ -887,22 +1092,25 @@ app.get("/v1/cases", async (request) => {
 
 app.get("/v1/cases/:id", async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-  const [caseResult, events, checks, sessions, actions, members, matches] = await Promise.all([
-    db.antifraud.query(
-      `
-        SELECT
-          c.id, c.user_id, c.status, c.severity,
-          LEAST(100, GREATEST(0, c.score))::int AS score,
-          LEAST(100, GREATEST(0, c.peak_score))::int AS peak_score,
-          c.summary, c.assigned_to, c.resolution, c.opened_at, c.updated_at,
-          c.resolved_at, c.subject_type, c.network_key, c.network_snapshot_id,
-          s.username, s.email, s.signup_ip::text,
-          s.country_code, s.state, s.city, s.source_created_at
-        FROM cases c JOIN subjects s ON s.user_id = c.user_id
-        WHERE c.id = $1
-      `,
-      [id],
-    ),
+  // Existence first: an unknown id 404s after ONE query instead of paying for
+  // the six evidence queries below.
+  const caseResult = await db.antifraud.query(
+    `
+      SELECT
+        c.id, c.user_id, c.status, c.severity,
+        LEAST(100, GREATEST(0, c.score))::int AS score,
+        LEAST(100, GREATEST(0, c.peak_score))::int AS peak_score,
+        c.summary, c.assigned_to, c.resolution, c.opened_at, c.updated_at,
+        c.resolved_at, c.subject_type, c.network_key, c.network_snapshot_id,
+        s.username, s.email, s.signup_ip::text,
+        s.country_code, s.state, s.city, s.source_created_at
+      FROM cases c JOIN subjects s ON s.user_id = c.user_id
+      WHERE c.id = $1
+    `,
+    [id],
+  );
+  if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
+  const [events, checks, sessions, actions, members, membersCount, matches] = await Promise.all([
     db.antifraud.query(
       `SELECT id, case_id, session_id, user_id, event_type, source, source_ref,
               score_delta,
@@ -951,7 +1159,13 @@ app.get("/v1/cases/:id", async (request, reply) => {
          LEFT JOIN subjects s ON s.user_id=ncm.user_id
         WHERE ncm.case_id=$1
         ORDER BY ncm.is_root DESC, COALESCE(s.username, ncm.user_id)
-        LIMIT 5000`,
+        LIMIT 101`,
+      [id],
+    ),
+    db.antifraud.query<{ total: number }>(
+      `SELECT COUNT(*)::int AS total
+         FROM network_case_members
+        WHERE case_id=$1`,
       [id],
     ),
     db.antifraud.query(
@@ -970,7 +1184,6 @@ app.get("/v1/cases/:id", async (request, reply) => {
       [id],
     ),
   ]);
-  if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
   return {
     data: {
       case: {
@@ -984,15 +1197,28 @@ app.get("/v1/cases/:id", async (request, reply) => {
       providerChecks: checks.rows,
       sessions: sessions.rows,
       actions: actions.rows,
-      members: members.rows,
+      members: members.rows.slice(0, 100),
+      membersTotal: membersCount.rows[0]?.total ?? 0,
       matches: matches.rows,
     },
   };
 });
 
-app.get("/v1/events", async () => ({
-  data: MONITOR_EVENT_CATALOG,
-}));
+// The event catalog is compiled into the binary and cannot change without a
+// deploy: precompute the body and a strong ETag once, serve 304s on match and
+// allow shared caching for five minutes.
+const MONITOR_EVENTS_BODY = JSON.stringify({ data: MONITOR_EVENT_CATALOG });
+const MONITOR_EVENTS_ETAG = `"${createHash("sha256")
+  .update(MONITOR_EVENTS_BODY)
+  .digest("base64url")}"`;
+app.get("/v1/events", async (request, reply) => {
+  reply.header("Cache-Control", "public, max-age=300");
+  reply.header("ETag", MONITOR_EVENTS_ETAG);
+  if (request.headers["if-none-match"] === MONITOR_EVENTS_ETAG) {
+    return reply.code(304).send();
+  }
+  return reply.type("application/json; charset=utf-8").send(MONITOR_EVENTS_BODY);
+});
 
 app.get("/v1/rules", async () => {
   const result = await db.antifraud.query(
@@ -1024,6 +1250,12 @@ app.post("/v1/rules", {
 
   const actorId = body.actorId ?? SERVICE_ACTOR_ID;
   const actorUsername = body.actorUsername ?? null;
+  if (!body.actorId) {
+    request.log.warn(
+      { route: "POST /v1/rules" },
+      "Mutation without actorId; audit falls back to the service actor",
+    );
+  }
   const {
     idempotencyKey: _idempotencyKey,
     actorId: _actorId,
@@ -1031,90 +1263,163 @@ app.post("/v1/rules", {
     ...changes
   } = body;
   const requestIdentity = { actorId, actorUsername, changes };
-  const client = await db.antifraud.connect();
-  let created: Record<string, unknown>;
-  let idempotent = false;
-  try {
-    await client.query("BEGIN");
-    const duplicate = await client.query<{
+  /**
+   * Idempotent-replay resolution shared by the pre-insert check and the 23505
+   * recovery path. Replays return the rule's CURRENT state (the creation-time
+   * snapshot in after_state can be stale after later edits) and 404 when the
+   * rule was deleted since.
+   */
+  const resolveReplay = async (queryable: {
+    query: typeof db.antifraud.query;
+  }): Promise<
+    | { kind: "none" }
+    | { kind: "conflict" }
+    | { kind: "gone" }
+    | { kind: "replay"; rule: Record<string, unknown> }
+  > => {
+    const duplicate = await queryable.query<{
       action: string;
       actor_id: string;
       actor_username: string | null;
+      target_id: string;
       request_state: unknown;
       after_state: Record<string, unknown> | null;
     }>(
-      `SELECT action, actor_id, actor_username, request_state, after_state
+      `SELECT action, actor_id, actor_username, target_id, request_state,
+              after_state
          FROM service_audit_events
         WHERE idempotency_key=$1`,
       [body.idempotencyKey],
     );
     const existing = duplicate.rows[0];
-    if (existing) {
-      if (
-        existing.action !== "rule.create" ||
-        existing.actor_id !== actorId ||
-        existing.actor_username !== actorUsername ||
-        !isDeepStrictEqual(existing.request_state, requestIdentity) ||
-        !existing.after_state
-      ) {
-        await client.query("COMMIT");
+    if (!existing) return { kind: "none" };
+    if (
+      existing.action !== "rule.create" ||
+      existing.actor_id !== actorId ||
+      existing.actor_username !== actorUsername ||
+      !isDeepStrictEqual(existing.request_state, requestIdentity) ||
+      !existing.after_state
+    ) {
+      return { kind: "conflict" };
+    }
+    const current = await queryable.query(
+      "SELECT * FROM rule_definitions WHERE id=$1",
+      [existing.target_id],
+    );
+    const rule = current.rows[0] as Record<string, unknown> | undefined;
+    return rule ? { kind: "replay", rule } : { kind: "gone" };
+  };
+
+  const client = await db.antifraud.connect();
+  let created: Record<string, unknown>;
+  try {
+    await client.query("BEGIN");
+    // Serialize concurrent retries of the SAME idempotency key: without this
+    // both miss the SELECT and one dies on the unique index as a 500.
+    await takeAdvisoryTxLock(client, body.idempotencyKey);
+    const replay = await resolveReplay(client);
+    if (replay.kind !== "none") {
+      await client.query("COMMIT");
+      if (replay.kind === "conflict") {
         return reply.code(409).send({ error: "idempotency_conflict" });
       }
-      created = existing.after_state;
-      idempotent = true;
-      await client.query("COMMIT");
-    } else {
-      const result = await client.query(
-        `
-          INSERT INTO rule_definitions(
-            key, name, description, enabled, trigger, sequence, exclude_before,
-            window_seconds, score_delta, action_type, priority
-          ) VALUES (
-            'custom-' || gen_random_uuid()::text,$1,$2,$3,'sequence',$4::jsonb,
-            $5::jsonb,$6,$7,$8,
-            (SELECT COALESCE(MAX(priority), 0) + 10 FROM rule_definitions)
-          )
-          RETURNING *
-        `,
-        [
-          body.name,
-          body.description,
-          body.enabled,
-          JSON.stringify(body.sequence),
-          JSON.stringify(body.excludeBefore),
-          body.windowSeconds,
-          body.scoreDelta,
-          body.actionType,
-        ],
-      );
-      created = result.rows[0] as Record<string, unknown>;
-      await client.query(
-        `INSERT INTO service_audit_events(
-           idempotency_key, actor_id, actor_username, action, target_type,
-           target_id, request_state, before_state, after_state
-         ) VALUES (
-           $1,$2,$3,'rule.create','rule',$4,$5::jsonb,NULL,$6::jsonb
-         )`,
-        [
-          body.idempotencyKey,
-          actorId,
-          actorUsername,
-          created.id,
-          JSON.stringify(requestIdentity),
-          JSON.stringify(created),
-        ],
-      );
-      await client.query("COMMIT");
+      if (replay.kind === "gone") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return { data: replay.rule, idempotent: true };
     }
+    // Create-scoped lock: serializes the rule count, the duplicate probe and
+    // MAX(priority)+10 across concurrent creates.
+    await takeAdvisoryTxLock(client, RULE_CREATE_LOCK_KEY);
+    const ruleCount = await client.query<{ count: number }>(
+      "SELECT COUNT(*)::int AS count FROM rule_definitions",
+    );
+    if ((ruleCount.rows[0]?.count ?? 0) >= RULE_LIMIT) {
+      await client.query("ROLLBACK");
+      return reply.code(409).send({ error: "rule_limit_reached" });
+    }
+    const duplicateRule = await client.query<{ id: string }>(
+      `SELECT id
+         FROM rule_definitions
+        WHERE sequence = $1::jsonb
+          AND exclude_before = $2::jsonb
+          AND window_seconds = $3
+        LIMIT 1`,
+      [
+        JSON.stringify(body.sequence),
+        JSON.stringify(body.excludeBefore),
+        body.windowSeconds,
+      ],
+    );
+    if (duplicateRule.rows[0]) {
+      await client.query("ROLLBACK");
+      return reply.code(409).send({
+        error: "duplicate_rule",
+        existingId: duplicateRule.rows[0].id,
+      });
+    }
+    const result = await client.query(
+      `
+        INSERT INTO rule_definitions(
+          key, name, description, enabled, trigger, sequence, exclude_before,
+          window_seconds, score_delta, action_type, priority
+        ) VALUES (
+          'custom-' || gen_random_uuid()::text,$1,$2,$3,'sequence',$4::jsonb,
+          $5::jsonb,$6,$7,$8,
+          (SELECT COALESCE(MAX(priority), 0) + 10 FROM rule_definitions)
+        )
+        RETURNING *
+      `,
+      [
+        body.name,
+        body.description,
+        body.enabled,
+        JSON.stringify(body.sequence),
+        JSON.stringify(body.excludeBefore),
+        body.windowSeconds,
+        body.scoreDelta,
+        body.actionType,
+      ],
+    );
+    created = result.rows[0] as Record<string, unknown>;
+    await client.query(
+      `INSERT INTO service_audit_events(
+         idempotency_key, actor_id, actor_username, action, target_type,
+         target_id, request_state, before_state, after_state
+       ) VALUES (
+         $1,$2,$3,'rule.create','rule',$4,$5::jsonb,NULL,$6::jsonb
+       )`,
+      [
+        body.idempotencyKey,
+        actorId,
+        actorUsername,
+        created.id,
+        JSON.stringify(requestIdentity),
+        JSON.stringify(created),
+      ],
+    );
+    await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    // Swallow the ROLLBACK's own failure so the ORIGINAL error propagates.
+    await client.query("ROLLBACK").catch(() => undefined);
+    // A same-key commit raced past the lock: resolve it as the replay it is.
+    if (pgErrorCode(error) === UNIQUE_VIOLATION) {
+      const replay = await resolveReplay(db.antifraud);
+      if (replay.kind === "replay") {
+        return { data: replay.rule, idempotent: true };
+      }
+      if (replay.kind === "gone") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return reply.code(409).send({ error: "idempotency_conflict" });
+    }
     throw error;
   } finally {
     client.release();
   }
   engine.invalidateRules();
-  if (!idempotent) await publishCommittedMutation("rule.created", { rule: created });
-  return { data: created, idempotent };
+  await publishCommittedMutation("rule.created", { rule: created });
+  return { data: created, idempotent: false };
 });
 
 app.put("/v1/rules/:id", {
@@ -1129,6 +1434,12 @@ app.put("/v1/rules/:id", {
   const body = ruleUpdateSchema.parse(request.body);
   const actorId = body.actorId ?? SERVICE_ACTOR_ID;
   const actorUsername = body.actorUsername ?? null;
+  if (!body.actorId) {
+    request.log.warn(
+      { route: "PUT /v1/rules/:id", ruleId: id },
+      "Mutation without actorId; audit falls back to the service actor",
+    );
+  }
   const {
     idempotencyKey: _idempotencyKey,
     actorId: _actorId,
@@ -1141,30 +1452,50 @@ app.put("/v1/rules/:id", {
     actorUsername,
     changes,
   };
-
-  const client = await db.antifraud.connect();
-  let updated: Record<string, unknown>;
-  try {
-    await client.query("BEGIN");
-    const duplicate = await client.query<StoredRuleUpdateIdentity>(
+  /** Replay resolution shared by the pre-check and the 23505 recovery path. */
+  const resolveReplay = async (queryable: {
+    query: typeof db.antifraud.query;
+  }): Promise<
+    | { kind: "none" }
+    | { kind: "conflict" }
+    | { kind: "gone" }
+    | { kind: "replay"; rule: Record<string, unknown> }
+  > => {
+    const duplicate = await queryable.query<StoredRuleUpdateIdentity>(
       `SELECT action, target_id, actor_id, actor_username, request_state
          FROM service_audit_events
         WHERE idempotency_key=$1`,
       [body.idempotencyKey],
     );
     const existing = duplicate.rows[0];
-    if (existing) {
-      if (!sameRuleUpdateIdentity(existing, requestIdentity)) {
-        await client.query("COMMIT");
+    if (!existing) return { kind: "none" };
+    if (!sameRuleUpdateIdentity(existing, requestIdentity)) {
+      return { kind: "conflict" };
+    }
+    const current = await queryable.query(
+      "SELECT * FROM rule_definitions WHERE id=$1",
+      [id],
+    );
+    const rule = current.rows[0] as Record<string, unknown> | undefined;
+    return rule ? { kind: "replay", rule } : { kind: "gone" };
+  };
+
+  const client = await db.antifraud.connect();
+  let updated: Record<string, unknown>;
+  try {
+    await client.query("BEGIN");
+    // Serialize concurrent retries of the SAME idempotency key (see POST).
+    await takeAdvisoryTxLock(client, body.idempotencyKey);
+    const replay = await resolveReplay(client);
+    if (replay.kind !== "none") {
+      await client.query("COMMIT");
+      if (replay.kind === "conflict") {
         return reply.code(409).send({ error: "idempotency_conflict" });
       }
-      const current = await client.query(
-        "SELECT * FROM rule_definitions WHERE id=$1",
-        [id],
-      );
-      await client.query("COMMIT");
-      if (!current.rows[0]) return reply.code(404).send({ error: "not_found" });
-      return { data: current.rows[0], idempotent: true };
+      if (replay.kind === "gone") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return { data: replay.rule, idempotent: true };
     }
     const before = await client.query(
       "SELECT * FROM rule_definitions WHERE id=$1 FOR UPDATE",
@@ -1175,6 +1506,21 @@ app.put("/v1/rules/:id", {
       return reply.code(404).send({ error: "not_found" });
     }
     const currentRule = before.rows[0] as Record<string, unknown>;
+    // Optimistic concurrency: with the row lock held, the stored updated_at is
+    // authoritative — a mismatch means someone saved after the caller loaded.
+    if (
+      body.expectedUpdatedAt !== undefined &&
+      !sameTimestampMs(body.expectedUpdatedAt, currentRule.updated_at)
+    ) {
+      await client.query("ROLLBACK");
+      return reply.code(409).send({
+        error: "stale_rule",
+        currentUpdatedAt:
+          currentRule.updated_at instanceof Date
+            ? currentRule.updated_at.toISOString()
+            : null,
+      });
+    }
     const nextSequence = body.sequence ?? stringArray(currentRule.sequence);
     const nextExcludeBefore =
       body.excludeBefore ?? stringArray(currentRule.exclude_before);
@@ -1238,7 +1584,19 @@ app.put("/v1/rules/:id", {
     );
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    // Swallow the ROLLBACK's own failure so the ORIGINAL error propagates.
+    await client.query("ROLLBACK").catch(() => undefined);
+    // A same-key commit raced past the lock: resolve it as the replay it is.
+    if (pgErrorCode(error) === UNIQUE_VIOLATION) {
+      const replay = await resolveReplay(db.antifraud);
+      if (replay.kind === "replay") {
+        return { data: replay.rule, idempotent: true };
+      }
+      if (replay.kind === "gone") {
+        return reply.code(404).send({ error: "not_found" });
+      }
+      return reply.code(409).send({ error: "idempotency_conflict" });
+    }
     throw error;
   } finally {
     client.release();
@@ -1258,37 +1616,56 @@ app.post("/v1/cases/:id/decision", {
 }, async (request, reply) => {
   const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
   const body = caseDecisionSchema.parse(request.body);
-  const status = body.decision.startsWith("resolved_")
-    ? "resolved"
-    : "in_review";
-  const client = await db.antifraud.connect();
-  let userId: string;
-  try {
-    await client.query("BEGIN");
-    const actorId = body.actorId ?? SERVICE_ACTOR_ID;
-    const actorUsername = body.actorUsername ?? null;
-    const duplicate = await client.query<StoredDecisionIdentity>(
+  const actorId = body.actorId ?? SERVICE_ACTOR_ID;
+  const actorUsername = body.actorUsername ?? null;
+  if (!body.actorId) {
+    request.log.warn(
+      { route: "POST /v1/cases/:id/decision", caseId: id },
+      "Mutation without actorId; audit falls back to the service actor",
+    );
+  }
+  const decisionIdentity = {
+    caseId: id,
+    decision: body.decision,
+    actorId,
+    actorUsername,
+    reason: body.reason,
+  };
+  /** Replay resolution shared by both in-lock checks and 23505 recovery. */
+  const resolveReplay = async (queryable: {
+    query: typeof db.antifraud.query;
+  }): Promise<"none" | "replay" | "conflict"> => {
+    const duplicate = await queryable.query<StoredDecisionIdentity>(
       `SELECT case_id, action_type, actor_id, actor_username, reason
          FROM staff_actions
         WHERE idempotency_key=$1`,
       [body.idempotencyKey],
     );
     const existing = duplicate.rows[0];
-    if (existing) {
-      const exactReplay = sameDecisionIdentity(existing, {
-        caseId: id,
-        decision: body.decision,
-        actorId,
-        actorUsername,
-        reason: body.reason,
-      });
+    if (!existing) return "none";
+    return sameDecisionIdentity(existing, decisionIdentity)
+      ? "replay"
+      : "conflict";
+  };
+  const client = await db.antifraud.connect();
+  let userId: string;
+  try {
+    await client.query("BEGIN");
+    // Serialize concurrent retries of the SAME idempotency key (see rules).
+    await takeAdvisoryTxLock(client, body.idempotencyKey);
+    const early = await resolveReplay(client);
+    if (early !== "none") {
       await client.query("COMMIT");
-      return exactReplay
+      return early === "replay"
         ? { success: true, idempotent: true }
         : reply.code(409).send({ error: "idempotency_conflict" });
     }
-    const current = await client.query<{ user_id: string; status: string }>(
-      "SELECT user_id, status FROM cases WHERE id=$1 FOR UPDATE",
+    const current = await client.query<{
+      user_id: string;
+      status: string;
+      resolution: string | null;
+    }>(
+      "SELECT user_id, status, resolution FROM cases WHERE id=$1 FOR UPDATE",
       [id],
     );
     const row = current.rows[0];
@@ -1296,10 +1673,29 @@ app.post("/v1/cases/:id/decision", {
       await client.query("ROLLBACK");
       return reply.code(404).send({ error: "not_found" });
     }
+    // Re-run the idempotency lookup INSIDE the row lock: a concurrent retry
+    // that committed between the early check and the FOR UPDATE must replay
+    // idempotently — the status check below would misreport the caller's own
+    // completed decision as a 409 case_already_resolved.
+    const inLock = await resolveReplay(client);
+    if (inLock !== "none") {
+      await client.query("COMMIT");
+      return inLock === "replay"
+        ? { success: true, idempotent: true }
+        : reply.code(409).send({ error: "idempotency_conflict" });
+    }
     if (row.status === "resolved") {
       await client.query("ROLLBACK");
       return reply.code(409).send({ error: "case_already_resolved" });
     }
+    // Decision → status: resolved_* resolves; a non-resolving decision keeps
+    // an escalated case escalated instead of silently de-escalating it (the
+    // staff action below is still recorded either way).
+    const status = body.decision.startsWith("resolved_")
+      ? "resolved"
+      : row.status === "escalated"
+        ? "escalated"
+        : "in_review";
     userId = row.user_id;
     await client.query(
       `UPDATE cases
@@ -1325,9 +1721,36 @@ app.post("/v1/cases/:id/decision", {
         body.idempotencyKey,
       ],
     );
+    // Durable audit copy: staff_actions rows are ON DELETE CASCADE with the
+    // case, so a deleted case would erase the only record of the decision.
+    // service_audit_events has no such cascade and shares the idempotency key.
+    await client.query(
+      `INSERT INTO service_audit_events(
+         idempotency_key, actor_id, actor_username, action, target_type,
+         target_id, request_state, before_state, after_state
+       ) VALUES (
+         $1,$2,$3,'case.decision','case',$4,$5::jsonb,$6::jsonb,$7::jsonb
+       )`,
+      [
+        body.idempotencyKey,
+        actorId,
+        actorUsername,
+        id,
+        JSON.stringify(decisionIdentity),
+        JSON.stringify({ status: row.status, resolution: row.resolution }),
+        JSON.stringify({ status, resolution: body.decision }),
+      ],
+    );
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK");
+    // Swallow the ROLLBACK's own failure so the ORIGINAL error propagates.
+    await client.query("ROLLBACK").catch(() => undefined);
+    // A same-key commit raced past the lock: resolve it as the replay it is.
+    if (pgErrorCode(error) === UNIQUE_VIOLATION) {
+      const replay = await resolveReplay(db.antifraud);
+      if (replay === "replay") return { success: true, idempotent: true };
+      return reply.code(409).send({ error: "idempotency_conflict" });
+    }
     throw error;
   } finally {
     client.release();
@@ -1340,11 +1763,14 @@ app.post("/v1/cases/:id/decision", {
   return { success: true };
 });
 
-app.get("/v1/top-rain", async (request) => {
-  const { limit } = z.object({
+app.get("/v1/top-rain", async (request, reply) => {
+  const { limit, days } = z.object({
     limit: z.coerce.number().int().min(1).max(100).default(10),
+    days: z.coerce.number().int().min(1).max(365).default(365),
   }).parse(request.query);
-  return { data: await cachedTopRain(limit) };
+  // Client-side freshness hint; the promise cache already bounds MAIN reads.
+  reply.header("Cache-Control", "private, max-age=15");
+  return { data: await cachedTopRain(`${limit}:${days}`) };
 });
 
 app.post("/v1/ws/tickets", {
@@ -1356,17 +1782,26 @@ app.post("/v1/ws/tickets", {
       keyGenerator: ticketRateLimitKey,
     },
   },
-}, async (request) => {
+}, async (request, reply) => {
+  // Per-IP floor: the actor-keyed limiter above is defeated by rotating the
+  // caller-chosen actorId, so the source IP gets its own (generous) cap.
+  if (!ticketIpFloorAllows(request.ip)) {
+    request.log.warn(
+      { route: "POST /v1/ws/tickets" },
+      "Websocket ticket request rejected by the per-IP rate floor",
+    );
+    return reply.code(429).send({ error: "rate_limited" });
+  }
   const actor = z.object({
     actorId: z.string().min(1).max(100),
-    actorUsername: z.string().max(100).optional(),
+    actorUsername: z.string().trim().min(1).max(100).optional(),
   }).strict().parse(request.body);
   const ticket = await live.createTicket(actor);
   return {
     data: {
       ticket,
       websocketUrl: `${config.PUBLIC_BASE_URL.replace(/^http/, "ws")}/v1/live`,
-      expiresInSeconds: 30,
+      expiresInSeconds: TICKET_TTL_SECONDS,
     },
   };
 });
@@ -1376,7 +1811,17 @@ app.post("/v1/ws/tickets", {
  * down at least every 5 minutes by its serverless duration cap). `after` is the
  * last live-frame id the client saw; omit it for the most recent events.
  */
-app.get("/v1/live/replay", async (request) => {
+app.get("/v1/live/replay", {
+  config: {
+    rateLimit: {
+      // Generous per-IP bound (every admin shares the Vercel egress IP) that
+      // never bans — same reasoning as the /v1/live upgrade limiter.
+      max: 120,
+      timeWindow: "1 minute",
+      ban: -1,
+    },
+  },
+}, async (request) => {
   const query = z.object({
     after: z.string().regex(STREAM_ID_PATTERN).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(200),
@@ -1385,10 +1830,12 @@ app.get("/v1/live/replay", async (request) => {
   // The cursor is the last SCANNED stream id (not the last parsed envelope) so
   // unparseable entries cannot stall the caller's pagination loop. `truncated`
   // tells the proxy the stream was trimmed past its cursor and it must resync.
+  // `scanned` lets the pager tell end-of-stream (0) apart from parse-skips.
   return {
     data: result.events,
     cursor: result.cursor ?? query.after ?? null,
     truncated: result.truncated,
+    scanned: result.scanned,
   };
 });
 
@@ -1424,7 +1871,7 @@ app.get("/v1/live", {
     : undefined;
   const rawTicket = protocol?.slice("antifraud-ticket.".length);
   const parsed = z.string().regex(/^[A-Za-z0-9_-]{40,100}$/).safeParse(rawTicket);
-  let ticket: { actorId: string } | null = null;
+  let ticket: { actorId: string; actorUsername: string | null } | null = null;
   try {
     ticket = parsed.success ? await live.consumeTicket(parsed.data) : null;
   } catch (error) {
@@ -1447,11 +1894,16 @@ app.get("/v1/live", {
   if (socket.readyState !== socket.OPEN) return;
   if (!live.addClient(socket, ticket.actorId)) {
     request.log.warn(
-      { actorId: ticket.actorId },
+      { actorId: ticket.actorId, actorUsername: ticket.actorUsername },
       "Rejected antifraud live websocket: actor connection capacity reached",
     );
     socket.close(1013, "connection_capacity");
+    return;
   }
+  request.log.info(
+    { actorId: ticket.actorId, actorUsername: ticket.actorUsername },
+    "Antifraud live websocket connected",
+  );
 });
 
 app.get("/v1/scoring", async () => {
@@ -1466,14 +1918,25 @@ app.get("/v1/scoring", async () => {
     ),
     scoreWeights.get(),
   ]);
+  // Additive per-weight `updatedAt` (null for keys still on their catalog
+  // default) so the dashboard can drive optimistic-concurrency updates.
+  const weightUpdatedAt = await scoreWeights.getUpdatedAt();
+  const withUpdatedAt = (definitions: ScoreDefinition[]) =>
+    definitions.map((definition) => ({
+      ...definition,
+      options: definition.options.map((item) => ({
+        ...item,
+        updatedAt: weightUpdatedAt[item.key] ?? null,
+      })),
+    }));
   return {
     data: {
       monitorStartScore: config.MONITOR_START_SCORE,
       monitorDurationSeconds: config.MONITOR_DURATION_SECONDS,
       severityBands: SEVERITY_BANDS,
-      signupSignals: signupScoreDefinitions(weights),
-      providerSignals: providerScoreDefinitions(weights),
-      activitySignals: activityScoreDefinitions(weights),
+      signupSignals: withUpdatedAt(signupScoreDefinitions(weights)),
+      providerSignals: withUpdatedAt(providerScoreDefinitions(weights)),
+      activitySignals: withUpdatedAt(activityScoreDefinitions(weights)),
       behaviorRules: rules.rows,
     },
   };
@@ -1492,6 +1955,12 @@ app.put("/v1/scoring/:key", {
     return reply.code(404).send({ error: "not_found" });
   }
   const body = scoreWeightUpdateSchema.parse(request.body);
+  if (!body.actorId) {
+    request.log.warn(
+      { route: "PUT /v1/scoring/:key", weightKey: key },
+      "Mutation without actorId; audit falls back to the service actor",
+    );
+  }
   try {
     const updated = await scoreWeights.update({
       key,
@@ -1499,11 +1968,27 @@ app.put("/v1/scoring/:key", {
       actorId: body.actorId ?? SERVICE_ACTOR_ID,
       actorUsername: body.actorUsername ?? null,
       idempotencyKey: body.idempotencyKey,
+      expectedUpdatedAt: body.expectedUpdatedAt,
     });
+    if (!updated.idempotent) {
+      // Other replicas drop their score-weight caches on this frame, exactly
+      // like rules already do.
+      await publishCommittedMutation("score_weight.updated", {
+        key: updated.key,
+        points: updated.points,
+        updatedAt: updated.updatedAt,
+      });
+    }
     return { data: updated };
   } catch (error) {
     if (error instanceof ScoreWeightConflictError) {
       return reply.code(409).send({ error: "idempotency_conflict" });
+    }
+    if (error instanceof ScoreWeightStaleError) {
+      return reply.code(409).send({
+        error: "stale_weight",
+        currentUpdatedAt: error.currentUpdatedAt,
+      });
     }
     throw error;
   }

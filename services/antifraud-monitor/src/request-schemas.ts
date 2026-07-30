@@ -5,6 +5,12 @@ export const scoreWeightUpdateSchema = z.object({
   actorId: z.string().trim().min(1).max(100).optional(),
   actorUsername: z.string().trim().min(1).max(100).optional(),
   points: z.number().int().min(-500).max(500),
+  /**
+   * Optimistic-concurrency guard: the `updatedAt` the caller last saw for the
+   * weight. When supplied and stale, the update 409s instead of clobbering a
+   * newer value. Omitted by older dashboard builds — fully optional.
+   */
+  expectedUpdatedAt: z.iso.datetime().optional(),
 }).strict();
 
 export const ruleUpdateSchema = z.object({
@@ -19,13 +25,16 @@ export const ruleUpdateSchema = z.object({
   windowSeconds: z.number().int().min(1).max(86_400).optional(),
   scoreDelta: z.number().int().min(-500).max(500).optional(),
   actionType: z.literal("manual_review").optional(),
+  /** Optimistic-concurrency guard; see scoreWeightUpdateSchema. */
+  expectedUpdatedAt: z.iso.datetime().optional(),
 }).strict().refine(
   (value) =>
     Object.keys(value).some(
       (key) =>
         key !== "idempotencyKey" &&
         key !== "actorId" &&
-        key !== "actorUsername",
+        key !== "actorUsername" &&
+        key !== "expectedUpdatedAt",
     ),
   { message: "At least one rule field must be supplied" },
 );

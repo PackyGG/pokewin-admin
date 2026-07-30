@@ -1,6 +1,7 @@
 import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
 import { getAntifraudLiveMirrorMetrics } from "@/lib/antifraud/overview";
+import { getAntifraudMonitorOverview } from "@/lib/antifraud/monitor-api";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -109,12 +110,15 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   try {
+    // Overview goes through the `cache()`-wrapped accessor instead of a raw
+    // fetch: `getAntifraudLiveMirrorMetrics` reads the same endpoint
+    // internally, so the raw call here doubled every heavy overview query.
     const [liveResult, casesResult, rulesResult, overviewResult, metricsResult] =
       await Promise.allSettled([
       upstreamJson(baseUrl, token, "/v1/monitors/live"),
       upstreamJson(baseUrl, token, "/v1/cases?limit=40"),
       upstreamJson(baseUrl, token, "/v1/rules"),
-      upstreamJson(baseUrl, token, "/v1/overview"),
+      getAntifraudMonitorOverview(),
       getAntifraudLiveMirrorMetrics(),
     ]);
     const live = liveResult.status === "fulfilled" ? liveResult.value : null;
@@ -125,19 +129,12 @@ export async function GET(request: Request): Promise<Response> {
       overviewResult.status === "fulfilled" ? overviewResult.value : null;
     const liveMetrics =
       metricsResult.status === "fulfilled" ? metricsResult.value : null;
-    const overviewData =
-      overview && typeof overview === "object" && "data" in overview
-        ? (overview as { data: unknown }).data
-        : null;
-    const overviewRecord =
-      overviewData && typeof overviewData === "object"
-        ? (overviewData as Record<string, unknown>)
-        : null;
+    const overviewRecord = overview?.data ?? null;
     const errors = {
       live: liveResult.status === "rejected",
       cases: casesResult.status === "rejected",
       flows: rulesResult.status === "rejected",
-      overview: overviewResult.status === "rejected",
+      overview: overviewResult.status === "rejected" || !overviewRecord,
       liveMetrics: metricsResult.status === "rejected",
     };
     return Response.json(

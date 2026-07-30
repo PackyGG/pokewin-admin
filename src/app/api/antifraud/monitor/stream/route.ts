@@ -246,6 +246,7 @@ async function replayEvents(
       data?: unknown;
       cursor?: unknown;
       truncated?: unknown;
+      scanned?: unknown;
     };
     if (!Array.isArray(payload.data)) throw new Error("Replay response invalid");
     if (payload.truncated === true) truncated = true;
@@ -257,7 +258,15 @@ async function replayEvents(
       typeof payload.cursor === "string" && REPLAY_ID.test(payload.cursor)
         ? payload.cursor
         : null;
-    if (payload.data.length < 200 || !next || next === cursor) {
+    // End-of-stream must be judged on entries SCANNED, not entries parsed:
+    // one unparseable entry in a full page would otherwise end paging
+    // mid-gap and silently drop everything behind it. Older services do not
+    // send `scanned`; fall back to the parsed count for those.
+    const scanned =
+      typeof payload.scanned === "number" && Number.isFinite(payload.scanned)
+        ? payload.scanned
+        : payload.data.length;
+    if (scanned < 200 || !next || next === cursor) {
       return { events, truncated };
     }
     cursor = next;

@@ -101,8 +101,10 @@ async function CaseDetail({ caseId }: { caseId: string }) {
     sessions,
     actions,
     members,
+    membersTotal,
     matches,
   } = result.data;
+  const memberCount = membersTotal ?? members.length;
   const decisionsEnabled = antifraudDecisionsConfigured();
   const activeSession = sessions.find((session) => session.status === "active");
   const location = [subject.city, subject.state, subject.country_code]
@@ -203,7 +205,7 @@ async function CaseDetail({ caseId }: { caseId: string }) {
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Badge variant="outline">
                   <Network className="mr-1 size-3" />
-                  {members.length} connected accounts
+                  {memberCount} connected accounts
                 </Badge>
               </div>
             )}
@@ -274,10 +276,10 @@ async function CaseDetail({ caseId }: { caseId: string }) {
                   </HostLink>
                 ))}
               </div>
-              {members.length > 100 && (
+              {memberCount > members.length && (
                 <p className="text-xs text-muted-foreground">
-                  Showing 100 of {members.length} case members. The network map
-                  contains the complete paginated component.
+                  Showing {members.length} of {memberCount} case members. The
+                  network map contains the complete paginated component.
                 </p>
               )}
             </div>
