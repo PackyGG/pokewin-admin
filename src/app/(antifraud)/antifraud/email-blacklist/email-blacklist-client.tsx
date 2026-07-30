@@ -24,8 +24,6 @@ export function EmailBlacklistClient({
   const router = useRouter();
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
-  const [reason, setReason] = useState("");
-  const [expiresAt, setExpiresAt] = useState("");
   const [isPending, startTransition] = useTransition();
   const isCheckingHistory = rules.some(
     (rule) => rule.enabled && !rule.backfillComplete,
@@ -44,10 +42,6 @@ export function EmailBlacklistClient({
       toast.error("Enter an email domain.");
       return;
     }
-    if (reason.trim().length < 4) {
-      toast.error("Add an internal reason.");
-      return;
-    }
     if (
       !window.confirm(
         "Add this domain to the Fraud blacklist? Existing matches will not be mass-locked.",
@@ -59,10 +53,6 @@ export function EmailBlacklistClient({
       try {
         const saved = await addFiatEmailDomain({
           domain: submittedDomain,
-          reason: reason.trim(),
-          expiresAt: expiresAt
-            ? new Date(expiresAt).toISOString()
-            : null,
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
@@ -71,8 +61,6 @@ export function EmailBlacklistClient({
           ...current.filter((rule) => rule.id !== saved.id),
         ]);
         setDomain("");
-        setReason("");
-        setExpiresAt("");
         toast.success(`${saved.domain} is now blocked.`);
         router.refresh();
       } catch (error) {
@@ -156,30 +144,6 @@ export function EmailBlacklistClient({
             spellCheck={false}
             disabled={isPending}
           />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="email-domain-reason">Internal reason</Label>
-          <Input
-            id="email-domain-reason"
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            placeholder="Evidence supporting this restriction"
-            maxLength={500}
-            disabled={isPending}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="email-domain-expiry">Optional expiry</Label>
-          <Input
-            id="email-domain-expiry"
-            type="datetime-local"
-            value={expiresAt}
-            onChange={(event) => setExpiresAt(event.target.value)}
-            disabled={isPending}
-          />
-          <p className="text-xs text-muted-foreground">
-            Blank keeps the rule permanent.
-          </p>
         </div>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? (

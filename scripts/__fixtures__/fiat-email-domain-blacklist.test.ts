@@ -6,7 +6,7 @@ function read(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("verified Fraud users edit durable email blacklist rules with reasons", () => {
+test("verified Fraud users edit durable email blacklist rules", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -27,8 +27,10 @@ test("verified Fraud users edit durable email blacklist rules with reasons", () 
   const client = read(
     "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
   );
-  assert.match(client, /email-domain-reason/);
-  assert.match(client, /Optional expiry/);
+  assert.doesNotMatch(client, /email-domain-reason|Internal reason/);
+  assert.doesNotMatch(client, /email-domain-expiry|Optional expiry/);
+  assert.match(actions, /EMAIL_BLACKLIST_CREATE_REASON/);
+  assert.match(actions, /expiresAt: null/);
   assert.match(client, /window\.confirm/);
   assert.match(page, /key=\{result\.data/);
   assert.match(page, /rule\.updatedAt/);

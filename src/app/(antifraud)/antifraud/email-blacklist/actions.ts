@@ -13,11 +13,11 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 
 const createSchema = z.object({
   domain: z.string().trim().min(1).max(253),
-  reason: z.string().trim().min(4).max(500),
-  expiresAt: z.string().datetime().nullable(),
   confirmed: z.literal(true),
   idempotencyKey: z.string().uuid(),
 });
+
+const EMAIL_BLACKLIST_CREATE_REASON = "Added from the email blacklist";
 
 const updateSchema = z.object({
   id: z.string().uuid(),
@@ -42,8 +42,8 @@ export async function addFiatEmailDomain(
 
   const saved = await createFiatEmailDomain({
     domain: parsed.data.domain,
-    reason: parsed.data.reason,
-    expiresAt: parsed.data.expiresAt,
+    reason: EMAIL_BLACKLIST_CREATE_REASON,
+    expiresAt: null,
     idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
@@ -56,8 +56,8 @@ export async function addFiatEmailDomain(
         ruleId: saved.id,
         domain: saved.domain,
         idempotencyKey: parsed.data.idempotencyKey,
-        reason: parsed.data.reason,
-        expiresAt: parsed.data.expiresAt,
+        reason: EMAIL_BLACKLIST_CREATE_REASON,
+        expiresAt: null,
       },
     });
   }
