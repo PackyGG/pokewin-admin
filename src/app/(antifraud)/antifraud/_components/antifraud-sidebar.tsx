@@ -7,7 +7,6 @@ import {
   Activity,
   ArrowUpFromLine,
   Banknote,
-  Braces,
   ChevronRight,
   Fingerprint,
   Gauge,
@@ -20,7 +19,6 @@ import {
   Settings,
   ShieldAlert,
   ShieldCheck,
-  UsersRound,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -139,28 +137,16 @@ const BLACKLIST_NAV: NavItem[] = [
 ];
 
 const SYSTEM_NAV: NavItem[] = [
-  { label: "System health", href: "/antifraud/system", icon: RadioTower },
   {
     label: "Providers",
     href: "/antifraud/settings#integrations",
     icon: ShieldCheck,
   },
   { label: "Risk engine", href: "/antifraud/points", icon: Gauge },
-  { label: "API", href: "/antifraud/api", icon: Braces },
-  {
-    label: "Errors",
-    href: "/antifraud/api#signup-failures",
-    icon: ShieldAlert,
-  },
   {
     label: "Audit log",
     href: "/antifraud/audit",
     icon: Activity,
-  },
-  {
-    label: "Access & permissions",
-    href: "/antifraud/settings?tab=general",
-    icon: UsersRound,
   },
   { label: "Settings", href: "/antifraud/settings", icon: Settings },
 ];

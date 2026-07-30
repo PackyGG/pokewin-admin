@@ -31,16 +31,19 @@ import {
 /**
  * The staff notification system.
  *
- * Owner/admin announcements land in the in-app inbox (`staff_notifications`,
- * the header bell). They can also be pushed to the staff member's own verified
- * Discord / Telegram channel — Discord by default, Telegram opt-in.
+ * This is a manual announcement system. The only live writer is
+ * `sendStaffAnnouncement`, which requires the current owner/admin session and
+ * always writes the `announcement` kind. Historical automated rows stay in
+ * storage but are intentionally invisible to every inbox read and mutation.
+ *
+ * Announcements land in the in-app inbox (`staff_notifications`, the header
+ * bell). They can also be pushed to the staff member's own verified Discord /
+ * Telegram channel — Discord by default, Telegram opt-in.
  *
  * Two rules the whole module is built around:
  *
- *  1. NOTIFYING MUST NEVER BREAK THE ACTION THAT CAUSED IT. Publishing a quiz
- *     or resolving a review is the real work; a dead webhook, an unmigrated
- *     table or a rate-limited bot must degrade to "no ping", never to a failed
- *     mutation. Every entry point here resolves, never rejects.
+ *  1. DELIVERY MUST NEVER PARTIALLY AUTHORIZE. The shared writer repeats the
+ *     owner/admin check even though the dedicated Server Action is also gated.
  *
  *  2. A CHANNEL IS INERT UNTIL VERIFIED. External delivery only ever goes to a
  *     row with `verified_at` set and `enabled = true`, so a typo'd Discord id
@@ -64,6 +67,8 @@ export const STAFF_NOTIFICATION_KINDS = {
 } as const;
 
 export type StaffNotificationKind = keyof typeof STAFF_NOTIFICATION_KINDS;
+
+const MANUAL_ANNOUNCEMENT_KIND: StaffNotificationKind = "announcement";
 
 export const STAFF_NOTIFICATION_KIND_LIST = Object.keys(
   STAFF_NOTIFICATION_KINDS,
@@ -186,7 +191,7 @@ export async function listStaffNotifications(
     const rows = await adminDrizzle.select().from(staff_notifications)
       .where(and(
         eq(staff_notifications.admin_user_id, adminUserId),
-        eq(staff_notifications.kind, "announcement"),
+        eq(staff_notifications.kind, MANUAL_ANNOUNCEMENT_KIND),
       ))
       .orderBy(desc(staff_notifications.created_at))
       .limit(Math.min(Math.max(limit, 1), 50));
@@ -216,7 +221,7 @@ export async function countUnreadStaffNotifications(
       .from(staff_notifications).where(and(
         eq(staff_notifications.admin_user_id, adminUserId),
         isNull(staff_notifications.read_at),
-        eq(staff_notifications.kind, "announcement"),
+        eq(staff_notifications.kind, MANUAL_ANNOUNCEMENT_KIND),
       ));
     return row?.value ?? 0;
   } catch (err) {
@@ -241,7 +246,7 @@ export async function markStaffNotificationRead(
       .set({ read_at: new Date().toISOString() })
       .where(and(eq(staff_notifications.id, notificationId),
         eq(staff_notifications.admin_user_id, adminUserId),
-        eq(staff_notifications.kind, "announcement"),
+        eq(staff_notifications.kind, MANUAL_ANNOUNCEMENT_KIND),
         isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -257,7 +262,7 @@ export async function markAllStaffNotificationsRead(
     await adminDrizzle.update(staff_notifications)
       .set({ read_at: new Date().toISOString() })
       .where(and(eq(staff_notifications.admin_user_id, adminUserId),
-        eq(staff_notifications.kind, "announcement"),
+        eq(staff_notifications.kind, MANUAL_ANNOUNCEMENT_KIND),
         isNull(staff_notifications.read_at)));
   } catch (err) {
     if (!isMissingRelationError(err)) {
@@ -321,7 +326,7 @@ export async function sendStaffAnnouncement(
   const recipients = [...new Set(input.recipients.filter(Boolean))];
   if (recipients.length === 0) return 0;
 
-  const kind = "announcement";
+  const kind = MANUAL_ANNOUNCEMENT_KIND;
   const spec = STAFF_NOTIFICATION_KINDS[kind];
   const defaults = spec.defaults;
 

@@ -87,24 +87,18 @@ test("Discord recipients and error destinations match the owner contract", () =>
   assert.match(discord, /Why it was flagged/);
 });
 
-test("system and audit routes are manager-only and never render secrets", () => {
+test("audit stays manager-only and runtime config never renders secrets", () => {
   const auditMigration = read(
     "drizzle/admin/migrations/20260730_antifraud_security_audit.sql",
   );
   const auditPage = read(
     "src/app/(antifraud)/antifraud/audit/page.tsx",
   );
-  const systemPage = read(
-    "src/app/(antifraud)/antifraud/system/page.tsx",
-  );
   const runtime = read("services/antifraud-monitor/src/runtime-config.ts");
 
   assert.match(auditMigration, /BEFORE UPDATE OR DELETE/);
   assert.match(auditMigration, /BEFORE TRUNCATE/);
   assert.match(auditPage, /requireAntifraudManagerPage\(\)/);
-  assert.match(systemPage, /requireAntifraudManagerPage\(\)/);
-  assert.match(systemPage, /Safe recovery controls/);
-  assert.doesNotMatch(systemPage, /process\.env/);
   assert.match(runtime, /fingerprintConfigured: Boolean\(/);
   assert.match(runtime, /secretConfigured: Boolean\(/);
   assert.doesNotMatch(runtime, /secretValue|tokenValue|providerPayload/);

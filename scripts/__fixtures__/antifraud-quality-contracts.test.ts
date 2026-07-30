@@ -69,7 +69,6 @@ test("manager mutations require admin service authority and durable local audit"
     "src/app/(antifraud)/antifraud/flows/actions.ts",
     "src/app/(antifraud)/antifraud/email-blacklist/actions.ts",
     "src/app/(antifraud)/antifraud/risky-locations/actions.ts",
-    "src/app/(antifraud)/antifraud/settings/actions.ts",
     "src/app/(antifraud)/antifraud/webhooks/actions.ts",
   ]) {
     assert.match(read(action), /createAdminAuditEvent\(/, action);

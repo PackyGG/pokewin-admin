@@ -17,6 +17,12 @@ test("overview endpoint exposes bounded real review, blacklist, and session data
   assert.match(server, /app\.get\("\/v1\/overview"/);
   assert.match(server, /JOIN signup_assessments/);
   assert.match(server, /FROM fiat_deposit_assessments/);
+  assert.match(server, /WHERE verdict = 'bad'/);
+  assert.match(server, /status NOT IN \('refunded', 'partially_refunded'\)/);
+  assert.match(server, /COALESCE\(customer_total_usd, credited_amount_usd\)/);
+  assert.match(server, /interval '29 days'/);
+  assert.match(server, /last24HoursCents/);
+  assert.match(server, /fraudulentFiat/);
   assert.match(server, /FROM fiat_email_domain_blacklist/);
   assert.match(server, /hard_policy = 'blocklist\.ip'/);
   assert.match(server, /ms\.started_at >= now\(\) - interval '30 days'/);

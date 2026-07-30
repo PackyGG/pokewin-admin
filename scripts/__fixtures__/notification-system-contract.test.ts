@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import { test } from "node:test";
@@ -7,6 +7,16 @@ const root = process.cwd();
 
 function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
+}
+
+function sourceFiles(path: string): string[] {
+  return readdirSync(join(root, path), { withFileTypes: true }).flatMap(
+    (entry) => {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) return sourceFiles(child);
+      return /\.(?:ts|tsx)$/.test(entry.name) ? [child] : [];
+    },
+  );
 }
 
 test("the shared header mounts the notification bell", () => {
@@ -33,14 +43,9 @@ test("only owner/admin announcements can enter the shared staff inbox", () => {
   const action = source(
     "src/app/(admin)/system/staff-notifications/actions.ts",
   );
-  const automatedSources = [
-    "src/app/api/antifraud/ingest/route.ts",
-    "src/app/(antifraud)/antifraud/reviews/actions.ts",
-  ];
-
   assert.match(
     notifications,
-    /eq\(staff_notifications\.kind,\s*"announcement"\)/,
+    /MANUAL_ANNOUNCEMENT_KIND:\s*StaffNotificationKind\s*=\s*"announcement"/,
   );
   assert.match(
     notifications,
@@ -55,8 +60,45 @@ test("only owner/admin announcements can enter the shared staff inbox", () => {
     /sessionIsAdmin\(session\)[\s\S]*sessionIsOwner\(session\)/,
   );
   assert.match(action, /sendStaffAnnouncement\(\{/);
-  for (const path of automatedSources) {
-    assert.doesNotMatch(source(path), /sendStaffAnnouncement|notifyStaff/);
+
+  const applicationSources = sourceFiles("src").filter(
+    (path) =>
+      !path.startsWith(join("src", "generated")) &&
+      !path.startsWith(join("src", "lib", "db-schema")),
+  );
+  const staffNotificationConsumers = applicationSources.filter((path) =>
+    /(?:from|insert|update|delete)\(staff_notifications\)|staff_notifications\.\w+/.test(
+      source(path),
+    ),
+  );
+  assert.deepEqual(
+    staffNotificationConsumers,
+    [join("src", "lib", "staff", "notifications.ts")],
+    "staff_notifications must only be accessed by its generated schema and shared manual boundary",
+  );
+
+  const announcementCallers = applicationSources.filter(
+    (path) =>
+      path !== join("src", "lib", "staff", "notifications.ts") &&
+      /\bsendStaffAnnouncement\s*\(/.test(source(path)),
+  );
+  assert.deepEqual(
+    announcementCallers,
+    [join("src", "app", "(admin)", "system", "staff-notifications", "actions.ts")],
+    "the dedicated manual composer must remain the only announcement caller",
+  );
+
+  for (const path of applicationSources) {
+    assert.doesNotMatch(
+      source(path),
+      /(?:INSERT\s+INTO|UPDATE|DELETE\s+FROM)\s+["'`]?staff_notifications\b/i,
+      `${path} bypasses the shared staff notification boundary with raw SQL`,
+    );
+    assert.doesNotMatch(
+      source(path),
+      /\bnotifyStaff\s*\(/,
+      `${path} restored a legacy automatic staff notification writer`,
+    );
   }
 });
 

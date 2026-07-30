@@ -79,6 +79,7 @@ function useReducedMotion(): boolean {
 
 export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
   const reducedMotion = useReducedMotion();
+  const accountDays = days.filter((day) => day.date !== "2026-07-22");
 
   return (
     <div className="grid h-full gap-4 lg:grid-cols-2">
@@ -180,7 +181,7 @@ export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
         />
         <ChartContainer config={accountConfig} className="min-h-0 flex-1 w-full">
           <LineChart
-            data={days}
+            data={accountDays}
             accessibilityLayer
             margin={{ top: 8, right: 8, left: -12, bottom: 0 }}
           >

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { AlertTriangle, Check, Plug, Users, X } from "lucide-react";
+import { AlertTriangle, Check, Plug, X } from "lucide-react";
 
 import {
   PageHero,
@@ -7,18 +7,9 @@ import {
   SectionHeading,
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import {
-  ANTIFRAUD_TOGGLE_ROLES,
-  getAntifraudAccessSettings,
-  getAntifraudUserAccess,
-} from "@/lib/antifraud/access";
 import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
-import {
-  AccessListEditor,
-  RoleAccessToggles,
-} from "./_components/access-controls";
 import { DiscordConfigSection } from "./_components/discord-config-section";
 import {
   SettingsTabNav,
@@ -50,43 +41,10 @@ export default async function SettingsPage({
           <DiscordConfigSection />
         </Suspense>
       ) : (
-        <>
-          <Suspense fallback={<Skeleton className="h-64 w-full rounded-xl" />}>
-            <AccessSection />
-          </Suspense>
-          <Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
-            <IntegrationSection />
-          </Suspense>
-        </>
+        <Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
+          <IntegrationSection />
+        </Suspense>
       )}
-    </div>
-  );
-}
-
-async function AccessSection() {
-  const [settings, userAccess] = await Promise.all([
-    getAntifraudAccessSettings().catch(() => null),
-    getAntifraudUserAccess().catch(() => ({ allowlist: [], denylist: [] })),
-  ]);
-
-  const roles = ANTIFRAUD_TOGGLE_ROLES.map((role) => ({
-    role,
-    label: role.replace("_", " ").replace(/\b\w/g, (c) => c.toUpperCase()),
-    enabled: settings?.[role] ?? false,
-  }));
-
-  return (
-    <div className="space-y-4">
-      <SectionHeading icon={Users} title="Who can enter" />
-      <p className="text-xs text-muted-foreground">
-        Owners and admins are always in. These toggles open the workspace to
-        whole roles; the two lists below override them per person.
-      </p>
-      <RoleAccessToggles roles={roles} />
-      <div className="grid gap-4 md:grid-cols-2">
-        <AccessListEditor list="allowlist" initial={userAccess.allowlist} />
-        <AccessListEditor list="denylist" initial={userAccess.denylist} />
-      </div>
     </div>
   );
 }

@@ -494,7 +494,8 @@ app.get("/v1/monitors/live", async () => {
  * the two database boundaries remain explicit and independently degradable.
  */
 app.get("/v1/overview", async () => {
-  const [reviewCounts, blacklistCounts, recentSessions] = await Promise.all([
+  const [reviewCounts, blacklistCounts, recentSessions, fiatFraud] =
+    await Promise.all([
     db.antifraud.query<{
       signup_reviews_left: number;
       fiat_reviews_left: number;
@@ -562,10 +563,54 @@ app.get("/v1/overview", async () => {
         LIMIT 40
       `,
     ),
+    db.antifraud.query<{
+      lifetime_cents: number;
+      last_24_hours_cents: number;
+      days: Array<{ date: string; amountCents: number }>;
+    }>(
+      `
+        WITH fraudulent_fiat AS (
+          SELECT
+            occurred_at,
+            COALESCE(customer_total_usd, credited_amount_usd) AS amount_usd
+          FROM fiat_deposit_assessments
+          WHERE verdict = 'bad'
+            AND status NOT IN ('refunded', 'partially_refunded')
+        ),
+        daily AS (
+          SELECT
+            (occurred_at AT TIME ZONE 'UTC')::date AS bucket,
+            ROUND(SUM(amount_usd) * 100)::float8 AS amount_cents
+          FROM fraudulent_fiat
+          WHERE occurred_at >=
+              date_trunc('day', now() AT TIME ZONE 'UTC') - interval '29 days'
+            AND occurred_at <
+              date_trunc('day', now() AT TIME ZONE 'UTC') + interval '1 day'
+          GROUP BY 1
+          ORDER BY 1
+        )
+        SELECT
+          COALESCE(ROUND(SUM(amount_usd) * 100), 0)::float8
+            AS lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (
+            WHERE occurred_at >= now() - interval '24 hours'
+              AND occurred_at < now()
+          ) * 100), 0)::float8 AS last_24_hours_cents,
+          COALESCE((
+            SELECT json_agg(json_build_object(
+              'date', bucket::text,
+              'amountCents', amount_cents
+            ) ORDER BY bucket)
+            FROM daily
+          ), '[]'::json)::json AS days
+        FROM fraudulent_fiat
+      `,
+    ),
   ]);
 
   const reviews = reviewCounts.rows[0];
   const blacklists = blacklistCounts.rows[0];
+  const fiat = fiatFraud.rows[0];
   return {
     data: {
       signupReviewsLeft: reviews?.signup_reviews_left ?? 0,
@@ -573,6 +618,11 @@ app.get("/v1/overview", async () => {
       activeDomainBlacklist: blacklists?.active_domains ?? 0,
       blockedIpCatches: blacklists?.blocked_ip_catches ?? 0,
       recentSessions: recentSessions.rows,
+      fraudulentFiat: {
+        lifetimeCents: fiat?.lifetime_cents ?? 0,
+        last24HoursCents: fiat?.last_24_hours_cents ?? 0,
+        days: fiat?.days ?? [],
+      },
     },
   };
 });

@@ -210,6 +210,18 @@ const monitorOverviewSchema = z.object({
   activeDomainBlacklist: z.number().int().nonnegative(),
   blockedIpCatches: z.number().int().nonnegative(),
   recentSessions: z.array(overviewSessionSchema).max(40),
+  fraudulentFiat: z.object({
+    lifetimeCents: z.number().nonnegative(),
+    last24HoursCents: z.number().nonnegative(),
+    days: z
+      .array(
+        z.object({
+          date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+          amountCents: z.number().nonnegative(),
+        }),
+      )
+      .max(30),
+  }),
 });
 
 export type AntifraudMonitorOverview = z.infer<typeof monitorOverviewSchema>;
@@ -315,11 +327,11 @@ export const getAntifraudPollerHealth = cache(async (): Promise<{
   }
 });
 
-export async function getAntifraudMonitorOverview(): Promise<{
+export const getAntifraudMonitorOverview = cache(async (): Promise<{
   configured: boolean;
   data: AntifraudMonitorOverview | null;
   error: boolean;
-}> {
+}> => {
   const { baseUrl, token } = readToken();
   if (!baseUrl || !token) {
     return { configured: false, data: null, error: false };
@@ -345,7 +357,7 @@ export async function getAntifraudMonitorOverview(): Promise<{
     console.error("[antifraud-monitor] overview request failed:", error);
     return { configured: true, data: null, error: true };
   }
-}
+});
 
 export async function getAntifraudScoringConfig(): Promise<{
   configured: boolean;

@@ -95,11 +95,11 @@ test("Fraud dashboard notifications remain inside the Fraud workspace", () => {
     middleware,
     /appHost\?\.basePath === "\/antifraud" && pathname === "\/notifications"/,
   );
-  assert.match(
+  assert.doesNotMatch(
     middleware,
     /appHost\?\.basePath === "\/antifraud" && pathname === "\/settings\/api"/,
   );
-  assert.match(middleware, /new URL\("\/api", request\.url\)/);
+  assert.doesNotMatch(middleware, /new URL\("\/api", request\.url\)/);
 });
 
 test("idempotent backend reads retry bounded transient failures", () => {

@@ -135,7 +135,7 @@ test("every antifraud Server Action file has a live server-side gate", () => {
     }
   };
   walk(root);
-  assert.ok(actionFiles.length >= 14);
+  assert.ok(actionFiles.length >= 13);
   for (const file of actionFiles) {
     const source = readFileSync(file, "utf8");
     assert.match(

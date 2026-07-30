@@ -39,6 +39,11 @@ test("fraud overview renders the complete owner KPI and chart contract", async (
   assert.match(panels, /Fiat deposits/);
   assert.match(panels, /Accounts/);
   assert.match(panels, /30 days/);
+  assert.match(
+    panels,
+    /accountDays = days\.filter\(\(day\) => day\.date !== "2026-07-22"\)/,
+  );
+  assert.match(panels, /<LineChart[\s\S]*data=\{accountDays\}/);
   assert.match(panels, /OverviewActionFeed/);
   assert.match(page, /PanelErrorBoundary/);
 });
@@ -56,7 +61,9 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   assert.match(query, /LIMIT 24/);
   assert.match(query, /unstable_cache\(/);
   assert.match(query, /revalidate: 60/);
-  assert.match(query, /antifraud-overview-dashboard-v4/);
+  assert.match(query, /getAntifraudMonitorOverview/);
+  assert.match(query, /canonical\.lifetimeCents/);
+  assert.match(query, /antifraud-overview-dashboard-v5/);
   assert.doesNotMatch(
     query,
     /fraud[\s\S]{0,120}user_kyc\.kyc_required\s*=\s*TRUE/i,

@@ -223,9 +223,6 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/pack-studio", request.url), 307);
     }
 
-    if (appHost?.basePath === "/antifraud" && pathname === "/settings/api") {
-      return NextResponse.redirect(new URL("/api", request.url), 308);
-    }
     if (appHost?.basePath === null && pathname === "/webhooks") {
       const fraudHost = APP_HOSTS.find(
         (entry) => entry.basePath === "/antifraud",
@@ -353,9 +350,8 @@ export async function middleware(request: NextRequest) {
 }
 
 export const config = {
-  // The negative lookahead excludes only `api/` (with trailing slash), so the
-  // bare `/api` path (the antifraud API settings page) is already matched and
-  // middleware-protected by this single pattern — no separate entry needed.
+  // API route handlers are host-agnostic infrastructure and bypass page-host
+  // routing. All user-facing pages remain middleware-protected.
   matcher: [
     "/((?!api/|_next/static|_next/image|favicon.ico|.*\\.png$|.*\\.svg$|.*\\.ico$).*)",
   ],

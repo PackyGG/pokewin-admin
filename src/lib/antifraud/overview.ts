@@ -11,6 +11,7 @@ import { adminDrizzle } from "@/lib/drizzle";
 import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { getAntifraudMonitorOverview } from "@/lib/antifraud/monitor-api";
 
 const LIVE_REVIEW_STATUSES = ["open", "in_review"] as const;
 const THIRTY_DAY_BUCKETS = 30;
@@ -678,7 +679,7 @@ async function computeAntifraudOverviewData(
 
 const cachedAntifraudOverviewData = unstable_cache(
   computeAntifraudOverviewData,
-  ["antifraud-overview-dashboard-v4"],
+  ["antifraud-overview-dashboard-v5"],
   {
     revalidate: 60,
     tags: ["antifraud-overview", "fiat-operations"],
@@ -687,9 +688,55 @@ const cachedAntifraudOverviewData = unstable_cache(
 
 export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData> {
   const env = await readDbEnv();
-  return env === "prod"
-    ? cachedAntifraudOverviewData(env)
-    : computeAntifraudOverviewData(env);
+  const [overview, monitor] = await Promise.all([
+    env === "prod"
+      ? cachedAntifraudOverviewData(env)
+      : computeAntifraudOverviewData(env),
+    getAntifraudMonitorOverview(),
+  ]);
+  const canonical = monitor.data?.fraudulentFiat;
+  if (!canonical) return overview;
+
+  const fraudByDay = new Map(
+    canonical.days.map((day) => [day.date, day.amountCents]),
+  );
+
+  return {
+    ...overview,
+    metrics: {
+      ...overview.metrics,
+      legitimateFiatDepositCents: Math.max(
+        0,
+        overview.metrics.legitimateFiatDepositCents +
+          overview.metrics.fraudulentFiatDepositCents -
+          canonical.lifetimeCents,
+      ),
+      fraudulentFiatDepositCents: canonical.lifetimeCents,
+    },
+    live: {
+      ...overview.live,
+      legitimateFiatCents24h: Math.max(
+        0,
+        overview.live.legitimateFiatCents24h +
+          overview.live.fraudulentFiatCents24h -
+          canonical.last24HoursCents,
+      ),
+      fraudulentFiatCents24h: canonical.last24HoursCents,
+    },
+    days: overview.days.map((day) => {
+      const fraudulentFiatCents = fraudByDay.get(day.date) ?? 0;
+      return {
+        ...day,
+        legitimateFiatCents: Math.max(
+          0,
+          day.legitimateFiatCents +
+            day.fraudulentFiatCents -
+            fraudulentFiatCents,
+        ),
+        fraudulentFiatCents,
+      };
+    }),
+  };
 }
 
 export async function getAntifraudLiveMirrorMetrics(): Promise<AntifraudLiveMirrorMetrics> {

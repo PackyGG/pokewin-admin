@@ -36,12 +36,8 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Fingerprints",
     "Banned users",
     "Risk locations",
-    "System health",
     "Providers",
     "Risk engine",
-    "API",
-    "Errors",
-    "Access & permissions",
     "Settings",
   ]) {
     assert.match(
@@ -63,6 +59,19 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   }
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
+  for (const removedItem of [
+    "System health",
+    "API",
+    "Errors",
+    "Access & permissions",
+  ]) {
+    assert.doesNotMatch(
+      sidebar,
+      new RegExp(
+        `label: "${removedItem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}"`,
+      ),
+    );
+  }
   assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
