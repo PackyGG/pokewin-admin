@@ -36,7 +36,7 @@ test("fiat withdrawal holds are accepted as high-severity review signals", () =>
   assert.equal(isFiatWithdrawalHoldSignal(event.kind), true);
 });
 
-test("unmapped review signals keep their backend key", () => {
-  assert.equal(reviewSignalLabel("multi_account"), "multi_account");
+test("unmapped review signals receive a readable label", () => {
+  assert.equal(reviewSignalLabel("multi_account"), "Multi account");
   assert.equal(isFiatWithdrawalHoldSignal("multi_account"), false);
 });
