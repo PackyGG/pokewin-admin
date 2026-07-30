@@ -2,6 +2,7 @@ import "server-only";
 
 import { eq, sql } from "drizzle-orm";
 
+import { adminDrizzle } from "@/lib/admin-db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPrimaryDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import { user_kyc } from "@/lib/db-schema/main/schema";
@@ -37,6 +38,10 @@ import { logError } from "@/lib/errors/logger";
  *   gate as a side effect would route around it. Such a case still clears —
  *   the withdrawals just stay locked until an owner or admin marks the
  *   verification cycle `safe`.
+ *
+ * The reverse is `restoreWithdrawalLocksForReopenedCase`: leaving `cleared`
+ * puts the locks back, so the release lives exactly as long as the verdict
+ * that justified it.
  */
 
 export type WithdrawalReleaseOutcome =
@@ -194,4 +199,144 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
   }
 
   return { status: "released", previousCrypto, previousItems };
+}
+
+export type WithdrawalRestoreOutcome =
+  /** Locks are back on. */
+  | { status: "relocked" }
+  /** This case's clear never released anything, so there is nothing to undo. */
+  | { status: "nothing_to_restore" }
+  /** MAIN rejected the write. The case is reopened but the account is open. */
+  | { status: "failed" };
+
+/**
+ * Put back what a cleared verdict released.
+ *
+ * Leaving `cleared` — reopening the case, sending it back to review, or
+ * flagging it — withdraws the verdict, so the account consequence has to go
+ * with it. Otherwise a cleared-then-reopened account keeps withdrawing while
+ * staff are still deciding, which is the exact window this whole workspace
+ * exists to close.
+ *
+ * It re-locks ONLY when this case's own clear did the releasing, proven by an
+ * `antifraud_withdrawals_unlocked` audit row carrying this `reviewId`. Without
+ * that check, reopening a case on an account that was never locked in the
+ * first place would lock it — inventing a restriction instead of restoring
+ * one. Same contract as the release: never throws, safe to re-run.
+ */
+export async function restoreWithdrawalLocksForReopenedCase(params: {
+  userId: string;
+  adminUserId: string;
+  reviewId: string;
+  idempotencyKey?: string;
+}): Promise<WithdrawalRestoreOutcome> {
+  const { userId, adminUserId, reviewId, idempotencyKey } = params;
+
+  try {
+    const released = await adminDrizzle.execute<{ id: string }>(sql`
+      SELECT id
+      FROM admin_audit_events
+      WHERE event_type = 'antifraud_withdrawals_unlocked'
+        AND target_user_id = ${userId}
+        AND metadata ->> 'reviewId' = ${reviewId}
+      LIMIT 1
+    `);
+    if (released.rows.length === 0) return { status: "nothing_to_restore" };
+  } catch (error) {
+    logError(
+      "antifraud.review.restoreWithdrawals",
+      `release-history lookup failed for review ${reviewId}`,
+      error,
+    );
+    return { status: "failed" };
+  }
+
+  const reason = `Antifraud review ${reviewId} reopened`;
+  try {
+    const db = await getPrimaryDrizzleDb();
+    const locked = await db.execute<{ user_id: string }>(sql`
+      INSERT INTO user_feature_locks (
+        id,
+        user_id,
+        locked_withdrawals_crypto,
+        locked_withdrawals_items,
+        locked_withdrawals_at,
+        locked_withdrawals_by,
+        locked_withdrawals_reason,
+        created_at,
+        updated_at
+      )
+      SELECT
+        ${crypto.randomUUID()},
+        u.id,
+        ARRAY['all']::text[],
+        TRUE,
+        NOW(),
+        NULL,
+        ${reason},
+        NOW(),
+        NOW()
+      FROM "user" u
+      WHERE u.id = ${userId}
+      ON CONFLICT (user_id) DO UPDATE SET
+        locked_withdrawals_crypto = ARRAY['all']::text[],
+        locked_withdrawals_items = TRUE,
+        locked_withdrawals_at = COALESCE(
+          user_feature_locks.locked_withdrawals_at,
+          EXCLUDED.locked_withdrawals_at
+        ),
+        locked_withdrawals_reason = COALESCE(
+          user_feature_locks.locked_withdrawals_reason,
+          EXCLUDED.locked_withdrawals_reason
+        ),
+        updated_at = NOW()
+      RETURNING user_id
+    `);
+    if (locked.rows.length === 0) return { status: "nothing_to_restore" };
+  } catch (error) {
+    logError(
+      "antifraud.review.restoreWithdrawals",
+      `withdrawal re-lock failed for review ${reviewId}`,
+      error,
+    );
+    return { status: "failed" };
+  }
+
+  const metadata = {
+    source: "antifraud_review",
+    reviewId,
+    idempotencyKey,
+    reason,
+    crypto: "all",
+    items: true,
+  };
+  // Best effort, same as the release: MAIN is already locked.
+  try {
+    await createAdminAuditEvent({
+      adminUserId,
+      eventType: "antifraud_withdrawals_locked",
+      targetUserId: userId,
+      metadata,
+    });
+    await createAdminAuditEvent({
+      adminUserId,
+      eventType: "locked_withdrawals_crypto_enabled",
+      targetUserId: userId,
+      metadata: { ...metadata, feature: "locked_withdrawals_crypto", locked: true },
+    });
+    await createAdminAuditEvent({
+      adminUserId,
+      eventType: "locked_withdrawals_items_enabled",
+      targetUserId: userId,
+      metadata: { ...metadata, feature: "locked_withdrawals_items", locked: true },
+    });
+  } catch (error) {
+    logError(
+      "antifraud.review.restoreWithdrawals",
+      `withdrawal re-lock audit mirror failed for review ${reviewId}`,
+      error,
+    );
+  }
+
+  return { status: "relocked" };
 }

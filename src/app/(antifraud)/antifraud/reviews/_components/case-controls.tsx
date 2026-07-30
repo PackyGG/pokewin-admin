@@ -141,6 +141,10 @@ export function CaseControls({
         toast.warning(
           "Case cleared, but withdrawals could not be unlocked — unlock them on the user page.",
         );
+      } else if (result.withdrawalRelease === "relock_failed") {
+        toast.warning(
+          "Verdict withdrawn, but withdrawals could not be locked again — lock them on the user page.",
+        );
       } else if (result.withdrawalRelease === "kyc_gated") {
         toast.warning(
           "Case cleared. Withdrawals stay locked until an owner or admin approves KYC.",
@@ -149,7 +153,9 @@ export function CaseControls({
         toast.success(
           result.withdrawalRelease === "released"
             ? "Case cleared — withdrawals unlocked"
-            : `Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`,
+            : result.withdrawalRelease === "relocked"
+              ? `Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()} — withdrawals locked again`
+              : `Marked ${REVIEW_STATUS_LABELS[next].toLowerCase()}`,
         );
       }
       router.refresh();
@@ -218,8 +224,8 @@ export function CaseControls({
         <p className="text-[11px] text-muted-foreground">
           Clear and Flag require a conclusion. Clearing also unlocks crypto and
           item withdrawals — unless the account is awaiting KYC, which only an
-          owner or admin can approve. Reopening withdraws the previous verdict
-          but keeps the append-only trail — it does not re-lock.
+          owner or admin can approve. Leaving Cleared again locks them back and
+          keeps the append-only trail.
         </p>
       </div>
 

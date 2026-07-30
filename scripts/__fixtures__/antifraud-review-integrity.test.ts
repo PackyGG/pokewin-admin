@@ -60,7 +60,7 @@ test("antifraud command audit mirrors are globally idempotent", () => {
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
   assert.match(reviewAction, /idempotencyKey: z\.string\(\)\.uuid/);
-  assert.match(reviewAction, /return \{ kind: "replayed", targetUserId: /);
+  assert.match(reviewAction, /kind: "replayed",\s*targetUserId: /);
   assert.match(
     reviewAction,
     /tx\.insert\(antifraud_review_notes\)[\s\S]*?tx\.insert\(staff_profiles\)|tx\.insert\(staff_profiles\)[\s\S]*?tx\.insert\(antifraud_review_notes\)/,
@@ -112,7 +112,24 @@ test("clearing a case releases the player's withdrawal locks", () => {
   // The verdict is already committed — a MAIN failure must not throw past it.
   assert.match(release, /return \{ status: "failed" \}/);
 
+  // Leaving `cleared` withdraws the release with the verdict, but only ever
+  // restores what THIS case released — reopening must not invent a lock on an
+  // account nobody had locked.
+  assert.match(release, /export async function restoreWithdrawalLocksForReopenedCase/);
+  assert.match(
+    release,
+    /event_type = 'antifraud_withdrawals_unlocked'[\s\S]*?metadata ->> 'reviewId' = \$\{reviewId\}[\s\S]*?return \{ status: "nothing_to_restore" \}/,
+  );
+  assert.match(release, /INSERT INTO user_feature_locks/);
+
   const actions = read("src/app/(antifraud)/antifraud/reviews/actions.ts");
+  assert.match(
+    actions,
+    /outcome\.previousStatus === "cleared"[\s\S]*?restoreReopenedCaseWithdrawals\(/,
+    "leaving cleared must re-lock",
+  );
+  // A replay knows what it moved away from only from the recorded `from`.
+  assert.match(actions, /function replayedFromStatus/);
   // ONE clearing path: the quick action delegates to updateReviewStatus, so
   // both entry points release through the same function.
   assert.match(

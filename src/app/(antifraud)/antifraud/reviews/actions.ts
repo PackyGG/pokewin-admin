@@ -29,7 +29,10 @@ import {
   getAntifraudUserAccess,
 } from "@/lib/antifraud/access";
 import { isAssignableAnalyst } from "@/lib/antifraud/review-analysts";
-import { releaseWithdrawalLocksForClearedCase } from "@/lib/antifraud/withdrawal-release";
+import {
+  releaseWithdrawalLocksForClearedCase,
+  restoreWithdrawalLocksForReopenedCase,
+} from "@/lib/antifraud/withdrawal-release";
 import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
 
 /**
@@ -229,17 +232,23 @@ const updateStatusSchema = z
   );
 
 /**
- * What the withdrawal release did, so the UI can say so instead of leaving the
- * analyst to guess. `failed` is the one the analyst must act on: the verdict
- * stands but the account is still locked.
+ * What the withdrawal side of the verdict did, so the UI can say so instead of
+ * leaving the analyst to guess. The two `*_failed` values are the ones the
+ * analyst must act on: the status moved but the account did not follow.
  */
 export type WithdrawalReleaseStatus =
+  // Clearing a case.
   | "released"
   | "already_open"
   /** Withdrawals stay locked: only an owner/admin can lift a KYC gate. */
   | "kyc_gated"
   | "failed"
-  /** Not a clearing transition — nothing was attempted. */
+  // Leaving `cleared` again — the release is withdrawn with the verdict.
+  | "relocked"
+  /** This case's clear never released anything, so there was nothing to undo. */
+  | "nothing_to_restore"
+  | "relock_failed"
+  /** Neither a clearing nor an un-clearing transition. */
   | "not_applicable";
 
 export type UpdateReviewStatusResult =
@@ -281,6 +290,17 @@ function assertStatusReplayMatches(
       "That status retry key was already used for a different command.",
     );
   }
+}
+
+/**
+ * The status the ORIGINAL command moved away from, read back off its audit
+ * row. On a replay the case already holds the new status, so `current.status`
+ * cannot answer "was this a clear, or the withdrawal of one?" — only the
+ * recorded `from` can.
+ */
+function replayedFromStatus(metadata: unknown): string | null {
+  if (!isRecord(metadata)) return null;
+  return typeof metadata.from === "string" ? metadata.from : null;
 }
 
 /**
@@ -354,6 +374,49 @@ async function releaseClearedCaseWithdrawals(params: {
 }
 
 /**
+ * The mirror image: leaving `cleared` withdraws the verdict, so it withdraws
+ * the release too. Reopening, sending back to review or flagging all re-lock.
+ *
+ * Only ever restores what THIS case released (see the helper) — reopening a
+ * case on an account nobody had locked must not invent a lock.
+ */
+async function restoreReopenedCaseWithdrawals(params: {
+  reviewId: string;
+  targetUserId: string;
+  adminUserId: string;
+  idempotencyKey: string;
+}): Promise<WithdrawalReleaseStatus> {
+  const outcome = await restoreWithdrawalLocksForReopenedCase({
+    userId: params.targetUserId,
+    adminUserId: params.adminUserId,
+    reviewId: params.reviewId,
+    idempotencyKey: params.idempotencyKey,
+  });
+
+  if (outcome.status === "relocked") {
+    try {
+      await adminDrizzle.insert(antifraud_review_notes).values({
+        review_id: params.reviewId,
+        admin_user_id: params.adminUserId,
+        kind: "action",
+        body:
+          "Verdict withdrawn: crypto and item withdrawals locked again until " +
+          "this case is closed.",
+      });
+    } catch (error) {
+      console.error("[antifraud] re-lock note failed:", error);
+    }
+    revalidateTag(userDetailTag(params.targetUserId));
+  }
+
+  return outcome.status === "nothing_to_restore"
+    ? "nothing_to_restore"
+    : outcome.status === "failed"
+      ? "relock_failed"
+      : "relocked";
+}
+
+/**
  * Move a case along. Setting a terminal status (cleared / flagged) stamps the
  * resolver + timestamp and stores the written conclusion; any NON-terminal
  * transition (re-opening or returning to review) clears resolver, timestamp AND the
@@ -381,11 +444,17 @@ export async function updateReviewStatus(
   };
   type Outcome =
     | { kind: "noop" }
-    // Both carry the subject so the post-commit withdrawal release can run
-    // without a second lookup — including on a replay, which is what repairs a
-    // clear whose release never got to run.
-    | { kind: "replayed"; targetUserId: string }
-    | { kind: "applied"; applied: Applied; targetUserId: string }
+    // Both carry the subject AND the status we moved away from, so the
+    // post-commit withdrawal step can release or re-lock without a second
+    // lookup — including on a replay, which is what repairs a transition whose
+    // account-side effect never got to run.
+    | { kind: "replayed"; targetUserId: string; previousStatus: string | null }
+    | {
+        kind: "applied";
+        applied: Applied;
+        targetUserId: string;
+        previousStatus: string;
+      }
     | { kind: "conflict"; conflictReviewId: string | null };
 
   const runTransaction = async (): Promise<Outcome> =>
@@ -414,7 +483,11 @@ export async function updateReviewStatus(
           status,
           resolution,
         });
-        return { kind: "replayed", targetUserId: current.target_user_id };
+        return {
+          kind: "replayed",
+          targetUserId: current.target_user_id,
+          previousStatus: replayedFromStatus(existingReplay.metadata),
+        };
       }
 
       // Stale-view guard: the analyst decided against a status that is no
@@ -461,7 +534,11 @@ export async function updateReviewStatus(
           status,
           resolution,
         });
-        return { kind: "replayed", targetUserId: current.target_user_id };
+        return {
+          kind: "replayed",
+          targetUserId: current.target_user_id,
+          previousStatus: replayedFromStatus(racedReplay?.metadata),
+        };
       }
 
       const updated = await tx.update(antifraud_reviews).set({
@@ -518,6 +595,7 @@ export async function updateReviewStatus(
       return {
         kind: "applied",
         targetUserId: current.target_user_id,
+        previousStatus: current.status,
         applied: {
           openedBy: current.opened_by,
         },
@@ -563,9 +641,11 @@ export async function updateReviewStatus(
     return { ok: true, withdrawalRelease: "not_applicable" };
   }
 
-  // A cleared verdict releases the account's withdrawal locks. This runs on a
-  // replay too: the release is idempotent, and re-running it is what repairs a
-  // clear whose post-commit step died before the account was unlocked.
+  // The account follows the verdict in BOTH directions: clearing releases the
+  // withdrawal locks, and leaving `cleared` again (reopen, back to review, or
+  // flag) puts them back. Both run on a replay too — they are idempotent, and
+  // re-running is what repairs a transition whose post-commit step died before
+  // the account caught up.
   const withdrawalRelease: WithdrawalReleaseStatus =
     status === "cleared"
       ? await releaseClearedCaseWithdrawals({
@@ -574,7 +654,14 @@ export async function updateReviewStatus(
           adminUserId: session.userId,
           idempotencyKey,
         })
-      : "not_applicable";
+      : outcome.previousStatus === "cleared"
+        ? await restoreReopenedCaseWithdrawals({
+            reviewId,
+            targetUserId: outcome.targetUserId,
+            adminUserId: session.userId,
+            idempotencyKey,
+          })
+        : "not_applicable";
 
   // On a replay a previous response may have failed during cache invalidation
   // after the transaction committed — re-running these is safe either way.
