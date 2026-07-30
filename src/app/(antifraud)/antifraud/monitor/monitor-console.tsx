@@ -1063,9 +1063,9 @@ export function MonitorConsole() {
               </>
             }
           />
-          <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="flex h-[460px] flex-col overflow-y-auto rounded-xl border border-border/60 bg-card p-3">
           {!liveSnapshotAvailable ? (
-            <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
               <AlertTriangle
                 className="size-6 text-amber-500"
                 aria-hidden
@@ -1077,7 +1077,7 @@ export function MonitorConsole() {
               </p>
             </div>
           ) : sessions.length === 0 ? (
-            <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
+            <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
               <UserRoundSearch className="size-6 text-muted-foreground" aria-hidden />
               <p className="text-sm font-semibold">No active monitors</p>
               <p className="max-w-sm text-xs text-muted-foreground">
@@ -1086,7 +1086,7 @@ export function MonitorConsole() {
               </p>
             </div>
           ) : (
-            <ul className="divide-y divide-border/60">
+            <ul className="space-y-2.5">
               {sessions.map((session) => {
                 const started = Date.parse(session.started_at);
                 const ends = Date.parse(session.ends_at);
@@ -1156,17 +1156,20 @@ export function MonitorConsole() {
                   </>
                 );
                 return (
-                  <li key={session.session_id}>
+                  <li
+                    key={session.session_id}
+                    className="overflow-hidden rounded-lg border border-border/60 bg-background/40"
+                  >
                     {session.case_id ? (
                       <HostLink
                         href={caseHref(session.case_id)}
                         aria-label={`Open monitor case for ${player}, ${session.severity} severity, score ${session.current_score}`}
-                        className="block px-3 py-3 hover:bg-muted/40 sm:px-4"
+                        className="block p-3 hover:bg-muted/40"
                       >
                         {body}
                       </HostLink>
                     ) : (
-                      <div className="px-3 py-3 sm:px-4">{body}</div>
+                      <div className="p-3">{body}</div>
                     )}
                   </li>
                 );
@@ -1190,9 +1193,9 @@ export function MonitorConsole() {
               </>
             }
           />
-          <div className="max-h-[480px] overflow-y-auto rounded-xl border border-border/60 bg-card">
+          <div className="flex h-[460px] flex-col overflow-y-auto rounded-xl border border-border/60 bg-card">
             {events.length === 0 ? (
-              <div className="flex min-h-72 flex-col items-center justify-center gap-2 px-4 text-center">
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
                 <Radio className="size-6 text-muted-foreground" aria-hidden />
                 <p className="text-sm font-semibold">Waiting for events</p>
                 <p className="max-w-xs text-xs text-muted-foreground">
@@ -1268,7 +1271,7 @@ export function MonitorConsole() {
             </>
           }
         />
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="h-[560px] overflow-y-auto rounded-xl border border-border/60 bg-card">
         {cases.length === 0 ? (
           <p className="px-4 py-10 text-center text-xs text-muted-foreground">
             No monitor cases have been recorded yet.
@@ -1342,7 +1345,7 @@ export function MonitorConsole() {
               </>
             }
           />
-          <div className="max-h-[520px] overflow-y-auto rounded-xl border border-border/60 bg-card">
+          <div className="h-[560px] overflow-y-auto rounded-xl border border-border/60 bg-card">
             {recentSessions.length === 0 ? (
               <p className="px-4 py-10 text-center text-xs text-muted-foreground">
                 No recent monitor sessions are available.
