@@ -59,6 +59,12 @@ export const API_SCOPES = {
       "Provision and link private creator sections, then read their combined 30-day performance, current deal terms, and active reward-program terms. Reads creator data from the production mirror, verifies Discord ownership for creator self-linking, and writes provisioning state only to the admin database.",
     access: "admin-write",
   },
+  "discord:vips:link": {
+    label: "Link VIP Discord channels",
+    description:
+      "Preview a Packy user and link that user to the current channel in the VIPs Discord server. Reads the user from the production mirror and writes the durable channel mapping only to the admin database.",
+    access: "admin-write",
+  },
   "discord:antifraud": {
     label: "Deliver Antifraud notifications",
     description:

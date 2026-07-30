@@ -1732,6 +1732,42 @@ export const discord_creator_setups = pgTable("discord_creator_setups", {
 	check("discord_creator_setups_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text])`),
 ]);
 
+export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	user_id: text().notNull(),
+	channel_id: text().notNull(),
+	linked_by_discord_user_id: text().notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_vip_channel_links_updated_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.updated_at.desc().nullsFirst().op("timestamptz_ops")),
+	unique("discord_vip_channel_links_guild_channel_unique").on(table.guild_id, table.channel_id),
+	unique("discord_vip_channel_links_guild_user_unique").on(table.guild_id, table.user_id),
+	check("discord_vip_channel_links_actor_id_check", sql`linked_by_discord_user_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
+]);
+
+export const discord_vip_channel_link_operations = pgTable("discord_vip_channel_link_operations", {
+	interaction_id: text().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	user_id: text().notNull(),
+	channel_id: text().notNull(),
+	actor_discord_user_id: text().notNull(),
+	status: text().notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_vip_channel_link_operations_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	check("discord_vip_channel_link_operations_actor_id_check", sql`actor_discord_user_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_interaction_id_check", sql`interaction_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_status_check", sql`status = ANY (ARRAY['linked'::text, 'updated'::text, 'already_linked'::text])`),
+	check("discord_vip_channel_link_operations_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
+]);
+
 export const admin_whop_refund_batches = pgTable("admin_whop_refund_batches", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	requested_by: uuid(),

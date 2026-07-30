@@ -149,6 +149,7 @@ that work.
 | `discord:info:read` | `/discord/info` |
 | `discord:rewards:read` | `/discord/rewards` |
 | `discord:creator:setup` | `/discord/creator-setups/{prepare,complete,repair,cancel,link,stats}` |
+| `discord:vips:link` | `/discord/vips/{link-preview,link}` |
 | `discord:rewards:claim` | `/discord/claim` |
 | `discord:read` | `/discord/linked` (only needed for a bare link check) |
 

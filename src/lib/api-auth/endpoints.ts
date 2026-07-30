@@ -111,6 +111,20 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/vips/link-preview",
+    summary:
+      "Body { guildId, channelId, userId, actorDiscordUserId }. VIPs-only read that returns the Packy username preview before a staff member confirms a channel link.",
+    scopes: ["discord:vips:link"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/vips/link",
+    summary:
+      "Body { guildId, channelId, userId, actorDiscordUserId, interactionId }. VIPs-only idempotent write that stores the Packy user to Discord channel mapping in the Admin DB.",
+    scopes: ["discord:vips:link"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",
