@@ -145,6 +145,10 @@ function KpiGrid({
   monitor: AntifraudMonitorOverview | null;
   monitorUnavailable: boolean;
 }) {
+  // Refunded deposits are dropped from both fiat legs upstream, so this money
+  // sits outside the tile's two numbers rather than inside the fraud one.
+  const refundedCents = monitor?.fiat?.refundedLifetimeCents ?? 0;
+  const fraudRefundedCents = monitor?.fiat?.fraudulentRefundedLifetimeCents ?? 0;
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
       <SplitKpi
@@ -164,6 +168,17 @@ function KpiGrid({
           ),
           accent: "rose",
         }}
+        footnote={
+          refundedCents > 0
+            ? `Already refunded (not counted above): ${formatCurrency(
+                refundedCents / 100,
+              )}${
+                fraudRefundedCents > 0
+                  ? ` · fraud ${formatCurrency(fraudRefundedCents / 100)}`
+                  : ""
+              }`
+            : undefined
+        }
       />
       <SplitKpi
         label="KYC locked"
@@ -231,11 +246,13 @@ function SplitKpi({
   icon: Icon,
   left,
   right,
+  footnote,
 }: {
   label: string;
   icon: ElementType;
   left: { label: string; value: string; accent: AccentColor };
   right: { label: string; value: string; accent: AccentColor };
+  footnote?: string;
 }) {
   // Flat tile matching KpiTile (same surface, radius, padding and the
   // canonical 11px/0.14em micro-caps eyebrow) so the mixed KPI grid reads
@@ -243,7 +260,9 @@ function SplitKpi({
   return (
     <div
       role="group"
-      aria-label={`${label}: ${left.label} ${left.value}, ${right.label} ${right.value}`}
+      aria-label={`${label}: ${left.label} ${left.value}, ${right.label} ${right.value}${
+        footnote ? `, ${footnote}` : ""
+      }`}
       className="h-full rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
     >
       <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
@@ -269,6 +288,11 @@ function SplitKpi({
           </div>
         ))}
       </div>
+      {footnote && (
+        <p className="mt-2 text-[10px] leading-tight text-muted-foreground">
+          {footnote}
+        </p>
+      )}
     </div>
   );
 }

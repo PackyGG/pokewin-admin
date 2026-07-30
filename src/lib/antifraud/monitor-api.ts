@@ -239,6 +239,13 @@ const monitorOverviewSchema = z.object({
       fraudulentLifetimeCents: z.number().nonnegative(),
       legitimateLast24HoursCents: z.number().nonnegative(),
       fraudulentLast24HoursCents: z.number().nonnegative(),
+      /**
+       * Deposits already refunded. They are excluded from both legs above, so
+       * this is separate money, never a subset of the fraud number. Optional
+       * while a monitor build without the refunded leg may still be serving.
+       */
+      refundedLifetimeCents: z.number().nonnegative().optional(),
+      fraudulentRefundedLifetimeCents: z.number().nonnegative().optional(),
       days: z
         .array(
           z.object({

@@ -778,6 +778,8 @@ async function loadOverview(
       fraudulent_lifetime_cents: number;
       legitimate_last_24_hours_cents: number;
       fraudulent_last_24_hours_cents: number;
+      refunded_lifetime_cents: number;
+      fraudulent_refunded_lifetime_cents: number;
       days: Array<{
         date: string;
         legitimateCents: number;
@@ -789,21 +791,25 @@ async function loadOverview(
           SELECT
             occurred_at,
             verdict = 'bad' AS is_fraud,
+            status IN ('refunded', 'partially_refunded') AS is_refunded,
             credited_amount_usd AS amount_usd
           FROM fiat_deposit_assessments
           WHERE status = ANY($1::text[])
-            AND status NOT IN ('refunded', 'partially_refunded')
             AND user_id <> ALL($2::text[])
         ),
         daily AS (
           SELECT
             (occurred_at AT TIME ZONE 'UTC')::date AS bucket,
             COALESCE(
-              ROUND(SUM(amount_usd) FILTER (WHERE NOT is_fraud) * 100),
+              ROUND(SUM(amount_usd) FILTER (
+                WHERE NOT is_fraud AND NOT is_refunded
+              ) * 100),
               0
             )::float8 AS legitimate_cents,
             COALESCE(
-              ROUND(SUM(amount_usd) FILTER (WHERE is_fraud) * 100),
+              ROUND(SUM(amount_usd) FILTER (
+                WHERE is_fraud AND NOT is_refunded
+              ) * 100),
               0
             )::float8 AS fraudulent_cents
           FROM scoped_fiat
@@ -815,20 +821,29 @@ async function loadOverview(
           ORDER BY 1
         )
         SELECT
-          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE NOT is_fraud) * 100), 0)
-            ::float8 AS legitimate_lifetime_cents,
-          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE is_fraud) * 100), 0)
-            ::float8 AS fraudulent_lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (
+            WHERE NOT is_fraud AND NOT is_refunded
+          ) * 100), 0)::float8 AS legitimate_lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (
+            WHERE is_fraud AND NOT is_refunded
+          ) * 100), 0)::float8 AS fraudulent_lifetime_cents,
           COALESCE(ROUND(SUM(amount_usd) FILTER (
             WHERE NOT is_fraud
+              AND NOT is_refunded
               AND occurred_at >= now() - interval '24 hours'
               AND occurred_at < now()
           ) * 100), 0)::float8 AS legitimate_last_24_hours_cents,
           COALESCE(ROUND(SUM(amount_usd) FILTER (
             WHERE is_fraud
+              AND NOT is_refunded
               AND occurred_at >= now() - interval '24 hours'
               AND occurred_at < now()
           ) * 100), 0)::float8 AS fraudulent_last_24_hours_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (WHERE is_refunded) * 100), 0)
+            ::float8 AS refunded_lifetime_cents,
+          COALESCE(ROUND(SUM(amount_usd) FILTER (
+            WHERE is_refunded AND is_fraud
+          ) * 100), 0)::float8 AS fraudulent_refunded_lifetime_cents,
           COALESCE((
             SELECT json_agg(json_build_object(
               'date', bucket::text,
@@ -887,6 +902,9 @@ async function loadOverview(
             fiat?.legitimate_last_24_hours_cents ?? 0,
           fraudulentLast24HoursCents:
             fiat?.fraudulent_last_24_hours_cents ?? 0,
+          refundedLifetimeCents: fiat?.refunded_lifetime_cents ?? 0,
+          fraudulentRefundedLifetimeCents:
+            fiat?.fraudulent_refunded_lifetime_cents ?? 0,
           days: fiat?.days ?? [],
         }
         : null,
@@ -909,7 +927,11 @@ async function loadOverview(
 app.get("/v1/overview", async (request) => {
   // The dashboard KPI has to reconcile with /v1/fiat-deposits, so the fiat
   // split uses that route's scope: settled-or-paid assessments only, refunds
-  // dropped from both legs, creators and excluded users ignored.
+  // kept out of both legs, creators and excluded users ignored. The refunded
+  // money is now reported on its own leg instead of vanishing, so the KPI can
+  // say how much of the fraud volume was already given back. A partially
+  // refunded row counts at its full credited value because the assessment
+  // stores no partial refund amount; there are none in production today.
   const ignoredFiatUsers = [
     ...new Set([
       ...(request.headers["x-antifraud-excluded-users"] === undefined

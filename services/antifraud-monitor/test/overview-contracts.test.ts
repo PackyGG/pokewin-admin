@@ -19,7 +19,17 @@ test("overview endpoint exposes bounded real review, blacklist, and session data
   assert.match(server, /FROM fiat_deposit_assessments/);
   assert.match(server, /verdict = 'bad' AS is_fraud/);
   assert.match(server, /status = ANY\(\$1::text\[\]\)/);
-  assert.match(server, /status NOT IN \('refunded', 'partially_refunded'\)/);
+  // Refunded money stays out of the legitimate and fraud legs, but it is now
+  // reported on its own leg instead of disappearing from the KPI entirely.
+  assert.match(
+    server,
+    /status IN \('refunded', 'partially_refunded'\) AS is_refunded/,
+  );
+  assert.match(server, /WHERE NOT is_fraud AND NOT is_refunded/);
+  assert.match(server, /WHERE is_fraud AND NOT is_refunded/);
+  assert.match(server, /FILTER \(WHERE is_refunded\) \* 100/);
+  assert.match(server, /refundedLifetimeCents/);
+  assert.match(server, /fraudulentRefundedLifetimeCents/);
   assert.match(server, /user_id <> ALL\(\$2::text\[\]\)/);
   assert.match(server, /interval '29 days'/);
   assert.match(server, /last24HoursCents/);
