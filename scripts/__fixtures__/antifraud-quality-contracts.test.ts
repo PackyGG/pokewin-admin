@@ -10,13 +10,14 @@ function read(relative: string): string {
   return readFileSync(path.join(root, relative), "utf8");
 }
 
-test("Fraud live APIs use the same fail-closed workspace gate", () => {
+test("Fraud live APIs use the fail-closed read gate and route-level request checks", () => {
   for (const route of [
     "src/app/api/antifraud/monitor/route.ts",
     "src/app/api/antifraud/monitor/stream/route.ts",
   ]) {
     const source = read(route);
-    assert.match(source, /requireAntifraudAccess\(\)/);
+    assert.match(source, /requireAntifraudReadAccess\(\)/);
+    assert.doesNotMatch(source, /requireAntifraudAccess\(\)/);
     assert.match(source, /sec-fetch-site/);
     assert.match(source, /origin/);
     assert.match(source, /rateLimit\(/);

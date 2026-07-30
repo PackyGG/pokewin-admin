@@ -1,4 +1,4 @@
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
 import { getAntifraudLiveMirrorMetrics } from "@/lib/antifraud/overview";
 
@@ -62,7 +62,7 @@ function flowMonitoring(value: unknown): {
 export async function GET(request: Request): Promise<Response> {
   let actorId: string;
   try {
-    const session = await requireAntifraudAccess();
+    const session = await requireAntifraudReadAccess();
     actorId = session.userId;
   } catch {
     return Response.json({ error: "unauthorized" }, { status: 401 });

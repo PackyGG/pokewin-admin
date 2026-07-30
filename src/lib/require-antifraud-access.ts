@@ -175,6 +175,26 @@ export async function requireAntifraudPageAccess(): Promise<SessionPayload> {
   return session;
 }
 
+/**
+ * Read-only API gate for authenticated GET/stream routes.
+ *
+ * EventSource does not reliably send an Origin header for a same-origin GET.
+ * Reusing the Server Action gate here therefore rejects a valid live stream
+ * before the route can apply its own Fetch Metadata and Origin checks. Keep
+ * role/account authorization shared, while the individual route owns its
+ * read-specific CSRF and rate-limit policy.
+ */
+export async function requireAntifraudReadAccess(
+  unauthorizedMessage = "Not authorized to access the Antifraud workspace.",
+): Promise<SessionPayload> {
+  const { session, username, active } = await resolveLiveSession();
+  if (!(await isAntifraudAllowed(session, username, active))) {
+    await auditDeniedAccess(session, username, "view");
+    throw new Error(unauthorizedMessage);
+  }
+  return session;
+}
+
 /** Server-action gate — throws on denial (never redirects from an action). */
 export async function requireAntifraudAccess(
   unauthorizedMessage = "Not authorized to access the Antifraud workspace.",

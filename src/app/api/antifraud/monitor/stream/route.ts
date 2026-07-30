@@ -1,6 +1,6 @@
 import WebSocket from "ws";
 
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
 
 export const runtime = "nodejs";
@@ -209,7 +209,7 @@ function websocketUrl(baseUrl: string): string {
 export async function GET(request: Request): Promise<Response> {
   let actorId: string;
   try {
-    const session = await requireAntifraudAccess();
+    const session = await requireAntifraudReadAccess();
     actorId = session.userId;
   } catch {
     return new Response("Unauthorized", { status: 401 });

@@ -6,7 +6,7 @@ import {
 } from "@/lib/dal";
 import { pageAccessGranted } from "@/lib/admin-pages";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 import https from "node:https";
 import crypto from "node:crypto";
 import type { Duplex, Writable } from "node:stream";
@@ -172,7 +172,7 @@ export async function GET(request: Request): Promise<Response> {
       fullAccess || pageAccessGranted(permissions, "/users");
     if (!canReceiveGaming) {
       try {
-        await requireAntifraudAccess();
+        await requireAntifraudReadAccess();
         canReceiveGaming = true;
       } catch {
         // Antifraud access is independent from normal admin page permissions.

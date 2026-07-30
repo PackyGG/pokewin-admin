@@ -126,7 +126,7 @@ async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
         />
       )}
 
-      <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
         <PanelErrorBoundary label="Live action feed">
           <OverviewActionFeed initialItems={overviewResult.data.feed} />
         </PanelErrorBoundary>
@@ -300,7 +300,7 @@ function DashboardSkeleton() {
         ))}
       </div>
       <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
-        <Skeleton className="h-[420px] rounded-xl" />
+        <Skeleton className="h-[300px] rounded-xl" />
         <Skeleton className="h-[420px] rounded-xl" />
       </div>
     </div>

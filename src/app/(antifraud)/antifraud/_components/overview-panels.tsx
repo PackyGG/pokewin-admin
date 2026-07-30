@@ -297,7 +297,7 @@ export function OverviewActionFeed({
   );
 
   return (
-    <section className="flex h-full min-h-[390px] flex-col rounded-xl border border-border/60 bg-card">
+    <section className="flex h-[300px] min-h-0 flex-col rounded-xl border border-border/60 bg-card">
       <div className="border-b border-border/60 px-3 py-3 sm:px-4">
         <SectionHeading
           icon={Radio}
@@ -321,7 +321,7 @@ export function OverviewActionFeed({
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">
         {items.length === 0 ? (
-          <div className="flex h-full min-h-72 items-center justify-center px-5 text-center text-xs text-muted-foreground">
+          <div className="flex h-full items-center justify-center px-5 text-center text-xs text-muted-foreground">
             No persisted Fraud activity is available yet. New monitor events
             will appear here live.
           </div>

@@ -7,7 +7,10 @@ const servicePath = "services/antifraud-monitor/src/live.ts";
 const packyRoutePath = "src/app/api/packy-live/route.ts";
 const packyClientPath = "src/lib/packy-ws.ts";
 const overviewPath = "src/app/(antifraud)/antifraud/page.tsx";
+const overviewPanelsPath =
+  "src/app/(antifraud)/antifraud/_components/overview-panels.tsx";
 const monitorRoutePath = "src/app/api/antifraud/monitor/route.ts";
+const accessGatePath = "src/lib/require-antifraud-access.ts";
 const monitorParserPath =
   "src/app/(antifraud)/antifraud/_components/monitor-stream.ts";
 const retiredOverviewActivityPath =
@@ -34,6 +37,36 @@ test("the monitor service owns connection capacity and the SSE bridge reconnects
   assert.match(service, /client\.on\("error"/);
   assert.match(route, /code === 1013/);
   assert.match(route, /CAPACITY_RETRY_MIN_MS/);
+});
+
+test("read-only antifraud streams do not use the Server Action origin gate", async () => {
+  const [streamRoute, snapshotRoute, accessGate] = await Promise.all([
+    readFile(routePath, "utf8"),
+    readFile(monitorRoutePath, "utf8"),
+    readFile(accessGatePath, "utf8"),
+  ]);
+
+  for (const route of [streamRoute, snapshotRoute]) {
+    assert.match(route, /requireAntifraudReadAccess\(\)/);
+    assert.doesNotMatch(route, /requireAntifraudAccess\(\)/);
+    assert.match(route, /sec-fetch-site/);
+  }
+  assert.match(accessGate, /export async function requireAntifraudReadAccess/);
+  assert.match(
+    accessGate,
+    /requireAntifraudReadAccess[\s\S]*?isAntifraudAllowed/,
+  );
+});
+
+test("overview action feed stays compact beside the thirty-day charts", async () => {
+  const [overview, panels] = await Promise.all([
+    readFile(overviewPath, "utf8"),
+    readFile(overviewPanelsPath, "utf8"),
+  ]);
+
+  assert.match(overview, /grid items-start gap-4/);
+  assert.match(panels, /h-\[300px\] min-h-0/);
+  assert.doesNotMatch(panels, /h-full min-h-\[390px\]/);
 });
 
 test("temporary terminal monitor frames keep every client eligible to reconnect", async () => {
