@@ -244,26 +244,27 @@ export function DiscordRoutingWorkspace({
 
   const config = initialConfig;
   const enabledEvents = initialConfig.events.filter((event) => event.enabled);
-  const assignedElsewhere = new Set(
-    initialConfig.routes
-      .filter(
-        (route) =>
-          route.enabled &&
-          route.channelId !== editor?.channelId,
-      )
-      .map((route) => route.eventKey),
-  );
+  // The same event may be routed to several channels, so nothing is hidden
+  // here; the other channels it already reaches are shown next to it instead.
+  const otherChannelsByEvent = new Map<string, string[]>();
+  for (const route of initialConfig.routes) {
+    if (!route.enabled || route.channelId === editor?.channelId) continue;
+    const name = initialConfig.channels.find(
+      (channel) => channel.id === route.channelId,
+    )?.name;
+    if (!name) continue;
+    const names = otherChannelsByEvent.get(route.eventKey) ?? [];
+    names.push(name);
+    otherChannelsByEvent.set(route.eventKey, names);
+  }
   const filteredEvents = enabledEvents.filter((event) => {
     const normalized = eventQuery.trim().toLowerCase();
     return (
-      !assignedElsewhere.has(event.key) &&
-      (
-        !normalized ||
-        event.label.toLowerCase().includes(normalized) ||
-        event.description.toLowerCase().includes(normalized) ||
-        event.category.toLowerCase().includes(normalized) ||
-        event.key.includes(normalized)
-      )
+      !normalized ||
+      event.label.toLowerCase().includes(normalized) ||
+      event.description.toLowerCase().includes(normalized) ||
+      event.category.toLowerCase().includes(normalized) ||
+      event.key.includes(normalized)
     );
   });
 
@@ -614,6 +615,7 @@ export function DiscordRoutingWorkspace({
         editingChannelId={editingChannelId}
         channels={editingChannelId ? initialConfig.channels : availableChannels}
         events={filteredEvents}
+        otherChannelsByEvent={otherChannelsByEvent}
         eventQuery={eventQuery}
         pending={pending}
         onEventQueryChange={setEventQuery}
@@ -842,6 +844,7 @@ function ChannelEditorDialog({
   editingChannelId,
   channels,
   events,
+  otherChannelsByEvent,
   eventQuery,
   pending,
   onEventQueryChange,
@@ -855,6 +858,7 @@ function ChannelEditorDialog({
   editingChannelId: string | null;
   channels: DiscordNotificationChannel[];
   events: DiscordNotificationEvent[];
+  otherChannelsByEvent: Map<string, string[]>;
   eventQuery: string;
   pending: boolean;
   onEventQueryChange: (value: string) => void;
@@ -927,6 +931,7 @@ function ChannelEditorDialog({
                 ) : (
                   events.map((event) => {
                     const checked = editor.eventKeys.includes(event.key);
+                    const alsoIn = otherChannelsByEvent.get(event.key) ?? [];
                     return (
                       <label
                         key={event.key}
@@ -955,6 +960,12 @@ function ChannelEditorDialog({
                           <span className="mt-1 block text-xs text-muted-foreground">
                             {event.description}
                           </span>
+                          {alsoIn.length > 0 && (
+                            <span className="mt-1 block text-[11px] text-muted-foreground/80">
+                              Also sent to{" "}
+                              {alsoIn.map((name) => `#${name}`).join(", ")}
+                            </span>
+                          )}
                         </span>
                       </label>
                     );

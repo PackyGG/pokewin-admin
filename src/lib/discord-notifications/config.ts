@@ -421,30 +421,9 @@ export async function replaceDiscordNotificationChannelRoutes(input: {
     }
 
     if (eventKeys.length > 0) {
-      const assignedElsewhere = await tx.execute<{
-        event_key: string;
-        channel_name: string;
-      }>(sql`
-        SELECT route.event_key, channel.name AS channel_name
-        FROM discord_notification_routes AS route
-        JOIN discord_notification_channels AS channel
-          ON channel.guild_id = route.guild_id
-         AND channel.channel_id = route.channel_id
-        JOIN jsonb_array_elements_text(${eventKeysJson}::jsonb) AS desired(event_key)
-          ON desired.event_key = route.event_key
-        WHERE route.guild_id = ${guildId}
-          AND route.channel_id <> ${channelId}
-          AND route.enabled = true
-        ORDER BY route.event_key
-        LIMIT 1
-      `);
-      const conflict = assignedElsewhere.rows[0];
-      if (conflict) {
-        throw new Error(
-          `${conflict.event_key} is already assigned to #${conflict.channel_name}. Remove it there first.`,
-        );
-      }
-
+      // An event may fan out to several channels: the delivery router already
+      // enqueues one message per eligible route, so channels are edited
+      // independently and never claim an event exclusively.
       const inserted = await tx.execute<{ event_key: string }>(sql`
         INSERT INTO discord_notification_routes (
           guild_id, event_key, channel_id, enabled, created_by
