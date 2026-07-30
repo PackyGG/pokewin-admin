@@ -570,6 +570,9 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
       eventType: "account_banned",
       targetUserId: review.targetUserId,
       metadata: {
+        // Scopes the row to the Fraud staff audit log — `account_banned` is
+        // also written from /users (see lib/antifraud/staff-audit.ts).
+        source: "antifraud_reviews",
         reason,
         issuer_main_user_id: issuerMainUserId,
         reviewId,

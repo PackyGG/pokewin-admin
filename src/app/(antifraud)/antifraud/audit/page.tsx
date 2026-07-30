@@ -1,27 +1,74 @@
-import Link from "next/link";
-import { Activity, ArrowRight } from "lucide-react";
+import { Suspense } from "react";
+import { CalendarClock, ScrollText, Search, UserRoundCog } from "lucide-react";
 
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import { HostLink } from "@/components/host-link";
+import { KpiStripSkeleton } from "@/components/loading-skeletons";
+import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  listAntifraudSecurityAuditEvents,
-  type AntifraudAuditKind,
-  type AntifraudAuditOutcome,
-} from "@/lib/antifraud/security-audit";
+  ANTIFRAUD_AUDIT_CATEGORY_LABELS,
+  ANTIFRAUD_AUDIT_EVENTS,
+  listAntifraudStaffAudit,
+  type AntifraudAuditCategory,
+  type AntifraudAuditRow,
+  type AntifraudAuditTone,
+} from "@/lib/antifraud/staff-audit";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
-import { EmptyState } from "../_components/list-page";
+import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import {
+  EmptyState,
+  FilterButton,
+  FilterGroup,
+  ListPagination,
+  parsePageParam,
+} from "../_components/list-page";
 
 export const metadata = { title: "Audit Log · Antifraud" };
 
+/**
+ * STAFF AUDIT LOG — who on the team did what in the Fraud workspace.
+ *
+ * Source: `admin_audit_events` scoped to the workspace's event vocabulary
+ * (see `@/lib/antifraud/staff-audit`). Deliberately NOT the security-boundary
+ * log: page views, access denials and automated `antifraud-monitor` ingests
+ * are system plumbing, not operator decisions, and they drowned out the real
+ * staff actions this page exists to answer for.
+ */
+
+const CATEGORIES = Object.keys(
+  ANTIFRAUD_AUDIT_CATEGORY_LABELS,
+) as AntifraudAuditCategory[];
+
 type SearchParams = {
-  action?: string;
-  kind?: string;
-  outcome?: string;
-  correlation?: string;
-  before?: string;
+  page?: string;
+  category?: string;
+  event?: string;
+  actor?: string;
+  search?: string;
 };
+
+type FilterState = {
+  page: number;
+  category?: AntifraudAuditCategory;
+  event?: string;
+  actor?: string;
+  search: string;
+};
+
+function auditHref(state: FilterState): string {
+  const params = new URLSearchParams();
+  if (state.category) params.set("category", state.category);
+  if (state.event) params.set("event", state.event);
+  if (state.actor) params.set("actor", state.actor);
+  if (state.search) params.set("search", state.search);
+  if (state.page > 1) params.set("page", String(state.page));
+  const query = params.toString();
+  return query ? `/antifraud/audit?${query}` : "/antifraud/audit";
+}
 
 export default async function AntifraudAuditPage({
   searchParams,
@@ -29,14 +76,21 @@ export default async function AntifraudAuditPage({
   searchParams: Promise<SearchParams>;
 }) {
   await requireAntifraudManagerPage();
-  const filters = await searchParams;
-  const data = await listAntifraudSecurityAuditEvents({
-    action: filters.action,
-    kind: filters.kind,
-    outcome: filters.outcome,
-    correlationId: filters.correlation,
-    before: filters.before,
-  });
+  const params = await searchParams;
+  const state: FilterState = {
+    page: parsePageParam(params.page),
+    category: CATEGORIES.includes(params.category as AntifraudAuditCategory)
+      ? (params.category as AntifraudAuditCategory)
+      : undefined,
+    event:
+      params.event && ANTIFRAUD_AUDIT_EVENTS[params.event]
+        ? params.event
+        : undefined,
+    actor: /^[0-9a-f-]{36}$/i.test(params.actor ?? "")
+      ? params.actor
+      : undefined,
+    search: params.search?.trim().slice(0, 100) ?? "",
+  };
 
   return (
     <div className="space-y-4">
@@ -45,162 +99,194 @@ export default async function AntifraudAuditPage({
       </PageHero>
 
       <p className="max-w-3xl text-xs text-muted-foreground">
-        Every authorized or denied Fraud page view, search, automated event, and
-        protected mutation. The database rejects updates, deletes, and
-        truncation.
+        Every action a staff member took in the Fraud workspace — bans, case
+        verdicts, KYC reviews, refund batches, blocklist edits and risk-config
+        changes. Automated monitor signals are not staff actions; they live in{" "}
+        <HostLink href="/antifraud/events" className="underline">
+          Events
+        </HostLink>
+        .
       </p>
 
-      <AuditFilters filters={filters} />
+      <Filters state={state} />
 
-      {data.events.length === 0 ? (
-        <EmptyState text="No audit events match these filters." icon={Activity} />
+      <Suspense key={auditHref(state)} fallback={<Fallback />}>
+        <Content state={state} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function Content({ state }: { state: FilterState }) {
+  const data = await listAntifraudStaffAudit({
+    page: state.page,
+    category: state.category,
+    event: state.event,
+    actorId: state.actor,
+    search: state.search,
+  });
+
+  return (
+    <>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <KpiTile
+          label="Matching actions"
+          value={String(data.total)}
+          icon={ScrollText}
+          accent="blue"
+        />
+        <KpiTile
+          label="Last 24 hours"
+          value={String(data.last24h)}
+          icon={CalendarClock}
+          accent="amber"
+        />
+        <KpiTile
+          label="Staff active (30d)"
+          value={String(data.activeStaff)}
+          icon={UserRoundCog}
+          accent="purple"
+        />
+      </div>
+
+      {data.actors.length > 0 && (
+        <FilterGroup label="Staff member">
+          <FilterButton
+            label="Everyone"
+            active={!state.actor}
+            href={auditHref({ ...state, actor: undefined, page: 1 })}
+          />
+          {data.actors.map((actor) => (
+            <FilterButton
+              key={actor.id}
+              label={actor.username}
+              active={state.actor === actor.id}
+              href={auditHref({ ...state, actor: actor.id, page: 1 })}
+            />
+          ))}
+        </FilterGroup>
+      )}
+
+      {data.rows.length === 0 ? (
+        <EmptyState
+          text="No staff actions match these filters."
+          icon={ScrollText}
+        />
       ) : (
         <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
           <div className="divide-y divide-border/60">
-            {data.events.map((event) => (
-              <details key={event.id} className="group p-4">
-                <summary className="flex cursor-pointer list-none items-start gap-3">
-                  <span
-                    className={cn(
-                      "mt-1 size-2 shrink-0 rounded-full",
-                      event.outcome === "failed" || event.outcome === "denied"
-                        ? "bg-rose-500"
-                        : event.outcome === "rate_limited"
-                          ? "bg-amber-500"
-                          : "bg-emerald-500",
-                    )}
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex flex-wrap items-center gap-2">
-                      <span className="break-all font-mono text-xs font-semibold">
-                        {event.action}
-                      </span>
-                      <Badge variant="outline">{event.eventKind}</Badge>
-                      <Badge variant="secondary">{event.outcome}</Badge>
-                    </span>
-                    <span className="mt-1 block text-xs tabular-nums text-muted-foreground">
-                      {event.actorUsername ?? "system"} ·{" "}
-                      {new Date(event.createdAt).toLocaleString()} · correlation{" "}
-                      <span className="font-mono">{event.correlationId}</span>
-                    </span>
-                  </span>
-                  <ArrowRight className="mt-1 size-4 text-muted-foreground transition-transform group-open:rotate-90" />
-                </summary>
-                <div className="mt-4 grid gap-3 border-t border-border/60 pt-4 text-xs md:grid-cols-2">
-                  <AuditValue label="Path" value={event.requestPath} />
-                  <AuditValue label="Method" value={event.requestMethod} />
-                  <AuditValue
-                    label="Target"
-                    value={
-                      event.targetType || event.targetId
-                        ? `${event.targetType ?? "target"}:${event.targetId ?? "unknown"}`
-                        : null
-                    }
-                  />
-                  <AuditValue label="Reason code" value={event.reasonCode} />
-                  <AuditValue label="Roles" value={event.actorRoles.join(", ")} />
-                  <AuditValue label="Model" value={event.modelVersion} />
-                  {Object.keys(event.metadata).length > 0 && (
-                    <pre className="overflow-x-auto rounded-lg bg-muted/60 p-3 font-mono text-[11px] md:col-span-2">
-                      {JSON.stringify(event.metadata, null, 2)}
-                    </pre>
-                  )}
-                </div>
-              </details>
+            {data.rows.map((row) => (
+              <AuditRow key={row.id} row={row} />
             ))}
           </div>
         </section>
       )}
 
-      {data.nextCursor && (
-        <Button variant="outline" render={<Link href={auditHref(filters, data.nextCursor)} />}>
-          Older events
-          <ArrowRight />
-        </Button>
-      )}
-    </div>
+      <ListPagination
+        page={data.page}
+        pages={data.pages}
+        total={data.total}
+        unitLabel="staff actions"
+        previousHref={
+          data.page > 1
+            ? auditHref({ ...state, page: data.page - 1 })
+            : undefined
+        }
+        nextHref={
+          data.page < data.pages
+            ? auditHref({ ...state, page: data.page + 1 })
+            : undefined
+        }
+      />
+    </>
   );
 }
 
-function AuditFilters({ filters }: { filters: SearchParams }) {
+const TONE_DOT: Record<AntifraudAuditTone, string> = {
+  danger: "bg-rose-500",
+  warn: "bg-amber-500",
+  good: "bg-emerald-500",
+  neutral: "bg-blue-500",
+};
+
+/** Bookkeeping keys — the row already shows actor, target and time. */
+const HIDDEN_METADATA_KEYS = new Set([
+  "idempotencyKey",
+  "correlationId",
+  "source",
+  "issuer_main_user_id",
+  "user_ids",
+]);
+
+function AuditRow({ row }: { row: AntifraudAuditRow }) {
+  const details = Object.entries(row.metadata ?? {}).filter(
+    ([key, value]) =>
+      !HIDDEN_METADATA_KEYS.has(key) && value !== null && value !== "",
+  );
+  const reason =
+    typeof row.metadata?.reason === "string" && row.metadata.reason.trim()
+      ? row.metadata.reason
+      : null;
+
   return (
-    <form className="grid gap-3 rounded-xl border border-border/60 bg-card p-4 md:grid-cols-4">
-      <label className="space-y-1.5">
-        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Action contains
-        </span>
-        <input
-          name="action"
-          defaultValue={filters.action}
-          maxLength={160}
-          className="h-9 w-full rounded-md border border-border/60 bg-background px-3 font-mono text-xs"
+    <details className="group p-4">
+      <summary className="flex cursor-pointer list-none items-start gap-3">
+        <span
+          className={cn(
+            "mt-1.5 size-2 shrink-0 rounded-full",
+            TONE_DOT[row.tone],
+          )}
         />
-      </label>
-      <SelectFilter
-        label="Kind"
-        name="kind"
-        value={filters.kind}
-        options={["view", "search", "export", "action"] satisfies AntifraudAuditKind[]}
-      />
-      <SelectFilter
-        label="Outcome"
-        name="outcome"
-        value={filters.outcome}
-        options={[
-          "allowed",
-          "denied",
-          "succeeded",
-          "failed",
-          "rate_limited",
-        ] satisfies AntifraudAuditOutcome[]}
-      />
-      <div className="flex items-end gap-2">
-        <Button type="submit" className="flex-1">Filter</Button>
-        <Button variant="ghost" render={<Link href="/antifraud/audit" />}>
-          Clear
-        </Button>
+        <span className="min-w-0 flex-1">
+          <span className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold">{row.label}</span>
+            <Badge variant="outline">
+              {ANTIFRAUD_AUDIT_CATEGORY_LABELS[row.category]}
+            </Badge>
+            {row.targetUserId && (
+              <Badge variant="secondary" className="font-mono text-[11px]">
+                {row.targetUsername ?? row.targetUserId.slice(0, 12)}
+              </Badge>
+            )}
+          </span>
+          <span className="mt-1 block text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {row.actorUsername ?? "unattributed"}
+            </span>
+            {row.actorRole ? ` · ${row.actorRole}` : ""} ·{" "}
+            <span className="tabular-nums">
+              {formatRelative(row.createdAt)}
+            </span>{" "}
+            ·{" "}
+            <span className="tabular-nums">
+              {formatDateTime(row.createdAt)}
+            </span>
+          </span>
+          {reason && (
+            <span className="mt-1 block truncate text-xs text-muted-foreground">
+              &ldquo;{reason}&rdquo;
+            </span>
+          )}
+        </span>
+      </summary>
+      <div className="mt-4 grid gap-3 border-t border-border/60 pt-4 text-xs md:grid-cols-2">
+        <Fact label="Action" value={row.eventType} />
+        <Fact label="Target user" value={row.targetUserId} />
+        {details.length === 0 ? (
+          <p className="text-muted-foreground md:col-span-2">
+            No further details were recorded.
+          </p>
+        ) : (
+          <pre className="overflow-x-auto rounded-lg bg-muted/60 p-3 font-mono text-[11px] md:col-span-2">
+            {JSON.stringify(Object.fromEntries(details), null, 2)}
+          </pre>
+        )}
       </div>
-    </form>
+    </details>
   );
 }
 
-function SelectFilter({
-  label,
-  name,
-  value,
-  options,
-}: {
-  label: string;
-  name: string;
-  value?: string;
-  options: readonly string[];
-}) {
-  return (
-    <label className="space-y-1.5">
-      <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-      <select
-        name={name}
-        defaultValue={value ?? ""}
-        className="h-9 w-full rounded-md border border-border/60 bg-background px-3 text-xs"
-      >
-        <option value="">All</option>
-        {options.map((option) => (
-          <option key={option} value={option}>{option}</option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function AuditValue({
-  label,
-  value,
-}: {
-  label: string;
-  value: string | null;
-}) {
+function Fact({ label, value }: { label: string; value: string | null }) {
   return (
     <div className="min-w-0">
       <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -211,12 +297,70 @@ function AuditValue({
   );
 }
 
-function auditHref(filters: SearchParams, before: string): string {
-  const params = new URLSearchParams();
-  for (const key of ["action", "kind", "outcome", "correlation"] as const) {
-    const value = filters[key];
-    if (value) params.set(key, value);
-  }
-  params.set("before", before);
-  return `/antifraud/audit?${params.toString()}`;
+function Filters({ state }: { state: FilterState }) {
+  return (
+    <div className="rounded-xl border border-border/70 bg-card p-3">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
+        <FilterGroup label="Area">
+          <FilterButton
+            label="All"
+            active={!state.category && !state.event}
+            href={auditHref({
+              ...state,
+              category: undefined,
+              event: undefined,
+              page: 1,
+            })}
+          />
+          {CATEGORIES.map((category) => (
+            <FilterButton
+              key={category}
+              label={ANTIFRAUD_AUDIT_CATEGORY_LABELS[category]}
+              active={state.category === category && !state.event}
+              href={auditHref({
+                ...state,
+                category,
+                event: undefined,
+                page: 1,
+              })}
+            />
+          ))}
+        </FilterGroup>
+        <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/audit">
+          {state.category && (
+            <input type="hidden" name="category" value={state.category} />
+          )}
+          {state.event && (
+            <input type="hidden" name="event" value={state.event} />
+          )}
+          {state.actor && (
+            <input type="hidden" name="actor" value={state.actor} />
+          )}
+          <Input
+            name="search"
+            defaultValue={state.search}
+            placeholder="Target user, username or email"
+            maxLength={100}
+            aria-label="Search audited users"
+            className="xl:w-72"
+          />
+          <Button type="submit" variant="outline">
+            <Search className="size-4" />
+            Search
+          </Button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function Fallback() {
+  return (
+    <>
+      <KpiStripSkeleton count={3} />
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Skeleton key={index} className="h-20 w-full rounded-xl" />
+      ))}
+    </>
+  );
 }
