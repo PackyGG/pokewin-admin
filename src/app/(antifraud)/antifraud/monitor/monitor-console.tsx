@@ -9,17 +9,14 @@ import {
   Clock3,
   History,
   Radio,
-  RefreshCw,
   ShieldAlert,
   UserRoundSearch,
   WifiOff,
-  Workflow,
   X,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
-import { Button } from "@/components/ui/button";
 import { retrySseConnection, useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
 import { cn } from "@/lib/utils";
@@ -46,8 +43,9 @@ import { RiskScoreBar } from "../_components/risk-score-bar";
  *     expires a whole batch of sessions in one statement and publishes one
  *     frame per row, so refetching per frame produced dozens of concurrent
  *     snapshot requests and tripped the endpoint's own rate limit.
- *   - There is no timer-based snapshot polling. Manual refresh and a bounded
- *     stream-triggered resync for an unknown case are the only later reads.
+ *   - There is no timer-based snapshot polling and no manual refresh control.
+ *     A bounded stream-triggered resync for an unknown case, plus the offline
+ *     fallback poll, are the only later reads.
  *
  * Two independent health signals are tracked: `streamState` (the live feed,
  * shown in the Connection tile) and `snapshotNotice` (a one-off snapshot
@@ -129,12 +127,6 @@ type Snapshot = {
   flows?: unknown;
 };
 
-type FlowCoverage = {
-  active: number;
-  total: number;
-  names: string[];
-};
-
 const MAX_EVENTS = 60;
 const MAX_CASES = 40;
 /** No frame at all (not even a heartbeat) for this long = the feed stalled. */
@@ -201,17 +193,6 @@ function optionalRiskScore(value: unknown): number | null {
   return Number.isFinite(parsed)
     ? Math.max(0, Math.min(100, Math.round(parsed)))
     : null;
-}
-
-function parseFlowCoverage(value: unknown): FlowCoverage {
-  const row = record(value);
-  return {
-    active: number(row?.active),
-    total: number(row?.total),
-    names: Array.isArray(row?.names)
-      ? row.names.filter((name): name is string => typeof name === "string")
-      : [],
-  };
 }
 
 function parseSession(value: unknown): MonitorSession | null {
@@ -500,14 +481,7 @@ export function MonitorConsole() {
   >([]);
   const [liveMetrics, setLiveMetrics] = React.useState<LiveMetrics | null>(null);
   const [summary, setSummary] = React.useState<SnapshotSummary | null>(null);
-  const [casesTruncated, setCasesTruncated] = React.useState(false);
-  const [flowCoverage, setFlowCoverage] = React.useState<FlowCoverage>({
-    active: 0,
-    total: 0,
-    names: [],
-  });
   const [events, setEvents] = React.useState<LiveEvent[]>([]);
-  const [refreshing, setRefreshing] = React.useState(false);
   const [now, setNow] = React.useState(() => Date.now());
 
   // Monotonic request token: only the newest snapshot is allowed to write
@@ -526,13 +500,12 @@ export function MonitorConsole() {
   const sessionsRef = React.useRef<MonitorSession[]>([]);
   const casesRef = React.useRef<MonitorCase[]>([]);
 
-  const loadSnapshot = React.useCallback(async (manual = false) => {
+  const loadSnapshot = React.useCallback(async () => {
     const token = ++snapshotToken.current;
     snapshotAbort.current?.abort();
     const controller = new AbortController();
     snapshotAbort.current = controller;
     const requestedAt = Date.now();
-    if (manual) setRefreshing(true);
 
     try {
       const response = await fetch("/api/antifraud/monitor", {
@@ -573,10 +546,6 @@ export function MonitorConsole() {
         return !completedAt || timeOf(session.started_at) > completedAt;
       });
       const nextCases = list(payload.cases, parseCase);
-      setCasesTruncated(payload.casesTruncated === true);
-      if (!payload.errors?.flows) {
-        setFlowCoverage(parseFlowCoverage(payload.flows));
-      }
       if (!payload.errors?.overview) {
         setRecentSessions(list(payload.recentSessions, parseRecentSession));
         setSummary(parseSnapshotSummary(payload.summary));
@@ -607,8 +576,6 @@ export function MonitorConsole() {
       setSnapshotNotice(
         "The last snapshot refresh failed. Live events keep arriving.",
       );
-    } finally {
-      if (manual) setRefreshing(false);
     }
   }, []);
 
@@ -984,22 +951,6 @@ export function MonitorConsole() {
 
   return (
     <>
-      <div className="flex justify-end">
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => void loadSnapshot(true)}
-          disabled={refreshing}
-        >
-          <RefreshCw
-            className={cn("size-3.5", refreshing && "animate-spin")}
-            aria-hidden
-          />
-          Refresh
-        </Button>
-      </div>
-
       <PanelErrorBoundary label="Live event metrics">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
         <div role="status" aria-live="polite">
@@ -1076,20 +1027,6 @@ export function MonitorConsole() {
       </div>
       </PanelErrorBoundary>
 
-      {flowCoverage.active > 0 && (
-        <div className="flex items-start gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 px-3 py-2.5 text-xs text-muted-foreground">
-          <Workflow className="mt-0.5 size-4 shrink-0 text-cyan-500" aria-hidden />
-          <span>
-            Checking {flowCoverage.active} active{" "}
-            {flowCoverage.active === 1 ? "flow" : "flows"}
-            {flowCoverage.names.length > 0
-              ? `: ${flowCoverage.names.join(" · ")}`
-              : ""}
-            . Matches appear in Live activity and are stored on the case.
-          </span>
-        </div>
-      )}
-
       {streamNotice && (
         <div className="flex items-start gap-2 rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2.5 text-xs text-amber-800 dark:text-amber-200">
           <AlertTriangle className="mt-0.5 size-3.5 shrink-0" aria-hidden />
@@ -1135,7 +1072,7 @@ export function MonitorConsole() {
               />
               <p className="text-sm font-semibold">Sessions unavailable</p>
               <p className="max-w-sm text-xs text-muted-foreground">
-                Refresh the snapshot. Live activity and reconnect status remain
+                Reload the page. Live activity and reconnect status remain
                 independent.
               </p>
             </div>
@@ -1331,12 +1268,6 @@ export function MonitorConsole() {
             </>
           }
         />
-        {casesTruncated && (
-          <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-            Showing the newest 40 cases. Older active cases remain available
-            through the case APIs and direct links.
-          </p>
-        )}
         <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         {cases.length === 0 ? (
           <p className="px-4 py-10 text-center text-xs text-muted-foreground">

@@ -200,5 +200,4 @@ test("monitor case snapshot and rendered limits stay aligned", async () => {
   assert.match(route, /\/v1\/cases\?limit=40/);
   assert.match(client, /const MAX_CASES = 40/);
   assert.match(client, /cases\.slice\(0, MAX_CASES\)/);
-  assert.match(client, /Showing the newest 40 cases/);
 });
