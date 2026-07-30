@@ -14,6 +14,12 @@ const SIGNAL_LABELS: Record<string, string> = {
   fingerprint_proxy: "Proxy",
   fingerprint_vpn: "VPN",
   fingerprint_tor: "Tor",
+  abstract_ip_proxy: "Proxy",
+  abstract_ip_vpn: "VPN",
+  abstract_ip_tor: "Tor",
+  abstract_ip_hosting: "Hosting",
+  abstract_ip_relay: "Relay",
+  abstract_ip_abuse: "Abusive IP",
 };
 
 function record(value: unknown): Record<string, unknown> | null {

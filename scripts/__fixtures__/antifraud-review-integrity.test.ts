@@ -164,3 +164,31 @@ test("free-battle containment requires two battles and applies KYC plus withdraw
     "containment must run only after the signed event id is reserved",
   );
 });
+
+test("Abstract catch-all signup containment requires signed provider evidence", () => {
+  const source = read("src/app/api/antifraud/ingest/route.ts");
+  const containmentStart = source.indexOf(
+    "async function containAbstractCatchallAccount",
+  );
+  const containmentEnd = source.indexOf(
+    "function containmentCount",
+    containmentStart,
+  );
+  const containment = source.slice(containmentStart, containmentEnd);
+  const ingestStart = source.indexOf("async function ingestOne");
+  const ingestEnd = source.indexOf("/**\n * Health probe", ingestStart);
+  const ingest = source.slice(ingestStart, ingestEnd);
+
+  assert.match(containment, /containmentRequired !== true/);
+  assert.match(containment, /provider !== "abstract_email"/);
+  assert.match(containment, /INSERT INTO user_feature_locks/);
+  assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]/);
+  assert.match(containment, /locked_withdrawals_items = TRUE/);
+  assert.match(containment, /requireUserKyc/);
+  assert.match(source, /system:antifraud-abstract-email/);
+  assert.match(
+    ingest,
+    /if \(!stored\) return[\s\S]*?containAbstractCatchallAccount\(signal\)/,
+    "catch-all containment must run only after the signed event id is reserved",
+  );
+});

@@ -56,6 +56,7 @@ function deliveryPool(
         return {
           rows: rows.filter((event) =>
             event.event_type === "fiat_blacklisted_email_domain"
+            || event.event_type === "abstract_email_catchall"
           ),
         };
       }
@@ -311,6 +312,48 @@ test("partial confirmation keeps the cursor for an idempotent retry", async () =
       sql.includes("dashboard_delivered_at")
     ),
     false,
+  );
+});
+
+test("Abstract catch-all containment is delivered ahead of ordinary events", async () => {
+  const containment: RiskEventRow = {
+    ...row,
+    event_type: "abstract_email_catchall",
+    source: "abstract_email",
+    source_ref: "user-1:abstract_email_catchall",
+    score_after: 100,
+    payload: {
+      containmentRequired: true,
+      emailDomain: "example.com",
+      provider: "abstract_email",
+    },
+  };
+  const fixture = deliveryPool([containment]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () =>
+      new Response(
+        JSON.stringify({ ok: true, accepted: 1, duplicates: 0 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("event_type = 'abstract_email_catchall'")
+      && sql.includes("dashboard_delivered_at IS NULL")
+    ),
+    true,
+  );
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("UPDATE risk_events")
+      && sql.includes("dashboard_delivered_at")
+    ),
+    true,
   );
 });
 

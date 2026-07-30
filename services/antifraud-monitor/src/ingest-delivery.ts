@@ -183,12 +183,18 @@ export class IngestDelivery {
             re.occurred_at, re.recorded_at
           FROM risk_events re
           JOIN subjects s ON s.user_id = re.user_id
-          JOIN fiat_email_domain_matches match ON
+          LEFT JOIN fiat_email_domain_matches match ON
             re.source_ref = 'blacklisted-signup:' || match.source_event_id
             OR re.source_ref =
               'blacklisted-checkout:' || match.source_event_id
-          WHERE re.event_type = 'fiat_blacklisted_email_domain'
-            AND match.lock_delivered_at IS NULL
+          WHERE (
+              re.event_type = 'fiat_blacklisted_email_domain'
+              AND match.lock_delivered_at IS NULL
+            )
+            OR (
+              re.event_type = 'abstract_email_catchall'
+              AND re.dashboard_delivered_at IS NULL
+            )
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,

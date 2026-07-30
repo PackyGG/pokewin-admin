@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  parseAbstractEmailResponse,
+  parseAbstractIpResponse,
   parseFingerprintResponse,
   parseProxycheckResponse,
+  sanitizeAbstractEmailResponse,
 } from "../src/enrichment.js";
 import { defaultScoreWeights } from "../src/score-catalog.js";
 import type { Signup } from "../src/types.js";
@@ -36,6 +39,155 @@ function signalMap(result: ReturnType<typeof parseFingerprintResponse>) {
     result.signals.map((signal) => [signal.key, signal] as const),
   );
 }
+
+test("Abstract IP Intelligence scores security and country mismatch evidence", () => {
+  const result = parseAbstractIpResponse({
+    ip_address: IP,
+    security: {
+      is_vpn: true,
+      is_proxy: true,
+      is_tor: false,
+      is_hosting: true,
+      is_relay: false,
+      is_mobile: false,
+      is_abuse: true,
+    },
+    asn: {
+      asn: 64500,
+      name: "Example Hosting",
+      type: "hosting",
+    },
+    location: {
+      country_code: "US",
+      region: "Virginia",
+      city: "Ashburn",
+    },
+  }, SIGNUP);
+
+  assert.deepEqual(
+    result.signals.map((signal) => [signal.key, signal.points]),
+    [
+      ["abstract_ip_vpn", 20],
+      ["abstract_ip_proxy", 35],
+      ["abstract_ip_hosting", 20],
+      ["abstract_ip_abuse", 80],
+      ["abstract_ip_country_mismatch", 30],
+    ],
+  );
+  assert.equal(result.score, 185);
+  assert.equal(result.signals[0]?.payload?.asn, 64500);
+});
+
+test("Abstract Email Reputation makes catch-all and invalid mail high risk", () => {
+  const result = parseAbstractEmailResponse({
+    email_address: SIGNUP.email,
+    email_deliverability: {
+      status: "undeliverable",
+      status_detail: "invalid_mailbox",
+      is_format_valid: true,
+      is_smtp_valid: false,
+      is_mx_valid: true,
+    },
+    email_quality: {
+      score: 0.2,
+      is_username_suspicious: true,
+      is_disposable: false,
+      is_catchall: true,
+      minimum_age: 12,
+    },
+    email_domain: {
+      domain: "example.com",
+      domain_age: 12,
+      is_risky_tld: true,
+    },
+    email_risk: {
+      address_risk_status: "high",
+      domain_risk_status: "medium",
+    },
+  });
+
+  const signals = new Map(
+    result.signals.map((signal) => [signal.key, signal.points] as const),
+  );
+  assert.equal(signals.get("abstract_email_catchall"), 100);
+  assert.equal(signals.get("abstract_email_undeliverable"), 100);
+  assert.equal(signals.get("abstract_email_invalid_smtp"), 70);
+  assert.equal(signals.get("abstract_email_high_risk"), 80);
+  assert.equal(signals.get("abstract_email_medium_risk"), 40);
+  assert.equal(signals.get("abstract_email_low_quality"), 50);
+  assert.equal(signals.get("abstract_email_new_domain"), 25);
+  assert.ok(result.score >= 100);
+});
+
+test("a clean deliverable non-catch-all email adds no Abstract risk", () => {
+  const result = parseAbstractEmailResponse({
+    email_deliverability: {
+      status: "deliverable",
+      status_detail: "valid_email",
+      is_format_valid: true,
+      is_smtp_valid: true,
+      is_mx_valid: true,
+    },
+    email_quality: {
+      score: 0.92,
+      is_username_suspicious: false,
+      is_disposable: false,
+      is_catchall: false,
+      minimum_age: 2_000,
+    },
+    email_domain: {
+      domain: "example.com",
+      domain_age: 2_000,
+      is_risky_tld: false,
+    },
+    email_risk: {
+      address_risk_status: "low",
+      domain_risk_status: "low",
+    },
+  });
+
+  assert.equal(result.score, 0);
+  assert.deepEqual(result.signals, []);
+});
+
+test("stored Abstract email evidence strips sender and raw mail-host identity", () => {
+  const sanitized = sanitizeAbstractEmailResponse({
+    email_address: SIGNUP.email,
+    suggested_correction: null,
+    email_deliverability: {
+      status: "deliverable",
+      status_detail: "valid_email",
+      is_format_valid: true,
+      is_smtp_valid: true,
+      is_mx_valid: true,
+      mx_records: ["mail.example.com"],
+    },
+    email_quality: {
+      score: 0.9,
+      is_catchall: false,
+    },
+    email_sender: {
+      first_name: "Private",
+      last_name: "Person",
+    },
+    email_domain: {
+      domain: "example.com",
+    },
+    email_risk: {
+      address_risk_status: "low",
+      domain_risk_status: "low",
+    },
+    email_breaches: {
+      total_breaches: 1,
+      breached_domains: [{ domain: "private.example" }],
+    },
+  });
+
+  const serialized = JSON.stringify(sanitized);
+  assert.doesNotMatch(serialized, /Private|Person|mail\.example|private\.example/);
+  assert.match(serialized, /"mx_record_count":1/);
+  assert.match(serialized, /"total_breaches":1/);
+});
 
 test("a positive VPN detection always contributes points", () => {
   const result = parseProxycheckResponse({

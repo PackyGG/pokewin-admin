@@ -197,6 +197,18 @@ async function IntegrationSection() {
       note: "Provider presence reported by the deployed monitor service.",
     },
     {
+      name: "Abstract IP Intelligence",
+      envs: ["ABSTRACT_IP_INTELLIGENCE_API_KEY"],
+      status: reportedStatus(runtimeData?.providers.abstractIpConfigured),
+      note: "Signup IP security, network, and location evidence.",
+    },
+    {
+      name: "Abstract Email Reputation",
+      envs: ["ABSTRACT_EMAIL_REPUTATION_API_KEY"],
+      status: reportedStatus(runtimeData?.providers.abstractEmailConfigured),
+      note: "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
+    },
+    {
       name: "Discord alert webhook",
       envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
       status: reportedStatus(runtimeData?.discord.webhookConfigured),

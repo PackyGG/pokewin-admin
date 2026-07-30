@@ -484,6 +484,13 @@ app.get("/v1/signups", async (request) => {
           proxycheck.status AS proxycheck_status,
           proxycheck.score AS proxycheck_score,
           COALESCE(proxycheck.signals, '[]'::jsonb) AS proxycheck_signals,
+          abstract_ip.status AS abstract_ip_status,
+          abstract_ip.score AS abstract_ip_score,
+          COALESCE(abstract_ip.signals, '[]'::jsonb) AS abstract_ip_signals,
+          abstract_email.status AS abstract_email_status,
+          abstract_email.score AS abstract_email_score,
+          COALESCE(abstract_email.signals, '[]'::jsonb)
+            AS abstract_email_signals,
           latest_case.id AS case_id,
           latest_case.status AS case_status,
           latest_case.severity AS case_severity,
@@ -505,6 +512,20 @@ app.get("/v1/signups", async (request) => {
           ORDER BY checked_at DESC
           LIMIT 1
         ) proxycheck ON true
+        LEFT JOIN LATERAL (
+          SELECT status, score::float8 AS score, signals
+          FROM provider_checks
+          WHERE user_id = s.user_id AND provider = 'abstract_ip'
+          ORDER BY checked_at DESC
+          LIMIT 1
+        ) abstract_ip ON true
+        LEFT JOIN LATERAL (
+          SELECT status, score::float8 AS score, signals
+          FROM provider_checks
+          WHERE user_id = s.user_id AND provider = 'abstract_email'
+          ORDER BY checked_at DESC
+          LIMIT 1
+        ) abstract_email ON true
         LEFT JOIN LATERAL (
           SELECT id, status, severity
           FROM cases

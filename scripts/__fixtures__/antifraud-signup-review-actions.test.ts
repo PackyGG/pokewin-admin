@@ -27,6 +27,17 @@ test("signup score 60 opens Account Review even below the general high band", ()
   );
 });
 
+test("Abstract catch-all signals always open Account Review", () => {
+  assert.equal(
+    shouldOpenReviewForSignal({
+      kind: "abstract_email_catchall",
+      riskScore: 0,
+      severity: "low",
+    }),
+    true,
+  );
+});
+
 test("Fraud review surfaces do not expose escalation controls", async () => {
   const files = await Promise.all(
     [

@@ -86,6 +86,8 @@ const runtimeConfigSchema = z.object({
   providers: z.object({
     fingerprintConfigured: z.boolean(),
     proxycheckConfigured: z.boolean(),
+    abstractIpConfigured: z.boolean(),
+    abstractEmailConfigured: z.boolean(),
   }),
   live: z.object({
     redisConfigured: z.boolean(),

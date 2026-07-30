@@ -189,6 +189,8 @@ const runtimeConfig: Config = {
   FINGERPRINT_SECRET_API_KEY: "fingerprint-secret",
   FINGERPRINT_REGION: "eu",
   PROXYCHECK_API_KEY: "proxycheck-secret",
+  ABSTRACT_IP_INTELLIGENCE_API_KEY: "abstract-ip-secret",
+  ABSTRACT_EMAIL_REPUTATION_API_KEY: "abstract-email-secret",
   API_TOKEN: "read-token-that-is-at-least-32-characters",
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
@@ -265,6 +267,8 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   assert.deepEqual(status.providers, {
     fingerprintConfigured: true,
     proxycheckConfigured: true,
+    abstractIpConfigured: true,
+    abstractEmailConfigured: true,
   });
   assert.deepEqual(status.live, {
     redisConfigured: true,
@@ -516,6 +520,13 @@ test("editable score migration seeds every runtime weight", async () => {
     await readFile(
       new URL(
         "../migrations/031_fingerprint_pro_plus_intelligence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    await readFile(
+      new URL(
+        "../migrations/035_abstract_signup_intelligence.sql",
         import.meta.url,
       ),
       "utf8",

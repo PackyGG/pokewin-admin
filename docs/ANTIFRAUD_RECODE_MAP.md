@@ -136,7 +136,7 @@ There are currently two related case models:
 | `score-catalog.ts` | Editable score vocabulary and defaults |
 | `score-weight-store.ts` | Cached weights and audited idempotent updates |
 | `event-catalog.ts` | Live/planned behavior event vocabulary |
-| `enrichment.ts` | Fingerprint and ProxyCheck parsing, weighting, caching |
+| `enrichment.ts` | Fingerprint, ProxyCheck, and Abstract IP/email parsing, weighting, caching |
 | `network-risk.ts` | Account graph, creator-cohort fraud, async scan jobs |
 | `fiat-risk.ts` | Fiat evidence, score, verdict, assessment persistence |
 | `fiat-eligibility.ts` | Synchronous automatic checkout allow/deny decision |
@@ -204,12 +204,13 @@ so one failed phase does not suppress later cleanup.
 2. Upsert a subject snapshot.
 3. Capture email containment evidence before external providers.
 4. Load signup/account context and editable weights.
-5. Fetch or reuse Fingerprint and ProxyCheck evidence.
+5. Fetch or reuse Fingerprint, ProxyCheck, Abstract IP Intelligence, and
+   Abstract Email Reputation evidence.
 6. Fail to the durable signup dead-letter when required enrichment is
    unavailable.
 7. Score base, provider, and risky-location signals.
-8. Persist assessment, case/session, high-risk marker, outbox, and source
-   cursor transactionally.
+8. Persist assessment, case/session, high-risk marker, catch-all containment,
+   outbox, and source cursor transactionally.
 9. Broadcast committed live events.
 10. Queue an account-network scan.
 11. Evaluate custom flows against the opened session.
@@ -235,6 +236,9 @@ so one failed phase does not suppress later cleanup.
   failed webhooks; merge canonical bad assessments; route by event family.
 - Email risk: match configured domains, Gmail aliases, and coordinated
   same-amount clusters; persist evidence and create containment events.
+- Abstract signup email: validate deliverability, SMTP/MX, catch-all,
+  disposable, username, quality, age/TLD, and address/domain risk. Catch-all
+  results require KYC and lock crypto/item withdrawals through signed ingest.
 
 ### Withdrawal flow
 

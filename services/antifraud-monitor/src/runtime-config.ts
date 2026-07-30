@@ -9,6 +9,8 @@ export function sanitizedRuntimeConfig(
   providers: {
     fingerprintConfigured: boolean;
     proxycheckConfigured: boolean;
+    abstractIpConfigured: boolean;
+    abstractEmailConfigured: boolean;
   };
   live: {
     redisConfigured: boolean;
@@ -33,6 +35,12 @@ export function sanitizedRuntimeConfig(
     providers: {
       fingerprintConfigured: Boolean(config.FINGERPRINT_SECRET_API_KEY),
       proxycheckConfigured: Boolean(config.PROXYCHECK_API_KEY),
+      abstractIpConfigured: Boolean(
+        config.ABSTRACT_IP_INTELLIGENCE_API_KEY,
+      ),
+      abstractEmailConfigured: Boolean(
+        config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
+      ),
     },
     live: {
       redisConfigured: Boolean(config.REDIS_URL),

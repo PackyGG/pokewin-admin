@@ -115,6 +115,7 @@ export function shouldOpenReviewForSignal(
   signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
 ): boolean {
   return (
+    signal.kind === "abstract_email_catchall" ||
     (signal.kind === "high_risk_signup" &&
       signal.riskScore !== null &&
       signal.riskScore !== undefined &&

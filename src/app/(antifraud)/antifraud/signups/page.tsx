@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import {
   AlertTriangle,
+  AtSign,
   ChevronLeft,
   ChevronRight,
   Clock3,
@@ -151,6 +152,7 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
   const networkSignals = [
     ...signup.fingerprint_signals,
     ...signup.proxycheck_signals,
+    ...signup.abstract_ip_signals,
   ];
   const networkLabels = networkRiskLabels(networkSignals);
 
@@ -254,10 +256,24 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
             />
             <ProviderCheck
               icon={Network}
-              label="IP check"
+              label="Proxycheck"
               status={signup.proxycheck_status}
               score={signup.proxycheck_score}
               signalCount={signup.proxycheck_signals.length}
+            />
+            <ProviderCheck
+              icon={Network}
+              label="Abstract IP"
+              status={signup.abstract_ip_status}
+              score={signup.abstract_ip_score}
+              signalCount={signup.abstract_ip_signals.length}
+            />
+            <ProviderCheck
+              icon={AtSign}
+              label="Abstract email"
+              status={signup.abstract_email_status}
+              score={signup.abstract_email_score}
+              signalCount={signup.abstract_email_signals.length}
             />
           </div>
           {networkLabels.length > 0 && (

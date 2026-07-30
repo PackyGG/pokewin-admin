@@ -158,7 +158,11 @@ function proxycheckResultNode(
 }
 
 export type EnrichmentResult = {
-  provider: "fingerprint" | "proxycheck";
+  provider:
+    | "fingerprint"
+    | "proxycheck"
+    | "abstract_ip"
+    | "abstract_email";
   status: "success" | "skipped" | "failed";
   lookupKey: string;
   requestId?: string;
@@ -998,6 +1002,286 @@ export function parseProxycheckResponse(
   };
 }
 
+export function parseAbstractIpResponse(
+  raw: JsonObject,
+  signup: Signup,
+  weights: ScoreWeights = defaultScoreWeights(),
+): { score: number; signals: Signal[] } {
+  const points = scorePoints(weights).abstractIp;
+  const security = object(raw.security);
+  const asn = object(raw.asn);
+  const company = object(raw.company);
+  const location = object(raw.location);
+  const countryCode = stringValue(location.country_code)?.toUpperCase();
+  const signupCountryCode = signup.country_code?.trim().toUpperCase() || null;
+  const evidence = signalPayload({
+    asn: asn.asn,
+    asnName: asn.name,
+    asnDomain: asn.domain,
+    asnType: asn.type,
+    companyName: company.name,
+    companyDomain: company.domain,
+    companyType: company.type,
+    countryCode,
+    region: location.region,
+    city: location.city,
+  });
+  const signals: Signal[] = [];
+  const add = (
+    hit: boolean,
+    key: string,
+    title: string,
+    detail: string,
+    score: number,
+  ) => {
+    if (!hit) return;
+    signals.push({ key, title, detail, points: score, payload: evidence });
+  };
+
+  add(
+    security.is_vpn === true,
+    "abstract_ip_vpn",
+    "Abstract: VPN detected",
+    "Abstract IP Intelligence classified the signup IP as a VPN.",
+    points.vpn,
+  );
+  add(
+    security.is_proxy === true,
+    "abstract_ip_proxy",
+    "Abstract: proxy detected",
+    "Abstract IP Intelligence classified the signup IP as a proxy.",
+    points.proxy,
+  );
+  add(
+    security.is_tor === true,
+    "abstract_ip_tor",
+    "Abstract: Tor detected",
+    "Abstract IP Intelligence classified the signup IP as a Tor address.",
+    points.tor,
+  );
+  add(
+    security.is_hosting === true,
+    "abstract_ip_hosting",
+    "Abstract: hosting network",
+    "Abstract IP Intelligence classified the signup IP as hosting infrastructure.",
+    points.hosting,
+  );
+  add(
+    security.is_relay === true,
+    "abstract_ip_relay",
+    "Abstract: relay detected",
+    "Abstract IP Intelligence classified the signup IP as a relay.",
+    points.relay,
+  );
+  add(
+    security.is_abuse === true,
+    "abstract_ip_abuse",
+    "Abstract: abusive IP",
+    "Abstract IP Intelligence reports abuse history for the signup IP.",
+    points.abuse,
+  );
+  add(
+    Boolean(
+      countryCode
+      && signupCountryCode
+      && countryCode !== signupCountryCode,
+    ),
+    "abstract_ip_country_mismatch",
+    "Abstract: signup country mismatch",
+    `Abstract located the signup IP in ${countryCode}, while the account recorded ${signupCountryCode}.`,
+    points.countryMismatch,
+  );
+
+  return {
+    score: signals.reduce((total, signal) => total + signal.points, 0),
+    signals,
+  };
+}
+
+function emailRiskLevel(value: unknown): "low" | "medium" | "high" | null {
+  const normalized = stringValue(value)?.trim().toLowerCase();
+  return normalized === "low" || normalized === "medium" || normalized === "high"
+    ? normalized
+    : null;
+}
+
+export function parseAbstractEmailResponse(
+  raw: JsonObject,
+  weights: ScoreWeights = defaultScoreWeights(),
+): { score: number; signals: Signal[] } {
+  const points = scorePoints(weights).abstractEmail;
+  const deliverability = object(raw.email_deliverability);
+  const quality = object(raw.email_quality);
+  const domain = object(raw.email_domain);
+  const risk = object(raw.email_risk);
+  const status = stringValue(deliverability.status)?.toLowerCase();
+  const statusDetail = stringValue(deliverability.status_detail);
+  const qualityScore = numberValue(quality.score);
+  const minimumAge = numberValue(quality.minimum_age)
+    ?? numberValue(domain.domain_age);
+  const addressRisk = emailRiskLevel(risk.address_risk_status);
+  const domainRisk = emailRiskLevel(risk.domain_risk_status);
+  const evidence = signalPayload({
+    deliverability: status,
+    statusDetail,
+    qualityScore,
+    domain: domain.domain,
+    domainAgeDays: minimumAge,
+    addressRisk,
+    domainRisk,
+    suggestedCorrection: raw.suggested_correction,
+  });
+  const signals: Signal[] = [];
+  const add = (
+    hit: boolean,
+    key: string,
+    title: string,
+    detail: string,
+    score: number,
+  ) => {
+    if (!hit) return;
+    signals.push({ key, title, detail, points: score, payload: evidence });
+  };
+
+  add(
+    quality.is_catchall === true,
+    "abstract_email_catchall",
+    "Catch-all email domain",
+    "Abstract reports that this domain accepts mail for any mailbox. The account requires containment and review.",
+    points.catchall,
+  );
+  add(
+    status === "undeliverable",
+    "abstract_email_undeliverable",
+    "Undeliverable signup email",
+    `Abstract reports the signup email as undeliverable${statusDetail ? ` (${statusDetail})` : ""}.`,
+    points.undeliverable,
+  );
+  add(
+    status === "unknown",
+    "abstract_email_unknown_deliverability",
+    "Unknown email deliverability",
+    `Abstract could not confirm email deliverability${statusDetail ? ` (${statusDetail})` : ""}.`,
+    points.unknownDeliverability,
+  );
+  add(
+    deliverability.is_smtp_valid === false
+      || deliverability.is_mx_valid === false,
+    "abstract_email_invalid_smtp",
+    "Invalid email routing",
+    "Abstract could not validate the mailbox SMTP path or domain MX records.",
+    points.invalidSmtp,
+  );
+  add(
+    quality.is_disposable === true,
+    "abstract_email_disposable",
+    "Disposable signup email",
+    "Abstract classified the signup email provider as disposable.",
+    points.disposable,
+  );
+  add(
+    quality.is_username_suspicious === true,
+    "abstract_email_suspicious_username",
+    "Suspicious email username",
+    "Abstract classified the email username as suspicious or auto-generated.",
+    points.suspiciousUsername,
+  );
+  add(
+    addressRisk === "high" || domainRisk === "high",
+    "abstract_email_high_risk",
+    "High-risk signup email",
+    "Abstract returned a high address or domain risk classification.",
+    points.highRisk,
+  );
+  add(
+    addressRisk === "medium" || domainRisk === "medium",
+    "abstract_email_medium_risk",
+    "Medium-risk signup email",
+    "Abstract returned a medium address or domain risk classification.",
+    points.mediumRisk,
+  );
+  add(
+    domain.is_risky_tld === true,
+    "abstract_email_risky_tld",
+    "Risky email top-level domain",
+    "Abstract classified the email domain suffix as risky.",
+    points.riskyTld,
+  );
+  if (qualityScore !== undefined && qualityScore < 0.5) {
+    add(
+      true,
+      "abstract_email_low_quality",
+      "Low-quality signup email",
+      `Abstract returned an email quality score of ${qualityScore.toFixed(2)}.`,
+      points.lowQuality,
+    );
+  }
+  if (minimumAge !== undefined && minimumAge >= 0 && minimumAge < 30) {
+    add(
+      true,
+      "abstract_email_new_domain",
+      "New email domain",
+      `Abstract reports that the email domain is only ${Math.round(minimumAge)} days old.`,
+      points.newDomain,
+    );
+  }
+
+  return {
+    score: signals.reduce((total, signal) => total + signal.points, 0),
+    signals,
+  };
+}
+
+export function sanitizeAbstractEmailResponse(raw: JsonObject): JsonObject {
+  const deliverability = object(raw.email_deliverability);
+  const quality = object(raw.email_quality);
+  const domain = object(raw.email_domain);
+  const risk = object(raw.email_risk);
+  const breaches = object(raw.email_breaches);
+  return {
+    email_address: raw.email_address,
+    suggested_correction: raw.suggested_correction,
+    email_deliverability: {
+      status: deliverability.status,
+      status_detail: deliverability.status_detail,
+      is_format_valid: deliverability.is_format_valid,
+      is_smtp_valid: deliverability.is_smtp_valid,
+      is_mx_valid: deliverability.is_mx_valid,
+      mx_record_count: Array.isArray(deliverability.mx_records)
+        ? deliverability.mx_records.length
+        : 0,
+    },
+    email_quality: {
+      score: quality.score,
+      is_free_email: quality.is_free_email,
+      is_username_suspicious: quality.is_username_suspicious,
+      is_disposable: quality.is_disposable,
+      is_catchall: quality.is_catchall,
+      is_subaddress: quality.is_subaddress,
+      is_role: quality.is_role,
+      is_dmarc_enforced: quality.is_dmarc_enforced,
+      is_spf_strict: quality.is_spf_strict,
+      minimum_age: quality.minimum_age,
+    },
+    email_domain: {
+      domain: domain.domain,
+      domain_age: domain.domain_age,
+      is_live_site: domain.is_live_site,
+      date_registered: domain.date_registered,
+      is_risky_tld: domain.is_risky_tld,
+    },
+    email_risk: {
+      address_risk_status: risk.address_risk_status,
+      domain_risk_status: risk.domain_risk_status,
+    },
+    email_breaches: {
+      total_breaches: breaches.total_breaches,
+      date_first_breached: breaches.date_first_breached,
+      date_last_breached: breaches.date_last_breached,
+    },
+  };
+}
+
 export class EnrichmentService {
   private readonly fingerprint: FingerprintJsServerApiClient;
 
@@ -1019,6 +1303,8 @@ export class EnrichmentService {
     return [
       this.config.FINGERPRINT_SECRET_API_KEY,
       this.config.PROXYCHECK_API_KEY,
+      this.config.ABSTRACT_IP_INTELLIGENCE_API_KEY,
+      this.config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
       this.config.FIAT_ELIGIBILITY_DEV_API_KEY,
@@ -1139,6 +1425,125 @@ export class EnrichmentService {
         lookupKey: signup.signup_ip,
         // The request URL carries the proxycheck API key, and fetch errors can
         // echo it back — never persist or surface an unscrubbed message.
+        errorCode:
+          error instanceof Error
+            ? this.scrub(error.message).slice(0, 100)
+            : "unknown_error",
+        signals: [],
+      };
+    }
+  }
+
+  async abstractIpCheck(
+    signup: Signup,
+    weights: ScoreWeights = defaultScoreWeights(),
+  ): Promise<EnrichmentResult> {
+    if (!signup.signup_ip) {
+      return {
+        provider: "abstract_ip",
+        status: "skipped",
+        lookupKey: `user:${signup.id}`,
+        errorCode: "missing_ip",
+        signals: [],
+      };
+    }
+
+    const url = new URL("https://ip-intelligence.abstractapi.com/v1/");
+    url.searchParams.set(
+      "api_key",
+      this.config.ABSTRACT_IP_INTELLIGENCE_API_KEY,
+    );
+    url.searchParams.set("ip_address", signup.signup_ip);
+    try {
+      const response = await fetch(url, {
+        signal: AbortSignal.timeout(5_000),
+        headers: { accept: "application/json" },
+      });
+      if (!response.ok) throw new Error(`http_${response.status}`);
+      const raw = object(await response.json());
+      if (
+        canonicalIp(raw.ip_address) !== canonicalIp(signup.signup_ip)
+        || Object.keys(object(raw.security)).length === 0
+      ) {
+        throw new Error("invalid_response");
+      }
+      const parsed = parseAbstractIpResponse(raw, signup, weights);
+      return {
+        provider: "abstract_ip",
+        status: "success",
+        lookupKey: signup.signup_ip,
+        score: parsed.score,
+        response: raw,
+        signals: parsed.signals,
+      };
+    } catch (error) {
+      return {
+        provider: "abstract_ip",
+        status: "failed",
+        lookupKey: signup.signup_ip,
+        errorCode:
+          error instanceof Error
+            ? this.scrub(error.message).slice(0, 100)
+            : "unknown_error",
+        signals: [],
+      };
+    }
+  }
+
+  async abstractEmailCheck(
+    signup: Signup,
+    weights: ScoreWeights = defaultScoreWeights(),
+  ): Promise<EnrichmentResult> {
+    const email = signup.email?.trim().toLowerCase();
+    if (!email) {
+      return {
+        provider: "abstract_email",
+        status: "skipped",
+        lookupKey: `user:${signup.id}`,
+        errorCode: "missing_email",
+        signals: [],
+      };
+    }
+
+    try {
+      const response = await fetch(
+        "https://emailreputation.abstractapi.com/v1/",
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(5_000),
+          headers: {
+            accept: "application/json",
+            authorization:
+              `Bearer ${this.config.ABSTRACT_EMAIL_REPUTATION_API_KEY}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ email }),
+        },
+      );
+      if (!response.ok) throw new Error(`http_${response.status}`);
+      const raw = object(await response.json());
+      if (
+        stringValue(raw.email_address)?.trim().toLowerCase() !== email
+        || Object.keys(object(raw.email_deliverability)).length === 0
+        || Object.keys(object(raw.email_quality)).length === 0
+      ) {
+        throw new Error("invalid_response");
+      }
+      const sanitized = sanitizeAbstractEmailResponse(raw);
+      const parsed = parseAbstractEmailResponse(sanitized, weights);
+      return {
+        provider: "abstract_email",
+        status: "success",
+        lookupKey: email,
+        score: parsed.score,
+        response: sanitized,
+        signals: parsed.signals,
+      };
+    } catch (error) {
+      return {
+        provider: "abstract_email",
+        status: "failed",
+        lookupKey: email,
         errorCode:
           error instanceof Error
             ? this.scrub(error.message).slice(0, 100)

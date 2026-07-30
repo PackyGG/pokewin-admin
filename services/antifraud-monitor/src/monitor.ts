@@ -5,6 +5,8 @@ import type { Databases } from "./db.js";
 import { DiscordAlerts, type DiscordAlert } from "./discord.js";
 import {
   EnrichmentService,
+  parseAbstractEmailResponse,
+  parseAbstractIpResponse,
   parseFingerprintResponse,
   parseProxycheckResponse,
   reweightFingerprintSignals,
@@ -83,6 +85,8 @@ type PreparedSignup = {
   context: Awaited<ReturnType<typeof signupContext>>;
   fingerprint: EnrichmentResult;
   proxycheck: EnrichmentResult;
+  abstractIp: EnrichmentResult;
+  abstractEmail: EnrichmentResult;
   weights: ScoreWeights;
 };
 
@@ -681,15 +685,19 @@ export class MonitorEngine {
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
     ]);
-    const [fingerprint, proxycheck] = await Promise.all([
+    const [fingerprint, proxycheck, abstractIp, abstractEmail] = await Promise.all([
       this.cachedFingerprint(signup, weights),
       this.cachedProxycheck(signup, weights),
+      this.cachedAbstractIp(signup, weights),
+      this.cachedAbstractEmail(signup, weights),
     ]);
     await Promise.all([
       this.saveProviderCheck(signup.id, fingerprint),
       this.saveProviderCheck(signup.id, proxycheck),
+      this.saveProviderCheck(signup.id, abstractIp),
+      this.saveProviderCheck(signup.id, abstractEmail),
     ]);
-    const unavailable = [fingerprint, proxycheck]
+    const unavailable = [fingerprint, proxycheck, abstractIp, abstractEmail]
       .filter((result) => result.status === "failed")
       .map((result) => result.provider);
     if (unavailable.length > 0) {
@@ -697,14 +705,28 @@ export class MonitorEngine {
         `Provider enrichment unavailable: ${unavailable.join(",")}`,
       );
     }
-    return { context, fingerprint, proxycheck, weights };
+    return {
+      context,
+      fingerprint,
+      proxycheck,
+      abstractIp,
+      abstractEmail,
+      weights,
+    };
   }
 
   private async persistSignup(
     signup: Signup,
     prepared: PreparedSignup,
   ): Promise<void> {
-    const { context, fingerprint, proxycheck, weights } = prepared;
+    const {
+      context,
+      fingerprint,
+      proxycheck,
+      abstractIp,
+      abstractEmail,
+      weights,
+    } = prepared;
     const locationPolicy = await this.riskyLocations.forCountry(
       signup.country_code,
     );
@@ -712,6 +734,8 @@ export class MonitorEngine {
       ...baseSignupSignals(signup, context, weights),
       ...fingerprint.signals,
       ...proxycheck.signals,
+      ...abstractIp.signals,
+      ...abstractEmail.signals,
       ...(locationPolicy
         ? [
             {
@@ -726,6 +750,9 @@ export class MonitorEngine {
     const score = Math.max(
       0,
       signals.reduce((total, signal) => total + signal.points, 0),
+    );
+    const catchallSignal = abstractEmail.signals.find(
+      (signal) => signal.key === "abstract_email_catchall",
     );
 
     const client = await this.db.antifraud.connect();
@@ -750,6 +777,7 @@ export class MonitorEngine {
         [signup.id, score, severity(score), JSON.stringify(signals)],
       );
       if (
+        catchallSignal ||
         locationPolicy ||
         score >= this.config.MONITOR_START_SCORE ||
         score >= HIGH_RISK_SIGNUP_SCORE
@@ -820,6 +848,42 @@ export class MonitorEngine {
             marker.title,
             marker.detail,
             JSON.stringify(marker.payload),
+            signup.created_at,
+          ],
+        );
+      }
+      if (catchallSignal) {
+        if (!opened) {
+          throw new Error("Catch-all signup did not open a case");
+        }
+        const emailDomain =
+          signup.email?.trim().toLowerCase().split("@").at(-1) ?? null;
+        await client.query(
+          `
+            INSERT INTO risk_events (
+              case_id, session_id, user_id, event_type, source, source_ref,
+              score_delta, score_after, title, detail, payload, occurred_at
+            ) VALUES (
+              $1,$2,$3,'abstract_email_catchall','abstract_email',$4,
+              0,$5,$6,$7,$8::jsonb,$9
+            )
+            ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+            DO NOTHING
+          `,
+          [
+            opened.caseId,
+            opened.sessionId,
+            signup.id,
+            `${signup.id}:abstract_email_catchall`,
+            score,
+            catchallSignal.title,
+            catchallSignal.detail,
+            JSON.stringify({
+              containmentRequired: true,
+              emailDomain,
+              provider: "abstract_email",
+              evidence: catchallSignal.payload ?? {},
+            }),
             signup.created_at,
           ],
         );
@@ -1375,6 +1439,81 @@ export class MonitorEngine {
     };
   }
 
+  private async cachedAbstractIp(
+    signup: Signup,
+    weights: ScoreWeights,
+  ): Promise<EnrichmentResult> {
+    if (!signup.signup_ip) {
+      return this.enrichment.abstractIpCheck(signup, weights);
+    }
+    const cached = await this.db.antifraud.query<{
+      response: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT response
+        FROM provider_checks
+        WHERE provider = 'abstract_ip'
+          AND lookup_key = $1
+          AND status = 'success'
+          AND expires_at > now()
+        ORDER BY expires_at DESC
+        LIMIT 1
+      `,
+      [signup.signup_ip],
+    );
+    if (!cached.rows[0]) {
+      return this.enrichment.abstractIpCheck(signup, weights);
+    }
+    const response = cached.rows[0].response ?? {};
+    const parsed = parseAbstractIpResponse(response, signup, weights);
+    return {
+      provider: "abstract_ip",
+      status: "success",
+      lookupKey: signup.signup_ip,
+      score: parsed.score,
+      response,
+      signals: parsed.signals,
+    };
+  }
+
+  private async cachedAbstractEmail(
+    signup: Signup,
+    weights: ScoreWeights,
+  ): Promise<EnrichmentResult> {
+    const email = signup.email?.trim().toLowerCase();
+    if (!email) {
+      return this.enrichment.abstractEmailCheck(signup, weights);
+    }
+    const cached = await this.db.antifraud.query<{
+      response: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT response
+        FROM provider_checks
+        WHERE provider = 'abstract_email'
+          AND lookup_key = $1
+          AND status = 'success'
+          AND expires_at > now()
+        ORDER BY expires_at DESC
+        LIMIT 1
+      `,
+      [email],
+    );
+    if (!cached.rows[0]) {
+      return this.enrichment.abstractEmailCheck(signup, weights);
+    }
+    const response = cached.rows[0].response ?? {};
+    const parsed = parseAbstractEmailResponse(response, weights);
+    return {
+      provider: "abstract_email",
+      status: "success",
+      lookupKey: email,
+      score: parsed.score,
+      response,
+      signals: parsed.signals,
+    };
+  }
+
   private async saveProviderCheck(
     userId: string,
     result: EnrichmentResult,
@@ -1385,7 +1524,11 @@ export class MonitorEngine {
           user_id, provider, lookup_key, request_id, status, score,
           signals, response, error_code, expires_at
         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,
-          CASE WHEN $2 = 'proxycheck' THEN now() + interval '24 hours' ELSE NULL END)
+          CASE
+            WHEN $2 IN ('proxycheck', 'abstract_ip', 'abstract_email')
+              THEN now() + interval '24 hours'
+            ELSE NULL
+          END)
         ON CONFLICT (user_id, provider, lookup_key) DO UPDATE SET
           user_id = EXCLUDED.user_id,
           request_id = EXCLUDED.request_id,
