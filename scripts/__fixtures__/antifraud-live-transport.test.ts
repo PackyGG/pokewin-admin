@@ -18,7 +18,6 @@ const retiredOverviewActivityPath =
 const monitorClientPaths = [
   "src/app/(antifraud)/antifraud/monitor/monitor-console.tsx",
   "src/app/(antifraud)/antifraud/_components/live-feed.tsx",
-  "src/app/(antifraud)/antifraud/_components/overview-live-sync.tsx",
 ];
 
 test("the monitor service owns connection capacity and the SSE bridge reconnects", async () => {

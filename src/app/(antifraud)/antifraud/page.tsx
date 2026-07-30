@@ -26,7 +26,6 @@ import {
 } from "@/lib/antifraud/monitor-api";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { OverviewLiveSync } from "./_components/overview-live-sync";
 import {
   OverviewActionFeed,
   OverviewCharts,
@@ -63,7 +62,6 @@ export default async function AntifraudOverviewPage() {
 
   return (
     <div className="space-y-4">
-      <OverviewLiveSync snapshotAt={snapshotAt} />
       <Suspense fallback={<DashboardSkeleton />}>
         <Dashboard snapshotAt={snapshotAt} />
       </Suspense>
