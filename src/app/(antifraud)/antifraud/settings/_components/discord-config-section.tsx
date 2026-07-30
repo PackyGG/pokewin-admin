@@ -2,6 +2,7 @@ import { BellRing, ExternalLink, ShieldCheck, Siren, Users } from "lucide-react"
 
 import { SectionHeading } from "@/components/modern-panels";
 import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
+import { ANTIFRAUD_TEAM_IDS } from "@/lib/discord-notifications/antifraud-policy";
 import { cn } from "@/lib/utils";
 
 /**
@@ -20,6 +21,13 @@ const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: "Automatic trigger", value: "Signup score 50+ or matched rule" },
   { label: "Urgent trigger", value: "Not defined yet" },
 ];
+
+const TEAM_ROLES = [
+  { label: "Owner", ids: ANTIFRAUD_TEAM_IDS.owner },
+  { label: "Manager", ids: ANTIFRAUD_TEAM_IDS.managers },
+  { label: "Developer", ids: ANTIFRAUD_TEAM_IDS.dev },
+  { label: "Support", ids: ANTIFRAUD_TEAM_IDS.support },
+] as const;
 
 function RecipientList({
   title,
@@ -222,6 +230,43 @@ export async function DiscordConfigSection() {
           ids={discord?.urgentRecipientIds ?? null}
           urgent
         />
+      </div>
+
+      <div className="rounded-xl border border-border/60 bg-card p-4">
+        <div className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Users className="size-4" />
+          </span>
+          <div>
+            <p className="text-sm font-semibold">Discord team roles</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Every supplied Discord user ID with its assigned antifraud role.
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {TEAM_ROLES.map((role) => (
+            <div
+              key={role.label}
+              className="rounded-lg border border-border/50 bg-muted/20 p-3"
+            >
+              <p className="text-xs font-semibold">{role.label}</p>
+              <ul className="mt-2 space-y-2">
+                {role.ids.map((id) => (
+                  <li
+                    key={id}
+                    className="flex items-center justify-between gap-3 rounded-md border border-border/50 bg-card px-3 py-2"
+                  >
+                    <code className="min-w-0 font-mono text-xs">{id}</code>
+                    <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
+                      {role.label}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
       </div>
 
       <div className="flex items-start gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
