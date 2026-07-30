@@ -20,7 +20,7 @@ import {
 import { HostLink } from "@/components/host-link";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { useSseStream } from "@/lib/hooks/use-sse";
+import { retrySseConnection, useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
 import { cn } from "@/lib/utils";
 import { formatCurrency } from "@/lib/utils/format";
@@ -29,6 +29,7 @@ import {
   networkRiskLabels,
 } from "../_components/network-risk-badges";
 import {
+  MONITOR_STREAM_PATH,
   parseMonitorFrame,
   type MonitorActivityEvent,
 } from "../_components/monitor-stream";
@@ -683,11 +684,34 @@ export function MonitorConsole() {
     [],
   );
 
+  // Give-up fallback: the stream contract promises callers degrade to
+  // polling, and this console owns the snapshot loader — so use it. Each
+  // tick also asks the shared connection to try again; the moment frames
+  // flow again the poller stops.
+  const fallbackPoll = React.useRef<ReturnType<typeof setInterval> | null>(
+    null,
+  );
+  const stopFallbackPoll = React.useCallback(() => {
+    if (fallbackPoll.current) {
+      clearInterval(fallbackPoll.current);
+      fallbackPoll.current = null;
+    }
+  }, []);
+  const startFallbackPoll = React.useCallback(() => {
+    if (fallbackPoll.current) return;
+    fallbackPoll.current = setInterval(() => {
+      void loadSnapshot();
+      retrySseConnection(MONITOR_STREAM_PATH);
+    }, 30_000);
+  }, [loadSnapshot]);
+  React.useEffect(() => stopFallbackPoll, [stopFallbackPoll]);
+
   const applyFrame = React.useCallback(
     (raw: unknown) => {
       const parsed = parseMonitorFrame(raw);
       if (!parsed) return;
       lastFrameAt.current = Date.now();
+      stopFallbackPoll();
 
       if (parsed.kind === "transport") {
         const state = parsed.state;
@@ -911,31 +935,42 @@ export function MonitorConsole() {
         );
       }
     },
-    [requestResync],
+    [requestResync, stopFallbackPoll],
   );
 
   useSseStream<unknown>(
-    "/api/antifraud/monitor/stream",
+    MONITOR_STREAM_PATH,
     {
       // The route never emits `init`; the mount snapshot is the initial paint.
       onInit: () => {},
       onRow: applyFrame,
       onReconnect: () => {
         lastFrameAt.current = Date.now();
+        stopFallbackPoll();
         setStreamState((current) =>
           current === "unconfigured" ? current : "connecting",
         );
+        // Frames published while the stream was down may not all replay;
+        // one bounded snapshot reconciles drift (10s cooldown inside).
+        requestResync();
+      },
+      onStale: () => {
+        setStreamState((current) =>
+          current === "unconfigured" ? current : "connecting",
+        );
+        requestResync();
       },
       onGiveUp: () => {
         setStreamState((current) =>
           current === "unconfigured" ? current : "offline",
         );
         setStreamNotice((current) =>
-          current ?? "Offline — automatic reconnect paused. Reload to retry.",
+          current ?? "Offline — retrying in the background.",
         );
+        startFallbackPoll();
       },
     },
-    { resumeParam: "after" },
+    { resumeParam: "after", staleAfterMs: STALE_STREAM_MS },
   );
 
   const connectionLabel =

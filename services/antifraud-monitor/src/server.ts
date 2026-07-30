@@ -308,10 +308,46 @@ await app.register(swagger, {
     },
   },
 });
+/**
+ * Grace given to live websocket clients to acknowledge the 1001 close frame on
+ * shutdown before they are terminated. Must stay well below the 25s shutdown
+ * watchdog: ws' default close timeout (30s per client) would otherwise push a
+ * redeploy past the watchdog and exit(1).
+ */
+const WS_SHUTDOWN_TERMINATE_MS = 3_000;
+/** Lame-duck window so load balancers see /health 503 before the listener dies. */
+const SHUTDOWN_DRAIN_MS = 2_000;
 await app.register(websocket, {
   options: {
     maxPayload: 128 * 1024,
     perMessageDeflate: false,
+  },
+  // The plugin's default preClose sends a bare close() (no code → clients see
+  // 1005) before any onClose hook runs, which made live.close()'s 1001 a
+  // no-op. Send the going-away code here, with a bounded terminate fallback.
+  preClose(done) {
+    const server = app.websocketServer;
+    for (const client of server.clients) {
+      try {
+        client.close(1001, "server_shutdown");
+      } catch {
+        client.terminate();
+      }
+    }
+    const deadline = setTimeout(() => {
+      for (const client of server.clients) {
+        try {
+          client.terminate();
+        } catch {
+          // The peer may already have completed teardown.
+        }
+      }
+    }, WS_SHUTDOWN_TERMINATE_MS);
+    deadline.unref();
+    server.close(() => {
+      clearTimeout(deadline);
+      done();
+    });
   },
 });
 
@@ -384,6 +420,11 @@ app.addHook("onRequest", async (request, reply) => {
 });
 
 app.get("/health", async (_request, reply) => {
+  // Lame-duck: a draining process must fail its checks immediately so the
+  // platform stops routing to it before the listener closes.
+  if (shuttingDown) {
+    return reply.code(503).send({ status: "draining" });
+  }
   const poller = engine.healthSnapshot();
   const webappMonitor = dashboardOpsTick.status();
   const stalledForMs = pollerStalledFor(
@@ -413,10 +454,16 @@ app.get("/health", async (_request, reply) => {
   return body;
 });
 app.get("/ready", async (_request, reply) => {
+  if (shuttingDown) {
+    return reply.code(503).send({ status: "draining" });
+  }
   try {
     await assertDatabaseConnections(db);
     const poller = engine.healthSnapshot();
-    const liveStatus = { subscribed: live.isSubscribed() };
+    const liveStatus = {
+      subscribed: live.isSubscribed(),
+      publishFailures: live.publishFailureCount,
+    };
     const webappMonitor = dashboardOpsTick.status();
     if (
       poller.status === "starting" ||
@@ -1322,10 +1369,14 @@ app.get("/v1/live/replay", async (request) => {
     after: z.string().regex(STREAM_ID_PATTERN).optional(),
     limit: z.coerce.number().int().min(1).max(200).default(200),
   }).parse(request.query);
-  const events = await live.replay(query.after ?? null, query.limit);
+  const result = await live.replay(query.after ?? null, query.limit);
+  // The cursor is the last SCANNED stream id (not the last parsed envelope) so
+  // unparseable entries cannot stall the caller's pagination loop. `truncated`
+  // tells the proxy the stream was trimmed past its cursor and it must resync.
   return {
-    data: events,
-    cursor: events[events.length - 1]?.id ?? query.after ?? null,
+    data: result.events,
+    cursor: result.cursor ?? query.after ?? null,
+    truncated: result.truncated,
   };
 });
 
@@ -1347,11 +1398,27 @@ app.get("/v1/live", { websocket: true }, async (socket, request) => {
     : undefined;
   const rawTicket = protocol?.slice("antifraud-ticket.".length);
   const parsed = z.string().regex(/^[A-Za-z0-9_-]{40,100}$/).safeParse(rawTicket);
-  const ticket = parsed.success ? await live.consumeTicket(parsed.data) : null;
+  let ticket: { actorId: string } | null = null;
+  try {
+    ticket = parsed.success ? await live.consumeTicket(parsed.data) : null;
+  } catch (error) {
+    // Redis being down is a capacity problem, not an auth failure: 1013 tells
+    // the proxy to take its backoff instead of discarding the session as
+    // unauthorized.
+    request.log.error(
+      { err: error },
+      "Antifraud live websocket ticket lookup failed",
+    );
+    socket.close(1013, "unavailable");
+    return;
+  }
   if (!ticket) {
     socket.close(1008, "invalid_ticket");
     return;
   }
+  // The peer may have disconnected during the ticket round-trip; its `close`
+  // event already fired, so registering it would leak the connection slot.
+  if (socket.readyState !== socket.OPEN) return;
   if (!live.addClient(socket, ticket.actorId)) {
     request.log.warn(
       { actorId: ticket.actorId },
@@ -1496,13 +1563,19 @@ app.addHook("onClose", async () => {
 let shutdownPromise: Promise<void> | null = null;
 function requestShutdown(signal: NodeJS.Signals): void {
   if (shutdownPromise) return;
+  // Flip into lame-duck first: /health and /ready go 503 immediately and the
+  // short drain window lets the platform stop routing before the close starts.
+  shuttingDown = true;
   app.log.info({ signal }, "Antifraud service shutdown requested");
   const warning = setTimeout(() => {
     app.log.error({ signal }, "Antifraud service shutdown exceeded 25 seconds");
     process.exit(1);
   }, 25_000);
   warning.unref();
-  shutdownPromise = app.close()
+  shutdownPromise = new Promise<void>((resolve) => {
+    setTimeout(resolve, SHUTDOWN_DRAIN_MS);
+  })
+    .then(() => app.close())
     .catch((error: unknown) => {
       process.exitCode = 1;
       app.log.error({ err: error, signal }, "Antifraud service shutdown failed");

@@ -45,6 +45,8 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
   const [isRefreshing, startRefresh] = React.useTransition();
   const [clockLabel, setClockLabel] = React.useState<string | null>(null);
   const newestEventMs = React.useRef(0);
+  /** Replayed duplicates after a reconnect must not inflate the counter. */
+  const seenFrameIds = React.useRef(new Set<string>());
 
   const snapshotMs = React.useMemo(() => {
     const parsed = Date.parse(snapshotAt);
@@ -95,6 +97,13 @@ export function OverviewLiveSync({ snapshotAt }: { snapshotAt: string }) {
       if (incoming.kind !== "activity") return;
 
       setConnection("live");
+
+      if (seenFrameIds.current.has(incoming.event.id)) return;
+      seenFrameIds.current.add(incoming.event.id);
+      if (seenFrameIds.current.size > 1_000) {
+        const oldest = seenFrameIds.current.values().next().value;
+        if (typeof oldest === "string") seenFrameIds.current.delete(oldest);
+      }
 
       // Only frames the current server render could not have seen make it
       // stale. An unparsable timestamp counts as newer — better a redundant

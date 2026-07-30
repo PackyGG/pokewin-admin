@@ -28,6 +28,19 @@ export const maxDuration = 300;
  *   3. The heartbeat is a real `transport` frame, not an SSE comment, so the
  *      client can detect a silently stalled connection (comments are invisible
  *      to EventSource) as well as keeping proxies from closing the socket.
+ *   4. The upstream websocket is pinged every 20s and terminated when no
+ *      message/pong arrives for 60s, so a half-open TCP connection can't keep
+ *      the heartbeat reporting "open" while no events flow.
+ *   5. Permanent refusals (unconfigured service, auth-shaped rejections) also
+ *      emit an `event: fatal` frame so the client stops retrying for good.
+ *      The rate-limit refusal deliberately does NOT send `fatal` — the
+ *      client's normal `retry:`-spaced EventSource reconnect drains it.
+ *   6. Rotation writes an `event: reconnect` frame right before closing so
+ *      the client reopens instantly (cursor preserved) instead of waiting
+ *      out the 15s retry window.
+ *   7. Replay is best-effort: after 2 consecutive replay failures the route
+ *      goes live without history, and a replay overflow or truncated replay
+ *      is surfaced to the UI instead of wedging the reconnect loop.
  */
 
 const HEARTBEAT_MS = 15_000;
@@ -37,6 +50,15 @@ const MAX_STREAM_STARTS_PER_MINUTE = 10;
 const ROTATE_AFTER_MS = 240_000;
 const UPSTREAM_RETRY_MIN_MS = 1_000;
 const UPSTREAM_RETRY_MAX_MS = 30_000;
+/** Ping the upstream socket this often to catch half-open TCP connections. */
+const UPSTREAM_PING_MS = 20_000;
+/** Terminate the upstream socket when no message/pong arrives in this window. */
+const UPSTREAM_IDLE_MS = 60_000;
+/** After this many consecutive replay failures, go live without history. */
+const REPLAY_FAILURE_LIMIT = 2;
+/** Pending live frames beyond this during replay → drop the replay, go live. */
+const REPLAY_PENDING_LIMIT = 500;
+const REPLAY_TRUNCATED_MESSAGE = "History truncated — refresh for full state";
 const CAPACITY_RETRY_MIN_MS = 15_000;
 /** Reconnect delay advertised to the browser's own EventSource retry. */
 const CLIENT_RETRY_MS = 15_000;
@@ -96,11 +118,21 @@ function sseFrame(event: string, value: unknown, id?: string): string {
  * A 200 `text/event-stream` response that carries a single terminal transport
  * frame and then ends. Used for every capacity refusal so the browser's
  * EventSource is not permanently poisoned by a non-2xx status.
+ *
+ * `fatal: true` additionally emits an `event: fatal` frame so the client hook
+ * stops retrying permanently. Only permanent refusals (unconfigured service,
+ * auth-shaped rejections) may set it — a rate-limit refusal must keep the
+ * client's normal `retry:`-spaced reconnect so the limiter can drain.
  */
-function terminalStream(state: TransportState, message: string): Response {
+function terminalStream(
+  state: TransportState,
+  message: string,
+  fatal = false,
+): Response {
   const body =
     `retry: ${CLIENT_RETRY_MS}\n\n` +
-    sseFrame("row", transport(state, message, true));
+    sseFrame("row", transport(state, message, true)) +
+    (fatal ? sseFrame("fatal", { message }) : "");
   return new Response(new TextEncoder().encode(body), { headers: SSE_HEADERS });
 }
 
@@ -153,14 +185,20 @@ function parseEnvelope(value: unknown): LiveEnvelope | null {
 /**
  * Catch up from the service's bounded Redis replay stream. Paging matters when
  * one Railway outage spans more than the route's 200-event page size.
+ *
+ * `truncated` is true when history is known-incomplete: the service trimmed
+ * its retained stream (`truncated: true` in the payload) or the page cap was
+ * hit with more pages remaining. The caller surfaces that to the UI instead
+ * of pretending the replay was complete.
  */
 async function replayEvents(
   baseUrl: string,
   token: string,
   after: string | null,
-): Promise<LiveEnvelope[]> {
+): Promise<{ events: LiveEnvelope[]; truncated: boolean }> {
   const events: LiveEnvelope[] = [];
   let cursor = after;
+  let truncated = false;
 
   for (let page = 0; page < 10; page += 1) {
     const url = new URL(`${baseUrl}/v1/live/replay`);
@@ -178,8 +216,10 @@ async function replayEvents(
     const payload = (await response.json()) as {
       data?: unknown;
       cursor?: unknown;
+      truncated?: unknown;
     };
     if (!Array.isArray(payload.data)) throw new Error("Replay response invalid");
+    if (payload.truncated === true) truncated = true;
     for (const value of payload.data) {
       const event = parseEnvelope(value);
       if (event) events.push(event);
@@ -188,11 +228,14 @@ async function replayEvents(
       typeof payload.cursor === "string" && REPLAY_ID.test(payload.cursor)
         ? payload.cursor
         : null;
-    if (payload.data.length < 200 || !next || next === cursor) break;
+    if (payload.data.length < 200 || !next || next === cursor) {
+      return { events, truncated };
+    }
     cursor = next;
   }
 
-  return events;
+  // Page cap reached with more history still unread.
+  return { events, truncated: true };
 }
 
 function websocketUrl(baseUrl: string): string {
@@ -231,7 +274,7 @@ export async function GET(request: Request): Promise<Response> {
   if (!limit.allowed) {
     return terminalStream(
       "closed",
-      "Too many stream restarts. Reload the page to reconnect.",
+      "Too many stream restarts — retrying automatically in about a minute.",
     );
   }
 
@@ -259,8 +302,11 @@ export async function GET(request: Request): Promise<Response> {
       let heartbeat: ReturnType<typeof setInterval> | null = null;
       let rotation: ReturnType<typeof setTimeout> | null = null;
       let retryTimer: ReturnType<typeof setTimeout> | null = null;
+      let upstreamPing: ReturnType<typeof setInterval> | null = null;
+      let lastUpstreamActivityAt = 0;
       let attempt = 0;
       let consecutiveFailures = 0;
+      let replayFailures = 0;
       let state: TransportState = "connecting";
       let closed = false;
       let lastDeliveredId = resumeAfter;
@@ -303,6 +349,8 @@ export async function GET(request: Request): Promise<Response> {
         if (heartbeat) clearInterval(heartbeat);
         if (rotation) clearTimeout(rotation);
         if (retryTimer) clearTimeout(retryTimer);
+        if (upstreamPing) clearInterval(upstreamPing);
+        upstreamPing = null;
         if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
         socket = null;
         try {
@@ -361,18 +409,38 @@ export async function GET(request: Request): Promise<Response> {
             socket = next;
             next.on("open", () => {
               if (closed || socket !== next) return;
+              // Zombie detection: ping the upstream on an interval and
+              // terminate when nothing (message or pong) arrived within the
+              // idle window. A half-open TCP connection otherwise keeps the
+              // heartbeat reporting "open" forever while no events flow.
+              lastUpstreamActivityAt = Date.now();
+              if (upstreamPing) clearInterval(upstreamPing);
+              upstreamPing = setInterval(() => {
+                if (closed || socket !== next) return;
+                if (Date.now() - lastUpstreamActivityAt > UPSTREAM_IDLE_MS) {
+                  if (upstreamPing) clearInterval(upstreamPing);
+                  upstreamPing = null;
+                  scheduleReconnect("Upstream idle, reconnecting");
+                  next.terminate();
+                  return;
+                }
+                next.ping();
+              }, UPSTREAM_PING_MS);
               // A brand-new browser already loaded an authoritative snapshot.
               // Replay is only for resuming a stream that has a known cursor;
               // otherwise retained history could regress the current snapshot.
               void (lastDeliveredId
                 ? replayEvents(baseUrl, token, lastDeliveredId)
-                : Promise.resolve([]))
-                .then((replayed) => {
+                : Promise.resolve({ events: [], truncated: false }))
+                .then(({ events: replayed, truncated }) => {
                   if (
                     closed ||
                     socket !== next ||
-                    next.readyState !== WebSocket.OPEN
+                    next.readyState !== WebSocket.OPEN ||
+                    !replaying
                   ) {
+                    // `!replaying`: the pending-buffer overflow path already
+                    // dropped this replay and went live.
                     return;
                   }
                   for (const event of replayed) forward(event);
@@ -381,16 +449,33 @@ export async function GET(request: Request): Promise<Response> {
                   pending.length = 0;
                   attempt = 0;
                   consecutiveFailures = 0;
+                  replayFailures = 0;
                   setState("open");
+                  if (truncated) send(transport("open", REPLAY_TRUNCATED_MESSAGE));
                 })
                 .catch(() => {
                   console.error("[antifraud-monitor] replay failed");
-                  if (closed || socket !== next) return;
+                  if (closed || socket !== next || !replaying) return;
+                  replayFailures += 1;
+                  if (replayFailures >= REPLAY_FAILURE_LIMIT) {
+                    // A persistently failing replay endpoint must not wedge
+                    // the whole route — go live without history instead of
+                    // burning a healthy socket on every attempt.
+                    if (next.readyState !== WebSocket.OPEN) return;
+                    replaying = false;
+                    for (const event of pending) forward(event);
+                    pending.length = 0;
+                    attempt = 0;
+                    consecutiveFailures = 0;
+                    setState("open", "Live only — event history unavailable");
+                    return;
+                  }
                   next.close();
                 });
             });
             next.on("message", (frame) => {
               if (closed || socket !== next) return;
+              lastUpstreamActivityAt = Date.now();
               try {
                 const payload = frame.toString();
                 if (Buffer.byteLength(payload) > MAX_FRAME_BYTES) return;
@@ -399,7 +484,17 @@ export async function GET(request: Request): Promise<Response> {
                 if (!envelope) return;
                 if (replaying) {
                   pending.push(envelope);
-                  if (pending.length > 500) next.close();
+                  if (pending.length > REPLAY_PENDING_LIMIT) {
+                    // A live burst outran the replay. Closing here would just
+                    // reconnect into the same window and die again — drop the
+                    // replay, go live, and tell the UI history is incomplete.
+                    replaying = false;
+                    for (const event of pending) forward(event);
+                    pending.length = 0;
+                    attempt = 0;
+                    consecutiveFailures = 0;
+                    setState("open", REPLAY_TRUNCATED_MESSAGE);
+                  }
                 } else {
                   forward(envelope);
                 }
@@ -407,11 +502,19 @@ export async function GET(request: Request): Promise<Response> {
                 // Ignore malformed upstream frames.
               }
             });
+            next.on("pong", () => {
+              if (closed || socket !== next) return;
+              lastUpstreamActivityAt = Date.now();
+            });
             next.on("error", () => {
               console.error("[antifraud-monitor] websocket failed");
               // `ws` always emits `close` after `error`; reconnect from there.
             });
             next.on("close", (code) => {
+              if (socket === next && upstreamPing) {
+                clearInterval(upstreamPing);
+                upstreamPing = null;
+              }
               if (closed || socket !== next) return;
               socket = null;
               if (code === 1013) {
@@ -439,6 +542,8 @@ export async function GET(request: Request): Promise<Response> {
 
       if (!baseUrl || !token) {
         send(transport("unconfigured", "Monitor service is not configured", true));
+        // Permanent refusal — tell the hook to stop retrying for good.
+        write(sseFrame("fatal", { message: "Monitor service is not configured" }));
         close();
         return;
       }
@@ -450,8 +555,10 @@ export async function GET(request: Request): Promise<Response> {
       }, HEARTBEAT_MS);
 
       rotation = setTimeout(() => {
-        // A normal SSE close lets the browser reconnect the same EventSource,
-        // preserving Last-Event-ID so the next route instance can replay.
+        // Tell the hook to reopen immediately (cursor preserved) instead of
+        // sitting dark for the 15s `retry:` window, then close normally so
+        // the next route instance can replay from Last-Event-ID.
+        write(sseFrame("reconnect", { reason: "rotation" }));
         close();
       }, ROTATE_AFTER_MS);
 

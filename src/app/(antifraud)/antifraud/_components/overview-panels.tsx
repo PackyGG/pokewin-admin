@@ -263,7 +263,15 @@ export function OverviewActionFeed({
         const frame = parseMonitorFrame(raw);
         if (!frame) return;
         if (frame.kind === "transport") {
-          setConnection(frame.state === "open" ? "live" : "connecting");
+          // "unconfigured"/terminal/error must read as offline, not as a
+          // permanent "connecting" that looks like a transient blip.
+          setConnection(
+            frame.state === "open"
+              ? "live"
+              : frame.state === "connecting"
+                ? "connecting"
+                : "offline",
+          );
           return;
         }
         if (frame.kind !== "activity") return;

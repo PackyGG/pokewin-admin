@@ -29,11 +29,25 @@ import * as React from "react";
  * first reconnect; on top of that the singleton adds backoff (1s → 2s →
  * 4s → … → 30s) for repeated failures so a DB outage doesn't hammer the
  * server. After `maxFailures` consecutive cold failures it gives up and
- * notifies every subscriber so callers can fall back to polling.
+ * notifies every subscriber so callers can fall back to polling. A
+ * give-up is NOT forever: it clears when the network comes back
+ * (`online`), when a hidden tab becomes visible again, or when a caller
+ * invokes `retrySseConnection(url)`.
+ *
+ * Terminal frames: a server that wants the client to STOP retrying (bad
+ * config, permanent refusal) sends `event: fatal` before closing. A plain
+ * clean EOF is otherwise retried by the browser forever, which turned
+ * "service unconfigured" into a silent 15s reconnect loop.
  *
  * Visibility: the connection closes on `visibilitychange → hidden` and
  * reopens when the tab becomes visible again, so background tabs don't
- * hold streams open.
+ * hold streams open. `offline`/`online` are handled the same way so a
+ * wifi drop doesn't burn the failure budget.
+ *
+ * Resume cursors survive teardown: the last delivered event id is kept in
+ * a module-level map keyed by URL, so a client-side navigation that
+ * unmounts every subscriber still resumes from where it left off instead
+ * of silently losing the gap.
  */
 
 type Subscriber<T> = {
@@ -53,10 +67,14 @@ type Connection = {
   source: EventSource | null;
   failures: number;
   opened: boolean;
+  /** When the current EventSource fired `open`; 0 while not open. */
+  openedAt: number;
   backoffTimer: ReturnType<typeof setTimeout> | null;
   gaveUp: boolean;
   visibilityBound: boolean;
   onVisibility: (() => void) | null;
+  onOnline: (() => void) | null;
+  onOffline: (() => void) | null;
   /**
    * Last `init` payload received on the current (or most recent)
    * connection. Replayed to subscribers that join after `init` already
@@ -70,6 +88,36 @@ type Connection = {
 
 const connections = new Map<string, Connection>();
 
+/**
+ * Last delivered event id per URL. Deliberately OUTSIDE the connection so a
+ * full teardown (route change unmounting every subscriber) does not lose the
+ * replay cursor — the next mount resumes instead of starting cold.
+ */
+const resumeCursors = new Map<string, string>();
+
+/**
+ * A run this long before dropping counts as "healthy": the next failure
+ * restarts the backoff schedule instead of escalating it.
+ */
+const STABLE_SESSION_MS = 30_000;
+
+/**
+ * Clear a gave-up connection and try again. Called internally on
+ * `online`/visibility recovery; exported so consumers can wire a manual
+ * "reconnect" affordance or a periodic retry to their polling fallback.
+ */
+export function retrySseConnection(url: string): void {
+  const conn = connections.get(url);
+  if (!conn || conn.subscribers.size === 0) return;
+  conn.gaveUp = false;
+  conn.failures = 0;
+  if (conn.backoffTimer) {
+    clearTimeout(conn.backoffTimer);
+    conn.backoffTimer = null;
+  }
+  connect(conn);
+}
+
 function getConnection(
   url: string,
   maxFailures: number,
@@ -80,16 +128,19 @@ function getConnection(
     conn = {
       url,
       resumeParam,
-      lastEventId: null,
+      lastEventId: resumeCursors.get(url) ?? null,
       maxFailures,
       subscribers: new Set(),
       source: null,
       failures: 0,
       opened: false,
+      openedAt: 0,
       backoffTimer: null,
       gaveUp: false,
       visibilityBound: false,
       onVisibility: null,
+      onOnline: null,
+      onOffline: null,
       lastInit: null,
       staleAfterMs: null,
       staleTimer: null,
@@ -154,10 +205,22 @@ function armStaleTimer(conn: Connection) {
       }
     }
     const wasOpen = closeSource(conn);
-    if (wasOpen && conn.subscribers.size > 0) {
-      emitReconnect(conn);
-      connect(conn);
+    if (!wasOpen || conn.subscribers.size === 0) return;
+    // A stale cycle is a failure too: a buffering middlebox that swallows
+    // frames must escalate through backoff and eventually give up, instead
+    // of dropping + reopening at full speed forever.
+    conn.failures += 1;
+    if (conn.failures >= conn.maxFailures) {
+      conn.gaveUp = true;
+      emitGiveUp(conn);
+      return;
     }
+    emitReconnect(conn);
+    const delay = Math.min(30_000, 1000 * 2 ** (conn.failures - 1));
+    conn.backoffTimer = setTimeout(() => {
+      conn.backoffTimer = null;
+      connect(conn);
+    }, delay);
   }, conn.staleAfterMs);
 }
 
@@ -172,6 +235,7 @@ function closeSource(conn: Connection): boolean {
     conn.source = null;
   }
   conn.opened = false;
+  conn.openedAt = 0;
   if (conn.staleTimer) {
     clearTimeout(conn.staleTimer);
     conn.staleTimer = null;
@@ -211,7 +275,11 @@ function connect(conn: Connection) {
   source.addEventListener("open", () => {
     if (conn.source !== source) return;
     conn.opened = true;
-    conn.failures = 0;
+    conn.openedAt = Date.now();
+    // Deliberately NOT resetting `failures` here: a flapping endpoint that
+    // opens and immediately dies would otherwise retry at 1s forever. The
+    // error handler resets the schedule only after a session that lasted
+    // `STABLE_SESSION_MS`.
     armStaleTimer(conn);
   });
 
@@ -233,13 +301,26 @@ function connect(conn: Connection) {
     if (conn.source !== source) return;
     try {
       const message = ev as MessageEvent<string>;
-      if (message.lastEventId) conn.lastEventId = message.lastEventId;
+      if (message.lastEventId) {
+        conn.lastEventId = message.lastEventId;
+        resumeCursors.set(conn.url, message.lastEventId);
+      }
       const parsed = JSON.parse(message.data);
       armStaleTimer(conn);
       emitRow(conn, parsed);
     } catch {
       // Ignore malformed row.
     }
+  });
+
+  source.addEventListener("fatal", () => {
+    if (conn.source !== source) return;
+    // The server says retrying is pointless (unconfigured / permanent
+    // refusal). Without this a clean EOF is retried by the browser every
+    // `retry:` interval forever.
+    closeSource(conn);
+    conn.gaveUp = true;
+    emitGiveUp(conn);
   });
 
   source.addEventListener("reconnect", () => {
@@ -259,13 +340,20 @@ function connect(conn: Connection) {
     // on the terminal case; otherwise let the browser's own retry run.
     if (source.readyState !== EventSource.CLOSED) return;
 
+    const sessionMs = conn.openedAt ? Date.now() - conn.openedAt : 0;
     const wasHealthy = closeSource(conn);
     if (wasHealthy) {
-      // First failure after a healthy run — treat as a soft retry on
-      // the gentle schedule. The connection had at least one good
-      // session, so the network / server is probably fine. Start the
-      // failure counter at 1 so the backoff begins at 1s (not 0s).
-      conn.failures = 1;
+      // The connection opened before dying. Only a session that actually
+      // LASTED resets the schedule — an endpoint that opens and drops
+      // instantly (proxy accepts, then resets the body) must escalate
+      // through the same 1s → 2s → … → 30s ramp and eventually give up,
+      // not hammer at 1s forever.
+      conn.failures = sessionMs >= STABLE_SESSION_MS ? 1 : conn.failures + 1;
+      if (conn.failures >= conn.maxFailures) {
+        conn.gaveUp = true;
+        emitGiveUp(conn);
+        return;
+      }
       const delay = Math.min(30_000, 1000 * 2 ** (conn.failures - 1));
       conn.backoffTimer = setTimeout(() => {
         conn.backoffTimer = null;
@@ -314,6 +402,10 @@ function ensureVisibilityBinding(conn: Connection) {
   if (typeof document === "undefined") return;
   const onVisibility = () => {
     if (document.visibilityState === "visible") {
+      // A refocus is a fresh chance: clear a give-up that happened while
+      // the tab was hidden or the machine was asleep.
+      conn.gaveUp = false;
+      conn.failures = 0;
       if (!conn.source && conn.subscribers.size > 0) connect(conn);
     } else {
       closeSource(conn);
@@ -325,6 +417,27 @@ function ensureVisibilityBinding(conn: Connection) {
   };
   document.addEventListener("visibilitychange", onVisibility);
   conn.onVisibility = onVisibility;
+
+  if (typeof window !== "undefined") {
+    // Without these a wifi drop burns the whole failure budget on retries
+    // that cannot succeed, and nothing reconnects when the network returns.
+    const onOffline = () => {
+      closeSource(conn);
+      if (conn.backoffTimer) {
+        clearTimeout(conn.backoffTimer);
+        conn.backoffTimer = null;
+      }
+    };
+    const onOnline = () => {
+      conn.gaveUp = false;
+      conn.failures = 0;
+      if (!conn.source && conn.subscribers.size > 0) connect(conn);
+    };
+    window.addEventListener("offline", onOffline);
+    window.addEventListener("online", onOnline);
+    conn.onOffline = onOffline;
+    conn.onOnline = onOnline;
+  }
   conn.visibilityBound = true;
 }
 
@@ -341,8 +454,15 @@ function teardownConnection(conn: Connection) {
   if (conn.visibilityBound && conn.onVisibility && typeof document !== "undefined") {
     document.removeEventListener("visibilitychange", conn.onVisibility);
   }
+  if (typeof window !== "undefined") {
+    if (conn.onOffline) window.removeEventListener("offline", conn.onOffline);
+    if (conn.onOnline) window.removeEventListener("online", conn.onOnline);
+  }
   conn.visibilityBound = false;
   conn.onVisibility = null;
+  conn.onOffline = null;
+  conn.onOnline = null;
+  // `resumeCursors` intentionally survives so the next mount resumes.
   connections.delete(conn.url);
 }
 
@@ -383,7 +503,9 @@ function subscribe<T>(
         // ignore
       }
     }
-  } else {
+  } else if (!conn.backoffTimer) {
+    // A pending backoff timer means a retry is already scheduled — a new
+    // subscriber must not bypass the schedule with an immediate attempt.
     connect(conn);
   }
 

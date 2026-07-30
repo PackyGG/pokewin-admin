@@ -739,7 +739,7 @@ test("websocket tickets retry a failed NX reservation", async () => {
   await bus.close();
 });
 
-test("websocket client errors terminate and release the actor slot", async () => {
+test("websocket client errors evict with a coded close and release the actor slot", async () => {
   const { bus } = liveBusFixture();
   const clients = Array.from(
     { length: MAX_CONNECTIONS_PER_ACTOR + 1 },
@@ -761,7 +761,9 @@ test("websocket client errors terminate and release the actor slot", async () =>
   );
 
   clients[0]?.emit("error", new Error("peer reset"));
-  assert.equal(clients[0]?.terminated, 1);
+  // Errored clients are now evicted with a coded close (1011) instead of a
+  // bare terminate, so peers do not see 1006 and hot-retry.
+  assert.equal(clients[0]?.readyState, 3);
   assert.equal(
     bus.addClient(
       clients[MAX_CONNECTIONS_PER_ACTOR] as unknown as WebSocket,
