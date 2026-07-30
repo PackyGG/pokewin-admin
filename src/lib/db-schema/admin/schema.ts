@@ -1606,7 +1606,7 @@ export const discord_notification_guilds = pgTable("discord_notification_guilds"
 	last_synced_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
+}, (_table) => [
 	check("discord_notification_guilds_id_check", sql`guild_id ~ '^[0-9]{15,21}$'::text`),
 ]);
 
