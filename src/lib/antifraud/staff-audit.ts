@@ -88,6 +88,11 @@ export const ANTIFRAUD_AUDIT_EVENTS: Record<string, EventDefinition> = {
     category: "enforcement",
     tone: "danger",
   },
+  antifraud_withdrawals_unlocked: {
+    label: "Withdrawals unlocked",
+    category: "enforcement",
+    tone: "good",
+  },
   antifraud_withdrawal_reviewed: {
     label: "Withdrawal reviewed",
     category: "enforcement",
