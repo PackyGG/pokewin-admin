@@ -10,11 +10,7 @@ export default function FiatDepositsLoading() {
       </PageHero>
       <Skeleton className="h-10 w-full max-w-xs rounded-lg" />
       <Skeleton className="h-20 rounded-xl" />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-        {Array.from({ length: 5 }).map((_, index) => (
-          <Skeleton key={index} className="h-28 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-14 rounded-xl" />
       <div className="space-y-3">
         {Array.from({ length: 4 }).map((_, index) => (
           <Skeleton key={index} className="h-36 rounded-xl" />

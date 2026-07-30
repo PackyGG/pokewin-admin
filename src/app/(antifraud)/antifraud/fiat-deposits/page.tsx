@@ -157,9 +157,9 @@ export default async function FiatDepositsPage({
         key={JSON.stringify(state)}
         fallback={
           <ListPageSkeleton
-            tiles={5}
-            tileGridClassName="grid gap-3 sm:grid-cols-2 xl:grid-cols-5"
-            tileClassName="h-28 rounded-xl"
+            tiles={1}
+            tileGridClassName="grid gap-3"
+            tileClassName="h-14 rounded-xl"
           />
         }
       >
@@ -515,38 +515,63 @@ async function FiatReviewOverlay({
 }
 
 function Summary({ summary }: { summary: FiatSummary }) {
+  // One slim strip instead of five tall tiles — same four figures plus the
+  // risk-score legend, in a single row that only wraps on narrow viewports.
+  const cells = [
+    {
+      icon: CreditCard,
+      tint: "text-cyan-500",
+      label: "Unreviewed",
+      value: summary.unreviewed.toLocaleString(),
+      sub: `${summary.total} assessed`,
+    },
+    {
+      icon: ShieldAlert,
+      tint: "text-rose-500",
+      label: "High risk",
+      value: summary.bad.toLocaleString(),
+      sub: `${summary.hold_recommended} holds`,
+    },
+    {
+      icon: CircleAlert,
+      tint: "text-amber-500",
+      label: "Provider flags",
+      value: (
+        summary.provider_high_risk + summary.three_ds_failed
+      ).toLocaleString(),
+      sub: `${summary.disputed} disputed`,
+    },
+    {
+      icon: Banknote,
+      tint: "text-emerald-500",
+      label: "Volume",
+      value: formatCurrency(summary.amount_usd),
+      sub: `${summary.good} low risk`,
+    },
+  ];
   return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-      <KpiTile
-        icon={CreditCard}
-        accent="cyan"
-        label="Unreviewed"
-        value={summary.unreviewed.toLocaleString()}
-        sub={`${summary.total} assessed`}
-      />
-      <KpiTile
-        icon={ShieldAlert}
-        accent="rose"
-        label="High risk"
-        value={summary.bad.toLocaleString()}
-        sub={`${summary.hold_recommended} holds advised`}
-      />
-      <KpiTile
-        icon={CircleAlert}
-        accent="amber"
-        label="Provider flags"
-        value={(
-          summary.provider_high_risk + summary.three_ds_failed
-        ).toLocaleString()}
-        sub={`${summary.disputed} disputed`}
-      />
-      <KpiTile
-        icon={Banknote}
-        accent="emerald"
-        label="Assessed volume"
-        value={formatCurrency(summary.amount_usd)}
-        sub={`${summary.good} low risk`}
-      />
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-xl border border-border/70 bg-card px-3 py-2 sm:px-4">
+      {cells.map(({ icon: Icon, tint, label, value, sub }) => (
+        <div
+          key={label}
+          role="group"
+          aria-label={`${label}: ${value}, ${sub}`}
+          className="flex min-w-0 items-center gap-2 border-l border-border/60 pl-5 first:border-l-0 first:pl-0"
+        >
+          <Icon className={cn("size-4 shrink-0", tint)} aria-hidden />
+          <div className="min-w-0">
+            <p className="truncate text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+              {label}
+            </p>
+            <p className="flex items-baseline gap-1.5 truncate text-sm font-semibold leading-tight tabular-nums">
+              {value}
+              <span className="truncate text-[10px] font-normal text-muted-foreground">
+                {sub}
+              </span>
+            </p>
+          </div>
+        </div>
+      ))}
       <FiatRiskScoreGuide />
     </div>
   );
@@ -696,43 +721,30 @@ function CryptoDepositRow({ deposit }: { deposit: TransactionListItem }) {
 
 function FiatRiskScoreGuide() {
   return (
-    <div className="rounded-xl border border-border/70 bg-card p-4">
-      <div className="flex items-center justify-between">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          Risk score guide
-        </span>
-        <ShieldCheck className="size-4 text-violet-500" />
-      </div>
-      <div
-        className="mt-4"
-        role="img"
-        aria-label="Risk score guide: 0 to 29 is good, 30 to 59 needs review, and 60 to 100 is high risk"
-      >
-        <div className="flex h-2.5 overflow-hidden rounded-full">
-          <span className="w-[30%] bg-emerald-500" aria-hidden />
-          <span className="w-[30%] bg-amber-400" aria-hidden />
-          <span className="w-[40%] bg-rose-500" aria-hidden />
-        </div>
-        <div className="mt-2 grid grid-cols-[3fr_3fr_4fr] text-[10px] font-semibold leading-tight">
+    <div
+      className="flex items-center gap-2 border-l border-border/60 pl-5 xl:ml-auto xl:border-l-0 xl:pl-0"
+      role="img"
+      aria-label="Risk score guide: 0 to 29 is good, 30 to 59 needs review, and 60 to 100 is high risk"
+    >
+      <ShieldCheck className="size-4 shrink-0 text-violet-500" aria-hidden />
+      <div>
+        <p className="text-[10px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          Risk guide
+        </p>
+        <p className="flex items-center gap-2 text-[10px] font-semibold leading-tight tabular-nums">
           <span className="text-emerald-600 dark:text-emerald-400">
-            Good
-            <span className="block font-normal text-muted-foreground">
-              0–29
-            </span>
+            Good 0–29
           </span>
-          <span className="text-center text-amber-600 dark:text-amber-400">
-            Review
-            <span className="block font-normal text-muted-foreground">
-              30–59
-            </span>
+          <span className="text-amber-600 dark:text-amber-400">
+            Review 30–59
           </span>
-          <span className="text-right text-rose-600 dark:text-rose-400">
-            High risk
-            <span className="block font-normal text-muted-foreground">
-              60–100
-            </span>
-          </span>
-        </div>
+          <span className="text-rose-600 dark:text-rose-400">High 60–100</span>
+        </p>
+      </div>
+      <div className="ml-1 hidden h-2 w-24 overflow-hidden rounded-full sm:flex">
+        <span className="w-[30%] bg-emerald-500" aria-hidden />
+        <span className="w-[30%] bg-amber-400" aria-hidden />
+        <span className="w-[40%] bg-rose-500" aria-hidden />
       </div>
     </div>
   );
