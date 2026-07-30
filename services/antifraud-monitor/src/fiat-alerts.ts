@@ -35,6 +35,7 @@ export const FIAT_PROBLEM_CODES = [
   "webhook_failed",
   "blacklisted_email_domain",
   "suspicious_deposit_cluster",
+  "fiat_identity_drift",
 ] as const;
 
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
@@ -44,6 +45,7 @@ export const FIAT_RISK_PROBLEM_CODES = [
   "fiat_locked_account",
   "blacklisted_email_domain",
   "suspicious_deposit_cluster",
+  "fiat_identity_drift",
 ] as const satisfies readonly FiatProblemCode[];
 
 export function isFiatRiskProblem(code: FiatProblemCode): boolean {
@@ -170,6 +172,8 @@ export function fiatProblemTitle(code: FiatProblemCode): string {
       return "Blacklisted email domain blocked";
     case "suspicious_deposit_cluster":
       return "Suspicious Whop deposit cluster blocked";
+    case "fiat_identity_drift":
+      return "Fiat deposit identity changed";
   }
 }
 
@@ -315,6 +319,48 @@ export function buildFiatDiscordPayload(
       inline: false,
     });
   }
+  if (problem.problem_code === "fiat_identity_drift") {
+    const codes = [
+      ...(Array.isArray(details.reason_codes) ? details.reason_codes : []),
+      ...(Array.isArray(details.watch_codes) ? details.watch_codes : []),
+    ];
+    if (codes.length > 0) {
+      fields.push({
+        name: "What changed",
+        value: clean(codes.join("\n")),
+        inline: false,
+      });
+    }
+    // Baseline vs. observed, side by side: the analyst's first question is
+    // always "changed from what?"
+    const cardWas = detail(details, "baseline_card_last4");
+    const cardNow = detail(details, "card_last4");
+    if (cardWas || cardNow) {
+      fields.push({
+        name: "Card",
+        value: clean(`••••${cardWas ?? "????"} → ••••${cardNow ?? "????"}`),
+        inline: true,
+      });
+    }
+    const emailWas = detail(details, "baseline_checkout_email");
+    const emailNow = detail(details, "checkout_email");
+    if (emailWas || emailNow) {
+      fields.push({
+        name: "Payer email",
+        value: clean(`${emailWas ?? "unknown"} → ${emailNow ?? "unknown"}`),
+        inline: false,
+      });
+    }
+    const clean_ = detail(details, "prior_clean_deposits");
+    if (clean_) {
+      fields.push({
+        name: "Clean deposits before this",
+        value: clean(clean_),
+        inline: true,
+      });
+    }
+  }
+
   const reason =
     detail(details, "failure_reason") ??
     detail(details, "last_error") ??
@@ -338,6 +384,12 @@ export function buildFiatDiscordPayload(
         : problem.source_kind === "signup"
         ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
         : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
+      : problem.problem_code === "fiat_identity_drift"
+      ? details.verdict === "contain"
+        ? details.enforcement === "contained"
+          ? "An authorized Fiat deposit disagreed with the identity this account established on its first one. Fiat deposits and all withdrawals are locked and KYC is required."
+          : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
+        : "An authorized Fiat deposit drifted from the account's first one, but not enough to lock on its own. Recorded for review only."
       : problem.problem_code === "high_risk"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
       : problem.problem_code === "fiat_locked_account"
@@ -801,7 +853,11 @@ export class FiatProblemAlerts {
           UNION ALL
 
           SELECT 'antifraud_risk'::text
-          WHERE alert.problem_code IN ('high_risk', 'fiat_locked_account')
+          WHERE alert.problem_code IN (
+            'high_risk',
+            'fiat_locked_account',
+            'fiat_identity_drift'
+          )
 
           UNION ALL
 
@@ -815,7 +871,8 @@ export class FiatProblemAlerts {
             'blacklisted_email_domain',
             'suspicious_deposit_cluster',
             'high_risk',
-            'fiat_locked_account'
+            'fiat_locked_account',
+            'fiat_identity_drift'
           )
         ) AS destination
         ON CONFLICT (source_kind, source_id, destination) DO NOTHING

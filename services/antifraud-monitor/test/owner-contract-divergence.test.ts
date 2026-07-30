@@ -70,11 +70,67 @@ test("permanent versioned signup profiles and provider evidence are present", as
 test("automatic containment bans confirmed catch-all accounts without forcing KYC", async () => {
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
 
-  assert.doesNotMatch(ingest, /AUTOMATED_.*KYC/);
+  // The route itself still never calls the KYC API. The single owner-approved
+  // automated requirement (2026-07-30, post-authorization Fiat identity drift)
+  // is isolated in its own module — see the test below.
   assert.doesNotMatch(ingest, /await requireUserKyc\(/);
   assert.match(ingest, /abstract_email_catchall[\s\S]*?is_banned = TRUE/);
   assert.match(ingest, /DELETE FROM session/);
   assert.match(ingest, /locked_withdrawals_items = TRUE/);
+});
+
+test("only Fiat identity drift may require KYC automatically", async () => {
+  const containment = await source(
+    "../../../src/lib/antifraud/fiat-identity-containment.ts",
+  );
+  const policy = await source("../src/fiat-deposit-identity-policy.ts");
+  const service = await source("../src/fiat-deposit-identity.ts");
+  const migrations = await migrationCorpus();
+
+  // Attributed to a real admin id — the backend rejects an unknown admin_id.
+  assert.match(
+    containment,
+    /FIAT_IDENTITY_AUTOMATION_ADMIN_ID\s*=\s*\n?\s*"[0-9a-f-]{36}"/,
+  );
+  // Lock before KYC: the rails must not wait on a third-party API, and the
+  // manual path refuses KYC unless withdrawals are already locked.
+  assert.match(
+    containment,
+    /locked_withdrawals_items = TRUE[\s\S]*?requireKycForContainment/,
+  );
+  // Re-requiring would open a second verification cycle.
+  assert.match(containment, /if \(current\.kycRequired\) return "already_required"/);
+  // A KYC outage must never roll back a committed lock.
+  assert.match(containment, /Never throws/);
+
+  // The dashboard re-checks the reason it was handed; the monitor's containment
+  // set and the dashboard's allowlist must not drift apart.
+  for (const reason of [
+    "checkout_email_domain_blacklisted",
+    "checkout_ip_blocklisted",
+    "checkout_fingerprint_blocklisted",
+    "checkout_email_catchall",
+    "checkout_email_undeliverable",
+    "checkout_email_changed",
+    "checkout_card_changed",
+    "checkout_ip_and_device_changed",
+  ]) {
+    assert.match(policy, new RegExp(`"${reason}"`));
+    assert.match(containment, new RegExp(`"${reason}"`));
+  }
+
+  // A single changed IP or device is ordinary customer behaviour; only the pair
+  // contains.
+  assert.match(policy, /"checkout_ip_changed"/);
+  assert.match(policy, /"checkout_device_changed"/);
+  assert.match(policy, /CARD_CHANGE_TRUST_DEPOSITS = 3/);
+
+  // History is never walked: the cursor is seeded at deploy time.
+  assert.match(
+    migrations,
+    /INSERT INTO source_cursors[\s\S]*?'fiat-deposit-identity', now\(\)/,
+  );
+  assert.match(service, /ON CONFLICT \(intent_id\) DO NOTHING/);
 });
 
 test("operator IP and fingerprint blocklists are durable and enforced at signup", async () => {

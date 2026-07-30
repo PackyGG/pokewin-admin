@@ -53,6 +53,18 @@ const schema = z.object({
     .enum(["true", "false"])
     .optional()
     .transform((value) => value !== "false"),
+  // Automatic KYC + rail locks for post-authorization identity drift.
+  // Defaults to ON for the same reason as the switch above. Set it to "false"
+  // for an observe-only window: every deposit is still evaluated and recorded
+  // with `enforcement = 'suppressed'`, and the Discord alert still fires, but
+  // no account is locked. Worth doing for one cycle on first deploy — the
+  // baseline is the account's FIRST EVER authorized deposit, so long-standing
+  // customers whose payer email changed at some point in the past will match
+  // on their next deposit.
+  FIAT_DEPOSIT_IDENTITY_CONTAINMENT_ENABLED: z
+    .enum(["true", "false"])
+    .optional()
+    .transform((value) => value !== "false"),
   FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: z.coerce
     .number()
     .int()

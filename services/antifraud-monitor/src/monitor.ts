@@ -28,6 +28,7 @@ import {
 import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { captureIdentifierBlocklistMatches } from "./identifier-blocklists.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
+import { FiatDepositIdentityChecks } from "./fiat-deposit-identity.js";
 import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
 import { FreshBehaviorMonitor } from "./fresh-behavior.js";
 import type { LiveBus } from "./live.js";
@@ -377,6 +378,7 @@ export class MonitorEngine {
   private readonly discord: DiscordAlerts;
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
+  private readonly fiatDepositIdentity: FiatDepositIdentityChecks;
   private readonly freeBattleRisk: FreeBattleRiskMonitor;
   private readonly freshBehavior: FreshBehaviorMonitor;
   readonly riskyLocations: RiskyLocationStore;
@@ -394,6 +396,12 @@ export class MonitorEngine {
     this.discord = new DiscordAlerts(config, log);
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
+    this.fiatDepositIdentity = new FiatDepositIdentityChecks(
+      config,
+      db,
+      this.enrichment,
+      log,
+    );
     this.freeBattleRisk = new FreeBattleRiskMonitor(config, db, log);
     this.freshBehavior = new FreshBehaviorMonitor(db, log);
     this.riskyLocations = new RiskyLocationStore(db);
@@ -403,6 +411,7 @@ export class MonitorEngine {
     await this.ensureCursor();
     await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
+    await this.fiatDepositIdentity.ensureCursor();
     await this.freeBattleRisk.ensureCursor();
     await this.freshBehavior.ensureCursor();
     await this.tick();
@@ -569,6 +578,11 @@ export class MonitorEngine {
       );
       await this.runPhase("fiat-withdrawal-hold-alerts", () =>
         this.deliverPendingFiatWithdrawalHoldAlerts(),
+      );
+      // Runs BEFORE the alert pass so a containment verdict and its Discord
+      // alert land in the same tick rather than a poll interval apart.
+      await this.runPhase("fiat-deposit-identity", () =>
+        this.fiatDepositIdentity.process(),
       );
       await this.runPhase("fiat-problem-alerts", () =>
         this.fiatAlerts.process(),

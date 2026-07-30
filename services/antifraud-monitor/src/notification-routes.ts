@@ -40,6 +40,7 @@ const ROUTES = {
       "Matched behavior rules",
       "Canonical high-risk fiat verdicts",
       "Fiat deposits on locked accounts",
+      "Fiat deposit identity changes",
     ],
     configured: botQueueConfigured,
   },
@@ -140,7 +141,8 @@ type FiatProblemCode =
   | "pending_stale"
   | "webhook_failed"
   | "blacklisted_email_domain"
-  | "suspicious_deposit_cluster";
+  | "suspicious_deposit_cluster"
+  | "fiat_identity_drift";
 
 export type FiatNotificationRouteKey = Extract<
   BotNotificationRouteKey,
@@ -162,7 +164,10 @@ export function notificationRoutesForFiatProblem(
   if (problemCode === "high_risk") {
     return ["antifraud_risk", "high_risk_supplemental"];
   }
-  if (problemCode === "fiat_locked_account") {
+  if (
+    problemCode === "fiat_locked_account" ||
+    problemCode === "fiat_identity_drift"
+  ) {
     return ["antifraud_risk"];
   }
   return ["fiat_operations"];

@@ -21,6 +21,10 @@ import {
   type AbstractCatchallContainmentTarget,
 } from "@/lib/antifraud/abstract-catchall-containment";
 import { reviewSignalLabel } from "@/lib/antifraud/signal-display";
+import {
+  applyFiatIdentityContainment,
+  fiatIdentityContainmentTarget,
+} from "@/lib/antifraud/fiat-identity-containment";
 import { isPostgresError } from "@/lib/postgres-errors";
 import {
   appendAntifraudSecurityAudit,
@@ -54,13 +58,22 @@ import {
  * Normally writes only the ADMIN DB. The dedicated
  * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
  * `signup_policy_recommendation`, `risky_free_battle_containment`,
- * `behavioral_withdrawal_containment` and `fiat_eligibility_containment`
+ * `behavioral_withdrawal_containment`, `fiat_eligibility_containment` and
+ * `fiat_deposit_identity_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * applies deterministic MAIN containment before acknowledgement. Active
  * blocked domains and Abstract-confirmed catch-all domains ban; suspicious
  * clusters and free-battle hard signals lock withdrawals only; a refused Fiat
  * checkout turns Fiat deposits off and locks withdrawals.
+ *
+ * KYC: automated signals do NOT mutate KYC state, with exactly one owner-
+ * approved exception — `fiat_deposit_identity_containment` also requires KYC,
+ * because a payer whose card/email/device stopped matching the identity the
+ * account established on its first authorized deposit must re-verify before the
+ * money moves again. That exception lives entirely in
+ * `@/lib/antifraud/fiat-identity-containment` and is unreachable from the other
+ * kinds.
  * Re-sent duplicates deliberately do NOT re-apply containment —
  * staff may have reviewed and unlocked the account in between.
  */
@@ -778,6 +791,46 @@ async function containFiatEligibilityAccount(
   return "locked";
 }
 
+/**
+ * Post-authorization Fiat identity drift: lock the rails AND require KYC.
+ *
+ * The only containment kind that touches KYC state — see
+ * `@/lib/antifraud/fiat-identity-containment` for why that exception exists and
+ * why it cannot leak into the other kinds. Admission checks live in that module
+ * too, so a forged payload cannot reach the lock.
+ */
+async function containFiatIdentityAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const target = fiatIdentityContainmentTarget(signal);
+  if (!target) {
+    console.error(
+      "[antifraud-ingest] skipping invalid Fiat identity containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const outcome = await applyFiatIdentityContainment(target);
+  if (!outcome.locked) {
+    console.error(
+      "[antifraud-ingest] Fiat identity account no longer exists, skipping containment lock",
+      { externalId: signal.id || null, userId: target.userId },
+    );
+    return "skipped";
+  }
+  if (outcome.kyc === "failed") {
+    // The lock is applied; only the KYC leg degraded. Acknowledge rather than
+    // retry — a retry would re-deliver the lock and risk a second verification
+    // cycle. The Discord alert routes an analyst to the one-click requirement.
+    console.error(
+      "[antifraud-ingest] Fiat identity containment locked but KYC was not required",
+      { externalId: signal.id || null, userId: target.userId },
+    );
+  }
+  return "locked";
+}
+
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** Containment was permanently un-appliable and acked instead of retried. */
@@ -868,7 +921,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       signal.kind === "signup_policy_recommendation" ||
       signal.kind === "risky_free_battle_containment" ||
       signal.kind === "behavioral_withdrawal_containment" ||
-      signal.kind === "fiat_eligibility_containment"
+      signal.kind === "fiat_eligibility_containment" ||
+      signal.kind === "fiat_deposit_identity_containment"
     )
   ) {
     // Containment lock AFTER the dedupe check, inside the transaction:
@@ -893,6 +947,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
         : signal.kind === "fiat_eligibility_containment"
           ? (await containFiatEligibilityAccount(signal)) === "skipped"
+        : signal.kind === "fiat_deposit_identity_containment"
+          ? (await containFiatIdentityAccount(signal)) === "skipped"
           : (await containBehavioralRiskAccount(signal)) === "skipped";
   }
 

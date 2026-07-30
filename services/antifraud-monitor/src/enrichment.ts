@@ -2054,8 +2054,15 @@ export class EnrichmentService {
     }
   }
 
+  /**
+   * Reputation for one email address.
+   *
+   * Takes only the fields it reads so a caller can ask about an address that is
+   * NOT the account's signup email — the post-authorization Fiat check runs
+   * this against the address the payer typed into Whop's checkout form.
+   */
   async abstractEmailCheck(
-    signup: Signup,
+    signup: Pick<Signup, "id" | "email">,
     weights: ScoreWeights = defaultScoreWeights(),
   ): Promise<EnrichmentResult> {
     const email = signup.email?.trim().toLowerCase();
