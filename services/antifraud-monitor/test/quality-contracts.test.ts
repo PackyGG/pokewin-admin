@@ -142,6 +142,23 @@ test("legacy withdrawal and fiat scores retain explicit model identities", async
   assert.match(fiat, /score_version='fiat-v2'/);
 });
 
+test("legacy withdrawal funding backfill seeds missing subject shells first", async () => {
+  const migration = await source(
+    "../migrations/037_profile_evidence_foundations.sql",
+  );
+  const subjectSeed = migration.indexOf(
+    "INSERT INTO subjects (user_id, source_created_at, first_seen_at, updated_at)",
+  );
+  const fundingBackfill = migration.indexOf("INSERT INTO funding_trace_edges");
+
+  assert.ok(subjectSeed >= 0);
+  assert.ok(fundingBackfill > subjectSeed);
+  assert.match(
+    migration.slice(subjectSeed, fundingBackfill),
+    /FROM withdrawal_assessments assessment[\s\S]*ON CONFLICT \(user_id\) DO NOTHING/,
+  );
+});
+
 test("delivery backfill preserves acknowledged history and replays only containment", async () => {
   const migration = await source(
     "../migrations/028_dashboard_delivery_receipts.sql",

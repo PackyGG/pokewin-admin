@@ -372,6 +372,22 @@ ON CONFLICT (user_id, provider, evidence_key) DO NOTHING;
 -- to the repository's 365-day operational history window and to the first 200
 -- allocated credits per withdrawal. Original withdrawal assessments remain the
 -- authoritative compatibility record.
+--
+-- Older withdrawal assessments can predate signup-subject retention. Preserve
+-- those assessments by creating the minimum truthful subject shell before the
+-- funding-edge foreign key is enforced; identity fields remain unknown.
+INSERT INTO subjects (user_id, source_created_at, first_seen_at, updated_at)
+SELECT
+  assessment.user_id,
+  MIN(assessment.requested_at),
+  MIN(assessment.requested_at),
+  MAX(assessment.requested_at)
+FROM withdrawal_assessments assessment
+WHERE assessment.requested_at >= now() - interval '365 days'
+  AND assessment.user_id IS NOT NULL
+GROUP BY assessment.user_id
+ON CONFLICT (user_id) DO NOTHING;
+
 INSERT INTO funding_trace_edges (
   subject_user_id, source_user_id, destination_user_id, source_type,
   source_ref, amount_usd, restricted_source, restriction_evidence, depth,
