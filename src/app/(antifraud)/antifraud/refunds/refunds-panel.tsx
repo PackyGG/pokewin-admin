@@ -529,33 +529,31 @@ export function RefundsPanel({
                 </Button>
               )}
           </div>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {recentBatches.map((batch) => (
               <div
                 key={batch.batchId}
                 className="overflow-hidden rounded-xl border border-border/60 bg-card"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3 px-3 py-3 text-sm sm:px-4">
-                  <div className="min-w-0 space-y-1">
-                    <p className="font-medium">
+                <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-2 text-xs">
+                  <div className="min-w-0">
+                    <p className="truncate font-medium">
                       <span className="font-mono">
                         {batch.batchId.slice(0, 8)}
                       </span>{" "}
                       · {batch.accounts.length}{" "}
                       {batch.accounts.length === 1 ? "account" : "accounts"} ·{" "}
-                      {batch.requestedCount} payments
+                      {batch.requestedCount} payments ·{" "}
+                      <span className="text-muted-foreground">
+                        {new Date(batch.createdAt).toLocaleString()}
+                      </span>
                     </p>
-                    <p className="text-xs text-muted-foreground">
-                      Created {new Date(batch.createdAt).toLocaleString()}
-                      {batch.completedAt &&
-                        ` · Completed ${new Date(batch.completedAt).toLocaleString()}`}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
+                    <p className="truncate text-[11px] text-muted-foreground">
                       {readableStatus(batch.selectionMode)} selection ·{" "}
                       {batch.reason}
                     </p>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex flex-wrap items-center gap-1.5">
                     <Badge variant="outline">
                       {readableStatus(batch.status)}
                     </Badge>
@@ -582,27 +580,30 @@ export function RefundsPanel({
                   {batch.accounts.map((account) => (
                     <details
                       key={account.userId}
-                      className="group px-3 py-3 sm:px-4"
+                      className="group px-3 py-2 sm:px-4"
                     >
-                      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-3">
+                      <summary className="flex cursor-pointer list-none flex-wrap items-center justify-between gap-x-3 gap-y-1 text-xs">
                         <div className="min-w-0">
                           <p className="truncate font-medium">
                             {accountIdentity(account)}
+                            {account.username && account.email && (
+                              <span className="font-normal text-muted-foreground">
+                                {" · "}
+                                {account.email}
+                              </span>
+                            )}
                           </p>
-                          <p className="truncate font-mono text-[11px] text-muted-foreground">
-                            {account.userId}
-                          </p>
-                          {account.username && account.email && (
-                            <p className="truncate text-xs text-muted-foreground">
-                              {account.email}
-                            </p>
-                          )}
-                          <p className="flex items-center gap-1 text-xs text-muted-foreground">
+                          <p className="flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground">
+                            <span className="truncate font-mono">
+                              {account.userId}
+                            </span>
                             <MapPin className="size-3 shrink-0" />
-                            {accountLocation(account)}
+                            <span className="truncate">
+                              {accountLocation(account)}
+                            </span>
                           </p>
                         </div>
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1.5">
                           <Badge variant="outline">
                             {account.items.length}{" "}
                             {account.items.length === 1
@@ -621,13 +622,13 @@ export function RefundsPanel({
                         </div>
                       </summary>
 
-                      <div className="mt-3 space-y-2">
+                      <div className="mt-2 space-y-1.5">
                         {account.items.map((item) => (
                           <div
                             key={item.itemId}
-                            className="grid gap-2 rounded-lg border border-border/60 bg-muted/20 p-3 text-xs sm:grid-cols-[minmax(0,1fr)_auto]"
+                            className="grid gap-1.5 rounded-lg border border-border/60 bg-muted/20 p-2 text-[11px] sm:grid-cols-[minmax(0,1fr)_auto]"
                           >
-                            <div className="min-w-0 space-y-1">
+                            <div className="min-w-0 space-y-0.5">
                               <p className="break-all font-mono">
                                 {item.providerPaymentId}
                               </p>
