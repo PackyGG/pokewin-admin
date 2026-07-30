@@ -23,7 +23,7 @@ export function AnalysisRuleEditor({
   const [pending, startTransition] = React.useTransition();
   return (
     <form
-      className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-3"
+      className="space-y-2 px-4 py-3"
       onSubmit={(event) => {
         event.preventDefault();
         const nextPoints = Number(points);
@@ -73,28 +73,28 @@ export function AnalysisRuleEditor({
           {rule.description}
         </p>
       </div>
-      <label className="flex items-center gap-2 text-xs text-muted-foreground">
-        Enabled
-        <Switch
-          checked={enabled}
-          onCheckedChange={setEnabled}
-          disabled={pending}
-        />
-      </label>
-      <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
-        Trigger
-        <Input
-          type="number"
-          min={0}
-          max={1_000_000}
-          step="0.1"
-          value={threshold}
-          onChange={(event) => setThreshold(event.target.value)}
-          className="h-8 w-24 font-mono text-xs"
-          disabled={pending}
-        />
-      </label>
-      <div className="flex items-center gap-1.5">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <label className="flex items-center gap-2 text-xs text-muted-foreground">
+          Enabled
+          <Switch
+            checked={enabled}
+            onCheckedChange={setEnabled}
+            disabled={pending}
+          />
+        </label>
+        <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          Trigger
+          <Input
+            type="number"
+            min={0}
+            max={1_000_000}
+            step="0.1"
+            value={threshold}
+            onChange={(event) => setThreshold(event.target.value)}
+            className="h-8 w-24 font-mono text-xs"
+            disabled={pending}
+          />
+        </label>
         <label className="flex items-center gap-1.5 text-xs text-muted-foreground">
           Points
           <Input
@@ -108,7 +108,13 @@ export function AnalysisRuleEditor({
             disabled={pending}
           />
         </label>
-        <Button type="submit" size="icon-sm" variant="outline" disabled={pending}>
+        <Button
+          type="submit"
+          size="icon-sm"
+          variant="outline"
+          disabled={pending}
+          className="ml-auto"
+        >
           <Save className="size-3.5" />
           <span className="sr-only">Save {rule.name}</span>
         </Button>

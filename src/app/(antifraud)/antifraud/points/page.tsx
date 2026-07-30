@@ -1,4 +1,4 @@
-import { Suspense, type ComponentType } from "react";
+import { Suspense, type ComponentType, type ReactNode } from "react";
 import {
   Activity,
   Clock3,
@@ -232,6 +232,22 @@ function SectionTitleText({
   );
 }
 
+// Two rows side by side on wide screens: these lists are short text plus a few
+// controls, so a single full-width column wasted most of the horizontal space.
+// The cells carry the dividers and the wrapper's -mb-px swallows the last row's
+// bottom border so it never doubles up with the container border.
+const LIST_GRID =
+  "-mb-px grid lg:grid-cols-2 [&>*]:border-b [&>*]:border-border/60 " +
+  "lg:[&>*:nth-child(odd)]:border-r lg:[&>*:last-child:nth-child(odd)]:border-r-0";
+
+function ListGrid({ children }: { children: ReactNode }) {
+  return (
+    <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+      <div className={LIST_GRID}>{children}</div>
+    </div>
+  );
+}
+
 function AnalysisRules({
   icon,
   title,
@@ -249,11 +265,11 @@ function AnalysisRules({
         icon={icon}
         title={<SectionTitleText title={title} description={description} />}
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+      <ListGrid>
         {rules.map((rule) => (
           <AnalysisRuleEditor key={rule.key} rule={rule} />
         ))}
-      </div>
+      </ListGrid>
     </section>
   );
 }
@@ -321,19 +337,16 @@ function ScoreSection({
         icon={icon}
         title={<SectionTitleText title={title} description={description} />}
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+      <ListGrid>
         {definitions.map((definition) => (
-          <div
-            key={definition.key}
-            className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
-          >
+          <div key={definition.key} className="space-y-2 px-4 py-3">
             <div className="min-w-0">
               <p className="text-sm font-medium">{definition.title}</p>
               <p className="text-xs leading-5 text-muted-foreground">
                 {definition.description}
               </p>
             </div>
-            <div className="flex flex-wrap gap-1.5 sm:max-w-md sm:justify-end">
+            <div className="flex flex-wrap gap-1.5">
               {definition.options.map((option) => (
                 <ScoreWeightEditor
                   key={option.key}
@@ -345,7 +358,7 @@ function ScoreSection({
             </div>
           </div>
         ))}
-      </div>
+      </ListGrid>
     </section>
   );
 }
@@ -382,7 +395,7 @@ function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
           />
         }
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+      <ListGrid>
         {config.behaviorRules.map((rule) => (
           <div
             key={rule.id}
@@ -404,7 +417,7 @@ function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
             <ScoreBadge label={rule.action_type} points={rule.score_delta} />
           </div>
         ))}
-      </div>
+      </ListGrid>
     </section>
   );
 }
