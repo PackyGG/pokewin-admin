@@ -133,3 +133,17 @@ test("the restore migration owns notification tables independently", () => {
 
   assert.doesNotMatch(migration, /staff_profiles|staff_quiz/);
 });
+
+test("staff announcements are not a Fraud Discord Routing action", () => {
+  const channels = source("src/lib/staff/channels.ts");
+  const removal = source(
+    "drizzle/admin/migrations/20260730_zz_remove_staff_announcement_discord_event.sql",
+  );
+
+  assert.match(channels, /ANTIFRAUD_DISCORD_WEBHOOK_URL/);
+  assert.doesNotMatch(channels, /enqueueDiscordEvent|staff\.announcement/);
+  assert.match(
+    removal,
+    /DELETE FROM discord_notification_events[\s\S]*staff\.announcement/,
+  );
+});
