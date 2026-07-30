@@ -8,8 +8,10 @@ import {
   canonicalIp,
   EnrichmentService,
   fingerprintEventIdentity,
+  providerContractMetadata,
   type EnrichmentResult,
 } from "./enrichment.js";
+import type { SignupProvider } from "./provider-contracts.js";
 import type { FiatEligibilityEnvironment } from "./fiat-eligibility-auth.js";
 import {
   FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
@@ -95,6 +97,16 @@ const REWARD_TYPES = [
  * that long, so every read gets its own deadline and a breach fails closed.
  */
 const SOURCE_READ_TIMEOUT_MS = 3_000;
+/**
+ * Deadline for the CORROBORATING providers (Abstract IP, Opportify). They can
+ * only ever add points — neither can block a decision — so their own SDK
+ * timeouts (5s and 8s) must not set the latency a paying customer waits. On a
+ * breach the provider is reported as failed, which the policy scores as
+ * `*_check_degraded` (10 points, never blocking). The MANDATORY providers keep
+ * their full budget: without Fingerprint and proxycheck there is no decision to
+ * make, so waiting for them is the point.
+ */
+const CORROBORATING_PROVIDER_TIMEOUT_MS = 2_000;
 const ANTIFRAUD_READ_TIMEOUT_MS = 2_500;
 const PERSIST_TIMEOUT_MS = 5_000;
 
@@ -168,6 +180,33 @@ async function withDeadline<T>(
   } finally {
     if (timer) clearTimeout(timer);
   }
+}
+
+/**
+ * Never rejects: a corroborating provider that misses its deadline is reported
+ * as failed so the policy can score it, exactly as it would score a provider
+ * that returned an error.
+ */
+function boundedCorroboration(
+  work: Promise<EnrichmentResult>,
+  provider: SignupProvider,
+): Promise<EnrichmentResult> {
+  return withDeadline(
+    work,
+    CORROBORATING_PROVIDER_TIMEOUT_MS,
+    `fiat_${provider}_provider`,
+  ).catch((error: unknown) => ({
+    provider,
+    status: "failed" as const,
+    lookupKey: `deadline:${provider}`,
+    errorCode:
+      error instanceof DeadlineError ? "checkout_deadline" : "provider_error",
+    ...providerContractMetadata(provider, "live", "unknown", {
+      errorCode:
+        error instanceof DeadlineError ? "checkout_deadline" : "provider_error",
+    }),
+    signals: [],
+  }));
 }
 
 function usd(value: string | number | null | undefined): number {
@@ -604,8 +643,14 @@ export class FiatEligibilityService {
     ] = await Promise.all([
       fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
-      this.enrichment.abstractIpCheck(providerSubject, weights),
-      this.enrichment.opportifyCheck(providerSubject, weights),
+      boundedCorroboration(
+        this.enrichment.abstractIpCheck(providerSubject, weights),
+        "abstract_ip",
+      ),
+      boundedCorroboration(
+        this.enrichment.opportifyCheck(providerSubject, weights),
+        "opportify",
+      ),
       networkPromise,
       this.loadFraudHistory(input),
       this.loadVelocity(input),
@@ -1043,6 +1088,7 @@ export const fiatEligibilityInternals = {
   AUTOMATIC_DENY_SCORE,
   MAX_REQUEST_AGE_MS,
   MAX_FUTURE_SKEW_MS,
+  CORROBORATING_PROVIDER_TIMEOUT_MS,
   CONTAINMENT_EVENT: FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
   GAME_WAGER_TYPES,
   GAME_PAYOUT_TYPES,

@@ -925,6 +925,129 @@ test("concurrent identical requests share one automatic provider review", async 
   assert.ok(statements.includes("COMMIT"));
 });
 
+test("a hanging corroborating provider cannot stall a checkout", async () => {
+  // Abstract and Opportify can only ever ADD POINTS. If the endpoint waited out
+  // their own SDK budgets (5s / 8s) a paying customer would wait with them, so
+  // they get a 2s checkout deadline and a breach is scored, not awaited.
+  assert.equal(
+    fiatEligibilityInternals.CORROBORATING_PROVIDER_TIMEOUT_MS,
+    2_000,
+  );
+
+  const now = new Date("2026-07-29T12:00:00.000Z");
+  const subject = {
+    ...subjectFixture(),
+    last_paid_fiat_at: null,
+    crypto_deposits: 3,
+    crypto_deposit_usd: "150.00",
+    fiat_deposits: 2,
+    fiat_deposit_usd: "80.00",
+    wager_usd: "400.00",
+    game_events: 60,
+    reward_usd: "12.00",
+    rain_wins: 1,
+    withdrawal_requests: 0,
+  };
+  let sourceCalls = 0;
+  const source = {
+    query: async () => {
+      sourceCalls += 1;
+      return sourceCalls === 1
+        ? { rows: [subject] }
+        : { rows: [{ shared_checkout_visitor_users: 0, shared_current_ip_users: 0 }] };
+    },
+  };
+  const request = {
+    env: "prod" as const,
+    createdAt: "2026-07-29T11:59:30.000Z",
+    ipAddress: "203.0.113.20",
+    fingerprint: "hanging-corroboration-request",
+    userID: "user-1",
+  };
+  let recordedAbstractStatus: unknown = null;
+  let recordedOpportifyStatus: unknown = null;
+  const answer = async (text: string, params?: unknown[]) => {
+    if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
+    if (text.includes("signup_risk_score")) return { rows: [] };
+    if (text.includes("attempts_10m")) {
+      return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
+    }
+    if (text.includes("FROM identifier_blocklists")) return { rows: [] };
+    if (text.includes("FROM fiat_perk_grants")) return { rows: [] };
+    if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
+      const values = (params ?? []) as unknown[];
+      recordedAbstractStatus = values[12];
+      recordedOpportifyStatus = values[13];
+      return {
+        rows: [{
+          id: "decision-hanging",
+          request_hash: fiatEligibilityInternals.requestHash(
+            request,
+            request.ipAddress,
+          ),
+          decision: "allow",
+          risk_score: 20,
+          reason_codes: [],
+          enforcement: "none",
+          enforcement_reasons: [],
+          expires_at: new Date(now.getTime() + 60_000),
+          created_at: now,
+        }],
+      };
+    }
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(text.trim())) return { rows: [] };
+    throw new Error(`unexpected antifraud query: ${text.slice(0, 60)}`);
+  };
+  const antifraud = {
+    query: (text: string, params?: unknown[]) => answer(text, params),
+    connect: async () => ({
+      query: (text: string, params?: unknown[]) => answer(text, params),
+      release: () => undefined,
+    }),
+  };
+  const never = new Promise<never>(() => {});
+  const enrichment = {
+    fingerprintCheck: async () =>
+      provider("fingerprint", {
+        response: {
+          products: {
+            identification: {
+              data: {
+                visitorId: "visitor-1",
+                linkedId: "user-1",
+                ip: "203.0.113.20",
+                time: "2026-07-29T11:59:35.000Z",
+              },
+            },
+          },
+        },
+      }),
+    proxycheck: async () => provider("proxycheck"),
+    // Both corroborating providers hang forever.
+    abstractIpCheck: () => never,
+    opportifyCheck: () => never,
+  };
+  const service = new FiatEligibilityService(
+    { source, fiatDevSource: null, antifraud } as never,
+    { get: async () => ({}) } as never,
+    enrichment as never,
+    true,
+  );
+
+  const startedAt = Date.now();
+  const decision = await service.assess(request, now);
+  const elapsed = Date.now() - startedAt;
+
+  assert.equal(decision.decisionId, "decision-hanging");
+  assert.equal(decision.allowed, true);
+  // Bounded by the corroborating deadline, not by the 8s Opportify budget.
+  assert.ok(elapsed >= 1_800, `returned too early (${elapsed}ms)`);
+  assert.ok(elapsed < 5_000, `checkout waited too long (${elapsed}ms)`);
+  // The breach is recorded as a provider failure so the policy can score it.
+  assert.equal(recordedAbstractStatus, "failed");
+  assert.equal(recordedOpportifyStatus, "failed");
+});
+
 test("missing or false global Fiat config can never return allow", async () => {
   assert.equal(parseFiatEligibilityGloballyEnabled(undefined), false);
   assert.equal(parseFiatEligibilityGloballyEnabled("false"), false);
