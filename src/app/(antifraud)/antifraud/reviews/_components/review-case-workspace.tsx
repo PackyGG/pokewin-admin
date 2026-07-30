@@ -18,6 +18,7 @@ import {
   isReviewStatus,
   type ReviewDetail,
 } from "@/lib/antifraud/reviews";
+import { reviewSignalLabel } from "@/lib/antifraud/signal-display";
 import { ReviewStatusBadge } from "../../_components/badges";
 import { CaseControls } from "./case-controls";
 import { QuickReviewActions } from "./quick-review-actions";
@@ -242,8 +243,34 @@ function ReviewProgress({
     </ol>
   );
 }
+/**
+ * Signals split by whether they actually moved the score.
+ *
+ * `riskScore` on a signal row is the *running case total* after that event, so
+ * once a case is capped every later row reads the same maxed number — reward
+ * bookkeeping written at signup ends up looking as alarming as the rule that
+ * opened the case. Ranking on `scoreDelta` (the event's own contribution)
+ * separates the drivers from the noise. `scoreDelta === null` means the
+ * producer does not score per event, so those stay with the drivers rather
+ * than being hidden.
+ */
+function splitSignals(signals: ReviewDetail["relatedSignals"]) {
+  const drivers = signals.filter((s) => s.scoreDelta !== 0);
+  const context = signals.filter((s) => s.scoreDelta === 0);
+  return {
+    drivers: [...drivers].sort(
+      (a, b) => (b.scoreDelta ?? 0) - (a.scoreDelta ?? 0),
+    ),
+    context,
+  };
+}
+
 function WhyThisCase({ detail }: { detail: ReviewDetail }) {
   const { review } = detail;
+  const topDrivers = splitSignals(detail.relatedSignals).drivers
+    .filter((signal) => (signal.scoreDelta ?? 0) > 0)
+    .slice(0, 5);
+
   return (
     <section className="space-y-3">
       <SectionHeading
@@ -269,6 +296,26 @@ function WhyThisCase({ detail }: { detail: ReviewDetail }) {
             ))}
           </div>
         )}
+        {topDrivers.length > 0 && (
+          <div className="rounded-lg border border-border/60 bg-muted/25 p-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              What built the score
+            </p>
+            <ul className="mt-2 space-y-1.5">
+              {topDrivers.map((signal) => (
+                <li
+                  key={signal.id}
+                  className="flex items-start justify-between gap-3"
+                >
+                  <span className="min-w-0 text-xs leading-5">
+                    {reviewSignalLabel(signal.kind)}
+                  </span>
+                  <ScoreDeltaBadge delta={signal.scoreDelta} />
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
         {review.resolution && (
           <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2 text-xs leading-5">
             <span className="font-semibold">Conclusion: </span>
@@ -277,6 +324,34 @@ function WhyThisCase({ detail }: { detail: ReviewDetail }) {
         )}
       </div>
     </section>
+  );
+}
+
+/** The points a single event contributed — not the running case total. */
+function ScoreDeltaBadge({ delta }: { delta: number | null }) {
+  if (delta == null) {
+    return (
+      <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        unscored
+      </span>
+    );
+  }
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-sm border px-1.5 py-0.5 text-[10px] font-bold tabular-nums",
+        delta >= 40
+          ? "border-rose-500/30 bg-rose-500/10 text-rose-600 dark:text-rose-400"
+          : delta > 0
+            ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+            : delta < 0
+              ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+              : "border-border/60 text-muted-foreground",
+      )}
+      title="Points this single event added to the case score"
+    >
+      {delta > 0 ? `+${delta}` : delta} pts
+    </span>
   );
 }
 
@@ -384,6 +459,31 @@ function CaseFacts({
 function RelatedSignals({ detail }: { detail: ReviewDetail }) {
   const { relatedSignals } = detail;
   if (relatedSignals.length === 0) return null;
+  const { drivers, context } = splitSignals(relatedSignals);
+
+  // Zero-score rows repeat heavily (one per daily-reward enrollment), so they
+  // collapse into one line per kind with a count instead of eleven rows.
+  const grouped = new Map<
+    string,
+    { kind: string; count: number; latest: Date }
+  >();
+  for (const signal of context) {
+    const existing = grouped.get(signal.kind);
+    if (existing) {
+      existing.count += 1;
+      if (signal.receivedAt > existing.latest) existing.latest = signal.receivedAt;
+    } else {
+      grouped.set(signal.kind, {
+        kind: signal.kind,
+        count: 1,
+        latest: signal.receivedAt,
+      });
+    }
+  }
+  const contextGroups = [...grouped.values()].sort(
+    (a, b) => b.latest.getTime() - a.latest.getTime(),
+  );
+
   return (
     <section className="space-y-3">
       <SectionHeading
@@ -392,56 +492,108 @@ function RelatedSignals({ detail }: { detail: ReviewDetail }) {
           <>
             Signals for this account
             <span className="text-xs font-normal text-muted-foreground">
-              latest {relatedSignals.length}
+              latest {relatedSignals.length} · {drivers.length} scored
             </span>
           </>
         }
       />
-      <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        {relatedSignals.map((signal, index) => (
-          <div
-            key={signal.id}
-            className={cn(
-              "flex gap-3 p-3 sm:p-4",
-              index > 0 && "border-t border-border/60",
-            )}
-          >
+      {drivers.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-6 text-center text-xs text-muted-foreground">
+          None of the recent signals moved the score. The case was opened by the
+          reason above.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          {drivers.map((signal, index) => (
             <div
+              key={signal.id}
               className={cn(
-                "mt-1.5 size-2 shrink-0 rounded-full",
-                signal.riskScore != null && signal.riskScore >= 60
-                  ? "bg-rose-500"
-                  : signal.riskScore != null && signal.riskScore >= 30
-                    ? "bg-amber-500"
-                    : "bg-cyan-500",
+                "flex gap-3 p-3 sm:p-4",
+                index > 0 && "border-t border-border/60",
               )}
-            />
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex flex-wrap items-center gap-1.5">
-                    <ReviewSignalBadge signal={signal.kind} />
-                    {signal.riskScore != null && (
-                      <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
-                        risk {signal.riskScore}
-                      </span>
-                    )}
+            >
+              <div
+                className={cn(
+                  "mt-1.5 size-2 shrink-0 rounded-full",
+                  (signal.scoreDelta ?? 0) >= 40
+                    ? "bg-rose-500"
+                    : (signal.scoreDelta ?? 0) > 0
+                      ? "bg-amber-500"
+                      : "bg-cyan-500",
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <ReviewSignalBadge signal={signal.kind} />
+                      <ScoreDeltaBadge delta={signal.scoreDelta} />
+                      {signal.riskScore != null && (
+                        <span
+                          className="text-[10px] tabular-nums text-muted-foreground"
+                          title="Running case score after this event"
+                        >
+                          case {signal.riskScore}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      {signal.summary}
+                    </p>
                   </div>
-                  <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                    {signal.summary}
+                  <p
+                    className="shrink-0 text-[10px] text-muted-foreground"
+                    title={formatDateTime(signal.receivedAt)}
+                  >
+                    {formatRelative(signal.receivedAt)}
                   </p>
                 </div>
-                <p
-                  className="shrink-0 text-[10px] text-muted-foreground"
-                  title={formatDateTime(signal.receivedAt)}
-                >
-                  {formatRelative(signal.receivedAt)}
-                </p>
               </div>
             </div>
-          </div>
-        ))}
-      </div>
+          ))}
+        </div>
+      )}
+
+      {contextGroups.length > 0 && (
+        <details className="group overflow-hidden rounded-xl border border-border/60 bg-muted/20">
+          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-xs text-muted-foreground hover:bg-muted/40 sm:px-4">
+            <span>
+              <span className="font-semibold text-foreground">
+                {context.length} signal{context.length === 1 ? "" : "s"} with no
+                score impact
+              </span>{" "}
+              — bookkeeping and routine play, kept for the timeline
+            </span>
+            <span className="shrink-0 text-[10px] uppercase tracking-wide">
+              <span className="group-open:hidden">show</span>
+              <span className="hidden group-open:inline">hide</span>
+            </span>
+          </summary>
+          <ul className="border-t border-border/60">
+            {contextGroups.map((group) => (
+              <li
+                key={group.kind}
+                className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3 py-2 last:border-b-0 sm:px-4"
+              >
+                <span className="flex min-w-0 items-center gap-1.5">
+                  <ReviewSignalBadge signal={group.kind} />
+                  {group.count > 1 && (
+                    <span className="text-[10px] tabular-nums text-muted-foreground">
+                      ×{group.count}
+                    </span>
+                  )}
+                </span>
+                <span
+                  className="shrink-0 text-[10px] text-muted-foreground"
+                  title={formatDateTime(group.latest)}
+                >
+                  {formatRelative(group.latest)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
     </section>
   );
 }

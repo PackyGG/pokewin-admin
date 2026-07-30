@@ -361,10 +361,29 @@ export type ReviewDetail = {
     kind: string;
     severity: string;
     summary: string;
+    /**
+     * Running case score *after* this signal, not the signal's own weight.
+     * Once a case is capped every later row reads the same number, which is
+     * why the workspace ranks on `scoreDelta` instead.
+     */
     riskScore: number | null;
+    /**
+     * Points this single event added, from the monitor's delivery payload.
+     * `null` for producers that do not score per event (fiat, withdrawal).
+     */
+    scoreDelta: number | null;
     receivedAt: Date;
   }[];
 };
+
+/** Reads the per-event score contribution out of a signal payload. */
+function signalScoreDelta(payload: unknown): number | null {
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) {
+    return null;
+  }
+  const raw = (payload as Record<string, unknown>).scoreDelta;
+  return typeof raw === "number" && Number.isFinite(raw) ? raw : null;
+}
 
 /**
  * Why this is a three-way result and not `ReviewDetail | null`:
@@ -455,6 +474,7 @@ export async function getReviewDetail(
           severity: s.severity,
           summary: s.summary,
           riskScore: s.risk_score,
+          scoreDelta: signalScoreDelta(s.payload),
           receivedAt: new Date(s.received_at),
         })),
       };

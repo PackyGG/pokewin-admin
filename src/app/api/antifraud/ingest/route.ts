@@ -20,6 +20,7 @@ import {
   applyAbstractCatchallContainment,
   type AbstractCatchallContainmentTarget,
 } from "@/lib/antifraud/abstract-catchall-containment";
+import { reviewSignalLabel } from "@/lib/antifraud/signal-display";
 import { isPostgresError } from "@/lib/postgres-errors";
 import {
   appendAntifraudSecurityAudit,
@@ -52,13 +53,14 @@ import {
  *
  * Normally writes only the ADMIN DB. The dedicated
  * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
- * `signup_policy_recommendation`, `risky_free_battle_containment`, and
- * `behavioral_withdrawal_containment`
+ * `signup_policy_recommendation`, `risky_free_battle_containment`,
+ * `behavioral_withdrawal_containment` and `fiat_eligibility_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * applies deterministic MAIN containment before acknowledgement. Active
  * blocked domains and Abstract-confirmed catch-all domains ban; suspicious
- * clusters and free-battle hard signals lock withdrawals only.
+ * clusters and free-battle hard signals lock withdrawals only; a refused Fiat
+ * checkout turns Fiat deposits off and locks withdrawals.
  * Re-sent duplicates deliberately do NOT re-apply containment —
  * staff may have reviewed and unlocked the account in between.
  */
@@ -665,6 +667,117 @@ async function containBehavioralRiskAccount(
   return locked.rows.length > 0 ? "locked" : "skipped";
 }
 
+/**
+ * Containment rules the automatic Fiat-checkout endpoint is allowed to enforce.
+ * The monitor decides; this list is the dashboard's independent second opinion,
+ * so a bug or a forged payload on the other side cannot invent a new reason to
+ * lock an account.
+ */
+const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
+  "new_account_checkout_ip_changed",
+  "new_account_checkout_device_changed",
+  "checkout_identity_changed_with_bad_reputation",
+  "repeat_fiat_within_sixty_seconds",
+  "blocklist_ip_match",
+  "blocklist_fingerprint_match",
+  "fingerprint_event_replayed",
+  "fingerprint_linked_id_mismatch",
+  "fingerprint_bad_bot",
+]);
+
+/**
+ * Turn Fiat deposits off and lock withdrawals for an account the automatic
+ * checkout assessment refused. Deliberately does NOT ban, does not touch
+ * `is_locked`, does not kill sessions and never mutates KYC: the account keeps
+ * working, its money rails do not, and staff decide the rest from the review
+ * this same delivery opens.
+ *
+ * Both leg sets use COALESCE on `*_at` / `*_reason` so a repeat containment
+ * never overwrites the first (or a human's) reason and timestamp.
+ */
+async function containFiatEligibilityAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const userId = signal.userId;
+  const rawReasons = signal.payload?.reasonCodes;
+  const reasons = Array.isArray(rawReasons)
+    ? rawReasons.filter(
+        (reason): reason is string =>
+          typeof reason === "string"
+          && FIAT_ELIGIBILITY_CONTAINMENT_REASONS.has(reason),
+      )
+    : [];
+  if (
+    !userId ||
+    signal.payload?.containmentRequired !== true ||
+    signal.payload?.environment !== "prod" ||
+    signal.riskScore == null ||
+    signal.riskScore < 70 ||
+    signal.riskScore > 100 ||
+    reasons.length === 0
+  ) {
+    console.error(
+      "[antifraud-ingest] skipping invalid Fiat eligibility containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const reason = (
+    "Automatic fraud lock: Fiat checkout assessment matched "
+    + reasons.join(", ")
+  ).slice(0, 500);
+  const db = getProdPrimaryDrizzleDb();
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id, user_id,
+      locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
+      locked_deposits_reason,
+      locked_withdrawals_crypto, locked_withdrawals_items,
+      locked_withdrawals_at, locked_withdrawals_by,
+      locked_withdrawals_reason,
+      created_at, updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()}, u.id,
+      ARRAY['all']::text[], NOW(), NULL, ${reason},
+      ARRAY['all']::text[], TRUE, NOW(), NULL, ${reason},
+      NOW(), NOW()
+    FROM "user" u
+    WHERE u.id = ${userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_deposits_fiat = ARRAY['all']::text[],
+      locked_deposits_at = COALESCE(
+        user_feature_locks.locked_deposits_at,
+        EXCLUDED.locked_deposits_at
+      ),
+      locked_deposits_reason = COALESCE(
+        user_feature_locks.locked_deposits_reason,
+        EXCLUDED.locked_deposits_reason
+      ),
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  if (locked.rows.length === 0) {
+    console.error(
+      "[antifraud-ingest] Fiat eligibility account no longer exists, skipping containment lock",
+      { externalId: signal.id || null, userId },
+    );
+    return "skipped";
+  }
+  return "locked";
+}
+
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
   /** Containment was permanently un-appliable and acked instead of retried. */
@@ -688,6 +801,31 @@ function externalIdForSignal(signal: AntifraudSignalEvent): string {
       )
       .digest("hex")
   );
+}
+
+/**
+ * Trail line for a signal appended to a live case.
+ *
+ * The old form led with `[${severity}]` and the raw `snake_case` kind. Both
+ * mislead: `severity` and `riskScore` on a signal describe the *running case
+ * total* after the event, so once a case is capped every later entry reads
+ * `[critical] … 100` — reward bookkeeping written at signup looked exactly as
+ * severe as the rule that opened the case. Lead with the readable name and the
+ * event's own contribution instead, and keep the running total labelled as
+ * such.
+ */
+function signalTrailEntry(signal: AntifraudSignalEvent): string {
+  const rawDelta = signal.payload?.scoreDelta;
+  const delta =
+    typeof rawDelta === "number" && Number.isFinite(rawDelta) ? rawDelta : null;
+  const points =
+    delta == null
+      ? "unscored"
+      : delta > 0
+        ? `+${delta} pts`
+        : `${delta} pts`;
+  const total = signal.riskScore != null ? `, case ${signal.riskScore}` : "";
+  return `${reviewSignalLabel(signal.kind)} (${points}${total}) — ${signal.summary}`;
 }
 
 /**
@@ -729,7 +867,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       signal.kind === "abstract_email_catchall" ||
       signal.kind === "signup_policy_recommendation" ||
       signal.kind === "risky_free_battle_containment" ||
-      signal.kind === "behavioral_withdrawal_containment"
+      signal.kind === "behavioral_withdrawal_containment" ||
+      signal.kind === "fiat_eligibility_containment"
     )
   ) {
     // Containment lock AFTER the dedupe check, inside the transaction:
@@ -752,6 +891,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
         : signal.kind === "risky_free_battle_containment"
           ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
+        : signal.kind === "fiat_eligibility_containment"
+          ? (await containFiatEligibilityAccount(signal)) === "skipped"
           : (await containBehavioralRiskAccount(signal)) === "skipped";
   }
 
@@ -813,7 +954,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       await tx.insert(antifraud_review_notes).values({
           review_id: live.id,
           kind: "signal",
-          body: `[${signal.severity}] ${signal.kind} — ${signal.summary}`,
+          body: signalTrailEntry(signal),
       });
     } else {
       try {

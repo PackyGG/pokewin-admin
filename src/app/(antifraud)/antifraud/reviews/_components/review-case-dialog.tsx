@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 
@@ -26,16 +27,26 @@ export function ReviewCaseDialog({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+  /**
+   * Closing used to be driven purely by the URL: the dialog was hard-mounted
+   * `open`, and dismissing it only fired `router.replace`. The overlay
+   * therefore stayed up for the whole RSC round-trip of the (heavy) queue page
+   * — a click on the X or the backdrop looked like nothing happened, and
+   * repeat clicks / Escape did nothing either. Owning `open` locally lets the
+   * dismissal animate immediately while the URL catches up behind it.
+   */
+  const [open, setOpen] = useState(true);
 
   function close() {
+    setOpen(false);
     router.replace(hrefForCurrentHost(closeHref), { scroll: false });
   }
 
   return (
     <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open) close();
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) close();
       }}
     >
       <DialogContent

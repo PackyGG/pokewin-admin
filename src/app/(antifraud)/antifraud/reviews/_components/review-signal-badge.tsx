@@ -2,6 +2,7 @@ import { cn } from "@/lib/utils";
 import {
   isFiatWithdrawalHoldSignal,
   reviewSignalLabel,
+  reviewSignalNote,
 } from "@/lib/antifraud/signal-display";
 
 export function ReviewSignalBadge({ signal }: { signal: string }) {
@@ -9,11 +10,7 @@ export function ReviewSignalBadge({ signal }: { signal: string }) {
 
   return (
     <span
-      title={
-        isFiatHold
-          ? "Lifetime completed deposits triggered automatic balance-to-crypto and physical-item withdrawal locks."
-          : signal
-      }
+      title={reviewSignalNote(signal)}
       className={cn(
         "rounded-sm border px-1.5 py-0.5 text-[10px]",
         isFiatHold
