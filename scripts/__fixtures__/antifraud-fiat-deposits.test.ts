@@ -47,7 +47,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /includeKycRequired: value\("includeKycRequired"\) === "true"/);
   assert.match(
     page,
-    /excludeKycRequired: !state\.includeKycRequired/,
+    /excludeKycRequired: !state\.includeKycRequired && !state\.search/,
   );
   assert.match(api, /params\.set\("excludeKycRequired", "true"\)/);
   assert.match(detail, /Payment option/);

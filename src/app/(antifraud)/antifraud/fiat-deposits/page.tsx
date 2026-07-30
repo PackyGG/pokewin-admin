@@ -210,7 +210,9 @@ async function FiatContent({
     verdict: state.verdict,
     reviewStatus: state.reviewStatus,
     search: state.search || undefined,
-    excludeKycRequired: !state.includeKycRequired,
+    // An exact lookup must not silently hide the matching payment just
+    // because that account is already in the KYC workflow.
+    excludeKycRequired: !state.includeKycRequired && !state.search,
   });
   if (!result.configured)
     return (

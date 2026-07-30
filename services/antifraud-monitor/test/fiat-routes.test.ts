@@ -105,11 +105,11 @@ test("fiat list API preserves its existing include-KYC default", async () => {
   assert.ok(assessmentQueries.every((call) => !call.sql.includes(kycPredicate)));
 });
 
-test("explicit KYC exclusion applies before rows, counts, summaries, and search pagination", async () => {
+test("explicit KYC exclusion applies before rows, counts, and summaries", async () => {
   const { app, calls } = await buildApp();
   const response = await app.inject({
     method: "GET",
-    url: "/v1/fiat-deposits?limit=3&page=2&search=needle&excludeKycRequired=true",
+    url: "/v1/fiat-deposits?limit=3&page=2&excludeKycRequired=true",
     headers: { "x-antifraud-excluded-users": "[]" },
   });
   await app.close();
@@ -118,8 +118,8 @@ test("explicit KYC exclusion applies before rows, counts, summaries, and search 
   assert.deepEqual(response.json().pagination, {
     page: 2,
     limit: 3,
-    total: 4,
-    pages: 2,
+    total: 17,
+    pages: 6,
   });
   const listQuery = calls.find((call) =>
     call.sql.includes("ORDER BY occurred_at DESC"),
@@ -135,6 +135,33 @@ test("explicit KYC exclusion applies before rows, counts, summaries, and search 
   assert.ok(listQuery?.sql.includes(kycPredicate));
   assert.ok(countQuery?.sql.includes(kycPredicate));
   assert.ok(summaryQuery?.sql.includes(kycPredicate));
+});
+
+test("a concrete search includes KYC-required matching payments", async () => {
+  const { app, calls } = await buildApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/fiat-deposits?search=needle&excludeKycRequired=true",
+    headers: { "x-antifraud-excluded-users": "[]" },
+  });
+  await app.close();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(response.json().pagination.total, 6);
+  const listQuery = calls.find((call) =>
+    call.sql.includes("ORDER BY occurred_at DESC"),
+  );
+  const countQuery = calls.find(
+    (call) =>
+      call.sql.includes("COUNT(*)::int AS count") &&
+      !call.sql.includes("verdict="),
+  );
+  const summaryQuery = calls.find((call) =>
+    call.sql.includes("COUNT(*)::int AS total"),
+  );
+  assert.ok(!listQuery?.sql.includes(kycPredicate));
+  assert.ok(!countQuery?.sql.includes(kycPredicate));
+  assert.ok(!summaryQuery?.sql.includes(kycPredicate));
   assert.ok(listQuery?.values.includes("%needle%"));
   assert.ok(countQuery?.values.includes("%needle%"));
   assert.match(

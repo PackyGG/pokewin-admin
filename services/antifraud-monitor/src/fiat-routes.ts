@@ -93,6 +93,8 @@ export async function registerFiatRoutes(
     const query = querySchema.parse(request.query);
     const excluded = excludedUserIds(request.headers);
     const usesAssessmentFilter = Boolean(query.verdict || query.reviewStatus);
+    const excludeKycRequired =
+      query.excludeKycRequired && !query.search;
     const refreshed = await service.refresh({
       status: query.status,
       search: query.search,
@@ -127,7 +129,7 @@ export async function registerFiatRoutes(
         conditions.push(`review_status=$${values.length}`);
       }
     }
-    if (query.excludeKycRequired) {
+    if (excludeKycRequired) {
       conditions.push(
         `COALESCE((account_evidence->>'kycRequired')::boolean,false)=false`,
       );
@@ -163,7 +165,7 @@ export async function registerFiatRoutes(
     const listValues = [...values, query.limit, offset];
     const summaryValues: unknown[] = [FIAT_ASSESSMENT_STATUSES];
     const summaryConditions = ["status=ANY($1::text[])"];
-    if (query.excludeKycRequired) {
+    if (excludeKycRequired) {
       summaryConditions.push(
         `COALESCE((account_evidence->>'kycRequired')::boolean,false)=false`,
       );
