@@ -33,10 +33,9 @@ test("signup ingestion owns one private Opportify fraud analysis", async () => {
 });
 
 test("Opportify is visible as independent signup evidence", async () => {
-  const [server, schema, page, settings, migration] = await Promise.all([
+  const [server, schema, settings, migration] = await Promise.all([
     source("services/antifraud-monitor/src/server.ts"),
     source("src/lib/antifraud/signups.ts"),
-    source("src/app/(antifraud)/antifraud/signups/page.tsx"),
     source("src/app/(antifraud)/antifraud/settings/page.tsx"),
     source(
       "services/antifraud-monitor/migrations/036_opportify_signup_intelligence.sql",
@@ -45,7 +44,6 @@ test("Opportify is visible as independent signup evidence", async () => {
 
   assert.match(server, /opportify\.score AS opportify_score/);
   assert.match(schema, /opportify_score: z\.number\(\)\.nullable\(\)/);
-  assert.match(page, /label="Opportify"/);
   assert.match(settings, /name: "Opportify Full Fraud Check"/);
   assert.match(migration, /'opportify_risk_medium', 25/);
   assert.match(migration, /'opportify_risk_high', 60/);

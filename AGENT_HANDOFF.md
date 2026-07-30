@@ -10,6 +10,8 @@
 
 ## CURRENT STATE
 
+- **2026-07-30 Fraud Accounts workspace removed:** the Accounts sidebar section and `/antifraud/signups` page/loading route are removed from the Fraud webapp and Fraud host routing. Signup ingestion, provider checks, scoring, monitoring, and review alerts remain active as backend behavior. Focused contracts, route type generation, TypeScript, and task-scoped ESLint pass; the shared-checkout full build is blocked by unrelated concurrent guardrail failures.
+
 - **2026-07-30 Antifraud 0-100 score invariant repair:** monitor snapshots, SSE frames, case/session detail, risk bars, and Discord alerts now clamp legacy aggregate scores to the public 0-100 scale. Signup event timelines cap the running score while retaining raw signal deltas for explainability. Antifraud migration `043_enforce_score_bounds.sql` repairs legacy signup/case/session/event aggregate values and adds database checks preventing future out-of-range persistence. Monitor checks pass 258 tests, repository guardrails pass 445, TypeScript, focused ESLint, and diff check pass; production build/release verification is in progress.
 
 - **2026-07-30 email blacklist form simplified:** `/antifraud/email-blacklist` creation now asks only for the email domain. New rules are permanent and receive a fixed server-side audit reason; enable/disable actions retain their existing reason prompt. Commit `664f3435`; the focused four-test contract, all 445 guardrails, TypeScript, and ESLint pass. The production build compiled successfully but its final trace step collided twice with another active build sharing `.next`.

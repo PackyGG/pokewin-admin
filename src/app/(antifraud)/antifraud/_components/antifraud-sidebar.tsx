@@ -21,7 +21,6 @@ import {
   ShieldAlert,
   ShieldCheck,
   UsersRound,
-  UserRoundSearch,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -86,11 +85,7 @@ const OVERVIEW_NAV: NavItem[] = [
   { label: "Live events", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account reviews", href: "/antifraud/reviews", icon: ShieldAlert },
 ];
-const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "signups", "reviews"] as const;
-
-const ACCOUNT_NAV: NavItem[] = [
-  { label: "Signups", href: "/antifraud/signups", icon: UserRoundSearch },
-];
+const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "reviews"] as const;
 
 const TRANSACTION_NAV: NavItem[] = [
   { label: "Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
@@ -210,11 +205,9 @@ function NavMenu({
         const alertKey: NavAlertKey | undefined =
           item.href === "/antifraud/fiat-deposits"
             ? "fiat"
-            : item.href === "/antifraud/signups"
-              ? "signups"
-              : item.href === "/antifraud/reviews"
-                ? "reviews"
-                : undefined;
+            : item.href === "/antifraud/reviews"
+              ? "reviews"
+              : undefined;
         const alertCount = alertKey ? (alertCounts?.[alertKey] ?? 0) : 0;
         return (
           <SidebarMenuItem key={`${item.label}-${i}`}>
@@ -361,17 +354,14 @@ export function AntifraudSidebar({
   // HostLink (a bare /dashboard here would be rewritten into this segment).
   const appHost = useAppHost();
   const toHref = (path: string) => (appHost ? hrefFrom(appHost, path) : path);
-  const signupsHref = toHref("/antifraud/signups");
   const reviewsHref = toHref("/antifraud/reviews");
   const fiatHref = toHref("/antifraud/fiat-deposits");
   const activeAlertKey: NavAlertKey | undefined =
-    pathname === signupsHref || pathname.startsWith(signupsHref + "/")
-      ? "signups"
-      : pathname === reviewsHref || pathname.startsWith(reviewsHref + "/")
-        ? "reviews"
-        : pathname === fiatHref || pathname.startsWith(fiatHref + "/")
-          ? "fiat"
-          : undefined;
+    pathname === reviewsHref || pathname.startsWith(reviewsHref + "/")
+      ? "reviews"
+      : pathname === fiatHref || pathname.startsWith(fiatHref + "/")
+        ? "fiat"
+        : undefined;
   const { counts: navAlertCounts, markSeen: markNavAlertSeen } =
     useNavAlertBadges({
       keys: ANTIFRAUD_NAV_ALERT_KEYS,
@@ -430,16 +420,6 @@ export function AntifraudSidebar({
           storageKey={`antifraud-nav:v1:${viewerId}:overview`}
         />
         <NavSection
-          label="Accounts"
-          items={ACCOUNT_NAV}
-          pathname={pathname}
-          onNavTap={handleNavTap}
-          alertCounts={navAlertCounts}
-          onAlertSeen={markNavAlertSeen}
-          toHref={toHref}
-          storageKey={`antifraud-nav:v1:${viewerId}:accounts`}
-        />
-        <NavSection
           label="Transactions"
           items={TRANSACTION_NAV}
           pathname={pathname}
@@ -491,7 +471,6 @@ export function AntifraudSidebar({
             <NavMenu
               items={[
                 ...OVERVIEW_NAV,
-                ...ACCOUNT_NAV,
                 ...TRANSACTION_NAV,
                 ...KYC_NAV,
                 ...BLACKLIST_NAV,

@@ -8,7 +8,7 @@ async function source(path: string): Promise<string> {
   return readFile(new URL(path, ROOT), "utf8");
 }
 
-test("navigation badges cover fiat, signups, and account reviews", async () => {
+test("Fraud navigation badges cover fiat and account reviews", async () => {
   const [mainSidebar, antifraudSidebar, badge] = await Promise.all([
     source("src/components/app-sidebar.tsx"),
     source("src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx"),
@@ -17,8 +17,8 @@ test("navigation badges cover fiat, signups, and account reviews", async () => {
 
   assert.match(mainSidebar, /item\.href === "\/fiat"/);
   assert.match(antifraudSidebar, /"\/antifraud\/fiat-deposits"/);
-  assert.match(antifraudSidebar, /"\/antifraud\/signups"/);
   assert.match(antifraudSidebar, /"\/antifraud\/reviews"/);
+  assert.doesNotMatch(antifraudSidebar, /"\/antifraud\/signups"/);
   assert.match(badge, /nav-alert-seen:\$\{STORAGE_VERSION\}:\$\{viewerId\}:\$\{key\}/);
   assert.match(badge, /const STORAGE_VERSION = "v2"/);
   assert.match(badge, /document\.visibilityState === "visible"/);

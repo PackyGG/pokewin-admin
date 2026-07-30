@@ -13,7 +13,6 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
 
   for (const section of [
     "Overview",
-    "Accounts",
     "Transactions",
     "KYC",
     "Notifications",
@@ -27,7 +26,6 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Dashboard",
     "Live events",
     "Account reviews",
-    "Signups",
     "Deposits",
     "Withdrawals",
     "Refunds",
@@ -64,6 +62,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     assert.match(sidebar, new RegExp(`href: "${route}"`));
   }
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
+  assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
   assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
@@ -106,7 +105,7 @@ test("unrequested profile and connection indexes stay out of Fraud", () => {
   );
   const errorBoundary = read("src/app/(antifraud)/antifraud/error.tsx");
 
-  assert.doesNotMatch(sidebar, /Profiles|Connections & clusters/);
+  assert.doesNotMatch(sidebar, /Profiles|Connections & clusters|Signups/);
   assert.match(errorBoundary, /correlation \{error\.digest\}/);
   assert.match(errorBoundary, /does not prove that a preceding action failed/);
 });

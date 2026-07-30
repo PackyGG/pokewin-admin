@@ -160,7 +160,6 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "risky-locations",
       "reviews",
       "kyc",
-      "signups",
       "quizzes",
       "staff",
       "profile",
