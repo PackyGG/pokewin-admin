@@ -1,7 +1,7 @@
 import { PageHeroSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function WebhooksLoading() {
+export default function DiscordRoutingLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />

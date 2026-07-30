@@ -64,7 +64,7 @@ test("channel creation has a durable manager request and leased bot execution", 
     "src/lib/discord-notifications/channel-operations.ts",
   );
   const actions = read(
-    "src/app/(antifraud)/antifraud/webhooks/actions.ts",
+    "src/app/(antifraud)/antifraud/discord/actions.ts",
   );
 
   assert.match(migration, /discord_notification_channel_settings/);
@@ -83,7 +83,7 @@ test("channel creation has a durable manager request and leased bot execution", 
 test("an event belongs to exactly one Discord channel", () => {
   const config = read("src/lib/discord-notifications/config.ts");
   const workspace = read(
-    "src/app/(antifraud)/antifraud/webhooks/routing-workspace.tsx",
+    "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
   );
 
   // The per-channel replace stays serialized per guild, and it refuses an

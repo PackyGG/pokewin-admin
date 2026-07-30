@@ -21,13 +21,13 @@ test("fraud navigation owns a manager-only Notifications Discord route", () => {
 
   assert.match(sidebar, /label="Notifications"/);
   assert.match(sidebar, /label:\s*"Discord"/);
-  assert.match(sidebar, /href:\s*"\/antifraud\/webhooks"/);
+  assert.match(sidebar, /href:\s*"\/antifraud\/discord"/);
   assert.match(sidebar, /\{canManage && \([\s\S]*NOTIFICATION_NAV/);
-  assert.match(antifraudHost, /"webhooks"/);
+  assert.match(antifraudHost, /"discord"/);
 });
 
 test("webhooks page is manager-gated and renders the bot routing workspace", () => {
-  const page = source("src/app/(antifraud)/antifraud/webhooks/page.tsx");
+  const page = source("src/app/(antifraud)/antifraud/discord/page.tsx");
 
   assert.match(page, /await requireAntifraudManagerPage\(\)/);
   assert.match(page, /getDiscordNotificationConfig\(\)/);

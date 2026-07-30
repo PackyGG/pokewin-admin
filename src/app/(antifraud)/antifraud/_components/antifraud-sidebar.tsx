@@ -99,7 +99,7 @@ const KYC_NAV: NavItem[] = [
 ];
 
 const NOTIFICATION_NAV: NavItem[] = [
-  { label: "Discord", href: "/antifraud/webhooks", icon: Webhook },
+  { label: "Discord", href: "/antifraud/discord", icon: Webhook },
   {
     label: "Dashboard",
     href: "/antifraud/notifications",

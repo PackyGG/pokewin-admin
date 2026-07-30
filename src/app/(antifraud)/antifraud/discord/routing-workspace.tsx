@@ -435,7 +435,7 @@ export function DiscordRoutingWorkspace({
       </div>
 
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="flex flex-col gap-3 border-b border-border/60 p-3 sm:flex-row sm:items-center sm:p-4">
+        <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:p-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Send className="size-4 text-cyan-500" />
@@ -478,8 +478,10 @@ export function DiscordRoutingWorkspace({
             </Button>
           </div>
         </div>
+      </section>
 
-        {activeChannels.length === 0 ? (
+      {activeChannels.length === 0 ? (
+        <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
           <div className="flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
             <span className="flex size-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-500">
               <Hash className="size-5" />
@@ -502,108 +504,111 @@ export function DiscordRoutingWorkspace({
               Add existing channel
             </Button>
           </div>
-        ) : (
-          <div className="divide-y divide-border/60">
-            {activeChannelGroups.map((group) => (
-              <div key={group.id}>
-                <div className="flex items-center gap-2 bg-muted/40 px-3 py-2 sm:px-4">
-                  <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                  <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    {group.name}
-                  </span>
-                  <span className="text-[11px] tabular-nums text-muted-foreground/70">
-                    {group.channels.length}
-                  </span>
-                </div>
-                <div className="divide-y divide-border/40">
-                  {group.channels.map((channel) => {
-                    const routes = initialConfig.routes.filter(
-                      (route) =>
-                        route.channelId === channel.id &&
-                        route.enabled &&
-                        initialConfig.events.some(
-                          (event) =>
-                            event.key === route.eventKey && event.enabled,
-                        ),
-                    );
-                    const events = routes.map(
-                      (route) =>
-                        initialConfig.events.find(
-                          (event) => event.key === route.eventKey,
-                        ) ?? {
-                          key: route.eventKey,
-                          label: route.eventKey,
-                          description: "This event is no longer in the catalog.",
-                          category: "Unavailable",
-                          custom: false,
-                          enabled: false,
-                        },
-                    );
+        </section>
+      ) : (
+        <div className="space-y-3">
+          {activeChannelGroups.map((group) => (
+            <section
+              key={group.id}
+              className="overflow-hidden rounded-xl border border-border/60 bg-card"
+            >
+              <div className="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-3 py-2 sm:px-4">
+                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
+                <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  {group.name}
+                </span>
+                <span className="text-[11px] tabular-nums text-muted-foreground/70">
+                  {group.channels.length}
+                </span>
+              </div>
+              <div className="divide-y divide-border/40">
+                {group.channels.map((channel) => {
+                  const routes = initialConfig.routes.filter(
+                    (route) =>
+                      route.channelId === channel.id &&
+                      route.enabled &&
+                      initialConfig.events.some(
+                        (event) =>
+                          event.key === route.eventKey && event.enabled,
+                      ),
+                  );
+                  const events = routes.map(
+                    (route) =>
+                      initialConfig.events.find(
+                        (event) => event.key === route.eventKey,
+                      ) ?? {
+                        key: route.eventKey,
+                        label: route.eventKey,
+                        description: "This event is no longer in the catalog.",
+                        category: "Unavailable",
+                        custom: false,
+                        enabled: false,
+                      },
+                  );
 
-                    return (
-                      <div
-                        key={channel.id}
-                        className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
-                      >
-                        <div className="flex min-w-0 flex-1 items-start gap-3">
-                          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
-                            <Hash className="size-4" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <div className="flex flex-wrap items-center gap-2">
-                              <h3 className="truncate text-sm font-semibold">
-                                #{channel.name}
-                              </h3>
-                              <DeliveryBadge channel={channel} />
-                              <span className="text-[11px] tabular-nums text-muted-foreground">
-                                {events.length}{" "}
-                                {events.length === 1 ? "event" : "events"}
-                              </span>
-                            </div>
-                            <div className="mt-2 flex flex-wrap gap-1.5">
-                              {events.map((event) => (
-                                <Badge
-                                  key={event.key}
-                                  variant={
-                                    event.enabled ? "outline" : "destructive"
-                                  }
-                                  className="px-1.5 py-0 text-[11px] font-normal"
-                                  title={event.description}
-                                >
-                                  {event.label}
-                                </Badge>
-                              ))}
-                            </div>
+                  return (
+                    <div
+                      key={channel.id}
+                      className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+                    >
+                      <div className="flex min-w-0 flex-1 items-start gap-3">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
+                          <Hash className="size-4" />
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="truncate text-sm font-semibold">
+                              #{channel.name}
+                            </h3>
+                            <DeliveryBadge channel={channel} />
+                            <span className="text-[11px] tabular-nums text-muted-foreground">
+                              {events.length}{" "}
+                              {events.length === 1 ? "event" : "events"}
+                            </span>
+                          </div>
+                          <div className="mt-2 flex flex-wrap gap-1.5">
+                            {events.map((event) => (
+                              <Badge
+                                key={event.key}
+                                variant={
+                                  event.enabled ? "outline" : "destructive"
+                                }
+                                className="px-1.5 py-0 text-[11px] font-normal"
+                                title={event.description}
+                              >
+                                {event.label}
+                              </Badge>
+                            ))}
                           </div>
                         </div>
-                        <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => openExistingChannel(channel.id)}
-                          >
-                            <Pencil />
-                            Edit
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Remove #${channel.name}`}
-                            disabled={pending}
-                            onClick={() => removeChannel(channel)}
-                          >
-                            <Trash2 className="text-destructive" />
-                          </Button>
-                        </div>
                       </div>
-                    );
-                  })}
-                </div>
+                      <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => openExistingChannel(channel.id)}
+                        >
+                          <Pencil />
+                          Edit
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-sm"
+                          aria-label={`Remove #${channel.name}`}
+                          disabled={pending}
+                          onClick={() => removeChannel(channel)}
+                        >
+                          <Trash2 className="text-destructive" />
+                        </Button>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-            ))}
-          </div>
-        )}
-      </section>
+            </section>
+          ))}
+        </div>
+      )}
 
       <ChannelEditorDialog
         editor={editor}

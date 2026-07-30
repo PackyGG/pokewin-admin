@@ -10,18 +10,18 @@ test("Discord Routing belongs only to the manager-gated Fraud workspace", () => 
   assert.doesNotMatch(source("src/lib/nav-config.ts"), /id:\s*"nav\.webhooks"/);
   assert.doesNotMatch(source("src/lib/admin-pages.ts"), /key:\s*"\/webhooks"/);
   assert.match(
-    source("src/app/(antifraud)/antifraud/webhooks/page.tsx"),
+    source("src/app/(antifraud)/antifraud/discord/page.tsx"),
     /requireAntifraudManagerPage\(\)/,
   );
   assert.match(
     source("src/middleware.ts"),
-    /fraudHost\.host\}\/webhooks/,
+    /fraudHost\.host\}\/discord/,
   );
 });
 
 test("Discord Routing exposes active channels with add and edit event flows", () => {
   const workspace = source(
-    "src/app/(antifraud)/antifraud/webhooks/routing-workspace.tsx",
+    "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
   );
 
   assert.match(workspace, /initialConfig\.channels/);
@@ -39,7 +39,7 @@ test("Discord Routing exposes active channels with add and edit event flows", ()
 
 test("every Discord route mutation is permission-gated and audited", () => {
   const actions = source(
-    "src/app/(antifraud)/antifraud/webhooks/actions.ts",
+    "src/app/(antifraud)/antifraud/discord/actions.ts",
   );
 
   assert.equal(

@@ -110,7 +110,7 @@ export async function createDiscordChannelAction(
         channelName: queued.name,
       },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
     return { requestId: queued.id, name: queued.name };
   });
 }
@@ -140,7 +140,7 @@ export async function createCustomEventAction(
         category: parsed.data.category,
       },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
   });
 }
 
@@ -168,7 +168,7 @@ export async function upsertRouteAction(
         enabled: parsed.data.enabled,
       },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
   });
 }
 
@@ -195,7 +195,7 @@ export async function replaceChannelRoutesAction(
         eventCount: parsed.data.eventKeys.length,
       },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
   });
 }
 
@@ -223,7 +223,7 @@ export async function setRouteEnabledAction(
       eventType: "discord_notification_route_toggled",
       metadata: { id: parsed.data.id, enabled: parsed.data.enabled },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
   });
 }
 
@@ -245,6 +245,6 @@ export async function deleteRouteAction(
       eventType: "discord_notification_route_deleted",
       metadata: { id: parsed.data.id },
     });
-    revalidatePath("/antifraud/webhooks");
+    revalidatePath("/antifraud/discord");
   });
 }

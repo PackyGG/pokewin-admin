@@ -32,10 +32,10 @@ test("Discord management stays inside exact approved categories and live markers
   const policy = read("src/lib/discord-notifications/antifraud-policy.ts");
   const config = read("src/lib/discord-notifications/config.ts");
   const workspace = read(
-    "src/app/(antifraud)/antifraud/webhooks/routing-workspace.tsx",
+    "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
   );
   const actions = read(
-    "src/app/(antifraud)/antifraud/webhooks/actions.ts",
+    "src/app/(antifraud)/antifraud/discord/actions.ts",
   );
 
   for (const id of [

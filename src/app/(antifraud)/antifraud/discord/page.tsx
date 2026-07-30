@@ -8,7 +8,7 @@ import { DiscordRoutingWorkspace } from "./routing-workspace";
 
 export const metadata = { title: "Discord Routing · Antifraud" };
 
-export default async function WebhooksPage() {
+export default async function DiscordRoutingPage() {
   await requireAntifraudManagerPage();
 
   return (

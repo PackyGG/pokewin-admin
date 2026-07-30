@@ -223,12 +223,15 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(new URL("/pack-studio", request.url), 307);
     }
 
-    if (appHost?.basePath === null && pathname === "/webhooks") {
+    // Discord routing used to live at `/webhooks`. Keep old bookmarks working
+    // from every host — the apex, the Fraud host itself, and the retired
+    // `/antifraud`-prefixed form — by sending them to its one canonical home.
+    if (pathname === "/webhooks" || pathname === "/antifraud/webhooks") {
       const fraudHost = APP_HOSTS.find(
         (entry) => entry.basePath === "/antifraud",
       );
       if (fraudHost) {
-        const url = new URL(`https://${fraudHost.host}/webhooks`);
+        const url = new URL(`https://${fraudHost.host}/discord`);
         url.search = request.nextUrl.search;
         return NextResponse.redirect(url, 308);
       }
