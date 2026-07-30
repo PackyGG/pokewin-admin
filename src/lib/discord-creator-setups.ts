@@ -255,7 +255,7 @@ function readCodeStats(
   };
 }
 
-async function requireLinkedSetupActor(input: {
+export async function requireLinkedSetupActor(input: {
   guildId: string;
   categoryId: string;
   channelId: string;

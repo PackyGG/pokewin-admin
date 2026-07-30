@@ -125,6 +125,34 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/deposit-settings",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns whether automatic deposit notifications are enabled for the linked creator section and its current logs channel.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/deposit-settings/update",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId, interactionId, enabled }. Enables or disables future deposit notifications for the linked creator section. Writes only audited settings and delivery state in the admin database.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deposits/jobs/claim",
+    summary:
+      "Body { guildId, workerId, limit }. Discovers completed creator-attributed deposits and leases a bounded batch of durable Discord delivery jobs.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deposits/jobs/[id]/ack",
+    summary:
+      "Body { guildId, leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Acknowledges a creator deposit notification as delivered or returns it to bounded retry handling.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",
