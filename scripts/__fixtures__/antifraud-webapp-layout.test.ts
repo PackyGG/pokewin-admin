@@ -119,3 +119,25 @@ test("unrequested profile and connection indexes stay out of Fraud", () => {
   assert.match(errorBoundary, /correlation \{error\.digest\}/);
   assert.match(errorBoundary, /does not prove that a preceding action failed/);
 });
+
+test("browser and React failures are routed to webapp error notifications", () => {
+  const route = read("src/app/api/antifraud/webapp-errors/route.ts");
+  const reporter = read("src/lib/errors/report-webapp-error.ts");
+  const routeBoundary = read("src/app/(antifraud)/antifraud/error.tsx");
+  const panelBoundary = read(
+    "src/app/(antifraud)/antifraud/_components/panel-error-boundary.tsx",
+  );
+  const instrumentation = read("src/instrumentation-client.ts");
+
+  assert.match(route, /requireAntifraudReadAccess/);
+  assert.match(route, /sec-fetch-site/);
+  assert.match(route, /rateLimit/);
+  assert.match(route, /eventKey: "antifraud\.error\.webapp"/);
+  assert.match(route, /Raw messages and stack traces were intentionally excluded/);
+  assert.doesNotMatch(route, /report\.message|report\.stack/);
+  assert.match(reporter, /source: "window-error"/);
+  assert.match(reporter, /source: "unhandled-rejection"/);
+  assert.match(routeBoundary, /reportWebappError/);
+  assert.match(panelBoundary, /info\.componentStack/);
+  assert.match(instrumentation, /registerWebappErrorListeners\(\)/);
+});

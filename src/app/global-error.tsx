@@ -3,6 +3,8 @@
 import { useEffect } from "react";
 import * as Sentry from "@sentry/nextjs";
 
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
+
 /**
  * Last-resort error boundary. `global-error.tsx` catches errors thrown
  * inside the ROOT `app/layout.tsx` itself — situations where even the
@@ -89,6 +91,12 @@ export default function GlobalError({
   reset: () => void;
 }) {
   useEffect(() => {
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "global-error",
+      error,
+      digest: error.digest,
+    });
     try {
       console.error("[global-error] root layout threw:", error);
     } catch {

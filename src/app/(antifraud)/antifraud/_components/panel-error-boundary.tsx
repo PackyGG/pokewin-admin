@@ -4,6 +4,7 @@ import * as React from "react";
 import { AlertTriangle, RotateCw } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
 
 type State = {
   failed: boolean;
@@ -20,7 +21,7 @@ export class PanelErrorBoundary extends React.Component<
     return { failed: true, correlationId: null };
   }
 
-  componentDidCatch(error: unknown): void {
+  componentDidCatch(error: unknown, info: React.ErrorInfo): void {
     const correlationId =
       typeof crypto !== "undefined" && "randomUUID" in crypto
         ? crypto.randomUUID()
@@ -29,6 +30,12 @@ export class PanelErrorBoundary extends React.Component<
       correlationId,
       label: this.props.label,
       error,
+    });
+    reportWebappError({
+      source: "react-component",
+      boundary: this.props.label,
+      error,
+      componentStack: info.componentStack,
     });
     this.setState({ correlationId });
   }

@@ -5,6 +5,7 @@ import { AlertTriangle, RotateCw } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { Button } from "@/components/ui/button";
+import { reportWebappError } from "@/lib/errors/report-webapp-error";
 
 export default function AntifraudError({
   error,
@@ -15,6 +16,12 @@ export default function AntifraudError({
 }) {
   useEffect(() => {
     console.error("[antifraud] error boundary caught:", error);
+    reportWebappError({
+      source: "react-boundary",
+      boundary: "antifraud-route",
+      error,
+      digest: error.digest,
+    });
   }, [error]);
 
   return (

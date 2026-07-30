@@ -1,3 +1,5 @@
+import { registerWebappErrorListeners } from "@/lib/errors/report-webapp-error";
+
 /**
  * Sentry browser init — DORMANT AND ZERO-WEIGHT by default. With no
  * NEXT_PUBLIC_SENTRY_DSN we never import `@sentry/nextjs`, so the (large)
@@ -11,6 +13,8 @@
 const dsn = process.env.NEXT_PUBLIC_SENTRY_DSN;
 
 let routerTransitionStart: (...args: unknown[]) => void = () => {};
+
+registerWebappErrorListeners();
 
 if (dsn) {
   void import("@sentry/nextjs").then((Sentry) => {
