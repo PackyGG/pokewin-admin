@@ -121,6 +121,7 @@ import {
 import {
   getPackBuilderEdgeError,
   getPackBuilderTicketTotalError,
+  scaleToPackBuilderTickets,
 } from "@/lib/packs/builder-edge";
 
 const pack_tag = {
@@ -2662,14 +2663,19 @@ async function materializeApprovedPack(
   if (edgeError) {
     return { ok: false, error: edgeError };
   }
-  const solvedTicketError = getPackBuilderTicketTotalError(shaped.weights);
+  // The solver returns PROPORTIONAL integer weights (gcd-reduced, arbitrary
+  // total). Production packs ship on the exact 1,000,000-ticket grid, so the
+  // proportions are rescaled onto it and the persisted rows carry the scaled
+  // vector — odds then sum to exactly 100.0000%.
+  const solvedTickets = scaleToPackBuilderTickets(shaped.weights) ?? [];
+  const solvedTicketError = getPackBuilderTicketTotalError(solvedTickets);
   if (solvedTicketError) {
     return { ok: false, error: solvedTicketError };
   }
 
   // Only real cards (a cardId) can be persisted into pack_cards. A value-only
   // slot can't be written — surface it rather than silently dropping it.
-  const persistable = slots.map((s, i) => ({ ...s, weight: shaped.weights[i]! }));
+  const persistable = slots.map((s, i) => ({ ...s, weight: solvedTickets[i]! }));
   const valueOnly = persistable.filter((s) => s.cardId === null && s.weight > 0);
   if (valueOnly.length > 0) {
     return {
@@ -2830,7 +2836,9 @@ async function previewPackBuildRequest(
   if ("error" in shaped) return { ok: false, error: shaped.error };
   const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
   if (edgeError) return { ok: false, error: edgeError };
-  const ticketError = getPackBuilderTicketTotalError(shaped.weights);
+  const ticketError = getPackBuilderTicketTotalError(
+    scaleToPackBuilderTickets(shaped.weights) ?? [],
+  );
   if (ticketError) return { ok: false, error: ticketError };
 
   const valueOnlyWithWeight = slots.some(
