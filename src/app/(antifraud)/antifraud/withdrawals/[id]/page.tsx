@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { notFound } from "next/navigation";
 import {
   Activity,
@@ -45,6 +46,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import { WithdrawalReviewControls } from "./review-controls";
+import { WithdrawalReviewSkeleton } from "./review-skeleton";
 
 export const metadata = { title: "Withdrawal Review · Antifraud" };
 
@@ -56,13 +58,39 @@ export default async function WithdrawalReviewPage({
   await requireAntifraudPageAccess();
   const { id } = await params;
   if (!z.string().uuid().safeParse(id).success) notFound();
-  const result = await getWithdrawalAssessment(id);
+
+  // Shell-first (CLAUDE.md § Pflicht: Shell-first Suspense-Streaming). The hero
+  // and its back control paint immediately; the monitor read — an upstream HTTP
+  // call with an 8s timeout, so the slowest thing on this page — streams in
+  // behind the boundary instead of blocking first paint on it.
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity backHref="/antifraud/withdrawals" />
+      </PageHero>
+      <Suspense key={id} fallback={<WithdrawalReviewSkeleton />}>
+        <WithdrawalAssessmentBody withdrawalId={id} />
+      </Suspense>
+    </div>
+  );
+}
+
+async function WithdrawalAssessmentBody({
+  withdrawalId,
+}: {
+  withdrawalId: string;
+}) {
+  const result = await getWithdrawalAssessment(withdrawalId);
   if (result.notFound) notFound();
   if (!result.configured) {
-    return <Unavailable text="The Antifraud monitor service is not configured." />;
+    return (
+      <UnavailableBody text="The Antifraud monitor service is not configured." />
+    );
   }
   if (result.error || !result.data) {
-    return <Unavailable text="This withdrawal review could not be loaded." />;
+    return (
+      <UnavailableBody text="This withdrawal review could not be loaded. The monitor request failed or timed out — retry once the service recovers." />
+    );
   }
   return <WithdrawalReview detail={result.data} />;
 }
@@ -73,24 +101,11 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
   const failedChecks = withdrawal.flow_checks.filter(
     (check) => check.status === "watch" || check.status === "alert",
   ).length;
+  // No PageHero here — the page shell owns it so it can paint before this read
+  // resolves. The "User profile" action depends on the loaded user id, so it
+  // lives on the identity card instead, next to the account it refers to.
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          backHref="/antifraud/withdrawals"
-          action={
-            <Button
-              size="sm"
-              variant="outline"
-              render={<HostLink href={`/users/${withdrawal.user_id}`} />}
-            >
-              <UserRound className="size-4" />
-              User profile
-            </Button>
-          }
-        />
-      </PageHero>
-
+    <>
       <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
@@ -115,6 +130,14 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
               {withdrawal.status}
             </Badge>
             <ReviewStatusBadge status={withdrawal.review_status} />
+            <Button
+              size="sm"
+              variant="outline"
+              render={<HostLink href={`/users/${withdrawal.user_id}`} />}
+            >
+              <UserRound className="size-4" />
+              User profile
+            </Button>
           </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
@@ -179,7 +202,7 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
           <ReviewTrail detail={detail} />
         </aside>
       </div>
-    </div>
+    </>
   );
 }
 
@@ -630,16 +653,18 @@ function checkStyle(
   };
 }
 
-function Unavailable({ text }: { text: string }) {
+/**
+ * Degraded body. The shell (hero + back control) is already on screen, so this
+ * only replaces the content region — the analyst keeps their way back out.
+ */
+function UnavailableBody({ text }: { text: string }) {
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity backHref="/antifraud/withdrawals" />
-      </PageHero>
-      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
-        <UserRound className="mx-auto mb-3 size-6 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">{text}</p>
-      </div>
+    <div
+      role="status"
+      className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center"
+    >
+      <UserRound className="mx-auto mb-3 size-6 text-muted-foreground" />
+      <p className="text-sm text-muted-foreground">{text}</p>
     </div>
   );
 }

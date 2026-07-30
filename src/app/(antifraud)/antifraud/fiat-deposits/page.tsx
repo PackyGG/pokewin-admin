@@ -9,7 +9,6 @@ import {
   CreditCard,
   Eye,
   EyeOff,
-  Search,
   ShieldAlert,
   ShieldCheck,
   UserRound,
@@ -24,7 +23,6 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listFiatAssessments,
@@ -60,6 +58,7 @@ import {
   parsePageParam,
   verdictStyle,
 } from "../_components/list-page";
+import { ListSearchForm } from "../_components/list-search-form";
 import { QueueReviewDrawer } from "../_components/review-drawer";
 import { RiskScoreBar } from "../_components/risk-score-bar";
 import { TransactionRailTabs } from "../_components/transaction-tabs";
@@ -320,38 +319,22 @@ function FiltersBar({
               ? "Hide KYC required"
               : "Show KYC required"}
           </Button>
-          <form
-            className="flex min-w-0 flex-1 gap-2"
+          <ListSearchForm
             action="/antifraud/fiat-deposits"
-          >
-            {state.status && (
-              <input type="hidden" name="status" value={state.status} />
-            )}
-            {state.verdict && (
-              <input type="hidden" name="verdict" value={state.verdict} />
-            )}
-            {state.reviewStatus && (
-              <input
-                type="hidden"
-                name="reviewStatus"
-                value={state.reviewStatus}
-              />
-            )}
-            {state.includeKycRequired && (
-              <input type="hidden" name="includeKycRequired" value="true" />
-            )}
-            <Input
-              name="search"
-              defaultValue={state.search}
-              placeholder="User, Whop email, payment, or ID"
-              maxLength={100}
-              aria-label="Search fiat deposits"
-              className="min-w-0 xl:w-72"
-            />
-            <Button type="submit" variant="outline" aria-label="Search">
-              <Search className="size-4" />
-            </Button>
-          </form>
+            placeholder="User, Whop email, payment, or ID"
+            ariaLabel="Search fiat deposits"
+            defaultValue={state.search}
+            carry={{
+              status: state.status,
+              verdict: state.verdict,
+              reviewStatus: state.reviewStatus,
+              includeKycRequired: state.includeKycRequired
+                ? "true"
+                : undefined,
+            }}
+            className="flex-1"
+            inputClassName="xl:w-72"
+          />
         </div>
       </div>
     </div>
@@ -580,23 +563,15 @@ function Summary({ summary }: { summary: FiatSummary }) {
 function CryptoFilters({ state }: { state: Filters }) {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3">
-      <form
-        className="flex w-full max-w-xl gap-2"
+      <ListSearchForm
         action="/antifraud/fiat-deposits"
-      >
-        <input type="hidden" name="rail" value="crypto" />
-        <Input
-          name="search"
-          defaultValue={state.search}
-          placeholder="User, username, or transaction ID"
-          maxLength={100}
-          aria-label="Search crypto deposits"
-        />
-        <Button type="submit" variant="outline">
-          <Search className="size-4" />
-          Search
-        </Button>
-      </form>
+        placeholder="User, username, or transaction ID"
+        ariaLabel="Search crypto deposits"
+        defaultValue={state.search}
+        carry={{ rail: "crypto" }}
+        submitLabel="Search"
+        className="w-full max-w-xl"
+      />
     </div>
   );
 }

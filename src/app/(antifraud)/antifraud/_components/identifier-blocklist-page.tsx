@@ -8,6 +8,7 @@ import {
   type IdentifierBlocklistKind,
 } from "@/lib/antifraud/identifier-blocklists-api";
 import { IdentifierBlocklistClient } from "./identifier-blocklist-client";
+import { PanelErrorBoundary } from "./panel-error-boundary";
 
 async function Content({ kind }: { kind: IdentifierBlocklistKind }) {
   const result = await listIdentifierBlocklist(kind);
@@ -36,11 +37,15 @@ async function Content({ kind }: { kind: IdentifierBlocklistKind }) {
         </div>
       )}
       {result.configured && !result.error && (
-        <IdentifierBlocklistClient
-          key={result.data.map((rule) => `${rule.id}:${rule.updatedAt}`).join("|")}
-          kind={kind}
-          initialRules={result.data}
-        />
+        <PanelErrorBoundary label="Blocklist editor">
+          <IdentifierBlocklistClient
+            key={result.data
+              .map((rule) => `${rule.id}:${rule.updatedAt}`)
+              .join("|")}
+            kind={kind}
+            initialRules={result.data}
+          />
+        </PanelErrorBoundary>
       )}
     </>
   );

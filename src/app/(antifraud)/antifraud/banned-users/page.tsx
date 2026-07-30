@@ -1,13 +1,12 @@
 import { Suspense } from "react";
-import { Ban, Clock, Search, UsersRound } from "lucide-react";
+import { Ban, Clock, UsersRound } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { FormCardSkeleton, KpiStripSkeleton } from "@/components/loading-skeletons";
 import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { listAntifraudBannedUsers } from "@/lib/antifraud/profiles-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { formatRelative } from "@/lib/utils/format";
+import { ListSearchForm } from "../_components/list-search-form";
 import { BannedUsersList } from "./banned-users-list";
 
 export const metadata = { title: "Banned Users · Antifraud" };
@@ -32,20 +31,20 @@ async function Content({ searchParams }: { searchParams: SearchParams }) {
         />
         <KpiTile label="Pages" value={String(result.pagination.pages)} icon={UsersRound} accent="blue" />
       </div>
-      <form className="rounded-xl border border-border/60 bg-card p-3">
+      <div className="rounded-xl border border-border/60 bg-card p-3">
         <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Search
         </p>
-        <div className="flex flex-col gap-2 sm:flex-row">
-          <Input
-            name="search"
-            defaultValue={params.search}
-            placeholder="User ID, username or email prefix"
-            className="sm:max-w-sm"
-          />
-          <Button type="submit" variant="outline"><Search className="size-4" />Search</Button>
-        </div>
-      </form>
+        <ListSearchForm
+          action="/antifraud/banned-users"
+          placeholder="User ID, username or email prefix"
+          ariaLabel="Search banned users"
+          defaultValue={params.search ?? ""}
+          submitLabel="Search"
+          className="flex-col gap-2 sm:flex-row"
+          inputClassName="sm:max-w-sm"
+        />
+      </div>
       {(!result.configured || result.error) && (
         <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
           {!result.configured

@@ -3,7 +3,6 @@ import { z } from "zod";
 import {
   AlertTriangle,
   ArrowRight,
-  Search,
   ShieldAlert,
   ShieldCheck,
   UserRound,
@@ -15,7 +14,6 @@ import { KpiTile, PageHero, PageHeroIdentity } from "@/components/modern-panels"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   listWithdrawalAssessments,
@@ -41,6 +39,7 @@ import {
 import { QueueReviewDrawer } from "../_components/review-drawer";
 import { RiskScoreBar } from "../_components/risk-score-bar";
 import { TransactionRailTabs } from "../_components/transaction-tabs";
+import { ListSearchForm } from "../_components/list-search-form";
 import { WithdrawalReviewDialog } from "./review-dialog";
 
 export const metadata = { title: "Withdrawals · Antifraud" };
@@ -214,26 +213,21 @@ function Filters({ state }: { state: FilterState }) {
             <FilterButton label="Completed" active={state.status === "completed"} href={filterHref({ status: "completed" })} />
           </FilterGroup>
         </div>
-        <form className="flex w-full gap-2 xl:w-auto" action="/antifraud/withdrawals">
-          {state.status && <input type="hidden" name="status" value={state.status} />}
-          <input type="hidden" name="rail" value={state.rail} />
-          <input type="hidden" name="lifecycle" value={state.lifecycle} />
-          {state.verdict && <input type="hidden" name="verdict" value={state.verdict} />}
-          {state.reviewStatus && (
-            <input type="hidden" name="reviewStatus" value={state.reviewStatus} />
-          )}
-          <Input
-            name="search"
-            defaultValue={state.search}
-            placeholder="User, email, or ID"
-            maxLength={100}
-            aria-label="Search withdrawals"
-            className="min-w-0 xl:w-64"
-          />
-          <Button type="submit" variant="outline" aria-label="Search">
-            <Search className="size-4" />
-          </Button>
-        </form>
+        <ListSearchForm
+          action="/antifraud/withdrawals"
+          placeholder="User, email, or ID"
+          ariaLabel="Search withdrawals"
+          defaultValue={state.search}
+          carry={{
+            rail: state.rail,
+            lifecycle: state.lifecycle,
+            status: state.status,
+            verdict: state.verdict,
+            reviewStatus: state.reviewStatus,
+          }}
+          className="w-full xl:w-auto"
+          inputClassName="xl:w-64"
+        />
       </div>
     </div>
   );

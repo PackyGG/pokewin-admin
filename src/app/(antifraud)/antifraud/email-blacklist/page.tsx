@@ -12,6 +12,7 @@ import {
 } from "@/components/modern-panels";
 import { listFiatEmailDomains } from "@/lib/antifraud/fiat-email-domains-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { PanelErrorBoundary } from "../_components/panel-error-boundary";
 import { EmailBlacklistClient } from "./email-blacklist-client";
 
 export const metadata = { title: "Email Blacklist · Antifraud" };
@@ -60,12 +61,14 @@ async function EmailBlacklistContent() {
       )}
 
       {result.configured && !result.error && (
-        <EmailBlacklistClient
-          key={result.data
-            .map((rule) => `${rule.id}:${rule.updatedAt}`)
-            .join("|")}
-          initialRules={result.data}
-        />
+        <PanelErrorBoundary label="Blacklist editor">
+          <EmailBlacklistClient
+            key={result.data
+              .map((rule) => `${rule.id}:${rule.updatedAt}`)
+              .join("|")}
+            initialRules={result.data}
+          />
+        </PanelErrorBoundary>
       )}
     </>
   );

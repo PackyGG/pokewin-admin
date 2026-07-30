@@ -14,6 +14,7 @@ import {
 } from "@/components/modern-panels";
 import { listRiskyLocations } from "@/lib/antifraud/risky-locations-api";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { PanelErrorBoundary } from "../_components/panel-error-boundary";
 import { RiskyLocationsClient } from "./risky-locations-client";
 
 countries.registerLocale(enLocale);
@@ -65,10 +66,12 @@ async function RiskyLocationsContent() {
       )}
 
       {result.configured && !result.error && (
-        <RiskyLocationsClient
-          initialLocations={result.data}
-          countries={countryOptions}
-        />
+        <PanelErrorBoundary label="Risky location rules">
+          <RiskyLocationsClient
+            initialLocations={result.data}
+            countries={countryOptions}
+          />
+        </PanelErrorBoundary>
       )}
     </>
   );

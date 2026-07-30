@@ -27,6 +27,7 @@ import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { FilterButton, FilterGroup } from "../_components/list-page";
+import { ListSearchForm } from "../_components/list-search-form";
 import { RequireKycDialog } from "./_components/require-kyc-dialog";
 import { ReviewKycControls } from "./_components/review-kyc-controls";
 
@@ -112,23 +113,15 @@ function FilterBar({
         </FilterGroup>
       </nav>
 
-      <form className="flex gap-2">
-        <input type="hidden" name="status" value={status} />
-        <input
-          type="search"
-          name="q"
-          defaultValue={search ?? ""}
-          placeholder="Search player, email, user ID, or applicant ID…"
-          aria-label="Search verification records"
-          className="h-8 min-w-0 flex-1 rounded-md border border-border/60 bg-background px-2.5 text-xs outline-none focus-visible:ring-2 focus-visible:ring-ring"
-        />
-        <button
-          type="submit"
-          className="h-8 shrink-0 rounded-md border border-border/60 bg-muted/40 px-3 text-xs font-medium transition-colors hover:bg-muted"
-        >
-          Search
-        </button>
-      </form>
+      <ListSearchForm
+        compact
+        action="/antifraud/kyc"
+        fieldName="q"
+        placeholder="Search player, email, user ID, or applicant ID…"
+        ariaLabel="Search verification records"
+        defaultValue={search ?? ""}
+        carry={{ status }}
+      />
     </div>
   );
 }

@@ -5,6 +5,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getAntifraudEventCatalog } from "@/lib/antifraud/monitor-api";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { PanelErrorBoundary } from "../_components/panel-error-boundary";
 import { EventCatalog } from "./event-catalog";
 
 export const metadata = { title: "Events & Triggers · Antifraud" };
@@ -30,7 +31,11 @@ async function CatalogData() {
   if (result.error) {
     return <Unavailable text="The event catalog could not be loaded." />;
   }
-  return <EventCatalog events={result.data} />;
+  return (
+    <PanelErrorBoundary label="Event catalog">
+      <EventCatalog events={result.data} />
+    </PanelErrorBoundary>
+  );
 }
 
 function Unavailable({ text }: { text: string }) {
