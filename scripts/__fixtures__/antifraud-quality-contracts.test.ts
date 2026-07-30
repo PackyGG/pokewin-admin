@@ -75,7 +75,7 @@ test("manager mutations require admin service authority and durable local audit"
   }
 });
 
-test("refund safeguards remain owner-only, step-up gated, and outcome-safe", () => {
+test("refund safeguards remain owner/admin-only, step-up gated, and outcome-safe", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/refunds/page.tsx",
   );
@@ -87,8 +87,9 @@ test("refund safeguards remain owner-only, step-up gated, and outcome-safe", () 
     "drizzle/admin/migrations/20260729_whop_refund_operations.sql",
   );
 
-  assert.match(page, /requireOwner\(\)/);
-  assert.match(actions, /requireOwner\(\)/);
+  assert.match(page, /requireAntifraudPageAccess\(\)/);
+  assert.match(page, /canManageAntifraud\(session\)/);
+  assert.match(actions, /requireAntifraudManager\(/);
   assert.match(actions, /require2FA/);
   assert.match(client, /maxRetries:\s*0/);
   assert.match(actions, /client\.payments\.retrieve/);

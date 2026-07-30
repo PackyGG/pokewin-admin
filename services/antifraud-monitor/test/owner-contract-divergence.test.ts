@@ -16,98 +16,63 @@ async function migrationCorpus(): Promise<string> {
   ).then((values) => values.join("\n"));
 }
 
-test("OWNER DIVERGENCE: signup score and timing policy are not implemented", async () => {
+test("signup score and timing policy match the owner contract", async () => {
   const config = await source("../src/config.ts");
   const sourceReader = await source("../src/source.ts");
   const monitor = await source("../src/monitor.ts");
+  const profileRisk = await source("../src/profile-risk.ts");
 
-  assert.match(config, /MONITOR_DURATION_SECONDS[\s\S]*?default\(180\)/);
-  assert.doesNotMatch(config, /STANDARD_MONITOR_DURATION|HIGH_MONITOR_DURATION/);
-  assert.match(sourceReader, /interval '5 seconds'/);
-  assert.doesNotMatch(sourceReader, /interval '30 seconds'/);
-  assert.match(
-    monitor,
-    /signals\.reduce\(\(total, signal\) => total \+ signal\.points, 0\)/,
-  );
-  assert.doesNotMatch(
-    monitor,
-    /Math\.min\(100,[\s\S]*?signals\.reduce/,
-    "the authoritative 0-100 signup cap is absent",
-  );
+  assert.match(config, /MONITOR_DURATION_SECONDS[\s\S]*?default\(600\)/);
+  assert.match(sourceReader, /interval '30 seconds'/);
+  assert.match(profileRisk, /score >= 21/);
+  assert.match(profileRisk, /score >= 50/);
+  assert.match(profileRisk, /score >= 70/);
+  assert.match(profileRisk, /Math\.min\(100/);
+  assert.match(monitor, /persistProfileAssessment/);
 });
 
-/**
- * Temporary divergence sentinel for the data-workstream integration.
- *
- * Replace this test with a black-box FiatEligibilityService regression after
- * the runtime gate lands. The replacement must exercise both dev and prod,
- * seed a prior unexpired stored allow, and prove that an absent or explicit
- * false account/environment switch returns a fresh deny rather than the cached
- * allow. Keep a true-switch control case so the fail-closed gate does not erase
- * otherwise valid idempotency.
- */
-test("TEMP OWNER DIVERGENCE: Fiat eligibility is not default-disabled and cached allows bypass the switch", async () => {
+test("Fiat is globally disabled before cached approvals are considered", async () => {
+  const config = await source("../src/config.ts");
   const eligibility = await source("../src/fiat-eligibility.ts");
-  const cachedDecisionLookup = eligibility.indexOf(
-    "const previous = await this.existing(input.fingerprint)",
-  );
-  const accountPolicyLookup = eligibility.indexOf(
-    "const source = this.sourceFor(input.env)",
-    cachedDecisionLookup,
-  );
+  const globalGate = eligibility.indexOf("if (!this.globallyEnabled)");
+  const cachedDecisionLookup = eligibility.indexOf("const previous = await this.existing");
 
+  assert.match(config, /FIAT_ELIGIBILITY_GLOBALLY_ENABLED/);
+  assert.ok(globalGate >= 0);
   assert.ok(cachedDecisionLookup >= 0);
   assert.ok(
-    accountPolicyLookup > cachedDecisionLookup,
-    "a cached allow is returned before current account/environment policy is loaded",
+    globalGate < cachedDecisionLookup,
+    "the global deny must run before cached eligibility decisions",
   );
-  assert.match(
-    eligibility,
-    /COALESCE\(cardinality\(ufl\.locked_deposits_fiat\), 0\) > 0 AS fiat_locked/,
-    "missing per-user lock state currently resolves to unlocked rather than explicit enablement",
-  );
-  assert.doesNotMatch(
-    eligibility,
-    /fiat_(?:eligibility_)?enabled|explicit_fiat_(?:eligibility_)?switch/i,
-    "no explicit true-only Fiat eligibility switch is enforced",
-  );
+  assert.match(eligibility, /fiat_globally_disabled/);
+  assert.match(eligibility, /riskScore: 0/);
 });
 
-test("OWNER DIVERGENCE: permanent versioned signup profiles are absent", async () => {
+test("permanent versioned signup profiles and provider evidence are present", async () => {
   const migrations = await migrationCorpus();
   const monitor = await source("../src/monitor.ts");
+  const profileStore = await source("../src/profile-store.ts");
 
-  assert.match(migrations, /CREATE TABLE IF NOT EXISTS subjects/);
-  assert.match(migrations, /CREATE TABLE IF NOT EXISTS signup_assessments/);
-  assert.doesNotMatch(migrations, /CREATE TABLE IF NOT EXISTS antifraud_profiles/);
-  assert.doesNotMatch(
-    migrations,
-    /signup_assessments[\s\S]{0,500}(model_version|score_version)/,
-  );
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS antifraud_profiles/i);
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS profile_assessment_history/i);
+  assert.match(migrations, /CREATE TABLE IF NOT EXISTS profile_provider_evidence/i);
+  assert.match(migrations, /evidence_key/i);
+  assert.match(monitor, /persistProfileAssessment/);
+  assert.match(profileStore, /profile_provider_evidence/);
   assert.match(
-    monitor,
-    /ON CONFLICT \(user_id\) DO UPDATE SET\s+score = EXCLUDED\.score/,
-  );
-  assert.match(
-    monitor,
-    /ON CONFLICT \(user_id, provider, lookup_key\) DO UPDATE SET/,
+    profileStore,
+    /ON CONFLICT \(user_id, provider, evidence_key\) DO NOTHING/i,
   );
 });
 
-test("OWNER DIVERGENCE: automatic containment conflicts with the KYC policy", async () => {
+test("automatic containment bans confirmed catch-all accounts without forcing KYC", async () => {
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
-  const email = await source("../src/fiat-email-domains.ts");
 
-  assert.match(ingest, /AUTOMATED_EMAIL_KYC_ACTOR_ID/);
-  assert.match(ingest, /AUTOMATED_ABSTRACT_EMAIL_KYC_ACTOR_ID/);
-  assert.match(ingest, /AUTOMATED_FREE_BATTLE_KYC_ACTOR_ID/);
-  assert.match(ingest, /await requireUserKyc\(/);
-  assert.match(email, /KYC required automatically/);
-  assert.match(ingest, /abstract_email_catchall[\s\S]*?is_locked = TRUE/);
-  assert.doesNotMatch(
-    ingest,
-    /abstract_email_catchall[\s\S]*?is_banned = TRUE/,
-  );
+  assert.doesNotMatch(ingest, /AUTOMATED_.*KYC/);
+  assert.doesNotMatch(ingest, /await requireUserKyc\(/);
+  assert.match(ingest, /abstract_email_catchall[\s\S]*?is_banned = TRUE/);
+  assert.match(ingest, /DELETE FROM session/);
+  assert.match(ingest, /locked_withdrawals_items = TRUE/);
 });
 
 test("OWNER DIVERGENCE: operator IP and fingerprint blocklists are absent", async () => {
@@ -178,17 +143,19 @@ test("OWNER DIVERGENCE: fresh-account promo, tip, and sponsorship actions are in
   );
 });
 
-test("OWNER DIVERGENCE: locked-review-only KYC action does not exist", async () => {
-  const reviewActions = await source(
-    "../../../src/app/(antifraud)/antifraud/reviews/actions.ts",
+test("KYC can only be requested from an eligible locked-account review", async () => {
+  const kycActions = await source(
+    "../../../src/app/(antifraud)/antifraud/kyc/actions.ts",
   );
   const quickActions = await source(
     "../../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
   );
-
-  assert.match(
-    reviewActions,
-    /action: z\.enum\(\["fine", "ban", "lock_withdrawals"\]\)/,
+  const eligibility = await source(
+    "../../../src/lib/antifraud/kyc-eligibility.ts",
   );
+
+  assert.match(kycActions, /isLockedAccountEligibleForKyc/);
+  assert.match(eligibility, /locked_withdrawals_items = TRUE/);
+  assert.match(eligibility, /cardinality\(locked_withdrawals_crypto\)/);
   assert.doesNotMatch(quickActions, /require_kyc|Require KYC/);
 });

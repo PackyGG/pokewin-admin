@@ -12,7 +12,7 @@ async function source(relative: string): Promise<string> {
 }
 
 test("current signup review and severity thresholds stay explicit", () => {
-  assert.equal(HIGH_RISK_SIGNUP_SCORE, 60);
+  assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
   assert.equal(severity(59), "medium");
   assert.equal(severity(60), "medium");
   assert.equal(severity(79), "medium");

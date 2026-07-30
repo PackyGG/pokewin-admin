@@ -97,7 +97,7 @@ test("Whop refunds are visible to Fraud staff and executable by managers", () =>
 });
 
 test("refund batches require manager access and fresh step-up before expansion", () => {
-  const manager = actions.indexOf("await requireAntifraudManager()");
+  const manager = actions.indexOf("await requireAntifraudManager(");
   const stepUp = actions.indexOf("await require2FA");
   const expansion = actions.indexOf("await resolveRefundSelection");
   assert.ok(manager >= 0);
@@ -163,7 +163,7 @@ test("completed-batch recovery is manager-only, step-up gated, and visible", () 
   const recovery = actions.indexOf(
     "export async function recoverRefundedBatch",
   );
-  const manager = actions.indexOf("await requireAntifraudManager()", recovery);
+  const manager = actions.indexOf("await requireAntifraudManager(", recovery);
   const stepUp = actions.indexOf("await require2FA", recovery);
   assert.ok(recovery >= 0);
   assert.ok(manager > recovery);

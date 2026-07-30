@@ -18,7 +18,7 @@ test("verified Fraud users edit durable email blacklist rules with reasons", () 
     "src/app/(antifraud)/antifraud/email-blacklist/actions.ts",
   );
 
-  assert.match(sidebar, /SidebarGroupLabel>System/);
+  assert.match(sidebar, /label="Blacklists"/);
   assert.match(sidebar, /\/antifraud\/email-blacklist/);
   assert.match(hosts, /"email-blacklist"/);
   assert.match(page, /requireAntifraudPageAccess/);
