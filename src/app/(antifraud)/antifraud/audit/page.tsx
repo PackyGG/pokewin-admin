@@ -1,11 +1,7 @@
 import Link from "next/link";
-import { Activity, ArrowRight, LockKeyhole } from "lucide-react";
+import { Activity, ArrowRight } from "lucide-react";
 
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -48,19 +44,11 @@ export default async function AntifraudAuditPage({
         <PageHeroIdentity />
       </PageHero>
 
-      <section className="space-y-3">
-        <SectionHeading icon={Activity} title="Immutable Fraud audit" />
-        <p className="max-w-3xl text-xs text-muted-foreground">
-          Every authorized or denied Fraud page view, search, automated event,
-          and protected mutation. The database rejects updates, deletes, and
-          truncation.
-        </p>
-        <div className="flex gap-2 rounded-xl border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-muted-foreground">
-          <LockKeyhole className="mt-0.5 size-4 shrink-0 text-cyan-500" />
-          Provider secrets, session values, raw payloads, and direct personal
-          fields are redacted or one-way hashed before storage.
-        </div>
-      </section>
+      <p className="max-w-3xl text-xs text-muted-foreground">
+        Every authorized or denied Fraud page view, search, automated event, and
+        protected mutation. The database rejects updates, deletes, and
+        truncation.
+      </p>
 
       <AuditFilters filters={filters} />
 
