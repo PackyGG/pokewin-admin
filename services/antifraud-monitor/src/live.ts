@@ -546,7 +546,9 @@ export class LiveBus {
       ).reverse();
 
     let truncated = false;
-    if (afterId) {
+    // "0-0" is the fresh-start sentinel, not a real cursor — replaying the
+    // whole retained stream from it is expected, never "truncated".
+    if (afterId && afterId !== "0-0") {
       const oldest = await this.publisher.xrange(STREAM, "-", "+", "COUNT", 1);
       const oldestId = oldest[0]?.[0];
       // An empty stream also means the caller's cursor no longer resolves to a
@@ -674,9 +676,13 @@ export class LiveBus {
   private async sendConnectedFrame(client: WebSocket): Promise<void> {
     const tipId = await this.streamTipId();
     if (client.readyState !== client.OPEN) return;
+    // "0-0" (empty stream) must NOT reach clients as a resume cursor: a
+    // client resuming from it would page the ENTIRE retained stream and
+    // read as truncated forever. An empty id fails the consumer's replay-id
+    // check, which correctly means "no cursor yet".
     client.send(
       JSON.stringify({
-        id: tipId,
+        id: tipId === "0-0" ? "" : tipId,
         schemaVersion: LIVE_SCHEMA_VERSION,
         correlationId: randomUUID(),
         type: "connected",

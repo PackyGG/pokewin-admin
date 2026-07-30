@@ -226,7 +226,11 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
     };
   }
 
-  if (frame.type === "connected") return null;
+  // Known-and-uninteresting service frames: the handshake, and config-change
+  // notifications consumed by the cache-invalidation layer, not the UI.
+  if (frame.type === "connected" || frame.type === "score_weight.updated") {
+    return null;
+  }
 
   if (!isEventType(frame.type)) {
     return { kind: "unsupported", eventType: frame.type };

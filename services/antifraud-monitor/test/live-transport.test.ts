@@ -157,7 +157,10 @@ test("connected frame carries the stream tip id as a resume cursor", async () =>
   await bus.close();
 });
 
-test("connected frame falls back to 0-0 when the stream is empty", async () => {
+test("connected frame carries an empty id when the stream is empty", async () => {
+  // NOT "0-0": that would become a resume cursor that replays the entire
+  // retained stream and reads as truncated forever. An empty id fails the
+  // consumer's replay-id check, which correctly means "no cursor yet".
   const { bus } = liveBusFixture();
   const client = new FakeWebSocket();
 
@@ -165,7 +168,7 @@ test("connected frame falls back to 0-0 when the stream is empty", async () => {
   await delay(0);
 
   const frame = JSON.parse(client.sent[0] ?? "{}") as Record<string, unknown>;
-  assert.equal(frame.id, "0-0");
+  assert.equal(frame.id, "");
   await bus.close();
 });
 

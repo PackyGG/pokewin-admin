@@ -147,6 +147,12 @@ type Share = {
   gaveUp: boolean;
   /** Leader side: last time any follower pinged presence/hello. */
   lastFollowerSeen: number;
+  /**
+   * Leader side: tightest limits any follower announced. Without this a
+   * leader tab whose own antifraud pages unmounted would run with no stale
+   * watchdog at all while followers still depend on the stream.
+   */
+  remotePrefs: SharePrefs | null;
   presenceTimer: ReturnType<typeof setInterval> | null;
   leaderTimer: ReturnType<typeof setInterval> | null;
   lockAbort: AbortController | null;
@@ -155,9 +161,11 @@ type Share = {
   closed: boolean;
 };
 
+type SharePrefs = { maxFailures: number; staleAfterMs: number | null };
+
 type ShareMessage =
-  | { t: "hello" }
-  | { t: "presence" }
+  | { t: "hello"; prefs?: SharePrefs }
+  | { t: "presence"; prefs?: SharePrefs }
   | { t: "retry" }
   | { t: "init"; rows: unknown[] }
   | { t: "row"; row: unknown; cursor: string | null }
@@ -197,18 +205,38 @@ const PRESENCE_INTERVAL_MS = 10_000;
 /** A follower that hasn't pinged in this long no longer counts as alive. */
 const FOLLOWER_TTL_MS = 30_000;
 
+/**
+ * A stored cursor older than this is discarded on read: after a long-idle
+ * reload the server's bounded replay window has moved on, and resuming from
+ * deep history risks replaying state (e.g. a `monitor.started` whose
+ * completion fell outside the window) that nothing ever reaps.
+ */
+const STORED_CURSOR_MAX_AGE_MS = 10 * 60_000;
+
 function readStoredCursor(url: string): string | null {
   try {
-    return window.sessionStorage.getItem(`sse-cursor:${url}`);
+    const raw = window.sessionStorage.getItem(`sse-cursor:${url}`);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { id?: unknown; at?: unknown };
+    if (typeof parsed.id !== "string" || typeof parsed.at !== "number") {
+      return null;
+    }
+    return Date.now() - parsed.at <= STORED_CURSOR_MAX_AGE_MS
+      ? parsed.id
+      : null;
   } catch {
-    // Private mode / storage disabled — resume-in-memory still works.
+    // Private mode / storage disabled / legacy value — resume-in-memory
+    // still works.
     return null;
   }
 }
 
 function writeStoredCursor(url: string, id: string): void {
   try {
-    window.sessionStorage.setItem(`sse-cursor:${url}`, id);
+    window.sessionStorage.setItem(
+      `sse-cursor:${url}`,
+      JSON.stringify({ id, at: Date.now() }),
+    );
   } catch {
     // Best-effort only.
   }
@@ -250,6 +278,15 @@ export function retrySseConnection(url: string): void {
     clearTimeout(conn.backoffTimer);
     conn.backoffTimer = null;
   }
+  // Force a fresh EventSource even if a (possibly wedged) one still
+  // exists — connect() would otherwise no-op on it. A source that opened
+  // moments ago keeps its warm-up instead of being churned.
+  if (
+    conn.source &&
+    !(conn.opened && Date.now() - conn.openedAt < STABLE_SESSION_MS)
+  ) {
+    if (closeSource(conn)) emitReconnect(conn);
+  }
   connect(conn);
 }
 
@@ -286,6 +323,27 @@ function getConnection(url: string): Connection {
     connections.set(url, conn);
   }
   return conn;
+}
+
+/** Tightest limits requested by this tab's local mounts on a share. */
+function sharePrefsOf(share: Share): SharePrefs {
+  let maxFailures = Infinity;
+  let staleAfterMs: number | null = null;
+  for (const entry of share.entries) {
+    maxFailures = Math.min(maxFailures, entry.maxFailures);
+    if (entry.staleAfterMs) {
+      staleAfterMs =
+        staleAfterMs === null
+          ? entry.staleAfterMs
+          : Math.min(staleAfterMs, entry.staleAfterMs);
+    }
+  }
+  return {
+    maxFailures: Number.isFinite(maxFailures)
+      ? maxFailures
+      : DEFAULT_MAX_FAILURES,
+    staleAfterMs,
+  };
 }
 
 /** True while this leader saw a follower recently enough to matter. */
@@ -634,6 +692,19 @@ function recomputeLimits(conn: Connection) {
           : Math.min(staleAfterMs, pref.staleAfterMs);
     }
   }
+  // A leader relaying to other tabs honors their announced limits too —
+  // its own mounts may all have unmounted while followers still depend on
+  // the stale watchdog.
+  const remote = conn.share?.remotePrefs;
+  if (remote && hasRemoteInterest(conn)) {
+    maxFailures = Math.min(maxFailures, remote.maxFailures);
+    if (remote.staleAfterMs) {
+      staleAfterMs =
+        staleAfterMs === null
+          ? remote.staleAfterMs
+          : Math.min(staleAfterMs, remote.staleAfterMs);
+    }
+  }
   conn.maxFailures = Number.isFinite(maxFailures)
     ? maxFailures
     : DEFAULT_MAX_FAILURES;
@@ -782,6 +853,10 @@ function handleShareMessage(share: Share, msg: ShareMessage) {
     switch (msg.t) {
       case "hello": {
         share.lastFollowerSeen = Date.now();
+        if (msg.prefs) {
+          share.remotePrefs = msg.prefs;
+          if (conn) recomputeLimits(conn);
+        }
         // Answer with current state so a late-joining tab doesn't wait
         // for the next natural `init`. Followers ignore null fields.
         postToShare(share, {
@@ -796,6 +871,10 @@ function handleShareMessage(share: Share, msg: ShareMessage) {
       }
       case "presence":
         share.lastFollowerSeen = Date.now();
+        if (msg.prefs) {
+          share.remotePrefs = msg.prefs;
+          if (conn) recomputeLimits(conn);
+        }
         return;
       case "retry":
         if (conn) {
@@ -804,6 +883,16 @@ function handleShareMessage(share: Share, msg: ShareMessage) {
           if (conn.backoffTimer) {
             clearTimeout(conn.backoffTimer);
             conn.backoffTimer = null;
+          }
+          // A retry is an explicit "this feed looks dead" signal. connect()
+          // no-ops while an EventSource object exists — even a silently
+          // wedged one — so drop it first, unless it opened moments ago
+          // and deserves its warm-up.
+          if (
+            conn.source &&
+            !(conn.opened && Date.now() - conn.openedAt < STABLE_SESSION_MS)
+          ) {
+            if (closeSource(conn)) emitReconnect(conn);
           }
           connect(conn);
         }
@@ -821,10 +910,15 @@ function handleShareMessage(share: Share, msg: ShareMessage) {
       deliverToEntries(share, (sub) => sub.onInit(msg.rows));
       return;
     case "row":
+      // Frames flowing proves the leader recovered — a give-up mirrored
+      // earlier must not stick, or every later mount in this tab starts
+      // offline with a pointless polling fallback.
+      share.gaveUp = false;
       if (msg.cursor) rememberCursor(share.url, msg.cursor);
       deliverToEntries(share, (sub) => sub.onRow(msg.row));
       return;
     case "reconnect":
+      share.gaveUp = false;
       deliverToEntries(share, (sub) => sub.onReconnect?.());
       return;
     case "giveup":
@@ -844,6 +938,9 @@ function handleShareMessage(share: Share, msg: ShareMessage) {
       if (msg.gaveUp && !share.gaveUp) {
         share.gaveUp = true;
         deliverToEntries(share, (sub) => sub.onGiveUp?.());
+      } else if (!msg.gaveUp) {
+        // Mirror recovery too — the leader is healthy again.
+        share.gaveUp = false;
       }
       return;
     default:
@@ -871,6 +968,7 @@ function ensureShare(url: string): Share | null {
     lastInit: null,
     gaveUp: false,
     lastFollowerSeen: 0,
+    remotePrefs: null,
     presenceTimer: null,
     leaderTimer: null,
     lockAbort: null,
@@ -960,7 +1058,7 @@ function followerAttach(share: Share, entry: Entry) {
   // Ask the leader for the current snapshot + cursor. Harmless if no
   // leader exists yet (this tab may be about to win the lock itself) —
   // the eventual leader's natural `init` broadcast covers that window.
-  postToShare(share, { t: "hello" });
+  postToShare(share, { t: "hello", prefs: sharePrefsOf(share) });
 
   if (!share.presenceTimer) {
     share.presenceTimer = setInterval(() => {
@@ -974,7 +1072,7 @@ function followerAttach(share: Share, entry: Entry) {
       ) {
         return;
       }
-      postToShare(share, { t: "presence" });
+      postToShare(share, { t: "presence", prefs: sharePrefsOf(share) });
     }, PRESENCE_INTERVAL_MS);
   }
 }

@@ -252,6 +252,9 @@ const monitorOverviewSchema = z.object({
         .max(30),
     })
     .nullish(),
+  // Deliberately NOT zero-filled: null must stay null so the overview merge
+  // falls back to the mirror-computed fraud numbers instead of overwriting
+  // them with zeros when the service's fiat aggregate is degraded.
   fraudulentFiat: z
     .object({
       lifetimeCents: z.number().nonnegative(),
@@ -266,10 +269,7 @@ const monitorOverviewSchema = z.object({
         .max(30),
     })
     .nullish()
-    .transform(
-      (value) =>
-        value ?? { lifetimeCents: 0, last24HoursCents: 0, days: [] },
-    ),
+    .transform((value) => value ?? null),
   degraded: z.record(z.string(), z.boolean()).optional(),
 });
 

@@ -191,6 +191,19 @@ async function createTicket(
   return payload.data.ticket;
 }
 
+/**
+ * Numeric `ms-seq` comparison: is `candidate` strictly newer than `current`?
+ * Millisecond timestamps and sequence counters both sit far below 2^53, so
+ * plain numbers are exact here.
+ */
+function streamIdNewer(candidate: string, current: string | null): boolean {
+  if (!current) return true;
+  const [aMs = 0, aSeq = 0] = candidate.split("-").map(Number);
+  const [bMs = 0, bSeq = 0] = current.split("-").map(Number);
+  if (aMs !== bMs) return aMs > bMs;
+  return aSeq > bSeq;
+}
+
 function parseEnvelope(value: unknown): LiveEnvelope | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const row = value as Record<string, unknown>;
@@ -321,12 +334,15 @@ export async function GET(request: Request): Promise<Response> {
   const requestOrigin = new URL(request.url).origin;
   const resumeHeader = request.headers.get("last-event-id");
   const resumeQuery = new URL(request.url).searchParams.get("after");
-  const resumeAfter =
-    resumeHeader && REPLAY_ID.test(resumeHeader)
-      ? resumeHeader
-      : resumeQuery && REPLAY_ID.test(resumeQuery)
-        ? resumeQuery
-        : null;
+  // "0-0" is the service's empty-stream sentinel, never a real position —
+  // resuming from it would replay the entire retained stream.
+  const validResume = (value: string | null): value is string =>
+    !!value && REPLAY_ID.test(value) && value !== "0-0";
+  const resumeAfter = validResume(resumeHeader)
+    ? resumeHeader
+    : validResume(resumeQuery)
+      ? resumeQuery
+      : null;
 
   // Hoisted so `cancel()` can tear the timers down too. On Vercel Fluid
   // Compute the request abort signal does NOT reliably fire when an SSE
@@ -344,6 +360,8 @@ export async function GET(request: Request): Promise<Response> {
       let lastUpstreamActivityAt = 0;
       let attempt = 0;
       let consecutiveFailures = 0;
+      /** 1008 closes in a row — persistent policy rejection turns fatal. */
+      let consecutiveAuthRejects = 0;
       let replayFailures = 0;
       let state: TransportState = "connecting";
       let closed = false;
@@ -383,8 +401,18 @@ export async function GET(request: Request): Promise<Response> {
           const oldest = deliveredIds.values().next().value;
           if (typeof oldest === "string") deliveredIds.delete(oldest);
         }
-        lastDeliveredId = event.id;
-        write(sseFrame("row", event, event.id));
+        // The cursor must stay MONOTONIC. Resync recovery forwards gap
+        // events whose stream ids are OLDER than the live tip already
+        // delivered; emitting their ids would rewind the browser's
+        // Last-Event-ID, and the next rotation would replay the whole
+        // gap-to-tip window again — overrunning the client's dedup budget.
+        // Older rows are still delivered, just without a cursor advance.
+        if (streamIdNewer(event.id, lastDeliveredId)) {
+          lastDeliveredId = event.id;
+          write(sseFrame("row", event, event.id));
+        } else {
+          write(sseFrame("row", event));
+        }
       };
 
       const setState = (
@@ -542,6 +570,7 @@ export async function GET(request: Request): Promise<Response> {
                   pending.length = 0;
                   attempt = 0;
                   consecutiveFailures = 0;
+                  consecutiveAuthRejects = 0;
                   replayFailures = 0;
                   setState("open");
                   if (truncated) send(transport("open", REPLAY_TRUNCATED_MESSAGE));
@@ -643,6 +672,30 @@ export async function GET(request: Request): Promise<Response> {
                   "Live stream capacity reached, retrying",
                   CAPACITY_RETRY_MIN_MS,
                 );
+              } else if (code === 1008) {
+                // Policy rejection (invalid ticket / auth). One occurrence can
+                // be a race with ticket expiry — retry. Repeats mean the
+                // service is rejecting us persistently: that is a permanent
+                // refusal, so stop minting doomed tickets and tell the client
+                // to give up until the user refocuses the tab.
+                consecutiveAuthRejects += 1;
+                if (consecutiveAuthRejects >= 3) {
+                  send(
+                    transport(
+                      "error",
+                      "Monitor service rejected this session",
+                      true,
+                    ),
+                  );
+                  write(
+                    sseFrame("fatal", {
+                      message: "Monitor service rejected this session",
+                    }),
+                  );
+                  close();
+                } else {
+                  scheduleReconnect("Live session rejected, refreshing ticket");
+                }
               } else {
                 scheduleReconnect("Live stream interrupted, reconnecting");
               }
