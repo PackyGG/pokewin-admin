@@ -46,6 +46,11 @@ const schema = z.object({
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_GLOBALLY_ENABLED: fiatEligibilityEnabledSchema,
+  // Fiat perk allowlist enforcement. Defaults to OFF so shipping the screening
+  // workspace changes nothing on its own: runs, reviews and grants accumulate
+  // first, and only when the allowlist is populated does flipping this to
+  // "true" start refusing checkouts from accounts without a live grant.
+  FIAT_PERK_GATE_ENABLED: fiatEligibilityEnabledSchema,
   // Automatic account containment for enforced denials. Defaults to ON: an
   // unset variable must not silently downgrade the endpoint to observe-only.
   // Set it to "false" to keep assessing and denying while withholding locks.

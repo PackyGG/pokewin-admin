@@ -181,6 +181,7 @@ const runtimeConfig: Config = {
   NODE_ENV: "test",
   FIAT_ELIGIBILITY_CONTAINMENT_ENABLED: true,
   FIAT_DEPOSIT_IDENTITY_CONTAINMENT_ENABLED: true,
+  FIAT_PERK_GATE_ENABLED: false,
   TZ: "UTC",
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",

@@ -36,6 +36,8 @@ import {
 import { registerNetworkRoutes } from "./network-routes.js";
 import { registerFiatEmailDomainRoutes } from "./fiat-email-domain-routes.js";
 import { registerIdentifierBlocklistRoutes } from "./identifier-blocklist-routes.js";
+import { registerFiatPerkRoutes } from "./fiat-perk-routes.js";
+import { FiatPerkService } from "./fiat-perks.js";
 import { registerProfileRoutes } from "./profile-routes.js";
 import { registerSignupFailureRoutes } from "./signup-failure-routes.js";
 import { registerRiskyLocationRoutes } from "./risky-location-routes.js";
@@ -180,13 +182,18 @@ const networkRisk = new NetworkRiskService(db, app.log);
 const withdrawalRisk = new WithdrawalRiskService(db, app.log);
 const fiatRisk = new FiatRiskService(db);
 const fiatEligibilityAccess = new FiatEligibilityAccess(config);
+const enrichment = new EnrichmentService(config);
 const fiatEligibility = new FiatEligibilityService(
   db,
   scoreWeights,
-  new EnrichmentService(config),
+  enrichment,
   config.FIAT_ELIGIBILITY_GLOBALLY_ENABLED,
   config.FIAT_ELIGIBILITY_CONTAINMENT_ENABLED,
+  config.FIAT_PERK_GATE_ENABLED,
 );
+// Batch screening shares the provider clients and score weights with the live
+// checkout gate, so an account is judged by the same evidence in both places.
+const fiatPerks = new FiatPerkService(db, enrichment, scoreWeights);
 const sumsub =
   config.SUMSUB_ADMIN_TOKEN && config.SUMSUB_ADMIN_KEY
     ? new SumsubClient({
@@ -2091,6 +2098,7 @@ app.put("/v1/scoring/:key", {
 await registerNetworkRoutes(app, db, networkRisk, config);
 await registerFiatEmailDomainRoutes(app, db);
 await registerIdentifierBlocklistRoutes(app, db);
+await registerFiatPerkRoutes(app, fiatPerks);
 await registerProfileRoutes(app, db);
 await registerSignupFailureRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
@@ -2192,6 +2200,14 @@ process.once("SIGINT", () => requestShutdown("SIGINT"));
 
 await migrate(db.antifraud);
 await db.antifraud.query("SELECT 1");
+// A screening sweep that died with its process must not keep claiming to run.
+const interruptedPerkRuns = await fiatPerks.recoverInterruptedRuns();
+if (interruptedPerkRuns > 0) {
+  app.log.warn(
+    { event: "fiat_perks.runs_recovered", count: interruptedPerkRuns },
+    "Marked interrupted Fiat perk screening runs as failed",
+  );
+}
 await preloadDisposableEmailDomains();
 if (!isDisposableEmailListLoaded()) {
   throw new Error("Disposable email domain list failed to load");
