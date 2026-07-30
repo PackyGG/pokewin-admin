@@ -131,15 +131,17 @@ export function IdentifierBlocklistClient({
 
   return (
     <div className="grid gap-5 xl:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
-      <form onSubmit={add} className="h-fit space-y-4 rounded-xl border bg-card p-4">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Icon className="size-4 text-rose-500" />
-          Add blocked {isIp ? "IP" : "fingerprint"}
-        </h2>
-        <p className="text-xs leading-5 text-muted-foreground">
-          Future matches lock withdrawals and open review. Existing linked
-          profiles are surfaced without a mass action. KYC is never automatic.
-        </p>
+      <form onSubmit={add} className="h-fit space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
+        <div>
+          <h2 className="flex items-center gap-2 text-sm font-semibold">
+            <Icon className="size-4 text-rose-500" />
+            Add blocked {isIp ? "IP" : "fingerprint"}
+          </h2>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            Future matches lock withdrawals and open review. Existing linked
+            profiles are surfaced without a mass action. KYC is never automatic.
+          </p>
+        </div>
         <div className="space-y-2">
           <Label htmlFor={`${kind}-identifier`}>{label}</Label>
           <Input
@@ -206,19 +208,25 @@ export function IdentifierBlocklistClient({
         </Button>
       </form>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="border-b px-4 py-3">
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldCheck className="size-4 text-cyan-500" />
             {isIp ? "IP" : "Fingerprint"} rules
           </h2>
+          <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+            {rules.length} {rules.length === 1 ? "rule" : "rules"}
+          </span>
         </div>
         {rules.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            No {isIp ? "IPs" : "fingerprints"} are blocked.
-          </p>
+          <div className="px-4 py-14 text-center">
+            <Icon className="mx-auto mb-3 size-6 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No {isIp ? "IPs" : "fingerprints"} are blocked.
+            </p>
+          </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/60">
             {rules.map((rule) => (
               <div
                 key={rule.id}
@@ -242,7 +250,7 @@ export function IdentifierBlocklistClient({
                     </Badge>
                   </div>
                   <p className="text-xs text-muted-foreground">{rule.reason}</p>
-                  <p className="text-[11px] text-muted-foreground">
+                  <p className="text-[11px] tabular-nums text-muted-foreground">
                     {rule.matchCount} detections · {rule.affectedUsers} users ·{" "}
                     {rule.matches24h}/24h · {rule.matches7d}/7d ·{" "}
                     {rule.matches30d}/30d · {rule.lockReviewCount} lock/review ·{" "}

@@ -11,16 +11,20 @@ export default function WithdrawalReviewLoading() {
       <Skeleton className="h-24 rounded-xl" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-lg" />
+          <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
       <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(320px,0.7fr)]">
-        <div className="space-y-3">
-          {Array.from({ length: 5 }).map((_, index) => (
-            <Skeleton key={index} className="h-32 rounded-xl" />
+        <div className="min-w-0 space-y-6">
+          {Array.from({ length: 4 }).map((_, index) => (
+            <Skeleton key={index} className="h-40 rounded-xl" />
           ))}
         </div>
-        <Skeleton className="h-96 rounded-xl" />
+        <div className="min-w-0 space-y-5">
+          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-56 rounded-xl" />
+          <Skeleton className="h-40 rounded-xl" />
+        </div>
       </div>
     </div>
   );

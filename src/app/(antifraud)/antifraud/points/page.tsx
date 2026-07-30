@@ -22,9 +22,11 @@ import {
   type AntifraudAnalysisRule,
 } from "@/lib/antifraud/network-api";
 import {
+  KpiTile,
   PageHero,
   PageHeroIdentity,
   SectionHeading,
+  type AccentColor,
 } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -56,7 +58,7 @@ export default async function AntifraudPointsPage({
   // Shell-first and active-tab-only: the selected tab is the only branch
   // mounted, so its monitor API reads do not run until that tab is selected.
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
@@ -96,58 +98,51 @@ async function ScoringDashboard() {
     config.signupSignals.length +
     config.providerSignals.length +
     config.activitySignals.length;
-  const cards = [
+  const cards: {
+    label: string;
+    value: string;
+    icon: ComponentType<{ className?: string }>;
+    accent: AccentColor;
+  }[] = [
     {
       label: "Monitor starts at",
       value: `${config.monitorStartScore} pts`,
       icon: Radar,
-      tone: "text-cyan-600 dark:text-cyan-400",
+      accent: "cyan",
     },
     {
       label: "Monitor window",
       value: `${config.monitorDurationSeconds / 60} min`,
       icon: Clock3,
-      tone: "text-cyan-600 dark:text-cyan-400",
+      accent: "cyan",
     },
     {
       label: "Score signals",
       value: String(fixedSignals),
       icon: Activity,
-      tone: "text-emerald-600 dark:text-emerald-400",
+      accent: "emerald",
     },
     {
       label: "Active flows",
       value: `${activeRules}/${config.behaviorRules.length}`,
       icon: Workflow,
-      tone:
-        activeRules < config.behaviorRules.length
-          ? "text-amber-600 dark:text-amber-400"
-          : "text-emerald-600 dark:text-emerald-400",
+      accent:
+        activeRules < config.behaviorRules.length ? "amber" : "emerald",
     },
   ];
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {cards.map((card) => {
-          const Icon = card.icon;
-          return (
-            <div
-              key={card.label}
-              className="rounded-xl border border-border/70 bg-card p-4"
-            >
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-medium text-muted-foreground">
-                  {card.label}
-                </span>
-                <Icon className={cn("size-4", card.tone)} />
-              </div>
-              <p className="mt-2 text-2xl font-semibold tabular-nums">
-                {card.value}
-              </p>
-            </div>
-          );
-        })}
+        {cards.map((card) => (
+          <KpiTile
+            key={card.label}
+            label={card.label}
+            value={card.value}
+            icon={card.icon}
+            accent={card.accent}
+          />
+        ))}
       </div>
 
       <SeverityBands bands={config.severityBands} />
@@ -254,7 +249,7 @@ function AnalysisRules({
         icon={icon}
         title={<SectionTitleText title={title} description={description} />}
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
         {rules.map((rule) => (
           <AnalysisRuleEditor key={rule.key} rule={rule} />
         ))}
@@ -326,7 +321,7 @@ function ScoreSection({
         icon={icon}
         title={<SectionTitleText title={title} description={description} />}
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
         {definitions.map((definition) => (
           <div
             key={definition.key}
@@ -387,7 +382,7 @@ function BehaviorRules({ config }: { config: AntifraudScoringConfig }) {
           />
         }
       />
-      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
         {config.behaviorRules.map((rule) => (
           <div
             key={rule.id}
@@ -425,16 +420,16 @@ function Unavailable({ text }: { text: string }) {
 
 function UnavailableWithIcon({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
-      <RadioTower className="mx-auto size-6 text-muted-foreground" aria-hidden />
-      <p className="mt-2 text-sm text-muted-foreground">{text}</p>
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+      <RadioTower className="mx-auto mb-3 size-6 text-muted-foreground" aria-hidden />
+      <p className="text-sm text-muted-foreground">{text}</p>
     </div>
   );
 }
 
 function PointsSkeleton() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-xl" />

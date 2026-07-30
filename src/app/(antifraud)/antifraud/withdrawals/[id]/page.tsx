@@ -91,7 +91,7 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
         />
       </PageHero>
 
-      <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Avatar className="size-11">
@@ -126,7 +126,7 @@ function WithdrawalReview({ detail }: { detail: WithdrawalDetail }) {
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiTile
           icon={ArrowUpFromLine}
-          accent="cyan"
+          accent="rose"
           label="Withdrawal"
           value={formatCurrency(withdrawal.amount_usd)}
           sub={
@@ -289,7 +289,7 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
       label: "Withdrawal",
       value: flow.withdrawalUsd,
       icon: ArrowUpFromLine,
-      tone: "text-foreground",
+      tone: "text-rose-600 dark:text-rose-400",
     },
   ];
   return (
@@ -310,7 +310,7 @@ function MoneyTrail({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
         {steps.map((step) => {
           const Icon = step.icon;
           return (
-            <div key={step.label} className="rounded-lg border bg-card p-3">
+            <div key={step.label} className="rounded-lg border border-border/60 bg-card p-3">
               <Icon className={cn("size-4", step.tone)} />
               <p className="mt-2 text-[11px] text-muted-foreground">
                 {step.label}
@@ -341,7 +341,7 @@ function BehaviorTimeline({ detail }: { detail: WithdrawalDetail }) {
           </>
         }
       />
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         {events.map((event, index) => (
           <div
             key={event.id}
@@ -463,7 +463,7 @@ function RiskBreakdown({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
     { key: "network", label: "Network" },
   ];
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-xl border border-border/60 bg-card p-4">
       <p className="text-sm font-semibold">Risk breakdown</p>
       <div className="mt-4 space-y-3">
         {labels.map(({ key, label }) => {
@@ -485,7 +485,7 @@ function RiskBreakdown({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
 
 function Assessment({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-xl border border-border/60 bg-card p-4">
       <div className="flex items-center gap-2">
         <ShieldCheck className="size-4 text-cyan-500" />
         <p className="text-sm font-semibold">Automated assessment</p>
@@ -517,7 +517,7 @@ function Assessment({ withdrawal }: { withdrawal: WithdrawalAssessment }) {
 
 function ReviewTrail({ detail }: { detail: WithdrawalDetail }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-xl border border-border/60 bg-card p-4">
       <div className="flex items-center gap-2">
         <History className="size-4 text-cyan-500" />
         <p className="text-sm font-semibold">Review trail</p>
@@ -636,7 +636,7 @@ function Unavailable({ text }: { text: string }) {
       <PageHero>
         <PageHeroIdentity backHref="/antifraud/withdrawals" />
       </PageHero>
-      <div className="rounded-xl border border-dashed bg-card/40 px-4 py-14 text-center">
+      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
         <UserRound className="mx-auto mb-3 size-6 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">{text}</p>
       </div>

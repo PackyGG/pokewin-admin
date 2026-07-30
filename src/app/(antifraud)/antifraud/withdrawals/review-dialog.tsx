@@ -5,6 +5,7 @@ import {
   AlertTriangle,
   CircleCheck,
   Link2,
+  ListChecks,
   ShieldAlert,
   UserRound,
   WalletCards,
@@ -98,7 +99,7 @@ export function WithdrawalReviewDialog({
               trace.entries.map((entry) => (
                 <div
                   key={entry.id}
-                  className="flex items-start justify-between gap-3 rounded-lg border bg-card p-3"
+                  className="flex items-start justify-between gap-3 rounded-lg border border-border/60 bg-card p-3"
                 >
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium">{entry.label}</p>
@@ -120,7 +121,7 @@ export function WithdrawalReviewDialog({
                 </div>
               ))
             ) : (
-              <div className="rounded-lg border border-dashed p-4 text-xs text-muted-foreground">
+              <div className="rounded-lg border border-dashed border-border/70 p-4 text-xs text-muted-foreground">
                 No completed ledger credit could be allocated.
               </div>
             )}
@@ -198,7 +199,10 @@ export function WithdrawalReviewDialog({
         </section>
 
         <section className="space-y-2">
-          <h3 className="text-sm font-semibold">Automated checks</h3>
+          <div className="flex items-center gap-2">
+            <ListChecks className="size-4 text-cyan-500" />
+            <h3 className="text-sm font-semibold">Automated checks</h3>
+          </div>
           <div className="grid gap-2 sm:grid-cols-2">
             {withdrawal.flow_checks.map((check) => {
               const alert =
@@ -213,7 +217,7 @@ export function WithdrawalReviewDialog({
                   key={check.key}
                   className={cn(
                     "rounded-lg border p-3",
-                    alert && "border-amber-500/30 bg-amber-500/5",
+                    alert ? "border-amber-500/30 bg-amber-500/5" : "border-border/60",
                   )}
                 >
                   <div className="flex items-center gap-2">
@@ -256,11 +260,15 @@ function ReviewFact({
     <div
       className={cn(
         "rounded-lg border p-3",
-        alert && "border-rose-500/30 bg-rose-500/5",
+        alert ? "border-rose-500/30 bg-rose-500/5" : "border-border/60 bg-muted/20",
       )}
     >
-      <p className="text-[11px] text-muted-foreground">{label}</p>
-      <p className="mt-1 text-sm font-semibold">{value}</p>
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className="mt-1 truncate text-sm font-semibold tabular-nums" title={value}>
+        {value}
+      </p>
     </div>
   );
 }

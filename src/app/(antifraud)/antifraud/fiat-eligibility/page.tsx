@@ -193,7 +193,7 @@ export default async function FiatEligibilityPage() {
   await requireAntifraudManagerPage();
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
@@ -242,7 +242,7 @@ export default async function FiatEligibilityPage() {
         />
       </div>
 
-      <section className="space-y-4">
+      <section className="space-y-3">
         <SectionHeading icon={Activity} title="What happens on every check" />
         <ol className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           {FLOW.map((step, index) => {
@@ -250,7 +250,7 @@ export default async function FiatEligibilityPage() {
             return (
               <li
                 key={step.title}
-                className="rounded-xl border border-border/70 bg-card p-4"
+                className="rounded-xl border border-border/60 bg-card p-3 sm:p-4"
               >
                 <div className="flex items-center gap-2">
                   <span className="flex size-7 items-center justify-center rounded-lg bg-primary/10 text-xs font-semibold text-primary">
@@ -268,7 +268,7 @@ export default async function FiatEligibilityPage() {
         </ol>
       </section>
 
-      <section className="space-y-4">
+      <section className="space-y-3">
         <SectionHeading icon={ShieldCheck} title="How true or false is decided" />
         <div className="grid gap-3 lg:grid-cols-2">
           <DecisionCard
@@ -292,7 +292,7 @@ export default async function FiatEligibilityPage() {
             ]}
           />
         </div>
-        <div className="rounded-xl border border-border/70 bg-card px-4 py-3">
+        <div className="rounded-xl border border-border/60 bg-card px-4 py-3">
           <code className="block whitespace-pre-wrap text-xs leading-6 text-muted-foreground">
             allowed = no blocking signal AND final risk score &lt; 50
           </code>
@@ -324,9 +324,9 @@ export default async function FiatEligibilityPage() {
         rules={HISTORY_RULES}
       />
 
-      <section className="space-y-4">
+      <section className="space-y-3">
         <SectionHeading icon={ServerCog} title="Safety and reuse rules" />
-        <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+        <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           <SafetyRow
             title="Environment-bound"
             detail="Dev and production keys, caller allowlists, and read-only source databases are separate. A key cannot claim the other environment."
@@ -364,7 +364,7 @@ function DecisionCard({
   return (
     <div
       className={cn(
-        "rounded-xl border p-4",
+        "rounded-xl border p-3 sm:p-4",
         allowed
           ? "border-emerald-500/25 bg-emerald-500/5"
           : "border-rose-500/25 bg-rose-500/5",
@@ -408,7 +408,7 @@ function RuleSection({
   rules: Rule[];
 }) {
   return (
-    <section className="space-y-4">
+    <section className="space-y-3">
       <SectionHeading
         icon={icon}
         title={

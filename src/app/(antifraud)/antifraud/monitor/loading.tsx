@@ -1,31 +1,45 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Mirrors /antifraud/monitor exactly: the seven KPI tiles, the two live
- * panels (each behind its section heading) and the case list. Heights match
- * the console's empty state so nothing jumps when the real content resolves.
+ * Mirrors /antifraud/monitor exactly: the header row, the seven KPI tiles
+ * (2 / 3 / 4-column grid), the two fixed-height live panels and the bottom
+ * two-column case/session lists. Heights match the console's fixed panel
+ * heights so nothing jumps when the real content resolves.
  */
 export default function AntifraudMonitorLoading() {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-7">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="space-y-1.5">
+          <Skeleton className="h-5 w-32" />
+          <Skeleton className="h-3.5 w-64" />
+        </div>
+        <Skeleton className="h-8 w-24 rounded-md" />
+      </div>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-4">
         {Array.from({ length: 7 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-2xl" />
+          <Skeleton key={index} className="h-24 rounded-lg" />
         ))}
       </div>
-      <div className="grid gap-5 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1.25fr)_minmax(340px,0.75fr)]">
         <div className="space-y-3">
           <HeadingSkeleton />
-          <Skeleton className="h-[320px] rounded-xl" />
+          <Skeleton className="h-[480px] rounded-xl" />
         </div>
         <div className="space-y-3">
           <HeadingSkeleton />
-          <Skeleton className="h-[320px] rounded-xl" />
+          <Skeleton className="h-[480px] rounded-xl" />
         </div>
       </div>
-      <div className="space-y-3">
-        <HeadingSkeleton />
-        <Skeleton className="h-[130px] rounded-xl" />
+      <div className="grid gap-4 xl:grid-cols-2">
+        <div className="space-y-3">
+          <HeadingSkeleton />
+          <Skeleton className="h-[220px] rounded-xl" />
+        </div>
+        <div className="space-y-3">
+          <HeadingSkeleton />
+          <Skeleton className="h-[220px] rounded-xl" />
+        </div>
       </div>
     </div>
   );

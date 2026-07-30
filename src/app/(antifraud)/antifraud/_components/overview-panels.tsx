@@ -82,8 +82,8 @@ export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
   const accountDays = days.filter((day) => day.date !== "2026-07-22");
 
   return (
-    <div className="grid h-full gap-4 lg:grid-cols-2">
-      <section className="flex min-h-[390px] flex-col space-y-3 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
+    <div className="grid gap-4 lg:grid-cols-2">
+      <section className="space-y-3 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
         <SectionHeading
           icon={ChartNoAxesCombined}
           title={
@@ -95,7 +95,14 @@ export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
             </span>
           }
         />
-        <ChartContainer config={fiatConfig} className="min-h-0 flex-1 w-full">
+        {/* Fixed height + aspect-auto: ChartContainer's default `aspect-video`
+            inside a flex-grow/h-full chain lets ResponsiveContainer re-measure
+            its own growth (the "20x giant panel" bug). A hard height breaks
+            the feedback loop for good. */}
+        <ChartContainer
+          config={fiatConfig}
+          className="aspect-auto h-[260px] w-full"
+        >
           <AreaChart
             data={days}
             accessibilityLayer
@@ -167,7 +174,7 @@ export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
         </ChartContainer>
       </section>
 
-      <section className="flex min-h-[390px] flex-col space-y-3 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
+      <section className="space-y-3 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
         <SectionHeading
           icon={Activity}
           title={
@@ -179,7 +186,10 @@ export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
             </span>
           }
         />
-        <ChartContainer config={accountConfig} className="min-h-0 flex-1 w-full">
+        <ChartContainer
+          config={accountConfig}
+          className="aspect-auto h-[260px] w-full"
+        >
           <LineChart
             data={accountDays}
             accessibilityLayer
@@ -306,7 +316,10 @@ export function OverviewActionFeed({
   );
 
   return (
-    <section className="flex h-[300px] min-h-0 flex-col rounded-xl border border-border/60 bg-card">
+    // Fixed height matching the chart panels (~p-4 + heading + 260px chart)
+    // so the feed + charts row reads as one aligned band; the list scrolls
+    // internally.
+    <section className="flex h-[336px] min-h-0 flex-col rounded-xl border border-border/60 bg-card">
       <div className="border-b border-border/60 px-3 py-3 sm:px-4">
         <SectionHeading
           icon={Radio}

@@ -100,11 +100,11 @@ export function DashboardNotificationWorkspace({
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_24rem]">
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="border-b p-4">
+    <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_24rem]">
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="border-b border-border/60 p-3 sm:p-4">
           <h2 className="font-semibold">Configured rules</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
+          <p className="mt-1 text-xs tabular-nums text-muted-foreground">
             {initialRules.length} rule{initialRules.length === 1 ? "" : "s"}.
             Disabled drafts do not deliver.
           </p>
@@ -119,9 +119,9 @@ export function DashboardNotificationWorkspace({
             </p>
           </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/60">
             {initialRules.map((rule) => (
-              <article key={rule.id} className="space-y-3 p-4">
+              <article key={rule.id} className="space-y-3 p-3 sm:p-4">
                 <div className="flex items-start gap-3">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
@@ -129,7 +129,9 @@ export function DashboardNotificationWorkspace({
                       <Badge variant={rule.enabled ? "default" : "secondary"}>
                         {rule.enabled ? "Enabled" : "Draft"}
                       </Badge>
-                      <Badge variant="outline">{rule.minimumSeverity}+</Badge>
+                      <Badge variant="outline" className="capitalize">
+                        {rule.minimumSeverity}+
+                      </Badge>
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
                       {rule.eventLabel} · {rule.targetGroups.map((group) => GROUP_LABELS[group]).join(", ")}
@@ -190,7 +192,7 @@ export function DashboardNotificationWorkspace({
         )}
       </section>
 
-      <aside className="space-y-4 rounded-xl border bg-card p-4">
+      <aside className="space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
         <div>
           <h2 className="font-semibold">Create rule</h2>
           <p className="mt-1 text-xs text-muted-foreground">

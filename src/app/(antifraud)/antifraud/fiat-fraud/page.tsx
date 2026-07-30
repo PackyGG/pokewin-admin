@@ -50,7 +50,7 @@ export default async function FiatFraudPage({
   const search = value("search")?.trim().slice(0, 100) || undefined;
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>

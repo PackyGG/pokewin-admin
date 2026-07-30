@@ -227,7 +227,7 @@ export function RiskyLocationsClient({
     <div className="grid gap-5 xl:grid-cols-[minmax(0,0.75fr)_minmax(0,1.25fr)]">
       <form
         onSubmit={addLocation}
-        className="h-fit space-y-4 rounded-xl border bg-card p-4"
+        className="h-fit space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4"
       >
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -364,19 +364,25 @@ export function RiskyLocationsClient({
         </Button>
       </form>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="border-b px-4 py-3">
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldCheck className="size-4 text-cyan-500" />
             Location monitor rules
           </h2>
+          <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+            {locations.length} {locations.length === 1 ? "rule" : "rules"}
+          </span>
         </div>
         {locations.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            No risky locations are configured.
-          </p>
+          <div className="px-4 py-14 text-center">
+            <MapPinPlus className="mx-auto mb-3 size-6 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No risky locations are configured.
+            </p>
+          </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/60">
             {locations
               .toSorted((a, b) =>
                 (
@@ -390,9 +396,9 @@ export function RiskyLocationsClient({
                   key={location.countryCode}
                   className="grid gap-3 px-4 py-3 md:grid-cols-[minmax(0,1fr)_96px_96px_170px_auto] md:items-end"
                 >
-                  <div className="min-w-0 self-center">
+                  <div className="min-w-0 space-y-1 self-center">
                     <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold">
+                      <span className="truncate text-sm font-semibold">
                         {flag(location.countryCode)}{" "}
                         {countryNames.get(location.countryCode) ??
                           location.countryCode}
@@ -408,7 +414,7 @@ export function RiskyLocationsClient({
                         {location.enabled ? "Monitoring" : "Disabled"}
                       </Badge>
                     </div>
-                    <p className="mt-1 text-xs text-muted-foreground">
+                    <p className="text-xs tabular-nums text-muted-foreground">
                       {location.affectedUsers} accounts · {location.matches24h}/24h ·{" "}
                       {location.matches7d}/7d · {location.matches30d}/30d ·{" "}
                       {location.averageRisk ?? "unknown"} avg risk ·{" "}

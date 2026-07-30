@@ -76,7 +76,7 @@ export function FiatReviewControls({
   }
 
   return (
-    <div className="space-y-4 rounded-xl border bg-card p-4">
+    <div className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
       <div>
         <p className="text-sm font-semibold">Analyst decision</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">

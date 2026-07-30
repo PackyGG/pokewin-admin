@@ -82,11 +82,8 @@ export function FiatFraudContent({
       </Suspense>
 
       <div className="space-y-3">
-        <SectionHeading
-          icon={ShieldAlert}
-          title="Flagged accounts"
-        />
-        <p className="text-xs text-muted-foreground">
+        <SectionHeading icon={ShieldAlert} title="Flagged accounts" />
+        <p className="max-w-3xl text-xs leading-5 text-muted-foreground">
           Each account appears once. Every card keeps its fraud signals,
           checkout identity, fiat totals, linked deposit, and containment state
           together. Durable fraud catches remain here even if a rule changes
@@ -98,10 +95,7 @@ export function FiatFraudContent({
             <>
               <div className="space-y-3">
                 {Array.from({ length: 5 }).map((_, index) => (
-                  <Skeleton
-                    key={index}
-                    className="h-72 w-full rounded-2xl"
-                  />
+                  <Skeleton key={index} className="h-72 w-full rounded-xl" />
                 ))}
               </div>
               <PaginationSkeleton />
@@ -163,14 +157,14 @@ async function FiatFraudList({
     return (
       <div
         role="alert"
-        className="flex items-start gap-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3"
+        className="flex items-start gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-3"
       >
-        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-red-500" />
+        <AlertTriangle className="mt-0.5 size-4 shrink-0 text-rose-500" />
         <div>
-          <p className="text-sm font-medium text-red-700 dark:text-red-300">
+          <p className="text-sm font-medium text-rose-700 dark:text-rose-300">
             Fiat fraud history is unavailable
           </p>
-          <p className="mt-0.5 text-xs text-red-700/80 dark:text-red-300/80">
+          <p className="mt-0.5 text-xs text-rose-700/80 dark:text-rose-300/80">
             The Antifraud monitor did not return durable catch records. Refresh
             to retry.
           </p>

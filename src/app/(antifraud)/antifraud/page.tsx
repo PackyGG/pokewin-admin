@@ -239,24 +239,33 @@ function SplitKpi({
   left: { label: string; value: string; accent: AccentColor };
   right: { label: string; value: string; accent: AccentColor };
 }) {
+  // Flat tile matching KpiTile (same surface, radius, padding and the
+  // canonical 11px/0.14em micro-caps eyebrow) so the mixed KPI grid reads
+  // as one family. h-full keeps split and plain tiles one clean row height.
   return (
-    <div className="min-h-24 rounded-xl border border-border/60 bg-card p-3 shadow-sm">
-      <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-        <Icon className="size-3.5" aria-hidden />
-        {label}
+    <div
+      role="group"
+      aria-label={`${label}: ${left.label} ${left.value}, ${right.label} ${right.value}`}
+      className="h-full rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+    >
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+        <Icon className="size-3.5 shrink-0 text-muted-foreground sm:size-4" aria-hidden />
+        <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </span>
       </div>
-      <div className="mt-3 grid grid-cols-2 divide-x divide-border/60">
+      <div className="mt-1.5 grid grid-cols-2 divide-x divide-border/60">
         {[left, right].map((item) => (
           <div key={item.label} className="min-w-0 px-2 first:pl-0 last:pr-0">
             <p
               className={cn(
-                "truncate text-lg font-bold tabular-nums",
+                "truncate text-lg font-bold leading-tight tracking-tight tabular-nums sm:text-xl",
                 TILE_COLORS[item.accent].text,
               )}
             >
               {item.value}
             </p>
-            <p className="truncate text-[10px] uppercase tracking-wide text-muted-foreground">
+            <p className="mt-0.5 truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {item.label}
             </p>
           </div>
@@ -299,9 +308,12 @@ function DashboardSkeleton() {
           <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
-        <Skeleton className="h-[300px] rounded-xl" />
-        <Skeleton className="h-[420px] rounded-xl" />
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+        <Skeleton className="h-[336px] rounded-xl" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[336px] rounded-xl" />
+          <Skeleton className="h-[336px] rounded-xl" />
+        </div>
       </div>
     </div>
   );

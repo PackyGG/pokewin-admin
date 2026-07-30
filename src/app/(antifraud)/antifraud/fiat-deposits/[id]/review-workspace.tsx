@@ -139,7 +139,7 @@ export function FiatReview({
         </PageHero>
       )}
 
-      <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Avatar className="size-11">
@@ -246,7 +246,7 @@ export function FiatReview({
           <PostDepositBehavior item={item} />
           <ProviderEvidence item={item} />
         </div>
-        <aside className="min-w-0 space-y-5">
+        <aside className="min-w-0 space-y-6">
           <FiatReviewControls
             depositIntentId={item.deposit_intent_id}
             status={item.review_status}
@@ -351,11 +351,11 @@ function MoneyTrail({ detail }: { detail: FiatDetail }) {
         }
       />
       {events.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-card/40 p-6 text-center text-xs text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 p-6 text-center text-xs text-muted-foreground">
           No linked money movement was found around this deposit.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           {events.map((event, index) => (
             <div
               key={event.id}
@@ -492,8 +492,11 @@ function PostDepositBehavior({ item }: { item: FiatAssessment }) {
       />
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
         {tiles.map((tile) => (
-          <div key={tile.label} className="rounded-lg border bg-card p-3">
-            <p className="text-[11px] text-muted-foreground">{tile.label}</p>
+          <div
+            key={tile.label}
+            className="rounded-lg border border-border/60 bg-card p-3"
+          >
+            <p className="text-[10px] text-muted-foreground">{tile.label}</p>
             <p className="mt-1 text-sm font-semibold tabular-nums">
               {tile.value}
             </p>
@@ -597,12 +600,12 @@ function ProviderEvidence({ item }: { item: FiatAssessment }) {
           <div
             key={fact.label}
             className={cn(
-              "rounded-lg border bg-card p-3",
+              "rounded-lg border border-border/60 bg-card p-3",
               fact.alert && "border-amber-500/30",
             )}
           >
             <div className="flex items-center justify-between gap-2">
-              <p className="text-[11px] text-muted-foreground">{fact.label}</p>
+              <p className="text-[10px] text-muted-foreground">{fact.label}</p>
               {fact.alert && (
                 <TriangleAlert className="size-3.5 shrink-0 text-amber-500" />
               )}
@@ -614,7 +617,7 @@ function ProviderEvidence({ item }: { item: FiatAssessment }) {
         ))}
       </div>
       {provider.riskSignals.length > 0 && (
-        <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           <p className="border-b border-border/60 px-4 py-2.5 text-xs font-semibold">
             Raw Whop risk signals
           </p>
@@ -650,8 +653,11 @@ type FiatCategory = keyof FiatAssessment["score_breakdown"];
 
 function RiskBreakdown({ item }: { item: FiatAssessment }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
-      <p className="text-sm font-semibold">Risk breakdown</p>
+    <div className="rounded-xl border border-border/60 bg-card p-4">
+      <div className="flex items-center gap-2">
+        <Gauge className="size-4 text-cyan-500" />
+        <p className="text-sm font-semibold">Risk breakdown</p>
+      </div>
       <div className="mt-4 space-y-3">
         {BREAKDOWN_LABELS.map(({ key, label }) => {
           const score = item.score_breakdown[key] ?? 0;
@@ -672,7 +678,7 @@ function RiskBreakdown({ item }: { item: FiatAssessment }) {
 
 function Assessment({ item }: { item: FiatAssessment }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-xl border border-border/60 bg-card p-4">
       <div className="flex items-center gap-2">
         <ShieldCheck className="size-4 text-cyan-500" />
         <p className="text-sm font-semibold">Automated assessment</p>
@@ -709,7 +715,7 @@ function Assessment({ item }: { item: FiatAssessment }) {
 
 function ReviewTrail({ detail }: { detail: FiatDetail }) {
   return (
-    <div className="rounded-xl border bg-card p-4">
+    <div className="rounded-xl border border-border/60 bg-card p-4">
       <div className="flex items-center gap-2">
         <History className="size-4 text-cyan-500" />
         <p className="text-sm font-semibold">Review trail</p>
@@ -816,7 +822,7 @@ function Unavailable({ text }: { text: string }) {
       <PageHero>
         <PageHeroIdentity backHref="/antifraud/fiat-deposits" />
       </PageHero>
-      <div className="rounded-xl border border-dashed bg-card/40 px-4 py-14 text-center">
+      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
         <CreditCard className="mx-auto mb-3 size-6 text-muted-foreground" />
         <p className="text-sm text-muted-foreground">{text}</p>
       </div>

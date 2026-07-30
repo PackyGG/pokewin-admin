@@ -350,7 +350,7 @@ async function CaseDetail({ caseId }: { caseId: string }) {
         </div>
 
         {/* ── Verdict ───────────────────────────────────────────── */}
-        <div className="space-y-4">
+        <div className="space-y-4 lg:sticky lg:top-4 lg:self-start">
           <SectionHeading icon={FileSearch} title="Record a decision" />
           <DecisionPanel
             caseId={subject.id}
@@ -544,10 +544,10 @@ function StaffActionRow({ action }: { action: AntifraudMonitorStaffAction }) {
         <span className="text-xs font-semibold">
           {action.actor_username ?? action.actor_id}
         </span>
-        <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+        <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
           {decisionLabel(action.action_type)}
         </span>
-        <span className="text-[9px] uppercase tracking-wide text-muted-foreground">
+        <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
           {action.status}
         </span>
         <span
@@ -628,7 +628,7 @@ function FactTile({
 }) {
   return (
     <div className="min-w-0 rounded-lg border border-border/60 bg-muted/20 p-3">
-      <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+      <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <p

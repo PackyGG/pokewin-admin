@@ -46,7 +46,7 @@ export async function ReviewCaseWorkspace({
   ]);
   if (detail.kind === "not_found") {
     return (
-      <div className="rounded-xl border border-dashed px-4 py-10 text-center">
+      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center">
         <p className="text-sm font-semibold">Case not found</p>
         <p className="mt-1 text-xs text-muted-foreground">
           It may have been removed or the link is no longer valid.
@@ -73,7 +73,7 @@ export async function ReviewCaseWorkspace({
   return (
     <div className="space-y-5">
       {/* ── Identity ─────────────────────────────────────────────── */}
-      <div className="rounded-xl border bg-card p-4 sm:p-5">
+      <div className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex min-w-0 items-center gap-3">
             <Avatar className="size-11">
@@ -136,9 +136,11 @@ export async function ReviewCaseWorkspace({
             viewerId={viewerId}
             analysts={analysts}
           />
-          <div className="space-y-3 rounded-xl border bg-card p-4">
+          <div className="space-y-3 rounded-xl border border-border/60 bg-card p-4">
             <div>
-              <p className="text-sm font-semibold">Account measures</p>
+              <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                Account measures
+              </p>
               <p className="mt-1 text-xs leading-5 text-muted-foreground">
                 Immediate actions. Each asks for confirmation and is audited.
               </p>
@@ -207,7 +209,7 @@ function ReviewProgress({
 
   return (
     <ol
-      className="grid gap-2 rounded-xl border bg-muted/20 p-2 sm:grid-cols-3"
+      className="grid gap-2 rounded-xl border border-border/60 bg-muted/20 p-2 sm:grid-cols-3"
       aria-label="Review progress"
     >
       {steps.map((step, index) => (
@@ -255,7 +257,7 @@ function WhyThisCase({ detail }: { detail: ReviewDetail }) {
           </>
         }
       />
-      <div className="space-y-3 rounded-xl border bg-card p-4">
+      <div className="space-y-3 rounded-xl border border-border/60 bg-card p-4">
         {detail.workflow && (
           <WorkflowEvidence workflow={detail.workflow} />
         )}
@@ -358,12 +360,15 @@ function CaseFacts({
       <SectionHeading icon={FileText} title="Case facts" />
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
         {facts.map((fact) => (
-          <div key={fact.label} className="rounded-lg border bg-card p-3">
-            <p className="text-[11px] text-muted-foreground">{fact.label}</p>
+          <div
+            key={fact.label}
+            className="rounded-lg border border-border/60 bg-muted/20 p-2.5"
+          >
+            <p className="text-[10px] text-muted-foreground">{fact.label}</p>
             <p
               className={cn(
-                "mt-1 truncate text-sm font-semibold",
-                fact.mono && "font-mono text-xs",
+                "mt-0.5 truncate text-xs font-medium tabular-nums",
+                fact.mono && "font-mono",
               )}
               title={fact.title ?? fact.value}
             >
@@ -392,7 +397,7 @@ function RelatedSignals({ detail }: { detail: ReviewDetail }) {
           </>
         }
       />
-      <div className="overflow-hidden rounded-xl border bg-card">
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         {relatedSignals.map((signal, index) => (
           <div
             key={signal.id}
@@ -457,12 +462,12 @@ function CaseTrail({ detail }: { detail: ReviewDetail }) {
         }
       />
       {notes.length === 0 ? (
-        <div className="rounded-xl border border-dashed bg-card/40 px-4 py-10 text-center text-xs text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-xs text-muted-foreground">
           No notes yet. Anything you write is kept permanently — the trail is
           append-only.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border bg-card">
+        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
           {notes.map((note, index) => (
             <div
               key={note.id}
@@ -475,7 +480,7 @@ function CaseTrail({ detail }: { detail: ReviewDetail }) {
                 <span className="text-xs font-semibold">
                   {note.author?.label ?? "System"}
                 </span>
-                <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+                <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {note.kind}
                 </span>
                 <span

@@ -246,11 +246,11 @@ export function RefundsPanel({
   ).length;
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-4">
+    <div className="space-y-4">
+      <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-3xl space-y-1">
-            <h2 className="flex items-center gap-2 font-semibold">
+            <h2 className="flex items-center gap-2 text-sm font-semibold">
               <AlertTriangle className="size-4 text-destructive" />
               Whop refunds for banned or fraud-confirmed accounts
             </h2>
@@ -305,7 +305,7 @@ export function RefundsPanel({
       </div>
 
       {requestedPaymentId && !requestedCandidate && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm sm:p-4">
           Payment <span className="font-mono">{requestedPaymentId}</span> is not
           currently refundable here. The account must first meet the active
           banned/fraud refund policy.
@@ -313,10 +313,11 @@ export function RefundsPanel({
       )}
 
       {progress && (
-        <div className="rounded-lg border p-4 text-sm">
+        <div className="rounded-xl border border-border/60 bg-card p-3 text-sm sm:p-4">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <span className="font-medium">
-              Batch {progress.batchId.slice(0, 8)}
+              Batch{" "}
+              <span className="font-mono">{progress.batchId.slice(0, 8)}</span>
             </span>
             <Badge variant={progress.done ? "secondary" : "outline"}>
               {progress.done ? "Finished" : "Processing"}
@@ -332,7 +333,7 @@ export function RefundsPanel({
       )}
 
       {grouped.length === 0 ? (
-        <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
+        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center text-sm text-muted-foreground">
           No refundable Whop deposits were found for banned or fraud-confirmed accounts.
         </div>
       ) : (
@@ -346,9 +347,9 @@ export function RefundsPanel({
             return (
               <section
                 key={userId}
-                className="overflow-hidden rounded-xl border"
+                className="overflow-hidden rounded-xl border border-border/60 bg-card"
               >
-                <div className="flex flex-wrap items-start justify-between gap-3 bg-muted/35 p-4">
+                <div className="flex flex-wrap items-start justify-between gap-3 bg-muted/30 p-3 sm:p-4">
                   <div className="flex items-start gap-3">
                     {canExecute && (
                       <Checkbox
@@ -400,13 +401,13 @@ export function RefundsPanel({
                     </Button>
                   )}
                 </div>
-                <div className="divide-y">
+                <div className="divide-y divide-border/60">
                   {deposits.map((deposit) => {
                     const selected = payments.has(deposit.providerPaymentId);
                     return (
                       <div
                         key={deposit.providerPaymentId}
-                        className="grid gap-3 p-4 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center"
+                        className="grid gap-3 px-3 py-3 sm:grid-cols-[auto_1fr_auto_auto] sm:items-center sm:px-4"
                       >
                         {canExecute && (
                           <Checkbox
@@ -441,7 +442,7 @@ export function RefundsPanel({
                           )}
                         </div>
                         <div className="text-right">
-                          <span className="font-semibold">
+                          <span className="font-semibold tabular-nums">
                             {money(deposit.amountCents, deposit.currency)}
                           </span>
                           {deposit.status === "paid_unreconciled" && (
@@ -482,7 +483,7 @@ export function RefundsPanel({
       {recentBatches.length > 0 && (
         <section className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="font-semibold">Recent refund batches</h2>
+            <h2 className="text-sm font-semibold">Recent refund batches</h2>
             {canExecute &&
               recentBatches.some((batch) => batch.succeeded > 0) && (
                 <Button
@@ -499,16 +500,18 @@ export function RefundsPanel({
                 </Button>
               )}
           </div>
-          <div className="divide-y rounded-xl border">
+          <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
             {recentBatches.map((batch) => (
               <div
                 key={batch.batchId}
-                className="flex flex-wrap items-center justify-between gap-3 p-4 text-sm"
+                className="flex flex-wrap items-center justify-between gap-3 px-3 py-3 text-sm sm:px-4"
               >
                 <div>
                   <p className="font-medium">
-                    {batch.batchId.slice(0, 8)} · {batch.requestedCount}{" "}
-                    payments
+                    <span className="font-mono">
+                      {batch.batchId.slice(0, 8)}
+                    </span>{" "}
+                    · {batch.requestedCount} payments
                   </p>
                   <p className="text-xs text-muted-foreground">
                     {new Date(batch.createdAt).toLocaleString()}

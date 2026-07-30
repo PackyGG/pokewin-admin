@@ -29,7 +29,7 @@ export default async function SettingsPage({
     requestedTab === "discord" ? "discord" : "general";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
@@ -129,10 +129,10 @@ async function IntegrationSection() {
       name: "Signed ingest webhook",
       envs: ["ANTIFRAUD_INGEST_URL", "ANTIFRAUD_INGEST_SECRET"],
       status: ingestStatus,
-        note:
-          ingestStatus === "partial"
-            ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
-            : "Shared HMAC delivery from committed monitor risk events, including score-50 signups, into Account Review.",
+      note:
+        ingestStatus === "partial"
+          ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
+          : "Shared HMAC delivery from committed monitor risk events, including score-50 signups, into Account Review.",
     },
     {
       name: "Live monitor API",
@@ -294,7 +294,7 @@ async function IntegrationSection() {
             </span>
             <span
               className={cn(
-                "shrink-0 text-[10px] font-bold uppercase tracking-wide",
+                "shrink-0 text-[10px] font-semibold uppercase tracking-wide",
                 integration.status === "ready" &&
                   "text-emerald-600 dark:text-emerald-400",
                 integration.status === "partial" &&

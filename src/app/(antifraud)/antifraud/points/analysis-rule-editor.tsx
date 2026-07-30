@@ -23,7 +23,7 @@ export function AnalysisRuleEditor({
   const [pending, startTransition] = React.useTransition();
   return (
     <form
-      className="grid gap-2 px-3 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center"
+      className="grid gap-2 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto_auto_auto] sm:items-center sm:gap-3"
       onSubmit={(event) => {
         event.preventDefault();
         const nextPoints = Number(points);
@@ -65,7 +65,7 @@ export function AnalysisRuleEditor({
       <div className="min-w-0">
         <div className="flex items-center gap-2">
           <p className="text-sm font-medium">{rule.name}</p>
-          <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
             {rule.category}
           </span>
         </div>

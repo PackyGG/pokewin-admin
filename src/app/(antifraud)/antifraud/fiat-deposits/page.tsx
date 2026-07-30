@@ -650,7 +650,7 @@ async function CryptoDepositContent({ state }: { state: Filters }) {
 function CryptoDepositRow({ deposit }: { deposit: TransactionListItem }) {
   const name = deposit.username ?? deposit.userId;
   return (
-    <article className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between">
+    <article className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:flex-row sm:items-center sm:justify-between sm:p-4">
       <div className="flex min-w-0 items-center gap-3">
         <Avatar className="size-9">
           {deposit.image && <AvatarImage src={deposit.image} alt="" />}
@@ -698,7 +698,7 @@ function FiatRiskScoreGuide() {
   return (
     <div className="rounded-xl border border-border/70 bg-card p-4">
       <div className="flex items-center justify-between">
-        <span className="text-xs font-medium text-muted-foreground">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Risk score guide
         </span>
         <ShieldCheck className="size-4 text-violet-500" />
@@ -713,7 +713,7 @@ function FiatRiskScoreGuide() {
           <span className="w-[30%] bg-amber-400" aria-hidden />
           <span className="w-[40%] bg-rose-500" aria-hidden />
         </div>
-        <div className="mt-2 grid grid-cols-[3fr_3fr_4fr] text-[9px] font-semibold leading-tight">
+        <div className="mt-2 grid grid-cols-[3fr_3fr_4fr] text-[10px] font-semibold leading-tight">
           <span className="text-emerald-600 dark:text-emerald-400">
             Good
             <span className="block font-normal text-muted-foreground">
@@ -759,9 +759,9 @@ function FiatRow({
   const flagged = item.flow_checks.filter((check) => check.status !== "pass");
   const passed = item.flow_checks.length - flagged.length;
   return (
-    <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
+    <article className="rounded-xl border border-border/70 bg-card p-3 shadow-sm sm:p-4">
       <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <Avatar className="size-10">
             {item.avatar_url && <AvatarImage src={item.avatar_url} alt="" />}
             <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
@@ -837,7 +837,7 @@ function FiatRow({
         </div>
         <div className="flex flex-wrap items-center gap-3 xl:justify-end">
           <div className="min-w-24 text-right">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               {unreconciled ? "Expected credit" : "Credited"}
             </p>
             <p className="text-lg font-semibold tabular-nums">
@@ -886,7 +886,7 @@ function FiatRow({
           </Button>
         </div>
       </div>
-      <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-3 xl:grid-cols-7">
+      <div className="mt-3 grid gap-2 border-t border-border/60 pt-3 sm:grid-cols-2 lg:grid-cols-4">
         <FactCell
           label="Six-point flow"
           value={`${passed}/${item.flow_checks.length} pass`}

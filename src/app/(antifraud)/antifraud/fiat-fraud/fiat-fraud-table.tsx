@@ -92,7 +92,7 @@ function FactBox({
   alert?: boolean;
 }) {
   return (
-    <div className="min-w-0 rounded-xl border border-border/60 bg-muted/20 p-3">
+    <div className="min-w-0 rounded-lg border border-border/60 bg-muted/20 p-2.5">
       <div className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         <Icon className={cn("size-3.5 shrink-0", alert && "text-rose-500")} />
         <span className="truncate">{label}</span>
@@ -125,8 +125,8 @@ function FiatFraudCard({ row }: { row: FiatFraudUserRow }) {
     : null;
 
   return (
-    <article className="overflow-hidden rounded-2xl border border-border/70 bg-card shadow-sm">
-      <div className="space-y-4 p-3.5 sm:p-4">
+    <article className="overflow-hidden rounded-xl border border-border/60 bg-card">
+      <div className="space-y-4 p-3 sm:p-4">
         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
           <div className="flex min-w-0 items-start gap-3">
             <div className="flex size-11 shrink-0 items-center justify-center rounded-xl border border-border/70 bg-muted/50 text-muted-foreground">
@@ -260,7 +260,7 @@ export function FiatFraudTable({ rows }: { rows: FiatFraudUserRow[] }) {
 
   if (uniqueRows.length === 0) {
     return (
-      <div className="rounded-xl border bg-card">
+      <div className="rounded-xl border border-border/60 bg-card">
         <EmptyState
           icon={ShieldAlert}
           title="No fraudulent fiat deposits found"

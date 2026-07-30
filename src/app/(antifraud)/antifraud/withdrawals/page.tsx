@@ -208,6 +208,7 @@ function Filters({ state }: { state: FilterState }) {
                 lifecycle: "all",
               })}
             />
+            <span aria-hidden className="mx-0.5 h-4 w-px self-center bg-border" />
             <FilterButton label="Pending" active={state.status === "pending"} href={filterHref({ status: "pending" })} />
             <FilterButton label="Processing" active={state.status === "processing"} href={filterHref({ status: "processing" })} />
             <FilterButton label="Completed" active={state.status === "completed"} href={filterHref({ status: "completed" })} />
@@ -428,7 +429,7 @@ function WithdrawalRow({
   return (
     <article className="rounded-xl border border-border/70 bg-card p-4 shadow-sm">
       <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-wrap items-center gap-3">
           <Avatar className="size-10">
             {withdrawal.avatar_url && <AvatarImage src={withdrawal.avatar_url} alt="" />}
             <AvatarFallback>{name.slice(0, 2).toUpperCase()}</AvatarFallback>
@@ -458,10 +459,10 @@ function WithdrawalRow({
         </div>
         <div className="flex flex-wrap items-center gap-3 lg:justify-end">
           <div className="min-w-28 text-right">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Withdrawal
             </p>
-            <p className="text-lg font-semibold tabular-nums">
+            <p className="text-lg font-semibold tabular-nums text-rose-600 dark:text-rose-400">
               {formatCurrency(withdrawal.amount_usd)}
             </p>
             <p className="text-[10px] tabular-nums text-muted-foreground">

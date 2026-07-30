@@ -1,4 +1,3 @@
-
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -8,7 +7,7 @@ export default function Loading() {
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-      <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
+      <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
         <Skeleton className="h-[520px] rounded-xl" />
         <Skeleton className="h-[680px] rounded-xl" />
       </div>

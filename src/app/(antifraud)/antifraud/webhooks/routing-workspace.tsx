@@ -324,7 +324,7 @@ export function DiscordRoutingWorkspace({
         requests={initialConfig.channelCreation.recentRequests}
       />
 
-      <section className="rounded-xl border bg-card p-4">
+      <section className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
         <StepUpField
           id="discord-routing-step-up"
           value={credential}
@@ -338,13 +338,15 @@ export function DiscordRoutingWorkspace({
         </p>
       </section>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="flex flex-col gap-3 border-b p-4 sm:flex-row sm:items-center">
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex flex-col gap-3 border-b border-border/60 p-3 sm:flex-row sm:items-center sm:p-4">
           <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Send className="size-4 text-cyan-500" />
               <h2 className="font-semibold">Active channels</h2>
-              <Badge variant="secondary">{activeChannels.length}</Badge>
+              <Badge variant="secondary" className="tabular-nums">
+                {activeChannels.length}
+              </Badge>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               Every configured channel and the events it receives.
@@ -404,7 +406,7 @@ export function DiscordRoutingWorkspace({
             </Button>
           </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/60">
             {activeChannels.map((channel) => {
               const routes = initialConfig.routes.filter(
                 (route) =>
@@ -431,7 +433,7 @@ export function DiscordRoutingWorkspace({
               return (
                 <div
                   key={channel.id}
-                  className="flex flex-col gap-4 p-4 sm:flex-row sm:items-start"
+                  className="flex flex-col gap-4 p-3 sm:flex-row sm:items-start sm:p-4"
                 >
                   <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[#5865F2]/10 text-[#5865F2]">
                     <Hash className="size-4" />
@@ -548,7 +550,7 @@ function ChannelCreationHistory({
   if (requests.length === 0) return null;
 
   return (
-    <section className="rounded-xl border bg-card px-4 py-3">
+    <section className="rounded-xl border border-border/60 bg-card px-4 py-3">
       <div className="flex items-center gap-2">
         <Clock3 className="size-4 text-violet-500" />
         <h2 className="text-sm font-semibold">Recent channel creation</h2>
@@ -557,7 +559,7 @@ function ChannelCreationHistory({
         {requests.slice(0, 5).map((request) => (
           <div
             key={request.id}
-            className="flex flex-col gap-1 rounded-lg border px-3 py-2 sm:flex-row sm:items-center"
+            className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:gap-3"
           >
             <div className="min-w-0 flex-1">
               <p className="truncate text-sm font-medium">
@@ -747,7 +749,7 @@ function ChannelEditorDialog({
             <div className="space-y-2">
               <div className="flex items-center justify-between gap-3">
                 <Label>Events</Label>
-                <span className="text-xs text-muted-foreground">
+                <span className="text-xs tabular-nums text-muted-foreground">
                   {editor.eventKeys.length} selected
                 </span>
               </div>
@@ -760,7 +762,7 @@ function ChannelEditorDialog({
                   className="pl-9"
                 />
               </div>
-              <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border p-2">
+              <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-border/60 p-2">
                 {events.length === 0 ? (
                   <p className="px-3 py-8 text-center text-sm text-muted-foreground">
                     No matching events.

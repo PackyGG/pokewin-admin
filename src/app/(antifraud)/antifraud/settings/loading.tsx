@@ -2,11 +2,12 @@ import { PageHeroSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Matches /antifraud/settings: hero, tab nav, then the active tab's section.
+ * Matches /antifraud/settings: hero, tab nav, then the active tab's section
+ * (integration status list on General, Discord config on Discord).
  */
 export default function SettingsLoading() {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHeroSkeleton />
       <Skeleton className="h-10 w-52 rounded-lg" />
       <div className="space-y-4">

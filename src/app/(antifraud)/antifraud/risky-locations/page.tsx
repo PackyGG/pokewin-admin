@@ -89,7 +89,7 @@ function RiskyLocationsFallback() {
 export default async function RiskyLocationsPage() {
   await requireAntifraudPageAccess();
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>

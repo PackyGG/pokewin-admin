@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import {
   BadgeCheck,
   CheckCircle2,
+  ChevronDown,
   Clock3,
   Fingerprint,
   LockKeyhole,
@@ -25,6 +26,7 @@ import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { FilterButton, FilterGroup } from "../_components/list-page";
 import { RequireKycDialog } from "./_components/require-kyc-dialog";
 import { ReviewKycControls } from "./_components/review-kyc-controls";
 
@@ -60,7 +62,7 @@ export default async function AntifraudKycPage({
   const contentKey = `${status}-${search ?? ""}`;
 
   return (
-    <div className="w-full min-w-0 space-y-5">
+    <div className="w-full min-w-0 space-y-6">
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-4">
         <div className="flex items-start gap-3">
           <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
@@ -112,22 +114,18 @@ function FilterBar({
 }) {
   const current: SearchParams = { status, q: search };
   return (
-    <div className="space-y-2.5 rounded-lg border border-border/70 bg-card p-3">
-      <nav aria-label="KYC status filters" className="flex flex-wrap gap-1.5">
-        {Object.entries(FILTER_LABELS).map(([value, label]) => (
-          <HostLink
-            key={value}
-            href={buildHref({ status: value, q: search }, current)}
-            className={cn(
-              "rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors",
-              status === value
-                ? "border-cyan-500/40 bg-cyan-500/10 text-cyan-600 dark:text-cyan-300"
-                : "border-border/60 bg-muted/40 text-muted-foreground hover:text-foreground",
-            )}
-          >
-            {label}
-          </HostLink>
-        ))}
+    <div className="space-y-3 rounded-xl border border-border/60 bg-card p-3 sm:p-4">
+      <nav aria-label="KYC status filters">
+        <FilterGroup label="View">
+          {Object.entries(FILTER_LABELS).map(([value, label]) => (
+            <FilterButton
+              key={value}
+              label={label}
+              active={status === value}
+              href={buildHref({ status: value, q: search }, current)}
+            />
+          ))}
+        </FilterGroup>
       </nav>
 
       <form className="flex gap-2">
@@ -168,9 +166,9 @@ async function KycDashboardContent({
 
   if (!result.data) {
     return (
-      <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
-        <ShieldX className="mx-auto size-5 text-muted-foreground" />
-        <p className="mt-2 text-sm font-semibold">KYC data could not be loaded</p>
+      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+        <ShieldX className="mx-auto mb-3 size-6 text-muted-foreground" />
+        <p className="text-sm font-semibold">KYC data could not be loaded</p>
         <p className="mt-1 text-xs text-muted-foreground">
           Nothing was changed. Refresh to retry the read-only dashboard.
         </p>
@@ -183,8 +181,8 @@ async function KycDashboardContent({
     (account) => account.countryReview?.countryMatch === "mismatch",
   ).length;
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <KpiTile
           label="Open decisions"
           value={String(stats.awaitingReview)}
@@ -215,7 +213,7 @@ async function KycDashboardContent({
         />
       </div>
 
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs tabular-nums text-muted-foreground">
         {stats.required} currently locked · {stats.total} historical verification
         records ·{" "}
         {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
@@ -264,9 +262,9 @@ function AccountList({
       />
 
       {accounts.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
-          <CheckCircle2 className="mx-auto size-5 text-muted-foreground" />
-          <p className="mt-2 text-sm font-semibold">
+        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+          <CheckCircle2 className="mx-auto mb-3 size-6 text-muted-foreground" />
+          <p className="text-sm font-semibold">
             {filter === "active"
               ? "No KYC checks are currently active or waiting"
               : "No finished KYC records match this view"}
@@ -277,7 +275,7 @@ function AccountList({
           </p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
           {accounts.map((account) => (
             <AccountCard
               key={account.userId}
@@ -305,8 +303,8 @@ function AccountCard({
   const presentation = getAccountPresentation(account);
 
   return (
-    <details className="group overflow-hidden rounded-lg border border-border/70 bg-card">
-      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-3 py-3 outline-none hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
+    <details className="group">
+      <summary className="flex cursor-pointer list-none flex-wrap items-center gap-3 px-3 py-2.5 outline-none hover:bg-accent/30 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:px-4">
         <span className="min-w-0 flex-1">
           <span className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-semibold">{label}</span>
@@ -346,14 +344,17 @@ function AccountCard({
           <span title={formatDateTime(account.updatedAt)}>
             {formatRelative(account.updatedAt)}
           </span>
-          <span className="transition-transform group-open:rotate-180">⌄</span>
+          <ChevronDown
+            aria-hidden
+            className="size-4 shrink-0 transition-transform group-open:rotate-180 motion-reduce:transition-none"
+          />
         </span>
       </summary>
 
       <div className="border-t border-border/60 px-3 py-4 sm:px-4">
         <div
           className={cn(
-            "mb-4 rounded-md border px-3 py-2.5",
+            "mb-4 rounded-lg border px-3 py-2.5",
             presentation.panelClassName,
           )}
         >
@@ -610,7 +611,7 @@ function InfoGroup({
 }) {
   return (
     <div>
-      <p className="mb-2 text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
         {title}
       </p>
       <dl className="space-y-1.5">{children}</dl>
@@ -806,14 +807,14 @@ function shortId(value: string): string {
 
 function DashboardSkeleton() {
   return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+    <div className="space-y-4">
+      <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => (
-          <Skeleton key={index} className="h-24 rounded-lg" />
+          <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
       </div>
-      <Skeleton className="h-80 rounded-lg" />
-      <Skeleton className="h-16 rounded-lg" />
+      <Skeleton className="h-80 rounded-xl" />
+      <Skeleton className="h-16 rounded-xl" />
     </div>
   );
 }

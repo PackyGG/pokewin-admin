@@ -33,7 +33,7 @@ export default async function RefundsPage({
   const reconciliationOnly = params.scope === "paid_unreconciled";
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>

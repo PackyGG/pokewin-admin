@@ -13,9 +13,12 @@ export default function AntifraudOverviewLoading() {
           <Skeleton key={i} className="h-24 w-full rounded-xl" />
         ))}
       </div>
-      <div className="grid gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
-        <Skeleton className="h-[420px] w-full rounded-xl" />
-        <Skeleton className="h-[420px] w-full rounded-xl" />
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+        <Skeleton className="h-[336px] w-full rounded-xl" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <Skeleton className="h-[336px] w-full rounded-xl" />
+          <Skeleton className="h-[336px] w-full rounded-xl" />
+        </div>
       </div>
     </div>
   );

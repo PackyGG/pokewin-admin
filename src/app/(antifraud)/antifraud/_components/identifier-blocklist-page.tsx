@@ -64,7 +64,7 @@ export function IdentifierBlocklistPage({
   kind: IdentifierBlocklistKind;
 }) {
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero><PageHeroIdentity /></PageHero>
       <Suspense fallback={<IdentifierBlocklistFallback />}>
         <Content kind={kind} />

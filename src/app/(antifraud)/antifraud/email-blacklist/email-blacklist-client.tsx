@@ -120,7 +120,7 @@ export function EmailBlacklistClient({
     <div className="grid gap-5 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
       <form
         onSubmit={addDomain}
-        className="h-fit space-y-4 rounded-xl border bg-card p-4"
+        className="h-fit space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4"
       >
         <div>
           <h2 className="flex items-center gap-2 text-sm font-semibold">
@@ -155,27 +155,33 @@ export function EmailBlacklistClient({
         </Button>
       </form>
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        <div className="border-b px-4 py-3">
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <h2 className="flex items-center gap-2 text-sm font-semibold">
             <ShieldCheck className="size-4 text-cyan-500" />
             Email domain rules
           </h2>
+          <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+            {rules.length} {rules.length === 1 ? "rule" : "rules"}
+          </span>
         </div>
         {rules.length === 0 ? (
-          <p className="px-4 py-10 text-center text-sm text-muted-foreground">
-            No email domains are blacklisted.
-          </p>
+          <div className="px-4 py-14 text-center">
+            <MailWarning className="mx-auto mb-3 size-6 text-muted-foreground" />
+            <p className="text-sm text-muted-foreground">
+              No email domains are blacklisted.
+            </p>
+          </div>
         ) : (
-          <div className="divide-y">
+          <div className="divide-y divide-border/60">
             {rules.map((rule) => (
               <div
                 key={rule.id}
                 className="grid gap-3 px-4 py-3 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
               >
-                <div className="min-w-0">
+                <div className="min-w-0 space-y-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <span className="font-mono text-sm font-semibold">
+                    <span className="break-all font-mono text-sm font-semibold">
                       @{rule.domain}
                     </span>
                     <Badge
@@ -197,7 +203,7 @@ export function EmailBlacklistClient({
                       </Badge>
                     )}
                   </div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
+                  <p className="text-[11px] tabular-nums text-muted-foreground">
                     {rule.affectedUsers} affected users · {rule.matchCount} matches
                     {rule.pendingLocks > 0
                       ? ` · ${rule.pendingLocks} locks pending`

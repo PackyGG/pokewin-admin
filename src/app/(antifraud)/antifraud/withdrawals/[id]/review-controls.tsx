@@ -11,6 +11,7 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
+import { cn } from "@/lib/utils";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   WithdrawalReviewAction,
@@ -105,7 +106,7 @@ export function WithdrawalReviewControls({
   }
 
   return (
-    <div className="space-y-4 rounded-xl border bg-card p-4">
+    <div className="space-y-4 rounded-xl border border-border/60 bg-card p-4">
       <div>
         <p className="text-sm font-semibold">Analyst decision</p>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
@@ -142,6 +143,9 @@ export function WithdrawalReviewControls({
               variant={action.variant}
               disabled={pending !== null || isCurrent}
               onClick={() => void apply(action.key, action.success)}
+              className={cn(
+                action.key === "recommend_block" && "sm:col-span-2",
+              )}
             >
               <Icon className="size-4" />
               {pending === action.key ? "Saving…" : action.label}

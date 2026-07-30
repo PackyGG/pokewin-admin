@@ -74,7 +74,7 @@ export function EventCatalog({
         />
       </div>
 
-      <div className="flex flex-col gap-3 rounded-xl border border-border/70 bg-card p-3 sm:flex-row sm:items-center">
+      <div className="flex flex-col gap-3 rounded-xl border border-border/60 bg-card p-3 sm:flex-row sm:items-center">
         <label className="relative min-w-0 flex-1">
           <Search
             className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
@@ -108,9 +108,9 @@ export function EventCatalog({
         </div>
       </div>
 
-      <div className="overflow-hidden rounded-xl border border-border/70 bg-card">
+      <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
         <div className="grid grid-cols-[minmax(0,1fr)_auto] gap-3 border-b border-border/60 px-3 py-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground sm:px-4">
-          <span>{visible.length} events</span>
+          <span className="tabular-nums">{visible.length} events</span>
           <span>Status</span>
         </div>
         {visible.length === 0 ? (

@@ -3,7 +3,7 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 
 export default function Loading() {
   return (
-    <div className="space-y-5">
+    <div className="space-y-4">
       <PageHero><PageHeroIdentity /></PageHero>
       <KpiStripSkeleton count={3} />
       <FormCardSkeleton rows={6} />

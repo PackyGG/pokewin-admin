@@ -201,12 +201,12 @@ export function FlowBuilder({
   }
 
   return (
-    <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
-      <aside className="self-start overflow-hidden rounded-xl border bg-card">
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+    <div className="grid gap-4 xl:grid-cols-[300px_minmax(0,1fr)]">
+      <aside className="self-start overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <div className="min-w-0">
             <h2 className="text-sm font-semibold">Flows</h2>
-            <p className="text-xs text-muted-foreground">
+            <p className="text-xs tabular-nums text-muted-foreground">
               {rules.filter((rule) => rule.enabled).length} active · {rules.length} total
             </p>
           </div>
@@ -241,7 +241,7 @@ export function FlowBuilder({
               <span className="flex items-start justify-between gap-2">
                 <span className="min-w-0">
                   <span className="block truncate text-sm font-medium">{rule.name}</span>
-                  <span className="mt-0.5 block truncate text-xs text-muted-foreground">
+                  <span className="mt-0.5 block truncate text-xs tabular-nums text-muted-foreground">
                     {rule.sequence.length} {rule.sequence.length === 1 ? "step" : "steps"} ·{" "}
                     {rule.window_seconds}s window
                   </span>
@@ -283,7 +283,7 @@ export function FlowBuilder({
               </>
             }
           />
-          <div className="rounded-xl border bg-card p-4 sm:p-5">
+          <div className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <Badge
                 variant="outline"
@@ -381,7 +381,7 @@ export function FlowBuilder({
             {draft.sequence.map((step, index) => (
               <div
                 key={step.id}
-                className="grid gap-2 rounded-xl border bg-card p-3 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center"
+                className="grid gap-2 rounded-xl border border-border/60 bg-card p-3 sm:grid-cols-[32px_minmax(0,1fr)_auto] sm:items-center"
               >
                 <div className="flex size-8 items-center justify-center rounded-full border border-primary/25 bg-primary/5 text-xs font-semibold text-primary">
                   {index + 1}
@@ -434,7 +434,7 @@ export function FlowBuilder({
               </div>
             ))}
             {draft.sequence.length === 0 && (
-              <div className="rounded-xl border border-dashed bg-card/40 px-4 py-10 text-center">
+              <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center">
                 <Workflow
                   className="mx-auto size-5 text-muted-foreground"
                   aria-hidden
@@ -447,7 +447,7 @@ export function FlowBuilder({
           </div>
         </section>
 
-        <div className="grid gap-6 lg:grid-cols-2 lg:items-start">
+        <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
           <section className="space-y-3">
             <SectionHeading
               icon={CircleSlash2}
@@ -460,7 +460,7 @@ export function FlowBuilder({
                 </>
               }
             />
-            <div className="rounded-xl border bg-card p-4">
+            <div className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
               <p className="text-xs leading-5 text-muted-foreground">
                 If one of these events occurs before the sequence completes, the
                 flow will not match.
@@ -527,7 +527,7 @@ export function FlowBuilder({
                 </>
               }
             />
-            <div className="rounded-xl border bg-card p-4">
+            <div className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
               <p className="text-xs leading-5 text-muted-foreground">
                 Applied once per flow and monitor session when all steps match.
               </p>
@@ -589,7 +589,7 @@ export function FlowBuilder({
           </div>
         )}
 
-        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card px-4 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border/60 bg-card px-4 py-3">
           <span className="flex items-center gap-2 text-xs text-muted-foreground">
             {draft.enabled && uniquePlannedKeys.length === 0 ? (
               <CheckCircle2 className="size-4 text-emerald-500" aria-hidden />

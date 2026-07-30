@@ -65,7 +65,7 @@ test("overview action feed stays compact beside the thirty-day charts", async ()
   ]);
 
   assert.match(overview, /grid items-start gap-4/);
-  assert.match(panels, /h-\[300px\] min-h-0/);
+  assert.match(panels, /h-\[336px\] min-h-0/);
   assert.doesNotMatch(panels, /h-full min-h-\[390px\]/);
 });
 

@@ -148,7 +148,7 @@ export function CaseControls({
     <div className="space-y-5 rounded-xl border border-border/60 bg-card p-4">
       {/* ── Status ─────────────────────────────────────────────────── */}
       <div className="space-y-3">
-        <Label className="text-xs uppercase tracking-wide text-muted-foreground">
+        <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           Review workflow
         </Label>
         <Textarea
@@ -205,7 +205,7 @@ export function CaseControls({
         </p>
       </div>
 
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <Button
           type="button"
           size="sm"
@@ -236,10 +236,10 @@ export function CaseControls({
       </div>
 
       {/* ── Assignment ─────────────────────────────────────────────── */}
-      <div className="space-y-1.5">
+      <div className="space-y-2">
         <Label
           htmlFor="case-assign-select"
-          className="text-xs uppercase tracking-wide text-muted-foreground"
+          className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
         >
           Assigned to
         </Label>
@@ -320,7 +320,7 @@ export function CaseControls({
       >
         <Label
           htmlFor="case-note"
-          className="text-xs uppercase tracking-wide text-muted-foreground"
+          className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground"
         >
           Add a note
         </Label>

@@ -88,7 +88,7 @@ export async function DiscordConfigSection() {
   );
 
   return (
-    <section className="space-y-5">
+    <section className="space-y-4">
       <div>
         <SectionHeading icon={BellRing} title="Discord alerts" />
         <p className="mt-2 text-xs text-muted-foreground">
@@ -113,7 +113,7 @@ export async function DiscordConfigSection() {
               </div>
               <span
                 className={cn(
-                  "ml-auto rounded-full px-2 py-1 text-[10px] font-bold uppercase tracking-wide",
+                  "ml-auto rounded-full px-2 py-1 text-[10px] font-semibold uppercase tracking-wide",
                   webhookReady === true
                     ? "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
                     : webhookReady === false
@@ -143,7 +143,7 @@ export async function DiscordConfigSection() {
             )}
 
             <div className="mt-5 rounded-lg border border-border/60 bg-muted/20 p-4">
-              <span className="inline-flex rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+              <span className="inline-flex rounded-sm bg-muted px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 Example alert
               </span>
               <p className="mt-2 text-sm font-semibold">
@@ -174,7 +174,7 @@ export async function DiscordConfigSection() {
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">
-                <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   Why it was flagged
                 </span>
                 <p className="mt-1 text-xs font-semibold">+55 | Shared device</p>

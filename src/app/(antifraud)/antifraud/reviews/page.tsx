@@ -41,6 +41,7 @@ import {
   type ReviewQueueState,
 } from "@/lib/antifraud/review-workflow";
 import { canManageAntifraud } from "@/lib/antifraud/access";
+import { FilterButton, FilterGroup } from "../_components/list-page";
 import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { ReviewCaseDialog } from "./_components/review-case-dialog";
@@ -156,26 +157,6 @@ function buildHref(next: Partial<SearchParams>, current: SearchParams): string {
   return qs ? `/antifraud/reviews?${qs}` : "/antifraud/reviews";
 }
 
-function FilterChip({
-  href,
-  active,
-  children,
-}: {
-  href: string;
-  active: boolean;
-  children: React.ReactNode;
-}) {
-  return (
-    <Button
-      size="sm"
-      variant={active ? "default" : "outline"}
-      render={<HostLink href={href} />}
-    >
-      {children}
-    </Button>
-  );
-}
-
 function FilterBar({
   tab,
   status,
@@ -194,22 +175,21 @@ function FilterBar({
   };
 
   return (
-    <div className="rounded-xl border border-border/70 bg-card p-3">
-      <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-        <div className="flex flex-wrap items-center gap-1.5">
+    <div className="rounded-xl border border-border/70 bg-card p-3 sm:p-4">
+      <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
+        <FilterGroup label="Queue">
           {REVIEW_QUEUE_STATES.map((value) => (
-            <FilterChip
+            <FilterButton
               key={value}
               href={buildHref(
                 { tab: value, status: "unresolved", cursor: undefined },
                 current,
               )}
               active={tab === value}
-            >
-              {REVIEW_QUEUE_LABELS[value]}
-            </FilterChip>
+              label={REVIEW_QUEUE_LABELS[value]}
+            />
           ))}
-        </div>
+        </FilterGroup>
         <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:flex-nowrap">
           {/* GET form — no client JS, and the URL stays shareable. */}
           <form className="flex min-w-0 flex-1 gap-2">
@@ -313,7 +293,7 @@ async function QueueList({
         title={
           <>
             Cases
-            <span className="text-xs font-normal text-muted-foreground">
+            <span className="text-xs font-normal tabular-nums text-muted-foreground">
               ({reviews.length} of {page.total})
             </span>
           </>
@@ -330,8 +310,8 @@ async function QueueList({
           </p>
         </div>
       ) : reviews.length === 0 ? (
-        <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center">
-          <CheckCircle2 className="size-5 text-muted-foreground" />
+        <div className="flex flex-col items-center gap-1.5 rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+          <CheckCircle2 className="size-6 text-muted-foreground" />
           <span className="text-sm font-semibold">Nothing here</span>
           <span className="max-w-sm text-xs text-muted-foreground">
             No cases match this filter. Cases arrive automatically from the
@@ -449,7 +429,7 @@ function CaseRow({
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-3 lg:justify-end">
           <div className="text-left lg:text-right">
-            <p className="text-[10px] uppercase tracking-wide text-muted-foreground">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
               Opened by{" "}
               {review.opener?.label ??
                 (review.openedBy ? "Unknown staff" : "Antifraud monitor")}

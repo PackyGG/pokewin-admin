@@ -86,7 +86,7 @@ function EmailBlacklistFallback() {
 export default async function EmailBlacklistPage() {
   await requireAntifraudPageAccess();
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>

@@ -15,6 +15,7 @@ import {
 } from "@/lib/antifraud/security-audit";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
+import { EmptyState } from "../_components/list-page";
 
 export const metadata = { title: "Audit Log · Antifraud" };
 
@@ -42,14 +43,14 @@ export default async function AntifraudAuditPage({
   });
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
 
       <section className="space-y-3">
         <SectionHeading icon={Activity} title="Immutable Fraud audit" />
-        <p className="max-w-3xl text-sm text-muted-foreground">
+        <p className="max-w-3xl text-xs text-muted-foreground">
           Every authorized or denied Fraud page view, search, automated event,
           and protected mutation. The database rejects updates, deletes, and
           truncation.
@@ -63,13 +64,11 @@ export default async function AntifraudAuditPage({
 
       <AuditFilters filters={filters} />
 
-      <section className="overflow-hidden rounded-xl border bg-card">
-        {data.events.length === 0 ? (
-          <div className="p-10 text-center text-sm text-muted-foreground">
-            No audit events match these filters.
-          </div>
-        ) : (
-          <div className="divide-y">
+      {data.events.length === 0 ? (
+        <EmptyState text="No audit events match these filters." icon={Activity} />
+      ) : (
+        <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+          <div className="divide-y divide-border/60">
             {data.events.map((event) => (
               <details key={event.id} className="group p-4">
                 <summary className="flex cursor-pointer list-none items-start gap-3">
@@ -77,7 +76,7 @@ export default async function AntifraudAuditPage({
                     className={cn(
                       "mt-1 size-2 shrink-0 rounded-full",
                       event.outcome === "failed" || event.outcome === "denied"
-                        ? "bg-red-500"
+                        ? "bg-rose-500"
                         : event.outcome === "rate_limited"
                           ? "bg-amber-500"
                           : "bg-emerald-500",
@@ -91,7 +90,7 @@ export default async function AntifraudAuditPage({
                       <Badge variant="outline">{event.eventKind}</Badge>
                       <Badge variant="secondary">{event.outcome}</Badge>
                     </span>
-                    <span className="mt-1 block text-xs text-muted-foreground">
+                    <span className="mt-1 block text-xs tabular-nums text-muted-foreground">
                       {event.actorUsername ?? "system"} ·{" "}
                       {new Date(event.createdAt).toLocaleString()} · correlation{" "}
                       <span className="font-mono">{event.correlationId}</span>
@@ -99,7 +98,7 @@ export default async function AntifraudAuditPage({
                   </span>
                   <ArrowRight className="mt-1 size-4 text-muted-foreground transition-transform group-open:rotate-90" />
                 </summary>
-                <div className="mt-4 grid gap-3 border-t pt-4 text-xs md:grid-cols-2">
+                <div className="mt-4 grid gap-3 border-t border-border/60 pt-4 text-xs md:grid-cols-2">
                   <AuditValue label="Path" value={event.requestPath} />
                   <AuditValue label="Method" value={event.requestMethod} />
                   <AuditValue
@@ -122,8 +121,8 @@ export default async function AntifraudAuditPage({
               </details>
             ))}
           </div>
-        )}
-      </section>
+        </section>
+      )}
 
       {data.nextCursor && (
         <Button variant="outline" render={<Link href={auditHref(filters, data.nextCursor)} />}>
@@ -137,14 +136,16 @@ export default async function AntifraudAuditPage({
 
 function AuditFilters({ filters }: { filters: SearchParams }) {
   return (
-    <form className="grid gap-3 rounded-xl border bg-card p-4 md:grid-cols-4">
-      <label className="space-y-1 text-xs font-medium">
-        Action contains
+    <form className="grid gap-3 rounded-xl border border-border/60 bg-card p-4 md:grid-cols-4">
+      <label className="space-y-1.5">
+        <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+          Action contains
+        </span>
         <input
           name="action"
           defaultValue={filters.action}
           maxLength={160}
-          className="h-9 w-full rounded-md border bg-background px-3 font-mono text-xs"
+          className="h-9 w-full rounded-md border border-border/60 bg-background px-3 font-mono text-xs"
         />
       </label>
       <SelectFilter
@@ -187,12 +188,14 @@ function SelectFilter({
   options: readonly string[];
 }) {
   return (
-    <label className="space-y-1 text-xs font-medium">
-      {label}
+    <label className="space-y-1.5">
+      <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
       <select
         name={name}
         defaultValue={value ?? ""}
-        className="h-9 w-full rounded-md border bg-background px-3 text-xs"
+        className="h-9 w-full rounded-md border border-border/60 bg-background px-3 text-xs"
       >
         <option value="">All</option>
         {options.map((option) => (
@@ -211,8 +214,10 @@ function AuditValue({
   value: string | null;
 }) {
   return (
-    <div>
-      <span className="font-medium text-muted-foreground">{label}</span>
+    <div className="min-w-0">
+      <span className="block text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+        {label}
+      </span>
       <span className="mt-0.5 block break-all font-mono">{value ?? "—"}</span>
     </div>
   );
