@@ -63,20 +63,8 @@ export default async function AntifraudKycPage({
 
   return (
     <div className="w-full min-w-0 space-y-6">
-      <header className="flex flex-wrap items-start justify-between gap-3 border-b border-border/60 pb-4">
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-500">
-            <Fingerprint className="size-4" />
-          </span>
-          <div className="min-w-0">
-            <h1 className="text-xl font-semibold tracking-tight">KYC review</h1>
-            <p className="mt-0.5 text-sm text-muted-foreground">
-              See who is waiting, what Sumsub found, and whether withdrawals
-              can be unlocked
-            </p>
-          </div>
-        </div>
-        {canManage && <RequireKycDialog />}
+      <header className="border-b border-border/60 pb-4">
+        <h1 className="text-xl font-semibold tracking-tight">KYC review</h1>
       </header>
 
       <FilterBar status={status} search={search} />
@@ -177,9 +165,6 @@ async function KycDashboardContent({
   }
 
   const { stats } = result.data;
-  const countryMismatches = result.data.accounts.filter(
-    (account) => account.countryReview?.countryMatch === "mismatch",
-  ).length;
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -212,22 +197,6 @@ async function KycDashboardContent({
           accent="cyan"
         />
       </div>
-
-      <p className="text-xs tabular-nums text-muted-foreground">
-        {stats.required} currently locked · {stats.total} historical verification
-        records ·{" "}
-        {stats.rejected} rejected · {stats.withApplicant} linked to a Sumsub
-        applicant ·{" "}
-        <span
-          className={cn(
-            countryMismatches > 0 &&
-              "font-semibold text-rose-600 dark:text-rose-400",
-          )}
-        >
-          {countryMismatches} saved country mismatch
-          {countryMismatches === 1 ? "" : "es"} in this view
-        </span>
-      </p>
 
       <AccountList
         accounts={result.data.accounts}
@@ -814,7 +783,6 @@ function DashboardSkeleton() {
         ))}
       </div>
       <Skeleton className="h-80 rounded-xl" />
-      <Skeleton className="h-16 rounded-xl" />
     </div>
   );
 }
