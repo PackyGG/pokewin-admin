@@ -220,6 +220,20 @@ test("the Fiat review links owners into the exact guarded refund", () => {
   );
   assert.match(refundPage, /\^pay_\[A-Za-z0-9\]\+\$/);
   assert.match(refundsPanel, /requestedPaymentAvailable[\s\S]*mode: "payments"/);
+  assert.match(
+    fiatList,
+    /isOwner\(session\)[\s\S]*\/antifraud\/refunds\?scope=paid_unreconciled/,
+  );
+  assert.match(refundPage, /params\.scope === "paid_unreconciled"/);
+  assert.match(
+    refundPage,
+    /candidate\.status === "paid_unreconciled"/,
+  );
+  assert.match(
+    refundsPanel,
+    /reconciliationOnly[\s\S]*mode: "payments"[\s\S]*providerPaymentId/,
+  );
+  assert.match(refundsPanel, /Refund all reconciliation failures/);
 });
 
 test("Fiat review surfaces retain the durable refund outcome", () => {

@@ -62,10 +62,12 @@ export function RefundsPanel({
   candidates,
   recentBatches,
   requestedPaymentId,
+  reconciliationOnly,
 }: {
   candidates: RefundCandidate[];
   recentBatches: RefundBatchSummary[];
   requestedPaymentId?: string;
+  reconciliationOnly: boolean;
 }) {
   const requestedCandidate = requestedPaymentId
     ? candidates.find(
@@ -268,9 +270,22 @@ export function RefundsPanel({
             <Button
               variant="destructive"
               disabled={selectableCount === 0 || working}
-              onClick={() => open({ mode: "all" })}
+              onClick={() =>
+                open(
+                  reconciliationOnly
+                    ? {
+                        mode: "payments",
+                        ids: candidates
+                          .filter((candidate) => !candidate.alreadyQueued)
+                          .map((candidate) => candidate.providerPaymentId),
+                      }
+                    : { mode: "all" },
+                )
+              }
             >
-              Refund all flagged
+              {reconciliationOnly
+                ? "Refund all reconciliation failures"
+                : "Refund all flagged"}
             </Button>
           </div>
         </div>

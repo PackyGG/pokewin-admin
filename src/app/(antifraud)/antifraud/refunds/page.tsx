@@ -29,6 +29,7 @@ export default async function RefundsPage({
     /^pay_[A-Za-z0-9]+$/.test(params.payment)
       ? params.payment
       : undefined;
+  const reconciliationOnly = params.scope === "paid_unreconciled";
 
   return (
     <div className="space-y-6">
@@ -46,7 +47,10 @@ export default async function RefundsPage({
             </>
           }
         >
-          <RefundsSection requestedPaymentId={payment} />
+          <RefundsSection
+            requestedPaymentId={payment}
+            reconciliationOnly={reconciliationOnly}
+          />
         </Suspense>
       </div>
     </div>
@@ -55,19 +59,27 @@ export default async function RefundsPage({
 
 async function RefundsSection({
   requestedPaymentId,
+  reconciliationOnly,
 }: {
   requestedPaymentId?: string;
+  reconciliationOnly: boolean;
 }) {
   const [candidates, recentBatches] = await Promise.all([
     getRefundCandidates(),
     getRecentRefundBatches(),
   ]);
+  const visibleCandidates = reconciliationOnly
+    ? candidates.filter(
+        (candidate) => candidate.status === "paid_unreconciled",
+      )
+    : candidates;
 
   return (
     <RefundsPanel
-      candidates={candidates}
+      candidates={visibleCandidates}
       recentBatches={recentBatches}
       requestedPaymentId={requestedPaymentId}
+      reconciliationOnly={reconciliationOnly}
     />
   );
 }

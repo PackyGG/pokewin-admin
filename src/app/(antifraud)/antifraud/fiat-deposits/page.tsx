@@ -34,6 +34,7 @@ import {
   type WhopRefundState,
 } from "@/lib/queries/whop-refunds";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import { isOwner } from "@/lib/owners";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { whopPaymentMethodLabel } from "@/lib/whop-payment-method";
@@ -83,6 +84,7 @@ export default async function FiatDepositsPage({
 }) {
   const session = await requireAntifraudPageAccess();
   const canManageKyc = canManageAntifraud(session);
+  const viewerIsOwner = isOwner(session);
   const params = await searchParams;
   const value = (key: string) =>
     typeof params[key] === "string" ? params[key] : undefined;
@@ -107,7 +109,7 @@ export default async function FiatDepositsPage({
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
-      <FiltersBar state={state} />
+      <FiltersBar state={state} viewerIsOwner={viewerIsOwner} />
       <Suspense
         key={JSON.stringify(state)}
         fallback={
@@ -124,7 +126,13 @@ export default async function FiatDepositsPage({
   );
 }
 
-function FiltersBar({ state }: { state: Filters }) {
+function FiltersBar({
+  state,
+  viewerIsOwner,
+}: {
+  state: Filters;
+  viewerIsOwner: boolean;
+}) {
   const filterHref = (selection: {
     status?: string | null;
     verdict?: FiatVerdict | null;
@@ -155,6 +163,16 @@ function FiltersBar({ state }: { state: Filters }) {
           </FilterGroup>
         </div>
         <div className="flex w-full flex-col gap-2 sm:flex-row xl:w-auto">
+          {viewerIsOwner && (
+            <Button
+              variant="destructive"
+              render={
+                <HostLink href="/antifraud/refunds?scope=paid_unreconciled" />
+              }
+            >
+              Refund reconciliation failures
+            </Button>
+          )}
           <Button
             variant={state.includeKycRequired ? "secondary" : "outline"}
             render={
