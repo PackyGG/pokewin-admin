@@ -63,10 +63,6 @@ export default async function AntifraudKycPage({
 
   return (
     <div className="w-full min-w-0 space-y-6">
-      <header className="border-b border-border/60 pb-4">
-        <h1 className="text-xl font-semibold tracking-tight">KYC review</h1>
-      </header>
-
       <FilterBar status={status} search={search} />
 
       <Suspense key={contentKey} fallback={<DashboardSkeleton />}>

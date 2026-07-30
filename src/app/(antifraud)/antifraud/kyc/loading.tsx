@@ -3,9 +3,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function KycLoading() {
   return (
     <div className="w-full min-w-0 space-y-6">
-      <div className="border-b border-border/60 pb-4">
-        <Skeleton className="h-5 w-28" />
-      </div>
       <Skeleton className="h-24 rounded-xl" />
       <div className="space-y-4">
         <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
