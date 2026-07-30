@@ -7,7 +7,6 @@ import {
   Bot,
   CheckCircle2,
   CircleOff,
-  Clock3,
   FolderPlus,
   Hash,
   Pencil,
@@ -320,10 +319,6 @@ export function DiscordRoutingWorkspace({
         </Button>
       </div>
 
-      <ChannelCreationHistory
-        requests={initialConfig.channelCreation.recentRequests}
-      />
-
       <section className="rounded-xl border border-border/60 bg-card p-3 sm:p-4">
         <StepUpField
           id="discord-routing-step-up"
@@ -332,10 +327,6 @@ export function DiscordRoutingWorkspace({
           disabled={pending}
           label="Approve Discord configuration changes"
         />
-        <p className="mt-2 text-xs text-muted-foreground">
-          All create, edit, and remove operations require a current passkey or
-          authenticator approval. Reads and refreshes do not.
-        </p>
       </section>
 
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
@@ -539,55 +530,6 @@ export function DiscordRoutingWorkspace({
         }
       />
     </div>
-  );
-}
-
-function ChannelCreationHistory({
-  requests,
-}: {
-  requests: DiscordNotificationConfig["channelCreation"]["recentRequests"];
-}) {
-  if (requests.length === 0) return null;
-
-  return (
-    <section className="rounded-xl border border-border/60 bg-card px-4 py-3">
-      <div className="flex items-center gap-2">
-        <Clock3 className="size-4 text-violet-500" />
-        <h2 className="text-sm font-semibold">Recent channel creation</h2>
-      </div>
-      <div className="mt-3 space-y-2">
-        {requests.slice(0, 5).map((request) => (
-          <div
-            key={request.id}
-            className="flex flex-col gap-1 rounded-lg border border-border/60 bg-muted/20 px-3 py-2 sm:flex-row sm:items-center sm:gap-3"
-          >
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-medium">
-                #{request.createdChannelName ?? request.requestedName}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {request.parentName ?? "Unknown section"} ·{" "}
-                {formatTimestamp(request.createdAt)}
-              </p>
-            </div>
-            <Badge
-              variant={request.status === "dead" ? "destructive" : "secondary"}
-            >
-              {request.status === "created"
-                ? "Created"
-                : request.status === "dead"
-                  ? "Failed"
-                  : "Queued"}
-            </Badge>
-            {request.errorMessage && request.status === "dead" ? (
-              <p className="max-w-sm text-xs text-destructive">
-                {request.errorMessage}
-              </p>
-            ) : null}
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }
 
