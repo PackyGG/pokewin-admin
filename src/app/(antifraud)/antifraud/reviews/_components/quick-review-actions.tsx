@@ -1,11 +1,12 @@
 "use client";
 
-import { useTransition } from "react";
+import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, LockKeyhole, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
+import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -119,6 +120,8 @@ function QuickActionButton({
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const [credential, setCredential] = useState("");
+  const sensitive = action === "ban" || action === "lock_withdrawals";
 
   function handleConfirm() {
     startTransition(async () => {
@@ -128,7 +131,9 @@ function QuickActionButton({
           action,
           expectedStatus: status,
           idempotencyKey: crypto.randomUUID(),
+          credential: sensitive ? credential : undefined,
         });
+        setCredential("");
         toast.success(success);
         router.refresh();
       } catch (error) {
@@ -159,13 +164,23 @@ function QuickActionButton({
         <AlertDialogHeader>
           <AlertDialogTitle>{title}</AlertDialogTitle>
           <AlertDialogDescription>
-            {description(account)} One confirmation is required. There is no
-            separate 2FA prompt.
+            {description(account)}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {sensitive && (
+          <StepUpField
+            value={credential}
+            onChange={setCredential}
+            disabled={pending}
+            label="Fresh TOTP or passkey"
+          />
+        )}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
-          <AlertDialogAction onClick={handleConfirm} disabled={pending}>
+          <AlertDialogAction
+            onClick={handleConfirm}
+            disabled={pending || (sensitive && !credential)}
+          >
             {confirm}
           </AlertDialogAction>
         </AlertDialogFooter>

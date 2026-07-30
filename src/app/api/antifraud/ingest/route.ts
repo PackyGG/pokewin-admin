@@ -9,7 +9,6 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
-import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
@@ -22,6 +21,10 @@ import {
   type AbstractCatchallContainmentTarget,
 } from "@/lib/antifraud/abstract-catchall-containment";
 import { isPostgresError } from "@/lib/postgres-errors";
+import {
+  appendAntifraudSecurityAudit,
+  antifraudErrorCode,
+} from "@/lib/antifraud/security-audit";
 
 /**
  * Durable inbound webhook from the separate antifraud backend service.
@@ -52,10 +55,10 @@ import { isPostgresError } from "@/lib/postgres-errors";
  * `risky_free_battle_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
- * locks crypto and item withdrawals in MAIN before the signal is acknowledged.
- * Abstract-confirmed catch-all email signals also apply the reversible
- * full-account lock.
- * Re-sent duplicates deliberately do NOT re-lock —
+ * applies deterministic MAIN containment before acknowledgement. Active
+ * blocked domains and Abstract-confirmed catch-all domains ban; suspicious
+ * clusters and free-battle hard signals lock withdrawals only.
+ * Re-sent duplicates deliberately do NOT re-apply containment —
  * staff may have reviewed and unlocked the account in between.
  */
 
@@ -67,14 +70,6 @@ const MAX_SKEW_MS = 5 * 60 * 1000;
 
 /** Cap on one delivery so a malformed batch can't fan out unbounded work. */
 const MAX_EVENTS_PER_DELIVERY = 50;
-
-/** Human-readable system actor stored by the backend KYC audit trail. */
-const AUTOMATED_EMAIL_KYC_ACTOR_ID =
-  "system:antifraud-email-containment";
-const AUTOMATED_ABSTRACT_EMAIL_KYC_ACTOR_ID =
-  "system:antifraud-abstract-email";
-const AUTOMATED_FREE_BATTLE_KYC_ACTOR_ID =
-  "system:antifraud-free-battle-containment";
 
 /**
  * Body size ceiling in BYTES. A too-large `Content-Length` is rejected before
@@ -172,10 +167,51 @@ export async function POST(request: Request): Promise<Response> {
   let reviewsOpened = 0;
   let locksSkipped = 0;
   for (const signal of signals) {
+    let correlationId: string;
+    try {
+      correlationId = await appendAntifraudSecurityAudit({
+        actorUsername: "system:antifraud-monitor",
+        actorRoles: ["system"],
+        sessionRef: `signed-ingest:${timestamp}`,
+        eventKind: "action",
+        action: `antifraud.automated:${signal.kind}`,
+        outcome: "allowed",
+        targetType: "user",
+        targetId: signal.userId ?? signal.id,
+        idempotencyKey: signal.id,
+        metadata: {
+          severity: signal.severity,
+          riskScore: signal.riskScore,
+          modelVersion:
+            typeof signal.payload?.modelVersion === "string"
+              ? signal.payload.modelVersion
+              : "unknown",
+        },
+      });
+    } catch {
+      return json({ error: "security_audit_unavailable" }, 503);
+    }
     let result: IngestResult;
     try {
       result = await ingestOne(signal);
     } catch (err) {
+      try {
+        await appendAntifraudSecurityAudit({
+          correlationId,
+          actorUsername: "system:antifraud-monitor",
+          actorRoles: ["system"],
+          sessionRef: `signed-ingest:${timestamp}`,
+          eventKind: "action",
+          action: `antifraud.automated:${signal.kind}`,
+          outcome: "failed",
+          targetType: "user",
+          targetId: signal.userId ?? signal.id,
+          idempotencyKey: signal.id,
+          reasonCode: antifraudErrorCode(err),
+        });
+      } catch {
+        return json({ error: "security_audit_unavailable" }, 503);
+      }
       if (isPostgresError(err, "42P01")) {
         return json({ error: "not_provisioned" }, 503);
       }
@@ -188,11 +224,40 @@ export async function POST(request: Request): Promise<Response> {
 
     if (result.outcome === "duplicate") {
       duplicates += 1;
+      await appendAntifraudSecurityAudit({
+        correlationId,
+        actorUsername: "system:antifraud-monitor",
+        actorRoles: ["system"],
+        sessionRef: `signed-ingest:${timestamp}`,
+        eventKind: "action",
+        action: `antifraud.automated:${signal.kind}`,
+        outcome: "succeeded",
+        targetType: "user",
+        targetId: signal.userId ?? signal.id,
+        idempotencyKey: signal.id,
+        metadata: { duplicate: true },
+      });
       continue;
     }
     accepted += 1;
     if (result.outcome === "review_opened") reviewsOpened += 1;
     if (result.lockSkipped) locksSkipped += 1;
+    await appendAntifraudSecurityAudit({
+      correlationId,
+      actorUsername: "system:antifraud-monitor",
+      actorRoles: ["system"],
+      sessionRef: `signed-ingest:${timestamp}`,
+      eventKind: "action",
+      action: `antifraud.automated:${signal.kind}`,
+      outcome: "succeeded",
+      targetType: "user",
+      targetId: signal.userId ?? signal.id,
+      idempotencyKey: signal.id,
+      metadata: {
+        result: result.outcome,
+        lockSkipped: result.lockSkipped,
+      },
+    });
 
   }
 
@@ -215,10 +280,10 @@ function blacklistDomainFromSignal(
 }
 
 /**
- * Apply the MAIN-DB containment lock for one `fiat_blacklisted_email_domain`
- * signal. Blacklisted-domain and Gmail dot-fragment matches also enter the
- * backend-owned KYC state machine. Coordinated deposit-cluster signals keep
- * their existing withdrawal-only containment.
+ * Apply deterministic MAIN containment for one
+ * `fiat_blacklisted_email_domain` signal. Active blocked domains ban.
+ * Gmail dot-fragment and coordinated cluster signals lock withdrawals only.
+ * Automated signals never mutate KYC state.
  *
  * Returns `"skipped"` for PERMANENT conditions (malformed containment fields,
  * account deleted since the signal was produced) instead of throwing: a throw
@@ -229,7 +294,7 @@ function blacklistDomainFromSignal(
  */
 async function containBlacklistedEmailDomainAccount(
   signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
+): Promise<"banned" | "locked" | "skipped"> {
   const userId = signal.userId;
   const domain = blacklistDomainFromSignal(signal);
   if (!userId || !domain || signal.riskScore !== 100) {
@@ -247,52 +312,78 @@ async function containBlacklistedEmailDomainAccount(
     signal.payload?.emailRiskType === "gmail_dot_fragmentation";
   const clusterMatch =
     signal.payload?.emailRiskType === "suspicious_deposit_cluster";
+  const blockedDomainMatch =
+    signal.payload?.emailRiskType === "blacklisted_domain";
   const reason =
     (clusterMatch
       ? `Automatic fraud lock: ${source} belonged to a suspicious coordinated deposit cluster (${domain})`
       : patternMatch
       ? `Automatic fraud lock: ${source} used a suspicious dot-fragmented Gmail address (${domain})`
-      : `Automatic fraud lock: ${source} used blacklisted email domain ${domain}`)
+      : `Automatic fraud ban: ${source} used active blocked email domain ${domain}`)
       .slice(0, 500);
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id,
-      user_id,
-      locked_withdrawals_crypto,
-      locked_withdrawals_items,
-      locked_withdrawals_at,
-      locked_withdrawals_by,
-      locked_withdrawals_reason,
-      created_at,
-      updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()},
-      u.id,
-      ARRAY['all']::text[],
-      TRUE,
-      NOW(),
-      NULL,
-      ${reason},
-      NOW(),
-      NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  if (locked.rows.length === 0) {
+  const contained = await db.transaction(async (tx) => {
+    const locked = await tx.execute<{ user_id: string }>(sql`
+      INSERT INTO user_feature_locks (
+        id,
+        user_id,
+        locked_withdrawals_crypto,
+        locked_withdrawals_items,
+        locked_withdrawals_at,
+        locked_withdrawals_by,
+        locked_withdrawals_reason,
+        created_at,
+        updated_at
+      )
+      SELECT
+        ${crypto.randomUUID()},
+        u.id,
+        ARRAY['all']::text[],
+        TRUE,
+        NOW(),
+        NULL,
+        ${reason},
+        NOW(),
+        NOW()
+      FROM "user" u
+      WHERE u.id = ${userId}
+      ON CONFLICT (user_id) DO UPDATE SET
+        locked_withdrawals_crypto = ARRAY['all']::text[],
+        locked_withdrawals_items = TRUE,
+        locked_withdrawals_at = COALESCE(
+          user_feature_locks.locked_withdrawals_at,
+          EXCLUDED.locked_withdrawals_at
+        ),
+        locked_withdrawals_reason = COALESCE(
+          user_feature_locks.locked_withdrawals_reason,
+          EXCLUDED.locked_withdrawals_reason
+        ),
+        updated_at = NOW()
+      RETURNING user_id
+    `);
+    if (locked.rows.length === 0 || !blockedDomainMatch) {
+      return locked.rows.length > 0;
+    }
+
+    await tx.execute(sql`
+      UPDATE "user"
+      SET
+        is_banned = TRUE,
+        banned_reason = CASE
+          WHEN is_banned THEN COALESCE(banned_reason, ${reason})
+          ELSE ${reason}
+        END,
+        banned_at = CASE
+          WHEN is_banned THEN COALESCE(banned_at, NOW())
+          ELSE NOW()
+        END,
+        banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
+        updated_at = NOW()
+      WHERE id = ${userId}
+    `);
+    await tx.execute(sql`DELETE FROM session WHERE "userId" = ${userId}`);
+    return true;
+  });
+  if (!contained) {
     console.error(
       "[antifraud-ingest] blacklisted email-domain account no longer exists, skipping containment lock",
       { externalId: signal.id || null, userId },
@@ -300,30 +391,12 @@ async function containBlacklistedEmailDomainAccount(
     return "skipped";
   }
 
-  const emailRiskType = signal.payload?.emailRiskType;
-  const requiresKyc =
-    emailRiskType === "blacklisted_domain" ||
-    emailRiskType === "gmail_dot_fragmentation";
-  if (requiresKyc) {
-    const current = await getUserKyc(userId);
-    if (!current.kycRequired) {
-      await requireUserKyc({
-        userId,
-        adminId: AUTOMATED_EMAIL_KYC_ACTOR_ID,
-        reason: reason.replace(
-          "Automatic fraud lock:",
-          "Automatic fraud KYC:",
-        ),
-      });
-    }
-  }
-
-  return "locked";
+  return blockedDomainMatch ? "banned" : "locked";
 }
 
 async function containAbstractCatchallAccount(
   signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
+): Promise<"banned" | "skipped"> {
   if (!abstractCatchallContainmentTarget(signal)) {
     console.error(
       "[antifraud-ingest] skipping invalid Abstract catch-all containment signal",
@@ -332,84 +405,39 @@ async function containAbstractCatchallAccount(
     return "skipped";
   }
   return applyAbstractCatchallContainment(signal, {
-    lockAccount: async (
+    banAccount: async (
       target: AbstractCatchallContainmentTarget,
     ): Promise<boolean> => {
       const db = getProdPrimaryDrizzleDb();
-      const locked = await db.execute<{ user_id: string }>(sql`
-        WITH locked_account AS (
+      return db.transaction(async (tx) => {
+        const banned = await tx.execute<{ id: string }>(sql`
           UPDATE "user"
           SET
-            is_locked = TRUE,
-            locked_reason = CASE
-              WHEN is_locked THEN COALESCE(locked_reason, ${target.reason})
+            is_banned = TRUE,
+            banned_reason = CASE
+              WHEN is_banned THEN COALESCE(banned_reason, ${target.reason})
               ELSE ${target.reason}
             END,
-            locked_at = CASE
-              WHEN is_locked THEN COALESCE(locked_at, NOW())
+            banned_at = CASE
+              WHEN is_banned THEN COALESCE(banned_at, NOW())
               ELSE NOW()
             END,
-            locked_by = CASE WHEN is_locked THEN locked_by ELSE NULL END,
-            locked_until = CASE WHEN is_locked THEN locked_until ELSE NULL END,
+            banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
             updated_at = NOW()
           WHERE id = ${target.userId}
           RETURNING id
-        )
-        INSERT INTO user_feature_locks (
-          id,
-          user_id,
-          locked_withdrawals_crypto,
-          locked_withdrawals_items,
-          locked_withdrawals_at,
-          locked_withdrawals_by,
-          locked_withdrawals_reason,
-          created_at,
-          updated_at
-        )
-        SELECT
-          ${crypto.randomUUID()},
-          u.id,
-          ARRAY['all']::text[],
-          TRUE,
-          NOW(),
-          NULL,
-          ${target.reason},
-          NOW(),
-          NOW()
-        FROM locked_account u
-        ON CONFLICT (user_id) DO UPDATE SET
-          locked_withdrawals_crypto = ARRAY['all']::text[],
-          locked_withdrawals_items = TRUE,
-          locked_withdrawals_at = COALESCE(
-            user_feature_locks.locked_withdrawals_at,
-            EXCLUDED.locked_withdrawals_at
-          ),
-          locked_withdrawals_reason = COALESCE(
-            user_feature_locks.locked_withdrawals_reason,
-            EXCLUDED.locked_withdrawals_reason
-          ),
-          updated_at = NOW()
-        RETURNING user_id
-      `);
-      if (locked.rows.length > 0) return true;
-      console.error(
-        "[antifraud-ingest] Abstract catch-all account no longer exists, skipping containment",
-        { externalId: signal.id || null, userId: target.userId },
-      );
-      return false;
-    },
-    isKycRequired: async (userId: string): Promise<boolean> =>
-      (await getUserKyc(userId)).kycRequired,
-    requireKyc: async (
-      target: AbstractCatchallContainmentTarget,
-    ): Promise<void> => {
-      await requireUserKyc({
-        userId: target.userId,
-        adminId: AUTOMATED_ABSTRACT_EMAIL_KYC_ACTOR_ID,
-        reason: target.reason.replace(
-          "Automatic fraud lock:",
-          "Automatic fraud KYC:",
-        ),
+        `);
+        if (banned.rows.length === 0) {
+          console.error(
+            "[antifraud-ingest] Abstract catch-all account no longer exists, skipping containment",
+            { externalId: signal.id || null, userId: target.userId },
+          );
+          return false;
+        }
+        await tx.execute(
+          sql`DELETE FROM session WHERE "userId" = ${target.userId}`,
+        );
+        return true;
       });
     },
   });
@@ -425,8 +453,9 @@ function containmentCount(value: unknown): number | null {
 }
 
 /**
- * Require KYC and lock withdrawals after at least two distinct free/sponsored
- * battles connect a participant to one or more fraud-flagged creators.
+ * Lock withdrawals after at least two distinct free/sponsored battles connect
+ * a participant to one or more fraud-flagged creators. Automated containment
+ * never mutates KYC state.
  */
 async function containRiskyFreeBattleAccount(
   signal: AntifraudSignalEvent,
@@ -510,23 +539,12 @@ async function containRiskyFreeBattleAccount(
     return "skipped";
   }
 
-  const current = await getUserKyc(userId);
-  if (!current.kycRequired) {
-    await requireUserKyc({
-      userId,
-      adminId: AUTOMATED_FREE_BATTLE_KYC_ACTOR_ID,
-      reason: reason.replace(
-        "Automatic fraud lock:",
-        "Automatic fraud KYC:",
-      ),
-    });
-  }
   return "locked";
 }
 
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
-  /** A containment lock was permanently un-appliable and acked instead of retried. */
+  /** Containment was permanently un-appliable and acked instead of retried. */
   lockSkipped: boolean;
 };
 
@@ -582,17 +600,20 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
 
   let lockSkipped = false;
   if (
-    signal.kind === "fiat_blacklisted_email_domain" ||
-    signal.kind === "abstract_email_catchall" ||
-    signal.kind === "risky_free_battle_containment"
+    signal.payload?.reviewOnly !== true &&
+    (
+      signal.kind === "fiat_blacklisted_email_domain" ||
+      signal.kind === "abstract_email_catchall" ||
+      signal.kind === "risky_free_battle_containment"
+    )
   ) {
     // Containment lock AFTER the dedupe check, inside the transaction:
     //  • a duplicate delivery returned above, so a re-sent signal can never
-    //    re-lock an account staff already reviewed and unlocked;
+    //    re-apply containment to an account staff already reviewed;
     //  • a transient lock failure throws, rolling back the stored signal, so
     //    the backend's retry re-attempts store AND lock together.
     // Serialize distinct events for the same account so concurrent matches
-    // cannot both observe KYC as clear and open two verification cycles.
+    // cannot race containment state.
     await tx.execute(sql`
       SELECT pg_advisory_xact_lock(
         hashtextextended(${"antifraud-containment:" + (signal.userId ?? "")}, 0)

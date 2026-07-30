@@ -44,6 +44,7 @@ test("KYC mutations are manager-only and preserve the verification-cycle guard",
   const actions = source("src/app/(antifraud)/antifraud/kyc/actions.ts");
 
   assert.match(actions, /requireAntifraudManager\(/);
+  assert.match(actions, /isLockedAccountEligibleForKyc\(userId\)/);
   assert.match(actions, /requireUserKyc\(/);
   assert.match(actions, /reviewUserKyc\(/);
   assert.match(actions, /expectedCycle:\s*parsed\.data\.expectedCycle/);

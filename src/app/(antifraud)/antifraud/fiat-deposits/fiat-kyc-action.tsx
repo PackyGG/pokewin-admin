@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { requireFiatDepositKyc } from "./actions";
+import { StepUpField } from "@/components/step-up-field";
 
 export function FiatKycAction({
   depositIntentId,
@@ -34,6 +35,7 @@ export function FiatKycAction({
   const [required, setRequired] = useState(currentlyRequired);
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const [credential, setCredential] = useState("");
   const isRequired = required || currentlyRequired;
 
   if (isRequired) {
@@ -51,6 +53,8 @@ export function FiatKycAction({
         const result = await requireFiatDepositKyc({
           depositIntentId,
           userId,
+          credential,
+          idempotencyKey: crypto.randomUUID(),
         });
         if (!result.success) {
           toast.error(result.error);
@@ -61,7 +65,7 @@ export function FiatKycAction({
         if (result.alreadyRequired) {
           toast.success("KYC was already required for this account.");
         } else if (result.readbackConfirmed) {
-          toast.success("KYC is now required and withdrawals are locked.");
+          toast.success("KYC is now required for this locked account.");
         } else {
           toast.warning(
             "KYC was required, but the live status is still refreshing.",
@@ -88,15 +92,21 @@ export function FiatKycAction({
         <AlertDialogHeader>
           <AlertDialogTitle>Require KYC for {accountLabel}?</AlertDialogTitle>
           <AlertDialogDescription>
-            This immediately starts a KYC cycle and locks withdrawals until an
-            owner or admin reviews it. A Sumsub result never unlocks the
-            account automatically.
+            This is available only while balance and item withdrawals are
+            already locked. A Sumsub result never unlocks the account
+            automatically.
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <StepUpField
+          value={credential}
+          onChange={setCredential}
+          disabled={isPending}
+          label="Fresh TOTP or passkey"
+        />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
-            disabled={isPending}
+            disabled={isPending || !credential}
             onClick={(event) => {
               event.preventDefault();
               requireKyc();

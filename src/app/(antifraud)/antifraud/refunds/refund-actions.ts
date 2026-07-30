@@ -612,7 +612,9 @@ export async function createRefundBatch(input: {
   confirmation: string;
   reason: string;
 }): Promise<ServerActionResult<RefundBatchProgress>> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudManager(
+    "Only owners and admins can execute refunds.",
+  );
   try {
     if (input.confirmation !== "REFUND") {
       throw new Error("Type REFUND exactly to confirm.");
@@ -760,7 +762,9 @@ async function finalizeBatch(
 export async function processNextRefund(
   batchId: string,
 ): Promise<ServerActionResult<RefundBatchProgress>> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudManager(
+    "Only owners and admins can execute refunds.",
+  );
   try {
     if (!/^[0-9a-f-]{36}$/i.test(batchId)) throw new Error("Invalid batch.");
 
@@ -890,7 +894,9 @@ export async function recoverRefundedBatch(input: {
   batchId: string;
   credential: string;
 }): Promise<ServerActionResult<RefundRecoveryResult>> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudManager(
+    "Only owners and admins can recover refunded accounts.",
+  );
   try {
     if (!/^[0-9a-f-]{36}$/i.test(input.batchId)) {
       throw new Error("Invalid batch.");
@@ -911,7 +917,9 @@ export async function recoverRefundedBatch(input: {
 export async function recoverAllRefundedAccounts(input: {
   credential: string;
 }): Promise<ServerActionResult<RefundRecoveryResult>> {
-  const session = await requireAntifraudManager();
+  const session = await requireAntifraudManager(
+    "Only owners and admins can recover refunded accounts.",
+  );
   try {
     await require2FA(session.userId, input.credential);
     const targets = await loadAllRefundRecoveryTargets();
@@ -931,7 +939,9 @@ export async function recoverAllRefundedAccounts(input: {
 export async function getRefundBatchProgress(
   batchId: string,
 ): Promise<RefundBatchProgress> {
-  await requireAntifraudManager();
+  await requireAntifraudManager(
+    "Only owners and admins can view refund progress.",
+  );
   if (!/^[0-9a-f-]{36}$/i.test(batchId)) throw new Error("Invalid batch.");
   const result = await adminDrizzle.execute<{
     pending: number;

@@ -9,10 +9,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import type { FiatEmailDomainRule } from "@/lib/antifraud/fiat-email-domains-api";
 import { formatRelative } from "@/lib/utils/format";
-import { addFiatEmailDomain, setFiatEmailDomainState } from "./actions";
+import {
+  addFiatEmailDomain,
+  setFiatEmailDomainState,
+} from "./actions";
 
 export function EmailBlacklistClient({
   initialRules,
@@ -23,6 +25,7 @@ export function EmailBlacklistClient({
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
   const [reason, setReason] = useState("");
+  const [expiresAt, setExpiresAt] = useState("");
   const [isPending, startTransition] = useTransition();
   const isCheckingHistory = rules.some(
     (rule) => rule.enabled && !rule.backfillComplete,
@@ -41,14 +44,13 @@ export function EmailBlacklistClient({
       toast.error("Enter an email domain.");
       return;
     }
-    const submittedReason = reason.trim();
-    if (submittedReason.length < 4) {
-      toast.error("Enter a reason with at least 4 characters.");
+    if (reason.trim().length < 4) {
+      toast.error("Add an internal reason.");
       return;
     }
     if (
       !window.confirm(
-        `Block @${submittedDomain}? This will affect matching accounts and will be audited.`,
+        "Add this domain to the Fraud blacklist? Existing matches will not be mass-locked.",
       )
     ) {
       return;
@@ -57,7 +59,11 @@ export function EmailBlacklistClient({
       try {
         const saved = await addFiatEmailDomain({
           domain: submittedDomain,
-          reason: submittedReason,
+          reason: reason.trim(),
+          expiresAt: expiresAt
+            ? new Date(expiresAt).toISOString()
+            : null,
+          confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) => [
@@ -66,27 +72,29 @@ export function EmailBlacklistClient({
         ]);
         setDomain("");
         setReason("");
+        setExpiresAt("");
         toast.success(`${saved.domain} is now blocked.`);
         router.refresh();
       } catch (error) {
         toast.error(
-          error instanceof Error
-            ? error.message
-            : "The domain could not be added.",
+          error instanceof Error ? error.message : "The domain could not be added.",
         );
       }
     });
   }
 
   function toggleRule(rule: FiatEmailDomainRule) {
-    const submittedReason = reason.trim();
-    if (submittedReason.length < 4) {
-      toast.error("Enter a reason with at least 4 characters.");
-      return;
-    }
+    const updateReason = window.prompt(
+      rule.enabled
+        ? "Why are you disabling this rule?"
+        : "Why are you reactivating this rule?",
+    );
+    if (!updateReason || updateReason.trim().length < 4) return;
     if (
       !window.confirm(
-        `${rule.enabled ? "Disable" : "Enable"} @${rule.domain}? This change will be audited.`,
+        rule.enabled
+          ? `Disable @${rule.domain}?`
+          : `Reactivate @${rule.domain}?`,
       )
     ) {
       return;
@@ -96,7 +104,9 @@ export function EmailBlacklistClient({
         const saved = await setFiatEmailDomainState({
           id: rule.id,
           enabled: !rule.enabled,
-          reason: submittedReason,
+          reason: updateReason.trim(),
+          expiresAt: rule.expiresAt,
+          confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
         setRules((current) =>
@@ -108,7 +118,6 @@ export function EmailBlacklistClient({
             : `${saved.domain} is disabled.`,
         );
         router.refresh();
-        setReason("");
       } catch (error) {
         toast.error(
           error instanceof Error
@@ -132,8 +141,8 @@ export function EmailBlacklistClient({
           </h2>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Exact domain matches from new signups and Whop checkout emails
-            receive an automatic crypto and item withdrawal lock and must
-            complete KYC review.
+            are automatically banned and sent to staff review. Existing
+            matching accounts are never mass-actioned.
           </p>
         </div>
         <div className="space-y-2">
@@ -149,17 +158,27 @@ export function EmailBlacklistClient({
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="email-domain-reason">Change reason</Label>
-          <Textarea
+          <Label htmlFor="email-domain-reason">Internal reason</Label>
+          <Input
             id="email-domain-reason"
             value={reason}
             onChange={(event) => setReason(event.target.value)}
-            placeholder="Why this domain should be blocked or changed"
+            placeholder="Evidence supporting this restriction"
             maxLength={500}
             disabled={isPending}
           />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="email-domain-expiry">Optional expiry</Label>
+          <Input
+            id="email-domain-expiry"
+            type="datetime-local"
+            value={expiresAt}
+            onChange={(event) => setExpiresAt(event.target.value)}
+            disabled={isPending}
+          />
           <p className="text-xs text-muted-foreground">
-            Required for adds, enables, and disables. Saved in the audit log.
+            Blank keeps the rule permanent.
           </p>
         </div>
         <Button type="submit" className="w-full" disabled={isPending}>
@@ -215,8 +234,7 @@ export function EmailBlacklistClient({
                     )}
                   </div>
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    {rule.affectedUsers} affected users · {rule.matchCount}{" "}
-                    matches
+                    {rule.affectedUsers} affected users · {rule.matchCount} matches
                     {rule.pendingLocks > 0
                       ? ` · ${rule.pendingLocks} locks pending`
                       : ""}{" "}

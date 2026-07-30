@@ -14,6 +14,8 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 const createSchema = z.object({
   domain: z.string().trim().min(1).max(253),
   reason: z.string().trim().min(4).max(500),
+  expiresAt: z.string().datetime().nullable(),
+  confirmed: z.literal(true),
   idempotencyKey: z.string().uuid(),
 });
 
@@ -21,6 +23,8 @@ const updateSchema = z.object({
   id: z.string().uuid(),
   enabled: z.boolean(),
   reason: z.string().trim().min(4).max(500),
+  expiresAt: z.string().datetime().nullable(),
+  confirmed: z.literal(true),
   idempotencyKey: z.string().uuid(),
 });
 
@@ -38,6 +42,8 @@ export async function addFiatEmailDomain(
 
   const saved = await createFiatEmailDomain({
     domain: parsed.data.domain,
+    reason: parsed.data.reason,
+    expiresAt: parsed.data.expiresAt,
     idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
@@ -49,8 +55,9 @@ export async function addFiatEmailDomain(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
-        reason: parsed.data.reason,
         idempotencyKey: parsed.data.idempotencyKey,
+        reason: parsed.data.reason,
+        expiresAt: parsed.data.expiresAt,
       },
     });
   }
@@ -68,6 +75,8 @@ export async function setFiatEmailDomainState(
   const saved = await updateFiatEmailDomain({
     id: parsed.data.id,
     enabled: parsed.data.enabled,
+    reason: parsed.data.reason,
+    expiresAt: parsed.data.expiresAt,
     idempotencyKey: parsed.data.idempotencyKey,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
@@ -81,8 +90,9 @@ export async function setFiatEmailDomainState(
       metadata: {
         ruleId: saved.id,
         domain: saved.domain,
-        reason: parsed.data.reason,
         idempotencyKey: parsed.data.idempotencyKey,
+        reason: parsed.data.reason,
+        expiresAt: parsed.data.expiresAt,
       },
     });
   }

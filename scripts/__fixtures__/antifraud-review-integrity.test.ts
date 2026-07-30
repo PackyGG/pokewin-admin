@@ -138,7 +138,7 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
   assert.match(body, /update\(antifraud_signals\)[\s\S]*?review_id: reviewId/);
 });
 
-test("free-battle containment requires two battles and applies KYC plus withdrawal locks", () => {
+test("free-battle containment requires two battles and locks withdrawals without automatic KYC", () => {
   const source = read("src/app/api/antifraud/ingest/route.ts");
   const containmentStart = source.indexOf(
     "async function containRiskyFreeBattleAccount",
@@ -156,8 +156,7 @@ test("free-battle containment requires two battles and applies KYC plus withdraw
   assert.match(containment, /INSERT INTO user_feature_locks/);
   assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]/);
   assert.match(containment, /locked_withdrawals_items = TRUE/);
-  assert.match(containment, /requireUserKyc/);
-  assert.match(source, /system:antifraud-free-battle-containment/);
+  assert.doesNotMatch(containment, /requireUserKyc|getUserKyc/);
   assert.match(
     ingest,
     /if \(!stored\) return[\s\S]*?containRiskyFreeBattleAccount\(signal\)/,
@@ -165,7 +164,7 @@ test("free-battle containment requires two battles and applies KYC plus withdraw
   );
 });
 
-test("Abstract catch-all signup containment requires signed provider evidence", () => {
+test("Abstract catch-all signup containment bans on signed provider evidence without KYC", () => {
   const source = read("src/app/api/antifraud/ingest/route.ts");
   const helper = read(
     "src/lib/antifraud/abstract-catchall-containment.ts",
@@ -185,14 +184,10 @@ test("Abstract catch-all signup containment requires signed provider evidence", 
   assert.match(helper, /containmentRequired !== true/);
   assert.match(helper, /provider !== "abstract_email"/);
   assert.match(containment, /UPDATE "user"/);
-  assert.match(containment, /is_locked = TRUE/);
-  assert.match(containment, /WHEN is_locked THEN locked_by ELSE NULL/);
-  assert.match(containment, /WHEN is_locked THEN locked_until ELSE NULL/);
-  assert.match(containment, /INSERT INTO user_feature_locks/);
-  assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]/);
-  assert.match(containment, /locked_withdrawals_items = TRUE/);
-  assert.match(containment, /requireUserKyc/);
-  assert.match(source, /system:antifraud-abstract-email/);
+  assert.match(containment, /is_banned = TRUE/);
+  assert.match(containment, /WHEN is_banned THEN banned_by ELSE NULL/);
+  assert.match(containment, /DELETE FROM session/);
+  assert.doesNotMatch(containment, /is_locked = TRUE|requireUserKyc|getUserKyc/);
   assert.match(
     ingest,
     /if \(!stored\) return[\s\S]*?containAbstractCatchallAccount\(signal\)/,

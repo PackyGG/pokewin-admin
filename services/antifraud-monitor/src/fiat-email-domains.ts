@@ -638,7 +638,9 @@ export class FiatEmailDomainGuard {
         SELECT EXISTS (
           SELECT 1
           FROM fiat_email_domain_blacklist
-          WHERE enabled AND domain = $1
+          WHERE enabled
+            AND (expires_at IS NULL OR expires_at > now())
+            AND domain = $1
         ) AS active
       `,
       [domain],
@@ -687,7 +689,9 @@ export class FiatEmailDomainGuard {
 
   private async activeDomains(): Promise<Set<string>> {
     const result = await this.db.antifraud.query<{ domain: string }>(
-      "SELECT domain FROM fiat_email_domain_blacklist WHERE enabled",
+      `SELECT domain
+       FROM fiat_email_domain_blacklist
+       WHERE enabled AND (expires_at IS NULL OR expires_at > now())`,
     );
     return new Set(result.rows.map((row) => row.domain));
   }
@@ -984,7 +988,9 @@ export class FiatEmailDomainGuard {
       `
         SELECT id, domain, backfill_received_at, backfill_source_id
         FROM fiat_email_domain_blacklist
-        WHERE enabled AND backfill_completed_at IS NULL
+        WHERE enabled
+          AND (expires_at IS NULL OR expires_at > now())
+          AND backfill_completed_at IS NULL
         ORDER BY created_at
         LIMIT 1
       `,
@@ -1015,6 +1021,7 @@ export class FiatEmailDomainGuard {
               domain: current.domain,
               reason: `Email domain ${current.domain} is blacklisted`,
             },
+            { reviewOnly: true },
           );
         }
       }
@@ -1052,14 +1059,19 @@ export class FiatEmailDomainGuard {
     client: pg.PoolClient,
     event: EmailDomainMatchEvent,
     risk: CheckoutEmailRisk,
+    options: { reviewOnly?: boolean } = {},
   ): Promise<boolean> {
+    const reviewOnly = options.reviewOnly === true;
     const inserted = await client.query<{ id: string }>(
       `
         INSERT INTO fiat_email_domain_matches (
           source_event_id, match_source, provider_event_id, deposit_intent_id,
           provider_payment_id, user_id, username, checkout_email, domain,
-          match_type, occurred_at
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+          match_type, occurred_at, lock_delivered_at
+        ) VALUES (
+          $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
+          CASE WHEN $12::boolean THEN now() ELSE NULL END
+        )
         ON CONFLICT (source_event_id) DO NOTHING
         RETURNING id
       `,
@@ -1075,6 +1087,7 @@ export class FiatEmailDomainGuard {
         risk.domain,
         risk.type,
         event.occurred_at,
+        reviewOnly,
       ],
     );
     if (inserted.rows.length === 0) return false;
@@ -1096,11 +1109,13 @@ export class FiatEmailDomainGuard {
       : isSignup
       ? "Blacklisted signup email"
       : "Blacklisted Whop checkout email";
-    const detail = clusterMatch
+    const detail = reviewOnly
+      ? `${isSignup ? "Existing signup" : "Existing Whop checkout"} matches newly blocked email domain ${risk.domain}. Staff review is required; no automatic account action was taken.`
+      : clusterMatch
       ? "Whop checkout belongs to a same-amount cluster with distinct accounts, payment identities, and unusual Gmail aliases. Crypto and item withdrawals must be locked automatically."
       : patternMatch
-      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked and KYC required automatically.`
-      : `${isSignup ? "Signup" : "Whop checkout"} used blacklisted email domain ${risk.domain}. Crypto and item withdrawals must be locked and KYC required automatically.`;
+      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked automatically for staff review.`
+      : `${isSignup ? "Signup" : "Whop checkout"} used active blocked email domain ${risk.domain}. The account must be banned automatically and reviewed by staff.`;
     const alertSource = isSignup ? "signup" : "payment_webhook";
 
     await client.query(
@@ -1138,9 +1153,10 @@ export class FiatEmailDomainGuard {
             'depositIntentId', $12::text,
             'providerPaymentId', $13::text,
             'providerEventId', $14::text,
-            'paymentMethodType', $15::text
+            'paymentMethodType', $15::text,
+            'reviewOnly', $16::boolean
           ),
-          $16
+          $17
         )
         ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
         DO NOTHING
@@ -1161,6 +1177,7 @@ export class FiatEmailDomainGuard {
         event.provider_payment_id,
         event.provider_event_id,
         event.payment_method_type,
+        reviewOnly,
         event.occurred_at,
       ],
     );
@@ -1185,9 +1202,16 @@ export class FiatEmailDomainGuard {
               'email_risk_reason', $12::text,
               'payment_method_type', $13::text,
               'risk_score', 100,
-              'status', 'withdrawals_locked'
+              'status', CASE
+                WHEN $14::boolean THEN 'review_only'
+                ELSE 'containment_required'
+              END
             ),
-            $14, 'infinity'::timestamptz
+            $15,
+            CASE
+              WHEN $14::boolean THEN now()
+              ELSE 'infinity'::timestamptz
+            END
           )
           ON CONFLICT (source_kind, source_id) DO NOTHING
         `,
@@ -1205,6 +1229,7 @@ export class FiatEmailDomainGuard {
           risk.type,
           risk.reason,
           event.payment_method_type,
+          reviewOnly,
           event.occurred_at,
         ],
       );

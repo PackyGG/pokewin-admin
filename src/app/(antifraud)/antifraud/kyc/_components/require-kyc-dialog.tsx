@@ -19,6 +19,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { requireAccountKyc } from "../actions";
+import { StepUpField } from "@/components/step-up-field";
 
 export function RequireKycDialog({
   account,
@@ -37,6 +38,7 @@ export function RequireKycDialog({
   const [accountQuery, setAccountQuery] = useState(account ?? "");
   const [reason, setReason] = useState("");
   const [levelName, setLevelName] = useState("");
+  const [credential, setCredential] = useState("");
   const [isPending, startTransition] = useTransition();
   const isRerequire = Boolean(account);
 
@@ -44,6 +46,7 @@ export function RequireKycDialog({
     setAccountQuery(account ?? "");
     setReason("");
     setLevelName("");
+    setCredential("");
   }
 
   function handleSubmit(event: React.FormEvent<HTMLFormElement>): void {
@@ -53,6 +56,8 @@ export function RequireKycDialog({
         account: accountQuery,
         reason,
         levelName: levelName || undefined,
+        credential,
+        idempotencyKey: crypto.randomUUID(),
       });
       if (!result.success) {
         toast.error(result.error);
@@ -100,9 +105,9 @@ export function RequireKycDialog({
               {isRerequire ? "Require a new KYC cycle" : "Require KYC"}
             </DialogTitle>
             <DialogDescription>
-              This locks withdrawals until an owner or admin reviews the
-              current verification cycle. Sumsub results never unlock an
-              account automatically.
+              This is available only while balance and item withdrawals are
+              already locked. Sumsub results never unlock an account
+              automatically.
             </DialogDescription>
           </DialogHeader>
 
@@ -122,6 +127,12 @@ export function RequireKycDialog({
                 <p className="text-xs text-muted-foreground">{accountLabel}</p>
               )}
             </div>
+            <StepUpField
+              value={credential}
+              onChange={setCredential}
+              disabled={isPending}
+              label="Fresh TOTP or passkey"
+            />
 
             <div className="space-y-1.5">
               <Label htmlFor={reasonId}>Internal reason</Label>
@@ -163,7 +174,7 @@ export function RequireKycDialog({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isPending}>
+            <Button type="submit" disabled={isPending || !credential}>
               {isPending ? "Applying…" : "Require verification"}
             </Button>
           </DialogFooter>

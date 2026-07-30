@@ -14,6 +14,7 @@ import {
   staff_profiles,
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
@@ -491,6 +492,7 @@ const quickAccountActionSchema = z.object({
   action: z.enum(["fine", "ban", "lock_withdrawals"]),
   expectedStatus: z.enum(REVIEW_STATUSES),
   idempotencyKey: z.string().uuid("Invalid idempotency key"),
+  credential: z.string().trim().max(4_096).optional(),
 });
 
 export type QuickReviewAccountAction =
@@ -535,6 +537,8 @@ export async function runQuickReviewAccountAction(input: unknown): Promise<void>
     if (!result.ok) throw new Error(result.message);
     return;
   }
+
+  await require2FA(session.userId, parsed.data.credential);
 
   if (action === "ban") {
     await requireCapability(session, "__can_ban_users", "ban users");

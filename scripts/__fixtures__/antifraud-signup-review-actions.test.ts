@@ -55,7 +55,7 @@ test("Fraud review surfaces do not expose escalation controls", async () => {
   }
 });
 
-test("Account Review exposes confirmed no-2FA quick actions", async () => {
+test("Account Review requires fresh step-up for ban and withdrawal locks", async () => {
   const component = await readFile(
     new URL(
       "../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
@@ -75,9 +75,10 @@ test("Account Review exposes confirmed no-2FA quick actions", async () => {
     assert.match(component, new RegExp(`action: "${action}"`));
   }
   assert.match(component, /AlertDialog/);
-  assert.match(component, /There is no\s+separate 2FA prompt/);
+  assert.match(component, /StepUpField/);
+  assert.match(component, /sensitive = action === "ban"/);
   assert.match(actions, /runQuickReviewAccountAction/);
   assert.match(actions, /__can_ban_users/);
   assert.match(actions, /__can_toggle_feature_locks/);
-  assert.doesNotMatch(actions, /require2FA/);
+  assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
 });

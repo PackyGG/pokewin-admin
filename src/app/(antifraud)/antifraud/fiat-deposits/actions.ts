@@ -10,11 +10,13 @@ import {
 } from "@/lib/antifraud/fiat-deposits-api";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
+import { isLockedAccountEligibleForKyc } from "@/lib/antifraud/kyc-eligibility";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import {
   requireAntifraudAccess,
   requireAntifraudManager,
 } from "@/lib/require-antifraud-access";
+import { require2FA } from "@/lib/require-2fa";
 
 const schema = z
   .object({
@@ -42,6 +44,8 @@ const schema = z
 const requireKycSchema = z.object({
   depositIntentId: z.string().uuid(),
   userId: z.string().trim().min(1).max(128),
+  credential: z.string().trim().min(1).max(4_096),
+  idempotencyKey: z.string().uuid(),
 });
 
 type RequireFiatKycResult =
@@ -93,6 +97,7 @@ export async function requireFiatDepositKyc(
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0].message };
   }
+  await require2FA(session.userId, parsed.data.credential);
 
   const assessment = await getFiatAssessment(parsed.data.depositIntentId);
   if (
@@ -120,6 +125,13 @@ export async function requireFiatDepositKyc(
     }
   } catch (error) {
     return { success: false, error: friendlyKycError(error) };
+  }
+  if (!(await isLockedAccountEligibleForKyc(parsed.data.userId))) {
+    return {
+      success: false,
+      error:
+        "KYC can be required only while both balance and item withdrawals are locked.",
+    };
   }
 
   const reason = `Fiat deposit risk review: ${parsed.data.depositIntentId}`;
@@ -155,6 +167,7 @@ export async function requireFiatDepositKyc(
         depositIntentId: parsed.data.depositIntentId,
         reason,
         verificationCycle,
+        idempotencyKey: parsed.data.idempotencyKey,
       },
     });
   } catch (error) {

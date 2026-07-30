@@ -18,6 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { reviewAccountKyc } from "../actions";
+import { StepUpField } from "@/components/step-up-field";
 
 export function ReviewKycControls({
   userId,
@@ -31,6 +32,7 @@ export function ReviewKycControls({
   const router = useRouter();
   const [decision, setDecision] = useState<"safe" | "rejected">("safe");
   const [isPending, startTransition] = useTransition();
+  const [credential, setCredential] = useState("");
 
   function submit(): void {
     startTransition(async () => {
@@ -38,6 +40,8 @@ export function ReviewKycControls({
         userId,
         decision,
         expectedCycle: verificationCycle,
+        credential,
+        idempotencyKey: crypto.randomUUID(),
       });
       if (!result.success) {
         toast.error(result.error);
@@ -93,11 +97,17 @@ export function ReviewKycControls({
               : `This keeps withdrawals locked for ${label}. The decision applies only to verification cycle ${verificationCycle}.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        <StepUpField
+          value={credential}
+          onChange={setCredential}
+          disabled={isPending}
+          label="Fresh TOTP or passkey"
+        />
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={submit}
-            disabled={isPending}
+            disabled={isPending || !credential}
             className={
               decision === "rejected"
                 ? "bg-destructive text-destructive-foreground hover:bg-destructive/90"

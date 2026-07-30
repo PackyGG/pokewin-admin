@@ -15,6 +15,7 @@ const ruleSchema = z.object({
   pendingLocks: z.number(),
   createdAt: z.string(),
   updatedAt: z.string(),
+  expiresAt: z.string().nullable(),
 });
 
 const matchSchema = z.object({
@@ -92,6 +93,8 @@ export async function listFiatEmailDomains(): Promise<{
 
 export async function createFiatEmailDomain(input: {
   domain: string;
+  reason: string;
+  expiresAt: string | null;
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
@@ -125,6 +128,8 @@ export async function createFiatEmailDomain(input: {
 export async function updateFiatEmailDomain(input: {
   id: string;
   enabled: boolean;
+  reason: string;
+  expiresAt: string | null;
   idempotencyKey: string;
   actorId: string;
   actorUsername?: string;
@@ -135,6 +140,8 @@ export async function updateFiatEmailDomain(input: {
       method: "PUT",
       body: JSON.stringify({
         enabled: input.enabled,
+        reason: input.reason,
+        expiresAt: input.expiresAt,
         idempotencyKey: input.idempotencyKey,
         actorId: input.actorId,
         actorUsername: input.actorUsername,

@@ -92,17 +92,12 @@ export async function require2FA(
             "That verification was already used — approve again with a fresh passkey or code.",
           );
         }
-        // Table/column missing before the migration is applied, or a
-        // transient fault → FAIL OPEN: the token is cryptographically valid, so
-        // passkey 2FA is never bricked; single-use simply doesn't apply until
-        // the table exists.
-        const missing = isPostgresError(err, "42P01", "42703");
-        if (!missing) {
-          console.error(
-            "[require2FA] step-up nonce consume failed (allowing):",
-            err,
-          );
-        }
+        // Replay storage is part of the decision. A valid assertion is not
+        // enough when its single-use claim cannot be durably recorded.
+        console.error("[require2FA] step-up nonce consume failed (denying)");
+        throw new Error(
+          "Verification replay protection is unavailable. Try again later.",
+        );
       }
     }
     return;
@@ -152,15 +147,12 @@ export async function require2FA(
       throw new Error("That 2FA code was already used — enter a fresh code.");
     }
   } catch (err) {
-    // Our own "already used" rejection propagates. Anything else — most
-    // importantly a missing `totp_last_step` column before the ADD
-    // COLUMN is applied, or a transient DB blip — FAILS OPEN so 2FA is never
-    // bricked: the code was already validated above. Single-use simply doesn't
-    // apply until the column exists.
+    // Our own "already used" rejection propagates. Any replay-store outage or
+    // missing migration fails closed.
     if (err instanceof Error && err.message.includes("already used")) throw err;
-    const missingColumn = isPostgresError(err, "42703");
-    if (!missingColumn) {
-      console.error("[require2FA] TOTP single-use claim failed (allowing):", err);
-    }
+    console.error("[require2FA] TOTP single-use claim failed (denying)");
+    throw new Error(
+      "Verification replay protection is unavailable. Try again later.",
+    );
   }
 }

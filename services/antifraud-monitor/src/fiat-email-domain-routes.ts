@@ -12,10 +12,14 @@ const actorSchema = z.object({
 
 const createSchema = actorSchema.extend({
   domain: z.string().trim().min(1).max(253),
+  reason: z.string().trim().min(4).max(500),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 const updateSchema = actorSchema.extend({
   enabled: z.boolean(),
+  reason: z.string().trim().min(4).max(500),
+  expiresAt: z.string().datetime().nullable(),
 });
 
 const catchHistoryQuerySchema = z.object({
@@ -33,8 +37,6 @@ const catchHistoryQuerySchema = z.object({
   search: z.string().trim().max(100).optional(),
 });
 
-const SYSTEM_REASON = "Email domain blacklisted by staff";
-
 type RuleRow = {
   id: string;
   domain: string;
@@ -45,6 +47,7 @@ type RuleRow = {
   backfill_completed_at: Date | null;
   created_at: Date;
   updated_at: Date;
+  expires_at: Date | null;
   match_count: number;
   affected_users: number;
   pending_locks: number;
@@ -63,6 +66,7 @@ async function listRules(db: Databases, ruleId?: string): Promise<RuleRow[]> {
         b.backfill_completed_at,
         b.created_at,
         b.updated_at,
+        b.expires_at,
         count(m.id)::int AS match_count,
         count(DISTINCT m.user_id)::int AS affected_users,
         count(m.id) FILTER (WHERE m.lock_delivered_at IS NULL)::int
@@ -93,6 +97,7 @@ function serializeRule(row: RuleRow) {
     pendingLocks: row.pending_locks,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
+    expiresAt: row.expires_at?.toISOString() ?? null,
   };
 }
 
@@ -142,7 +147,7 @@ export async function registerFiatEmailDomainRoutes(
           priorAudit.action !== "created" ||
           priorAudit.actor_id !== parsed.data.actorId ||
           priorAudit.after_state.domain !== domain ||
-          priorAudit.after_state.reason !== SYSTEM_REASON ||
+          priorAudit.after_state.reason !== parsed.data.reason ||
           priorAudit.after_state.enabled !== true
         ) {
           await client.query("ROLLBACK");
@@ -154,12 +159,18 @@ export async function registerFiatEmailDomainRoutes(
         const inserted = await client.query<{ id: string }>(
           `
             INSERT INTO fiat_email_domain_blacklist (
-              domain, reason, enabled, created_by, updated_by
-            ) VALUES ($1,$2,true,$3,$3)
+              domain, reason, enabled, created_by, updated_by,
+              expires_at
+            ) VALUES ($1,$2,true,$3,$3,$4)
             ON CONFLICT (lower(domain)) DO NOTHING
             RETURNING id
           `,
-          [domain, SYSTEM_REASON, parsed.data.actorId],
+          [
+            domain,
+            parsed.data.reason,
+            parsed.data.actorId,
+            parsed.data.expiresAt,
+          ],
         );
         ruleId = inserted.rows[0]?.id ?? null;
         if (!ruleId) {
@@ -169,8 +180,9 @@ export async function registerFiatEmailDomainRoutes(
         const state = {
           id: ruleId,
           domain,
-          reason: SYSTEM_REASON,
+          reason: parsed.data.reason,
           enabled: true,
+          expiresAt: parsed.data.expiresAt,
         };
         await client.query(
           `
@@ -221,6 +233,7 @@ export async function registerFiatEmailDomainRoutes(
         after_state: {
           reason?: unknown;
           enabled?: unknown;
+          expiresAt?: unknown;
         };
       }>(
         `
@@ -236,7 +249,9 @@ export async function registerFiatEmailDomainRoutes(
           priorAudit.rule_id !== params.data.id ||
           priorAudit.action !== "updated" ||
           priorAudit.actor_id !== parsed.data.actorId ||
-          priorAudit.after_state.enabled !== parsed.data.enabled
+          priorAudit.after_state.enabled !== parsed.data.enabled ||
+          priorAudit.after_state.reason !== parsed.data.reason ||
+          priorAudit.after_state.expiresAt !== parsed.data.expiresAt
         ) {
           await client.query("ROLLBACK");
           return reply.code(409).send({ error: "idempotency_conflict" });
@@ -268,6 +283,8 @@ export async function registerFiatEmailDomainRoutes(
             SET
               enabled = $2,
               updated_by = $3,
+              reason = $4,
+              expires_at = $5,
               backfill_received_at = CASE
                 WHEN NOT enabled AND $2::boolean THEN 'epoch'::timestamptz
                 ELSE backfill_received_at
@@ -287,6 +304,8 @@ export async function registerFiatEmailDomainRoutes(
             params.data.id,
             parsed.data.enabled,
             parsed.data.actorId,
+            parsed.data.reason,
+            parsed.data.expiresAt,
           ],
         );
         await client.query(
@@ -305,6 +324,8 @@ export async function registerFiatEmailDomainRoutes(
             {
               ...current,
               enabled: parsed.data.enabled,
+              reason: parsed.data.reason,
+              expiresAt: parsed.data.expiresAt,
             },
           ],
         );

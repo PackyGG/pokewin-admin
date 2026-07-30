@@ -64,6 +64,26 @@ export async function middleware(request: NextRequest) {
     ? redirectTargetForHost(appHost, pathname)
     : null;
 
+  const isAntifraudRequest =
+    appHost?.basePath === "/antifraud" ||
+    pathname === "/antifraud" ||
+    pathname.startsWith("/antifraud/");
+  const forwardedHeaders = new Headers(request.headers);
+  forwardedHeaders.delete("x-antifraud-path");
+  forwardedHeaders.delete("x-antifraud-method");
+  forwardedHeaders.delete("x-antifraud-search-keys");
+  if (isAntifraudRequest) {
+    forwardedHeaders.set("x-antifraud-path", pathname.slice(0, 500));
+    forwardedHeaders.set("x-antifraud-method", request.method.slice(0, 12));
+    const searchKeys = [...new Set(request.nextUrl.searchParams.keys())]
+      .filter((key) => /^[a-zA-Z0-9_-]{1,50}$/.test(key))
+      .slice(0, 25)
+      .join(",");
+    if (searchKeys) {
+      forwardedHeaders.set("x-antifraud-search-keys", searchKeys);
+    }
+  }
+
   /** Serve this request, rewriting into the host's segment when it has one. */
   const serve = () => {
     // The normal Admin app consolidated its legacy /withdrawals list into the
@@ -84,10 +104,16 @@ export async function middleware(request: NextRequest) {
       url.search = request.nextUrl.search;
       return NextResponse.redirect(url, 308);
     }
-    if (!rewriteTarget) return NextResponse.next();
+    if (!rewriteTarget) {
+      return NextResponse.next({
+        request: { headers: forwardedHeaders },
+      });
+    }
     const url = request.nextUrl.clone();
     url.pathname = rewriteTarget;
-    return NextResponse.rewrite(url);
+    return NextResponse.rewrite(url, {
+      request: { headers: forwardedHeaders },
+    });
   };
 
   const isPublicRoute = PUBLIC_ROUTES.includes(pathname);

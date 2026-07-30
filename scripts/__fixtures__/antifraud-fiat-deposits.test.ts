@@ -66,7 +66,7 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(page, /Account previously checked by staff/);
   assert.match(page, /BadgeCheck/);
   assert.match(kycAction, /requireFiatDepositKyc/);
-  assert.match(kycAction, /KYC is now required and withdrawals are locked/);
+  assert.match(kycAction, /KYC is now required for this locked account/);
   assert.match(kycAction, /const isRequired = required \|\| currentlyRequired/);
   assert.match(kycAction, /result\.readbackConfirmed/);
   assert.match(kycAction, /A Sumsub result never unlocks/);
@@ -74,6 +74,10 @@ test("fiat deposits are a first-class Fraud transaction workspace", () => {
   assert.match(actions, /assessment\.data\.assessment\.user_id !== parsed\.data\.userId/);
   assert.match(actions, /getUserKyc\(/);
   assert.match(actions, /current\.kycRequired/);
+  assert.match(
+    actions,
+    /isLockedAccountEligibleForKyc\(parsed\.data\.userId\)/,
+  );
   assert.match(actions, /requireUserKyc\(/);
   assert.match(
     actions,

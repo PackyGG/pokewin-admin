@@ -14,8 +14,10 @@ import {
 } from "@/lib/backend-api/kyc";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
+import { isLockedAccountEligibleForKyc } from "@/lib/antifraud/kyc-eligibility";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { require2FA } from "@/lib/require-2fa";
 
 type ActionResult =
   | { success: true; data: UserKycStatus; userId: string }
@@ -25,12 +27,16 @@ const requireSchema = z.object({
   account: z.string().trim().min(1).max(320),
   reason: z.string().trim().min(3).max(500),
   levelName: z.string().trim().max(100).optional(),
+  credential: z.string().trim().min(1).max(4_096),
+  idempotencyKey: z.string().uuid(),
 });
 
 const reviewSchema = z.object({
   userId: z.string().trim().min(1).max(128),
   decision: z.enum(["safe", "rejected"]),
   expectedCycle: z.number().int().positive(),
+  credential: z.string().trim().min(1).max(4_096),
+  idempotencyKey: z.string().uuid(),
 });
 
 function friendlyError(error: unknown): string {
@@ -71,12 +77,20 @@ export async function requireAccountKyc(
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0].message };
   }
+  await require2FA(session.userId, parsed.data.credential);
 
   const userId = await resolveAccount(parsed.data.account);
   if (!userId) {
     return {
       success: false,
       error: "Enter one exact player ID, username, display name, or email.",
+    };
+  }
+  if (!(await isLockedAccountEligibleForKyc(userId))) {
+    return {
+      success: false,
+      error:
+        "KYC can be required only while both balance and item withdrawals are locked.",
     };
   }
 
@@ -103,6 +117,7 @@ export async function requireAccountKyc(
         reason: parsed.data.reason,
         levelName: parsed.data.levelName || null,
         verificationCycle: data.verificationCycle,
+        idempotencyKey: parsed.data.idempotencyKey,
       },
     });
   } catch (error) {
@@ -127,6 +142,7 @@ export async function reviewAccountKyc(
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0].message };
   }
+  await require2FA(session.userId, parsed.data.credential);
 
   let data: UserKycStatus;
   try {
@@ -150,6 +166,7 @@ export async function reviewAccountKyc(
         source: "antifraud_kyc_workspace",
         decision: parsed.data.decision,
         verificationCycle: parsed.data.expectedCycle,
+        idempotencyKey: parsed.data.idempotencyKey,
       },
     });
   } catch (error) {

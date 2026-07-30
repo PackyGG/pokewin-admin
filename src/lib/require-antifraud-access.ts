@@ -1,5 +1,6 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
+import { headers } from "next/headers";
 
 import { verifySession, getUserPermissions, sessionRoles } from "@/lib/dal";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
@@ -18,6 +19,10 @@ import {
 } from "@/lib/antifraud/access";
 import type { SessionPayload } from "@/lib/session";
 import { isNextControlFlowError } from "@/lib/utils/action-error";
+import {
+  appendAntifraudSecurityAudit,
+  beginAntifraudAction,
+} from "@/lib/antifraud/security-audit";
 
 /**
  * Shared Antifraud access gates — the same rule the layout uses
@@ -109,12 +114,64 @@ async function isAntifraudAllowed(
 }
 
 /** Page-level gate — redirects non-eligible viewers to their landing route. */
+const auditAllowedPage = cache(
+  async (session: SessionPayload, username: string): Promise<void> => {
+    const requestHeaders = await headers();
+    const path = requestHeaders.get("x-antifraud-path") ?? "/antifraud";
+    await appendAntifraudSecurityAudit({
+      actorAdminUserId: session.userId,
+      actorUsername: username,
+      actorRoles: sessionRoles(session),
+      sessionRef: `${session.userId}:${session.iat ?? 0}`,
+      eventKind: "view",
+      action: `antifraud.view:${path}`,
+      outcome: "allowed",
+    });
+    const searchKeys = requestHeaders.get("x-antifraud-search-keys");
+    if (searchKeys) {
+      await appendAntifraudSecurityAudit({
+        actorAdminUserId: session.userId,
+        actorUsername: username,
+        actorRoles: sessionRoles(session),
+        sessionRef: `${session.userId}:${session.iat ?? 0}`,
+        eventKind: "search",
+        action: `antifraud.search:${path}`,
+        outcome: "allowed",
+        metadata: { parameterKeys: searchKeys.split(",") },
+      });
+    }
+  },
+);
+
+async function auditDeniedAccess(
+  session: SessionPayload,
+  username: string | null,
+  kind: "view" | "action",
+): Promise<void> {
+  try {
+    await appendAntifraudSecurityAudit({
+      actorAdminUserId: session.userId,
+      actorUsername: username,
+      actorRoles: sessionRoles(session),
+      sessionRef: `${session.userId}:${session.iat ?? 0}`,
+      eventKind: kind,
+      action: `antifraud.${kind}`,
+      outcome: "denied",
+      reasonCode: "workspace_access_denied",
+    });
+  } catch {
+    console.error("[antifraud-security] denied-access audit unavailable");
+  }
+}
+
 export async function requireAntifraudPageAccess(): Promise<SessionPayload> {
   const { session, username, active } = await resolveLiveSession();
   if (!(await isAntifraudAllowed(session, username, active))) {
+    await auditDeniedAccess(session, username, "view");
     const allowedPages = await getUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
   }
+  await auditAllowedPage(session, username!);
   return session;
 }
 
@@ -124,8 +181,44 @@ export async function requireAntifraudAccess(
 ): Promise<SessionPayload> {
   const { session, username, active } = await resolveLiveSession();
   if (!(await isAntifraudAllowed(session, username, active))) {
+    await auditDeniedAccess(session, username, "action");
     throw new Error(unauthorizedMessage);
   }
+  const requestHeaders = await headers();
+  const origin = requestHeaders.get("origin");
+  const host = requestHeaders.get("host");
+  let sameOrigin = false;
+  try {
+    sameOrigin =
+      Boolean(origin && host) &&
+      new URL(origin!).host.toLowerCase() === host!.toLowerCase();
+  } catch {
+    sameOrigin = false;
+  }
+  if (!sameOrigin) {
+    try {
+      await appendAntifraudSecurityAudit({
+        actorAdminUserId: session.userId,
+        actorUsername: username,
+        actorRoles: sessionRoles(session),
+        sessionRef: `${session.userId}:${session.iat ?? 0}`,
+        eventKind: "action",
+        action: "antifraud.server_action",
+        outcome: "denied",
+        reasonCode: "origin_mismatch",
+      });
+    } finally {
+      throw new Error("This Antifraud action must come from the current dashboard.");
+    }
+  }
+  await beginAntifraudAction({
+    actorAdminUserId: session.userId,
+    actorUsername: username,
+    actorRoles: sessionRoles(session),
+    sessionRef: `${session.userId}:${session.iat ?? 0}`,
+    action: "antifraud.server_action",
+    limitPerMinute: 90,
+  });
   return session;
 }
 

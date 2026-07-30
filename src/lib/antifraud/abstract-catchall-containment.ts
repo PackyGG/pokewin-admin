@@ -7,13 +7,9 @@ export type AbstractCatchallContainmentTarget = {
 };
 
 type AbstractCatchallContainmentDependencies = {
-  lockAccount: (
+  banAccount: (
     target: AbstractCatchallContainmentTarget,
   ) => Promise<boolean>;
-  isKycRequired: (userId: string) => Promise<boolean>;
-  requireKyc: (
-    target: AbstractCatchallContainmentTarget,
-  ) => Promise<void>;
 };
 
 function normalizedDomain(value: unknown): string | null {
@@ -43,7 +39,7 @@ export function abstractCatchallContainmentTarget(
     userId,
     domain,
     reason: (
-      `Automatic fraud lock: signup used an Abstract-confirmed catch-all email domain (${domain})`
+      `Automatic fraud ban: signup used an Abstract-confirmed catch-all email domain (${domain})`
     ).slice(0, 500),
   };
 }
@@ -51,12 +47,9 @@ export function abstractCatchallContainmentTarget(
 export async function applyAbstractCatchallContainment(
   signal: AntifraudSignalEvent,
   dependencies: AbstractCatchallContainmentDependencies,
-): Promise<"locked" | "skipped"> {
+): Promise<"banned" | "skipped"> {
   const target = abstractCatchallContainmentTarget(signal);
   if (!target) return "skipped";
-  if (!(await dependencies.lockAccount(target))) return "skipped";
-  if (!(await dependencies.isKycRequired(target.userId))) {
-    await dependencies.requireKyc(target);
-  }
-  return "locked";
+  if (!(await dependencies.banAccount(target))) return "skipped";
+  return "banned";
 }
