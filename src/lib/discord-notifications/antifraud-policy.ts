@@ -7,6 +7,7 @@ export const APPROVED_DISCORD_CATEGORIES = {
   accounts: "1532207307683795026",
   transactions: "1532207461077876766",
   errors: "1532216500444856360",
+  kyc: "1532297417339174922",
 } as const;
 
 export const APPROVED_DISCORD_CATEGORY_IDS = Object.values(

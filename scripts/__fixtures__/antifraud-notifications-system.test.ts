@@ -42,6 +42,7 @@ test("Discord management stays inside exact approved categories and live markers
     "1532207307683795026",
     "1532207461077876766",
     "1532216500444856360",
+    "1532297417339174922",
     "1532206965915390063",
     "1532206977286017154",
   ]) {
