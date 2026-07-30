@@ -47,6 +47,7 @@ import type {
   DiscordNotificationEvent,
 } from "@/lib/discord-notifications/config";
 import { APPROVED_DISCORD_CATEGORY_IDS } from "@/lib/discord-notifications/antifraud-policy";
+import type { ServerActionResult } from "@/lib/errors/server-action-result";
 import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
 import { getMyPasskeyStepUpState } from "@/lib/passkey-step-up-actions";
 import { cn } from "@/lib/utils";
@@ -62,7 +63,7 @@ type ChannelEditorState = {
 };
 
 type PendingMutation = {
-  operation: (credential: string) => Promise<void>;
+  operation: (credential: string) => Promise<ServerActionResult<unknown>>;
   successMessage: string;
   onSuccess?: () => void;
 };
@@ -274,23 +275,32 @@ export function DiscordRoutingWorkspace({
 
   function execute(mutation: PendingMutation, approval: string) {
     startTransition(async () => {
-      try {
-        await mutation.operation(approval);
-        toast.success(mutation.successMessage);
-        // Only a grace window is reusable; a one-use proof is dropped.
+      // Only a grace window is reusable. A TOTP code or one-use passkey proof
+      // is spent by the attempt itself — keeping it would make every retry fail
+      // with "already used" instead of asking for a fresh one.
+      const dropApproval = () => {
         if (approval !== PASSKEY_GRACE_CREDENTIAL) setCredential("");
+      };
+      try {
+        const result = await mutation.operation(approval);
+        if (!result.success) {
+          dropApproval();
+          toast.error(result.error);
+          return;
+        }
+        toast.success(mutation.successMessage);
+        dropApproval();
         mutation.onSuccess?.();
         router.refresh();
-      } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "That change could not be saved",
-        );
+      } catch {
+        dropApproval();
+        toast.error("That change could not be saved — please try again.");
       }
     });
   }
 
   function runMutation(
-    operation: (approval: string) => Promise<void>,
+    operation: (approval: string) => Promise<ServerActionResult<unknown>>,
     successMessage: string,
     onSuccess?: () => void,
   ) {
@@ -631,12 +641,11 @@ export function DiscordRoutingWorkspace({
         pending={pending}
         onCreate={(input) =>
           runMutation(
-            async (approval) => {
-              await createDiscordChannelAction({
+            (approval) =>
+              createDiscordChannelAction({
                 ...input,
                 credential: approval,
-              });
-            },
+              }),
             "Channel creation queued",
             () => setCreateChannelOpen(false),
           )
