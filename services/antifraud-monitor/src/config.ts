@@ -21,6 +21,7 @@ const schema = z.object({
   PROXYCHECK_API_KEY: z.string().min(1),
   ABSTRACT_IP_INTELLIGENCE_API_KEY: z.string().min(1),
   ABSTRACT_EMAIL_REPUTATION_API_KEY: z.string().min(1),
+  OPPORTIFY_API_KEY: z.string().min(1),
   ADMIN_API_KEY: z.string().min(1).optional(),
   xbypasssecret: z.string().min(1).optional(),
   XBYPASSSECRET: z.string().min(1).optional(),

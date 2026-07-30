@@ -191,6 +191,7 @@ const runtimeConfig: Config = {
   PROXYCHECK_API_KEY: "proxycheck-secret",
   ABSTRACT_IP_INTELLIGENCE_API_KEY: "abstract-ip-secret",
   ABSTRACT_EMAIL_REPUTATION_API_KEY: "abstract-email-secret",
+  OPPORTIFY_API_KEY: "opportify-secret",
   API_TOKEN: "read-token-that-is-at-least-32-characters",
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
@@ -269,6 +270,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     proxycheckConfigured: true,
     abstractIpConfigured: true,
     abstractEmailConfigured: true,
+    opportifyConfigured: true,
   });
   assert.deepEqual(status.live, {
     redisConfigured: true,
@@ -286,6 +288,7 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.REDIS_URL,
     runtimeConfig.FINGERPRINT_SECRET_API_KEY,
     runtimeConfig.PROXYCHECK_API_KEY,
+    runtimeConfig.OPPORTIFY_API_KEY,
     runtimeConfig.API_TOKEN,
     runtimeConfig.API_ADMIN_TOKEN,
     runtimeConfig.FIAT_ALERT_DASHBOARD_URL,
@@ -527,6 +530,13 @@ test("editable score migration seeds every runtime weight", async () => {
     await readFile(
       new URL(
         "../migrations/035_abstract_signup_intelligence.sql",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
+    await readFile(
+      new URL(
+        "../migrations/036_opportify_signup_intelligence.sql",
         import.meta.url,
       ),
       "utf8",

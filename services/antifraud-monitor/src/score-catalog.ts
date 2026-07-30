@@ -73,6 +73,9 @@ export const DEFAULT_SCORE_WEIGHTS = {
   abstract_email_risky_tld: 40,
   abstract_email_low_quality: 50,
   abstract_email_new_domain: 25,
+  opportify_risk_medium: 25,
+  opportify_risk_high: 60,
+  opportify_risk_highest: 100,
   crypto_deposit: -20,
   fiat_deposit: 20,
   paid_pack_opened: -5,
@@ -212,6 +215,11 @@ export function scorePoints(weights: ScoreWeights = defaultScoreWeights()) {
       riskyTld: weights.abstract_email_risky_tld,
       lowQuality: weights.abstract_email_low_quality,
       newDomain: weights.abstract_email_new_domain,
+    },
+    opportifyRisk: {
+      medium: weights.opportify_risk_medium,
+      high: weights.opportify_risk_high,
+      highest: weights.opportify_risk_highest,
     },
     cryptoDeposit: weights.crypto_deposit,
     fiatDeposit: weights.fiat_deposit,
@@ -673,6 +681,17 @@ export function providerScoreDefinitions(
         option(weights, "abstract_email_risky_tld", "Risky TLD"),
         option(weights, "abstract_email_low_quality", "Low quality"),
         option(weights, "abstract_email_new_domain", "New domain"),
+      ],
+    },
+    {
+      key: "opportify_risk",
+      title: "Opportify fraud analysis",
+      description:
+        "Independent API-only signup analysis across email, IP, username content, provider velocity, and geographic consistency. The provider's composite level scores once; source details remain evidence so overlapping checks are not double-counted.",
+      options: [
+        option(weights, "opportify_risk_medium", "Medium"),
+        option(weights, "opportify_risk_high", "High"),
+        option(weights, "opportify_risk_highest", "Highest"),
       ],
     },
   ];

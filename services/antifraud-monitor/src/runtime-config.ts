@@ -11,6 +11,7 @@ export function sanitizedRuntimeConfig(
     proxycheckConfigured: boolean;
     abstractIpConfigured: boolean;
     abstractEmailConfigured: boolean;
+    opportifyConfigured: boolean;
   };
   live: {
     redisConfigured: boolean;
@@ -41,6 +42,7 @@ export function sanitizedRuntimeConfig(
       abstractEmailConfigured: Boolean(
         config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
       ),
+      opportifyConfigured: Boolean(config.OPPORTIFY_API_KEY),
     },
     live: {
       redisConfigured: Boolean(config.REDIS_URL),

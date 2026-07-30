@@ -88,6 +88,7 @@ const runtimeConfigSchema = z.object({
     proxycheckConfigured: z.boolean(),
     abstractIpConfigured: z.boolean(),
     abstractEmailConfigured: z.boolean(),
+    opportifyConfigured: z.boolean(),
   }),
   live: z.object({
     redisConfigured: z.boolean(),

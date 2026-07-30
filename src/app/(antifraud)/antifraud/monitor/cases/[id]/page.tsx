@@ -428,13 +428,15 @@ function ProviderCheckCard({
 }: {
   check: AntifraudMonitorProviderCheck;
 }) {
-  const signals = check.signals.filter((signal) => signal.points !== 0);
+  const signals = check.provider === "opportify"
+    ? check.signals
+    : check.signals.filter((signal) => signal.points !== 0);
   return (
     <div className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-center gap-2">
         <Network className="size-3.5 shrink-0 text-muted-foreground" />
         <span className="truncate text-xs font-semibold capitalize">
-          {check.provider}
+          {check.provider.replaceAll("_", " ")}
         </span>
         <Badge
           variant="outline"
@@ -460,7 +462,9 @@ function ProviderCheckCard({
                 "h-5 px-1.5 text-[10px]",
                 signal.points > 0
                   ? "border-rose-500/25 bg-rose-500/8 text-rose-600 dark:text-rose-400"
-                  : "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400",
+                  : signal.points < 0
+                    ? "border-emerald-500/25 bg-emerald-500/8 text-emerald-600 dark:text-emerald-400"
+                    : "border-cyan-500/25 bg-cyan-500/8 text-cyan-600 dark:text-cyan-400",
               )}
               title={signal.detail}
             >

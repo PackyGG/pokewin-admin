@@ -203,7 +203,8 @@ source of truth for deployed monitor configuration. Its response is:
     },
     "providers": {
       "fingerprintConfigured": true,
-      "proxycheckConfigured": true
+      "proxycheckConfigured": true,
+      "opportifyConfigured": true
     },
     "live": {
       "redisConfigured": true,

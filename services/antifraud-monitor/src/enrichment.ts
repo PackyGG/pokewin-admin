@@ -162,7 +162,8 @@ export type EnrichmentResult = {
     | "fingerprint"
     | "proxycheck"
     | "abstract_ip"
-    | "abstract_email";
+    | "abstract_email"
+    | "opportify";
   status: "success" | "skipped" | "failed";
   lookupKey: string;
   requestId?: string;
@@ -1282,6 +1283,302 @@ export function sanitizeAbstractEmailResponse(raw: JsonObject): JsonObject {
   };
 }
 
+type OpportifyLevel = "lowest" | "low" | "medium" | "high" | "highest";
+
+function opportifyLevel(value: unknown): OpportifyLevel | undefined {
+  const normalized = stringValue(value)?.trim().toLowerCase();
+  return normalized === "lowest"
+    || normalized === "low"
+    || normalized === "medium"
+    || normalized === "high"
+    || normalized === "highest"
+    ? normalized
+    : undefined;
+}
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function compactObject(
+  values: Record<string, unknown>,
+): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(values).filter(([, value]) =>
+      value !== undefined && value !== null && value !== ""),
+  );
+}
+
+function sanitizedOpportifyResponse(raw: JsonObject): JsonObject {
+  const sources = object(raw.sources);
+  const email = object(sources.email);
+  const addressSignals = object(email.addressSignals);
+  const emailDns = object(email.emailDNS);
+  const emailDomain = object(email.domain);
+  const emailRisk = object(email.riskReport);
+  const ip = object(sources.ip);
+  const ipGeo = object(ip.geo);
+  const whois = object(ip.whois);
+  const asn = object(whois.asn);
+  const organization = object(whois.organization);
+  const trustedProvider = object(ip.trustedProvider);
+  const blocklisted = object(ip.blocklisted);
+  const ipRisk = object(ip.riskReport);
+  const content = object(sources.content);
+  const velocity = object(sources.velocity);
+  const geo = object(sources.geo);
+  const session = object(sources.session);
+
+  return {
+    score: raw.score,
+    level: raw.level,
+    factors: stringArray(raw.factors).slice(0, 100),
+    sources: compactObject({
+      email: Object.keys(email).length === 0
+        ? undefined
+        : compactObject({
+            emailProvider: email.emailProvider,
+            emailType: email.emailType,
+            isDeliverable: email.isDeliverable,
+            isCatchAll: email.isCatchAll,
+            isMailboxFull: email.isMailboxFull,
+            isReachable: email.isReachable,
+            isFormatValid: email.isFormatValid,
+            addressSignals: compactObject({
+              tagDetected: addressSignals.tagDetected,
+              isRoleAddress: addressSignals.isRoleAddress,
+              roleType: addressSignals.roleType,
+              isNoReply: addressSignals.isNoReply,
+              noReplyPattern: addressSignals.noReplyPattern,
+            }),
+            emailDNS: compactObject({
+              mxCount: Array.isArray(emailDns.mx) ? emailDns.mx.length : 0,
+              spfValid: emailDns.spfValid,
+              dkimConfigured: emailDns.dkimConfigured,
+              dmarcValid: emailDns.dmarcValid,
+              mxRelay: emailDns.mxRelay,
+              mxRelayCategory: emailDns.mxRelayCategory,
+            }),
+            riskReport: compactObject({
+              score: emailRisk.score,
+              level: emailRisk.level,
+              baseAnalysis: stringArray(emailRisk.baseAnalysis).slice(0, 50),
+            }),
+            domain: compactObject({
+              name: emailDomain.name,
+              enrichmentAvailable: emailDomain.enrichmentAvailable,
+              creationDate: emailDomain.creationDate,
+              expirationDate: emailDomain.expirationDate,
+              updatedDate: emailDomain.updatedDate,
+              ageYears: emailDomain.ageYears,
+              registrar: emailDomain.registrar,
+              isBlockListed: emailDomain.isBlockListed,
+              mtaStsStatus: emailDomain.mtaStsStatus,
+              bimiStatus: emailDomain.bimiStatus,
+              hasVMC: emailDomain.hasVMC,
+              aRecordValid: emailDomain.aRecordValid,
+              sslValid: emailDomain.sslValid,
+            }),
+          }),
+      ip: Object.keys(ip).length === 0
+        ? undefined
+        : compactObject({
+            ipType: ip.ipType,
+            ipCidr: ip.ipCidr,
+            connectionType: ip.connectionType,
+            hostReverse: ip.hostReverse,
+            geo: compactObject({
+              continent: ipGeo.continent,
+              countryCode: ipGeo.countryCode,
+              countryName: ipGeo.countryName,
+              city: ipGeo.city,
+              region: ipGeo.region,
+              timezone: ipGeo.timezone,
+            }),
+            network: compactObject({
+              asn: asn.asn ?? asn.number,
+              asName: asn.name,
+              asDescription: asn.description,
+              asCountry: asn.countryCode ?? asn.country,
+              organization: organization.name,
+              organizationType: organization.type,
+              organizationCountry:
+                organization.countryCode ?? organization.country,
+            }),
+            trustedProvider: compactObject({
+              isKnownProvider: trustedProvider.isKnownProvider,
+              provider: trustedProvider.provider,
+              providerType: trustedProvider.providerType,
+              description: trustedProvider.description,
+            }),
+            blocklisted: compactObject({
+              isBlockListed: blocklisted.isBlockListed,
+              sources: blocklisted.sources,
+              activeReports: blocklisted.activeReports,
+              lastDetected: blocklisted.lastDetected,
+            }),
+            riskReport: compactObject({
+              score: ipRisk.score,
+              level: ipRisk.level,
+              baseAnalysis: stringArray(ipRisk.baseAnalysis).slice(0, 50),
+            }),
+          }),
+      content: Object.keys(content).length === 0 ? undefined : content,
+      velocity: Object.keys(velocity).length === 0 ? undefined : velocity,
+      geo: Object.keys(geo).length === 0 ? undefined : geo,
+      session: Object.keys(session).length === 0
+        ? undefined
+        : compactObject({
+            tokenAge: session.tokenAge,
+            tokenValid: session.tokenValid,
+            detections: Array.isArray(session.detections)
+              ? session.detections.slice(0, 100)
+              : undefined,
+            score: session.score,
+            level: session.level,
+            factors: stringArray(session.factors).slice(0, 50),
+            eventCount: session.eventCount,
+          }),
+    }),
+  };
+}
+
+function sourceRiskSummary(source: JsonObject): {
+  score?: number;
+  level?: OpportifyLevel;
+  factors: string[];
+} {
+  const risk = object(source.riskReport);
+  return {
+    score: numberValue(risk.score),
+    level: opportifyLevel(risk.level),
+    factors: stringArray(risk.baseAnalysis).slice(0, 50),
+  };
+}
+
+export function parseOpportifyResponse(
+  raw: JsonObject,
+  weights: ScoreWeights = defaultScoreWeights(),
+): { score: number; level: OpportifyLevel; response: JsonObject; signals: Signal[] } {
+  const response = sanitizedOpportifyResponse(raw);
+  const score = numberValue(response.score);
+  const level = opportifyLevel(response.level);
+  if (score === undefined || score < 200 || score > 1_000 || !level) {
+    throw new Error("invalid_response");
+  }
+
+  const points = scorePoints(weights).opportifyRisk;
+  const scoringPoints =
+    level === "highest"
+      ? points.highest
+      : level === "high"
+        ? points.high
+        : level === "medium"
+          ? points.medium
+          : 0;
+  const signals: Signal[] = [];
+  if (scoringPoints !== 0) {
+    signals.push({
+      key: "opportify_risk",
+      title: `Opportify ${level} risk`,
+      detail: `Opportify returned a composite signup fraud score of ${Math.round(score)} (${level}).`,
+      points: scoringPoints,
+      payload: {
+        providerScore: score,
+        providerLevel: level,
+        factors: stringArray(response.factors).slice(0, 30),
+      },
+    });
+  }
+
+  const sources = object(response.sources);
+  const email = object(sources.email);
+  if (Object.keys(email).length > 0) {
+    const risk = sourceRiskSummary(email);
+    signals.push({
+      key: "opportify_email_evidence",
+      title: "Opportify email intelligence",
+      detail: [
+        stringValue(email.emailType) ?? "unknown type",
+        `deliverable ${String(email.isDeliverable ?? "unknown")}`,
+        email.isCatchAll === true ? "catch-all" : null,
+        email.isMailboxFull === true ? "mailbox full" : null,
+        risk.level ? `${risk.level} risk` : null,
+      ].filter(Boolean).join(" · "),
+      points: 0,
+      payload: email,
+    });
+  }
+
+  const ip = object(sources.ip);
+  if (Object.keys(ip).length > 0) {
+    const risk = sourceRiskSummary(ip);
+    const blocklisted = object(ip.blocklisted);
+    const trusted = object(ip.trustedProvider);
+    const ipGeo = object(ip.geo);
+    signals.push({
+      key: "opportify_ip_evidence",
+      title: "Opportify IP intelligence",
+      detail: [
+        stringValue(ip.connectionType) ?? "unknown connection",
+        stringValue(ipGeo.countryCode),
+        blocklisted.isBlockListed === true ? "blocklisted" : null,
+        trusted.isKnownProvider === true ? "trusted provider" : null,
+        risk.level ? `${risk.level} risk` : null,
+      ].filter(Boolean).join(" · "),
+      points: 0,
+      payload: ip,
+    });
+  }
+
+  const velocity = object(sources.velocity);
+  if (Object.keys(velocity).length > 0) {
+    signals.push({
+      key: "opportify_velocity_evidence",
+      title: "Opportify submission velocity",
+      detail: velocity.anomaly === true
+        ? "Opportify detected anomalous signup frequency."
+        : "Opportify returned email and IP submission-frequency windows.",
+      points: 0,
+      payload: velocity,
+    });
+  }
+
+  const geo = object(sources.geo);
+  if (Object.keys(geo).length > 0) {
+    signals.push({
+      key: "opportify_geo_evidence",
+      title: "Opportify geographic consistency",
+      detail: geo.consistent === false
+        ? "Opportify found inconsistent declared, email-domain, or IP countries."
+        : "Opportify found the available geographic signals consistent.",
+      points: 0,
+      payload: geo,
+    });
+  }
+
+  const content = object(sources.content);
+  if (Object.keys(content).length > 0) {
+    const names = object(content.names);
+    const risk = sourceRiskSummary(content);
+    signals.push({
+      key: "opportify_content_evidence",
+      title: "Opportify username analysis",
+      detail: names.isGibberish === true
+        ? "Opportify classified the signup name or username as gibberish."
+        : risk.level
+          ? `Opportify returned ${risk.level} username-content risk.`
+          : "Opportify analyzed the signup name and username.",
+      points: 0,
+      payload: content,
+    });
+  }
+
+  return { score, level, response, signals };
+}
+
 export class EnrichmentService {
   private readonly fingerprint: FingerprintJsServerApiClient;
 
@@ -1305,6 +1602,7 @@ export class EnrichmentService {
       this.config.PROXYCHECK_API_KEY,
       this.config.ABSTRACT_IP_INTELLIGENCE_API_KEY,
       this.config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
+      this.config.OPPORTIFY_API_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
       this.config.FIAT_ELIGIBILITY_DEV_API_KEY,
@@ -1544,6 +1842,76 @@ export class EnrichmentService {
         provider: "abstract_email",
         status: "failed",
         lookupKey: email,
+        errorCode:
+          error instanceof Error
+            ? this.scrub(error.message).slice(0, 100)
+            : "unknown_error",
+        signals: [],
+      };
+    }
+  }
+
+  async opportifyCheck(
+    signup: Signup,
+    weights: ScoreWeights = defaultScoreWeights(),
+  ): Promise<EnrichmentResult> {
+    const email = signup.email?.trim().toLowerCase() || undefined;
+    const userIp = canonicalIp(signup.signup_ip);
+    if (!email && !userIp) {
+      return {
+        provider: "opportify",
+        status: "skipped",
+        lookupKey: `user:${signup.id}`,
+        errorCode: "missing_email_and_ip",
+        signals: [],
+      };
+    }
+
+    const body = compactObject({
+      email,
+      userIp,
+      fullName: signup.name?.trim().slice(0, 200),
+      username: signup.username?.trim().slice(0, 200),
+      city: signup.city?.trim().slice(0, 200),
+      region: signup.state?.trim().slice(0, 200),
+      country: signup.country_code?.trim().toUpperCase().slice(0, 2),
+      submissionType: "registration",
+    });
+
+    try {
+      const providerResponse = await fetch(
+        "https://api.opportify.ai/intel/v1/fraud/analyze",
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(8_000),
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+            "x-opportify-token": this.config.OPPORTIFY_API_KEY,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!providerResponse.ok) {
+        throw new Error(`http_${providerResponse.status}`);
+      }
+      const text = await providerResponse.text();
+      if (text.length > 512_000) throw new Error("response_too_large");
+      const raw = object(JSON.parse(text));
+      const parsed = parseOpportifyResponse(raw, weights);
+      return {
+        provider: "opportify",
+        status: "success",
+        lookupKey: `user:${signup.id}`,
+        score: parsed.score,
+        response: parsed.response,
+        signals: parsed.signals,
+      };
+    } catch (error) {
+      return {
+        provider: "opportify",
+        status: "failed",
+        lookupKey: `user:${signup.id}`,
         errorCode:
           error instanceof Error
             ? this.scrub(error.message).slice(0, 100)

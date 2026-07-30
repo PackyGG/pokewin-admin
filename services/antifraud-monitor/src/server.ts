@@ -92,6 +92,7 @@ const config = loadConfig();
 const SECRET_VALUES = [
   config.FINGERPRINT_SECRET_API_KEY,
   config.PROXYCHECK_API_KEY,
+  config.OPPORTIFY_API_KEY,
   config.API_TOKEN,
   config.API_ADMIN_TOKEN,
   config.FIAT_ELIGIBILITY_DEV_API_KEY,
@@ -491,6 +492,9 @@ app.get("/v1/signups", async (request) => {
           abstract_email.score AS abstract_email_score,
           COALESCE(abstract_email.signals, '[]'::jsonb)
             AS abstract_email_signals,
+          opportify.status AS opportify_status,
+          opportify.score AS opportify_score,
+          COALESCE(opportify.signals, '[]'::jsonb) AS opportify_signals,
           latest_case.id AS case_id,
           latest_case.status AS case_status,
           latest_case.severity AS case_severity,
@@ -526,6 +530,13 @@ app.get("/v1/signups", async (request) => {
           ORDER BY checked_at DESC
           LIMIT 1
         ) abstract_email ON true
+        LEFT JOIN LATERAL (
+          SELECT status, score::float8 AS score, signals
+          FROM provider_checks
+          WHERE user_id = s.user_id AND provider = 'opportify'
+          ORDER BY checked_at DESC
+          LIMIT 1
+        ) opportify ON true
         LEFT JOIN LATERAL (
           SELECT id, status, severity
           FROM cases

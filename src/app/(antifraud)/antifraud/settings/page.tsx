@@ -209,6 +209,13 @@ async function IntegrationSection() {
       note: "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
     },
     {
+      name: "Opportify Fraud Protection",
+      envs: ["OPPORTIFY_API_KEY"],
+      status: reportedStatus(runtimeData?.providers.opportifyConfigured),
+      note:
+        "Private server-side signup analysis across email, IP, username content, provider velocity, and geographic consistency.",
+    },
+    {
       name: "Discord alert webhook",
       envs: ["ANTIFRAUD_DISCORD_WEBHOOK_URL"],
       status: reportedStatus(runtimeData?.discord.webhookConfigured),

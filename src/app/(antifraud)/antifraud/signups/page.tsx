@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Clock3,
   Fingerprint,
+  Gauge,
   MapPin,
   Network,
   RadioTower,
@@ -274,6 +275,13 @@ function SignupRow({ signup }: { signup: AntifraudSignup }) {
               status={signup.abstract_email_status}
               score={signup.abstract_email_score}
               signalCount={signup.abstract_email_signals.length}
+            />
+            <ProviderCheck
+              icon={Gauge}
+              label="Opportify"
+              status={signup.opportify_status}
+              score={signup.opportify_score}
+              signalCount={signup.opportify_signals.length}
             />
           </div>
           {networkLabels.length > 0 && (

@@ -8,6 +8,7 @@ import {
   parseAbstractEmailResponse,
   parseAbstractIpResponse,
   parseFingerprintResponse,
+  parseOpportifyResponse,
   parseProxycheckResponse,
   reweightFingerprintSignals,
   type EnrichmentResult,
@@ -87,6 +88,7 @@ type PreparedSignup = {
   proxycheck: EnrichmentResult;
   abstractIp: EnrichmentResult;
   abstractEmail: EnrichmentResult;
+  opportify: EnrichmentResult;
   weights: ScoreWeights;
 };
 
@@ -284,6 +286,7 @@ export class MonitorEngine {
     return [
       this.config.FINGERPRINT_SECRET_API_KEY,
       this.config.PROXYCHECK_API_KEY,
+      this.config.OPPORTIFY_API_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
       this.config.SOURCE_DATABASE_URL,
@@ -685,19 +688,27 @@ export class MonitorEngine {
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
     ]);
-    const [fingerprint, proxycheck, abstractIp, abstractEmail] = await Promise.all([
+    const [fingerprint, proxycheck, abstractIp, abstractEmail, opportify] = await Promise.all([
       this.cachedFingerprint(signup, weights),
       this.cachedProxycheck(signup, weights),
       this.cachedAbstractIp(signup, weights),
       this.cachedAbstractEmail(signup, weights),
+      this.cachedOpportify(signup, weights),
     ]);
     await Promise.all([
       this.saveProviderCheck(signup.id, fingerprint),
       this.saveProviderCheck(signup.id, proxycheck),
       this.saveProviderCheck(signup.id, abstractIp),
       this.saveProviderCheck(signup.id, abstractEmail),
+      this.saveProviderCheck(signup.id, opportify),
     ]);
-    const unavailable = [fingerprint, proxycheck, abstractIp, abstractEmail]
+    const unavailable = [
+      fingerprint,
+      proxycheck,
+      abstractIp,
+      abstractEmail,
+      opportify,
+    ]
       .filter((result) => result.status === "failed")
       .map((result) => result.provider);
     if (unavailable.length > 0) {
@@ -711,6 +722,7 @@ export class MonitorEngine {
       proxycheck,
       abstractIp,
       abstractEmail,
+      opportify,
       weights,
     };
   }
@@ -725,6 +737,7 @@ export class MonitorEngine {
       proxycheck,
       abstractIp,
       abstractEmail,
+      opportify,
       weights,
     } = prepared;
     const locationPolicy = await this.riskyLocations.forCountry(
@@ -736,6 +749,7 @@ export class MonitorEngine {
       ...proxycheck.signals,
       ...abstractIp.signals,
       ...abstractEmail.signals,
+      ...opportify.signals,
       ...(locationPolicy
         ? [
             {
@@ -1512,6 +1526,45 @@ export class MonitorEngine {
       response,
       signals: parsed.signals,
     };
+  }
+
+  private async cachedOpportify(
+    signup: Signup,
+    weights: ScoreWeights,
+  ): Promise<EnrichmentResult> {
+    const cached = await this.db.antifraud.query<{
+      response: Record<string, unknown> | null;
+    }>(
+      `
+        SELECT response
+        FROM provider_checks
+        WHERE user_id = $1
+          AND provider = 'opportify'
+          AND status = 'success'
+        ORDER BY checked_at DESC
+        LIMIT 1
+      `,
+      [signup.id],
+    );
+    if (!cached.rows[0]) {
+      return this.enrichment.opportifyCheck(signup, weights);
+    }
+    try {
+      const parsed = parseOpportifyResponse(
+        cached.rows[0].response ?? {},
+        weights,
+      );
+      return {
+        provider: "opportify",
+        status: "success",
+        lookupKey: `user:${signup.id}`,
+        score: parsed.score,
+        response: parsed.response,
+        signals: parsed.signals,
+      };
+    } catch {
+      return this.enrichment.opportifyCheck(signup, weights);
+    }
   }
 
   private async saveProviderCheck(
