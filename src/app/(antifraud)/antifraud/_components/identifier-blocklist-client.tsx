@@ -43,8 +43,6 @@ export function IdentifierBlocklistClient({
   const [rules, setRules] = useState(initialRules);
   const [value, setValue] = useState("");
   const [matchMode, setMatchMode] = useState<"exact" | "cidr">("exact");
-  const [reason, setReason] = useState("");
-  const [expiresAt, setExpiresAt] = useState("");
   const [isPending, startTransition] = useTransition();
   const isIp = kind === "ip";
   const Icon = isIp ? Network : Fingerprint;
@@ -52,8 +50,8 @@ export function IdentifierBlocklistClient({
 
   function add(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!value.trim() || reason.trim().length < 4) {
-      toast.error(`Enter a ${label.toLowerCase()} and an internal reason.`);
+    if (!value.trim()) {
+      toast.error(`Enter a ${label.toLowerCase()}.`);
       return;
     }
     if (
@@ -69,8 +67,6 @@ export function IdentifierBlocklistClient({
           kind,
           value: value.trim(),
           matchMode: isIp ? matchMode : "exact",
-          reason: reason.trim(),
-          expiresAt: expiresAt ? new Date(expiresAt).toISOString() : null,
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
@@ -79,8 +75,6 @@ export function IdentifierBlocklistClient({
           ...current.filter((rule) => rule.id !== saved.id),
         ]);
         setValue("");
-        setReason("");
-        setExpiresAt("");
         toast.success(`${saved.value} is now blocked.`);
         router.refresh();
       } catch (error) {
@@ -92,12 +86,6 @@ export function IdentifierBlocklistClient({
   }
 
   function toggle(rule: IdentifierBlocklistRule) {
-    const updateReason = window.prompt(
-      rule.enabled
-        ? "Why are you disabling this rule?"
-        : "Why are you reactivating this rule?",
-    );
-    if (!updateReason || updateReason.trim().length < 4) return;
     if (
       !window.confirm(
         `${rule.enabled ? "Disable" : "Reactivate"} ${rule.value}?`,
@@ -111,8 +99,6 @@ export function IdentifierBlocklistClient({
           kind,
           id: rule.id,
           enabled: !rule.enabled,
-          reason: updateReason.trim(),
-          expiresAt: rule.expiresAt,
           confirmed: true,
           idempotencyKey: crypto.randomUUID(),
         });
@@ -178,30 +164,6 @@ export function IdentifierBlocklistClient({
             )}
           </div>
         )}
-        <div className="space-y-2">
-          <Label htmlFor={`${kind}-reason`}>Internal reason</Label>
-          <Input
-            id={`${kind}-reason`}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            maxLength={500}
-            placeholder="Evidence supporting this restriction"
-            disabled={isPending}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor={`${kind}-expiry`}>Optional expiry</Label>
-          <Input
-            id={`${kind}-expiry`}
-            type="datetime-local"
-            value={expiresAt}
-            onChange={(event) => setExpiresAt(event.target.value)}
-            disabled={isPending}
-          />
-          <p className="text-xs text-muted-foreground">
-            Blank keeps the rule permanent.
-          </p>
-        </div>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? <Loader2 className="size-4 animate-spin" /> : <Ban className="size-4" />}
           Block {isIp ? "IP" : "fingerprint"}
@@ -249,7 +211,6 @@ export function IdentifierBlocklistClient({
                       {rule.enabled ? "Blocking" : "Disabled"}
                     </Badge>
                   </div>
-                  <p className="text-xs text-muted-foreground">{rule.reason}</p>
                   <p className="text-[11px] tabular-nums text-muted-foreground">
                     {rule.matchCount} detections · {rule.affectedUsers} users ·{" "}
                     {rule.matches24h}/24h · {rule.matches7d}/7d ·{" "}

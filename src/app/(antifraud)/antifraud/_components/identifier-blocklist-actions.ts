@@ -13,11 +13,13 @@ import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 
 const commonSchema = z.object({
   kind: identifierBlocklistKindSchema,
-  reason: z.string().trim().min(4).max(500),
-  expiresAt: z.string().datetime().nullable(),
   confirmed: z.literal(true),
   idempotencyKey: z.string().uuid(),
 });
+// The monitor API still requires a reason and an expiry field on every
+// mutation, but the panel no longer collects them: rules are permanent and the
+// admin audit event carries the actor.
+const AUTOMATIC_REASON = "Blocked from the antifraud admin panel";
 const createSchema = commonSchema.extend({
   value: z.string().trim().min(1).max(255),
   matchMode: z.enum(["exact", "cidr"]),
@@ -41,6 +43,8 @@ export async function addIdentifierBlocklistRule(input: unknown) {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const saved = await createIdentifierBlocklistRule({
     ...parsed.data,
+    reason: AUTOMATIC_REASON,
+    expiresAt: null,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
   });
@@ -53,8 +57,6 @@ export async function addIdentifierBlocklistRule(input: unknown) {
         kind: saved.kind,
         value: saved.value,
         matchMode: saved.matchMode,
-        reason: parsed.data.reason,
-        expiresAt: parsed.data.expiresAt,
         affectedUsers: saved.affectedUsers,
         idempotencyKey: parsed.data.idempotencyKey,
       },
@@ -70,6 +72,8 @@ export async function setIdentifierBlocklistRuleState(input: unknown) {
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
   const saved = await updateIdentifierBlocklistRule({
     ...parsed.data,
+    reason: AUTOMATIC_REASON,
+    expiresAt: null,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
   });
@@ -83,8 +87,6 @@ export async function setIdentifierBlocklistRuleState(input: unknown) {
         blocklistId: saved.id,
         kind: saved.kind,
         value: saved.value,
-        reason: parsed.data.reason,
-        expiresAt: parsed.data.expiresAt,
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });
