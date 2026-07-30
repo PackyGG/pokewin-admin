@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, prepare, complete, repair, cancel, link, stats, deal, migration, linkMigration, scopes, endpoints] =
+  const [service, prepare, complete, repair, cancel, link, stats, deal, rewards, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
       read("src/app/api/v1/discord/creator-setups/prepare/route.ts"),
@@ -15,6 +15,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/app/api/v1/discord/creator-setups/link/route.ts"),
       read("src/app/api/v1/discord/creator-setups/stats/route.ts"),
       read("src/app/api/v1/discord/creator-setups/deal/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/rewards/route.ts"),
       read(
         "drizzle/admin/migrations/20260729_discord_creator_setups.sql",
       ),
@@ -40,7 +41,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, repair, cancel, link, stats, deal]) {
+  for (const route of [prepare, complete, repair, cancel, link, stats, deal, rewards]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
@@ -62,6 +63,14 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /deal\.status === "scheduled"/);
   assert.match(service, /total_withdraw_cap_usd/);
   assert.match(service, /max_sponsorship_per_stream_usd/);
+  assert.match(rewards, /getCreatorSetupRewards/);
+  assert.match(rewards, /rejectWrongGuild/);
+  assert.match(service, /creator_reward_programs/);
+  assert.match(service, /creator_reward_programs\.is_active, true/);
+  assert.match(service, /thresholdUsd/);
+  assert.match(service, /vipRewardUsd/);
+  assert.match(service, /lossbackPct/);
+  assert.match(service, /maxRewardPerUserUsd/);
 
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "discord_creator_setups"/);
   assert.match(migration, /UNIQUE \("guild_id", "creator_discord_user_id"\)/);
@@ -114,4 +123,5 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deal/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
 });

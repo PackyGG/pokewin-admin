@@ -104,6 +104,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/rewards",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns active creator-facing reward-program terms for the Packy creator linked to that private Discord section. Internal IDs, staff data, claim totals, and payout history are omitted.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",

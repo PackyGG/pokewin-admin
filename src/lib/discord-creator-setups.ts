@@ -1,9 +1,12 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { admin_audit_events } from "@/lib/db-schema/admin/schema";
+import {
+  admin_audit_events,
+  creator_reward_programs,
+} from "@/lib/db-schema/admin/schema";
 import { account, affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
@@ -183,6 +186,29 @@ type UsageStatsRow = {
   active_players: string;
   wager_usd: string;
   earnings_usd: string;
+};
+
+export type CreatorSetupRewards = {
+  generatedAt: string;
+  creator: {
+    userId: string;
+    username: string | null;
+  };
+  programs: Array<{
+    name: string;
+    codes: string[];
+    wager: {
+      thresholdUsd: number;
+      rewardUsd: number;
+      vipRewardUsd: number | null;
+    } | null;
+    lossback: {
+      percent: number;
+      minDepositUsd: number;
+    } | null;
+    maxRewardPerUserUsd: number | null;
+    accrualStartAt: string;
+  }>;
 };
 
 type DepositStatsRow = {
@@ -493,6 +519,74 @@ export async function getCreatorSetupDeal(input: {
     generatedAt: new Date().toISOString(),
     creator: { userId: creator.id, username: creator.username },
     deal: current ? creatorFacingDeal(current) : null,
+  };
+}
+
+export async function getCreatorSetupRewards(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorSetupRewards> {
+  const setup = await requireLinkedSetupActor(input);
+  const creator = await requireActiveCreator(setup.creator_user_id);
+  const programs = await adminDrizzle
+    .select({
+      name: creator_reward_programs.name,
+      codes: creator_reward_programs.codes,
+      thresholdUsd: creator_reward_programs.threshold_usd,
+      rewardUsd: creator_reward_programs.reward_usd,
+      vipRewardUsd: creator_reward_programs.vip_reward_usd,
+      lossbackPct: creator_reward_programs.lossback_pct,
+      minDepositUsd: creator_reward_programs.min_deposit_usd,
+      maxRewardPerUserUsd: creator_reward_programs.max_reward_per_user_usd,
+      accrualStartAt: creator_reward_programs.accrual_start_at,
+    })
+    .from(creator_reward_programs)
+    .where(
+      and(
+        eq(creator_reward_programs.creator_user_id, setup.creator_user_id),
+        eq(creator_reward_programs.is_active, true),
+      ),
+    )
+    .orderBy(desc(creator_reward_programs.created_at));
+
+  return {
+    generatedAt: new Date().toISOString(),
+    creator: { userId: creator.id, username: creator.username },
+    programs: programs.map((program) => ({
+      name: program.name,
+      codes: [
+        ...new Set(
+          (program.codes ?? [])
+            .map((code) => code.trim().toUpperCase())
+            .filter(Boolean),
+        ),
+      ],
+      wager:
+        program.thresholdUsd !== null && program.rewardUsd !== null
+          ? {
+              thresholdUsd: money(program.thresholdUsd),
+              rewardUsd: money(program.rewardUsd),
+              vipRewardUsd:
+                program.vipRewardUsd === null
+                  ? null
+                  : money(program.vipRewardUsd),
+            }
+          : null,
+      lossback:
+        program.lossbackPct !== null && program.minDepositUsd !== null
+          ? {
+              percent: money(program.lossbackPct),
+              minDepositUsd: money(program.minDepositUsd),
+            }
+          : null,
+      maxRewardPerUserUsd:
+        program.maxRewardPerUserUsd === null
+          ? null
+          : money(program.maxRewardPerUserUsd),
+      accrualStartAt: new Date(program.accrualStartAt).toISOString(),
+    })),
   };
 }
 

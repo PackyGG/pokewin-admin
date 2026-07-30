@@ -56,7 +56,7 @@ export const API_SCOPES = {
   "discord:creator:setup": {
     label: "Provision creator Discord channels",
     description:
-      "Provision and link private creator sections, then read their combined 30-day performance and current creator-facing deal terms. Reads creator data from the production mirror, verifies Discord ownership for creator self-linking, and writes provisioning state only to the admin database.",
+      "Provision and link private creator sections, then read their combined 30-day performance, current deal terms, and active reward-program terms. Reads creator data from the production mirror, verifies Discord ownership for creator self-linking, and writes provisioning state only to the admin database.",
     access: "admin-write",
   },
   "discord:antifraud": {
