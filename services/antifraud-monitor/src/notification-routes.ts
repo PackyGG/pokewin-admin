@@ -82,7 +82,7 @@ const ROUTES = {
     purpose: "Signed delivery of committed risk events to the admin dashboard.",
     eventFamilies: [
       "Committed antifraud risk events",
-      "Score-60 signup review markers",
+      "Score-50 signup review markers",
       "Email-containment withdrawal locks",
       "Automatic fiat withdrawal-hold review signals",
     ],

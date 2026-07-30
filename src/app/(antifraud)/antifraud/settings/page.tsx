@@ -174,7 +174,7 @@ async function IntegrationSection() {
         note:
           ingestStatus === "partial"
             ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
-            : "Shared HMAC delivery from committed monitor risk events, including score-60 signups, into Account Review.",
+            : "Shared HMAC delivery from committed monitor risk events, including score-50 signups, into Account Review.",
     },
     {
       name: "Live monitor API",

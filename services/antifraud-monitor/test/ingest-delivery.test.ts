@@ -94,7 +94,7 @@ test("risk rows map to bounded dashboard signal fields", () => {
     type: "signal",
     id: row.id,
     kind: "shared_device",
-    severity: "medium",
+    severity: "critical",
     riskScore: 75,
     userId: "user-1",
     username: "player",

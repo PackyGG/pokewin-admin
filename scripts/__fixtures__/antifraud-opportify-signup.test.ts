@@ -46,7 +46,7 @@ test("Opportify is visible as independent signup evidence", async () => {
   assert.match(server, /opportify\.score AS opportify_score/);
   assert.match(schema, /opportify_score: z\.number\(\)\.nullable\(\)/);
   assert.match(page, /label="Opportify"/);
-  assert.match(settings, /name: "Opportify Fraud Protection"/);
+  assert.match(settings, /name: "Opportify Full Fraud Check"/);
   assert.match(migration, /'opportify_risk_medium', 25/);
   assert.match(migration, /'opportify_risk_high', 60/);
   assert.match(migration, /'opportify_risk_highest', 100/);

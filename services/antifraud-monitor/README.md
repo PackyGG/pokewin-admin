@@ -19,10 +19,10 @@ It does not modify the Packy frontend or backend.
 - proxycheck.io stable v3 enrichment with confidence-aware proxy/VPN/Tor
   scoring, live risk, attack and prior-detection history, network/location,
   device-estimate and operator evidence, plus a 24-hour per-IP signup cache
-- Configurable three-minute monitor sessions
+- Score-based 10- and 15-minute monitor sessions
 - Durable risk events, cases, rule matches and staff decisions
 - Signed, retry-safe delivery of committed risk events to the Admin dashboard
-- Durable Discord delivery for every score-60 signup, retried independently
+- Durable Discord delivery for every score-50 signup, retried independently
   from the signed Account Review event stream
 - Incremental detection of automatic lifetime-fiat withdrawal holds, with
   independent durable delivery to Account Review and a dedicated Discord
@@ -57,7 +57,7 @@ are not alerted.
 Admin-dashboard sink. Committed `risk_events` are delivered in signed batches;
 the delivery cursor advances only after the dashboard confirms every event.
 Retries are idempotent because the risk-event id is the dashboard external id.
-Score-60 signup markers use this same stream to open Account Review cases.
+Score-50 signup markers use this same stream to open Account Review cases.
 Neither value is returned by runtime status.
 
 Automatic lifetime-fiat withdrawal holds and future non-email account

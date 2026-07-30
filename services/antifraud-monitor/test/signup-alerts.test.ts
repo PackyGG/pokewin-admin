@@ -30,7 +30,7 @@ test("50 is the inclusive signup review notification floor", () => {
   assert.equal(marker.payload.monitorCaseId, "case-1");
 });
 
-test("score-60 signup delivery uses durable independent sinks", async () => {
+test("score-50 signup delivery uses durable independent sinks", async () => {
   const source = await readFile(
     new URL("../src/monitor.ts", import.meta.url),
     "utf8",

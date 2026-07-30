@@ -12,12 +12,12 @@ import { cn } from "@/lib/utils";
 /** Rows whose value is a compiled-in code fact; `null` = not determinable here. */
 const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: "Standard accent", value: "Discord blurple · #5865F2" },
-  { label: "Review accent", value: "Amber | score 40-79" },
-  { label: "High accent", value: "Orange | score 80-119" },
+  { label: "Review accent", value: "Amber | score 21-49" },
+  { label: "High accent", value: "Orange | score 50-69" },
   { label: "Critical / urgent accent", value: "Red · #EF4444" },
   // Replaced with the monitor-reported presence state inside the component.
   { label: "Button destination", value: null },
-  { label: "Automatic trigger", value: "Signup score 60+ or matched rule" },
+  { label: "Automatic trigger", value: "Signup score 50+ or matched rule" },
   { label: "Urgent trigger", value: "Not defined yet" },
 ];
 
@@ -163,21 +163,21 @@ export async function DiscordConfigSection() {
                 </span>
                 <span>
                   <span className="block text-muted-foreground">Risk score</span>
-                  <strong>60 points</strong>
-                  <span className="block text-amber-600 dark:text-amber-400">
-                    Medium risk
+                  <strong>55 points</strong>
+                  <span className="block text-orange-600 dark:text-orange-400">
+                    High risk
                   </span>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">Trigger</span>
-                  <strong>Signup score 60+</strong>
+                  <strong>Signup score 50+</strong>
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">
                 <span className="text-[10px] font-bold uppercase tracking-wide text-muted-foreground">
                   Why it was flagged
                 </span>
-                <p className="mt-1 text-xs font-semibold">+60 | Shared device</p>
+                <p className="mt-1 text-xs font-semibold">+55 | Shared device</p>
                 <p className="text-[11px] text-muted-foreground">
                   Three accounts share this device.
                 </p>

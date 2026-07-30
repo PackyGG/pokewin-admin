@@ -52,7 +52,10 @@ test("context-risk countries add bounded risk and only extend eligible monitors"
   ]);
   assert.match(migration, /BETWEEN 60 AND 3600/);
   assert.match(monitor, /CONTEXT_RISK_COUNTRIES\.has\(countryCode\)/);
-  assert.match(monitor, /\{ countryCode, monitorDurationSeconds: 900 \}/);
+  assert.match(
+    monitor,
+    /\{ countryCode, monitorDurationSeconds: 900, riskWeight: 15 \}/,
+  );
   assert.match(monitor, /locationPolicy\?\.monitorDurationSeconds/);
   assert.doesNotMatch(monitor, /locationPolicy (?:!== null|\|\|)/);
   assert.match(monitor, /Math\.max\(/);

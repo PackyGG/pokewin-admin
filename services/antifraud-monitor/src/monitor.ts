@@ -1046,7 +1046,7 @@ export class MonitorEngine {
       CONTEXT_RISK_COUNTRIES.has(countryCode);
     const locationPolicy =
       requiresContextLocationMonitor
-        ? { countryCode, monitorDurationSeconds: 900 }
+        ? { countryCode, monitorDurationSeconds: 900, riskWeight: 15 }
         : await this.riskyLocations.forCountry(signup.country_code);
     const signals = [
       ...baseSignupSignals(signup, context, weights),
@@ -1415,7 +1415,7 @@ export class MonitorEngine {
             caseId: alert.case_id ?? undefined,
             score: alert.score,
             severity: severity(alert.score),
-            trigger: "Signup score reached 60+",
+            trigger: "Signup score reached 50+",
             signals: storedSignals(alert.signals),
             occurredAt: alert.occurred_at,
           },

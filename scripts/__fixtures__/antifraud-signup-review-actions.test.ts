@@ -7,20 +7,20 @@ import {
   shouldOpenReviewForSignal,
 } from "../../src/lib/antifraud/ws";
 
-test("signup score 60 opens Account Review even below the general high band", () => {
-  assert.equal(SIGNUP_REVIEW_SCORE_FLOOR, 60);
+test("signup score 50 opens Account Review at the high-risk floor", () => {
+  assert.equal(SIGNUP_REVIEW_SCORE_FLOOR, 50);
   assert.equal(
     shouldOpenReviewForSignal({
       kind: "high_risk_signup",
-      riskScore: 60,
-      severity: "medium",
+      riskScore: 50,
+      severity: "high",
     }),
     true,
   );
   assert.equal(
     shouldOpenReviewForSignal({
       kind: "high_risk_signup",
-      riskScore: 59,
+      riskScore: 49,
       severity: "medium",
     }),
     false,

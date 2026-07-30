@@ -113,13 +113,13 @@ function isEventType(value: string): value is MonitorEventType {
 
 /**
  * Severity from a score, mirroring `SEVERITY_BANDS` in
- * `services/antifraud-monitor/src/score-catalog.ts` (low 0–39, medium 40–79,
- * high 80–119, critical 120+). Used only when the frame does not state one.
+ * `services/antifraud-monitor/src/score-catalog.ts` (low 0-20, medium 21-49,
+ * high 50-69, critical 70-100). Used only when the frame does not state one.
  */
 function severityFromScore(value: number): MonitorSeverity {
-  if (value >= 120) return "critical";
-  if (value >= 80) return "high";
-  if (value >= 40) return "medium";
+  if (value >= 70) return "critical";
+  if (value >= 50) return "high";
+  if (value >= 21) return "medium";
   return "low";
 }
 

@@ -13,12 +13,13 @@ async function source(relative: string): Promise<string> {
 
 test("current signup review and severity thresholds stay explicit", () => {
   assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
-  assert.equal(severity(59), "medium");
-  assert.equal(severity(60), "medium");
-  assert.equal(severity(79), "medium");
-  assert.equal(severity(80), "high");
-  assert.equal(severity(119), "high");
-  assert.equal(severity(120), "critical");
+  assert.equal(severity(20), "low");
+  assert.equal(severity(21), "medium");
+  assert.equal(severity(49), "medium");
+  assert.equal(severity(50), "high");
+  assert.equal(severity(69), "high");
+  assert.equal(severity(70), "critical");
+  assert.equal(severity(100), "critical");
   assert.deepEqual(
     SEVERITY_BANDS.map(({ key, minimum, maximum }) => ({
       key,
@@ -26,10 +27,10 @@ test("current signup review and severity thresholds stay explicit", () => {
       maximum,
     })),
     [
-      { key: "low", minimum: 0, maximum: 39 },
-      { key: "medium", minimum: 40, maximum: 79 },
-      { key: "high", minimum: 80, maximum: 119 },
-      { key: "critical", minimum: 120, maximum: null },
+      { key: "low", minimum: 0, maximum: 20 },
+      { key: "medium", minimum: 21, maximum: 49 },
+      { key: "high", minimum: 50, maximum: 69 },
+      { key: "critical", minimum: 70, maximum: 100 },
     ],
   );
 });
