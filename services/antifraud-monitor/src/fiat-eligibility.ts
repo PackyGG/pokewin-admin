@@ -290,8 +290,13 @@ async function loadSourceSubject(
             WHERE intent.id IS NOT NULL
           ), 0) AS fiat_deposit_usd
         FROM ledger_transactions lt
+        -- The user_id predicate is redundant on paper (an intent's completed
+        -- ledger row always belongs to the same account) but it is what lets
+        -- the planner use the intents' (user_id, created_at) index. Without it
+        -- PostgreSQL seq-scans the whole intents table once per deposit row.
         LEFT JOIN fiat_deposit_intents intent
           ON intent.completed_ledger_id = lt.id
+          AND intent.user_id = u.id
         WHERE lt.user_id = u.id
           AND lt.type::text = 'deposit'
           AND lt.status::text = 'completed'

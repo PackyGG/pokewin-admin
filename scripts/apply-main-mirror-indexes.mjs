@@ -182,7 +182,17 @@ const statements =
 
 async function applyTarget(name) {
   const isProd = name === "prod";
-  const mirrorKey = isProd ? "MIRROR_PRODUCTION_DB" : "MIRROR_DEV_DB";
+  const adminKey = isProd
+    ? "MIRROR_PRODUCTION_DB_ADMIN"
+    : "MIRROR_DEV_DB_ADMIN";
+  const runtimeKey = isProd ? "MIRROR_PRODUCTION_DB" : "MIRROR_DEV_DB";
+  // Index DDL needs CREATE on schema public. The mirrors' RUNTIME credential is
+  // deliberately SELECT-only (the production mirror's `fraud_app` has no CREATE
+  // and owns no tables), so an optional *_ADMIN url lets the owner hand this
+  // script an owner/superuser role without ever widening the app credential.
+  // Falls back to the runtime url, which still works wherever that role owns
+  // the schema.
+  const mirrorKey = process.env[adminKey] ? adminKey : runtimeKey;
   const primaryKey = isProd ? "DATABASE_URL" : "DEV_DATABASE_URL";
   const mirrorUrl = process.env[mirrorKey];
   const primaryUrl = process.env[primaryKey];
@@ -225,7 +235,12 @@ async function applyTarget(name) {
       throw new Error(`${mirrorKey} is a recovery replica and cannot accept index DDL`);
     }
     if (!preflight.rows[0]?.can_create) {
-      throw new Error(`${mirrorKey} user lacks CREATE on schema public`);
+      throw new Error(
+        `${mirrorKey} user lacks CREATE on schema public`
+          + (mirrorKey === runtimeKey
+            ? `; set ${adminKey} to an owner/superuser url for this mirror`
+            : ""),
+      );
     }
 
     operation.phase = "acquire-advisory-lock";
