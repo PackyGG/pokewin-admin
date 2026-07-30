@@ -163,8 +163,18 @@ test("network clustering normalizes IPv4 and IPv6 without accepting malformed te
   assert.deepEqual(networkClusterKeys("2001:db8::1"), {
     exact: "2001:0db8:0000:0000:0000:0000:0000:0001",
     subnet: "2001:0db8:0000:0000::/64",
-    evidenceSubnet: "2001:0db8:0000:0000:0000::/56",
+    evidenceSubnet: "2001:0db8:0000:0000::/56",
     baselineSubnet: "2001:0db8:0000::/48",
+    family: 6,
+  });
+  // Regression: bits 56..64 of the fourth group must be masked away, or the
+  // value has bits right of the /56 prefix and Postgres `cidr` rejects it —
+  // this exact address dead-lettered a production signup five times.
+  assert.deepEqual(networkClusterKeys("2601:192:7f:2bc0:eb00::1"), {
+    exact: "2601:0192:007f:2bc0:eb00:0000:0000:0001",
+    subnet: "2601:0192:007f:2bc0::/64",
+    evidenceSubnet: "2601:0192:007f:2b00::/56",
+    baselineSubnet: "2601:0192:007f::/48",
     family: 6,
   });
   assert.deepEqual(networkClusterKeys("unknown, 192.0.2.1"), {

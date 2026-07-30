@@ -454,12 +454,17 @@ export function networkClusterKeys(ip: string | null): {
         family: null,
       };
     }
-    const fifth = Number.parseInt(groups[4]!, 16);
-    const subnet56Fifth = (fifth & 0xff00).toString(16).padStart(4, "0");
+    // A /56 keeps the first 48 bits plus the HIGH byte of the FOURTH group.
+    // Postgres `cidr` rejects any value with bits set right of the prefix,
+    // so masking the wrong group (this previously kept all of group four and
+    // masked group five) dead-lettered every signup whose address had bits
+    // in 56..72 — e.g. 2601:0192:007f:2bc0:… must become 2601:0192:007f:2b00::/56.
+    const fourth = Number.parseInt(groups[3]!, 16);
+    const subnet56Fourth = (fourth & 0xff00).toString(16).padStart(4, "0");
     return {
       exact: groups.join(":"),
       subnet: `${groups.slice(0, 4).join(":")}::/64`,
-      evidenceSubnet: `${[...groups.slice(0, 4), subnet56Fifth].join(":")}::/56`,
+      evidenceSubnet: `${[...groups.slice(0, 3), subnet56Fourth].join(":")}::/56`,
       baselineSubnet: `${groups.slice(0, 3).join(":")}::/48`,
       family: 6,
     };
