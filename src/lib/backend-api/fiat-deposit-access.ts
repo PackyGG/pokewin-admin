@@ -1,117 +1,46 @@
 import "server-only";
 
-import {
-  BackendApiError,
-  BackendNetworkError,
-  type BackendErrorPayload,
-} from "./errors";
+import { z } from "zod";
 
-export type FiatDepositAccess = {
-  enabled: boolean;
-};
+import { backendApi } from "./client";
 
-type FiatDepositAccessResponse =
-  | FiatDepositAccess
-  | boolean
-  | {
-      data?: FiatDepositAccess | boolean;
-      success?: boolean;
-    };
+const fiatDepositAccessSchema = z.object({
+  user_id: z.string().min(1),
+  enabled: z.boolean(),
+});
 
-function requiredEnv(name: "ADMIN_API_KEY" | "xbypasssecret"): string {
-  const value = process.env[name]?.trim();
-  if (!value) {
-    throw new Error(`Missing ${name} for Fiat deposit access control`);
+const fiatDepositAccessResponseSchema = z.object({
+  success: z.literal(true),
+  data: fiatDepositAccessSchema,
+});
+
+export type FiatDepositAccess = z.infer<typeof fiatDepositAccessSchema>;
+
+function parseAccessResponse(
+  response: unknown,
+  requestedUserId: string,
+): FiatDepositAccess {
+  const parsed = fiatDepositAccessResponseSchema.safeParse(response);
+  if (!parsed.success || parsed.data.data.user_id !== requestedUserId) {
+    throw new Error("Backend returned an invalid Fiat deposit access response");
   }
-  return value;
+  return parsed.data.data;
 }
 
-function headers(): Record<string, string> {
-  return {
-    "x-admin-api-key": requiredEnv("ADMIN_API_KEY"),
-    xbypasssecret: requiredEnv("xbypasssecret"),
-    accept: "application/json",
-  };
-}
-
-function parseAccess(response: FiatDepositAccessResponse): FiatDepositAccess {
-  if (typeof response === "boolean") return { enabled: response };
-  if (
-    response &&
-    typeof response === "object" &&
-    "enabled" in response &&
-    typeof response.enabled === "boolean"
-  ) {
-    return { enabled: response.enabled };
-  }
-  const data =
-    response && typeof response === "object" && "data" in response
-      ? response.data
-      : undefined;
-  if (typeof data === "boolean") return { enabled: data };
-  if (
-    data &&
-    typeof data === "object" &&
-    typeof data.enabled === "boolean"
-  ) {
-    return { enabled: data.enabled };
-  }
-  throw new Error("Backend returned an invalid Fiat deposit access response");
-}
-
-const FIAT_DEPOSIT_ACCESS_BASE_URL = "https://packy.gg/v1";
-
-const urlFor = (userId: string) =>
-  `${FIAT_DEPOSIT_ACCESS_BASE_URL}/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
-
-async function requestFiatDepositAccess(
-  userId: string,
-  method: "GET" | "PUT",
-  enabled?: boolean,
-): Promise<FiatDepositAccess> {
-  const url = urlFor(userId);
-  let response: Response;
-  try {
-    response = await fetch(url, {
-      method,
-      headers: {
-        ...headers(),
-        ...(method === "PUT" ? { "content-type": "application/json" } : {}),
-      },
-      body: method === "PUT" ? JSON.stringify({ enabled }) : undefined,
-      cache: "no-store",
-      signal: AbortSignal.timeout(8_000),
-    });
-  } catch (error) {
-    throw new BackendNetworkError(url, error);
-  }
-
-  const body = (await response.json().catch(() => null)) as
-    | FiatDepositAccessResponse
-    | BackendErrorPayload
-    | null;
-  if (!response.ok) {
-    const payload = (body ?? {}) as BackendErrorPayload;
-    throw new BackendApiError(
-      response.status,
-      payload.message ??
-        payload.error ??
-        `Fiat access request failed: ${response.status}`,
-      payload,
-    );
-  }
-  return parseAccess(body as FiatDepositAccessResponse);
-}
+const pathFor = (userId: string): string =>
+  `/admin/users/${encodeURIComponent(userId)}/fiat-deposit-access`;
 
 export async function getFiatDepositAccess(
   userId: string,
 ): Promise<FiatDepositAccess> {
-  return requestFiatDepositAccess(userId, "GET");
+  const response = await backendApi.get<unknown>(pathFor(userId));
+  return parseAccessResponse(response, userId);
 }
 
 export async function updateFiatDepositAccess(
   userId: string,
   enabled: boolean,
 ): Promise<FiatDepositAccess> {
-  return requestFiatDepositAccess(userId, "PUT", enabled);
+  const response = await backendApi.put<unknown>(pathFor(userId), { enabled });
+  return parseAccessResponse(response, userId);
 }

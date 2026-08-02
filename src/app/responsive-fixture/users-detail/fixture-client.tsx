@@ -397,6 +397,10 @@ export function UserDetailFixtureClient() {
       disposedInventoryPromise={ok<PaginatedInventory>(EMPTY_INVENTORY)}
       wagerRequirementPromise={Promise.resolve(null)}
       featureLocksPromise={Promise.resolve(null)}
+      fiatDepositAccessPromise={Promise.resolve({
+        user_id: DATA.user.id,
+        enabled: true,
+      })}
       kycPromise={Promise.resolve(null)}
       auditPromise={Promise.resolve({
         data: { events: [], total: 0, truncated: false },

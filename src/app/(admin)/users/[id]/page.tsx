@@ -34,6 +34,7 @@ import {
 } from "@/lib/errors/safe-query";
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import { getFiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
 import { getUserKyc } from "@/lib/backend-api/kyc";
 import {
   getUserAdminAuditFeed,
@@ -544,6 +545,13 @@ async function UserDetailBody({
     initialTab === "account"
       ? getUserFeatureLocks(id).catch(() => null)
       : null;
+  // Account tab: per-user Fiat deposit allow-list status. This is a backend-
+  // owned access flag, independent from fraud/compliance locks. Keep the read
+  // lazy with the rest of the Account controls and degrade visibly on error.
+  const fiatDepositAccessPromise =
+    initialTab === "account"
+      ? getFiatDepositAccess(id).catch(() => null)
+      : null;
   // KYC tab: backend-owned Sumsub KYC status + admin control. Same
   // catch→null convention as the fraud-locks read above — null renders the
   // card's muted "awaiting backend deploy" state instead of crashing the tab.
@@ -757,6 +765,7 @@ async function UserDetailBody({
       disposedInventoryPromise={disposedInventoryPromise}
       wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
+      fiatDepositAccessPromise={fiatDepositAccessPromise}
       kycPromise={kycPromise}
       auditPromise={auditPromise}
       wagerProgressPromise={wagerProgressPromise}

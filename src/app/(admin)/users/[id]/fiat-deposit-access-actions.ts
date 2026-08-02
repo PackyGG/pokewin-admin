@@ -1,5 +1,8 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
+
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   getFiatDepositAccess,
@@ -13,9 +16,12 @@ type Result =
   | { success: true; data: FiatDepositAccess }
   | { success: false; error: string };
 
-function validUserId(userId: string): boolean {
-  return typeof userId === "string" && userId.trim().length > 0;
-}
+const userIdSchema = z.string().trim().min(1, "Invalid user id");
+
+const updateAccessSchema = z.object({
+  userId: userIdSchema,
+  enabled: z.boolean(),
+});
 
 function friendlyError(error: unknown): string {
   if (error instanceof BackendApiError) {
@@ -31,41 +37,30 @@ function friendlyError(error: unknown): string {
   return "Fiat access API is currently unavailable";
 }
 
-export async function getFiatDepositAccessAction(
-  userId: string,
-): Promise<Result> {
-  await requirePageAccess("/users");
-  await requireAdmin();
-  if (!validUserId(userId)) {
-    return { success: false, error: "Invalid user id" };
-  }
-  try {
-    return { success: true, data: await getFiatDepositAccess(userId) };
-  } catch (error) {
-    return { success: false, error: friendlyError(error) };
-  }
-}
-
 export async function updateFiatDepositAccessAction(
   userId: string,
   enabled: boolean,
 ): Promise<Result> {
   await requirePageAccess("/users");
   const session = await requireAdmin();
-  if (!validUserId(userId) || typeof enabled !== "boolean") {
-    return { success: false, error: "Invalid Fiat access request" };
+  const parsed = updateAccessSchema.safeParse({ userId, enabled });
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues[0].message };
   }
 
   let previous: FiatDepositAccess | null = null;
   try {
-    previous = await getFiatDepositAccess(userId);
+    previous = await getFiatDepositAccess(parsed.data.userId);
   } catch {
     // The PUT remains useful when the status read is temporarily unavailable.
   }
 
   let updated: FiatDepositAccess;
   try {
-    updated = await updateFiatDepositAccess(userId, enabled);
+    updated = await updateFiatDepositAccess(
+      parsed.data.userId,
+      parsed.data.enabled,
+    );
   } catch (error) {
     return { success: false, error: friendlyError(error) };
   }
@@ -73,12 +68,14 @@ export async function updateFiatDepositAccessAction(
   await createAdminAuditEvent({
     adminUserId: session.userId,
     eventType: "user_fiat_deposit_access_updated",
-    targetUserId: userId,
+    targetUserId: parsed.data.userId,
     metadata: {
       previousEnabled: previous?.enabled ?? null,
       enabled: updated.enabled,
     },
   });
+
+  revalidatePath(`/users/${parsed.data.userId}`, "page");
 
   return { success: true, data: updated };
 }

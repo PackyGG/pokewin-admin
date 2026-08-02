@@ -2,34 +2,56 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-const component = readFileSync(
+const read = (path: string): string => readFileSync(path, "utf8");
+
+const component = read(
   "src/app/(admin)/users/[id]/fiat-deposit-access-button.tsx",
-  "utf8",
 );
-const apiClient = readFileSync(
-  "src/lib/backend-api/fiat-deposit-access.ts",
-  "utf8",
+const actions = read(
+  "src/app/(admin)/users/[id]/fiat-deposit-access-actions.ts",
+);
+const apiClient = read("src/lib/backend-api/fiat-deposit-access.ts");
+const page = read("src/app/(admin)/users/[id]/page.tsx");
+const accountTab = read(
+  "src/app/(admin)/users/[id]/user-view-modern-tabs.tsx",
 );
 
-test("Fiat access calls the packy.gg API host", () => {
-  assert.match(
-    apiClient,
-    /FIAT_DEPOSIT_ACCESS_BASE_URL = "https:\/\/packy\.gg\/v1"/,
-  );
-  assert.doesNotMatch(apiClient, /backendApi\.(get|put)/);
+test("Fiat access uses the shared authenticated backend API client", () => {
+  assert.match(apiClient, /backendApi\.get<unknown>\(pathFor\(userId\)\)/);
+  assert.match(apiClient, /backendApi\.put<unknown>\(pathFor\(userId\), \{ enabled \}\)/);
+  assert.doesNotMatch(apiClient, /https:\/\/packy\.gg|ADMIN_API_KEY|xbypasssecret/);
 });
 
-test("user Fiat access is an immediate switch without a confirmation dialog", () => {
-  assert.match(component, /<Switch[\s\S]*onCheckedChange=\{update\}/);
-  assert.match(
-    component,
-    /updateFiatDepositAccessAction\(userId, nextEnabled\)/,
-  );
-  assert.doesNotMatch(component, /AlertDialog|Confirm|confirmation/);
+test("Fiat access validates the exact backend response contract", () => {
+  assert.match(apiClient, /success: z\.literal\(true\)/);
+  assert.match(apiClient, /user_id: z\.string\(\)\.min\(1\)/);
+  assert.match(apiClient, /enabled: z\.boolean\(\)/);
+  assert.match(apiClient, /parsed\.data\.data\.user_id !== requestedUserId/);
 });
 
-test("failed Fiat access updates restore the prior switch state", () => {
-  assert.match(component, /const previousEnabled = enabled/);
-  assert.match(component, /setEnabled\(nextEnabled\)/);
-  assert.match(component, /setEnabled\(previousEnabled\)/);
+test("user Fiat access requires confirmation and is not optimistic", () => {
+  assert.match(component, /<AlertDialog/);
+  assert.match(component, /onCheckedChange=\{setRequestedEnabled\}/);
+  assert.match(component, /Confirm \$\{nextLabel\}/);
+  assert.doesNotMatch(component, /setAccess\(nextEnabled\)/);
+  assert.match(component, /setAccess\(result\.data\)/);
+});
+
+test("Fiat allow-list copy does not imply bypassing safety locks", () => {
+  assert.match(component, /Fiat deposit allow-list/);
+  assert.match(component, /Fraud, compliance, KYC, location/);
+  assert.match(component, /will not clear or bypass any fraud, compliance, KYC/);
+});
+
+test("Fiat access is lazy on the Account tab and revalidates after mutation", () => {
+  assert.match(
+    page,
+    /initialTab === "account"[\s\S]*getFiatDepositAccess\(id\)\.catch\(\(\) => null\)/,
+  );
+  assert.match(accountTab, /title="Fiat Deposit Allow-list"/);
+  assert.match(actions, /requirePageAccess\("\/users"\)/);
+  assert.match(actions, /requireAdmin\(\)/);
+  assert.match(actions, /createAdminAuditEvent\(/);
+  assert.match(actions, /revalidatePath\(`\/users\/\$\{parsed\.data\.userId\}`/);
+  assert.match(component, /router\.refresh\(\)/);
 });

@@ -68,6 +68,7 @@ import {
   Scale,
   ShieldAlert,
   BadgeCheck,
+  BadgeDollarSign,
   Users,
   Fingerprint,
 } from "lucide-react";
@@ -101,6 +102,8 @@ import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { FraudLocksCard } from "./fraud-locks-card";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
+import { FiatDepositAccessCard } from "./fiat-deposit-access-button";
 import { KycCard } from "./kyc-card";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import { UserWagerProgressCard } from "./user-wager-progress-card";
@@ -1929,6 +1932,7 @@ export function AccountTab({
   pnlResultPromise,
   wagerRequirementPromise,
   featureLocksPromise,
+  fiatDepositAccessPromise,
   wagerProgressPromise,
   balanceWeightingPromise,
   adjustmentsTxPromise,
@@ -1945,6 +1949,9 @@ export function AccountTab({
   // refund/chargeback). Same catch→null convention as the wager-requirement
   // override above.
   featureLocksPromise: Promise<UserFeatureLocks | null> | null;
+  // Backend-API read of the per-user Fiat deposit allow-list. This does not
+  // represent or override fraud/compliance/KYC/location locks.
+  fiatDepositAccessPromise: Promise<FiatDepositAccess | null> | null;
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
@@ -1972,6 +1979,7 @@ export function AccountTab({
   const [windowedStatsOpen, setWindowedStatsOpen] = useState(false);
   const [adminAdjustmentsOpen, setAdminAdjustmentsOpen] = useState(false);
   const [featureLocksOpen, setFeatureLocksOpen] = useState(false);
+  const [fiatDepositAccessOpen, setFiatDepositAccessOpen] = useState(false);
   const [battleLimitsOpen, setBattleLimitsOpen] = useState(false);
   const [wagerRequirementOpen, setWagerRequirementOpen] = useState(false);
   const [wagerProgressOpen, setWagerProgressOpen] = useState(false);
@@ -2060,6 +2068,25 @@ export function AccountTab({
           featureLocks={featureLocks}
           canToggle={capabilities.canToggleFeatureLocks}
         />
+      </CollapsibleSection>
+
+      <CollapsibleSection
+        icon={BadgeDollarSign}
+        title="Fiat Deposit Allow-list"
+        open={fiatDepositAccessOpen}
+        onOpenChange={setFiatDepositAccessOpen}
+      >
+        {fiatDepositAccessPromise ? (
+          <Suspense fallback={<SkeletonCard lines={3} />}>
+            <FiatDepositAccessStreamed
+              userId={user.id}
+              fiatDepositAccessPromise={fiatDepositAccessPromise}
+              canManage={data.sessionRole === "admin"}
+            />
+          </Suspense>
+        ) : (
+          <SkeletonCard lines={3} />
+        )}
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -2430,6 +2457,25 @@ function FraudLocksStreamed({
   const featureLocks = use(featureLocksPromise);
   return (
     <FraudLocksCard userId={userId} data={featureLocks} canManage={canManage} />
+  );
+}
+
+function FiatDepositAccessStreamed({
+  userId,
+  fiatDepositAccessPromise,
+  canManage,
+}: {
+  userId: string;
+  fiatDepositAccessPromise: Promise<FiatDepositAccess | null>;
+  canManage: boolean;
+}) {
+  const access = use(fiatDepositAccessPromise);
+  return (
+    <FiatDepositAccessCard
+      userId={userId}
+      data={access}
+      canManage={canManage}
+    />
   );
 }
 

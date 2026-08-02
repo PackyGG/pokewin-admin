@@ -68,6 +68,7 @@ import type { UserRewards } from "@/lib/queries/users";
 import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
@@ -92,7 +93,6 @@ import {
 import { UserAdminActions } from "./user-tabs-moderation";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
-import { FiatDepositAccessButton } from "./fiat-deposit-access-button";
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
@@ -187,6 +187,7 @@ export function UserViewModern({
   disposedInventoryPromise,
   wagerRequirementPromise,
   featureLocksPromise,
+  fiatDepositAccessPromise,
   kycPromise,
   auditPromise,
   wagerProgressPromise,
@@ -244,6 +245,9 @@ export function UserViewModern({
   // (card refund/chargeback). Same catch→null convention as the
   // wager-requirement override above.
   featureLocksPromise: Promise<UserFeatureLocks | null> | null;
+  // Account tab — backend-owned per-user Fiat deposit allow-list access.
+  // Independent from fraud/compliance locks; null is a visible degraded state.
+  fiatDepositAccessPromise: Promise<FiatDepositAccess | null> | null;
   // Account tab — backend-owned Sumsub KYC status + admin control. Same
   // catch→null convention as the fraud-locks read above.
   kycPromise: Promise<UserKycStatus | null> | null;
@@ -552,7 +556,6 @@ export function UserViewModern({
 
         {/* ── RIGHT — action cluster ────────────────────────────────── */}
         <div className="flex flex-wrap items-center gap-1.5 lg:shrink-0 lg:justify-end">
-          {isAdmin && <FiatDepositAccessButton userId={user.id} />}
           {/* Quick-link to the creator detail page — only for on-site
               creators (the /creators/<id> route shares the main-site user id
               space). One accented nav button is acceptable. */}
@@ -666,6 +669,7 @@ export function UserViewModern({
             pnlResultPromise={pnlResultPromise}
             wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}
+            fiatDepositAccessPromise={fiatDepositAccessPromise}
             wagerProgressPromise={wagerProgressPromise}
             balanceWeightingPromise={balanceWeightingPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
