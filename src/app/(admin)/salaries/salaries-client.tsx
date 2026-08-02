@@ -52,8 +52,6 @@ import {
   updateSalaryEmployee,
 } from "./actions";
 
-type Cadence = "weekly" | "biweekly" | "monthly";
-
 // Chain the saved address belongs to — derived server-side from the
 // address format and passed down (the client never re-detects).
 type AddressKind = "erc20" | "sol" | "unknown";
@@ -63,69 +61,9 @@ type Employee = {
   discordName: string;
   ethAddress: string;
   addressKind: AddressKind;
-  cadence: Cadence;
   salaryUsdt: number;
   active: boolean;
-  // Recurring pay day as a day of the month (1-31) or null if unset,
-  // plus the server-computed proximity status used to color the badge.
-  payDayOfMonth: number | null;
-  payStatus: "due" | "ok" | null;
   notes: string | null;
-};
-
-// Day-of-month options for the pay-day dropdown (1-31).
-const PAY_DAY_OPTIONS = Array.from({ length: 31 }, (_, i) => i + 1);
-
-// 1 → "1st", 2 → "2nd", 3 → "3rd", 11 → "11th", 21 → "21st", 31 → "31st".
-function ordinal(n: number): string {
-  const s = ["th", "st", "nd", "rd"];
-  const v = n % 100;
-  return `${n}${s[(v - 20) % 10] || s[v] || s[0]}`;
-}
-
-// Pay-day badge. Red = "due" (today/tomorrow is the pay date, ~24h out),
-// green = "ok" (not imminent). These are status colors the admin asked
-// for, not House-POV money colors.
-function PayDayBadge({
-  payDayOfMonth,
-  payStatus,
-}: {
-  payDayOfMonth: number | null;
-  payStatus: "due" | "ok" | null;
-}) {
-  if (payDayOfMonth == null) {
-    return <span className="text-xs text-muted-foreground">—</span>;
-  }
-  const due = payStatus === "due";
-  return (
-    <Badge
-      variant="outline"
-      className={cn(
-        "text-[10px] font-medium",
-        due
-          ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-          : "border-emerald-500/30 bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-      )}
-      title={due ? "Pay day is within ~24h" : "Pay day not imminent"}
-    >
-      {ordinal(payDayOfMonth)}
-    </Badge>
-  );
-}
-
-const CADENCE_LABELS: Record<Cadence, string> = {
-  weekly: "Weekly",
-  biweekly: "Bi-weekly",
-  monthly: "Monthly",
-};
-
-const CADENCE_COLORS: Record<Cadence, string> = {
-  weekly:
-    "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",
-  biweekly:
-    "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  monthly:
-    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
 };
 
 // ── Address-type tag (ERC-20 / SOL) ─────────────────────────────────
@@ -234,7 +172,7 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Saved recipients with their default salary. Each address is
+          Saved recipients with their monthly salary. Each address is
           tagged ERC-20 or Solana. Click an address to view its QR code,
           then scan it with your wallet to pay manually.
         </p>
@@ -262,12 +200,6 @@ function EmployeesCard({ employees }: { employees: Employee[] }) {
                     </th>
                     <th className="px-3 py-2 text-left text-xs font-medium">
                       Address (click for QR)
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium">
-                      Cadence
-                    </th>
-                    <th className="px-3 py-2 text-left text-xs font-medium">
-                      Pay Day
                     </th>
                     <th className="px-3 py-2 text-right text-xs font-medium">
                       Salary
@@ -335,35 +267,11 @@ function EmployeeRow({ employee }: { employee: Employee }) {
             <AddressTag kind={employee.addressKind} />
           </div>
         </td>
-        <td className="px-3 py-2">
-          <Badge
-            variant="outline"
-            className={`text-[10px] ${CADENCE_COLORS[employee.cadence]}`}
-          >
-            {CADENCE_LABELS[employee.cadence]}
-          </Badge>
-        </td>
-        <td className="px-3 py-2">
-          <PayDayBadge
-            payDayOfMonth={employee.payDayOfMonth}
-            payStatus={employee.payStatus}
-          />
-        </td>
         <td className="px-3 py-2 text-right text-sm tabular-nums">
           ${employee.salaryUsdt.toFixed(2)}
           <span className="ml-1 text-[10px] text-muted-foreground">
-            /{employee.cadence === "monthly" ? "mo" : employee.cadence === "weekly" ? "wk" : "2wk"}
+            /mo
           </span>
-          {employee.cadence !== "monthly" && (
-            <div className="text-[10px] text-muted-foreground">
-              ≈ $
-              {(
-                employee.salaryUsdt *
-                (employee.cadence === "weekly" ? 4 : 2)
-              ).toLocaleString(undefined, { maximumFractionDigits: 2 })}{" "}
-              /mo
-            </div>
-          )}
         </td>
         <td className="px-3 py-2 text-right">
           <div className="flex items-center justify-end gap-1">
@@ -399,10 +307,6 @@ function EmployeeRow({ employee }: { employee: Employee }) {
 function EmployeeMobileCard({ employee }: { employee: Employee }) {
   const [qrOpen, setQrOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  const perMonth =
-    employee.cadence === "monthly"
-      ? null
-      : employee.salaryUsdt * (employee.cadence === "weekly" ? 4 : 2);
   return (
     <div
       className={cn(
@@ -420,40 +324,14 @@ function EmployeeMobileCard({ employee }: { employee: Employee }) {
               inactive
             </Badge>
           )}
-          <Badge
-            variant="outline"
-            className={cn("text-[10px]", CADENCE_COLORS[employee.cadence])}
-          >
-            {CADENCE_LABELS[employee.cadence]}
-          </Badge>
-          {employee.payDayOfMonth != null && (
-            <PayDayBadge
-              payDayOfMonth={employee.payDayOfMonth}
-              payStatus={employee.payStatus}
-            />
-          )}
         </div>
         <div className="text-right">
           <div className="text-sm font-semibold tabular-nums">
             ${employee.salaryUsdt.toFixed(2)}
             <span className="ml-1 text-[10px] font-normal text-muted-foreground">
-              /
-              {employee.cadence === "monthly"
-                ? "mo"
-                : employee.cadence === "weekly"
-                  ? "wk"
-                  : "2wk"}
+              /mo
             </span>
           </div>
-          {perMonth != null && (
-            <div className="text-[10px] text-muted-foreground tabular-nums">
-              ≈ $
-              {perMonth.toLocaleString(undefined, {
-                maximumFractionDigits: 2,
-              })}{" "}
-              /mo
-            </div>
-          )}
         </div>
       </div>
 
@@ -558,7 +436,7 @@ function AddressQrDialog({
             <AddressTag kind={employee.addressKind} />
           </DialogTitle>
           <DialogDescription>
-            {SCAN_HINT[employee.addressKind]} Salary per period: $
+            {SCAN_HINT[employee.addressKind]} Monthly salary: $
             {employee.salaryUsdt.toFixed(2)}.
           </DialogDescription>
         </DialogHeader>
@@ -639,10 +517,6 @@ function EmployeeFormDialog({
   const router = useRouter();
   const [discordName, setDiscordName] = useState(employee?.discordName ?? "");
   const [address, setAddress] = useState(employee?.ethAddress ?? "");
-  const [cadence, setCadence] = useState<Cadence>(employee?.cadence ?? "monthly");
-  const [payDay, setPayDay] = useState<number | null>(
-    employee?.payDayOfMonth ?? null,
-  );
   const [salary, setSalary] = useState(
     employee ? String(employee.salaryUsdt) : "",
   );
@@ -654,8 +528,6 @@ function EmployeeFormDialog({
   function reset() {
     setDiscordName(employee?.discordName ?? "");
     setAddress(employee?.ethAddress ?? "");
-    setCadence(employee?.cadence ?? "monthly");
-    setPayDay(employee?.payDayOfMonth ?? null);
     setSalary(employee ? String(employee.salaryUsdt) : "");
     setActive(employee?.active ?? true);
     setNotes(employee?.notes ?? "");
@@ -681,19 +553,15 @@ function EmployeeFormDialog({
             id: employee!.id,
             discordName: discordName.trim(),
             ethAddress: address.trim(),
-            cadence,
             salaryUsdt: sal,
             active,
-            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           })
         : await addSalaryEmployee({
             discordName: discordName.trim(),
             ethAddress: address.trim(),
-            cadence,
             salaryUsdt: sal,
             active,
-            payDayOfMonth: payDay,
             notes: notes.trim() || null,
           });
       if (!result.success) {
@@ -750,53 +618,8 @@ function EmployeeFormDialog({
             </p>
           </div>
           <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Cadence</Label>
-            <select
-              value={cadence}
-              onChange={(e) => setCadence(e.target.value as Cadence)}
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="weekly">Weekly</option>
-              <option value="biweekly">Bi-weekly</option>
-              <option value="monthly">Monthly</option>
-            </select>
-            <p className="text-[10px] text-muted-foreground">
-              Salary below is the amount per pay period (per
-              {cadence === "weekly"
-                ? " week"
-                : cadence === "biweekly"
-                  ? " 2 weeks"
-                  : " month"}
-              ).
-            </p>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Pay Day</Label>
-            <select
-              value={payDay === null ? "" : String(payDay)}
-              onChange={(e) =>
-                setPayDay(
-                  e.target.value === "" ? null : Number(e.target.value),
-                )
-              }
-              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="">No pay day</option>
-              {PAY_DAY_OPTIONS.map((d) => (
-                <option key={d} value={d}>
-                  {ordinal(d)}
-                </option>
-              ))}
-            </select>
-            <p className="text-[10px] text-muted-foreground">
-              Day of the month. Shown on the list and flagged red ~24h
-              before. Days past a short month&apos;s end fall on its last
-              day.
-            </p>
-          </div>
-          <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">
-              Salary per Period (USDT)
+              Monthly Salary (USDT)
             </Label>
             <Input
               type="number"
@@ -806,26 +629,6 @@ function EmployeeFormDialog({
               onChange={(e) => setSalary(e.target.value)}
               placeholder="500"
             />
-            {/* For weekly/biweekly cadences show the monthly equivalent
-                so it's obvious what the actual monthly cost is. Same
-                fixed multiples used in page.tsx for the Monthly Budget
-                KPI — dead-simple, NO calendar math: weekly ×4,
-                biweekly ×2. */}
-            {(() => {
-              const sal = parseFloat(salary);
-              if (!Number.isFinite(sal) || sal <= 0) return null;
-              if (cadence === "monthly") return null;
-              const factor = cadence === "weekly" ? 4 : 2;
-              const perMonth = sal * factor;
-              return (
-                <p className="text-[10px] text-muted-foreground">
-                  ≈ ${perMonth.toLocaleString(undefined, {
-                    maximumFractionDigits: 2,
-                  })}{" "}
-                  per month
-                </p>
-              );
-            })()}
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Notes</Label>

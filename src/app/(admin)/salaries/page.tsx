@@ -11,33 +11,6 @@ import { SalariesClient } from "./salaries-client";
 
 export const metadata = { title: "Employee Salaries" };
 
-/**
- * Pay-day proximity status, computed server-side per request so there's
- * no client/server hydration mismatch.
- *   - "due"  → the pay date is today or tomorrow (within ~24h) → red
- *   - "ok"   → not imminent → green
- *   - null   → no pay day set
- * payDay is a day of the month (1-31), clamped to the month's actual
- * length so e.g. 31 on a 30-day month means the 30th and Feb is handled.
- */
-function payDayStatus(payDay: number | null, now: Date): "due" | "ok" | null {
-  if (payDay == null) return null;
-  const y = now.getUTCFullYear();
-  const m = now.getUTCMonth();
-  const today = now.getUTCDate();
-  // Day 0 of the next month === last day of this month.
-  const daysInThisMonth = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-  const dayThisMonth = Math.min(payDay, daysInThisMonth);
-  let diff = dayThisMonth - today;
-  if (diff < 0) {
-    // This month's pay date already passed → count to next month's.
-    const daysInNextMonth = new Date(Date.UTC(y, m + 2, 0)).getUTCDate();
-    const dayNextMonth = Math.min(payDay, daysInNextMonth);
-    diff = daysInThisMonth - today + dayNextMonth;
-  }
-  return diff <= 1 ? "due" : "ok";
-}
-
 export default async function SalariesPage() {
   await requireMotha();
   const [employees, payments, monthlyBudgetRows] = await Promise.all([
@@ -52,32 +25,15 @@ export default async function SalariesPage() {
       .orderBy(desc(salary_payments.paid_at)).limit(100),
     adminDrizzle
       .select({
-        value: sql<string>`COALESCE(SUM(
-          ${salary_employees.salary_usdt} *
-          CASE
-            WHEN ${salary_employees.cadence} = 'weekly' THEN 4
-            WHEN ${salary_employees.cadence} = 'biweekly' THEN 2
-            ELSE 1
-          END
-        ), 0)::text`,
+        value: sql<string>`COALESCE(SUM(${salary_employees.salary_usdt}), 0)::text`,
       })
       .from(salary_employees)
       .where(eq(salary_employees.active, true)),
   ]);
 
-  const now = new Date();
   const activeEmployees = employees.filter((e) => e.active).length;
-  // Monthly budget = sum of (salary × periods-per-month) across all
-  // active employees. Per-period salary stays as the input; cadence
-  // converts it to monthly using dead-simple fixed multiples — NO
-  // calendar math (no 52/12 ≈ 4.33, no days-in-month):
-  //   weekly   → ×4   (a $1,625/wk line contributes exactly $6,500/mo)
-  //   biweekly → ×2
-  //   monthly  → ×1
-  // Fallback: anything else (or stale rows from before the cadence
-  // column existed) is treated as monthly.
-  // PostgreSQL performs the complete sum in NUMERIC arithmetic. Convert only
-  // the final display value; no per-row salary math runs through JS floats.
+  // Every saved salary is a monthly amount. PostgreSQL performs the complete
+  // sum in NUMERIC arithmetic; only the final display value is converted.
   const monthlyBudget = toNumber(monthlyBudgetRows[0]?.value);
   // Address-type breakdown for the overview tile — derived purely from
   // each saved address's format (ERC-20 0x… vs Solana base58).
@@ -127,15 +83,8 @@ export default async function SalariesPage() {
             discordName: e.discord_name,
             ethAddress: e.eth_address,
             addressKind: addressKind(e.eth_address),
-            cadence: (e.cadence === "weekly" ||
-            e.cadence === "biweekly" ||
-            e.cadence === "monthly"
-              ? e.cadence
-              : "monthly") as "weekly" | "biweekly" | "monthly",
             salaryUsdt: Number(e.salary_usdt),
             active: e.active,
-            payDayOfMonth: e.pay_day_of_month ?? null,
-            payStatus: payDayStatus(e.pay_day_of_month ?? null, now),
             notes: e.notes,
           }))}
           payments={payments.map((p) => ({

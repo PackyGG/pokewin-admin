@@ -12,8 +12,6 @@ import { isAddress, normalizeAddress } from "@/lib/salary/wallet";
 
 // ── Schemas ─────────────────────────────────────────────────────────
 
-const CADENCES = ["weekly", "biweekly", "monthly"] as const;
-
 const employeeSchema = z.object({
   discordName: z
     .string()
@@ -21,7 +19,6 @@ const employeeSchema = z.object({
     .min(1, "Discord name is required")
     .max(80),
   ethAddress: z.string().trim().min(1, "Address is required"),
-  cadence: z.enum(CADENCES).optional(),
   salaryUsdt: z
     .number()
     .finite()
@@ -29,8 +26,6 @@ const employeeSchema = z.object({
     .max(1_000_000),
   notes: z.string().trim().max(500).nullable().optional(),
   active: z.boolean().optional(),
-  // Recurring pay day as a day of the month (1-31). null clears it.
-  payDayOfMonth: z.number().int().min(1).max(31).nullable().optional(),
 });
 
 const updateEmployeeSchema = employeeSchema.partial().extend({
@@ -61,12 +56,12 @@ export async function addSalaryEmployee(
   const [created] = await adminDrizzle.insert(salary_employees).values({
       discord_name: parsed.data.discordName,
       eth_address: normalizeAddress(address),
-      cadence: parsed.data.cadence ?? "monthly",
+      cadence: "monthly",
       salary_usdt: String(parsed.data.salaryUsdt),
       max_per_payout: null,
       notes: parsed.data.notes?.trim() || null,
       active: parsed.data.active ?? true,
-      pay_day_of_month: parsed.data.payDayOfMonth ?? null,
+      pay_day_of_month: null,
       created_by_id: session.userId,
       updated_at: new Date().toISOString(),
     }).returning({ id: salary_employees.id });
@@ -79,7 +74,7 @@ export async function addSalaryEmployee(
       employeeId: created.id,
       discordName: parsed.data.discordName,
       ethAddress: normalizeAddress(address),
-      cadence: parsed.data.cadence ?? "monthly",
+      cadence: "monthly",
       salaryUsdt: parsed.data.salaryUsdt,
     },
   });
@@ -111,16 +106,15 @@ export async function updateSalaryEmployee(
     }
     updateData.eth_address = normalizeAddress(parsed.data.ethAddress);
   }
-  if (parsed.data.cadence !== undefined) updateData.cadence = parsed.data.cadence;
+  // Salaries are monthly-only. This also normalizes legacy cadence values
+  // when an employee is edited.
+  updateData.cadence = "monthly";
   if (parsed.data.salaryUsdt !== undefined)
     updateData.salary_usdt = String(parsed.data.salaryUsdt);
   if (parsed.data.notes !== undefined) {
     updateData.notes = parsed.data.notes?.trim() || null;
   }
   if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
-  if (parsed.data.payDayOfMonth !== undefined)
-    updateData.pay_day_of_month = parsed.data.payDayOfMonth;
-
   if (Object.keys(updateData).length === 0) {
     return { success: false, error: "Nothing to update" };
   }
