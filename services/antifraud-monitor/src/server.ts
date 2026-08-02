@@ -2218,6 +2218,17 @@ await ingestDelivery.start();
 await networkRisk.start();
 withdrawalRisk.start();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
+app.log.info(
+  {
+    event: "fiat_eligibility.endpoint_ready",
+    method: "POST",
+    endpoint: new URL(FIAT_ELIGIBILITY_PATH, config.PUBLIC_BASE_URL).toString(),
+    environments: fiatEligibilityAccess.configuredEnvironments(),
+    globallyEnabled: config.FIAT_ELIGIBILITY_GLOBALLY_ENABLED,
+    rateLimitPerMinute: config.FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE,
+  },
+  "Fiat eligibility endpoint ready for dev and prod traffic",
+);
 dashboardOpsTick.start();
 
 // The MAIN mirror role is shared with other read-only consumers and can

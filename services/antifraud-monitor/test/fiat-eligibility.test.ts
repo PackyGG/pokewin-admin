@@ -275,6 +275,13 @@ test("server pre-authentication logs dedicated Fiat endpoint rejections", () => 
   );
 });
 
+test("server logs the shared dev and prod Fiat endpoint when it starts", () => {
+  assert.match(
+    serverSource,
+    /fiat_eligibility\.endpoint_ready[\s\S]*?new URL\(FIAT_ELIGIBILITY_PATH, config\.PUBLIC_BASE_URL\)[\s\S]*?configuredEnvironments\(\)[\s\S]*?FIAT_ELIGIBILITY_GLOBALLY_ENABLED[\s\S]*?FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE/,
+  );
+});
+
 test("Fiat endpoint logs correlated decisions without credentials or raw device data", async () => {
   const logLines: string[] = [];
   const app = Fastify({
@@ -316,45 +323,68 @@ test("Fiat endpoint logs correlated decisions without credentials or raw device 
 
   const fingerprint = "fresh-sensitive-fingerprint-request";
   const clientIp = "203.0.113.42";
-  const response = await app.inject({
-    method: "POST",
-    url: "/v1/fiat-eligibility/check",
-    headers: { authorization: `Bearer ${PROD_KEY}` },
-    payload: {
-      env: "prod",
-      createdAt: new Date().toISOString(),
-      ipAddress: clientIp,
-      fingerprint,
-      userID: "user-log-test",
-    },
-  });
+  const responses = await Promise.all(
+    (["dev", "prod"] as const).map((environment) => app.inject({
+      method: "POST",
+      url: "/v1/fiat-eligibility/check",
+      headers: {
+        authorization: `Bearer ${environment === "dev" ? DEV_KEY : PROD_KEY}`,
+      },
+      payload: {
+        env: environment,
+        createdAt: new Date().toISOString(),
+        ipAddress: clientIp,
+        fingerprint,
+        userID: `user-log-test-${environment}`,
+      },
+    })),
+  );
   await app.close();
 
-  assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    decisionId: "decision-1",
-    allowed: true,
-    timestamp: "2026-07-29T12:00:00.000Z",
-  });
+  for (const response of responses) {
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      decisionId: "decision-1",
+      allowed: true,
+      timestamp: "2026-07-29T12:00:00.000Z",
+    });
+  }
   const records = logLines.map(
     (line) => JSON.parse(line) as Record<string, unknown>,
   );
-  const started = records.find(
+  const started = records.filter(
     (record) => record.event === "fiat_eligibility.assessment_started",
   );
-  const completed = records.find(
+  const completed = records.filter(
     (record) => record.event === "fiat_eligibility.assessment_completed",
   );
-  assert.equal(started?.userId, "user-log-test");
-  assert.equal(started?.clientAddressFamily, 4);
-  assert.equal(completed?.decisionId, decision.decisionId);
-  assert.equal(completed?.decision, "allow");
-  assert.equal(completed?.riskScore, 8);
-  assert.deepEqual(completed?.reasonCodes, ["established_account"]);
-  assert.equal(typeof completed?.durationMs, "number");
-  assert.equal(started?.requestId, completed?.requestId);
+  assert.deepEqual(
+    started.map((record) => record.environment).sort(),
+    ["dev", "prod"],
+  );
+  assert.deepEqual(
+    completed.map((record) => record.environment).sort(),
+    ["dev", "prod"],
+  );
+  for (const environment of ["dev", "prod"]) {
+    const startedRecord = started.find(
+      (record) => record.environment === environment,
+    );
+    const completedRecord = completed.find(
+      (record) => record.environment === environment,
+    );
+    assert.equal(startedRecord?.userId, `user-log-test-${environment}`);
+    assert.equal(startedRecord?.clientAddressFamily, 4);
+    assert.equal(completedRecord?.decisionId, decision.decisionId);
+    assert.equal(completedRecord?.decision, "allow");
+    assert.equal(completedRecord?.riskScore, 8);
+    assert.deepEqual(completedRecord?.reasonCodes, ["established_account"]);
+    assert.equal(typeof completedRecord?.durationMs, "number");
+    assert.equal(startedRecord?.requestId, completedRecord?.requestId);
+  }
 
   const serializedLogs = logLines.join("");
+  assert.equal(serializedLogs.includes(DEV_KEY), false);
   assert.equal(serializedLogs.includes(PROD_KEY), false);
   assert.equal(serializedLogs.includes(fingerprint), false);
   assert.equal(serializedLogs.includes(clientIp), false);
