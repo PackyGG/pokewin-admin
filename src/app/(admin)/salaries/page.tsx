@@ -15,7 +15,7 @@ export default async function SalariesPage() {
   await requireMotha();
   const [employees, payments, monthlyBudgetRows] = await Promise.all([
     adminDrizzle.select().from(salary_employees)
-      .orderBy(desc(salary_employees.active), salary_employees.discord_name),
+      .orderBy(salary_employees.discord_name),
     adminDrizzle.select({
       id: salary_payments.id, employee_id: salary_payments.employee_id,
       payment_link: salary_payments.payment_link, paid_at: salary_payments.paid_at,
@@ -28,11 +28,10 @@ export default async function SalariesPage() {
         value: sql<string>`COALESCE(SUM(${salary_employees.salary_usdt}), 0)::text`,
         weeklyValue: sql<string>`COALESCE(SUM(${salary_employees.salary_usdt}) / 4, 0)::text`,
       })
-      .from(salary_employees)
-      .where(eq(salary_employees.active, true)),
+      .from(salary_employees),
   ]);
 
-  const activeEmployees = employees.filter((e) => e.active).length;
+  const employeeCount = employees.length;
   // Every saved salary is a monthly amount. PostgreSQL performs the complete
   // sum in NUMERIC arithmetic; only the final display value is converted.
   const monthlyBudget = toNumber(monthlyBudgetRows[0]?.value);
@@ -46,8 +45,8 @@ export default async function SalariesPage() {
 
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3">
         <KpiTile
-          label="Active Employees"
-          value={String(activeEmployees)}
+          label="Employees"
+          value={String(employeeCount)}
           icon={Users}
           accent="cyan"
         />
@@ -74,8 +73,6 @@ export default async function SalariesPage() {
             ethAddress: e.eth_address,
             addressKind: addressKind(e.eth_address),
             salaryUsdt: Number(e.salary_usdt),
-            active: e.active,
-            notes: e.notes,
           }))}
           payments={payments.map((p) => ({
             id: p.id,

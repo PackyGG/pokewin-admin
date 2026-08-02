@@ -20,7 +20,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/utils/format";
 import {
@@ -62,8 +61,6 @@ type Employee = {
   ethAddress: string;
   addressKind: AddressKind;
   salaryUsdt: number;
-  active: boolean;
-  notes: string | null;
 };
 
 // ── Address-type tag (ERC-20 / SOL) ─────────────────────────────────
@@ -242,16 +239,9 @@ function EmployeeRow({ employee }: { employee: Employee }) {
   const [editOpen, setEditOpen] = useState(false);
   return (
     <>
-      <tr
-        className={`border-b last:border-b-0 ${employee.active ? "" : "opacity-60"}`}
-      >
+      <tr className="border-b last:border-b-0">
         <td className="px-3 py-2 text-sm font-medium">
           <span className="font-mono">{employee.discordName}</span>
-          {!employee.active && (
-            <Badge variant="outline" className="ml-1.5 text-[10px]">
-              inactive
-            </Badge>
-          )}
         </td>
         <td className="px-3 py-2">
           <div className="flex items-center gap-1.5">
@@ -308,22 +298,12 @@ function EmployeeMobileCard({ employee }: { employee: Employee }) {
   const [qrOpen, setQrOpen] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
   return (
-    <div
-      className={cn(
-        "rounded-lg border bg-card p-3",
-        !employee.active && "opacity-60",
-      )}
-    >
+    <div className="rounded-lg border bg-card p-3">
       <div className="flex items-start justify-between gap-2">
         <div className="flex min-w-0 flex-wrap items-center gap-1.5">
           <span className="font-mono text-sm font-medium">
             {employee.discordName}
           </span>
-          {!employee.active && (
-            <Badge variant="outline" className="text-[10px]">
-              inactive
-            </Badge>
-          )}
         </div>
         <div className="text-right">
           <div className="text-sm font-semibold tabular-nums">
@@ -520,8 +500,6 @@ function EmployeeFormDialog({
   const [salary, setSalary] = useState(
     employee ? String(employee.salaryUsdt) : "",
   );
-  const [active, setActive] = useState(employee?.active ?? true);
-  const [notes, setNotes] = useState(employee?.notes ?? "");
   const [pending, startTransition] = useTransition();
   const isEdit = Boolean(employee);
 
@@ -529,8 +507,6 @@ function EmployeeFormDialog({
     setDiscordName(employee?.discordName ?? "");
     setAddress(employee?.ethAddress ?? "");
     setSalary(employee ? String(employee.salaryUsdt) : "");
-    setActive(employee?.active ?? true);
-    setNotes(employee?.notes ?? "");
   }
 
   function handleSubmit() {
@@ -554,15 +530,11 @@ function EmployeeFormDialog({
             discordName: discordName.trim(),
             ethAddress: address.trim(),
             salaryUsdt: sal,
-            active,
-            notes: notes.trim() || null,
           })
         : await addSalaryEmployee({
             discordName: discordName.trim(),
             ethAddress: address.trim(),
             salaryUsdt: sal,
-            active,
-            notes: notes.trim() || null,
           });
       if (!result.success) {
         toast.error(result.error);
@@ -630,24 +602,6 @@ function EmployeeFormDialog({
               placeholder="500"
             />
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Notes</Label>
-            <Textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Role, special arrangements, etc."
-              maxLength={500}
-            />
-          </div>
-          <label className="flex items-center gap-2 text-xs">
-            <input
-              type="checkbox"
-              checked={active}
-              onChange={(e) => setActive(e.target.checked)}
-            />
-            <span>Active (eligible for payments)</span>
-          </label>
         </div>
         <DialogFooter>
           <Button variant="ghost" onClick={onClose} disabled={pending}>
@@ -707,8 +661,7 @@ function DeleteEmployeeButton({
           <AlertDialogDescription>
             Removes the saved salary record for{" "}
             <span className="font-medium">{employee.discordName}</span>. If
-            they have any payouts on file, this will be blocked —
-            deactivate instead.
+            they have any payouts on file, this will be blocked.
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
@@ -1016,7 +969,6 @@ function TrackPaymentDialog({
               {employees.map((e) => (
                 <option key={e.id} value={e.id}>
                   {e.discordName}
-                  {e.active ? "" : " (inactive)"}
                 </option>
               ))}
             </select>

@@ -24,8 +24,6 @@ const employeeSchema = z.object({
     .finite()
     .positive("Salary must be > 0")
     .max(1_000_000),
-  notes: z.string().trim().max(500).nullable().optional(),
-  active: z.boolean().optional(),
 });
 
 const updateEmployeeSchema = employeeSchema.partial().extend({
@@ -59,8 +57,8 @@ export async function addSalaryEmployee(
       cadence: "monthly",
       salary_usdt: String(parsed.data.salaryUsdt),
       max_per_payout: null,
-      notes: parsed.data.notes?.trim() || null,
-      active: parsed.data.active ?? true,
+      notes: null,
+      active: true,
       pay_day_of_month: null,
       created_by_id: session.userId,
       updated_at: new Date().toISOString(),
@@ -111,10 +109,6 @@ export async function updateSalaryEmployee(
   updateData.cadence = "monthly";
   if (parsed.data.salaryUsdt !== undefined)
     updateData.salary_usdt = String(parsed.data.salaryUsdt);
-  if (parsed.data.notes !== undefined) {
-    updateData.notes = parsed.data.notes?.trim() || null;
-  }
-  if (parsed.data.active !== undefined) updateData.active = parsed.data.active;
   if (Object.keys(updateData).length === 0) {
     return { success: false, error: "Nothing to update" };
   }
@@ -139,15 +133,14 @@ export async function deleteSalaryEmployee(
   if (!z.string().uuid().safeParse(employeeId).success) {
     return { success: false, error: "Invalid id" };
   }
-  // Refuse to delete if there are payouts on file — historical record
-  // matters. Mark inactive instead.
+  // Refuse to delete if there are payouts on file so history stays intact.
   const [payout] = await adminDrizzle.select({ value: count() }).from(salary_payouts)
     .where(eq(salary_payouts.employee_id, employeeId));
   const payoutCount = payout?.value ?? 0;
   if (payoutCount > 0) {
     return {
       success: false,
-      error: `Cannot delete — ${payoutCount} payout${payoutCount === 1 ? "" : "s"} on record. Deactivate instead.`,
+      error: `Cannot delete — ${payoutCount} payout${payoutCount === 1 ? "" : "s"} on record.`,
     };
   }
 
