@@ -18,6 +18,7 @@
 //     item is not in the sidebar). The sidebar therefore now gates on
 //     `pageKey`, which reproduces today's behavior exactly.
 //
+import { EXCLUDED_USERS_ACCESS_ALLOWLIST } from "@/lib/excluded-users/access-shared";
 // This file is imported from both a Client Component (palette + sidebar) and
 // a Server Component (docs page), so it must stay dependency-free — no
 // `"use client"`, no server-only modules. Icons are referenced as string
@@ -547,19 +548,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Excluded Users — sidebar-only, ROOT-OWNER-ONLY (motha). Not in ADMIN_PAGES
-    // as the security boundary (page + actions enforce requireExcludedUsersAccess
-    // → requireMainOwner server-side); listed in ADMIN_PAGES only so the key
+    // Excluded Users — sidebar-only, explicit username allowlist. Not in ADMIN_PAGES
+    // as the security boundary (page + actions enforce requireExcludedUsersAccess);
+    // listed in ADMIN_PAGES only so the key
     // isn't "unknown". pageKey set to "/system/excluded-users" preserves the
-    // sidebar gate. `strictUsernameAllowlist` keeps the entry hidden from every
-    // NON-root owner too (the generic isOwner bypass does NOT apply here).
+    // sidebar gate. `strictUsernameAllowlist` prevents generic admin/owner bypasses.
     id: "nav.system.excluded-users",
     group: "System",
     label: "Excluded Users",
     href: "/system/excluded-users",
     pageKey: "/system/excluded-users",
     icon: "Ban",
-    usernameAllowlist: ["motha"],
+    usernameAllowlist: [...EXCLUDED_USERS_ACCESS_ALLOWLIST],
     strictUsernameAllowlist: true,
     inSidebar: true,
     inPalette: false,

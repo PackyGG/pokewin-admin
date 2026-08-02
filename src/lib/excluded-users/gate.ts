@@ -1,39 +1,39 @@
-import type { SessionPayload } from "@/lib/session";
-import { requireMainOwner, isMainOwnerUsername } from "@/lib/owners";
+import { redirect } from "next/navigation";
 import { and, eq } from "drizzle-orm";
+
 import { adminDrizzle } from "@/lib/admin-db";
+import { verifySession } from "@/lib/dal";
 import { admin_users } from "@/lib/db-schema/admin/schema";
+import { hasExcludedUsersAccess } from "@/lib/excluded-users/access-shared";
+import type { SessionPayload } from "@/lib/session";
 
 /**
- * Access to the excluded-users (blacklist) page + its server actions is
- * MAIN-OWNER-ONLY — restricted to the root `motha` account, NOT to every owner.
- * (Owner-management surfaces like Salaries admit any owner; the blacklist is
- * intentionally tighter — only the root owner may see or mutate it.) The
- * throwing gate redirects to /dashboard for anyone else via `requireMainOwner`.
- *
- * Name + signature kept (`requireExcludedUsersAccess` returning the session +
- * verified username) so the page + actions call sites are unchanged.
+ * Gate for the Excluded Users page and every mutation on it. Access uses a
+ * narrow username allowlist that grants no unrelated owner or role powers.
  */
 export async function requireExcludedUsersAccess(): Promise<
   SessionPayload & { username: string }
 > {
-  return requireMainOwner();
+  const session = await verifySession();
+  if (!hasExcludedUsersAccess(session.username)) {
+    redirect("/dashboard");
+  }
+  return { ...session, username: session.username };
 }
 
-/**
- * Non-throwing MAIN-OWNER check for conditional UI bits — true only for the
- * root `motha` account. Resolves the username from the admin id (DB-fresh,
- * gated on `is_active`); fail-closed on any read error.
- */
+/** DB-fresh, fail-closed access check for conditional UI. */
 export async function canManageExcludedUsers(
   userId: string,
 ): Promise<boolean> {
   try {
-    const [row] = await adminDrizzle.select({ username: admin_users.username })
-      .from(admin_users).where(and(eq(admin_users.id, userId),
-        eq(admin_users.is_active, true))).limit(1);
-    if (!row) return false;
-    return isMainOwnerUsername(row.username);
+    const [row] = await adminDrizzle
+      .select({ username: admin_users.username })
+      .from(admin_users)
+      .where(
+        and(eq(admin_users.id, userId), eq(admin_users.is_active, true)),
+      )
+      .limit(1);
+    return row ? hasExcludedUsersAccess(row.username) : false;
   } catch {
     return false;
   }

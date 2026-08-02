@@ -10,6 +10,7 @@
 
 ## CURRENT STATE
 
+- **2026-08-02 Excluded Users access:** the active admin `hifoen` is explicitly authorized for `/system/excluded-users` through the shared sidebar and server-action gate without receiving any new owner or role-wide privileges. Withdrawal lock controls remain root-owner-only. The production build and all 453 guardrails pass.
 - **2026-07-30 Fraud Discord staff-announcement action removed:** `staff.announcement` is no longer exposed in Fraud Discord Routing. The separate Admin DB event had no routes, jobs, or alert rules and was removed with `20260730_zz_remove_staff_announcement_discord_event.sql`; staff notification delivery remains on its dedicated webhook path. The stale Fiat threshold guardrail was aligned to its extracted policy module so the production gate passes all 453 checks.
 - **2026-07-30 KYC Discord category approved:** Fraud Discord routing now accepts category `1532297417339174922` inside the existing live boundary validation. The exact-ID notification contract, TypeScript, ESLint, repository guardrails, and production build pass.
 - **2026-07-30 production gate repair:** the KYC workspace guardrail now matches the intentionally removed page heading, clearing the stale assertion that blocked current `origin/main` Vercel builds. All 450 repository guardrails, repository TypeScript, full ESLint, all 286 monitor tests, diff check, and the 84-page production build pass from a clean worktree.

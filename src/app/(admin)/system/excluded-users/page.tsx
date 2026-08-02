@@ -11,11 +11,10 @@ import { ExcludedUsersClient } from "./excluded-users-client";
 export const metadata = { title: "Excluded Users" };
 
 /**
- * /system/excluded-users — motha-only blacklist management.
+ * /system/excluded-users — explicitly allowlisted blacklist management.
  *
- * Server-side: the `requireExcludedUsersAccess()` gate (now
- * `requireMainOwner`) redirects anyone who is not the root `motha`
- * account to /dashboard — NOT merely any owner. Even though the
+ * Server-side: `requireExcludedUsersAccess()` redirects anyone outside the
+ * narrow operator allowlist to /dashboard. Even though the
  * sidebar entry already hides the link, the page gate is the actual
  * security boundary (a non-owner admin could still navigate by URL
  * otherwise).
@@ -26,10 +25,8 @@ export const metadata = { title: "Excluded Users" };
  */
 export default async function ExcludedUsersPage() {
   const session = await requireExcludedUsersAccess();
-  // The whole page is MAIN-OWNER-ONLY (root `motha`), so the withdrawal
-  // lock/unlock control — itself motha-only — is always available here.
-  // Kept derived from isMainOwner(session) for an explicit, self-documenting
-  // gate; the server actions enforce the same check independently.
+  // Withdrawal lock/unlock remains root-owner-only even though additional
+  // trusted operators can manage the blacklist itself.
   const canManageWithdrawalLock = isMainOwner(session);
   const { rows, balanceV2TableReady } = await getExcludedUsersForPage();
 
@@ -53,9 +50,9 @@ export default async function ExcludedUsersPage() {
             </p>
             <p>
               <span className="font-medium text-foreground">Access:</span>{" "}
-              this page is restricted to the motha account. Server-side
-              actions enforce the same gate independently of the sidebar
-              visibility.
+              this page is restricted to explicitly authorized operators.
+              Server-side actions enforce the same gate independently of the
+              sidebar visibility.
             </p>
           </div>
         </div>
