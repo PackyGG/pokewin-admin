@@ -13,6 +13,8 @@ export function sanitizedRuntimeConfig(
     abstractIpConfigured: boolean;
     abstractEmailConfigured: boolean;
     opportifyConfigured: boolean;
+    maxmindFactorsConfigured: boolean;
+    maxmindAlertsConfigured: boolean;
   };
   providerContracts: typeof PROVIDER_CONTRACTS;
   live: {
@@ -52,6 +54,10 @@ export function sanitizedRuntimeConfig(
         config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
       ),
       opportifyConfigured: Boolean(config.OPPORTIFY_API_KEY),
+      maxmindFactorsConfigured: Boolean(
+        config.MAXMIND_ACCOUNT_ID && config.MAXMIND_LICENSE_KEY,
+      ),
+      maxmindAlertsConfigured: Boolean(config.MAXMIND_ALERT_WEBHOOK_SECRET),
     },
     providerContracts: PROVIDER_CONTRACTS,
     live: {

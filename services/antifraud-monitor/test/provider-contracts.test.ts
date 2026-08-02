@@ -14,6 +14,7 @@ test("signup provider contracts expose only compiled non-secret provenance", () 
     "abstract_ip",
     "abstract_email",
     "opportify",
+    "maxmind",
   ]);
   assert.equal(PROVIDER_CONTRACTS.proxycheck.version, "24-June-2026");
   assert.equal(PROVIDER_CONTRACTS.abstract_email.requiredDatum, "email");
@@ -21,6 +22,7 @@ test("signup provider contracts expose only compiled non-secret provenance", () 
     PROVIDER_CONTRACTS.opportify.requiredDatum,
     "email_or_signup_ip",
   );
+  assert.equal(PROVIDER_CONTRACTS.maxmind.version, "v2.0");
   const serialized = JSON.stringify(PROVIDER_CONTRACTS);
   assert.doesNotMatch(serialized, /api[_-]?key|token|secret|authorization/i);
 });

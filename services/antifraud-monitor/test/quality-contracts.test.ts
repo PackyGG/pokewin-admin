@@ -35,20 +35,21 @@ test("current signup review and severity thresholds stay explicit", () => {
   );
 });
 
-test("all five signup providers are required and failures enter recovery", async () => {
+test("all six signup providers are required and failures enter recovery", async () => {
   const monitor = await source("../src/monitor.ts");
   const prepareStart = monitor.indexOf("private async prepareSignup");
   const prepareEnd = monitor.indexOf("private async persistSignup", prepareStart);
   const prepare = monitor.slice(prepareStart, prepareEnd);
 
-  for (const provider of [
-    "cachedFingerprint",
-    "cachedProxycheck",
-    "cachedAbstractIp",
-    "cachedAbstractEmail",
-    "cachedOpportify",
+  for (const [provider, args] of [
+    ["cachedFingerprint", "signup, weights"],
+    ["cachedProxycheck", "signup, weights"],
+    ["cachedAbstractIp", "signup, weights"],
+    ["cachedAbstractEmail", "signup, weights"],
+    ["cachedOpportify", "signup, weights"],
+    ["cachedMaxmind", "signup"],
   ]) {
-    assert.match(prepare, new RegExp(`this\\.${provider}\\(signup, weights\\)`));
+    assert.match(prepare, new RegExp(`this\\.${provider}\\(${args}\\)`));
   }
   assert.match(prepare, /\.filter\(\(result\) => result\.status === "failed"\)/);
   assert.match(prepare, /Provider enrichment unavailable:/);
@@ -136,10 +137,10 @@ test("legacy withdrawal and fiat scores retain explicit model identities", async
     withdrawalMigration,
     /model_version integer NOT NULL DEFAULT 1/,
   );
-  assert.match(withdrawal, /WITHDRAWAL_RISK_MODEL_VERSION = 4/);
+  assert.match(withdrawal, /WITHDRAWAL_RISK_MODEL_VERSION = 5/);
   assert.match(withdrawalRoutes, /model_version=\$1/);
   assert.match(fiatMigration, /score_version text NOT NULL DEFAULT 'fiat-v1'/);
-  assert.match(fiat, /score_version='fiat-v2'/);
+  assert.match(fiat, /score_version='fiat-v3'/);
 });
 
 test("legacy withdrawal funding backfill seeds missing subject shells first", async () => {

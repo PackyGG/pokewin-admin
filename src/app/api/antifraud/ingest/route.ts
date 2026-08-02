@@ -621,6 +621,7 @@ const BEHAVIORAL_CONTAINMENT_REASONS = new Set([
   "fresh_creator_tip",
   "fresh_sponsored_battle",
   "score_priority_policy",
+  "maxmind_score_alert",
 ]);
 
 async function containBehavioralRiskAccount(

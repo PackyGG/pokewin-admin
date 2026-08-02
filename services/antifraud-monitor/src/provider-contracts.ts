@@ -34,6 +34,13 @@ export const PROVIDER_CONTRACTS = {
     method: "POST",
     requiredDatum: "email_or_signup_ip",
   },
+  maxmind: {
+    model: "MaxMind minFraud Factors",
+    version: "v2.0",
+    endpoint: "minfraud.maxmind.com/minfraud/v2.0/factors",
+    method: "POST",
+    requiredDatum: "email_or_signup_ip",
+  },
 } as const;
 
 export type SignupProvider = keyof typeof PROVIDER_CONTRACTS;

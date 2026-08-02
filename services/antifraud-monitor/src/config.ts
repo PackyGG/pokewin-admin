@@ -34,6 +34,9 @@ const schema = z.object({
   ABSTRACT_IP_INTELLIGENCE_API_KEY: z.string().min(1),
   ABSTRACT_EMAIL_REPUTATION_API_KEY: z.string().min(1),
   OPPORTIFY_API_KEY: z.string().min(1),
+  MAXMIND_ACCOUNT_ID: z.string().regex(/^\d+$/).optional(),
+  MAXMIND_LICENSE_KEY: z.string().min(16).optional(),
+  MAXMIND_ALERT_WEBHOOK_SECRET: z.string().min(20).max(100).optional(),
   ADMIN_API_KEY: z.string().min(1).optional(),
   xbypasssecret: z.string().min(1).optional(),
   XBYPASSSECRET: z.string().min(1).optional(),
@@ -136,6 +139,14 @@ export function loadConfig(): Config {
     throw new Error(`Invalid configuration: ${errors}`);
   }
   const config = parsed.data;
+  if (
+    config.NODE_ENV !== "test"
+    && (!config.MAXMIND_ACCOUNT_ID || !config.MAXMIND_LICENSE_KEY)
+  ) {
+    throw new Error(
+      "Invalid configuration: MAXMIND_ACCOUNT_ID and MAXMIND_LICENSE_KEY are required",
+    );
+  }
   if (config.API_TOKEN === config.API_ADMIN_TOKEN) {
     throw new Error("Invalid configuration: API_TOKEN and API_ADMIN_TOKEN must differ");
   }

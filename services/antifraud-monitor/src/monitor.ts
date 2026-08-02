@@ -113,6 +113,7 @@ type PreparedSignup = {
   abstractIp: EnrichmentResult;
   abstractEmail: EnrichmentResult;
   opportify: EnrichmentResult;
+  maxmind: EnrichmentResult;
   weights: ScoreWeights;
   identifierBlocklistSignals: Signal[];
 };
@@ -865,12 +866,13 @@ export class MonitorEngine {
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
     ]);
-    const [fingerprint, proxycheck, abstractIp, abstractEmail, opportify] = await Promise.all([
+    const [fingerprint, proxycheck, abstractIp, abstractEmail, opportify, maxmind] = await Promise.all([
       this.cachedFingerprint(signup, weights),
       this.cachedProxycheck(signup, weights),
       this.cachedAbstractIp(signup, weights),
       this.cachedAbstractEmail(signup, weights),
       this.cachedOpportify(signup, weights),
+      this.cachedMaxmind(signup),
     ]);
     await Promise.all([
       this.saveProviderCheck(signup.id, fingerprint, signup.created_at),
@@ -878,6 +880,7 @@ export class MonitorEngine {
       this.saveProviderCheck(signup.id, abstractIp, signup.created_at),
       this.saveProviderCheck(signup.id, abstractEmail, signup.created_at),
       this.saveProviderCheck(signup.id, opportify, signup.created_at),
+      this.saveProviderCheck(signup.id, maxmind, signup.created_at),
     ]);
     const unavailable = [
       fingerprint,
@@ -885,6 +888,7 @@ export class MonitorEngine {
       abstractIp,
       abstractEmail,
       opportify,
+      maxmind,
     ]
       .filter((result) => result.status === "failed")
       .map((result) => result.provider);
@@ -897,6 +901,7 @@ export class MonitorEngine {
         ...abstractIp.signals,
         ...abstractEmail.signals,
         ...opportify.signals,
+        ...maxmind.signals,
       ];
       const catchallSignal = abstractEmail.signals.find(
         (signal) => signal.key === "abstract_email_catchall",
@@ -934,6 +939,7 @@ export class MonitorEngine {
         abstractIp,
         abstractEmail,
         opportify,
+        maxmind,
       ]);
       throw new Error(
         `Provider enrichment unavailable: ${unavailable.join(",")}`,
@@ -946,6 +952,7 @@ export class MonitorEngine {
       abstractIp,
       abstractEmail,
       opportify,
+      maxmind,
       weights,
       identifierBlocklistSignals,
     };
@@ -1058,6 +1065,7 @@ export class MonitorEngine {
       abstractIp,
       abstractEmail,
       opportify,
+      maxmind,
       weights,
       identifierBlocklistSignals,
     } = prepared;
@@ -1076,6 +1084,7 @@ export class MonitorEngine {
       ...abstractIp.signals,
       ...abstractEmail.signals,
       ...opportify.signals,
+      ...maxmind.signals,
       ...(locationPolicy
         ? [
             {
@@ -1095,6 +1104,7 @@ export class MonitorEngine {
         abstractIp,
         abstractEmail,
         opportify,
+        maxmind,
       ]),
       assessedAt: signup.created_at,
       isCreator: signup.is_creator ?? false,
@@ -2131,6 +2141,47 @@ export class MonitorEngine {
     } catch {
       return this.enrichment.opportifyCheck(signup, weights);
     }
+  }
+
+  private async cachedMaxmind(signup: Signup): Promise<EnrichmentResult> {
+    const cached = await this.db.antifraud.query<{
+      request_id: string | null;
+      score: number | null;
+      response: Record<string, unknown> | null;
+      signals: Signal[] | string | null;
+    }>(
+      `
+        SELECT request_id, score, response, signals
+        FROM provider_checks
+        WHERE user_id = $1
+          AND provider = 'maxmind'
+          AND status = 'success'
+        ORDER BY checked_at DESC
+        LIMIT 1
+      `,
+      [signup.id],
+    );
+    const row = cached.rows[0];
+    if (!row || row.score === null || !row.request_id) {
+      return this.enrichment.maxmindCheck(signup);
+    }
+    return {
+      provider: "maxmind",
+      status: "success",
+      lookupKey: `user:${signup.id}`,
+      requestId: row.request_id,
+      score: Number(row.score),
+      ...providerContractMetadata("maxmind", "cache", "complete", {
+        nativeScore: Number(row.score),
+        nativeRank: Number(row.score) >= 75
+          ? "high"
+          : Number(row.score) >= 25
+            ? "medium"
+            : "low",
+      }),
+      response: row.response ?? {},
+      signals: storedSignals(row.signals),
+    };
   }
 
   private async saveProviderCheck(

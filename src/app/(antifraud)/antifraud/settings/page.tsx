@@ -110,7 +110,8 @@ async function IntegrationSection() {
       | "proxycheck"
       | "abstract_ip"
       | "abstract_email"
-      | "opportify",
+      | "opportify"
+      | "maxmind",
     fallback: string,
   ) => {
     const contract = runtimeData?.providerContracts?.[provider];
@@ -200,6 +201,21 @@ async function IntegrationSection() {
         "opportify",
         "Private server-side signup analysis across email, IP, username content, provider velocity, and geographic consistency.",
       ),
+    },
+    {
+      name: "MaxMind minFraud Factors",
+      envs: ["MAXMIND_ACCOUNT_ID", "MAXMIND_LICENSE_KEY"],
+      status: reportedStatus(runtimeData?.providers.maxmindFactorsConfigured),
+      note: contractNote(
+        "maxmind",
+        "Primary server-side risk model for signup identity, IP, email, device, geography, payments, transfers, and payouts.",
+      ),
+    },
+    {
+      name: "MaxMind risk-score alerts",
+      envs: ["MAXMIND_ALERT_WEBHOOK_SECRET"],
+      status: reportedStatus(runtimeData?.providers.maxmindAlertsConfigured),
+      note: "Signed webhook intake for MaxMind score escalations and post-transaction discoveries.",
     },
     {
       name: "Discord bot delivery",

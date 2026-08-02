@@ -6,7 +6,7 @@ import type {
 } from "./provider-contracts.js";
 import type { Signal } from "./types.js";
 
-export const PROFILE_ASSESSMENT_VERSION = "signup-v2";
+export const PROFILE_ASSESSMENT_VERSION = "signup-v3";
 
 export type RiskCategory =
   | "identity"
@@ -117,7 +117,7 @@ export function categoryForSignal(key: string): RiskCategory {
   }
   if (/fund|deposit|withdraw|creator_tip|sponsor/.test(key)) return "funding";
   if (/relationship|affiliate|shared_account/.test(key)) return "relationship";
-  if (/provider|opportify|abstract/.test(key)) return "provider";
+  if (/provider|opportify|abstract|maxmind/.test(key)) return "provider";
   if (/lock|kyc|ban|restricted/.test(key)) return "account";
   return "behavior";
 }

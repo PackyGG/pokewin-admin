@@ -93,6 +93,8 @@ const runtimeConfigSchema = z.object({
     abstractIpConfigured: z.boolean(),
     abstractEmailConfigured: z.boolean(),
     opportifyConfigured: z.boolean(),
+    maxmindFactorsConfigured: z.boolean(),
+    maxmindAlertsConfigured: z.boolean(),
   }),
   providerContracts: z.object({
     fingerprint: z.object({
@@ -124,6 +126,13 @@ const runtimeConfigSchema = z.object({
       requiredDatum: z.string(),
     }),
     opportify: z.object({
+      model: z.string(),
+      version: z.string(),
+      endpoint: z.string(),
+      method: z.string(),
+      requiredDatum: z.string(),
+    }),
+    maxmind: z.object({
       model: z.string(),
       version: z.string(),
       endpoint: z.string(),

@@ -2,6 +2,8 @@ import type { FastifyBaseLogger } from "fastify";
 import type { Pool, PoolClient } from "pg";
 
 import type { Databases } from "./db.js";
+import type { MaxMindEvaluation } from "./maxmind.js";
+import { MaxMindService, maxMindRiskPoints } from "./maxmind.js";
 
 export type WithdrawalVerdict = "good" | "review" | "bad";
 
@@ -132,7 +134,7 @@ export type WithdrawalScoreInput = {
   linkedRiskAccountCount: number;
 };
 
-export const WITHDRAWAL_RISK_MODEL_VERSION = 4;
+export const WITHDRAWAL_RISK_MODEL_VERSION = 5;
 
 export function scoreWithdrawal(input: WithdrawalScoreInput): {
   riskScore: number;
@@ -455,6 +457,7 @@ type SourceWithdrawal = {
   email: string | null;
   image: string | null;
   account_created_at: string;
+  signup_ip: string | null;
   method: string;
   status: string;
   inventory_item_ids: string[];
@@ -1047,6 +1050,55 @@ async function destinationReuse(
   );
 }
 
+function applyMaxMindWithdrawalRisk(
+  scored: ReturnType<typeof scoreWithdrawal>,
+  evaluation: MaxMindEvaluation,
+): ReturnType<typeof scoreWithdrawal> {
+  const native = evaluation.riskScore ?? 0;
+  const points = maxMindRiskPoints(native);
+  const signal: WithdrawalSignal = {
+    key: "maxmind_factors_risk",
+    label: "MaxMind minFraud Factors",
+    detail: `MaxMind assessed this transfer at ${native.toFixed(2)} risk.`,
+    points,
+    tone: native >= 75 ? "bad" : native >= 25 ? "warning" : "good",
+    category: "integrity",
+  };
+  const signals = [
+    ...scored.signals.filter((entry) => entry.key !== signal.key),
+    signal,
+  ];
+  const integrityScore = Math.max(
+    0,
+    Math.min(100, scored.scoreBreakdown.integrity + points),
+  );
+  const riskScore = Math.max(
+    0,
+    Math.min(100, Math.max(scored.riskScore + points, Math.round(native * 0.8))),
+  );
+  const verdict: WithdrawalVerdict = riskScore >= 60
+    ? "bad"
+    : riskScore >= 30
+      ? "review"
+      : "good";
+  return {
+    ...scored,
+    riskScore,
+    verdict,
+    summary: points > 0 ? signal.detail : scored.summary,
+    signals,
+    scoreBreakdown: { ...scored.scoreBreakdown, integrity: integrityScore },
+    flowChecks: scored.flowChecks.map((check) => check.key === "integrity"
+      ? {
+          ...check,
+          score: integrityScore,
+          status: integrityScore >= 40 ? "alert" : integrityScore > 0 ? "watch" : "pass",
+          evidence: [...check.evidence, signal.detail],
+        }
+      : check),
+  };
+}
+
 export class WithdrawalRiskService {
   private syncTimer: NodeJS.Timeout | null = null;
   private syncRunning = false;
@@ -1055,6 +1107,7 @@ export class WithdrawalRiskService {
   constructor(
     private readonly db: Databases,
     private readonly logger?: FastifyBaseLogger,
+    private readonly maxmind?: MaxMindService,
   ) {}
 
   start(): void {
@@ -1096,7 +1149,7 @@ export class WithdrawalRiskService {
       lockClient = await this.db.antifraud.connect();
       const lock = await lockClient.query<{ acquired: boolean }>(
         `SELECT pg_try_advisory_lock(hashtext($1)) AS acquired`,
-        ["withdrawal-risk-model-v2-sync"],
+        ["withdrawal-risk-model-v5-sync"],
       );
       acquired = lock.rows[0]?.acquired === true;
       if (!acquired) return;
@@ -1122,7 +1175,7 @@ export class WithdrawalRiskService {
       try {
         if (acquired && lockClient) {
           await lockClient.query(`SELECT pg_advisory_unlock(hashtext($1))`, [
-            "withdrawal-risk-model-v2-sync",
+            "withdrawal-risk-model-v5-sync",
           ]);
         }
       } catch (error) {
@@ -1228,7 +1281,7 @@ export class WithdrawalRiskService {
       this.db.source.query<SourceWithdrawal>(
         `
         SELECT
-          cwr.id::text, cwr.user_id, u.username, u.email, u.image,
+          cwr.id::text, cwr.user_id, u.username, u.email, u.image, u.signup_ip,
           u.created_at AS account_created_at,
           cwr.method::text, cwr.status::text,
           cwr.inventory_item_ids::text[], cwr.voucher_ids::text[],
@@ -1255,6 +1308,30 @@ export class WithdrawalRiskService {
     ]);
     if (requests.rows.length === 0) {
       return { ids: [], total: total.rows[0]?.count ?? 0 };
+    }
+
+    const maxmindByWithdrawal = new Map<string, MaxMindEvaluation>();
+    if (this.maxmind) {
+      for (let offset = 0; offset < requests.rows.length; offset += 5) {
+        const chunk = requests.rows.slice(offset, offset + 5);
+        const evaluated = await Promise.all(chunk.map(async (request) => {
+          const result = await this.maxmind!.evaluate({
+            eventKey: `withdrawal:${request.id}`,
+            transactionId: `withdrawal:${request.id}`,
+            eventType: "fund_transfer",
+            userId: request.user_id,
+            occurredAt: new Date(request.requested_at),
+            shopId: "packy:withdrawal",
+            username: request.username,
+            email: request.email,
+            ipAddress: request.signup_ip,
+            amount: number(request.total_value_usd),
+            currency: "USD",
+          });
+          return [request.id, result] as const;
+        }));
+        for (const [id, result] of evaluated) maxmindByWithdrawal.set(id, result);
+      }
     }
 
     const [ledgerById, assets, reuseByAddress, fundingRowsById] = await Promise.all([
@@ -1363,7 +1440,7 @@ export class WithdrawalRiskService {
         linkedAccounts,
         modelVersion: WITHDRAWAL_RISK_MODEL_VERSION,
       };
-      const scored = scoreWithdrawal({
+      const locallyScored = scoreWithdrawal({
         method: request.method,
         amountUsd,
         assetValueUsd,
@@ -1392,6 +1469,10 @@ export class WithdrawalRiskService {
         fundingTraceGapUsd: fundingTrace.gapUsd,
         linkedRiskAccountCount,
       });
+      const maxmind = maxmindByWithdrawal.get(request.id);
+      const scored = maxmind?.status === "success" && maxmind.riskScore !== null
+        ? applyMaxMindWithdrawalRisk(locallyScored, maxmind)
+        : locallyScored;
       return { request, sources, flow, ...scored };
     });
 

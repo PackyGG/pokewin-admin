@@ -96,6 +96,7 @@ import { registerSumsubRoutes } from "./sumsub-routes.js";
 import { KycCountryReviewService } from "./kyc-country-reviews.js";
 import { DashboardOpsTick } from "./ops-tick.js";
 import { DiscordAlerts } from "./discord.js";
+import { MaxMindService, registerMaxMindAlertRoute } from "./maxmind.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
@@ -107,6 +108,8 @@ const SECRET_VALUES = [
   config.FINGERPRINT_SECRET_API_KEY,
   config.PROXYCHECK_API_KEY,
   config.OPPORTIFY_API_KEY,
+  config.MAXMIND_LICENSE_KEY,
+  config.MAXMIND_ALERT_WEBHOOK_SECRET,
   config.API_TOKEN,
   config.API_ADMIN_TOKEN,
   config.FIAT_ELIGIBILITY_DEV_API_KEY,
@@ -179,8 +182,9 @@ const live = new LiveBus(config.REDIS_URL, app.log, {
 });
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
-const withdrawalRisk = new WithdrawalRiskService(db, app.log);
-const fiatRisk = new FiatRiskService(db);
+const maxmind = new MaxMindService(config, db.antifraud, app.log);
+const withdrawalRisk = new WithdrawalRiskService(db, app.log, maxmind);
+const fiatRisk = new FiatRiskService(db, maxmind);
 const fiatEligibilityAccess = new FiatEligibilityAccess(config);
 const enrichment = new EnrichmentService(config);
 const fiatEligibility = new FiatEligibilityService(
@@ -217,6 +221,7 @@ const engine = new MonitorEngine(
   (userId) => networkRisk.enqueueAccount(userId).then(() => undefined),
 );
 let shuttingDown = false;
+let maxmindReportTimer: NodeJS.Timeout | null = null;
 
 // Cross-replica cache invalidation: rule and score-weight mutations committed
 // on OTHER replicas arrive here as live frames; drop the local caches so this
@@ -468,7 +473,11 @@ app.addHook("onRequest", async (request, reply) => {
   // fetch metadata, and must never be blocked by the origin gate or auth.
   // Both payloads are trimmed to status-only shapes (full detail lives on the
   // authenticated /v1/operations/* routes).
-  if (requestPathname === "/health" || requestPathname === "/ready") {
+  if (
+    requestPathname === "/health"
+    || requestPathname === "/ready"
+    || requestPathname === "/v1/providers/maxmind/alerts"
+  ) {
     return;
   }
   const origin = request.headers.origin;
@@ -1842,6 +1851,13 @@ app.post("/v1/cases/:id/decision", {
         JSON.stringify({ status, resolution: body.decision }),
       ],
     );
+    if (body.decision === "resolved_safe" || body.decision === "resolved_fraud") {
+      await maxmind.queueCaseFeedback(client, {
+        caseId: id,
+        userId,
+        decision: body.decision,
+      });
+    }
     await client.query("COMMIT");
   } catch (error) {
     // Swallow the ROLLBACK's own failure so the ORIGINAL error propagates.
@@ -2104,6 +2120,7 @@ await registerSignupFailureRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
 await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
+registerMaxMindAlertRoute(app, maxmind);
 await registerSumsubRoutes(
   app,
   sumsub,
@@ -2164,6 +2181,7 @@ app.setErrorHandler((error, request, reply) => {
 app.addHook("onClose", async () => {
   shuttingDown = true;
   dashboardOpsTick.stop();
+  if (maxmindReportTimer) clearInterval(maxmindReportTimer);
   await withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
@@ -2217,6 +2235,13 @@ await live.start();
 await ingestDelivery.start();
 await networkRisk.start();
 withdrawalRisk.start();
+maxmindReportTimer = setInterval(() => {
+  void maxmind.drainReports().catch((error) => {
+    app.log.warn({ err: error }, "MaxMind feedback outbox drain failed");
+  });
+}, 30_000);
+maxmindReportTimer.unref();
+void maxmind.drainReports();
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
 app.log.info(
   {

@@ -1807,6 +1807,7 @@ export class EnrichmentService {
       this.config.ABSTRACT_IP_INTELLIGENCE_API_KEY,
       this.config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
       this.config.OPPORTIFY_API_KEY,
+      this.config.MAXMIND_LICENSE_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
       this.config.FIAT_ELIGIBILITY_DEV_API_KEY,
@@ -2226,6 +2227,157 @@ export class EnrichmentService {
         lookupKey: `user:${signup.id}`,
         errorCode,
         ...providerContractMetadata("opportify", "live", "unknown", {
+          errorCode,
+        }),
+        signals: [],
+      };
+    }
+  }
+
+  async maxmindCheck(signup: Signup): Promise<EnrichmentResult> {
+    if (!this.config.MAXMIND_ACCOUNT_ID || !this.config.MAXMIND_LICENSE_KEY) {
+      const errorCode = "maxmind_not_configured";
+      return {
+        provider: "maxmind",
+        status: "failed",
+        lookupKey: `user:${signup.id}`,
+        errorCode,
+        ...providerContractMetadata("maxmind", "input", "unknown", { errorCode }),
+        signals: [],
+      };
+    }
+    const email = signup.email?.trim().toLowerCase() || undefined;
+    const ip = canonicalIp(signup.signup_ip);
+    if (!email && !ip) {
+      const errorCode = "missing_email_and_ip";
+      return {
+        provider: "maxmind",
+        status: "skipped",
+        lookupKey: `user:${signup.id}`,
+        errorCode,
+        ...providerContractMetadata("maxmind", "input", "unknown", {
+          errorCode,
+        }),
+        signals: [],
+      };
+    }
+
+    const username = signup.username?.trim().toLowerCase();
+    const body = compactObject({
+      device: compactObject({
+        ip_address: ip,
+        user_agent: signup.user_agent?.trim().slice(0, 512),
+      }),
+      event: {
+        transaction_id: `signup:${signup.id}`,
+        shop_id: "packy:signup",
+        type: "account_creation",
+        time: signup.created_at.toISOString(),
+        party: "customer",
+      },
+      account: compactObject({
+        user_id: signup.id,
+        username_md5: username
+          ? createHash("md5").update(username).digest("hex")
+          : undefined,
+      }),
+      email: email ? { address: email } : undefined,
+      billing: compactObject({
+        country: signup.country_code?.trim().toUpperCase().slice(0, 2),
+        region: signup.state?.trim().slice(0, 255),
+        city: signup.city?.trim().slice(0, 255),
+      }),
+    });
+
+    try {
+      const authorization = Buffer.from(
+        `${this.config.MAXMIND_ACCOUNT_ID}:${this.config.MAXMIND_LICENSE_KEY}`,
+      ).toString("base64");
+      const response = await fetch(
+        "https://minfraud.maxmind.com/minfraud/v2.0/factors",
+        {
+          method: "POST",
+          signal: AbortSignal.timeout(8_000),
+          headers: {
+            accept: "application/json",
+            authorization: `Basic ${authorization}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      if (!response.ok) throw new Error(`http_${response.status}`);
+      const text = await response.text();
+      if (text.length > 512_000) throw new Error("response_too_large");
+      const raw = object(JSON.parse(text));
+      const riskScore = numberValue(raw.risk_score);
+      const id = stringValue(raw.id);
+      if (riskScore === undefined || riskScore < 0 || riskScore > 100 || !id) {
+        throw new Error("invalid_response");
+      }
+      const points = riskScore >= 85
+        ? 55
+        : riskScore >= 70
+          ? 40
+          : riskScore >= 50
+            ? 25
+            : riskScore >= 25
+              ? 10
+              : riskScore < 5
+                ? -5
+                : 0;
+      const reasons = Array.isArray(raw.risk_score_reasons)
+        ? raw.risk_score_reasons.slice(0, 25)
+        : [];
+      const signals: Signal[] = [{
+        key: "maxmind_factors_risk",
+        title: "MaxMind minFraud Factors",
+        detail: `MaxMind assessed this signup at ${riskScore.toFixed(2)} risk.`,
+        points,
+        payload: {
+          minfraudId: id,
+          riskScore,
+          ipRisk: numberValue(path(raw, "ip_address", "risk")),
+          disposition: stringValue(path(raw, "disposition", "action")),
+        },
+      }];
+      if (reasons.length > 0) {
+        signals.push({
+          key: "maxmind_risk_reasons",
+          title: "MaxMind risk reasons",
+          detail: "MaxMind returned the model factors that moved its risk score.",
+          points: 0,
+          payload: { reasons },
+        });
+      }
+      const responseEvidence = boundedSanitizedObject(
+        raw,
+        new Set(["address", "phone_number"]),
+      ) as JsonObject;
+      return {
+        provider: "maxmind",
+        status: "success",
+        lookupKey: `user:${signup.id}`,
+        requestId: id,
+        score: riskScore,
+        ...providerContractMetadata("maxmind", "live", "complete", {
+          nativeScore: riskScore,
+          nativeRank: riskScore >= 75 ? "high" : riskScore >= 25 ? "medium" : "low",
+        }),
+        response: {
+          evidence_contract: "maxmind-factors-sanitized-v1",
+          ...responseEvidence,
+        },
+        signals,
+      };
+    } catch (error) {
+      const errorCode = this.providerErrorCode(error);
+      return {
+        provider: "maxmind",
+        status: "failed",
+        lookupKey: `user:${signup.id}`,
+        errorCode,
+        ...providerContractMetadata("maxmind", "live", "unknown", {
           errorCode,
         }),
         signals: [],

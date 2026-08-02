@@ -1,6 +1,8 @@
 import type { Pool } from "pg";
 
 import type { Databases } from "./db.js";
+import type { MaxMindEvaluation } from "./maxmind.js";
+import { MaxMindService, maxMindRiskPoints } from "./maxmind.js";
 import { whopPaymentMethodInfo } from "./whop-payment-method.js";
 
 export type FiatVerdict = "good" | "review" | "bad";
@@ -53,6 +55,13 @@ export type FiatProviderEvidence = {
   paymentMethodType: string | null;
   cardBrand?: string | null;
   cardLast4?: string | null;
+  maxmind?: {
+    id: string | null;
+    riskScore: number | null;
+    ipRisk: number | null;
+    disposition: string | null;
+    response: Record<string, unknown> | null;
+  };
 };
 
 export type FiatFundingEvidence = {
@@ -865,6 +874,7 @@ type SourceFiatIntent = {
   email: string | null;
   image: string | null;
   account_created_at: string;
+  signup_ip: string | null;
   country_code: string | null;
   is_banned: boolean;
   is_locked: boolean;
@@ -1253,8 +1263,74 @@ export const FIAT_ASSESSMENT_STATUSES = [
 
 type FiatAssessmentStatus = (typeof FIAT_ASSESSMENT_STATUSES)[number];
 
+function applyMaxMindFiatRisk(
+  scored: ReturnType<typeof scoreFiatDeposit>,
+  evaluation: MaxMindEvaluation,
+): ReturnType<typeof scoreFiatDeposit> {
+  const native = evaluation.riskScore ?? 0;
+  const points = maxMindRiskPoints(native);
+  const signal: FiatSignal = {
+    key: "maxmind_factors_risk",
+    label: "MaxMind minFraud Factors",
+    detail: `MaxMind assessed this payment at ${native.toFixed(2)} risk.`,
+    points,
+    tone: native >= 75 ? "bad" : native >= 25 ? "warning" : "good",
+    category: "provider",
+  };
+  const signals = [
+    ...scored.signals.filter((entry) => entry.key !== signal.key),
+    signal,
+  ];
+  const providerScore = Math.max(
+    0,
+    Math.min(100, scored.scoreBreakdown.provider + points),
+  );
+  const riskScore = Math.max(
+    0,
+    Math.min(100, Math.max(scored.riskScore + points, Math.round(native * 0.8))),
+  );
+  const verdict: FiatVerdict = riskScore >= 60
+    ? "bad"
+    : riskScore >= 30
+      ? "review"
+      : "good";
+  return {
+    ...scored,
+    riskScore,
+    verdict,
+    recommendation: verdict === "bad"
+      ? "Hold withdrawals and complete an analyst review."
+      : verdict === "review"
+        ? "Review before allowing value to leave the account."
+        : scored.recommendation,
+    summary: points > 0 ? signal.detail : scored.summary,
+    signals,
+    scoreBreakdown: { ...scored.scoreBreakdown, provider: providerScore },
+    flowChecks: scored.flowChecks.map((check) => check.key === "provider"
+      ? {
+          ...check,
+          score: providerScore,
+          status: providerScore >= 40 ? "block" : providerScore > 0 ? "review" : "pass",
+          evidence: [...check.evidence, signal.detail],
+        }
+      : check),
+  };
+}
+
+function maxMindPaymentMethod(
+  value: string | null,
+): "card" | "digital_wallet" | undefined {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  if (!normalized) return undefined;
+  if (/apple|google|paypal|wallet/.test(normalized)) return "digital_wallet";
+  return "card";
+}
+
 export class FiatRiskService {
-  constructor(private readonly db: Databases) {}
+  constructor(
+    private readonly db: Databases,
+    private readonly maxmind?: MaxMindService,
+  ) {}
 
   async refresh(input: {
     status?: FiatAssessmentStatus;
@@ -1338,7 +1414,7 @@ export class FiatRiskService {
             id DESC
         )
         SELECT
-          fdi.id::text, fdi.user_id, u.username, u.email, u.image,
+          fdi.id::text, fdi.user_id, u.username, u.email, u.image, u.signup_ip,
           u.created_at AS account_created_at, u.country_code,
           u.is_banned, u.is_locked, u.is_suspected_alt,
           COALESCE(kyc.kyc_required, false) AS kyc_required,
@@ -1408,12 +1484,57 @@ export class FiatRiskService {
       intents.map((intent) => intent.id),
     );
 
+    const maxmindByIntent = new Map<string, MaxMindEvaluation>();
+    for (let offset = 0; this.maxmind && offset < intents.length; offset += 5) {
+      const chunk = intents.slice(offset, offset + 5);
+      const evaluated = await Promise.all(chunk.map(async (intent) => {
+        const provider = providers.get(intent.id) ?? EMPTY_PROVIDER;
+        const occurredAt = intentTime(intent);
+        const result = await this.maxmind!.evaluate({
+          eventKey: `fiat:${intent.id}`,
+          transactionId: `fiat:${intent.id}`,
+          eventType: "purchase",
+          userId: intent.user_id,
+          occurredAt,
+          shopId: "packy:fiat-deposit",
+          username: intent.username,
+          email: provider.checkoutEmail ?? intent.email,
+          ipAddress: intent.signup_ip,
+          amount: (intent.actual_customer_total_cents ?? intent.credited_amount_cents) / 100,
+          currency: intent.currency,
+          billingCountry: provider.billingCountry ?? intent.country_code,
+          cardLast4: provider.cardLast4,
+          paymentProcessor: "other",
+          paymentMethod: maxMindPaymentMethod(provider.paymentMethodType),
+          paymentWasAuthorized: true,
+          was3dSecureSuccessful: provider.threeDsVerified,
+        });
+        return [intent.id, result] as const;
+      }));
+      for (const [id, result] of evaluated) maxmindByIntent.set(id, result);
+    }
+
     const assessments = intents.map((intent) => {
       const amountUsd = intent.credited_amount_cents / 100;
       const occurredAt = intentTime(intent);
       const context = contexts.get(intent.id);
       const network = networks.get(intent.user_id);
-      const provider = providers.get(intent.id) ?? EMPTY_PROVIDER;
+      const baseProvider = providers.get(intent.id) ?? EMPTY_PROVIDER;
+      const maxmind = maxmindByIntent.get(intent.id);
+      const provider: FiatProviderEvidence = {
+        ...baseProvider,
+        ...(maxmind
+          ? {
+              maxmind: {
+                id: maxmind.minfraudId,
+                riskScore: maxmind.riskScore,
+                ipRisk: maxmind.ipRisk,
+                disposition: maxmind.disposition,
+                response: maxmind.response,
+              },
+            }
+          : {}),
+      };
       const funding = contextFunding(context, amountUsd);
       const behavior = contextBehavior(
         context,
@@ -1456,9 +1577,12 @@ export class FiatRiskService {
         account,
       });
       const blacklistedCheckoutEmail = blacklistedCheckoutEmails.get(intent.id);
-      const scored = blacklistedCheckoutEmail
+      const locallyScored = blacklistedCheckoutEmail
         ? applyBlacklistedCheckoutEmail(baseScore, blacklistedCheckoutEmail)
         : baseScore;
+      const scored = maxmind?.status === "success" && maxmind.riskScore !== null
+        ? applyMaxMindFiatRisk(locallyScored, maxmind)
+        : locallyScored;
       return {
         intent,
         occurredAt,
@@ -1490,7 +1614,7 @@ export class FiatRiskService {
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
               $16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,
-              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29,'fiat-v2',now()
+              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29,'fiat-v3',now()
             )
             ON CONFLICT (deposit_intent_id) DO UPDATE SET
               user_id=EXCLUDED.user_id,
@@ -1521,7 +1645,7 @@ export class FiatRiskService {
               score_breakdown=EXCLUDED.score_breakdown,
               flow_checks=EXCLUDED.flow_checks,
               provider_payment_id=EXCLUDED.provider_payment_id,
-              score_version='fiat-v2',
+              score_version='fiat-v3',
               assessed_at=now()
           `,
           [

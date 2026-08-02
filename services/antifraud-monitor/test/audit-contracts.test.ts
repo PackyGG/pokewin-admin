@@ -196,6 +196,9 @@ const runtimeConfig: Config = {
   ABSTRACT_IP_INTELLIGENCE_API_KEY: "abstract-ip-secret",
   ABSTRACT_EMAIL_REPUTATION_API_KEY: "abstract-email-secret",
   OPPORTIFY_API_KEY: "opportify-secret",
+  MAXMIND_ACCOUNT_ID: "123456",
+  MAXMIND_LICENSE_KEY: "maxmind-license-key-for-testing",
+  MAXMIND_ALERT_WEBHOOK_SECRET: "maxmind-alert-secret-at-least-32-characters",
   API_TOKEN: "read-token-that-is-at-least-32-characters",
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
@@ -277,6 +280,8 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     abstractIpConfigured: true,
     abstractEmailConfigured: true,
     opportifyConfigured: true,
+    maxmindFactorsConfigured: true,
+    maxmindAlertsConfigured: true,
   });
   assert.equal(
     status.providerContracts.fingerprint.model,
