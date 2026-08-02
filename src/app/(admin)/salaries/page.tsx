@@ -1,4 +1,4 @@
-import { Users, Receipt, Wallet } from "lucide-react";
+import { CalendarDays, Receipt, Users } from "lucide-react";
 import { desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { salary_employees, salary_payments } from "@/lib/db-schema/admin/schema";
@@ -26,6 +26,7 @@ export default async function SalariesPage() {
     adminDrizzle
       .select({
         value: sql<string>`COALESCE(SUM(${salary_employees.salary_usdt}), 0)::text`,
+        weeklyValue: sql<string>`COALESCE(SUM(${salary_employees.salary_usdt}) / 4, 0)::text`,
       })
       .from(salary_employees)
       .where(eq(salary_employees.active, true)),
@@ -35,15 +36,7 @@ export default async function SalariesPage() {
   // Every saved salary is a monthly amount. PostgreSQL performs the complete
   // sum in NUMERIC arithmetic; only the final display value is converted.
   const monthlyBudget = toNumber(monthlyBudgetRows[0]?.value);
-  // Address-type breakdown for the overview tile — derived purely from
-  // each saved address's format (ERC-20 0x… vs Solana base58).
-  const erc20Count = employees.filter(
-    (e) => addressKind(e.eth_address) === "erc20",
-  ).length;
-  const solCount = employees.filter(
-    (e) => addressKind(e.eth_address) === "sol",
-  ).length;
-  const unknownCount = employees.length - erc20Count - solCount;
+  const weeklyCost = toNumber(monthlyBudgetRows[0]?.weeklyValue);
 
   return (
     <div className="space-y-6">
@@ -65,13 +58,10 @@ export default async function SalariesPage() {
           accent="amber"
         />
         <KpiTile
-          label="Address Types"
-          value={`${erc20Count} ERC-20`}
-          sub={
-            `${solCount} SOL` +
-            (unknownCount > 0 ? ` · ${unknownCount} other` : "")
-          }
-          icon={Wallet}
+          label="Weekly Cost"
+          value={`$${weeklyCost.toLocaleString(undefined, { maximumFractionDigits: 2 })}`}
+          sub="Monthly budget ÷ 4"
+          icon={CalendarDays}
           accent="purple"
         />
       </div>

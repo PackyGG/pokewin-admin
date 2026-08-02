@@ -755,8 +755,8 @@ function PaymentTrackingCard({
           </Button>
         </div>
         <p className="text-xs text-muted-foreground">
-          Log a payment you sent: pick the employee, paste the payment
-          link, and save it with a date.
+          Pick the employee and paste the payment link. The date is saved
+          automatically.
         </p>
       </CardHeader>
       <CardContent>
@@ -952,16 +952,12 @@ function TrackPaymentDialog({
   const router = useRouter();
   const [employeeId, setEmployeeId] = useState("");
   const [link, setLink] = useState("");
-  // Init empty; set to today in the effect on open so there's no
-  // server/client date mismatch during render.
-  const [date, setDate] = useState("");
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
     if (!open) return;
     setEmployeeId("");
     setLink("");
-    setDate(new Date().toISOString().slice(0, 10));
   }, [open]);
 
   function handleSubmit() {
@@ -977,7 +973,6 @@ function TrackPaymentDialog({
       const result = await addSalaryPayment({
         employeeId,
         paymentLink: link.trim(),
-        paidAt: date || undefined,
       });
       if (!result.success) {
         toast.error(result.error);
@@ -1005,7 +1000,8 @@ function TrackPaymentDialog({
             Track a payment
           </DialogTitle>
           <DialogDescription>
-            Save a payment link against an employee, with a date.
+            Pick an employee and paste the payment link. Today&apos;s date is
+            saved automatically.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
@@ -1034,14 +1030,6 @@ function TrackPaymentDialog({
               onChange={(e) => setLink(e.target.value)}
               placeholder="https://…"
               className="font-mono text-xs"
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Date</Label>
-            <Input
-              type="date"
-              value={date}
-              onChange={(e) => setDate(e.target.value)}
             />
           </div>
         </div>

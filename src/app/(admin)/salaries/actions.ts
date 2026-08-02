@@ -187,8 +187,6 @@ const paymentLinkSchema = z
 const addPaymentSchema = z.object({
   employeeId: z.string().uuid("Invalid employee id"),
   paymentLink: paymentLinkSchema,
-  // Date the payment was made (date-input string). Defaults to now.
-  paidAt: z.string().trim().optional(),
 });
 
 const deletePaymentSchema = z.object({
@@ -198,7 +196,6 @@ const deletePaymentSchema = z.object({
 export async function addSalaryPayment(data: {
   employeeId: string;
   paymentLink: string;
-  paidAt?: string;
 }): Promise<{ success: true; id: string } | { success: false; error: string }> {
   const session = await requireMotha();
   const parsed = addPaymentSchema.safeParse(data);
@@ -214,14 +211,7 @@ export async function addSalaryPayment(data: {
   }).from(salary_employees).where(eq(salary_employees.id, parsed.data.employeeId)).limit(1);
   if (!employee) return { success: false, error: "Employee not found" };
 
-  let paidAt = new Date();
-  if (parsed.data.paidAt) {
-    const d = new Date(parsed.data.paidAt);
-    if (Number.isNaN(d.getTime())) {
-      return { success: false, error: "Invalid date" };
-    }
-    paidAt = d;
-  }
+  const paidAt = new Date();
 
   const [created] = await adminDrizzle.insert(salary_payments).values({
       employee_id: employee.id,
