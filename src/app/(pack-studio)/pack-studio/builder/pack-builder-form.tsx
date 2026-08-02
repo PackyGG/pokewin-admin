@@ -268,7 +268,12 @@ export function PackBuilderForm({
   const [price, setPrice] = useState(
     initialDraft ? String(initialDraft.price) : "",
   );
-  const [autoPrice, setAutoPrice] = useState(initialDraft === null);
+  // ONE auto-tune switch. It owns BOTH auto-derived numbers — the EV price AND
+  // the solver-shaped odds. They are the same loop (odds → EV → price → re-shape
+  // → odds), so gating only the price left the shaper still rewriting every
+  // unpinned row on any target-edge change (including typing a "10%" into the
+  // NAME, which is tag-aware). Off = the pool is frozen exactly as edited.
+  const [autoTune, setAutoTune] = useState(initialDraft === null);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(
     initialDraft?.imageUrl ?? null,
@@ -374,10 +379,10 @@ export function PackBuilderForm({
   const suggestedPrice = pricing.suggestedPrice;
 
   useEffect(() => {
-    if (!autoPrice || !(suggestedPrice > 0)) return;
+    if (!autoTune || !(suggestedPrice > 0)) return;
     const next = suggestedPrice.toFixed(2);
     setPrice((current) => (current === next ? current : next));
-  }, [autoPrice, suggestedPrice]);
+  }, [autoTune, suggestedPrice]);
 
   function handleNameChange(val: string) {
     setName(val);
@@ -431,6 +436,7 @@ export function PackBuilderForm({
   // until the operator re-adds / changes the pool). The auto flag resets to true
   // when the pool itself changes (handleAddCard / remove set autoOdds:true).
   useEffect(() => {
+    if (!autoTune) return;
     if (!shapeOk) return;
     const totalW = shapeOk.weights.reduce((s, w) => s + w, 0);
     if (!(totalW > 0)) return;
@@ -448,7 +454,7 @@ export function PackBuilderForm({
       });
       return changed ? next : prev;
     });
-  }, [shapeOk]);
+  }, [autoTune, shapeOk]);
 
   // Risk read off the CURRENT table odds (auto OR manually nudged) — this is the
   // preview the operator actually sees, reflecting any manual override.
@@ -516,12 +522,14 @@ export function PackBuilderForm({
   }
 
   function handleRemoveCard(index: number) {
-    setCards((prev) =>
-      prev
-        .filter((_, i) => i !== index)
-        // Re-arm auto-odds on the survivors so the shape re-distributes cleanly.
-        .map((c) => ({ ...c, autoOdds: true })),
-    );
+    setCards((prev) => {
+      const survivors = prev.filter((_, i) => i !== index);
+      // Re-arm auto-odds on the survivors so the shape re-distributes cleanly —
+      // but ONLY while auto-tune is driving. With auto-tune off this used to
+      // silently unpin every hand-set row, so deleting one card rewrote the
+      // whole pool on the next shape.
+      return autoTune ? survivors.map((c) => ({ ...c, autoOdds: true })) : survivors;
+    });
   }
 
   // ── Submit → saved draft OR owner approval queue ──
@@ -674,13 +682,24 @@ export function PackBuilderForm({
                       htmlFor="auto-pack-price"
                       className="text-xs font-normal text-muted-foreground"
                     >
-                      Auto from EV
+                      Auto-tune price + odds
                     </Label>
                     <Switch
                       id="auto-pack-price"
                       size="sm"
-                      checked={autoPrice}
-                      onCheckedChange={(checked) => setAutoPrice(!!checked)}
+                      checked={autoTune}
+                      onCheckedChange={(checked) => {
+                        const on = !!checked;
+                        setAutoTune(on);
+                        // Turning it back ON is an explicit "let the solver
+                        // drive again" — release every hand-pinned row so the
+                        // shape re-distributes the whole pool.
+                        if (on) {
+                          setCards((prev) =>
+                            prev.map((c) => ({ ...c, autoOdds: true })),
+                          );
+                        }
+                      }}
                     />
                   </div>
                 </div>
@@ -689,25 +708,28 @@ export function PackBuilderForm({
                   type="number"
                   value={price}
                   onChange={(e) => {
-                    setAutoPrice(false);
+                    setAutoTune(false);
                     setPrice(e.target.value);
                   }}
                   placeholder="0.00"
                   min="0"
                   step="0.01"
-                  readOnly={autoPrice}
+                  readOnly={autoTune}
                 />
                 <p className="text-xs text-muted-foreground">
                   {pricingEv > 0
-                    ? `EV ${formatCurrency(pricingEv)} · ${autoPrice ? "Auto price" : "Suggested"} ${formatCurrency(suggestedPrice)} · target ${targetEdgePct.toFixed(2)}%`
+                    ? `EV ${formatCurrency(pricingEv)} · ${autoTune ? "Auto price" : "Suggested"} ${formatCurrency(suggestedPrice)} · target ${targetEdgePct.toFixed(2)}%`
                     : "Add cards to calculate the pack price automatically from EV and edge."}
-                  {!autoPrice && suggestedPrice > 0 && (
+                  {!autoTune && suggestedPrice > 0 && (
                     <>
                       {" · "}
                       <button
                         type="button"
                         onClick={() => {
-                          setAutoPrice(true);
+                          setAutoTune(true);
+                          setCards((prev) =>
+                            prev.map((c) => ({ ...c, autoOdds: true })),
+                          );
                           setPrice(suggestedPrice.toFixed(2));
                         }}
                         className="text-primary underline underline-offset-2"
@@ -758,9 +780,10 @@ export function PackBuilderForm({
                   removeCard={handleRemoveCard}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Odds are auto-shaped to the target edge + win-rate. Editing an
-                  odds cell pins that row; the server re-shapes weights
-                  authoritatively on submit.
+                  {autoTune
+                    ? "Auto-tune is on: odds are re-shaped to the target edge + win-rate whenever the pool, price or dials change. Editing an odds cell pins that row."
+                    : "Auto-tune is off: these odds stay exactly as you set them. Turn it back on to let the solver re-shape the pool."}{" "}
+                  The server re-shapes weights authoritatively on submit.
                 </p>
                 <div
                   className={cn(
