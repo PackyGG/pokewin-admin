@@ -15,6 +15,7 @@ import {
   type AntifraudAuditTone,
 } from "@/lib/antifraud/staff-audit";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
@@ -74,7 +75,7 @@ export default async function AntifraudAuditPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requireAntifraudManagerPage();
+  const session = await requireAntifraudManagerPage();
   const params = await searchParams;
   const state: FilterState = {
     page: parsePageParam(params.page),
@@ -110,19 +111,29 @@ export default async function AntifraudAuditPage({
       <Filters state={state} />
 
       <Suspense key={auditHref(state)} fallback={<Fallback />}>
-        <Content state={state} />
+        <Content
+          state={state}
+          canViewProtectedActors={canViewProtectedAuditActivity(session)}
+        />
       </Suspense>
     </div>
   );
 }
 
-async function Content({ state }: { state: FilterState }) {
+async function Content({
+  state,
+  canViewProtectedActors,
+}: {
+  state: FilterState;
+  canViewProtectedActors: boolean;
+}) {
   const data = await listAntifraudStaffAudit({
     page: state.page,
     category: state.category,
     event: state.event,
     actorId: state.actor,
     search: state.search,
+    canViewProtectedActors,
   });
 
   return (

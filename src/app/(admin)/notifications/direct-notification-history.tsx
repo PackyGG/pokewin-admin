@@ -27,9 +27,13 @@ import {
  * Server component behind its own Suspense boundary so it never blocks the
  * composer's first paint.
  */
-export async function DirectNotificationHistory() {
+export async function DirectNotificationHistory({
+  canViewProtectedActors,
+}: {
+  canViewProtectedActors: boolean;
+}) {
   const { data: entries, error } = await safeQuery(
-    () => getDirectNotificationHistory(),
+    () => getDirectNotificationHistory(canViewProtectedActors),
     [],
     "notifications.directHistory",
     10_000,

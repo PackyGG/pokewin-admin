@@ -1,4 +1,5 @@
-import { count, desc, eq, sql } from "drizzle-orm";
+import { and, count, desc, eq, sql } from "drizzle-orm";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_audit_events,
@@ -92,7 +93,13 @@ type BulkAuditRow = {
 
 export async function getUserAdminAuditFeed(
   userId: string,
+  canViewProtectedActors = false,
 ): Promise<UserAdminAuditFeed> {
+  const actorVisible = auditActorVisibilityPredicate(canViewProtectedActors);
+  const aliasedActorVisible = auditActorVisibilityPredicate(
+    canViewProtectedActors,
+    sql`e.admin_user_id`,
+  );
   const [rows, total, bulkRows] = await Promise.all([
     adminDrizzle
       .select({
@@ -107,13 +114,13 @@ export async function getUserAdminAuditFeed(
       })
       .from(admin_audit_events)
       .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
-      .where(eq(admin_audit_events.target_user_id, userId))
+      .where(and(eq(admin_audit_events.target_user_id, userId), actorVisible))
       .orderBy(desc(admin_audit_events.created_at))
       .limit(USER_ADMIN_AUDIT_MAX),
     adminDrizzle
       .select({ value: count() })
       .from(admin_audit_events)
-      .where(eq(admin_audit_events.target_user_id, userId))
+      .where(and(eq(admin_audit_events.target_user_id, userId), actorVisible))
       .then((result) => result[0]?.value ?? 0),
     // `metadata - 'user_ids'` strips the id array server-side so the batch's
     // other 5,000 account ids never travel to the browser; the count is kept
@@ -132,6 +139,7 @@ export async function getUserAdminAuditFeed(
         FROM admin_audit_events e
         LEFT JOIN admin_users u ON u.id = e.admin_user_id
         WHERE e.event_type = ${BULK_BAN_EVENT}
+          AND ${aliasedActorVisible}
           AND e.metadata -> 'user_ids' @> to_jsonb(${userId}::text)
         ORDER BY e.created_at DESC
         LIMIT ${USER_ADMIN_AUDIT_MAX}

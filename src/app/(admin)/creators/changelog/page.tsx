@@ -8,6 +8,7 @@ import {
   Ban,
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import {
   PageHero,
   PageHeroIdentity,
@@ -54,7 +55,7 @@ export default async function CreatorChangelogPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/creators/changelog");
+  const session = await requirePageAccess("/creators/changelog");
   const params = await searchParams;
   // Floor to the /creators 48h minimum (sub-48h windows are clamped up, an
   // absent param → 48h). Shared with `<ChangelogPeriodFilter>` so the loaded
@@ -71,7 +72,10 @@ export default async function CreatorChangelogPage({
       </PageHero>
 
       <Suspense key={period} fallback={<SkeletonTable rows={8} />}>
-        <ChangelogContent period={period} />
+        <ChangelogContent
+          period={period}
+          canViewProtectedActors={canViewProtectedAuditActivity(session)}
+        />
       </Suspense>
     </div>
   );
@@ -84,8 +88,17 @@ export default async function CreatorChangelogPage({
  * resolves target usernames from the main DB (separate query, no cross-DB
  * join — see `getCreatorsChangelogEvents`).
  */
-async function ChangelogContent({ period }: { period: DashboardPeriod }) {
-  const events = await getCreatorsChangelogEvents({ period });
+async function ChangelogContent({
+  period,
+  canViewProtectedActors,
+}: {
+  period: DashboardPeriod;
+  canViewProtectedActors: boolean;
+}) {
+  const events = await getCreatorsChangelogEvents({
+    period,
+    canViewProtectedActors,
+  });
 
   const counts = countByType(events);
 

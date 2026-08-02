@@ -14,6 +14,7 @@ import {
 } from "@/lib/db-schema/main/schema";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import {
   getCreatorLinkedSocialsCached,
   isLinkedSocialUsername,
@@ -109,6 +110,7 @@ export type CreatorMetadata = {
  */
 export async function getCreatorMetadata(
   userId: string,
+  canViewProtectedActors = false,
 ): Promise<CreatorMetadata | null> {
   const db = await getReadDrizzleDb();
 
@@ -229,6 +231,7 @@ export async function getCreatorMetadata(
         and(
           eq(admin_audit_events.event_type, "user_made_creator"),
           eq(admin_audit_events.target_user_id, userId),
+          auditActorVisibilityPredicate(canViewProtectedActors),
         ),
       )
       .orderBy(asc(admin_audit_events.created_at))

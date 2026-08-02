@@ -4,6 +4,7 @@ import { admin_audit_events, admin_users } from "@/lib/db-schema/admin/schema";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { withTimeout, isQueryTimeoutError } from "@/lib/errors/safe-query";
 import { logError } from "@/lib/errors/logger";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import {
   periodToCutoff,
   type DashboardPeriod,
@@ -198,8 +199,10 @@ function isCreatorRemoval(metadata: unknown): boolean {
  */
 export async function getCreatorsChangelogEvents({
   period = "48h",
+  canViewProtectedActors = false,
 }: {
   period?: DashboardPeriod;
+  canViewProtectedActors?: boolean;
 } = {}): Promise<CreatorChangelogEvent[]> {
   const cutoff = periodToCutoff(period, new Date());
 
@@ -226,6 +229,7 @@ export async function getCreatorsChangelogEvents({
           ...CHANGELOG_SOURCE_EVENT_TYPES,
         ]),
         gte(admin_audit_events.created_at, cutoff.toISOString()),
+        auditActorVisibilityPredicate(canViewProtectedActors),
       ),
     )
     .orderBy(desc(admin_audit_events.created_at))

@@ -15,6 +15,7 @@ import {
   admin_sessions,
   admin_users,
 } from "@/lib/db-schema/admin/schema";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
@@ -286,7 +287,11 @@ export async function getAdminUserSessions(
   };
 }
 
-export async function getAdminUserAuditStats(adminUserId: string) {
+export async function getAdminUserAuditStats(
+  adminUserId: string,
+  canViewProtectedActors = false,
+) {
+  const actorVisible = auditActorVisibilityPredicate(canViewProtectedActors);
   // Previously the daily series was a `groupBy(created_at)` — which buckets
   // per unique timestamp, not per day. For an active admin that pulled
   // back one row per event (thousands) and collapsed them in JS. Pushed
@@ -299,13 +304,13 @@ export async function getAdminUserAuditStats(adminUserId: string) {
     adminDrizzle
       .select({ event_type: admin_audit_events.event_type, value: count() })
       .from(admin_audit_events)
-      .where(eq(admin_audit_events.admin_user_id, adminUserId))
+      .where(and(eq(admin_audit_events.admin_user_id, adminUserId), actorVisible))
       .groupBy(admin_audit_events.event_type)
       .orderBy(desc(count())),
     adminDrizzle
       .select({ created_at: admin_audit_events.created_at })
       .from(admin_audit_events)
-      .where(eq(admin_audit_events.admin_user_id, adminUserId))
+      .where(and(eq(admin_audit_events.admin_user_id, adminUserId), actorVisible))
       .orderBy(desc(admin_audit_events.created_at))
       .limit(1)
       .then((rows) => rows[0] ?? null),
@@ -315,6 +320,7 @@ export async function getAdminUserAuditStats(adminUserId: string) {
                COUNT(*)::bigint AS count
         FROM admin_audit_events
         WHERE admin_user_id = ${adminUserId}::uuid
+          AND ${actorVisible}
           AND created_at >= NOW() - INTERVAL '30 days'
         GROUP BY DATE(created_at AT TIME ZONE 'UTC')
       `)
@@ -369,11 +375,13 @@ export async function getAdminUserAuditEvents(
   adminUserId: string,
   page: number = 1,
   perPage: number = 20,
-  filters?: { eventType?: string; search?: string }
+  filters?: { eventType?: string; search?: string },
+  canViewProtectedActors = false,
 ): Promise<PaginatedResult<AdminAuditEventItem>> {
   const db = await getReadDrizzleDb();
   const conditions: SQL[] = [
     eq(admin_audit_events.admin_user_id, adminUserId),
+    auditActorVisibilityPredicate(canViewProtectedActors),
   ];
   if (filters?.eventType && filters.eventType !== "all") {
     conditions.push(eq(admin_audit_events.event_type, filters.eventType));

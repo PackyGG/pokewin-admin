@@ -54,21 +54,36 @@ import { SocialLinksEditor } from "./social-links-editor";
  * with no source (e.g. a reward-page URL, which has no column) are omitted or
  * shown as "not set", never guessed.
  */
-export function CreatorMetadataTab({ userId }: { userId: string }) {
+export function CreatorMetadataTab({
+  userId,
+  canViewProtectedActors,
+}: {
+  userId: string;
+  canViewProtectedActors: boolean;
+}) {
   return (
     <Suspense fallback={<CreatorMetadataTabSkeleton />}>
-      <CreatorMetadataTabContent userId={userId} />
+      <CreatorMetadataTabContent
+        userId={userId}
+        canViewProtectedActors={canViewProtectedActors}
+      />
     </Suspense>
   );
 }
 
-async function CreatorMetadataTabContent({ userId }: { userId: string }) {
+async function CreatorMetadataTabContent({
+  userId,
+  canViewProtectedActors,
+}: {
+  userId: string;
+  canViewProtectedActors: boolean;
+}) {
   // The query's best-effort legs degrade to gap labels internally; this
   // wrapper catches what remains (the MAIN identity reads) so a DB blip
   // renders a VISIBLE band instead of throwing the tab into the route
   // error boundary.
   const { data: meta, error } = await safeQueryOrNull(
-    () => getCreatorMetadata(userId),
+    () => getCreatorMetadata(userId, canViewProtectedActors),
     "creator-hub.creators.metadata",
     15_000,
   );

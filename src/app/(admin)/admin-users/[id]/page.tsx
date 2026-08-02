@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 import { requirePageAccess } from "@/lib/dal";
 import { isMainOwner } from "@/lib/owners";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import {
   getAdminUserDetail,
   getAdminUserAuditStats,
@@ -70,6 +71,7 @@ export default async function AdminUserDetailPage({
   // permissions changes, etc.) — non-admin viewers must not be able to
   // browse it.
   const isCurrentUserAdmin = session.role === "admin";
+  const canViewProtectedActors = canViewProtectedAuditActivity(session);
 
   // The owner-management card is visible ONLY to the main owner (motha). Other
   // owners get full access but cannot grow/shrink the owner set — this matches
@@ -111,7 +113,7 @@ export default async function AdminUserDetailPage({
     REWARD_QUERY_TIMEOUT_MS,
   );
   const auditStatsPromise = safeQuery(
-    () => getAdminUserAuditStats(id),
+    () => getAdminUserAuditStats(id, canViewProtectedActors),
     emptyAuditStats,
     "adminUsers.auditStats",
     REWARD_QUERY_TIMEOUT_MS,
@@ -122,7 +124,7 @@ export default async function AdminUserDetailPage({
           getAdminUserAuditEvents(id, auditPage, auditPerPage, {
             eventType: typeof sp.auditEventType === "string" ? sp.auditEventType : undefined,
             search: typeof sp.auditSearch === "string" ? sp.auditSearch : undefined,
-          }),
+          }, canViewProtectedActors),
         emptyAuditEvents,
         "adminUsers.auditEvents",
         REWARD_QUERY_TIMEOUT_MS,

@@ -1,6 +1,7 @@
 import "server-only";
 
-import { desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import { adminDrizzle } from "@/lib/drizzle";
 import { admin_audit_events, admin_users } from "@/lib/db-schema/admin/schema";
 
@@ -103,7 +104,9 @@ function asTrackingItems(
   return items;
 }
 
-export async function getDirectNotificationHistory(): Promise<
+export async function getDirectNotificationHistory(
+  canViewProtectedActors = false,
+): Promise<
   DirectNotificationHistoryEntry[]
 > {
   const rows = await adminDrizzle
@@ -117,7 +120,12 @@ export async function getDirectNotificationHistory(): Promise<
     })
     .from(admin_audit_events)
     .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
-    .where(inArray(admin_audit_events.event_type, EVENT_TYPES))
+    .where(
+      and(
+        inArray(admin_audit_events.event_type, EVENT_TYPES),
+        auditActorVisibilityPredicate(canViewProtectedActors),
+      ),
+    )
     .orderBy(desc(admin_audit_events.created_at))
     .limit(SCAN_LIMIT);
 

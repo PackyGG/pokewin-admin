@@ -21,6 +21,7 @@ import { requirePageAccess, getUserPermissions } from "@/lib/dal";
 import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { canEditBalanceAdjustments } from "@/lib/balance-adjustment-edit/motha-gate";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
 import { UserViewModern } from "./user-view-modern";
@@ -259,6 +260,7 @@ export default async function UserDetailPage({
           id={id}
           sessionRole={session.role}
           sessionUserId={session.userId}
+          canViewProtectedActors={canViewProtectedAuditActivity(session)}
           permissions={permissions}
           initialTab={initialTab}
           backSlot={backSlot}
@@ -281,6 +283,7 @@ async function UserDetailBody({
   id,
   sessionRole,
   sessionUserId,
+  canViewProtectedActors,
   permissions,
   initialTab,
   backSlot,
@@ -288,6 +291,7 @@ async function UserDetailBody({
   id: string;
   sessionRole: string;
   sessionUserId: string;
+  canViewProtectedActors: boolean;
   // Union permission keys for non-admin viewers (null for admins), resolved
   // on the critical path and threaded down so capability gating matches the
   // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
@@ -555,7 +559,7 @@ async function UserDetailBody({
   const auditPromise =
     initialTab === "audit"
       ? safeQuery(
-          () => getUserAdminAuditFeed(id),
+          () => getUserAdminAuditFeed(id, canViewProtectedActors),
           EMPTY_USER_ADMIN_AUDIT,
           "users.detail.adminAudit",
           USER_DETAIL_QUERY_TIMEOUT_MS,

@@ -3,6 +3,7 @@ import "server-only";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import { headers } from "next/headers";
 import { sql } from "drizzle-orm";
+import { antifraudSecurityAuditActorVisibilityPredicate } from "@/lib/audit-visibility";
 
 import { adminDrizzle } from "@/lib/admin-db";
 
@@ -354,6 +355,7 @@ export async function listAntifraudSecurityAuditEvents(input: {
   correlationId?: string;
   before?: string;
   limit?: number;
+  canViewProtectedActors?: boolean;
 }): Promise<{
   events: AntifraudSecurityAuditEvent[];
   nextCursor: string | null;
@@ -409,7 +411,10 @@ export async function listAntifraudSecurityAuditEvents(input: {
       metadata,
       created_at::text
     FROM antifraud_security_audit_events
-    WHERE (${action}::text IS NULL OR action ILIKE '%' || ${action} || '%')
+    WHERE ${antifraudSecurityAuditActorVisibilityPredicate(
+      input.canViewProtectedActors === true,
+    )}
+      AND (${action}::text IS NULL OR action ILIKE '%' || ${action} || '%')
       AND (${kind}::text IS NULL OR event_kind = ${kind})
       AND (${outcome}::text IS NULL OR outcome = ${outcome})
       AND (

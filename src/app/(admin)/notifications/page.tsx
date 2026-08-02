@@ -15,6 +15,7 @@ import { DirectNotificationsContent } from "./direct-notifications-content";
 import { DirectNotificationHistory } from "./direct-notification-history";
 import { NotificationsTabNav } from "./notifications-tab-nav";
 import { parseNotificationTab } from "./tabs";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 
 export const metadata = { title: "Notifications" };
 
@@ -65,7 +66,13 @@ async function AnnouncementsSection({
  * disagree. The history streams behind its own boundary — it reads the admin
  * DB and must never hold up the composer's first paint.
  */
-async function DirectSection({ canSend }: { canSend: boolean }) {
+async function DirectSection({
+  canSend,
+  canViewProtectedActors,
+}: {
+  canSend: boolean;
+  canViewProtectedActors: boolean;
+}) {
   const availability = await getDirectNotificationAvailability();
 
   return (
@@ -79,7 +86,9 @@ async function DirectSection({ canSend }: { canSend: boolean }) {
 
       {canSend && (
         <Suspense fallback={<TableSkeleton rows={4} columns={8} />}>
-          <DirectNotificationHistory />
+          <DirectNotificationHistory
+            canViewProtectedActors={canViewProtectedActors}
+          />
         </Suspense>
       )}
     </div>
@@ -131,7 +140,10 @@ export default async function NotificationsPage({
           // resolves — an async child without one blocks the shell even when
           // its work is cheap.
           <Suspense fallback={<TableSkeleton rows={6} columns={4} />}>
-            <DirectSection canSend={canSendDirect} />
+            <DirectSection
+              canSend={canSendDirect}
+              canViewProtectedActors={canViewProtectedAuditActivity(session)}
+            />
           </Suspense>
         ) : (
           <Suspense

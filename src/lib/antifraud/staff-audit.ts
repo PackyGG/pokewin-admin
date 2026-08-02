@@ -8,6 +8,7 @@ import {
   admin_audit_events,
   admin_users,
 } from "@/lib/db-schema/admin/schema";
+import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { logError } from "@/lib/errors/logger";
 import { isQueryTimeoutError, withTimeout } from "@/lib/errors/safe-query";
@@ -340,13 +341,17 @@ export type AntifraudAuditFilters = {
   event?: string;
   actorId?: string;
   search?: string;
+  canViewProtectedActors?: boolean;
 };
 
 export async function listAntifraudStaffAudit(
   filters: AntifraudAuditFilters,
 ): Promise<AntifraudAuditPage> {
   const page = Math.max(1, Math.min(filters.page ?? 1, 10_000));
-  const conditions: SQL[] = [scopePredicate()];
+  const actorVisible = auditActorVisibilityPredicate(
+    filters.canViewProtectedActors === true,
+  );
+  const conditions: SQL[] = [scopePredicate(), actorVisible];
 
   if (filters.event && ANTIFRAUD_AUDIT_EVENTS[filters.event]) {
     conditions.push(eq(admin_audit_events.event_type, filters.event));
@@ -412,6 +417,7 @@ export async function listAntifraudStaffAudit(
           )::text AS last_24h
         FROM ${admin_audit_events}
         WHERE ${scopePredicate()}
+          AND ${actorVisible}
           AND ${admin_audit_events.created_at} >= now() - interval '30 days'
       `)
       .then((result) => result.rows[0] ?? null),
@@ -424,6 +430,7 @@ export async function listAntifraudStaffAudit(
         JOIN ${admin_users}
           ON ${admin_users.id} = ${admin_audit_events.admin_user_id}
         WHERE ${scopePredicate()}
+          AND ${actorVisible}
         ORDER BY ${admin_users.username} ASC
         LIMIT 100
       `)

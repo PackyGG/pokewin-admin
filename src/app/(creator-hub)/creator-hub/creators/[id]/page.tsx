@@ -2,6 +2,7 @@ import { Suspense } from "react";
 import { notFound } from "next/navigation";
 
 import { requireCreatorHubPageAccess } from "@/lib/require-creator-hub-access";
+import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import { getCreatorHeader } from "@/lib/queries/creators";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 
@@ -91,7 +92,7 @@ export default async function CreatorHubCreatorDetailPage({
   params: Promise<{ id: string }>;
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requireCreatorHubPageAccess();
+  const session = await requireCreatorHubPageAccess();
 
   const { id } = await params;
   const sp = await searchParams;
@@ -147,7 +148,12 @@ export default async function CreatorHubCreatorDetailPage({
             activityPeriod={parseCreatorActivityPeriod(sp.activityPeriod)}
           />
         )}
-        {tab === "creator" && <CreatorMetadataTab userId={id} />}
+        {tab === "creator" && (
+          <CreatorMetadataTab
+            userId={id}
+            canViewProtectedActors={canViewProtectedAuditActivity(session)}
+          />
+        )}
         {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
         {tab === "risk" && <RiskTab userId={id} />}
         {tab === "alts" && <AltAccountsTab userId={id} />}
