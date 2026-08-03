@@ -15,7 +15,6 @@ import { require2FA } from "@/lib/require-2fa";
 import { DISCORD_MENTION_GROUP_KEYS } from "@/lib/discord-notifications/antifraud-policy";
 import { queueDiscordChannelCreation } from "@/lib/discord-notifications/channel-operations";
 import {
-  createDiscordNotificationEvent,
   deleteDiscordNotificationRoute,
   replaceDiscordNotificationChannelRoutes,
   setDiscordNotificationRouteEnabled,
@@ -30,14 +29,6 @@ const eventKeySchema = z
   .min(3)
   .max(80)
   .regex(/^[a-z0-9][a-z0-9_.-]*$/, "Use lowercase letters, numbers, dots, dashes, or underscores");
-
-const createEventSchema = z.object({
-  key: eventKeySchema,
-  label: z.string().trim().min(2).max(80),
-  description: z.string().trim().min(2).max(240),
-  category: z.string().trim().min(2).max(60),
-  credential: z.string().trim().min(1).max(4096),
-});
 
 const routeSchema = z.object({
   eventKey: eventKeySchema,
@@ -120,35 +111,6 @@ export async function createDiscordChannelAction(
     });
     revalidatePath("/antifraud/discord");
     return { requestId: queued.id, name: queued.name };
-  });
-}
-
-export async function createCustomEventAction(
-  input: unknown,
-): Promise<ServerActionResult<void>> {
-  const session = await requireAntifraudManager();
-  return guarded("antifraud.webhooks.createEvent", async () => {
-    const parsed = createEventSchema.safeParse(input);
-    if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-    await require2FA(session.userId, parsed.data.credential);
-
-    await createDiscordNotificationEvent({
-      key: parsed.data.key,
-      label: parsed.data.label,
-      description: parsed.data.description,
-      category: parsed.data.category,
-      actorId: session.userId,
-    });
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: "discord_notification_event_created",
-      metadata: {
-        key: parsed.data.key,
-        label: parsed.data.label,
-        category: parsed.data.category,
-      },
-    });
-    revalidatePath("/antifraud/discord");
   });
 }
 

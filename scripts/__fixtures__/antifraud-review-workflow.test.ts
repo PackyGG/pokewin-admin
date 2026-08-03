@@ -35,7 +35,7 @@ test("priority and waiting classification use lock, KYC, and 70+ evidence", () =
   assert.match(workflow, /user_kyc/);
 });
 
-test("postponement is audited, timed to 2.5 hours, and suppresses reminders", () => {
+test("review reminders run every 2 hours while postponement remains 2.5 hours", () => {
   const actions = source(
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
@@ -55,8 +55,9 @@ test("postponement is audited, timed to 2.5 hours, and suppresses reminders", ()
   assert.match(actions, /onConflictDoNothing\(\)/);
   assert.match(migration, /admin_audit_review_postponed_idempotency_idx/);
   assert.match(policy, /postponed:\s*2\.5 \* 60 \* 60 \* 1_000/);
-  assert.match(policy, /normal:\s*4\.5 \* 60 \* 60 \* 1_000/);
-  assert.match(policy, /urgent:\s*60 \* 60 \* 1_000/);
+  assert.match(policy, /normal:\s*2 \* 60 \* 60 \* 1_000/);
+  assert.match(policy, /urgent:\s*2 \* 60 \* 60 \* 1_000/);
+  assert.match(reminders, /review\.created_at \+ interval '2 hours'/);
   assert.match(reminders, /workflow\.postponed_until > now\(\)/);
   assert.doesNotMatch(reminders, /48\s*\*\s*60\s*\*\s*60/);
 });

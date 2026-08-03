@@ -131,8 +131,8 @@ export function discordMentionIds(
 }
 
 export const REVIEW_REMINDER_DELAYS_MS = {
-  normal: 4.5 * 60 * 60 * 1_000,
-  urgent: 60 * 60 * 1_000,
+  normal: 2 * 60 * 60 * 1_000,
+  urgent: 2 * 60 * 60 * 1_000,
   postponed: 2.5 * 60 * 60 * 1_000,
   sumsubReady: 0,
 } as const;

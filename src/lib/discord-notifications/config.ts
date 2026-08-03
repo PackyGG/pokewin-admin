@@ -84,14 +84,6 @@ function normalizeEventKey(value: string): string {
   return normalized;
 }
 
-function boundedText(value: string, field: string, max: number): string {
-  const normalized = value.trim();
-  if (!normalized || normalized.length > max) {
-    throw new Error(`${field} must contain 1-${max} characters.`);
-  }
-  return normalized;
-}
-
 function configuredGuildId(guildId?: string): string {
   return requireSnowflake(
     guildId ?? process.env.ADMIN_GUILD_ID ?? "",
@@ -276,43 +268,6 @@ export async function getDiscordNotificationConfig(
         completedAt: row.completed_at,
       })),
     },
-  };
-}
-
-export async function createDiscordNotificationEvent(input: {
-  key: string;
-  label: string;
-  description?: string;
-  category: string;
-  actorId: string;
-}): Promise<DiscordNotificationEvent> {
-  const key = normalizeEventKey(input.key);
-  const label = boundedText(input.label, "Label", 120);
-  const category = boundedText(input.category, "Category", 80);
-  const description = input.description?.trim().slice(0, 500) ?? "";
-  const result = await adminDrizzle.execute<{
-    event_key: string;
-    label: string;
-    description: string;
-    category: string;
-    is_custom: boolean;
-    enabled: boolean;
-  }>(sql`
-    INSERT INTO discord_notification_events (
-      event_key, label, description, category, is_custom, enabled, created_by
-    )
-    VALUES (${key}, ${label}, ${description}, ${category}, true, true, ${input.actorId}::uuid)
-    RETURNING event_key, label, description, category, is_custom, enabled
-  `);
-  const row = result.rows[0];
-  if (!row) throw new Error("The custom event could not be created.");
-  return {
-    key: row.event_key,
-    label: row.label,
-    description: row.description,
-    category: row.category,
-    custom: row.is_custom,
-    enabled: row.enabled,
   };
 }
 

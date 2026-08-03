@@ -90,11 +90,7 @@ export async function enqueueDueReviewReminders(): Promise<{
           THEN 'urgent'
         ELSE 'normal'
       END,
-      review.created_at + CASE
-        WHEN workflow.queue_state IN ('priority', 'waiting_kyc')
-          THEN interval '1 hour'
-        ELSE interval '4 hours 30 minutes'
-      END
+      review.created_at + interval '2 hours'
     FROM antifraud_reviews AS review
     LEFT JOIN antifraud_review_workflow AS workflow
       ON workflow.review_id = review.id

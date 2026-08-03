@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  Bot,
   CheckCircle2,
   ChevronDown,
   CircleOff,
@@ -45,7 +44,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Textarea } from "@/components/ui/textarea";
 import type {
   DiscordNotificationChannel,
   DiscordNotificationConfig,
@@ -63,7 +61,6 @@ import { getMyPasskeyStepUpState } from "@/lib/passkey-step-up-actions";
 import { cn } from "@/lib/utils";
 import {
   createDiscordChannelAction,
-  createCustomEventAction,
   replaceChannelRoutesAction,
 } from "./actions";
 
@@ -89,7 +86,6 @@ export function DiscordRoutingWorkspace({
   const [editor, setEditor] = useState<ChannelEditorState | null>(null);
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [eventQuery, setEventQuery] = useState("");
-  const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(
     () => new Set(),
@@ -503,13 +499,6 @@ export function DiscordRoutingWorkspace({
               Create Discord channel
             </Button>
             <Button
-              variant="outline"
-              onClick={() => setCreateEventOpen(true)}
-            >
-              <Bot />
-              New event
-            </Button>
-            <Button
               onClick={openNewChannel}
               disabled={
                 pending ||
@@ -726,21 +715,6 @@ export function DiscordRoutingWorkspace({
               }),
             "Channel creation queued",
             () => setCreateChannelOpen(false),
-          )
-        }
-      />
-
-      <CreateEventDialog
-        open={createEventOpen}
-        onOpenChange={setCreateEventOpen}
-        existingEvents={initialConfig.events}
-        pending={pending}
-        onCreate={(input) =>
-          runMutation(
-            (approval) =>
-              createCustomEventAction({ ...input, credential: approval }),
-            "Event created",
-            () => setCreateEventOpen(false),
           )
         }
       />
@@ -1162,142 +1136,6 @@ function DeliveryBadge({ channel }: { channel: DiscordNotificationChannel }) {
             ? "Cannot send"
             : "Cannot embed"}
     </Badge>
-  );
-}
-
-function CreateEventDialog({
-  open,
-  onOpenChange,
-  existingEvents,
-  pending,
-  onCreate,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  existingEvents: DiscordNotificationEvent[];
-  pending: boolean;
-  onCreate: (input: {
-    key: string;
-    label: string;
-    description: string;
-    category: string;
-  }) => void;
-}) {
-  const [label, setLabel] = useState("");
-  const [key, setKey] = useState("");
-  const [description, setDescription] = useState("");
-  const [category, setCategory] = useState("Custom");
-
-  function reset() {
-    setLabel("");
-    setKey("");
-    setDescription("");
-    setCategory("Custom");
-  }
-
-  function create() {
-    const normalizedKey = key.trim().toLowerCase();
-    if (existingEvents.some((event) => event.key === normalizedKey)) {
-      toast.error("That event key already exists");
-      return;
-    }
-    onCreate({
-      key: normalizedKey,
-      label: label.trim(),
-      description: description.trim(),
-      category: category.trim(),
-    });
-    onOpenChange(false);
-    reset();
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(next) => {
-        onOpenChange(next);
-        if (!next) reset();
-      }}
-    >
-      <DialogContent className="sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle>New event</DialogTitle>
-          <DialogDescription>
-            Add a reusable event, then assign it to a channel.
-          </DialogDescription>
-        </DialogHeader>
-        <div className="space-y-4">
-          <div className="space-y-1.5">
-            <Label htmlFor="event-label">Name</Label>
-            <Input
-              id="event-label"
-              value={label}
-              maxLength={80}
-              placeholder="Manual review alert"
-              onChange={(event) => {
-                const next = event.target.value;
-                setLabel(next);
-                if (!key) {
-                  setKey(
-                    next
-                      .toLowerCase()
-                      .replace(/[^a-z0-9]+/g, "_")
-                      .replace(/^_+|_+$/g, ""),
-                  );
-                }
-              }}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="event-key">Event key</Label>
-            <Input
-              id="event-key"
-              value={key}
-              maxLength={80}
-              placeholder="manual_review_alert"
-              onChange={(event) => setKey(event.target.value)}
-            />
-            <p className="text-[11px] text-muted-foreground">
-              Lowercase letters, numbers, dots, dashes, and underscores only.
-            </p>
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="event-category">Category</Label>
-            <Input
-              id="event-category"
-              value={category}
-              maxLength={60}
-              onChange={(event) => setCategory(event.target.value)}
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="event-description">Description</Label>
-            <Textarea
-              id="event-description"
-              value={description}
-              maxLength={240}
-              placeholder="When this event is sent."
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </div>
-        </div>
-        <DialogFooter showCloseButton>
-          <Button
-            disabled={
-              pending ||
-              label.trim().length < 2 ||
-              description.trim().length < 2 ||
-              category.trim().length < 2 ||
-              !/^[a-z0-9][a-z0-9_.-]{2,79}$/.test(key.trim().toLowerCase())
-            }
-            onClick={create}
-          >
-            <Plus />
-            Create event
-          </Button>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
   );
 }
 

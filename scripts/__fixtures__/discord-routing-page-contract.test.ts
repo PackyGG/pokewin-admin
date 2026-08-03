@@ -19,7 +19,7 @@ test("Discord Routing belongs only to the manager-gated Fraud workspace", () => 
   );
 });
 
-test("Discord Routing exposes active channels with add and edit event flows", () => {
+test("Discord Routing exposes active channels without custom event creation", () => {
   const workspace = source(
     "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
   );
@@ -34,7 +34,7 @@ test("Discord Routing exposes active channels with add and edit event flows", ()
   assert.match(workspace, /createDiscordChannelAction/);
   assert.match(workspace, /Save changes/);
   assert.match(workspace, /replaceChannelRoutesAction/);
-  assert.match(workspace, /createCustomEventAction/);
+  assert.doesNotMatch(workspace, /createCustomEventAction|CreateEventDialog|New event/);
 });
 
 test("Discord Routing categories are independently collapsible", () => {
@@ -55,9 +55,10 @@ test("every Discord route mutation is permission-gated and audited", () => {
 
   assert.equal(
     actions.match(/requireAntifraudManager\(\)/g)?.length,
-    6,
+    5,
   );
-  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 6);
+  assert.equal(actions.match(/createAdminAuditEvent\(/g)?.length, 5);
+  assert.doesNotMatch(actions, /createCustomEventAction|createEventSchema/);
   assert.match(actions, /discord_notification_channel_routes_replaced/);
   assert.match(actions, /discord_notification_channel_creation_queued/);
   assert.doesNotMatch(actions, /WEBHOOK_URL|DISCORD_TOKEN/);
