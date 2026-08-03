@@ -237,7 +237,6 @@ const fiatPerks = new FiatPerkService(
   enrichment,
   scoreWeights,
   fiatPerkAccess,
-  publishCommittedMutation,
 );
 const sumsub =
   config.SUMSUB_ADMIN_TOKEN && config.SUMSUB_ADMIN_KEY
