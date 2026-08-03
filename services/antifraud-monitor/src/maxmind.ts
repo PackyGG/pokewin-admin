@@ -36,7 +36,6 @@ export type MaxMindEvaluationInput = {
   billingRegion?: string | null;
   billingCity?: string | null;
   cardLast4?: string | null;
-  paymentProcessor?: "other";
   paymentMethod?:
     | "bank_debit"
     | "bank_redirect"
@@ -234,7 +233,6 @@ export class MaxMindService {
           city: input.billingCity?.trim().slice(0, 255),
         }),
         payment: compact({
-          processor: input.paymentProcessor,
           method: input.paymentMethod,
           was_authorized: input.paymentWasAuthorized,
         }),

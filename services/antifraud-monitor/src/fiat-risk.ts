@@ -1504,7 +1504,6 @@ export class FiatRiskService {
           currency: intent.currency,
           billingCountry: provider.billingCountry ?? intent.country_code,
           cardLast4: provider.cardLast4,
-          paymentProcessor: "other",
           paymentMethod: maxMindPaymentMethod(provider.paymentMethodType),
           paymentWasAuthorized: true,
           was3dSecureSuccessful: provider.threeDsVerified,
