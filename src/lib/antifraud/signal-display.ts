@@ -2,6 +2,38 @@ export const FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND =
   "fiat_deposit_withdrawal_hold";
 
 /**
+ * Automatic `user_rewards` enrollment rows created for every account.
+ *
+ * They are retained as source/audit evidence, but they are not player actions,
+ * do not prove a level was reached, and carry no fraud score. Fraud surfaces
+ * must therefore omit them instead of presenting them as actionable signals.
+ */
+export const NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS = [
+  "welcome_reward_granted",
+  "level_one_reward_granted",
+  "daily_reward_granted",
+  "other_reward_granted",
+] as const;
+
+const NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_SET = new Set<string>(
+  NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS,
+);
+
+export function isNonActionableRewardEnrollmentSignal(
+  signal: string,
+): boolean {
+  return NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_SET.has(signal);
+}
+
+export function withoutNonActionableRewardEnrollmentSignals(
+  signals: readonly string[],
+): string[] {
+  return signals.filter(
+    (signal) => !isNonActionableRewardEnrollmentSignal(signal),
+  );
+}
+
+/**
  * Signal kinds whose raw name reads like the player did something, when the
  * underlying row is only bookkeeping.
  *

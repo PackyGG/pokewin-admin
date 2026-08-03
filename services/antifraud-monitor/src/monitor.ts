@@ -49,6 +49,7 @@ import {
 import { RiskyLocationStore } from "./risky-locations.js";
 import { baseSignupSignals, clampRiskScore, severity } from "./scoring.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
+import { isNonActionableRewardEnrollmentEvent } from "./event-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
   HIGH_RISK_SIGNUP_SCORE,
@@ -2506,6 +2507,9 @@ export class MonitorEngine {
     // block committed ingestion, and must not prevent rules from firing.
     session.current_score = runningScore;
     for (const event of broadcasts) {
+      if (isNonActionableRewardEnrollmentEvent(event.activity.event_type)) {
+        continue;
+      }
       await this.broadcast("monitor.event", {
         caseId: session.case_id,
         sessionId: session.id,

@@ -4,6 +4,7 @@ import { cache } from "react";
 import { z } from "zod";
 
 import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
+import { isNonActionableRewardEnrollmentSignal } from "@/lib/antifraud/signal-display";
 
 const scoreOptionSchema = z.object({
   key: z.string(),
@@ -483,7 +484,13 @@ export async function getAntifraudEventCatalog(): Promise<{
     const payload = z
       .object({ data: z.array(monitorEventSchema) })
       .parse(await response.json());
-    return { configured: true, data: payload.data, error: false };
+    return {
+      configured: true,
+      data: payload.data.filter(
+        (event) => !isNonActionableRewardEnrollmentSignal(event.key),
+      ),
+      error: false,
+    };
   } catch (error) {
     console.error("[antifraud-monitor] event catalog failed:", error);
     return { configured: true, data: [], error: true };
@@ -838,7 +845,13 @@ export async function getAntifraudCaseDetail(caseId: string): Promise<{
     return {
       configured: true,
       notFound: false,
-      data: payload.data,
+      data: {
+        ...payload.data,
+        events: payload.data.events.filter(
+          (event) =>
+            !isNonActionableRewardEnrollmentSignal(event.event_type),
+        ),
+      },
       error: false,
     };
   } catch (error) {

@@ -5,6 +5,7 @@ import { serviceRequestAuthorized } from "../src/auth.js";
 import {
   isDocumentedMonitorEvent,
   isLiveMonitorEvent,
+  isNonActionableRewardEnrollmentEvent,
   MONITOR_EVENT_CATALOG,
   unavailableMonitorEvents,
 } from "../src/event-catalog.js";
@@ -59,6 +60,14 @@ test("custom flow create contract accepts complete ordered flows", () => {
     "ledger_upgrader_bet",
   ]);
   assert.equal(parsed.enabled, true);
+});
+
+test("automatic reward enrollments are retained but hidden from activity", () => {
+  assert.equal(isNonActionableRewardEnrollmentEvent("welcome_reward_granted"), true);
+  assert.equal(isNonActionableRewardEnrollmentEvent("level_one_reward_granted"), true);
+  assert.equal(isNonActionableRewardEnrollmentEvent("daily_reward_granted"), true);
+  assert.equal(isNonActionableRewardEnrollmentEvent("other_reward_granted"), true);
+  assert.equal(isNonActionableRewardEnrollmentEvent("daily_reward_opened"), false);
 });
 
 test("custom flows can only send matches to manual review", () => {

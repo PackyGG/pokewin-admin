@@ -26,6 +26,8 @@
  * only validates and normalises the service contract.
  */
 
+import { isNonActionableRewardEnrollmentSignal } from "@/lib/antifraud/signal-display";
+
 /** SSE endpoint our proxy exposes. */
 export const MONITOR_STREAM_PATH = "/api/antifraud/monitor/stream";
 
@@ -228,12 +230,22 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
 
   // Known-and-uninteresting service frames: the handshake, and config-change
   // notifications consumed by the cache-invalidation layer, not the UI.
-  if (frame.type === "connected" || frame.type === "score_weight.updated") {
+  if (
+    frame.type === "connected" ||
+    frame.type === "score_weight.updated" ||
+    frame.type.startsWith("fiat_perk.run.")
+  ) {
     return null;
   }
 
   if (!isEventType(frame.type)) {
     return { kind: "unsupported", eventType: frame.type };
+  }
+  if (
+    frame.type === "monitor.event" &&
+    isNonActionableRewardEnrollmentSignal(text(data.eventType))
+  ) {
+    return null;
   }
   if (
     frame.schemaVersion !== 1 ||

@@ -10,6 +10,7 @@ import {
   user_kyc,
 } from "@/lib/db-schema/main/schema";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { withoutNonActionableRewardEnrollmentSignals } from "./signal-display";
 
 export const REVIEW_QUEUE_STATES = [
   "priority",
@@ -162,7 +163,9 @@ export async function syncReviewWorkflowStates(): Promise<number> {
       kycDecision: kyc?.decision ?? "pending",
       kycFinished: isFinishedKyc(kycStatus),
       riskScore: review.risk_score,
-      reasonCodes: review.signals.slice(0, 50),
+      reasonCodes: withoutNonActionableRewardEnrollmentSignals(
+        review.signals,
+      ).slice(0, 50),
     };
     return {
       reviewId: review.review_id,
@@ -253,7 +256,12 @@ export async function loadReviewWorkflows(
         postponedUntil && postponedUntil.getTime() > Date.now()
           ? "postponed"
           : row.queue_state,
-      evidence: row.evidence,
+      evidence: {
+        ...row.evidence,
+        reasonCodes: withoutNonActionableRewardEnrollmentSignals(
+          row.evidence.reasonCodes,
+        ),
+      },
       postponedUntil,
       postponedBy: row.postponed_by,
       stateUpdatedAt: new Date(row.state_updated_at),

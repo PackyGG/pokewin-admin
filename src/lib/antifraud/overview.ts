@@ -1,6 +1,6 @@
 import "server-only";
 
-import { desc, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, notInArray, sql } from "drizzle-orm";
 import { unstable_cache } from "next/cache";
 
 import {
@@ -12,6 +12,7 @@ import { readDrizzleForEnv } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getAntifraudMonitorOverview } from "@/lib/antifraud/monitor-api";
+import { NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS } from "@/lib/antifraud/signal-display";
 
 const LIVE_REVIEW_STATUSES = ["open", "in_review"] as const;
 const THIRTY_DAY_BUCKETS = 30;
@@ -241,7 +242,13 @@ async function computeAntifraudOverviewData(
         })
         .from(antifraud_signals)
         .where(
-          sql`${antifraud_signals.received_at} >= now() - interval '30 days'`,
+          and(
+            sql`${antifraud_signals.received_at} >= now() - interval '30 days'`,
+            notInArray(
+              antifraud_signals.kind,
+              [...NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS],
+            ),
+          ),
         )
         .orderBy(desc(antifraud_signals.received_at))
         .limit(20),

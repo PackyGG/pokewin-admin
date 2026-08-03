@@ -4,7 +4,9 @@ import test from "node:test";
 import {
   FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND,
   isFiatWithdrawalHoldSignal,
+  isNonActionableRewardEnrollmentSignal,
   reviewSignalLabel,
+  withoutNonActionableRewardEnrollmentSignals,
 } from "../../src/lib/antifraud/signal-display";
 import {
   parseAntifraudEvent,
@@ -39,4 +41,26 @@ test("fiat withdrawal holds are accepted as high-severity review signals", () =>
 test("unmapped review signals receive a readable label", () => {
   assert.equal(reviewSignalLabel("multi_account"), "Multi account");
   assert.equal(isFiatWithdrawalHoldSignal("multi_account"), false);
+});
+
+test("automatic reward enrollment never appears as Fraud activity", () => {
+  const enrollmentKinds = [
+    "welcome_reward_granted",
+    "level_one_reward_granted",
+    "daily_reward_granted",
+    "other_reward_granted",
+  ];
+
+  for (const kind of enrollmentKinds) {
+    assert.equal(isNonActionableRewardEnrollmentSignal(kind), true);
+  }
+  assert.equal(isNonActionableRewardEnrollmentSignal("daily_reward_opened"), false);
+  assert.deepEqual(
+    withoutNonActionableRewardEnrollmentSignals([
+      "daily_reward_granted",
+      "daily_reward_opened",
+      "fiat_deposit",
+    ]),
+    ["daily_reward_opened", "fiat_deposit"],
+  );
 });

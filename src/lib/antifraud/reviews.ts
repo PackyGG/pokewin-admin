@@ -1,7 +1,17 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import {
+  and,
+  desc,
+  eq,
+  ilike,
+  inArray,
+  notInArray,
+  or,
+  sql,
+  type SQL,
+} from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
 import { isPostgresError } from "@/lib/postgres-errors";
@@ -16,6 +26,10 @@ import {
   OPEN_REVIEW_STATUSES,
   type ReviewStatus,
 } from "./constants";
+import {
+  NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS,
+  withoutNonActionableRewardEnrollmentSignals,
+} from "./signal-display";
 import {
   loadReviewWorkflows,
   reviewQueueCondition,
@@ -125,7 +139,7 @@ function toRow(row: {
     source: row.source,
     riskScore: row.risk_score,
     reason: row.reason,
-    signals: [...row.signals],
+    signals: withoutNonActionableRewardEnrollmentSignals(row.signals),
     assignedTo: row.assigned_to,
     openedBy: row.opened_by,
     resolution: row.resolution,
@@ -434,7 +448,15 @@ export async function getReviewDetail(
           .where(eq(antifraud_review_notes.review_id, reviewId))
           .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
         adminDrizzle.select().from(antifraud_signals)
-          .where(eq(antifraud_signals.target_user_id, review.target_user_id))
+          .where(
+            and(
+              eq(antifraud_signals.target_user_id, review.target_user_id),
+              notInArray(
+                antifraud_signals.kind,
+                [...NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS],
+              ),
+            ),
+          )
           .orderBy(desc(antifraud_signals.received_at)).limit(25),
         loadReviewWorkflows([reviewId]),
       ]);
@@ -629,6 +651,12 @@ export type SignalRow = {
 export async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
   try {
     const rows = await adminDrizzle.select().from(antifraud_signals)
+      .where(
+        notInArray(
+          antifraud_signals.kind,
+          [...NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS],
+        ),
+      )
       .orderBy(desc(antifraud_signals.received_at))
       .limit(Math.min(Math.max(limit, 1), 100));
     return rows.map((row) => ({

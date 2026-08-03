@@ -15,6 +15,21 @@ export type MonitorEventDefinition = {
   status: MonitorEventStatus;
 };
 
+export const NON_ACTIONABLE_REWARD_ENROLLMENT_EVENTS = [
+  "welcome_reward_granted",
+  "level_one_reward_granted",
+  "daily_reward_granted",
+  "other_reward_granted",
+] as const;
+
+const NON_ACTIONABLE_REWARD_ENROLLMENT_EVENT_SET = new Set<string>(
+  NON_ACTIONABLE_REWARD_ENROLLMENT_EVENTS,
+);
+
+export function isNonActionableRewardEnrollmentEvent(key: string): boolean {
+  return NON_ACTIONABLE_REWARD_ENROLLMENT_EVENT_SET.has(key);
+}
+
 const event = (
   key: string,
   name: string,

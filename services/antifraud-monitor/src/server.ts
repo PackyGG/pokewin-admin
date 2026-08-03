@@ -31,6 +31,7 @@ import { MonitorEngine } from "./monitor.js";
 import {
   isDocumentedMonitorEvent,
   MONITOR_EVENT_CATALOG,
+  NON_ACTIONABLE_REWARD_ENROLLMENT_EVENTS,
   unavailableMonitorEvents,
 } from "./event-catalog.js";
 import { registerNetworkRoutes } from "./network-routes.js";
@@ -236,6 +237,7 @@ const fiatPerks = new FiatPerkService(
   enrichment,
   scoreWeights,
   fiatPerkAccess,
+  publishCommittedMutation,
 );
 const sumsub =
   config.SUMSUB_ADMIN_TOKEN && config.SUMSUB_ADMIN_KEY
@@ -1266,9 +1268,10 @@ app.get("/v1/cases/:id", async (request, reply) => {
               title, detail, occurred_at, recorded_at
          FROM risk_events
         WHERE case_id=$1
+          AND event_type <> ALL($2::text[])
         ORDER BY occurred_at, recorded_at
         LIMIT 500`,
-      [id],
+      [id, [...NON_ACTIONABLE_REWARD_ENROLLMENT_EVENTS]],
     ),
     db.antifraud.query(
       `SELECT pc.id, pc.user_id, pc.provider, pc.request_id, pc.status,
