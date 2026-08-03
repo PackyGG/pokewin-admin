@@ -18,6 +18,7 @@ import {
   RotateCcw,
   ScanSearch,
   Settings,
+  Settings2,
   ShieldAlert,
   Webhook,
   type LucideIcon,
@@ -142,6 +143,7 @@ const BLACKLIST_NAV: NavItem[] = [
 ];
 
 const SYSTEM_NAV: NavItem[] = [
+  { label: "Config", href: "/antifraud/config", icon: Settings2 },
   { label: "Risk engine", href: "/antifraud/points", icon: Gauge },
   {
     label: "Audit log",

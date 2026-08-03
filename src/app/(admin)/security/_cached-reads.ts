@@ -12,7 +12,6 @@ import { getRewardExpiry } from "@/lib/backend-api/reward-expiry";
 import { getCryptoFees } from "@/lib/backend-api/crypto-fees";
 import { getDepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 import { getTelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
-import { getFiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
 import { SECURITY_CACHE_TAG } from "./security-cache-tag";
 
 /**
@@ -114,12 +113,6 @@ const cachedTelegramNotificationSettings = unstable_cache(
   { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
 );
 
-const cachedFiatDepositAutomaticCreditConfig = unstable_cache(
-  () => getFiatDepositAutomaticCreditConfig(),
-  ["security-fiat-deposit-automatic-credit-v1"],
-  { revalidate: REVALIDATE_SECONDS, tags: [SECURITY_CACHE_TAG] },
-);
-
 /**
  * Prod-cached / dev-direct read for each /security section. On a dev-toggled
  * admin every helper bypasses the cache and runs the live read so they always
@@ -208,13 +201,4 @@ export async function getCachedTelegramNotificationSettings(): ReturnType<
   return env === "prod"
     ? cachedTelegramNotificationSettings()
     : getTelegramNotificationSettings();
-}
-
-export async function getCachedFiatDepositAutomaticCreditConfig(): ReturnType<
-  typeof getFiatDepositAutomaticCreditConfig
-> {
-  const env = await readDbEnv();
-  return env === "prod"
-    ? cachedFiatDepositAutomaticCreditConfig()
-    : getFiatDepositAutomaticCreditConfig();
 }

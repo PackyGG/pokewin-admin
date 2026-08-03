@@ -16,14 +16,24 @@ const accountTab = read(
   "src/app/(admin)/users/[id]/user-view-modern-tabs.tsx",
 );
 const fiatConfigApi = read("src/lib/backend-api/fiat-deposit-review.ts");
-const securityCard = read(
-  "src/app/(admin)/security/fiat-auto-approval-card.tsx",
+const fraudConfigCard = read(
+  "src/app/(antifraud)/antifraud/config/fiat-auto-approval-card.tsx",
 );
-const securityActions = read(
-  "src/app/(admin)/security/fiat-auto-approval-actions.ts",
+const fraudConfigActions = read(
+  "src/app/(antifraud)/antifraud/config/fiat-auto-approval-actions.ts",
 );
+const fraudConfigPage = read(
+  "src/app/(antifraud)/antifraud/config/page.tsx",
+);
+const fraudSidebar = read(
+  "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
+);
+const appHosts = read("src/lib/app-hosts.ts");
 const securityLoader = read(
   "src/app/(admin)/security/security-sections-loader.tsx",
+);
+const securitySections = read(
+  "src/app/(admin)/security/security-page-sections.tsx",
 );
 
 test("reward feature locks mirror every backend category", () => {
@@ -66,25 +76,33 @@ test("global Fiat switch uses the backend-owned automatic-credit contract", () =
   assert.match(fiatConfigApi, /fiat_deposit_automatic_credit_enabled/);
   assert.match(fiatConfigApi, /\/admin\/fiat-deposits\/config/);
   assert.match(fiatConfigApi, /ResponseSchema\.safeParse/);
-  assert.match(securityActions, /requirePageAccess\("\/security"\)/);
-  assert.match(securityActions, /requireAdmin\(\)/);
-  assert.match(securityActions, /fiat_deposit_automatic_credit_updated/);
-  assert.match(securityActions, /revalidateTag\(SECURITY_CACHE_TAG\)/);
+  assert.match(fraudConfigActions, /requireAntifraudManager\(/);
+  assert.match(fraudConfigActions, /fiat_deposit_automatic_credit_updated/);
+  assert.match(fraudConfigActions, /revalidatePath\("\/antifraud\/config"\)/);
 });
 
 test("global switch confirms the production-impacting policy change", () => {
-  assert.match(securityCard, /<AlertDialog/);
-  assert.match(securityCard, /onCheckedChange=\{setRequestedEnabled\}/);
-  assert.match(securityCard, /Require admin approval for Fiat deposits/);
-  assert.match(securityCard, /per-account auto-approval override/);
-  assert.match(securityCard, /Fraud, KYC, payment-binding/);
+  assert.match(fraudConfigCard, /<AlertDialog/);
+  assert.match(fraudConfigCard, /onCheckedChange=\{setRequestedEnabled\}/);
+  assert.match(fraudConfigCard, /Require admin approval for Fiat deposits/);
+  assert.match(fraudConfigCard, /per-account auto-approval override/);
+  assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
 });
 
-test("dedicated Fiat switch is cached and hidden from raw site config", () => {
+test("dedicated Fiat switch lives in Fraud Config and stays hidden from raw Security config", () => {
+  assert.match(fraudConfigPage, /requireAntifraudManagerPage\(\)/);
+  assert.match(fraudConfigPage, /getFiatDepositAutomaticCreditConfig\(\)/);
   assert.match(
-    securityLoader,
-    /getCachedFiatDepositAutomaticCreditConfig\(\)/,
+    fraudConfigPage,
+    /initialEnabled=\{config\.fiat_deposit_automatic_credit_enabled\}/,
   );
-  assert.match(securityLoader, /FIAT_AUTO_APPROVAL_SITE_CONFIG_KEYS/);
-  assert.match(securityLoader, /fiatAutomaticCredit=/);
+  assert.match(fraudSidebar, /label: "Config"/);
+  assert.match(fraudSidebar, /href: "\/antifraud\/config"/);
+  assert.match(
+    appHosts,
+    /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"config"/,
+  );
+  assert.match(securityLoader, /FIAT_DEPOSIT_AUTO_CREDIT_SITE_CONFIG_KEYS/);
+  assert.doesNotMatch(securitySections, /Fiat Deposit Approval/);
+  assert.doesNotMatch(securityLoader, /fiatAutomaticCredit/);
 });

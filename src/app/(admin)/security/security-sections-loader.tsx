@@ -10,7 +10,6 @@ import {
   getCachedCryptoFees,
   getCachedDepositBonusConfig,
   getCachedTelegramNotificationSettings,
-  getCachedFiatDepositAutomaticCreditConfig,
 } from "./_cached-reads";
 import { SecurityPageSections } from "./security-page-sections";
 import { RAIN_CONFIG_SITE_CONFIG_KEYS } from "../rain/config-keys";
@@ -33,8 +32,7 @@ import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
 import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 import type { TelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
 import { GEO_POLICY_SITE_CONFIG_KEYS } from "@/lib/fiat-jurisdiction-policy";
-import { FIAT_AUTO_APPROVAL_SITE_CONFIG_KEYS } from "./fiat-auto-approval-keys";
-import type { FiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
+import { FIAT_DEPOSIT_AUTO_CREDIT_SITE_CONFIG_KEYS } from "@/lib/contracts/fiat-deposit-review";
 
 /**
  * Async data loader for the /security sections. Lives behind a <Suspense>
@@ -63,7 +61,6 @@ export async function SecuritySectionsLoader() {
     cryptoFeesResult,
     depositBonusConfigResult,
     telegramNotificationsResult,
-    fiatAutomaticCreditResult,
     vaultLockTimesResult,
   ] = await Promise.allSettled([
     getCachedSiteConfig(),
@@ -76,7 +73,6 @@ export async function SecuritySectionsLoader() {
     getCachedCryptoFees(),
     getCachedDepositBonusConfig(),
     getCachedTelegramNotificationSettings(),
-    getCachedFiatDepositAutomaticCreditConfig(),
     getCachedVaultLockTimes(),
   ]);
 
@@ -100,7 +96,7 @@ export async function SecuritySectionsLoader() {
     ...REWARD_EXPIRY_SITE_CONFIG_KEYS,
     ...TELEGRAM_NOTIFICATION_SITE_CONFIG_KEYS,
     ...KENO_SITE_CONFIG_KEYS,
-    ...FIAT_AUTO_APPROVAL_SITE_CONFIG_KEYS,
+    ...FIAT_DEPOSIT_AUTO_CREDIT_SITE_CONFIG_KEYS,
     // Owned by /fiat and /system/geo-blocking. Raw edits here would change
     // the site-wide lock without atomically updating the 305 location rows.
     ...GEO_POLICY_SITE_CONFIG_KEYS,
@@ -151,11 +147,6 @@ export async function SecuritySectionsLoader() {
       ? telegramNotificationsResult.value
       : null;
 
-  const fiatAutomaticCredit: FiatDepositAutomaticCreditConfig | null =
-    fiatAutomaticCreditResult.status === "fulfilled"
-      ? fiatAutomaticCreditResult.value
-      : null;
-
   const vaultLockTimes =
     vaultLockTimesResult.status === "fulfilled"
       ? vaultLockTimesResult.value
@@ -175,7 +166,6 @@ export async function SecuritySectionsLoader() {
       cryptoFees={cryptoFees}
       depositBonusConfig={depositBonusConfig}
       telegramNotifications={telegramNotifications}
-      fiatAutomaticCredit={fiatAutomaticCredit}
     />
   );
 }

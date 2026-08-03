@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
@@ -9,8 +9,7 @@ import {
   updateFiatDepositAutomaticCreditConfig,
   type FiatDepositAutomaticCreditConfig,
 } from "@/lib/backend-api/fiat-deposit-review";
-import { requireAdmin, requirePageAccess } from "@/lib/dal";
-import { SECURITY_CACHE_TAG } from "./security-cache-tag";
+import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 
 const InputSchema = z.object({ enabled: z.boolean() });
 
@@ -20,8 +19,9 @@ export async function updateFiatAutomaticCreditAction(input: {
   | { success: true; data: FiatDepositAutomaticCreditConfig }
   | { success: false; error: string }
 > {
-  await requirePageAccess("/security");
-  const session = await requireAdmin();
+  const session = await requireAntifraudManager(
+    "Only owners and admins can change global Fiat approval.",
+  );
 
   const parsed = InputSchema.safeParse(input);
   if (!parsed.success) {
@@ -63,6 +63,6 @@ export async function updateFiatAutomaticCreditAction(input: {
     },
   });
 
-  revalidateTag(SECURITY_CACHE_TAG);
+  revalidatePath("/antifraud/config");
   return { success: true, data: updated };
 }

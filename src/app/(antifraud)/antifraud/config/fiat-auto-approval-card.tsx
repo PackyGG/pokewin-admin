@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { AlertTriangle, BadgeDollarSign, Loader2, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
@@ -23,30 +23,22 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Switch } from "@/components/ui/switch";
-import type { FiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
 import { updateFiatAutomaticCreditAction } from "./fiat-auto-approval-actions";
 
-export function FiatAutoApprovalCard({
-  initial,
+export function GlobalFiatReviewCard({
+  initialEnabled,
 }: {
-  initial: FiatDepositAutomaticCreditConfig | null;
+  initialEnabled: boolean | null;
 }) {
   const [isPending, startTransition] = useTransition();
-  const [enabled, setEnabled] = useState(
-    initial?.fiat_deposit_automatic_credit_enabled ?? false,
-  );
+  const [enabled, setEnabled] = useState(initialEnabled ?? false);
   const [requestedEnabled, setRequestedEnabled] = useState<boolean | null>(null);
-  const previousInitial = useRef(initial);
 
   useEffect(() => {
-    if (previousInitial.current === initial) return;
-    previousInitial.current = initial;
-    if (initial) {
-      setEnabled(initial.fiat_deposit_automatic_credit_enabled);
-    }
-  }, [initial]);
+    if (initialEnabled !== null) setEnabled(initialEnabled);
+  }, [initialEnabled]);
 
-  if (!initial) {
+  if (initialEnabled === null) {
     return (
       <Card className="border-dashed">
         <CardHeader>
