@@ -17,11 +17,17 @@ test("gets Fiat access with the admin and rate-limit bypass headers", async () =
     async (url, init) => {
       capturedUrl = String(url);
       capturedInit = init;
-      return Response.json({ data: { enabled: true } });
+      return Response.json({
+        success: true,
+        data: { user_id: "user/id", enabled: true },
+      });
     },
   );
 
-  assert.deepEqual(await client.get("user/id"), { enabled: true });
+  assert.deepEqual(await client.get("user/id"), {
+    user_id: "user/id",
+    enabled: true,
+  });
   assert.equal(
     capturedUrl,
     "https://packy.gg/v1/admin/users/user%2Fid/fiat-deposit-access",
@@ -43,11 +49,17 @@ test("updates Fiat access with the documented PUT body", async () => {
     config,
     async (_url, init) => {
       capturedInit = init;
-      return Response.json({ enabled: false });
+      return Response.json({
+        success: true,
+        data: { user_id: "abc", enabled: false },
+      });
     },
   );
 
-  assert.deepEqual(await client.update("abc", false), { enabled: false });
+  assert.deepEqual(await client.update("abc", false), {
+    user_id: "abc",
+    enabled: false,
+  });
   assert.equal(capturedInit?.method, "PUT");
   assert.equal(capturedInit?.body, JSON.stringify({ enabled: false }));
   assert.equal(
@@ -65,4 +77,35 @@ test("fails closed when required upstream credentials are missing", async () => 
     () => client.get("abc"),
     /fiat_deposit_access_admin_key_missing/,
   );
+});
+
+test("fails closed when the response belongs to another user", async () => {
+  const client = new FiatDepositAccessClient(config, async () =>
+    Response.json({
+      success: true,
+      data: { user_id: "different-user", enabled: true },
+    }),
+  );
+
+  await assert.rejects(
+    () => client.update("abc", true),
+    /fiat_deposit_access_invalid_response/,
+  );
+});
+
+test("rejects legacy response shapes instead of guessing access state", async () => {
+  for (const body of [
+    true,
+    { enabled: true },
+    { data: { enabled: true } },
+    { success: false, data: { user_id: "abc", enabled: true } },
+  ]) {
+    const client = new FiatDepositAccessClient(config, async () =>
+      Response.json(body),
+    );
+    await assert.rejects(
+      () => client.get("abc"),
+      /fiat_deposit_access_invalid_response/,
+    );
+  }
 });

@@ -89,7 +89,11 @@ request; a changed request returns `409 idempotency_conflict`.
 Antifraud workflows. Configure `ADMIN_API_KEY` and `xbypasssecret`. Requests
 send `x-admin-api-key` plus the `xbypasssecret` rate-limit bypass header.
 Missing credentials, non-2xx responses, timeouts, and malformed response
-bodies fail closed.
+bodies fail closed. The response contract is identical to the admin dashboard:
+`{ success: true, data: { user_id, enabled } }`, including a check that the
+returned user matches the requested user. This client is only for per-user
+access; the global Fiat switch continues through the existing site-config API
+and cache-refresh flow.
 
 ## Sanitized Sumsub review reads
 

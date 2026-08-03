@@ -1,16 +1,17 @@
 import type { Config } from "./config.js";
+import { z } from "zod";
 
-export type FiatDepositAccess = {
-  enabled: boolean;
-};
+const fiatDepositAccessSchema = z.object({
+  user_id: z.string().min(1),
+  enabled: z.boolean(),
+});
 
-type FiatDepositAccessResponse =
-  | FiatDepositAccess
-  | boolean
-  | {
-      data?: FiatDepositAccess | boolean;
-      success?: boolean;
-    };
+const fiatDepositAccessResponseSchema = z.object({
+  success: z.literal(true),
+  data: fiatDepositAccessSchema,
+});
+
+export type FiatDepositAccess = z.infer<typeof fiatDepositAccessSchema>;
 
 type UpstreamConfig = Pick<
   Config,
@@ -19,29 +20,15 @@ type UpstreamConfig = Pick<
 
 const FIAT_DEPOSIT_ACCESS_BASE_URL = "https://packy.gg/v1";
 
-function parseAccess(response: FiatDepositAccessResponse): FiatDepositAccess {
-  if (typeof response === "boolean") return { enabled: response };
-  if (
-    response &&
-    typeof response === "object" &&
-    "enabled" in response &&
-    typeof response.enabled === "boolean"
-  ) {
-    return { enabled: response.enabled };
+function parseAccessResponse(
+  response: unknown,
+  requestedUserId: string,
+): FiatDepositAccess {
+  const parsed = fiatDepositAccessResponseSchema.safeParse(response);
+  if (!parsed.success || parsed.data.data.user_id !== requestedUserId) {
+    throw new Error("fiat_deposit_access_invalid_response");
   }
-  const data =
-    response && typeof response === "object" && "data" in response
-      ? response.data
-      : undefined;
-  if (typeof data === "boolean") return { enabled: data };
-  if (
-    data &&
-    typeof data === "object" &&
-    typeof data.enabled === "boolean"
-  ) {
-    return { enabled: data.enabled };
-  }
-  throw new Error("fiat_deposit_access_invalid_response");
+  return parsed.data.data;
 }
 
 export class FiatDepositAccessClient {
@@ -86,7 +73,7 @@ export class FiatDepositAccessClient {
     if (!response.ok) {
       throw new Error(`fiat_deposit_access_http_${response.status}`);
     }
-    return parseAccess(body as FiatDepositAccessResponse);
+    return parseAccessResponse(body, userId);
   }
 
   get(userId: string): Promise<FiatDepositAccess> {
