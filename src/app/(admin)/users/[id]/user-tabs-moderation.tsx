@@ -2,7 +2,17 @@
 
 import React, { useEffect, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Ban, ShieldAlert, ShieldBan, ShieldCheck, ShieldOff, Lock, Unlock } from "lucide-react";
+import {
+  Ban,
+  Fingerprint,
+  Lock,
+  Network,
+  ShieldAlert,
+  ShieldBan,
+  ShieldCheck,
+  ShieldOff,
+  Unlock,
+} from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -43,7 +53,13 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import { EmptyState } from "@/components/empty-state";
 import { BAN_REASON_PRESETS } from "@/lib/ban-reasons";
 import type { UserDetail } from "./user-tabs-types";
-import { banUser, unbanUser, lockUser, unlockUser } from "../actions";
+import {
+  banUser,
+  blockUserIdentifiers,
+  unbanUser,
+  lockUser,
+  unlockUser,
+} from "../actions";
 
 /**
  * Moderation toolbar — the action buttons that used to live at the top of
@@ -97,6 +113,12 @@ export function UserAdminActions({
         ) : (
           <LockButton userId={user.id} onSuccess={() => setLocked(true)} />
         ))}
+      {canBan && (
+        <>
+          <BlockIdentifierButton userId={user.id} kind="ip" />
+          <BlockIdentifierButton userId={user.id} kind="fingerprint" />
+        </>
+      )}
     </div>
   );
 }
@@ -357,7 +379,10 @@ function BanButton({
         toast.error(result.error);
         return;
       }
-      toast.success("User banned");
+      const { ipCount, fingerprintCount } = result.data.identifiers;
+      toast.success(
+        `User banned · ${ipCount} IP${ipCount === 1 ? "" : "s"} and ${fingerprintCount} fingerprint${fingerprintCount === 1 ? "" : "s"} blacklisted`,
+      );
       setOpen(false);
       setReasonOption(null);
       setCustomReason("");
@@ -429,6 +454,71 @@ function BanButton({
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BlockIdentifierButton({
+  userId,
+  kind,
+}: {
+  userId: string;
+  kind: "ip" | "fingerprint";
+}) {
+  const [open, setOpen] = useState(false);
+  const [isPending, startTransition] = useTransition();
+  const isIp = kind === "ip";
+  const Icon = isIp ? Network : Fingerprint;
+  const label = isIp ? "Ban IP" : "Ban fingerprint";
+
+  function submit() {
+    startTransition(async () => {
+      const result = await blockUserIdentifiers({
+        userId,
+        kind,
+        confirmed: true,
+      });
+      if (!result.success) {
+        toast.error(result.error);
+        return;
+      }
+      const count = isIp
+        ? result.data.ipCount
+        : result.data.fingerprintCount;
+      toast.success(
+        `${count} known ${isIp ? `IP address${count === 1 ? "" : "es"}` : `fingerprint${count === 1 ? "" : "s"}`} blacklisted`,
+      );
+      setOpen(false);
+    });
+  }
+
+  return (
+    <AlertDialog open={open} onOpenChange={setOpen}>
+      <Button
+        variant="outline"
+        size="sm"
+        className="gap-1.5 border-rose-500/40 text-rose-600 hover:bg-rose-500/10 dark:text-rose-400"
+        onClick={() => setOpen(true)}
+      >
+        <Icon className="size-3.5" /> {label}
+      </Button>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{label}?</AlertDialogTitle>
+          <AlertDialogDescription>
+            This permanently blacklists every known{" "}
+            {isIp ? "IP address" : "Fingerprint visitor ID"} tied to this
+            user. Matching accounts will enter the existing Antifraud review
+            and containment flow. This does not ban the user account itself.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>Cancel</AlertDialogCancel>
+          <AlertDialogAction onClick={submit} disabled={isPending}>
+            {isPending ? "Blacklisting..." : label}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
 

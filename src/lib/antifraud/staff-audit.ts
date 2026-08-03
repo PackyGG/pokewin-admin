@@ -184,6 +184,11 @@ export const ANTIFRAUD_AUDIT_EVENTS: Record<string, EventDefinition> = {
     category: "blocklists",
     tone: "good",
   },
+  antifraud_user_identifiers_blocklisted: {
+    label: "User identifiers blocked",
+    category: "blocklists",
+    tone: "danger",
+  },
   fiat_email_domain_blacklisted: {
     label: "Email domain blocked",
     category: "blocklists",

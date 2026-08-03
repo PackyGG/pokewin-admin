@@ -19,6 +19,7 @@ import { requireCapability } from "@/lib/require-capability";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
+import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
 import { isPostgresError } from "@/lib/postgres-errors";
 import {
   REVIEW_STATUSES,
@@ -740,8 +741,16 @@ export async function runQuickReviewAccountAction(
     const db = await getPrimaryDrizzleDb();
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
     const reason = `Antifraud review ${reviewId}: ${review.reason}`.slice(0, 500);
+    let identifiers;
 
     try {
+      identifiers = await blockKnownUserIdentifiers({
+        db,
+        userId: review.targetUserId,
+        reason,
+        actorId: session.userId,
+        actorUsername: session.username ?? undefined,
+      });
       await db.transaction(async (tx) => {
         const updated = await tx.execute<{ id: string }>(sql`
           UPDATE "user"
@@ -760,7 +769,9 @@ export async function runQuickReviewAccountAction(
       });
     } catch (error) {
       console.error("[antifraud] quick review ban failed:", error);
-      throw new Error("The account could not be banned. Nothing was hidden.");
+      throw new Error(
+        "The account or its known IP/fingerprint identifiers could not be banned. Nothing was hidden.",
+      );
     }
 
     await createAdminAuditEvent({
@@ -775,6 +786,9 @@ export async function runQuickReviewAccountAction(
         issuer_main_user_id: issuerMainUserId,
         reviewId,
         idempotencyKey,
+        blacklisted_ip_count: identifiers.ipCount,
+        blacklisted_fingerprint_count: identifiers.fingerprintCount,
+        blocklist_changes: identifiers.changedCount,
       },
     });
     revalidateTag("users-list");

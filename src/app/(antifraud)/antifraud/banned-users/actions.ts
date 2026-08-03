@@ -14,6 +14,7 @@ import { require2FA } from "@/lib/require-2fa";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
+import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
 
 const schema = z.object({
   userId: z.string().trim().min(1).max(100),
@@ -44,6 +45,16 @@ export async function mutateBannedUser(input: unknown): Promise<void> {
   try {
     const db = await getPrimaryDrizzleDb();
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+    const identifiers =
+      parsed.data.action === "ban"
+        ? await blockKnownUserIdentifiers({
+            db,
+            userId: parsed.data.userId,
+            reason: parsed.data.reason,
+            actorId: session.userId,
+            actorUsername: session.username ?? undefined,
+          })
+        : null;
     const updated =
       parsed.data.action === "ban"
         ? await db.transaction(async (tx) => {
@@ -88,6 +99,13 @@ export async function mutateBannedUser(input: unknown): Promise<void> {
         correlationId,
         idempotencyKey: parsed.data.idempotencyKey,
         issuer_main_user_id: issuerMainUserId,
+        ...(identifiers
+          ? {
+              blacklisted_ip_count: identifiers.ipCount,
+              blacklisted_fingerprint_count: identifiers.fingerprintCount,
+              blocklist_changes: identifiers.changedCount,
+            }
+          : {}),
       },
     });
     await finishAntifraudAction({

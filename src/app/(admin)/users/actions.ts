@@ -30,6 +30,11 @@ import {
 import { ok, fail, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
+import {
+  blockKnownUserIdentifiers,
+  type UserIdentifierBlockResult,
+} from "@/lib/antifraud/user-identifier-blocking";
+import { z } from "zod";
 
 // 7-day soft-delete window for admin_deleted_users snapshots. Mirrored
 // in /users/deleted's purge-on-read scan and the restore action's
@@ -58,7 +63,12 @@ export async function fetchDistinctUserCountries() {
 export async function banUser(
   userId: string,
   reason: string,
-): Promise<ServerActionResult<{ userId: string }>> {
+): Promise<
+  ServerActionResult<{
+    userId: string;
+    identifiers: UserIdentifierBlockResult;
+  }>
+> {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/users");
   try {
@@ -79,6 +89,26 @@ export async function banUser(
   // unlinked admins fall back to null and the audit event below
   // remains the source of truth for who actually triggered the ban.
   const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+
+  let identifiers: UserIdentifierBlockResult;
+  try {
+    identifiers = await blockKnownUserIdentifiers({
+      db,
+      userId,
+      reason: `Account ban: ${reason.trim()}`.slice(0, 500),
+      actorId: session.userId,
+      actorUsername: session.username ?? undefined,
+    });
+  } catch (err) {
+    logError(
+      "users.ban.identifiers",
+      `identifier blocklist failed for ${userId}`,
+      err,
+    );
+    return fail(
+      "Couldn't blacklist this user's IP and fingerprint, so the account was not banned.",
+    );
+  }
 
   try {
     await db.transaction(async (tx) => {
@@ -108,7 +138,13 @@ export async function banUser(
     adminUserId: session.userId,
     eventType: "account_banned",
     targetUserId: userId,
-    metadata: { reason, issuer_main_user_id: issuerMainUserId },
+    metadata: {
+      reason,
+      issuer_main_user_id: issuerMainUserId,
+      blacklisted_ip_count: identifiers.ipCount,
+      blacklisted_fingerprint_count: identifiers.fingerprintCount,
+      blocklist_changes: identifiers.changedCount,
+    },
   });
 
   // Narrow tag flushes ONLY — no revalidatePath. A path revalidation
@@ -121,7 +157,83 @@ export async function banUser(
   revalidateTag("users-list");
   revalidateTag("users-list-stats");
   revalidateTag(userDetailTag(userId));
-  return ok({ userId });
+  return ok({ userId, identifiers });
+}
+
+const blockUserIdentifierSchema = z.object({
+  userId: z.string().trim().min(1).max(100),
+  kind: z.enum(["ip", "fingerprint"]),
+  confirmed: z.literal(true),
+});
+
+/** Permanently block only the selected identifier class for one user. */
+export async function blockUserIdentifiers(
+  input: unknown,
+): Promise<ServerActionResult<UserIdentifierBlockResult>> {
+  const session = await requirePageAccess("/users");
+  try {
+    await requireCapability(session, "__can_ban_users", "ban user identifiers");
+  } catch (err) {
+    return fail(
+      err instanceof Error ? err.message : "Permission denied",
+      "FORBIDDEN",
+    );
+  }
+  const parsed = blockUserIdentifierSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0].message, "VALIDATION");
+  }
+
+  const db = await getPrimaryDrizzleDb();
+  let identifiers: UserIdentifierBlockResult;
+  try {
+    identifiers = await blockKnownUserIdentifiers({
+      db,
+      userId: parsed.data.userId,
+      kind: parsed.data.kind,
+      reason: `Blocked from user profile (${parsed.data.userId})`,
+      actorId: session.userId,
+      actorUsername: session.username ?? undefined,
+    });
+  } catch (err) {
+    logError(
+      "users.blockIdentifiers",
+      `${parsed.data.kind} blocklist failed for ${parsed.data.userId}`,
+      err,
+    );
+    return fail(`Couldn't blacklist this user's ${parsed.data.kind}.`);
+  }
+
+  const blockedCount =
+    parsed.data.kind === "ip"
+      ? identifiers.ipCount
+      : identifiers.fingerprintCount;
+  if (blockedCount === 0) {
+    return fail(
+      parsed.data.kind === "ip"
+        ? "This user has no known IP address to blacklist."
+        : "This user has no known fingerprint to blacklist.",
+      "NOT_FOUND",
+    );
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "antifraud_user_identifiers_blocklisted",
+    targetUserId: parsed.data.userId,
+    metadata: {
+      kind: parsed.data.kind,
+      blocked_count: blockedCount,
+      changed_count: identifiers.changedCount,
+      source: "users_detail",
+    },
+  });
+  revalidatePath(
+    parsed.data.kind === "ip"
+      ? "/antifraud/ip-blacklist"
+      : "/antifraud/fingerprint-blacklist",
+  );
+  return ok(identifiers);
 }
 
 export async function unbanUser(userId: string) {
