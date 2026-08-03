@@ -9,6 +9,10 @@ import {
   PerkCandidateNotFoundError,
   PerkDecisionConflictError,
 } from "./fiat-perks.js";
+import {
+  FiatPerkAccessService,
+  PerkAccessSyncError,
+} from "./fiat-perk-access.js";
 
 const actorSchema = z.object({
   idempotencyKey: z.string().uuid(),
@@ -34,6 +38,8 @@ const runSchema = actorSchema.extend({
   excludeGranted: z.boolean().default(true),
   excludedUserIds: z.array(z.string().trim().min(1).max(100)).max(5_000)
     .default([]),
+  selectedUserIds: z.array(z.string().trim().min(1).max(100)).max(500)
+    .default([]),
 });
 
 const decisionSchema = actorSchema.extend({
@@ -48,8 +54,32 @@ const revokeSchema = actorSchema.extend({
 const candidateQuerySchema = z.object({
   verdict: z.enum(["pass", "review", "fail"]).optional(),
   decision: z.enum(["pending", "approved", "declined"]).optional(),
+  accessStatus: z.enum(["none", "unknown", "syncing", "enabled", "disabled", "error"]).optional(),
+  countryCode: z.string().trim().regex(/^[A-Za-z]{2}$/).optional(),
+  minRiskScore: z.coerce.number().min(0).max(100).optional(),
+  maxRiskScore: z.coerce.number().min(0).max(100).optional(),
+  maxMindStatus: z.enum(["success", "failed", "skipped", "not_checked"]).optional(),
+  minMaxMindRisk: z.coerce.number().min(0).max(100).optional(),
+  maxMaxMindRisk: z.coerce.number().min(0).max(100).optional(),
+  maxMindDisposition: z.enum(["accept", "reject", "manual_review", "test"]).optional(),
+  providerChecked: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
+  minAccountAgeDays: z.coerce.number().min(0).max(36500).optional(),
+  maxAccountAgeDays: z.coerce.number().min(0).max(36500).optional(),
+  blockingReason: z.string().trim().min(1).max(100).optional(),
+  minCryptoDepositUsd: z.coerce.number().min(0).max(1_000_000_000).optional(),
+  minFiatDepositUsd: z.coerce.number().min(0).max(1_000_000_000).optional(),
+  minWagerUsd: z.coerce.number().min(0).max(1_000_000_000).optional(),
+  maxRewardUsd: z.coerce.number().min(0).max(1_000_000_000).optional(),
   search: z.string().trim().min(1).max(120).optional(),
   limit: z.coerce.number().int().min(1).max(500).default(200),
+});
+
+const accessBatchSchema = actorSchema.extend({
+  action: z.enum(["enable", "disable"]),
+  candidateIds: z.array(z.string().uuid()).max(100).default([]),
+  userIds: z.array(z.string().trim().min(1).max(100)).max(100).default([]),
+  note: z.string().trim().min(4).max(500).nullish(),
+  filterSnapshot: z.record(z.string(), z.unknown()).default({}),
 });
 
 const grantQuerySchema = z.object({
@@ -80,6 +110,7 @@ function decisionErrorReply(error: unknown): {
 export async function registerFiatPerkRoutes(
   app: FastifyInstance,
   service: FiatPerkService,
+  access: FiatPerkAccessService,
 ): Promise<void> {
   app.get("/v1/fiat-perks/runs", async (request) => {
     const limit = z.coerce
@@ -106,6 +137,15 @@ export async function registerFiatPerkRoutes(
         message: "A country scope needs a country code.",
       });
     }
+    if (
+      parsed.data.scope === "selected_accounts"
+      && parsed.data.selectedUserIds.length === 0
+    ) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: "A selected-account run needs at least one user id.",
+      });
+    }
     const run = await service.startRun({
       scope: parsed.data.scope,
       minAccountAgeDays: parsed.data.minAccountAgeDays,
@@ -114,6 +154,7 @@ export async function registerFiatPerkRoutes(
       activeWithinDays: parsed.data.activeWithinDays,
       excludeGranted: parsed.data.excludeGranted,
       excludedUserIds: parsed.data.excludedUserIds,
+      selectedUserIds: parsed.data.selectedUserIds,
       idempotencyKey: parsed.data.idempotencyKey,
       actorId: parsed.data.actorId,
       actorUsername: parsed.data.actorUsername ?? null,
@@ -146,10 +187,84 @@ export async function registerFiatPerkRoutes(
         runId: params.data.id,
         verdict: query.data.verdict,
         decision: query.data.decision,
+        accessStatus: query.data.accessStatus,
+        countryCode: query.data.countryCode?.toUpperCase(),
+        minRiskScore: query.data.minRiskScore,
+        maxRiskScore: query.data.maxRiskScore,
+        maxMindStatus: query.data.maxMindStatus,
+        minMaxMindRisk: query.data.minMaxMindRisk,
+        maxMaxMindRisk: query.data.maxMaxMindRisk,
+        maxMindDisposition: query.data.maxMindDisposition,
+        providerChecked: query.data.providerChecked,
+        minAccountAgeDays: query.data.minAccountAgeDays,
+        maxAccountAgeDays: query.data.maxAccountAgeDays,
+        blockingReason: query.data.blockingReason,
+        minCryptoDepositUsd: query.data.minCryptoDepositUsd,
+        minFiatDepositUsd: query.data.minFiatDepositUsd,
+        minWagerUsd: query.data.minWagerUsd,
+        maxRewardUsd: query.data.maxRewardUsd,
         search: query.data.search,
         limit: query.data.limit,
       }),
     };
+  });
+
+  app.get("/v1/fiat-perks/access-batches", async (request) => {
+    const limit = z.coerce.number().int().min(1).max(100).default(20)
+      .parse((request.query as { limit?: unknown } | null)?.limit ?? 20);
+    return { data: await access.listBatches(limit) };
+  });
+
+  app.post("/v1/fiat-perks/access-batches", async (request, reply) => {
+    const parsed = accessBatchSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: parsed.error.issues[0]?.message ?? "Invalid request",
+      });
+    }
+    try {
+      const batch = parsed.data.action === "enable"
+        ? await access.queueEnable({
+          candidateIds: parsed.data.candidateIds,
+          userIds: parsed.data.userIds,
+          note: parsed.data.note ?? null,
+          filterSnapshot: parsed.data.filterSnapshot,
+          idempotencyKey: parsed.data.idempotencyKey,
+          actorId: parsed.data.actorId,
+          actorUsername: parsed.data.actorUsername ?? null,
+        })
+        : await access.queueDisable({
+          userIds: parsed.data.userIds,
+          note: parsed.data.note ?? "Bulk Fiat access disable",
+          filterSnapshot: parsed.data.filterSnapshot,
+          idempotencyKey: parsed.data.idempotencyKey,
+          actorId: parsed.data.actorId,
+          actorUsername: parsed.data.actorUsername ?? null,
+        });
+      return reply.code(202).send({ data: batch });
+    } catch (error) {
+      if (error instanceof PerkAccessSyncError) {
+        return reply.code(409).send({ error: "access_conflict", message: error.message });
+      }
+      throw error;
+    }
+  });
+
+  app.post("/v1/fiat-perks/access-batches/:id/retry", async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).safeParse(request.params);
+    const actor = actorSchema.safeParse(request.body);
+    if (!params.success || !actor.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    try {
+      return reply.code(202).send({ data: await access.retryBatch(params.data.id) });
+    } catch (error) {
+      if (error instanceof PerkAccessSyncError) {
+        return reply.code(409).send({ error: "access_conflict", message: error.message });
+      }
+      throw error;
+    }
   });
 
   app.post(

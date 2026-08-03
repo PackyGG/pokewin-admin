@@ -321,6 +321,52 @@ test("an unanswered provider holds the account instead of clearing it", () => {
   assert.equal(result.blockingReasons.length, 0);
 });
 
+test("MaxMind Factors is a first-class screening decision with reasons", () => {
+  const input = baseInput();
+  input.providersChecked = true;
+  input.providers = [
+    provider("fingerprint"),
+    provider("proxycheck"),
+    provider("maxmind", {
+      nativeScore: 82.5,
+      response: {
+        risk_score: 82.5,
+        ip_address: { risk: 76 },
+        disposition: { action: "reject" },
+        subscores: { email_address: 71, device: 88 },
+        risk_score_reasons: [{
+          multiplier: 3.4,
+          reasons: [{ code: "HIGH_RISK_DEVICE", reason: "Device risk" }],
+        }],
+      },
+    }),
+  ];
+  const result = evaluateFiatPerkCandidate(input);
+  assert.equal(result.verdict, "fail");
+  assert.ok(result.blockingReasons.includes("maxmind_risk"));
+  assert.ok(result.blockingReasons.includes("maxmind_ip_risk"));
+  assert.ok(result.blockingReasons.includes("maxmind_disposition"));
+});
+
+test("a low MaxMind score clears while missing MaxMind evidence holds review", () => {
+  const clean = baseInput();
+  clean.providersChecked = true;
+  clean.providers = [
+    provider("fingerprint"),
+    provider("proxycheck"),
+    provider("maxmind", {
+      nativeScore: 2.4,
+      response: { risk_score: 2.4, ip_address: { risk: 1.2 } },
+    }),
+  ];
+  assert.equal(evaluateFiatPerkCandidate(clean).verdict, "pass");
+
+  const missing = baseInput();
+  missing.providersChecked = true;
+  missing.providers = [provider("fingerprint"), provider("proxycheck")];
+  assert.equal(evaluateFiatPerkCandidate(missing).verdict, "review");
+});
+
 test("the checkout gate refuses an account without a live perk", () => {
   const subject = {
     id: "user-1",

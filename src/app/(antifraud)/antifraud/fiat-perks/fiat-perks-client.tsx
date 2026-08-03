@@ -9,10 +9,12 @@ import {
   CircleAlert,
   CircleCheck,
   CircleX,
+  Filter,
   Loader2,
   Play,
   ScanSearch,
   ShieldOff,
+  ShieldCheck,
   Users,
   X,
 } from "lucide-react";
@@ -36,12 +38,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_MIN_ACCOUNT_AGE_DAYS,
   FIAT_PERK_SCOPES,
   FIAT_PERK_SCOPE_LABELS,
   MAX_PERK_RUN_ACCOUNTS,
   type FiatPerkCandidate,
+  type FiatPerkAccessBatch,
   type FiatPerkCheck,
   type FiatPerkGrant,
   type FiatPerkRun,
@@ -51,7 +55,9 @@ import { formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import {
   decidePerkCandidate,
+  changeFiatAccessBatch,
   revokePerkGrant,
+  retryFiatAccessBatch,
   startPerkScreeningRun,
 } from "./actions";
 
@@ -62,6 +68,22 @@ type Filters = {
   verdict: "pass" | "review" | "fail" | null;
   decision: "pending" | "approved" | "declined" | null;
   search: string;
+  access: string;
+  country: string;
+  riskMin: string;
+  riskMax: string;
+  mmStatus: string;
+  mmMin: string;
+  mmMax: string;
+  mmAction: string;
+  providers: string;
+  ageMin: string;
+  ageMax: string;
+  reason: string;
+  cryptoMin: string;
+  fiatMin: string;
+  wagerMin: string;
+  rewardMax: string;
 };
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -109,6 +131,7 @@ export function FiatPerksClient({
   selectedRunId,
   candidates,
   grants,
+  accessBatches,
   filters,
   readOnly,
 }: {
@@ -116,6 +139,7 @@ export function FiatPerksClient({
   selectedRunId: string | null;
   candidates: FiatPerkCandidate[];
   grants: FiatPerkGrant[];
+  accessBatches: FiatPerkAccessBatch[];
   filters: Filters;
   readOnly: boolean;
 }) {
@@ -126,7 +150,8 @@ export function FiatPerksClient({
   // A sweep finishes server-side. Poll only while one is actually running, and
   // stop the moment it is not — an idle workspace must not keep refetching.
   const running = selectedRun?.status === "running"
-    || runs.some((run) => run.status === "running");
+    || runs.some((run) => run.status === "running")
+    || accessBatches.some((batch) => batch.status === "queued" || batch.status === "running");
   React.useEffect(() => {
     if (!running) return;
     const timer = window.setInterval(() => router.refresh(), RUN_POLL_MS);
@@ -161,6 +186,7 @@ export function FiatPerksClient({
         disabled={readOnly}
         onFilter={setParam}
       />
+      <AccessBatchHistory batches={accessBatches} />
       <GrantList grants={grants} disabled={readOnly} />
     </div>
   );
@@ -176,6 +202,7 @@ function ScreeningForm({ disabled }: { disabled: boolean }) {
   const [countryCode, setCountryCode] = React.useState("");
   const [activeWithinDays, setActiveWithinDays] = React.useState("30");
   const [excludeGranted, setExcludeGranted] = React.useState(true);
+  const [selectedUserIds, setSelectedUserIds] = React.useState("");
   const [pending, setPending] = React.useState(false);
 
   async function submit(event: React.FormEvent) {
@@ -183,6 +210,9 @@ function ScreeningForm({ disabled }: { disabled: boolean }) {
     if (pending || disabled) return;
     setPending(true);
     try {
+      const explicitIds = [...new Set(
+        selectedUserIds.split(/[\s,]+/).map((value) => value.trim()).filter(Boolean),
+      )];
       const run = await startPerkScreeningRun({
         scope,
         minAccountAgeDays: Number(minAge),
@@ -190,6 +220,7 @@ function ScreeningForm({ disabled }: { disabled: boolean }) {
         countryCode: scope === "country" ? countryCode.trim() : null,
         activeWithinDays: Number(activeWithinDays),
         excludeGranted,
+        selectedUserIds: scope === "selected_accounts" ? explicitIds : [],
         idempotencyKey: crypto.randomUUID(),
       });
       toast.success(
@@ -265,7 +296,18 @@ function ScreeningForm({ disabled }: { disabled: boolean }) {
             />
           </div>
 
-          {scope === "country" ? (
+          {scope === "selected_accounts" ? (
+            <div className="space-y-1.5 md:col-span-2">
+              <Label htmlFor="perk-users">Account IDs</Label>
+              <Textarea
+                id="perk-users"
+                rows={3}
+                placeholder="One user ID per line, up to 500"
+                value={selectedUserIds}
+                onChange={(event) => setSelectedUserIds(event.target.value)}
+              />
+            </div>
+          ) : scope === "country" ? (
             <div className="space-y-1.5">
               <Label htmlFor="perk-country">Country code</Label>
               <Input
@@ -392,8 +434,55 @@ function ReviewQueue({
   disabled: boolean;
   onFilter: (updates: Record<string, string | null>) => void;
 }) {
+  const router = useRouter();
   const [search, setSearch] = React.useState(filters.search);
+  const [advancedOpen, setAdvancedOpen] = React.useState(false);
+  const [draft, setDraft] = React.useState(filters);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [batchPending, setBatchPending] = React.useState(false);
   React.useEffect(() => setSearch(filters.search), [filters.search]);
+  React.useEffect(() => setDraft(filters), [filters]);
+  React.useEffect(() => {
+    const visible = new Set(candidates.map((candidate) => candidate.id));
+    setSelected((current) => new Set([...current].filter((id) => visible.has(id))));
+  }, [candidates]);
+
+  const selectable = candidates.filter((candidate) => candidate.decision === "pending");
+  const allSelected = selectable.length > 0
+    && selectable.every((candidate) => selected.has(candidate.id));
+
+  async function enableSelected() {
+    if (selected.size === 0 || batchPending || disabled) return;
+    const note = window.prompt(
+      `Reason for enabling Fiat access for ${selected.size} selected account(s):`,
+    );
+    if (note === null) return;
+    if (note.trim().length < 4) {
+      toast.error("Give a reason of at least 4 characters.");
+      return;
+    }
+    if (!window.confirm(
+      `Enable the backend Fiat switch for ${selected.size} account(s)? Each account is confirmed separately.`,
+    )) return;
+    setBatchPending(true);
+    try {
+      const batch = await changeFiatAccessBatch({
+        action: "enable",
+        candidateIds: [...selected],
+        userIds: [],
+        note: note.trim(),
+        filterSnapshot: filters,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success(`Queued ${batch.requestedCount} backend-confirmed Fiat access changes.`);
+      setSelected(new Set());
+      router.refresh();
+    } catch (error) {
+      toast.error(errorMessage(error, "The access batch could not be queued."));
+    } finally {
+      setBatchPending(false);
+    }
+  }
 
   return (
     <section className="space-y-3">
@@ -449,7 +538,100 @@ function ReviewQueue({
             aria-label="Search screened accounts"
           />
         </form>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setAdvancedOpen((value) => !value)}
+        >
+          <Filter className="size-4" aria-hidden />
+          {advancedOpen ? "Hide filters" : "All filters"}
+        </Button>
       </div>
+
+      {advancedOpen && (
+        <form
+          className="grid gap-3 rounded-xl border border-border/70 bg-card p-4 md:grid-cols-3 xl:grid-cols-5"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onFilter({
+              access: draft.access || null,
+              country: draft.country.trim().toUpperCase() || null,
+              riskMin: draft.riskMin || null,
+              riskMax: draft.riskMax || null,
+              mmStatus: draft.mmStatus || null,
+              mmMin: draft.mmMin || null,
+              mmMax: draft.mmMax || null,
+              mmAction: draft.mmAction || null,
+              providers: draft.providers || null,
+              ageMin: draft.ageMin || null,
+              ageMax: draft.ageMax || null,
+              reason: draft.reason.trim() || null,
+              cryptoMin: draft.cryptoMin || null,
+              fiatMin: draft.fiatMin || null,
+              wagerMin: draft.wagerMin || null,
+              rewardMax: draft.rewardMax || null,
+            });
+          }}
+        >
+          <FilterSelect label="Backend access" value={draft.access} onChange={(access) => setDraft({ ...draft, access })} options={[
+            ["none", "No grant"], ["enabled", "Enabled"], ["disabled", "Disabled"],
+            ["unknown", "Unknown"], ["syncing", "Syncing"], ["error", "Error"],
+          ]} />
+          <FilterInput label="Country" value={draft.country} onChange={(country) => setDraft({ ...draft, country })} placeholder="DE" />
+          <FilterRange label="Internal risk" min={draft.riskMin} max={draft.riskMax} onMin={(riskMin) => setDraft({ ...draft, riskMin })} onMax={(riskMax) => setDraft({ ...draft, riskMax })} />
+          <FilterSelect label="MaxMind status" value={draft.mmStatus} onChange={(mmStatus) => setDraft({ ...draft, mmStatus })} options={[
+            ["success", "Answered"], ["failed", "Failed"], ["skipped", "Skipped"], ["not_checked", "Not checked"],
+          ]} />
+          <FilterRange label="MaxMind risk" min={draft.mmMin} max={draft.mmMax} onMin={(mmMin) => setDraft({ ...draft, mmMin })} onMax={(mmMax) => setDraft({ ...draft, mmMax })} />
+          <FilterSelect label="MaxMind action" value={draft.mmAction} onChange={(mmAction) => setDraft({ ...draft, mmAction })} options={[
+            ["accept", "Accept"], ["manual_review", "Manual review"], ["reject", "Reject"], ["test", "Test"],
+          ]} />
+          <FilterSelect label="Provider checks" value={draft.providers} onChange={(providers) => setDraft({ ...draft, providers })} options={[["yes", "Completed"], ["no", "Not completed"]]} />
+          <FilterRange label="Account age days" min={draft.ageMin} max={draft.ageMax} onMin={(ageMin) => setDraft({ ...draft, ageMin })} onMax={(ageMax) => setDraft({ ...draft, ageMax })} />
+          <FilterInput label="Blocking reason" value={draft.reason} onChange={(reason) => setDraft({ ...draft, reason })} placeholder="shared_device" />
+          <FilterInput label="Min crypto funding $" value={draft.cryptoMin} onChange={(cryptoMin) => setDraft({ ...draft, cryptoMin })} type="number" />
+          <FilterInput label="Min Fiat funding $" value={draft.fiatMin} onChange={(fiatMin) => setDraft({ ...draft, fiatMin })} type="number" />
+          <FilterInput label="Min wagered $" value={draft.wagerMin} onChange={(wagerMin) => setDraft({ ...draft, wagerMin })} type="number" />
+          <FilterInput label="Max rewards $" value={draft.rewardMax} onChange={(rewardMax) => setDraft({ ...draft, rewardMax })} type="number" />
+          <div className="flex items-end gap-2 md:col-span-2">
+            <Button type="submit" size="sm">Apply filters</Button>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => onFilter(Object.fromEntries([
+                "access", "country", "riskMin", "riskMax", "mmStatus", "mmMin",
+                "mmMax", "mmAction", "providers", "ageMin", "ageMax", "reason",
+                "cryptoMin", "fiatMin", "wagerMin", "rewardMax",
+              ].map((key) => [key, null])))}
+            >
+              Reset
+            </Button>
+          </div>
+        </form>
+      )}
+
+      {selectable.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={allSelected}
+              onChange={() => setSelected(allSelected
+                ? new Set()
+                : new Set(selectable.map((candidate) => candidate.id)))}
+              className="size-4 rounded border-border"
+            />
+            Select all {selectable.length} visible undecided accounts
+          </label>
+          <span className="ml-auto text-xs text-muted-foreground">{selected.size} selected</span>
+          <Button size="sm" disabled={selected.size === 0 || batchPending || disabled} onClick={enableSelected}>
+            {batchPending ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <ShieldCheck className="size-4" aria-hidden />}
+            Enable selected
+          </Button>
+        </div>
+      )}
 
       {candidates.length === 0
         ? (
@@ -468,6 +650,13 @@ function ReviewQueue({
                 key={candidate.id}
                 candidate={candidate}
                 disabled={disabled}
+                selected={selected.has(candidate.id)}
+                onSelectedChange={(checked) => setSelected((current) => {
+                  const next = new Set(current);
+                  if (checked) next.add(candidate.id);
+                  else next.delete(candidate.id);
+                  return next;
+                })}
               />
             ))}
           </div>
@@ -510,12 +699,100 @@ function FilterChips<T extends string>({
   );
 }
 
+function FilterInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  type = "text",
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  type?: "text" | "number";
+}) {
+  const id = React.useId();
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Input
+        id={id}
+        type={type}
+        min={type === "number" ? 0 : undefined}
+        value={value}
+        placeholder={placeholder}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function FilterRange({
+  label,
+  min,
+  max,
+  onMin,
+  onMax,
+}: {
+  label: string;
+  min: string;
+  max: string;
+  onMin: (value: string) => void;
+  onMax: (value: string) => void;
+}) {
+  const minId = React.useId();
+  const maxId = React.useId();
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={minId}>{label}</Label>
+      <div className="grid grid-cols-2 gap-2">
+        <Input id={minId} aria-label={`${label} minimum`} type="number" min={0} placeholder="Min" value={min} onChange={(event) => onMin(event.target.value)} />
+        <Input id={maxId} aria-label={`${label} maximum`} type="number" min={0} placeholder="Max" value={max} onChange={(event) => onMax(event.target.value)} />
+      </div>
+    </div>
+  );
+}
+
+function FilterSelect({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: ReadonlyArray<readonly [string, string]>;
+}) {
+  const id = React.useId();
+  return (
+    <div className="space-y-1.5">
+      <Label htmlFor={id}>{label}</Label>
+      <Select
+        value={value || "all"}
+        onValueChange={(next) => onChange(!next || next === "all" ? "" : next)}
+      >
+        <SelectTrigger id={id}><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="all">Any</SelectItem>
+          {options.map(([key, text]) => <SelectItem key={key} value={key}>{text}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function CandidateRow({
   candidate,
   disabled,
+  selected,
+  onSelectedChange,
 }: {
   candidate: FiatPerkCandidate;
   disabled: boolean;
+  selected: boolean;
+  onSelectedChange: (checked: boolean) => void;
 }) {
   const router = useRouter();
   const [open, setOpen] = React.useState(false);
@@ -528,12 +805,27 @@ function CandidateRow({
 
   async function decide(decision: "approved" | "declined") {
     if (pending || disabled) return;
+    let note: string | null = null;
+    if (decision === "approved") {
+      const entered = window.prompt(
+        `Reason for enabling backend Fiat access for ${candidate.username ?? candidate.userId}:`,
+      );
+      if (entered === null) return;
+      if (entered.trim().length < 4) {
+        toast.error("Give a reason of at least 4 characters.");
+        return;
+      }
+      if (!window.confirm(
+        `Enable the authoritative backend Fiat switch for ${candidate.username ?? candidate.userId}?`,
+      )) return;
+      note = entered.trim();
+    }
     setPending(decision);
     try {
       await decidePerkCandidate({
         candidateId: candidate.id,
         decision,
-        note: null,
+        note,
         idempotencyKey: crypto.randomUUID(),
       });
       toast.success(
@@ -556,6 +848,15 @@ function CandidateRow({
       className="overflow-hidden rounded-xl border border-border/70 bg-card"
     >
       <div className="flex flex-wrap items-center gap-3 px-4 py-3">
+        {!decided && (
+          <input
+            type="checkbox"
+            checked={selected}
+            onChange={(event) => onSelectedChange(event.target.checked)}
+            aria-label={`Select ${candidate.username ?? candidate.userId}`}
+            className="size-4 rounded border-border"
+          />
+        )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className="truncate text-sm font-medium">
@@ -571,6 +872,23 @@ function CandidateRow({
             {candidate.countryCode && (
               <Badge variant="outline" className="text-[10px]">
                 {candidate.countryCode}
+              </Badge>
+            )}
+            {candidate.maxMindRiskScore !== null && (
+              <Badge variant="outline" className="text-[10px]">
+                MaxMind {candidate.maxMindRiskScore.toFixed(2)}
+              </Badge>
+            )}
+            {candidate.accessStatus && (
+              <Badge variant="outline" className={cn(
+                "text-[10px]",
+                candidate.accessStatus === "enabled"
+                  ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                  : candidate.accessStatus === "error"
+                    ? "border-rose-500/30 text-rose-700 dark:text-rose-400"
+                    : "text-muted-foreground",
+              )}>
+                access {candidate.accessStatus}
               </Badge>
             )}
             {decided && (
@@ -678,9 +996,122 @@ function CandidateRow({
                 : ""}
             </p>
           )}
+          {candidate.evidence.maxmind && (
+            <div className="mt-3 grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
+              <div>
+                <p className="text-xs font-medium">MaxMind Factors</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Overall {candidate.evidence.maxmind.riskScore?.toFixed(2) ?? "unknown"}
+                  {candidate.evidence.maxmind.ipRisk !== null
+                    ? ` · IP ${candidate.evidence.maxmind.ipRisk.toFixed(2)}`
+                    : ""}
+                  {candidate.evidence.maxmind.disposition
+                    ? ` · ${candidate.evidence.maxmind.disposition}`
+                    : ""}
+                </p>
+                {Object.keys(candidate.evidence.maxmind.factors).length > 0 && (
+                  <p className="mt-1 text-[11px] text-muted-foreground">
+                    {Object.entries(candidate.evidence.maxmind.factors)
+                      .map(([key, value]) => `${key.replaceAll("_", " ")} ${value}`)
+                      .join(" · ")}
+                  </p>
+                )}
+              </div>
+              <div>
+                <p className="text-xs font-medium">Risk reasons</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  {candidate.evidence.maxmind.reasons.length > 0
+                    ? candidate.evidence.maxmind.reasons
+                      .map((reason) => reason.code.replaceAll("_", " "))
+                      .join(" · ")
+                    : "No material MaxMind risk reason was returned."}
+                </p>
+              </div>
+            </div>
+          )}
         </div>
       </CollapsibleContent>
     </Collapsible>
+  );
+}
+
+function AccessBatchHistory({ batches }: { batches: FiatPerkAccessBatch[] }) {
+  if (batches.length === 0) return null;
+  return <AccessBatchHistoryContent batches={batches} />;
+}
+
+function AccessBatchHistoryContent({ batches }: { batches: FiatPerkAccessBatch[] }) {
+  const router = useRouter();
+  const [pending, setPending] = React.useState<string | null>(null);
+
+  async function retry(batch: FiatPerkAccessBatch) {
+    setPending(batch.id);
+    try {
+      await retryFiatAccessBatch({
+        batchId: batch.id,
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success("Retry queued for the failed access changes.");
+      router.refresh();
+    } catch (error) {
+      toast.error(errorMessage(error, "The access batch could not be retried."));
+    } finally {
+      setPending(null);
+    }
+  }
+
+  return (
+    <section className="space-y-3">
+      <SectionHeading icon={ShieldCheck} title="Backend access operations" />
+      <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/70 bg-card">
+        {batches.map((batch) => (
+          <div key={batch.id} className="flex flex-wrap items-center gap-3 px-4 py-2.5">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium capitalize">{batch.action} Fiat access</p>
+              <p className="text-xs text-muted-foreground">
+                {batch.succeededCount}/{batch.requestedCount} confirmed
+                {batch.failedCount > 0 ? ` · ${batch.failedCount} failed` : ""}
+                {batch.requestedByUsername ? ` · ${batch.requestedByUsername}` : ""}
+                {` · ${formatRelative(new Date(batch.createdAt))}`}
+              </p>
+              {batch.failures.length > 0 && (
+                <p className="mt-1 break-words font-mono text-[10px] text-rose-700 dark:text-rose-400">
+                  {batch.failures.map((failure) => (
+                    `${failure.userId}: ${failure.errorCode ?? "unknown_error"}`
+                  )).join(" · ")}
+                </p>
+              )}
+            </div>
+            <Badge variant="outline" className={cn(
+              "text-[10px]",
+              batch.status === "completed"
+                ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                : batch.status === "failed" || batch.status === "partial"
+                  ? "border-rose-500/30 text-rose-700 dark:text-rose-400"
+                  : "border-cyan-500/30 text-cyan-700 dark:text-cyan-400",
+            )}>
+              {(batch.status === "queued" || batch.status === "running") && (
+                <Loader2 className="size-3 animate-spin" aria-hidden />
+              )}
+              {batch.status}
+            </Badge>
+            {(batch.status === "failed" || batch.status === "partial") && (
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={pending !== null}
+                onClick={() => retry(batch)}
+              >
+                {pending === batch.id && (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                )}
+                Retry failed
+              </Button>
+            )}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -693,6 +1124,8 @@ function GrantList({
 }) {
   const router = useRouter();
   const [pendingUser, setPendingUser] = React.useState<string | null>(null);
+  const [selected, setSelected] = React.useState<Set<string>>(new Set());
+  const [batchPending, setBatchPending] = React.useState(false);
 
   async function revoke(grant: FiatPerkGrant) {
     if (pendingUser || disabled) return;
@@ -722,6 +1155,69 @@ function GrantList({
     }
   }
 
+  async function disableSelected() {
+    if (selected.size === 0 || batchPending || disabled) return;
+    const reason = window.prompt(
+      `Why is Fiat access being disabled for ${selected.size} account(s)?`,
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 4) {
+      toast.error("Give a reason of at least 4 characters.");
+      return;
+    }
+    if (!window.confirm(
+      `Disable backend Fiat access for ${selected.size} account(s)?`,
+    )) return;
+    setBatchPending(true);
+    try {
+      const batch = await changeFiatAccessBatch({
+        action: "disable",
+        candidateIds: [],
+        userIds: [...selected],
+        note: reason.trim(),
+        filterSnapshot: { source: "live_grants" },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success(`Queued ${batch.requestedCount} Fiat access removals.`);
+      setSelected(new Set());
+      router.refresh();
+    } catch (error) {
+      toast.error(errorMessage(error, "The disable batch could not be queued."));
+    } finally {
+      setBatchPending(false);
+    }
+  }
+
+  async function enableSelectedGrants() {
+    if (selected.size === 0 || batchPending || disabled) return;
+    const reason = window.prompt(
+      `Reason for confirming Fiat access for ${selected.size} existing grant(s):`,
+    );
+    if (reason === null) return;
+    if (reason.trim().length < 4) {
+      toast.error("Give a reason of at least 4 characters.");
+      return;
+    }
+    setBatchPending(true);
+    try {
+      const batch = await changeFiatAccessBatch({
+        action: "enable",
+        candidateIds: [],
+        userIds: [...selected],
+        note: reason.trim(),
+        filterSnapshot: { source: "existing_grants" },
+        idempotencyKey: crypto.randomUUID(),
+      });
+      toast.success(`Queued ${batch.requestedCount} grant confirmations.`);
+      setSelected(new Set());
+      router.refresh();
+    } catch (error) {
+      toast.error(errorMessage(error, "The enable batch could not be queued."));
+    } finally {
+      setBatchPending(false);
+    }
+  }
+
   return (
     <section className="space-y-3">
       <SectionHeading
@@ -735,6 +1231,45 @@ function GrantList({
           </>
         }
       />
+      {grants.length > 0 && (
+        <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border/70 bg-card px-4 py-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={grants.every((grant) => selected.has(grant.userId))}
+              onChange={() => setSelected(
+                grants.every((grant) => selected.has(grant.userId))
+                  ? new Set()
+                  : new Set(grants.map((grant) => grant.userId)),
+              )}
+              className="size-4 rounded border-border"
+            />
+            Select all visible live grants
+          </label>
+          <Button
+            className="ml-auto"
+            size="sm"
+            disabled={selected.size === 0 || batchPending || disabled}
+            onClick={enableSelectedGrants}
+          >
+            {batchPending
+              ? <Loader2 className="size-4 animate-spin" aria-hidden />
+              : <ShieldCheck className="size-4" aria-hidden />}
+            Confirm enabled ({selected.size})
+          </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            disabled={selected.size === 0 || batchPending || disabled}
+            onClick={disableSelected}
+          >
+            {batchPending
+              ? <Loader2 className="size-4 animate-spin" aria-hidden />
+              : <ShieldOff className="size-4" aria-hidden />}
+            Disable selected ({selected.size})
+          </Button>
+        </div>
+      )}
       {grants.length === 0
         ? (
           <p className="rounded-xl border border-border/70 bg-card px-4 py-8 text-center text-sm text-muted-foreground">
@@ -748,6 +1283,18 @@ function GrantList({
                 key={grant.userId}
                 className="flex flex-wrap items-center gap-3 px-4 py-2.5"
               >
+                <input
+                  type="checkbox"
+                  checked={selected.has(grant.userId)}
+                  onChange={(event) => setSelected((current) => {
+                    const next = new Set(current);
+                    if (event.target.checked) next.add(grant.userId);
+                    else next.delete(grant.userId);
+                    return next;
+                  })}
+                  aria-label={`Select ${grant.username ?? grant.userId}`}
+                  className="size-4 rounded border-border"
+                />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-sm font-medium">
                     {grant.username ?? grant.userId}
@@ -762,6 +1309,19 @@ function GrantList({
                       : ""}
                   </p>
                 </div>
+                <Badge
+                  variant="outline"
+                  className={cn(
+                    "text-[10px]",
+                    grant.accessStatus === "enabled"
+                      ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+                      : grant.accessStatus === "error"
+                        ? "border-rose-500/30 text-rose-700 dark:text-rose-400"
+                        : "text-muted-foreground",
+                  )}
+                >
+                  backend {grant.accessStatus}
+                </Badge>
                 <Button
                   size="sm"
                   variant="outline"

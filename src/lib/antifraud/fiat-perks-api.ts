@@ -5,9 +5,11 @@ import { z } from "zod";
 import { getExcludedUserIdsStrict } from "@/lib/excluded-users/fetch";
 import {
   perkCandidateSchema,
+  perkAccessBatchSchema,
   perkGrantSchema,
   perkRunSchema,
   type FiatPerkCandidate,
+  type FiatPerkAccessBatch,
   type FiatPerkGrant,
   type FiatPerkRun,
   type FiatPerkScope,
@@ -31,6 +33,7 @@ export {
 } from "./fiat-perks-contract";
 export type {
   FiatPerkCandidate,
+  FiatPerkAccessBatch,
   FiatPerkCheck,
   FiatPerkEvidence,
   FiatPerkGrant,
@@ -130,12 +133,48 @@ export function listFiatPerkCandidates(input: {
   runId: string;
   verdict?: "pass" | "review" | "fail";
   decision?: "pending" | "approved" | "declined";
+  accessStatus?: "none" | "unknown" | "syncing" | "enabled" | "disabled" | "error";
+  countryCode?: string;
+  minRiskScore?: number;
+  maxRiskScore?: number;
+  maxMindStatus?: "success" | "failed" | "skipped" | "not_checked";
+  minMaxMindRisk?: number;
+  maxMaxMindRisk?: number;
+  maxMindDisposition?: "accept" | "reject" | "manual_review" | "test";
+  providerChecked?: boolean;
+  minAccountAgeDays?: number;
+  maxAccountAgeDays?: number;
+  blockingReason?: string;
+  minCryptoDepositUsd?: number;
+  minFiatDepositUsd?: number;
+  minWagerUsd?: number;
+  maxRewardUsd?: number;
   search?: string;
   limit?: number;
 }) {
   const params = new URLSearchParams();
   if (input.verdict) params.set("verdict", input.verdict);
   if (input.decision) params.set("decision", input.decision);
+  for (const [key, value] of Object.entries({
+    accessStatus: input.accessStatus,
+    countryCode: input.countryCode,
+    minRiskScore: input.minRiskScore,
+    maxRiskScore: input.maxRiskScore,
+    maxMindStatus: input.maxMindStatus,
+    minMaxMindRisk: input.minMaxMindRisk,
+    maxMaxMindRisk: input.maxMaxMindRisk,
+    maxMindDisposition: input.maxMindDisposition,
+    providerChecked: input.providerChecked,
+    minAccountAgeDays: input.minAccountAgeDays,
+    maxAccountAgeDays: input.maxAccountAgeDays,
+    blockingReason: input.blockingReason,
+    minCryptoDepositUsd: input.minCryptoDepositUsd,
+    minFiatDepositUsd: input.minFiatDepositUsd,
+    minWagerUsd: input.minWagerUsd,
+    maxRewardUsd: input.maxRewardUsd,
+  })) {
+    if (value !== undefined) params.set(key, String(value));
+  }
   if (input.search) params.set("search", input.search);
   params.set("limit", String(input.limit ?? 200));
   return read(
@@ -197,6 +236,7 @@ export async function startFiatPerkRun(
     countryCode: string | null;
     activeWithinDays: number;
     excludeGranted: boolean;
+    selectedUserIds: string[];
   },
 ): Promise<FiatPerkRun> {
   // Accounts the panel already treats as invisible must never be screened into
@@ -214,6 +254,7 @@ export async function startFiatPerkRun(
         countryCode: input.countryCode,
         activeWithinDays: input.activeWithinDays,
         excludeGranted: input.excludeGranted,
+        selectedUserIds: input.selectedUserIds,
         excludedUserIds,
         idempotencyKey: input.idempotencyKey,
         actorId: input.actorId,
@@ -224,6 +265,64 @@ export async function startFiatPerkRun(
   );
   if (!response.ok) throw new Error(await mutationError(response));
   return z.object({ data: perkRunSchema }).parse(await response.json()).data;
+}
+
+export function listFiatPerkAccessBatches(limit = 20) {
+  return read(
+    `/v1/fiat-perks/access-batches?limit=${limit}`,
+    z.array(perkAccessBatchSchema),
+    [] as FiatPerkAccessBatch[],
+    "access batches",
+  );
+}
+
+export async function createFiatPerkAccessBatch(
+  input: MutationActor & {
+    action: "enable" | "disable";
+    candidateIds?: string[];
+    userIds?: string[];
+    note: string | null;
+    filterSnapshot?: Record<string, unknown>;
+  },
+): Promise<FiatPerkAccessBatch> {
+  const response = await request(
+    "/v1/fiat-perks/access-batches",
+    {
+      method: "POST",
+      body: JSON.stringify({
+        action: input.action,
+        candidateIds: input.candidateIds ?? [],
+        userIds: input.userIds ?? [],
+        note: input.note ?? undefined,
+        filterSnapshot: input.filterSnapshot ?? {},
+        idempotencyKey: input.idempotencyKey,
+        actorId: input.actorId,
+        actorUsername: input.actorUsername ?? undefined,
+      }),
+    },
+    { admin: true, timeoutMs: RUN_START_TIMEOUT_MS },
+  );
+  if (!response.ok) throw new Error(await mutationError(response));
+  return z.object({ data: perkAccessBatchSchema }).parse(await response.json()).data;
+}
+
+export async function retryFiatPerkAccessBatch(
+  input: MutationActor & { batchId: string },
+): Promise<FiatPerkAccessBatch> {
+  const response = await request(
+    `/v1/fiat-perks/access-batches/${encodeURIComponent(input.batchId)}/retry`,
+    {
+      method: "POST",
+      body: JSON.stringify({
+        idempotencyKey: input.idempotencyKey,
+        actorId: input.actorId,
+        actorUsername: input.actorUsername ?? undefined,
+      }),
+    },
+    { admin: true, timeoutMs: RUN_START_TIMEOUT_MS },
+  );
+  if (!response.ok) throw new Error(await mutationError(response));
+  return z.object({ data: perkAccessBatchSchema }).parse(await response.json()).data;
 }
 
 export async function decideFiatPerkCandidate(
@@ -245,7 +344,7 @@ export async function decideFiatPerkCandidate(
         actorUsername: input.actorUsername ?? undefined,
       }),
     },
-    { admin: true },
+    { admin: true, timeoutMs: RUN_START_TIMEOUT_MS },
   );
   if (!response.ok) throw new Error(await mutationError(response));
   return z.object({ data: perkCandidateSchema }).parse(await response.json()).data;
@@ -265,7 +364,7 @@ export async function revokeFiatPerkGrant(
         actorUsername: input.actorUsername ?? undefined,
       }),
     },
-    { admin: true },
+    { admin: true, timeoutMs: RUN_START_TIMEOUT_MS },
   );
   if (!response.ok) throw new Error(await mutationError(response));
   return z.object({ data: perkGrantSchema }).parse(await response.json()).data;

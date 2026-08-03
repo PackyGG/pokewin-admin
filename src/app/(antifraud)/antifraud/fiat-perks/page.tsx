@@ -12,6 +12,7 @@ import {
 } from "@/components/modern-panels";
 import {
   listFiatPerkCandidates,
+  listFiatPerkAccessBatches,
   listFiatPerkGrants,
   listFiatPerkRuns,
   type FiatPerkCandidate,
@@ -26,7 +27,31 @@ type SearchParams = {
   verdict?: string;
   decision?: string;
   q?: string;
+  access?: string;
+  country?: string;
+  riskMin?: string;
+  riskMax?: string;
+  mmStatus?: string;
+  mmMin?: string;
+  mmMax?: string;
+  mmAction?: string;
+  providers?: string;
+  ageMin?: string;
+  ageMax?: string;
+  reason?: string;
+  cryptoMin?: string;
+  fiatMin?: string;
+  wagerMin?: string;
+  rewardMax?: string;
 };
+
+function numberParam(value: string | undefined, max = 1_000_000_000) {
+  if (value === undefined || value.trim() === "") return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 && parsed <= max
+    ? parsed
+    : undefined;
+}
 
 function verdictParam(value: string | undefined) {
   return value === "pass" || value === "review" || value === "fail"
@@ -47,12 +72,43 @@ async function Content({ params }: { params: SearchParams }) {
     ? params.run
     : runs.data[0]?.id;
 
-  const [candidates, grants] = await Promise.all([
+  const [candidates, grants, accessBatches] = await Promise.all([
     selectedRunId
       ? listFiatPerkCandidates({
         runId: selectedRunId,
         verdict: verdictParam(params.verdict),
         decision: decisionParam(params.decision),
+        accessStatus: ["none", "unknown", "syncing", "enabled", "disabled", "error"]
+          .includes(params.access ?? "")
+          ? params.access as "none" | "unknown" | "syncing" | "enabled" | "disabled" | "error"
+          : undefined,
+        countryCode: /^[A-Za-z]{2}$/.test(params.country ?? "")
+          ? params.country
+          : undefined,
+        minRiskScore: numberParam(params.riskMin, 100),
+        maxRiskScore: numberParam(params.riskMax, 100),
+        maxMindStatus: ["success", "failed", "skipped", "not_checked"]
+          .includes(params.mmStatus ?? "")
+          ? params.mmStatus as "success" | "failed" | "skipped" | "not_checked"
+          : undefined,
+        minMaxMindRisk: numberParam(params.mmMin, 100),
+        maxMaxMindRisk: numberParam(params.mmMax, 100),
+        maxMindDisposition: ["accept", "reject", "manual_review", "test"]
+          .includes(params.mmAction ?? "")
+          ? params.mmAction as "accept" | "reject" | "manual_review" | "test"
+          : undefined,
+        providerChecked: params.providers === "yes"
+          ? true
+          : params.providers === "no"
+            ? false
+            : undefined,
+        minAccountAgeDays: numberParam(params.ageMin, 36500),
+        maxAccountAgeDays: numberParam(params.ageMax, 36500),
+        blockingReason: params.reason?.trim() || undefined,
+        minCryptoDepositUsd: numberParam(params.cryptoMin),
+        minFiatDepositUsd: numberParam(params.fiatMin),
+        minWagerUsd: numberParam(params.wagerMin),
+        maxRewardUsd: numberParam(params.rewardMax),
         search: params.q?.trim() || undefined,
       })
       : Promise.resolve({
@@ -61,21 +117,23 @@ async function Content({ params }: { params: SearchParams }) {
         data: [] as FiatPerkCandidate[],
       }),
     listFiatPerkGrants({ status: "granted" }),
+    listFiatPerkAccessBatches(10),
   ]);
 
   const selectedRun = runs.data.find((run) => run.id === selectedRunId) ?? null;
   const unavailable = !runs.configured
     || runs.error
     || candidates.error
-    || grants.error;
+    || grants.error
+    || accessBatches.error;
 
   return (
     <>
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
         <KpiTile
           label="Live perks"
-          value={String(grants.data.length)}
-          sub="accounts allowed on cards"
+          value={String(grants.data.filter((grant) => grant.accessStatus === "enabled").length)}
+          sub="backend-confirmed access"
           icon={BadgeCheck}
           accent="emerald"
         />
@@ -115,10 +173,27 @@ async function Content({ params }: { params: SearchParams }) {
         selectedRunId={selectedRunId ?? null}
         candidates={candidates.data}
         grants={grants.data}
+        accessBatches={accessBatches.data}
         filters={{
           verdict: verdictParam(params.verdict) ?? null,
           decision: decisionParam(params.decision) ?? null,
           search: params.q ?? "",
+          access: params.access ?? "",
+          country: params.country ?? "",
+          riskMin: params.riskMin ?? "",
+          riskMax: params.riskMax ?? "",
+          mmStatus: params.mmStatus ?? "",
+          mmMin: params.mmMin ?? "",
+          mmMax: params.mmMax ?? "",
+          mmAction: params.mmAction ?? "",
+          providers: params.providers ?? "",
+          ageMin: params.ageMin ?? "",
+          ageMax: params.ageMax ?? "",
+          reason: params.reason ?? "",
+          cryptoMin: params.cryptoMin ?? "",
+          fiatMin: params.fiatMin ?? "",
+          wagerMin: params.wagerMin ?? "",
+          rewardMax: params.rewardMax ?? "",
         }}
         readOnly={!runs.configured}
       />
@@ -153,7 +228,7 @@ export default async function FiatPerksPage({
       <Suspense
         key={`${params.run ?? "latest"}-${params.verdict ?? "all"}-${
           params.decision ?? "all"
-        }-${params.q ?? ""}`}
+        }-${JSON.stringify(params)}`}
         fallback={<Fallback />}
       >
         <Content params={params} />

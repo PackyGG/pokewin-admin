@@ -2,6 +2,7 @@ import type pg from "pg";
 
 import type { Databases } from "./db.js";
 import { canonicalIp, type EnrichmentService } from "./enrichment.js";
+import type { FiatPerkAccessService } from "./fiat-perk-access.js";
 import {
   domainFromEmail,
   suspiciousGmailDotPattern,
@@ -9,6 +10,7 @@ import {
 import {
   DEFAULT_MIN_ACCOUNT_AGE_DAYS,
   evaluateFiatPerkCandidate,
+  perkMaxMindEvidence,
   perkAccountAgeDays,
   type FiatPerkBehaviour,
   type FiatPerkBlocklistHit,
@@ -40,6 +42,7 @@ import type { Signup } from "./types.js";
 
 export const FIAT_PERK_SCOPES = [
   "all",
+  "selected_accounts",
   "crypto_depositors",
   "prior_fiat",
   "active_players",
@@ -90,6 +93,7 @@ export type FiatPerkRunRequest = {
   activeWithinDays: number;
   excludeGranted: boolean;
   excludedUserIds: readonly string[];
+  selectedUserIds: readonly string[];
   idempotencyKey: string;
   actorId: string;
   actorUsername: string | null;
@@ -130,12 +134,18 @@ export type FiatPerkCandidate = {
   checks: unknown;
   evidence: unknown;
   providerChecked: boolean;
+  maxMindStatus: "success" | "failed" | "skipped" | "not_checked";
+  maxMindRiskScore: number | null;
+  maxMindIpRisk: number | null;
+  maxMindDisposition: string | null;
+  maxMindReasonCodes: string[];
   decision: "pending" | "approved" | "declined";
   decidedBy: string | null;
   decidedByUsername: string | null;
   decidedAt: string | null;
   decisionNote: string | null;
   grantStatus: "granted" | "revoked" | null;
+  accessStatus: "unknown" | "syncing" | "enabled" | "disabled" | "error" | null;
   createdAt: string;
 };
 
@@ -151,6 +161,9 @@ export type FiatPerkGrant = {
   revokedByUsername: string | null;
   revokedAt: string | null;
   revokedReason: string | null;
+  accessStatus: "unknown" | "syncing" | "enabled" | "disabled" | "error";
+  accessErrorCode: string | null;
+  accessConfirmedAt: string | null;
   updatedAt: string;
 };
 
@@ -222,6 +235,10 @@ function usdNumber(value: string | number | null | undefined): number {
 
 export function scopeLabel(request: FiatPerkRunRequest): string {
   switch (request.scope) {
+    case "selected_accounts":
+      return `${request.selectedUserIds.length} selected account${
+        request.selectedUserIds.length === 1 ? "" : "s"
+      }`;
     case "crypto_depositors":
       return "Accounts with crypto deposits";
     case "prior_fiat":
@@ -263,6 +280,10 @@ async function selectScopeUserIds(
   }
 
   switch (request.scope) {
+    case "selected_accounts":
+      values.push([...request.selectedUserIds]);
+      conditions.push(`u.id = ANY($${values.length}::text[])`);
+      break;
     case "crypto_depositors":
       conditions.push(`EXISTS (
         SELECT 1 FROM ledger_transactions lt
@@ -776,6 +797,7 @@ export class FiatPerkService {
     private readonly db: Databases,
     private readonly enrichment: EnrichmentService,
     private readonly scoreWeights: ScoreWeightStore,
+    private readonly access: FiatPerkAccessService,
   ) {}
 
   /**
@@ -809,6 +831,7 @@ export class FiatPerkService {
       countryCode: request.countryCode,
       activeWithinDays: request.activeWithinDays,
       excludeGranted: request.excludeGranted,
+      selectedUserCount: request.selectedUserIds.length,
     };
     const inserted = await this.db.antifraud.query<{ id: string }>(
       `
@@ -926,7 +949,9 @@ export class FiatPerkService {
             return { row, evaluation: dataOnly, providerChecked: false };
           }
           const providerSubject = providerSubjectFrom(row);
-          const cacheKey = `${providerSubject.fingerprint_request_id ?? "-"}|${
+          // MaxMind includes account/email context, so provider evidence is
+          // account-specific even when two accounts share an IP or device.
+          const cacheKey = `${row.id}|${providerSubject.fingerprint_request_id ?? "-"}|${
             providerSubject.signup_ip ?? "-"
           }`;
           let bundle = providerCache.get(cacheKey);
@@ -948,6 +973,7 @@ export class FiatPerkService {
               providersChecked: true,
             }),
             providerChecked: true,
+            providers,
           };
         },
       );
@@ -974,22 +1000,26 @@ export class FiatPerkService {
       row: SubjectRow;
       evaluation: FiatPerkEvaluation;
       providerChecked: boolean;
+      providers?: Awaited<ReturnType<typeof loadProviderBundle>>;
     }[],
   ): Promise<void> {
     if (evaluated.length === 0) return;
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
-      for (const { row, evaluation, providerChecked } of evaluated) {
+      for (const { row, evaluation, providerChecked, providers = [] } of evaluated) {
+        const maxmind = perkMaxMindEvidence(providers);
         await client.query(
           `
             INSERT INTO fiat_perk_candidates (
               run_id, user_id, username, email, avatar_url, country_code,
               account_age_days, verdict, risk_score, blocking_reasons,
-              checks, evidence, provider_checked
+              checks, evidence, provider_checked, maxmind_status,
+              maxmind_risk_score, maxmind_ip_risk, maxmind_disposition,
+              maxmind_reason_codes
             ) VALUES (
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[],
-              $11::jsonb, $12::jsonb, $13
+              $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18::text[]
             )
             ON CONFLICT (run_id, user_id) DO NOTHING
           `,
@@ -1012,8 +1042,14 @@ export class FiatPerkService {
                 ?? canonicalIp(row.signup_ip)
                 ?? null,
               visitorId: row.visitor_id,
+              maxmind,
             }),
             providerChecked,
+            maxmind.status,
+            maxmind.riskScore,
+            maxmind.ipRisk,
+            maxmind.disposition,
+            maxmind.reasons.map((reason) => reason.code),
           ],
         );
       }
@@ -1078,6 +1114,22 @@ export class FiatPerkService {
     runId: string;
     verdict?: "pass" | "review" | "fail";
     decision?: "pending" | "approved" | "declined";
+    accessStatus?: "none" | "unknown" | "syncing" | "enabled" | "disabled" | "error";
+    countryCode?: string;
+    minRiskScore?: number;
+    maxRiskScore?: number;
+    maxMindStatus?: "success" | "failed" | "skipped" | "not_checked";
+    minMaxMindRisk?: number;
+    maxMaxMindRisk?: number;
+    maxMindDisposition?: string;
+    providerChecked?: boolean;
+    minAccountAgeDays?: number;
+    maxAccountAgeDays?: number;
+    blockingReason?: string;
+    minCryptoDepositUsd?: number;
+    minFiatDepositUsd?: number;
+    minWagerUsd?: number;
+    maxRewardUsd?: number;
     search?: string;
     limit: number;
   }): Promise<FiatPerkCandidate[]> {
@@ -1090,6 +1142,50 @@ export class FiatPerkService {
     if (input.decision) {
       values.push(input.decision);
       conditions.push(`c.decision = $${values.length}`);
+    }
+    if (input.accessStatus) {
+      if (input.accessStatus === "none") {
+        conditions.push("g.user_id IS NULL");
+      } else {
+        values.push(input.accessStatus);
+        conditions.push(`g.access_status = $${values.length}`);
+      }
+    }
+    if (input.countryCode) {
+      values.push(input.countryCode.toUpperCase());
+      conditions.push(`upper(COALESCE(c.country_code,'')) = $${values.length}`);
+    }
+    for (const [value, expression, operator] of [
+      [input.minRiskScore, "c.risk_score", ">="],
+      [input.maxRiskScore, "c.risk_score", "<="],
+      [input.minMaxMindRisk, "c.maxmind_risk_score", ">="],
+      [input.maxMaxMindRisk, "c.maxmind_risk_score", "<="],
+      [input.minAccountAgeDays, "c.account_age_days", ">="],
+      [input.maxAccountAgeDays, "c.account_age_days", "<="],
+      [input.minCryptoDepositUsd, "COALESCE((c.evidence #>> '{behaviour,cryptoDepositUsd}')::numeric,0)", ">="],
+      [input.minFiatDepositUsd, "COALESCE((c.evidence #>> '{behaviour,fiatDepositUsd}')::numeric,0)", ">="],
+      [input.minWagerUsd, "COALESCE((c.evidence #>> '{behaviour,wagerUsd}')::numeric,0)", ">="],
+      [input.maxRewardUsd, "COALESCE((c.evidence #>> '{behaviour,rewardUsd}')::numeric,0)", "<="],
+    ] as const) {
+      if (value === undefined) continue;
+      values.push(value);
+      conditions.push(`${expression} ${operator} $${values.length}`);
+    }
+    if (input.maxMindStatus) {
+      values.push(input.maxMindStatus);
+      conditions.push(`c.maxmind_status = $${values.length}`);
+    }
+    if (input.maxMindDisposition) {
+      values.push(input.maxMindDisposition);
+      conditions.push(`c.maxmind_disposition = $${values.length}`);
+    }
+    if (input.providerChecked !== undefined) {
+      values.push(input.providerChecked);
+      conditions.push(`c.provider_checked = $${values.length}`);
+    }
+    if (input.blockingReason) {
+      values.push(input.blockingReason);
+      conditions.push(`$${values.length} = ANY(c.blocking_reasons)`);
     }
     if (input.search) {
       values.push(`%${input.search.toLowerCase()}%`);
@@ -1128,6 +1224,24 @@ export class FiatPerkService {
     actorId: string;
     actorUsername: string | null;
   }): Promise<FiatPerkCandidate> {
+    if (input.decision === "approved") {
+      const batch = await this.access.queueEnable({
+        candidateIds: [input.candidateId],
+        note: input.note,
+        idempotencyKey: input.idempotencyKey,
+        actorId: input.actorId,
+        actorUsername: input.actorUsername,
+        background: false,
+      });
+      if (batch.status !== "completed") {
+        throw new PerkDecisionConflictError(
+          "The backend did not confirm Fiat access. The account remains unchanged.",
+        );
+      }
+      const current = await this.getCandidate(input.candidateId);
+      if (!current) throw new PerkCandidateNotFoundError();
+      return current;
+    }
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
@@ -1207,42 +1321,6 @@ export class FiatPerkService {
         ],
       );
 
-      if (input.decision === "approved") {
-        await client.query(
-          `
-            INSERT INTO fiat_perk_grants (
-              user_id, status, candidate_id, run_id, username, risk_score,
-              granted_by, granted_by_username, granted_at, granted_note
-            ) VALUES ($1, 'granted', $2, $3, $4, $5, $6, $7, now(), $8)
-            ON CONFLICT (user_id) DO UPDATE SET
-              status = 'granted',
-              candidate_id = EXCLUDED.candidate_id,
-              run_id = EXCLUDED.run_id,
-              username = EXCLUDED.username,
-              risk_score = EXCLUDED.risk_score,
-              granted_by = EXCLUDED.granted_by,
-              granted_by_username = EXCLUDED.granted_by_username,
-              granted_at = now(),
-              granted_note = EXCLUDED.granted_note,
-              revoked_by = NULL,
-              revoked_by_username = NULL,
-              revoked_at = NULL,
-              revoked_reason = NULL,
-              updated_at = now()
-          `,
-          [
-            candidate.user_id,
-            candidate.id,
-            candidate.run_id,
-            candidate.username,
-            candidate.risk_score,
-            input.actorId,
-            input.actorUsername,
-            input.note,
-          ],
-        );
-      }
-
       await client.query(
         `
           INSERT INTO fiat_perk_audit (
@@ -1286,76 +1364,22 @@ export class FiatPerkService {
     actorId: string;
     actorUsername: string | null;
   }): Promise<FiatPerkGrant> {
-    const client = await this.db.antifraud.connect();
-    try {
-      await client.query("BEGIN");
-      const prior = await client.query<{ user_id: string; action: string }>(
-        `
-          SELECT user_id, action FROM fiat_perk_audit
-          WHERE idempotency_key = $1
-        `,
-        [input.idempotencyKey],
+    const batch = await this.access.queueDisable({
+      userIds: [input.userId],
+      note: input.reason,
+      idempotencyKey: input.idempotencyKey,
+      actorId: input.actorId,
+      actorUsername: input.actorUsername,
+      background: false,
+    });
+    if (batch.status !== "completed") {
+      throw new PerkDecisionConflictError(
+        "The backend did not confirm that Fiat access was disabled.",
       );
-      const seen = prior.rows[0];
-      if (seen) {
-        await client.query("ROLLBACK");
-        if (seen.user_id !== input.userId || seen.action !== "revoked") {
-          throw new PerkDecisionConflictError(
-            "That retry key was already used for a different change.",
-          );
-        }
-        const current = await this.getGrant(input.userId);
-        if (!current) throw new PerkCandidateNotFoundError();
-        return current;
-      }
-
-      const updated = await client.query(
-        `
-          UPDATE fiat_perk_grants
-          SET status = 'revoked',
-              revoked_by = $2,
-              revoked_by_username = $3,
-              revoked_at = now(),
-              revoked_reason = $4,
-              updated_at = now()
-          WHERE user_id = $1 AND status = 'granted'
-        `,
-        [input.userId, input.actorId, input.actorUsername, input.reason],
-      );
-      if ((updated.rowCount ?? 0) === 0) {
-        await client.query("ROLLBACK");
-        throw new PerkDecisionConflictError(
-          "That account does not hold a live Fiat perk.",
-        );
-      }
-
-      await client.query(
-        `
-          INSERT INTO fiat_perk_audit (
-            user_id, action, actor_id, actor_username, note, idempotency_key,
-            after_state
-          ) VALUES ($1, 'revoked', $2, $3, $4, $5, $6::jsonb)
-        `,
-        [
-          input.userId,
-          input.actorId,
-          input.actorUsername,
-          input.reason,
-          input.idempotencyKey,
-          JSON.stringify({ status: "revoked" }),
-        ],
-      );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
     }
-
-    const grant = await this.getGrant(input.userId);
-    if (!grant) throw new PerkCandidateNotFoundError();
-    return grant;
+    const current = await this.getGrant(input.userId);
+    if (!current) throw new PerkCandidateNotFoundError();
+    return current;
   }
 
   async getCandidate(candidateId: string): Promise<FiatPerkCandidate | null> {
@@ -1425,6 +1449,7 @@ async function loadProviderBundle(
     enrichment.proxycheck(subject, weights, "signup"),
     enrichment.abstractIpCheck(subject, weights),
     enrichment.opportifyCheck(subject, weights),
+    enrichment.maxmindCheck(subject),
   ]);
 }
 
@@ -1500,12 +1525,18 @@ type CandidateRow = {
   checks: unknown;
   evidence: unknown;
   provider_checked: boolean;
+  maxmind_status: "success" | "failed" | "skipped" | "not_checked";
+  maxmind_risk_score: string | null;
+  maxmind_ip_risk: string | null;
+  maxmind_disposition: string | null;
+  maxmind_reason_codes: string[];
   decision: "pending" | "approved" | "declined";
   decided_by: string | null;
   decided_by_username: string | null;
   decided_at: Date | null;
   decision_note: string | null;
   grant_status: "granted" | "revoked" | null;
+  access_status: "unknown" | "syncing" | "enabled" | "disabled" | "error" | null;
   created_at: Date;
 };
 
@@ -1514,8 +1545,10 @@ const CANDIDATE_SELECT = `
     c.id, c.run_id, c.user_id, c.username, c.email, c.avatar_url,
     c.country_code, c.account_age_days, c.verdict, c.risk_score,
     c.blocking_reasons, c.checks, c.evidence, c.provider_checked, c.decision,
+    c.maxmind_status, c.maxmind_risk_score, c.maxmind_ip_risk,
+    c.maxmind_disposition, c.maxmind_reason_codes,
     c.decided_by, c.decided_by_username, c.decided_at, c.decision_note,
-    c.created_at, g.status AS grant_status
+    c.created_at, g.status AS grant_status, g.access_status
   FROM fiat_perk_candidates c
   LEFT JOIN fiat_perk_grants g ON g.user_id = c.user_id
 `;
@@ -1536,12 +1569,22 @@ function serializeCandidate(row: CandidateRow): FiatPerkCandidate {
     checks: row.checks,
     evidence: row.evidence,
     providerChecked: row.provider_checked,
+    maxMindStatus: row.maxmind_status,
+    maxMindRiskScore: row.maxmind_risk_score === null
+      ? null
+      : Number(row.maxmind_risk_score),
+    maxMindIpRisk: row.maxmind_ip_risk === null
+      ? null
+      : Number(row.maxmind_ip_risk),
+    maxMindDisposition: row.maxmind_disposition,
+    maxMindReasonCodes: row.maxmind_reason_codes ?? [],
     decision: row.decision,
     decidedBy: row.decided_by,
     decidedByUsername: row.decided_by_username,
     decidedAt: row.decided_at?.toISOString() ?? null,
     decisionNote: row.decision_note,
     grantStatus: row.grant_status,
+    accessStatus: row.access_status,
     createdAt: row.created_at.toISOString(),
   };
 }
@@ -1558,6 +1601,9 @@ type GrantRow = {
   revoked_by_username: string | null;
   revoked_at: Date | null;
   revoked_reason: string | null;
+  access_status: "unknown" | "syncing" | "enabled" | "disabled" | "error";
+  access_error_code: string | null;
+  access_confirmed_at: Date | null;
   updated_at: Date;
 };
 
@@ -1565,7 +1611,8 @@ const GRANT_SELECT = `
   SELECT
     g.user_id, g.username, g.status, g.risk_score, g.granted_by,
     g.granted_by_username, g.granted_at, g.revoked_by, g.revoked_by_username,
-    g.revoked_at, g.revoked_reason, g.updated_at
+    g.revoked_at, g.revoked_reason, g.access_status, g.access_error_code,
+    g.access_confirmed_at, g.updated_at
   FROM fiat_perk_grants g
 `;
 
@@ -1582,6 +1629,9 @@ function serializeGrant(row: GrantRow): FiatPerkGrant {
     revokedByUsername: row.revoked_by_username,
     revokedAt: row.revoked_at?.toISOString() ?? null,
     revokedReason: row.revoked_reason,
+    accessStatus: row.access_status,
+    accessErrorCode: row.access_error_code,
+    accessConfirmedAt: row.access_confirmed_at?.toISOString() ?? null,
     updatedAt: row.updated_at.toISOString(),
   };
 }

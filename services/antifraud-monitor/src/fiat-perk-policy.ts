@@ -40,7 +40,8 @@ export type FiatPerkCheckCategory =
   | "network"
   | "device"
   | "behaviour"
-  | "history";
+  | "history"
+  | "maxmind";
 
 export type FiatPerkCheck = {
   key: string;
@@ -129,6 +130,92 @@ export type FiatPerkEvaluation = {
   checks: FiatPerkCheck[];
   blockingReasons: string[];
 };
+
+export type FiatPerkMaxMindReason = {
+  code: string;
+  reason: string | null;
+  multiplier: number | null;
+};
+
+export type FiatPerkMaxMindEvidence = {
+  status: "success" | "failed" | "skipped" | "not_checked";
+  riskScore: number | null;
+  ipRisk: number | null;
+  disposition: string | null;
+  reasons: FiatPerkMaxMindReason[];
+  factors: Record<string, number>;
+  warnings: string[];
+};
+
+function record(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function finiteNumber(value: unknown): number | null {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function text(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+/** Normalise the additive MaxMind response into stable, filterable evidence. */
+export function perkMaxMindEvidence(
+  providers: readonly EnrichmentResult[],
+): FiatPerkMaxMindEvidence {
+  const provider = providers.find((entry) => entry.provider === "maxmind");
+  if (!provider) {
+    return {
+      status: "not_checked",
+      riskScore: null,
+      ipRisk: null,
+      disposition: null,
+      reasons: [],
+      factors: {},
+      warnings: [],
+    };
+  }
+  const response = record(provider.response);
+  const ip = record(response.ip_address);
+  const disposition = record(response.disposition);
+  const subscores = record(response.subscores);
+  const factors = Object.fromEntries(
+    Object.entries(subscores)
+      .map(([key, value]) => [key, finiteNumber(value)] as const)
+      .filter((entry): entry is readonly [string, number] => entry[1] !== null),
+  );
+  const reasons = (Array.isArray(response.risk_score_reasons)
+    ? response.risk_score_reasons
+    : []).flatMap((group) => {
+      const node = record(group);
+      const multiplier = finiteNumber(node.multiplier);
+      return (Array.isArray(node.reasons) ? node.reasons : [])
+        .map((reason) => {
+          const value = record(reason);
+          const code = text(value.code);
+          return code
+            ? { code, reason: text(value.reason), multiplier }
+            : null;
+        })
+        .filter((reason): reason is FiatPerkMaxMindReason => reason !== null);
+    }).slice(0, 50);
+  const warnings = (Array.isArray(response.warnings) ? response.warnings : [])
+    .map((warning) => text(record(warning).code))
+    .filter((warning): warning is string => warning !== null)
+    .slice(0, 25);
+  return {
+    status: provider.status,
+    riskScore: provider.nativeScore ?? provider.score ?? finiteNumber(response.risk_score),
+    ipRisk: finiteNumber(ip.risk),
+    disposition: text(disposition.action),
+    reasons,
+    factors,
+    warnings,
+  };
+}
 
 export function perkAccountAgeDays(createdAt: Date, now: Date): number {
   const age = (now.getTime() - createdAt.getTime()) / 86_400_000;
@@ -487,6 +574,61 @@ export function evaluatePerkProviderChecks(
           provider.score ?? 0
         }.`,
       points: failed ? 10 : 0,
+    });
+  }
+
+  const maxmind = perkMaxMindEvidence(providers);
+  const maxMindStatus: FiatPerkCheckStatus = maxmind.status !== "success"
+    ? "warn"
+    : (maxmind.riskScore ?? 0) >= 75
+      ? "fail"
+      : (maxmind.riskScore ?? 0) >= 25
+        ? "warn"
+        : "pass";
+  checks.push({
+    key: "maxmind_risk",
+    label: "MaxMind overall risk",
+    category: "maxmind",
+    status: maxMindStatus,
+    detail: maxmind.status !== "success"
+      ? `MaxMind Factors did not answer (${byName.get("maxmind")?.errorCode ?? "not run"}).`
+      : `MaxMind Factors scored this identity ${maxmind.riskScore?.toFixed(2) ?? "unknown"}/100${
+        maxmind.reasons.length > 0
+          ? ` with ${maxmind.reasons.length} material reason(s)`
+          : ""
+      }.`,
+    points: maxMindStatus === "fail" ? 100 : maxMindStatus === "warn" ? 25 : 0,
+  });
+
+  if (maxmind.status === "success" && maxmind.ipRisk !== null) {
+    const status: FiatPerkCheckStatus = maxmind.ipRisk >= 75
+      ? "fail"
+      : maxmind.ipRisk >= 25
+        ? "warn"
+        : "pass";
+    checks.push({
+      key: "maxmind_ip_risk",
+      label: "MaxMind IP risk",
+      category: "maxmind",
+      status,
+      detail: `MaxMind scored the last known IP ${maxmind.ipRisk.toFixed(2)}/100.`,
+      points: status === "fail" ? 100 : status === "warn" ? 20 : 0,
+    });
+  }
+
+  if (maxmind.status === "success" && maxmind.disposition) {
+    const status: FiatPerkCheckStatus = maxmind.disposition === "reject"
+      ? "fail"
+      : maxmind.disposition === "manual_review"
+        ? "warn"
+        : "pass";
+    checks.push({
+      key: "maxmind_disposition",
+      label: "MaxMind rule disposition",
+      category: "maxmind",
+      status,
+      detail: `The configured MaxMind rule action is ${maxmind.disposition}.`,
+      points: status === "fail" ? 100 : status === "warn" ? 25 : 0,
     });
   }
 
