@@ -37,6 +37,17 @@ test("Discord Routing exposes active channels with add and edit event flows", ()
   assert.match(workspace, /createCustomEventAction/);
 });
 
+test("Discord Routing categories are independently collapsible", () => {
+  const workspace = source(
+    "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
+  );
+
+  assert.match(workspace, /collapsedCategoryIds/);
+  assert.match(workspace, /<CollapsibleTrigger/);
+  assert.match(workspace, /<CollapsibleContent>/);
+  assert.match(workspace, /Collapse.*Expand.*group\.name/);
+});
+
 test("every Discord route mutation is permission-gated and audited", () => {
   const actions = source(
     "src/app/(antifraud)/antifraud/discord/actions.ts",

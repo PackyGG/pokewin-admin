@@ -24,6 +24,11 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -86,6 +91,9 @@ export function DiscordRoutingWorkspace({
   const [eventQuery, setEventQuery] = useState("");
   const [createEventOpen, setCreateEventOpen] = useState(false);
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [credential, setCredential] = useState("");
   const [pendingMutation, setPendingMutation] =
     useState<PendingMutation | null>(null);
@@ -543,106 +551,138 @@ export function DiscordRoutingWorkspace({
         </section>
       ) : (
         <div className="space-y-3">
-          {activeChannelGroups.map((group) => (
-            <section
-              key={group.id}
-              className="overflow-hidden rounded-xl border border-border/60 bg-card"
-            >
-              <div className="flex items-center gap-2 border-b border-border/60 bg-muted/40 px-3 py-2 sm:px-4">
-                <ChevronDown className="size-3.5 shrink-0 text-muted-foreground" />
-                <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                  {group.name}
-                </span>
-                <span className="text-[11px] tabular-nums text-muted-foreground/70">
-                  {group.channels.length}
-                </span>
-              </div>
-              <div className="divide-y divide-border/40">
-                {group.channels.map((channel) => {
-                  const routes = initialConfig.routes.filter(
-                    (route) =>
-                      route.channelId === channel.id &&
-                      route.enabled &&
-                      initialConfig.events.some(
-                        (event) =>
-                          event.key === route.eventKey && event.enabled,
-                      ),
-                  );
-                  const events = routes.map(
-                    (route) =>
-                      initialConfig.events.find(
-                        (event) => event.key === route.eventKey,
-                      ) ?? {
-                        key: route.eventKey,
-                        label: route.eventKey,
-                        description: "This event is no longer in the catalog.",
-                        category: "Unavailable",
-                        custom: false,
-                        enabled: false,
-                      },
-                  );
+          {activeChannelGroups.map((group) => {
+            const categoryOpen = !collapsedCategoryIds.has(group.id);
 
-                  return (
-                    <div
-                      key={channel.id}
-                      className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
-                    >
-                      <div className="flex min-w-0 flex-1 items-start gap-3">
-                        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
-                          <Hash className="size-4" />
-                        </span>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex flex-wrap items-center gap-2">
-                            <h3 className="truncate text-sm font-semibold">
-                              #{channel.name}
-                            </h3>
-                            <DeliveryBadge channel={channel} />
-                            <span className="text-[11px] tabular-nums text-muted-foreground">
-                              {events.length}{" "}
-                              {events.length === 1 ? "event" : "events"}
-                            </span>
-                          </div>
-                          <div className="mt-2 flex flex-wrap gap-1.5">
-                            {events.map((event) => (
-                              <Badge
-                                key={event.key}
-                                variant={
-                                  event.enabled ? "outline" : "destructive"
-                                }
-                                className="px-1.5 py-0 text-[11px] font-normal"
-                                title={event.description}
+            return (
+              <section
+                key={group.id}
+                className="overflow-hidden rounded-xl border border-border/60 bg-card"
+              >
+                <Collapsible
+                  open={categoryOpen}
+                  onOpenChange={(open) =>
+                    setCollapsedCategoryIds((current) => {
+                      const next = new Set(current);
+                      if (open) next.delete(group.id);
+                      else next.add(group.id);
+                      return next;
+                    })
+                  }
+                >
+                  <CollapsibleTrigger
+                    className={cn(
+                      "flex w-full cursor-pointer items-center gap-2 bg-muted/40 px-3 py-2 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4",
+                      categoryOpen && "border-b border-border/60",
+                    )}
+                    aria-label={`${categoryOpen ? "Collapse" : "Expand"} ${group.name}`}
+                  >
+                    <ChevronDown
+                      className={cn(
+                        "size-3.5 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-200",
+                        !categoryOpen && "-rotate-90",
+                      )}
+                    />
+                    <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                      {group.name}
+                    </span>
+                    <span className="text-[11px] tabular-nums text-muted-foreground/70">
+                      {group.channels.length}
+                    </span>
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="divide-y divide-border/40">
+                      {group.channels.map((channel) => {
+                        const routes = initialConfig.routes.filter(
+                          (route) =>
+                            route.channelId === channel.id &&
+                            route.enabled &&
+                            initialConfig.events.some(
+                              (event) =>
+                                event.key === route.eventKey && event.enabled,
+                            ),
+                        );
+                        const events = routes.map(
+                          (route) =>
+                            initialConfig.events.find(
+                              (event) => event.key === route.eventKey,
+                            ) ?? {
+                              key: route.eventKey,
+                              label: route.eventKey,
+                              description:
+                                "This event is no longer in the catalog.",
+                              category: "Unavailable",
+                              custom: false,
+                              enabled: false,
+                            },
+                        );
+
+                        return (
+                          <div
+                            key={channel.id}
+                            className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+                          >
+                            <div className="flex min-w-0 flex-1 items-start gap-3">
+                              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
+                                <Hash className="size-4" />
+                              </span>
+                              <div className="min-w-0 flex-1">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <h3 className="truncate text-sm font-semibold">
+                                    #{channel.name}
+                                  </h3>
+                                  <DeliveryBadge channel={channel} />
+                                  <span className="text-[11px] tabular-nums text-muted-foreground">
+                                    {events.length}{" "}
+                                    {events.length === 1 ? "event" : "events"}
+                                  </span>
+                                </div>
+                                <div className="mt-2 flex flex-wrap gap-1.5">
+                                  {events.map((event) => (
+                                    <Badge
+                                      key={event.key}
+                                      variant={
+                                        event.enabled
+                                          ? "outline"
+                                          : "destructive"
+                                      }
+                                      className="px-1.5 py-0 text-[11px] font-normal"
+                                      title={event.description}
+                                    >
+                                      {event.label}
+                                    </Badge>
+                                  ))}
+                                </div>
+                              </div>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => openExistingChannel(channel.id)}
                               >
-                                {event.label}
-                              </Badge>
-                            ))}
+                                <Pencil />
+                                Edit
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                aria-label={`Remove #${channel.name}`}
+                                disabled={pending}
+                                onClick={() => removeChannel(channel)}
+                              >
+                                <Trash2 className="text-destructive" />
+                              </Button>
+                            </div>
                           </div>
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => openExistingChannel(channel.id)}
-                        >
-                          <Pencil />
-                          Edit
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon-sm"
-                          aria-label={`Remove #${channel.name}`}
-                          disabled={pending}
-                          onClick={() => removeChannel(channel)}
-                        >
-                          <Trash2 className="text-destructive" />
-                        </Button>
-                      </div>
+                        );
+                      })}
                     </div>
-                  );
-                })}
-              </div>
-            </section>
-          ))}
+                  </CollapsibleContent>
+                </Collapsible>
+              </section>
+            );
+          })}
         </div>
       )}
 
@@ -904,7 +944,9 @@ function ChannelEditorDialog({
   onSave: () => void;
   onRemove?: () => void;
 }) {
-  const channel = channels.find((candidate) => candidate.id === editor?.channelId);
+  const channel = channels.find(
+    (candidate) => candidate.id === editor?.channelId,
+  );
   const silentChannel = isSilentDiscordCategory(channel?.parentId ?? null);
 
   return (
@@ -912,7 +954,9 @@ function ChannelEditorDialog({
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>
-            {editingChannelId ? `Edit #${channel?.name ?? "channel"}` : "New channel"}
+            {editingChannelId
+              ? `Edit #${channel?.name ?? "channel"}`
+              : "New channel"}
           </DialogTitle>
           <DialogDescription>
             Choose a Discord channel and the events the bot should send there.
@@ -996,9 +1040,8 @@ function ChannelEditorDialog({
                   Urgent alerts always add{" "}
                   {DISCORD_ESCALATION_GROUP_KEYS.map(
                     (key) =>
-                      DISCORD_MENTION_GROUPS.find(
-                        (group) => group.key === key,
-                      )?.label ?? key,
+                      DISCORD_MENTION_GROUPS.find((group) => group.key === key)
+                        ?.label ?? key,
                   ).join(" and ")}
                   , even if they are not selected here.
                 </p>
@@ -1048,7 +1091,9 @@ function ChannelEditorDialog({
                         />
                         <span className="min-w-0 flex-1">
                           <span className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">{event.label}</span>
+                            <span className="text-sm font-medium">
+                              {event.label}
+                            </span>
                             <Badge variant="outline">{event.category}</Badge>
                             {event.custom && (
                               <Badge variant="secondary">Custom</Badge>
