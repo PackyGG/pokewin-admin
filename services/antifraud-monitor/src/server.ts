@@ -97,11 +97,30 @@ import { KycCountryReviewService } from "./kyc-country-reviews.js";
 import { DashboardOpsTick } from "./ops-tick.js";
 import { DiscordAlerts } from "./discord.js";
 import { MaxMindService, registerMaxMindAlertRoute } from "./maxmind.js";
+import {
+  bootstrapProviderAccessConfig,
+  missingProviderCredentials,
+  sendProviderAccessIssue,
+} from "./provider-access-alerts.js";
 
 // Naive timestamps read from either database must be interpreted as UTC even
 // when the container image ships a local zone. The pools pin the session
 // TimeZone too; this pins the Node process.
 process.env.TZ ??= "UTC";
+
+const bootstrapAccessConfig = bootstrapProviderAccessConfig(process.env);
+const missingAccessIssues = missingProviderCredentials(process.env);
+if (bootstrapAccessConfig && missingAccessIssues.length > 0) {
+  const bootstrapLog = {
+    warn: (context: unknown, message?: string) => console.warn(message, context),
+    error: (context: unknown, message?: string) => console.error(message, context),
+  };
+  await Promise.all(
+    missingAccessIssues.map((issue) =>
+      sendProviderAccessIssue(bootstrapAccessConfig, bootstrapLog, issue)
+    ),
+  );
+}
 
 const config = loadConfig();
 const SECRET_VALUES = [
@@ -182,11 +201,20 @@ const live = new LiveBus(config.REDIS_URL, app.log, {
 });
 const scoreWeights = new ScoreWeightStore(db.antifraud);
 const networkRisk = new NetworkRiskService(db, app.log);
-const maxmind = new MaxMindService(config, db.antifraud, app.log);
+const discordAlerts = new DiscordAlerts(config, app.log);
+const reportProviderAccessIssue = (
+  issue: Parameters<typeof sendProviderAccessIssue>[2],
+) => sendProviderAccessIssue(config, app.log, issue);
+const maxmind = new MaxMindService(
+  config,
+  db.antifraud,
+  app.log,
+  reportProviderAccessIssue,
+);
 const withdrawalRisk = new WithdrawalRiskService(db, app.log, maxmind);
 const fiatRisk = new FiatRiskService(db, maxmind);
 const fiatEligibilityAccess = new FiatEligibilityAccess(config);
-const enrichment = new EnrichmentService(config);
+const enrichment = new EnrichmentService(config, reportProviderAccessIssue);
 const fiatEligibility = new FiatEligibilityService(
   db,
   scoreWeights,
@@ -211,7 +239,6 @@ const ingestDelivery = new IngestDelivery(
   app.log,
 );
 const dashboardOpsTick = new DashboardOpsTick(config, app.log);
-const discordAlerts = new DiscordAlerts(config, app.log);
 const engine = new MonitorEngine(
   config,
   db,

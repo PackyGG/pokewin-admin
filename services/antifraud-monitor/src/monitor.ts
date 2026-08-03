@@ -3,6 +3,7 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import { DiscordAlerts, type DiscordAlert } from "./discord.js";
+import { sendProviderAccessIssue } from "./provider-access-alerts.js";
 import {
   EnrichmentService,
   parseAbstractEmailResponse,
@@ -393,8 +394,10 @@ export class MonitorEngine {
     private readonly log: FastifyBaseLogger,
     private readonly onSignupAssessed?: (userId: string) => Promise<void>,
   ) {
-    this.enrichment = new EnrichmentService(config);
     this.discord = new DiscordAlerts(config, log);
+    this.enrichment = new EnrichmentService(config, (issue) =>
+      sendProviderAccessIssue(config, log, issue)
+    );
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
     this.fiatDepositIdentity = new FiatDepositIdentityChecks(

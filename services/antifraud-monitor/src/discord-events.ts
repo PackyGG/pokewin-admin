@@ -33,7 +33,7 @@ export async function sendBotDiscordEvent(
     Config,
     "ADMIN_GUILD_ID" | "ANTIFRAUD_INGEST_URL" | "ANTIFRAUD_INGEST_SECRET"
   >,
-  log: FastifyBaseLogger,
+  log: Pick<FastifyBaseLogger, "warn" | "error">,
   input: {
     eventKey: string;
     dedupeKey: string;

@@ -4,6 +4,11 @@ import type { FastifyBaseLogger, FastifyInstance } from "fastify";
 import type { Pool, PoolClient } from "pg";
 
 import type { Config } from "./config.js";
+import {
+  maxmindAccessIssue,
+  providerFailureAccessIssue,
+  type ProviderAccessIssue,
+} from "./provider-access-alerts.js";
 
 type JsonObject = Record<string, unknown>;
 
@@ -165,7 +170,17 @@ export class MaxMindService {
     private readonly config: Config,
     private readonly pool: Pool,
     private readonly log?: FastifyBaseLogger,
+    private readonly reportProviderAccessIssue?: (
+      issue: ProviderAccessIssue,
+    ) => void | Promise<unknown>,
   ) {}
+
+  private reportAccessIssue(issue: ProviderAccessIssue | undefined): void {
+    if (!issue || !this.reportProviderAccessIssue) return;
+    void Promise.resolve(this.reportProviderAccessIssue(issue)).catch(() => {
+      // Provider evidence and containment must not depend on alert transport.
+    });
+  }
 
   private scrub(value: string): string {
     const licenseKey = this.config.MAXMIND_LICENSE_KEY;
@@ -175,6 +190,7 @@ export class MaxMindService {
 
   async evaluate(input: MaxMindEvaluationInput): Promise<MaxMindEvaluation> {
     if (!this.config.MAXMIND_ACCOUNT_ID || !this.config.MAXMIND_LICENSE_KEY) {
+      this.reportAccessIssue({ provider: "maxmind", kind: "missing_credential" });
       throw new Error("maxmind_not_configured");
     }
     const cached = await this.pool.query<{
@@ -269,6 +285,7 @@ export class MaxMindService {
       const text = await provider.text();
       if (text.length > 512_000) throw new Error("response_too_large");
       const raw = object(JSON.parse(text));
+      this.reportAccessIssue(maxmindAccessIssue(raw));
       const riskScore = number(raw.risk_score);
       const minfraudId = string(raw.id);
       if (riskScore === null || riskScore < 0 || riskScore > 100 || !minfraudId) {
@@ -291,6 +308,7 @@ export class MaxMindService {
       const message = error instanceof Error
         ? `${error.name}:${error.message}`
         : "unknown_error";
+      this.reportAccessIssue(providerFailureAccessIssue("maxmind", message));
       evaluation = {
         status: "failed",
         minfraudId: null,
@@ -392,6 +410,7 @@ export class MaxMindService {
         );
       } catch (error) {
         const message = this.scrub(error instanceof Error ? error.message : "unknown_error");
+        this.reportAccessIssue(providerFailureAccessIssue("maxmind", message));
         await this.pool.query(
           `UPDATE maxmind_report_outbox SET attempts=attempts+1,last_error=$2,
              next_attempt_at=now()+make_interval(secs=>LEAST(3600,30*power(2,LEAST(attempts,7))::int))

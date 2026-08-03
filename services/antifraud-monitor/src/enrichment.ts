@@ -20,6 +20,11 @@ import {
   type SignupProvider,
 } from "./provider-contracts.js";
 import type { Signal, Signup } from "./types.js";
+import {
+  maxmindAccessIssue,
+  providerFailureAccessIssue,
+  type ProviderAccessIssue,
+} from "./provider-access-alerts.js";
 
 type JsonObject = Record<string, unknown>;
 type ProviderProvenance = {
@@ -1786,7 +1791,12 @@ export function parseOpportifyResponse(
 export class EnrichmentService {
   private readonly fingerprint: FingerprintJsServerApiClient;
 
-  constructor(private readonly config: Config) {
+  constructor(
+    private readonly config: Config,
+    private readonly reportProviderAccessIssue?: (
+      issue: ProviderAccessIssue,
+    ) => void | Promise<unknown>,
+  ) {
     const region =
       config.FINGERPRINT_REGION === "eu"
         ? Region.EU
@@ -1896,6 +1906,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("fingerprint", errorCode);
       return {
         provider: "fingerprint",
         status: "failed",
@@ -1977,6 +1988,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("proxycheck", errorCode);
       return {
         provider: "proxycheck",
         status: "failed",
@@ -2042,6 +2054,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("abstract_ip", errorCode);
       return {
         provider: "abstract_ip",
         status: "failed",
@@ -2131,6 +2144,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("abstract_email", errorCode);
       return {
         provider: "abstract_email",
         status: "failed",
@@ -2221,6 +2235,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("opportify", errorCode);
       return {
         provider: "opportify",
         status: "failed",
@@ -2234,9 +2249,25 @@ export class EnrichmentService {
     }
   }
 
+  private reportAccessFailure(
+    provider: SignupProvider,
+    errorCode: string,
+  ): void {
+    const issue = providerFailureAccessIssue(provider, errorCode);
+    if (issue) this.reportAccessIssue(issue);
+  }
+
+  private reportAccessIssue(issue: ProviderAccessIssue): void {
+    if (!this.reportProviderAccessIssue) return;
+    void Promise.resolve(this.reportProviderAccessIssue(issue)).catch(() => {
+      // Alert delivery is best-effort and must never replace provider evidence.
+    });
+  }
+
   async maxmindCheck(signup: Signup): Promise<EnrichmentResult> {
     if (!this.config.MAXMIND_ACCOUNT_ID || !this.config.MAXMIND_LICENSE_KEY) {
       const errorCode = "maxmind_not_configured";
+      this.reportAccessIssue({ provider: "maxmind", kind: "missing_credential" });
       return {
         provider: "maxmind",
         status: "failed",
@@ -2310,6 +2341,8 @@ export class EnrichmentService {
       const text = await response.text();
       if (text.length > 512_000) throw new Error("response_too_large");
       const raw = object(JSON.parse(text));
+      const accessIssue = maxmindAccessIssue(raw);
+      if (accessIssue) this.reportAccessIssue(accessIssue);
       const riskScore = numberValue(raw.risk_score);
       const id = stringValue(raw.id);
       if (riskScore === undefined || riskScore < 0 || riskScore > 100 || !id) {
@@ -2372,6 +2405,7 @@ export class EnrichmentService {
       };
     } catch (error) {
       const errorCode = this.providerErrorCode(error);
+      this.reportAccessFailure("maxmind", errorCode);
       return {
         provider: "maxmind",
         status: "failed",
