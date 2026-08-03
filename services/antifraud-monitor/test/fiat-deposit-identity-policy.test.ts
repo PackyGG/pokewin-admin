@@ -72,8 +72,8 @@ test("operator blocklist hits contain and name the right kind", () => {
     baseline: baseline(),
     observation: observation({
       blocklistMatches: [
-        { id: "r1", kind: "ip", value: "203.0.113.10", reason: "fraud ring" },
-        { id: "r2", kind: "fingerprint", value: "visitor-a", reason: "farm" },
+        { id: "r1", kind: "ip", value: "203.0.113.10", reason: "fraud ring", effect: "block" },
+        { id: "r2", kind: "fingerprint", value: "visitor-a", reason: "farm", effect: "block" },
       ],
     }),
   });
@@ -82,6 +82,24 @@ test("operator blocklist hits contain and name the right kind", () => {
     "checkout_ip_blocklisted",
     "checkout_fingerprint_blocklisted",
   ]);
+});
+
+test("a known VPN IP only watches and never contains", () => {
+  const outcome = evaluateFiatDepositIdentity({
+    baseline: baseline(),
+    observation: observation({
+      blocklistMatches: [{
+        id: "vpn-1",
+        kind: "ip",
+        value: "203.0.113.10",
+        reason: "shared VPN exit",
+        effect: "known_vpn",
+      }],
+    }),
+  });
+  assert.equal(outcome.verdict, "watch");
+  assert.deepEqual(outcome.reasonCodes, []);
+  assert.deepEqual(outcome.watchCodes, ["checkout_known_vpn_ip"]);
 });
 
 test("a catch-all payer email contains", () => {

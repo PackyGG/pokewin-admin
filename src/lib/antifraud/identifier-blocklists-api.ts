@@ -6,6 +6,10 @@ export const identifierBlocklistKindSchema = z.enum(["ip", "fingerprint"]);
 export type IdentifierBlocklistKind = z.infer<
   typeof identifierBlocklistKindSchema
 >;
+export const identifierBlocklistEffectSchema = z.enum(["block", "known_vpn"]);
+export type IdentifierBlocklistEffect = z.infer<
+  typeof identifierBlocklistEffectSchema
+>;
 
 const ruleSchema = z.object({
   id: z.string().uuid(),
@@ -14,6 +18,7 @@ const ruleSchema = z.object({
   matchMode: z.enum(["exact", "cidr"]),
   reason: z.string(),
   source: z.enum(["manual", "automatic", "legacy"]),
+  effect: identifierBlocklistEffectSchema.default("block"),
   enabled: z.boolean(),
   createdBy: z.string(),
   updatedBy: z.string(),
@@ -26,6 +31,9 @@ const ruleSchema = z.object({
   lastMatchAt: z.string().nullable(),
   lockReviewCount: z.number().int(),
   reviewOnlyCount: z.number().int(),
+  vpnStatus: z.enum(["detected", "unknown"]).default("unknown"),
+  vpnProviders: z.array(z.string()).default([]),
+  vpnLastDetectedAt: z.string().nullable().default(null),
   createdAt: z.string(),
   updatedAt: z.string(),
   expiresAt: z.string().nullable(),
@@ -124,6 +132,7 @@ export async function createIdentifierBlocklistRule(
     matchMode: "exact" | "cidr";
     reason: string;
     expiresAt: string | null;
+    effect?: IdentifierBlocklistEffect;
   },
 ) {
   return parseMutation(
@@ -136,6 +145,7 @@ export async function createIdentifierBlocklistRule(
           matchMode: input.matchMode,
           reason: input.reason,
           expiresAt: input.expiresAt,
+          effect: input.effect ?? "block",
           idempotencyKey: input.idempotencyKey,
           actorId: input.actorId,
           actorUsername: input.actorUsername,
@@ -153,6 +163,7 @@ export async function updateIdentifierBlocklistRule(
     enabled: boolean;
     reason: string;
     expiresAt: string | null;
+    effect?: IdentifierBlocklistEffect;
   },
 ) {
   return parseMutation(
@@ -164,6 +175,7 @@ export async function updateIdentifierBlocklistRule(
           enabled: input.enabled,
           reason: input.reason,
           expiresAt: input.expiresAt,
+          effect: input.effect ?? "block",
           idempotencyKey: input.idempotencyKey,
           actorId: input.actorId,
           actorUsername: input.actorUsername,

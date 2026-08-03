@@ -656,11 +656,27 @@ test("an operator blocklist hit on the checkout IP or device contains", () => {
         kind,
         value: kind === "ip" ? "203.0.113.20" : "visitor-1",
         reason: "manual fraud rule",
+        effect: "block",
       }],
     });
     assert.equal(reviewed.decision, "deny");
     assert.deepEqual(reviewed.enforcementReasons, [`blocklist_${kind}_match`]);
   }
+});
+
+test("a known VPN IP raises Fiat risk without containing", () => {
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    blocklistMatches: [{
+      id: "vpn-1",
+      kind: "ip",
+      value: "203.0.113.20",
+      reason: "shared VPN exit",
+      effect: "known_vpn",
+    }],
+  });
+  assert.equal(reviewed.enforce, false);
+  assert.equal(reviewed.signals.find((signal) => signal.key === "known_vpn_ip_match")?.points, 15);
 });
 
 test("behaviour rewards self-funded play and punishes reward farming", () => {

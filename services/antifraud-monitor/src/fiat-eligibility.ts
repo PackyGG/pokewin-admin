@@ -438,7 +438,8 @@ async function loadBlocklistMatches(
           WHEN kind = 'ip' THEN ip_network::text
           ELSE fingerprint_id
         END AS value,
-        reason
+        reason,
+        effect
       FROM identifier_blocklists
       WHERE enabled
         AND (expires_at IS NULL OR expires_at > now())
@@ -1005,7 +1006,9 @@ export class FiatEligibilityService {
           reasonCodes: outcome.enforcementReasons,
           riskScore: outcome.riskScore,
           occurredAt: context.now,
-          blocklistMatches: context.blocklistMatches,
+          blocklistMatches: context.blocklistMatches.filter(
+            (match) => match.effect === "block",
+          ),
           evidence: {
             requestIpFamily: context.requestIp.includes(":") ? 6 : 4,
             accountAgeDays: Number(

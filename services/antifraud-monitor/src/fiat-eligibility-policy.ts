@@ -195,6 +195,7 @@ export type FiatEligibilityBlocklistMatch = {
   kind: "ip" | "fingerprint";
   value: string;
   reason: string;
+  effect: "block" | "known_vpn";
 };
 
 export type FiatEligibilityPolicyInput = {
@@ -610,6 +611,16 @@ export function evaluateFiatEligibility(
 
   // ── Operator blocklists ──────────────────────────────────────────────────
   for (const match of input.blocklistMatches) {
+    if (match.effect === "known_vpn") {
+      add(true, {
+        key: "known_vpn_ip_match",
+        detail: `The checkout IP matches a known shared VPN: ${match.reason}`,
+        points: 15,
+        containing: false,
+        source: "policy",
+      });
+      continue;
+    }
     add(true, {
       key: `blocklist_${match.kind}_match`,
       detail:

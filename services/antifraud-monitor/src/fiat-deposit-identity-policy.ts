@@ -58,6 +58,7 @@ export type FiatIdentityContainmentReason =
  * containment reason and neither half is.
  */
 export const FIAT_IDENTITY_WATCH_REASONS = [
+  "checkout_known_vpn_ip",
   "checkout_ip_changed",
   "checkout_device_changed",
   "checkout_card_changed_trusted",
@@ -83,6 +84,7 @@ export type FiatIdentityBlocklistMatch = {
   kind: "ip" | "fingerprint";
   value: string;
   reason: string;
+  effect: "block" | "known_vpn";
 };
 
 /**
@@ -183,6 +185,14 @@ export function evaluateFiatDepositIdentity(
   });
 
   for (const match of seen.blocklistMatches) {
+    if (match.effect === "known_vpn") {
+      add(true, {
+        key: "checkout_known_vpn_ip",
+        detail: `The checkout IP matches a known shared VPN: ${match.reason}`,
+        containing: false,
+      });
+      continue;
+    }
     add(true, {
       key: match.kind === "ip"
         ? "checkout_ip_blocklisted"

@@ -147,6 +147,9 @@ test("operator IP and fingerprint blocklists are durable and enforced at signup"
   assert.match(routes, /\/v1\/blocklists\/:kind/);
   assert.match(routes, /historical_backfill[\s\S]*review_only/);
   assert.match(matcher, /active_ip_blocklist/);
+  assert.match(migrations, /effect = 'block'.*known_vpn/is);
+  assert.match(matcher, /known_vpn_ip/);
+  assert.match(matcher, /points: 15/);
   assert.match(matcher, /active_fingerprint_blocklist/);
   assert.match(matcher, /lock_review/);
   assert.match(ingest, /containIdentifierBlocklistAccount/);

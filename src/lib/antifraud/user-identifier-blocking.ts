@@ -86,6 +86,9 @@ async function ensureKindBlocked(input: {
     const results = await Promise.all(
       batch.map(async (value) => {
         const existing = byValue.get(value);
+        // A public VPN deliberately downgraded by staff must stay non-blocking,
+        // even when one of its users is later banned.
+        if (existing?.effect === "known_vpn") return false;
         if (existing && !needsReactivation(existing)) return false;
         if (existing) {
           await updateIdentifierBlocklistRule({
@@ -97,6 +100,7 @@ async function ensureKindBlocked(input: {
             idempotencyKey: randomUUID(),
             actorId: input.actorId,
             actorUsername: input.actorUsername,
+            effect: "block",
           });
           return true;
         }

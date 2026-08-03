@@ -4,6 +4,7 @@ import type { Databases } from "./db.js";
 import type { Signal, Signup } from "./types.js";
 
 export type IdentifierBlocklistKind = "ip" | "fingerprint";
+export type IdentifierBlocklistEffect = "block" | "known_vpn";
 
 export function validateIdentifierInput(
   kind: IdentifierBlocklistKind,
@@ -37,6 +38,7 @@ export async function captureIdentifierBlocklistMatches(
     kind: IdentifierBlocklistKind;
     value: string;
     reason: string;
+    effect: IdentifierBlocklistEffect;
   }>(
     `
       SELECT
@@ -47,7 +49,8 @@ export async function captureIdentifierBlocklistMatches(
           WHEN kind = 'ip' THEN ip_network::text
           ELSE fingerprint_id
         END AS value,
-        reason
+        reason,
+        effect
       FROM identifier_blocklists
       WHERE enabled
         AND (expires_at IS NULL OR expires_at > now())
@@ -73,9 +76,9 @@ export async function captureIdentifierBlocklistMatches(
           blocklist_id, user_id, source_ref, match_context, resulting_action,
           evidence, matched_at
         ) VALUES (
-          $1,$2,$3,'signup','lock_review',
-          jsonb_build_object('kind',$4::text,'value',$5::text),
-          $6
+          $1,$2,$3,'signup',$4,
+          jsonb_build_object('kind',$5::text,'value',$6::text,'effect',$7::text),
+          $8
         )
         ON CONFLICT (blocklist_id, user_id, source_ref) DO NOTHING
       `,
@@ -83,13 +86,27 @@ export async function captureIdentifierBlocklistMatches(
         match.id,
         signup.id,
         `signup:${signup.created_at.toISOString()}`,
+        match.effect === "block" ? "lock_review" : "no_action",
         match.kind,
         match.value,
+        match.effect,
         signup.created_at,
       ],
     );
   }
-  return matches.rows.map((match) => ({
+  return matches.rows.map((match) => match.effect === "known_vpn" ? ({
+    key: "known_vpn_ip",
+    title: "Known VPN IP",
+    detail: `Network ${match.value} is a known shared VPN. This raises risk but never directly locks or opens review.`,
+    points: 15,
+    payload: {
+      blocklistId: match.id,
+      kind: match.kind,
+      value: match.value,
+      reason: match.reason,
+      effect: match.effect,
+    },
+  }) : ({
     key:
       match.kind === "ip"
         ? "active_ip_blocklist"
@@ -105,6 +122,7 @@ export async function captureIdentifierBlocklistMatches(
       kind: match.kind,
       value: match.value,
       reason: match.reason,
+      effect: match.effect,
     },
   }));
 }

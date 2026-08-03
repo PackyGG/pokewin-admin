@@ -630,6 +630,7 @@ async function loadBlocklistHits(
         JOIN identifier_blocklists b
           ON b.kind = 'ip'
          AND b.enabled
+         AND b.effect = 'block'
          AND (b.expires_at IS NULL OR b.expires_at > now())
          AND pg_input_is_valid(t.ip, 'inet')
          AND t.ip::inet <<= b.ip_network
@@ -651,6 +652,7 @@ async function loadBlocklistHits(
         FROM identifier_blocklists b
         WHERE b.kind = 'fingerprint'
           AND b.enabled
+          AND b.effect = 'block'
           AND (b.expires_at IS NULL OR b.expires_at > now())
           AND b.fingerprint_id = ANY($1::text[])
         ORDER BY b.fingerprint_id, b.created_at

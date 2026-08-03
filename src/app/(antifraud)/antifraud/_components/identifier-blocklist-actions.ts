@@ -27,6 +27,7 @@ const createSchema = commonSchema.extend({
 const updateSchema = commonSchema.extend({
   id: z.string().uuid(),
   enabled: z.boolean(),
+  effect: z.enum(["block", "known_vpn"]),
 });
 
 function revalidate(kind: "ip" | "fingerprint") {
@@ -66,6 +67,40 @@ export async function addIdentifierBlocklistRule(input: unknown) {
   return saved;
 }
 
+export async function setIdentifierBlocklistRuleEffect(input: unknown) {
+  const session = await requireAntifraudAccess();
+  const parsed = updateSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (parsed.data.kind !== "ip") throw new Error("Only IP rules can be known VPNs.");
+  const saved = await updateIdentifierBlocklistRule({
+    ...parsed.data,
+    reason: AUTOMATIC_REASON,
+    expiresAt: null,
+    actorId: session.userId,
+    actorUsername: session.username ?? undefined,
+  });
+  if (saved.effect !== parsed.data.effect) {
+    throw new Error("The Antifraud monitor has not applied this policy yet.");
+  }
+  if (!saved.idempotent) {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: parsed.data.effect === "known_vpn"
+        ? "antifraud_identifier_marked_known_vpn"
+        : "antifraud_identifier_restored_blocking",
+      metadata: {
+        blocklistId: saved.id,
+        kind: saved.kind,
+        value: saved.value,
+        effect: saved.effect,
+        idempotencyKey: parsed.data.idempotencyKey,
+      },
+    });
+  }
+  revalidate(saved.kind);
+  return saved;
+}
+
 export async function setIdentifierBlocklistRuleState(input: unknown) {
   const session = await requireAntifraudAccess();
   const parsed = updateSchema.safeParse(input);
@@ -76,6 +111,7 @@ export async function setIdentifierBlocklistRuleState(input: unknown) {
     expiresAt: null,
     actorId: session.userId,
     actorUsername: session.username ?? undefined,
+    effect: parsed.data.effect,
   });
   if (!saved.idempotent) {
     await createAdminAuditEvent({

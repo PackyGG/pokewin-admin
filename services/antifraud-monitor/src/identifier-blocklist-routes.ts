@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Databases } from "./db.js";
 import {
   validateIdentifierInput,
+  type IdentifierBlocklistEffect,
   type IdentifierBlocklistKind,
 } from "./identifier-blocklists.js";
 
@@ -25,6 +26,7 @@ const updateSchema = actorSchema.extend({
   enabled: z.boolean(),
   reason: z.string().trim().min(4).max(500),
   expiresAt: z.string().datetime().nullable(),
+  effect: z.enum(["block", "known_vpn"]),
 });
 
 type RuleRow = {
@@ -34,6 +36,7 @@ type RuleRow = {
   match_mode: "exact" | "cidr";
   reason: string;
   source: "manual" | "automatic" | "legacy";
+  effect: IdentifierBlocklistEffect;
   enabled: boolean;
   created_by: string;
   updated_by: string;
@@ -49,6 +52,9 @@ type RuleRow = {
   last_match_at: Date | null;
   lock_review_count: number;
   review_only_count: number;
+  vpn_detected: boolean;
+  vpn_providers: string[];
+  vpn_last_detected_at: Date | null;
 };
 
 async function listRules(
@@ -69,6 +75,7 @@ async function listRules(
         b.match_mode,
         b.reason,
         b.source,
+        b.effect,
         b.enabled,
         b.created_by,
         b.updated_by,
@@ -89,11 +96,37 @@ async function listRules(
           WHERE m.resulting_action IN ('lock_review','locked')
         )::int AS lock_review_count,
         count(m.id) FILTER (WHERE m.resulting_action='review_only')::int
-          AS review_only_count
+          AS review_only_count,
+        COALESCE(vpn.detected, false) AS vpn_detected,
+        COALESCE(vpn.providers, ARRAY[]::text[]) AS vpn_providers,
+        vpn.last_detected_at AS vpn_last_detected_at
       FROM identifier_blocklists b
       LEFT JOIN identifier_blocklist_matches m ON m.blocklist_id=b.id
+      LEFT JOIN LATERAL (
+        SELECT
+          true AS detected,
+          array_agg(DISTINCT CASE
+            WHEN pc.provider='proxycheck' THEN 'proxycheck.io'
+            WHEN pc.provider='abstract_ip' THEN 'Abstract API'
+            ELSE 'Provider evidence'
+          END) AS providers,
+          max(pc.checked_at) AS last_detected_at
+        FROM provider_checks pc
+        CROSS JOIN LATERAL jsonb_array_elements(
+          CASE WHEN jsonb_typeof(pc.signals)='array'
+            THEN pc.signals ELSE '[]'::jsonb END
+        ) signal
+        WHERE pc.status='success'
+          AND pc.provider IN ('proxycheck','abstract_ip')
+          AND pg_input_is_valid(pc.lookup_key, 'inet')
+          AND pc.lookup_key::inet <<= b.ip_network
+          AND signal->>'key' IN (
+            'proxycheck_anonymous','abstract_ip_vpn','abstract_ip_proxy',
+            'abstract_ip_tor'
+          )
+      ) vpn ON b.kind='ip'
       WHERE b.kind=$1 AND ($2::uuid IS NULL OR b.id=$2)
-      GROUP BY b.id
+      GROUP BY b.id,vpn.detected,vpn.providers,vpn.last_detected_at
       ORDER BY b.enabled DESC, b.created_at DESC
     `,
     [kind, id ?? null],
@@ -109,6 +142,7 @@ function serialize(row: RuleRow) {
     matchMode: row.match_mode,
     reason: row.reason,
     source: row.source,
+    effect: row.effect,
     enabled: row.enabled,
     createdBy: row.created_by,
     updatedBy: row.updated_by,
@@ -121,6 +155,9 @@ function serialize(row: RuleRow) {
     lastMatchAt: row.last_match_at?.toISOString() ?? null,
     lockReviewCount: row.lock_review_count,
     reviewOnlyCount: row.review_only_count,
+    vpnStatus: row.vpn_detected ? "detected" : "unknown",
+    vpnProviders: row.vpn_providers,
+    vpnLastDetectedAt: row.vpn_last_detected_at?.toISOString() ?? null,
     createdAt: row.created_at.toISOString(),
     updatedAt: row.updated_at.toISOString(),
     expiresAt: row.expires_at?.toISOString() ?? null,
@@ -291,6 +328,7 @@ export async function registerIdentifierBlocklistRoutes(
               matchMode: parsed.data.matchMode,
               reason: parsed.data.reason,
               enabled: true,
+              effect: "block",
               expiresAt: parsed.data.expiresAt,
             },
           ],
@@ -333,6 +371,7 @@ export async function registerIdentifierBlocklistRoutes(
           enabled?: unknown;
           reason?: unknown;
           expiresAt?: unknown;
+          effect?: unknown;
         };
       }>(
         `SELECT blocklist_id,actor_id,after_state
@@ -347,6 +386,7 @@ export async function registerIdentifierBlocklistRoutes(
           || state.after_state.enabled !== parsed.data.enabled
           || state.after_state.reason !== parsed.data.reason
           || state.after_state.expiresAt !== parsed.data.expiresAt
+          || state.after_state.effect !== parsed.data.effect
         ) {
           await client.query("ROLLBACK");
           return reply.code(409).send({ error: "idempotency_conflict" });
@@ -359,8 +399,9 @@ export async function registerIdentifierBlocklistRoutes(
           enabled: boolean;
           reason: string;
           expires_at: Date | null;
+          effect: IdentifierBlocklistEffect;
         }>(
-          `SELECT id,kind,enabled,reason,expires_at
+          `SELECT id,kind,enabled,reason,expires_at,effect
            FROM identifier_blocklists
            WHERE id=$1 AND kind=$2 FOR UPDATE`,
           [params.data.id, params.data.kind],
@@ -370,10 +411,14 @@ export async function registerIdentifierBlocklistRoutes(
           await client.query("ROLLBACK");
           return reply.code(404).send({ error: "not_found" });
         }
+        if (params.data.kind !== "ip" && parsed.data.effect !== "block") {
+          await client.query("ROLLBACK");
+          return reply.code(400).send({ error: "invalid_effect" });
+        }
         await client.query(
           `UPDATE identifier_blocklists SET
              enabled=$2,reason=$3,expires_at=$4,updated_by=$5,
-             updated_by_username=$6,updated_at=now()
+             updated_by_username=$6,effect=$7,updated_at=now()
            WHERE id=$1`,
           [
             params.data.id,
@@ -382,6 +427,7 @@ export async function registerIdentifierBlocklistRoutes(
             parsed.data.expiresAt,
             parsed.data.actorId,
             parsed.data.actorUsername ?? null,
+            parsed.data.effect,
           ],
         );
         const action = current.enabled === parsed.data.enabled
@@ -405,11 +451,13 @@ export async function registerIdentifierBlocklistRoutes(
               enabled: current.enabled,
               reason: current.reason,
               expiresAt: current.expires_at?.toISOString() ?? null,
+              effect: current.effect,
             },
             {
               enabled: parsed.data.enabled,
               reason: parsed.data.reason,
               expiresAt: parsed.data.expiresAt,
+              effect: parsed.data.effect,
             },
           ],
         );

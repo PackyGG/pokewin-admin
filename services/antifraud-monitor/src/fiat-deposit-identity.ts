@@ -456,7 +456,8 @@ export class FiatDepositIdentityChecks {
             WHEN kind = 'ip' THEN ip_network::text
             ELSE fingerprint_id
           END AS value,
-          reason
+          reason,
+          effect
         FROM identifier_blocklists
         WHERE enabled
           AND (expires_at IS NULL OR expires_at > now())

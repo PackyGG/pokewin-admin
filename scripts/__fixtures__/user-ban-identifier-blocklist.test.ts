@@ -49,4 +49,5 @@ test("identifier blocking reactivates expired or disabled rules and never silent
   assert.match(identifierBlocking, /enabled: true/);
   assert.match(identifierBlocking, /expiresAt: null/);
   assert.match(identifierBlocking, /initial\.error/);
+  assert.match(identifierBlocking, /existing\?\.effect === "known_vpn"/);
 });
