@@ -1,7 +1,11 @@
 import type pg from "pg";
 
 import type { Databases } from "./db.js";
-import { canonicalIp, type EnrichmentService } from "./enrichment.js";
+import {
+  canonicalIp,
+  type EnrichmentResult,
+  type EnrichmentService,
+} from "./enrichment.js";
 import type { FiatPerkAccessService } from "./fiat-perk-access.js";
 import {
   domainFromEmail,
@@ -33,9 +37,11 @@ import type { Signup } from "./types.js";
  * Cost discipline, because a scope can be thousands of accounts:
  *   • account ids are selected once, cheaply, and processed in small batches;
  *   • every per-account aggregate rides one batched query, never a loop;
- *   • provider calls only happen for accounts that already cleared every free
- *     check, are bounded to a small concurrency, and are cached per identity
- *     inside the run so one shared IP is never paid for twice.
+ *   • all providers run for every selected account with bounded concurrency,
+ *     so even an internally blocked account retains complete review evidence.
+ *     Account identity remains
+ *     in each cache key because email/account-aware providers cannot safely
+ *     reuse another user's answer merely because an IP is shared.
  *
  * MAIN is only ever read. Nothing in this file writes to the game database.
  */
@@ -134,6 +140,7 @@ export type FiatPerkCandidate = {
   checks: unknown;
   evidence: unknown;
   providerChecked: boolean;
+  providers: FiatPerkProviderEvidence[];
   maxMindStatus: "success" | "failed" | "skipped" | "not_checked";
   maxMindRiskScore: number | null;
   maxMindIpRisk: number | null;
@@ -147,6 +154,24 @@ export type FiatPerkCandidate = {
   grantStatus: "granted" | "revoked" | null;
   accessStatus: "unknown" | "syncing" | "enabled" | "disabled" | "error" | null;
   createdAt: string;
+};
+
+export type FiatPerkProviderEvidence = {
+  provider: EnrichmentResult["provider"];
+  status: EnrichmentResult["status"];
+  completeness: EnrichmentResult["completeness"];
+  score: number | null;
+  nativeScore: number | null;
+  nativeRank: string | null;
+  nativeConfidence: number | null;
+  providerModel: string;
+  providerVersion: string;
+  source: EnrichmentResult["provenance"]["source"];
+  failureKind: EnrichmentResult["failureKind"] | null;
+  errorCode: string | null;
+  signalKeys: string[];
+  signals: Array<{ key: string; title: string; detail: string; points: number }>;
+  response: Record<string, unknown>;
 };
 
 export type FiatPerkGrant = {
@@ -906,7 +931,7 @@ export class FiatPerkService {
     );
 
     const weights = await this.scoreWeights.get();
-    // One provider answer per identity, reused across accounts inside the run.
+    // One six-provider bundle per account identity inside the run.
     const providerCache = new Map<string, Promise<EnrichmentBundle>>();
     let providerChecks = 0;
 
@@ -931,23 +956,13 @@ export class FiatPerkService {
           history: histories.get(row.id)
             ?? { signupRiskScore: 0, openCaseSeverity: null },
         };
-        // Cheap verdict first: an account that already failed never costs a
-        // provider call.
-        const dataOnly = evaluateFiatPerkCandidate({
-          ...base,
-          providers: [],
-          providersChecked: false,
-        });
-        return { row, base, dataOnly };
+        return { row, base };
       });
 
       const evaluated = await mapWithConcurrency(
         prepared,
         PROVIDER_CONCURRENCY,
-        async ({ row, base, dataOnly }) => {
-          if (dataOnly.verdict === "fail") {
-            return { row, evaluation: dataOnly, providerChecked: false };
-          }
+        async ({ row, base }) => {
           const providerSubject = providerSubjectFrom(row);
           // MaxMind includes account/email context, so provider evidence is
           // account-specific even when two accounts share an IP or device.
@@ -1009,7 +1024,7 @@ export class FiatPerkService {
       await client.query("BEGIN");
       for (const { row, evaluation, providerChecked, providers = [] } of evaluated) {
         const maxmind = perkMaxMindEvidence(providers);
-        await client.query(
+        const inserted = await client.query<{ id: string }>(
           `
             INSERT INTO fiat_perk_candidates (
               run_id, user_id, username, email, avatar_url, country_code,
@@ -1021,7 +1036,8 @@ export class FiatPerkService {
               $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::text[],
               $11::jsonb, $12::jsonb, $13, $14, $15, $16, $17, $18::text[]
             )
-            ON CONFLICT (run_id, user_id) DO NOTHING
+            ON CONFLICT (run_id, user_id) DO UPDATE SET user_id=EXCLUDED.user_id
+            RETURNING id::text
           `,
           [
             runId,
@@ -1052,6 +1068,55 @@ export class FiatPerkService {
             maxmind.reasons.map((reason) => reason.code),
           ],
         );
+        const candidateId = inserted.rows[0]?.id;
+        if (!candidateId) throw new Error("fiat_perk_candidate_persistence_failed");
+        for (const provider of providers) {
+          await client.query(
+            `INSERT INTO fiat_perk_candidate_provider_evidence(
+               candidate_id,provider,status,completeness,score,native_score,
+               native_rank,native_confidence,provider_model,provider_version,
+               source,failure_kind,error_code,signal_keys,signals,response
+             ) VALUES(
+               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14::text[],
+               $15::jsonb,$16::jsonb
+             )
+             ON CONFLICT(candidate_id,provider) DO UPDATE SET
+               status=EXCLUDED.status,completeness=EXCLUDED.completeness,
+               score=EXCLUDED.score,native_score=EXCLUDED.native_score,
+               native_rank=EXCLUDED.native_rank,
+               native_confidence=EXCLUDED.native_confidence,
+               provider_model=EXCLUDED.provider_model,
+               provider_version=EXCLUDED.provider_version,
+               source=EXCLUDED.source,failure_kind=EXCLUDED.failure_kind,
+               error_code=EXCLUDED.error_code,signal_keys=EXCLUDED.signal_keys,
+               signals=EXCLUDED.signals,response=EXCLUDED.response,
+               created_at=now()`,
+            [
+              candidateId,
+              provider.provider,
+              provider.status,
+              provider.completeness,
+              provider.score ?? null,
+              provider.nativeScore ?? null,
+              provider.nativeRank ?? null,
+              provider.nativeConfidence ?? null,
+              provider.providerModel,
+              provider.providerVersion,
+              provider.provenance.source,
+              provider.failureKind ?? null,
+              provider.errorCode ?? null,
+              provider.signals.filter((signal) => signal.points > 0)
+                .map((signal) => signal.key),
+              JSON.stringify(provider.signals.map((signal) => ({
+                key: signal.key,
+                title: signal.title,
+                detail: signal.detail,
+                points: signal.points,
+              }))),
+              JSON.stringify(provider.response ?? {}),
+            ],
+          );
+        }
       }
       await client.query(
         `
@@ -1122,6 +1187,12 @@ export class FiatPerkService {
     minMaxMindRisk?: number;
     maxMaxMindRisk?: number;
     maxMindDisposition?: string;
+    providerName?: EnrichmentResult["provider"];
+    providerStatus?: EnrichmentResult["status"] | "missing";
+    providerCompleteness?: EnrichmentResult["completeness"];
+    minProviderScore?: number;
+    maxProviderScore?: number;
+    providerSignal?: string;
     providerChecked?: boolean;
     minAccountAgeDays?: number;
     maxAccountAgeDays?: number;
@@ -1178,6 +1249,41 @@ export class FiatPerkService {
     if (input.maxMindDisposition) {
       values.push(input.maxMindDisposition);
       conditions.push(`c.maxmind_disposition = $${values.length}`);
+    }
+    if (input.providerName) {
+      values.push(input.providerName);
+      const providerConditions = [`p.provider = $${values.length}`];
+      if (input.providerStatus === "missing") {
+        conditions.push(`NOT EXISTS (
+          SELECT 1 FROM fiat_perk_candidate_provider_evidence p
+           WHERE p.candidate_id=c.id AND ${providerConditions[0]}
+        )`);
+      } else {
+        if (input.providerStatus) {
+          values.push(input.providerStatus);
+          providerConditions.push(`p.status = $${values.length}`);
+        }
+        if (input.providerCompleteness) {
+          values.push(input.providerCompleteness);
+          providerConditions.push(`p.completeness = $${values.length}`);
+        }
+        if (input.minProviderScore !== undefined) {
+          values.push(input.minProviderScore);
+          providerConditions.push(`COALESCE(p.native_score,p.score) >= $${values.length}`);
+        }
+        if (input.maxProviderScore !== undefined) {
+          values.push(input.maxProviderScore);
+          providerConditions.push(`COALESCE(p.native_score,p.score) <= $${values.length}`);
+        }
+        if (input.providerSignal) {
+          values.push(input.providerSignal);
+          providerConditions.push(`$${values.length} = ANY(p.signal_keys)`);
+        }
+        conditions.push(`EXISTS (
+          SELECT 1 FROM fiat_perk_candidate_provider_evidence p
+           WHERE p.candidate_id=c.id AND ${providerConditions.join(" AND ")}
+        )`);
+      }
     }
     if (input.providerChecked !== undefined) {
       values.push(input.providerChecked);
@@ -1448,6 +1554,7 @@ async function loadProviderBundle(
     enrichment.fingerprintCheck(subject, weights),
     enrichment.proxycheck(subject, weights, "signup"),
     enrichment.abstractIpCheck(subject, weights),
+    enrichment.abstractEmailCheck(subject, weights),
     enrichment.opportifyCheck(subject, weights),
     enrichment.maxmindCheck(subject),
   ]);
@@ -1525,6 +1632,7 @@ type CandidateRow = {
   checks: unknown;
   evidence: unknown;
   provider_checked: boolean;
+  providers: FiatPerkProviderEvidence[];
   maxmind_status: "success" | "failed" | "skipped" | "not_checked";
   maxmind_risk_score: string | null;
   maxmind_ip_risk: string | null;
@@ -1548,9 +1656,34 @@ const CANDIDATE_SELECT = `
     c.maxmind_status, c.maxmind_risk_score, c.maxmind_ip_risk,
     c.maxmind_disposition, c.maxmind_reason_codes,
     c.decided_by, c.decided_by_username, c.decided_at, c.decision_note,
-    c.created_at, g.status AS grant_status, g.access_status
+    c.created_at, g.status AS grant_status, g.access_status,
+    provider_evidence.providers
   FROM fiat_perk_candidates c
   LEFT JOIN fiat_perk_grants g ON g.user_id = c.user_id
+  LEFT JOIN LATERAL (
+    SELECT COALESCE(jsonb_agg(jsonb_build_object(
+      'provider',p.provider,
+      'status',p.status,
+      'completeness',p.completeness,
+      'score',p.score,
+      'nativeScore',p.native_score,
+      'nativeRank',p.native_rank,
+      'nativeConfidence',p.native_confidence,
+      'providerModel',p.provider_model,
+      'providerVersion',p.provider_version,
+      'source',p.source,
+      'failureKind',p.failure_kind,
+      'errorCode',p.error_code,
+      'signalKeys',p.signal_keys,
+      'signals',p.signals,
+      'response',p.response
+    ) ORDER BY CASE p.provider
+      WHEN 'fingerprint' THEN 1 WHEN 'proxycheck' THEN 2
+      WHEN 'abstract_ip' THEN 3 WHEN 'abstract_email' THEN 4
+      WHEN 'opportify' THEN 5 ELSE 6 END), '[]'::jsonb) AS providers
+    FROM fiat_perk_candidate_provider_evidence p
+    WHERE p.candidate_id=c.id
+  ) provider_evidence ON true
 `;
 
 function serializeCandidate(row: CandidateRow): FiatPerkCandidate {
@@ -1569,6 +1702,7 @@ function serializeCandidate(row: CandidateRow): FiatPerkCandidate {
     checks: row.checks,
     evidence: row.evidence,
     providerChecked: row.provider_checked,
+    providers: row.providers ?? [],
     maxMindStatus: row.maxmind_status,
     maxMindRiskScore: row.maxmind_risk_score === null
       ? null

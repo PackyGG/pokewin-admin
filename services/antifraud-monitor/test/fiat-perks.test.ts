@@ -76,9 +76,32 @@ function provider(
     provider: name,
     status: "success",
     lookupKey: `key-${name}`,
+    completeness: "complete",
+    providerModel: name,
+    providerVersion: "test-v1",
+    provenance: {
+      endpoint: "test",
+      method: "GET",
+      source: "live",
+      independent: true,
+    },
     signals: [],
     ...overrides,
   } as EnrichmentResult;
+}
+
+function cleanProviders(): EnrichmentResult[] {
+  return [
+    provider("fingerprint"),
+    provider("proxycheck"),
+    provider("abstract_ip"),
+    provider("abstract_email"),
+    provider("opportify"),
+    provider("maxmind", {
+      nativeScore: 2.4,
+      response: { risk_score: 2.4, ip_address: { risk: 1.2 } },
+    }),
+  ];
 }
 
 function checkFor(checks: FiatPerkCheck[], key: string): FiatPerkCheck {
@@ -290,7 +313,7 @@ test("a bad IP or device reputation rejects the account", () => {
       }],
     }),
   ]);
-  assert.equal(checkFor(badIp, "provider_ip_reputation").status, "fail");
+  assert.equal(checkFor(badIp, "provider_proxycheck").status, "fail");
 
   const badDevice = evaluatePerkProviderChecks([
     provider("fingerprint", {
@@ -304,7 +327,7 @@ test("a bad IP or device reputation rejects the account", () => {
     provider("proxycheck"),
   ]);
   assert.equal(
-    checkFor(badDevice, "provider_device_reputation").status,
+    checkFor(badDevice, "provider_fingerprint").status,
     "fail",
   );
 });
@@ -312,10 +335,13 @@ test("a bad IP or device reputation rejects the account", () => {
 test("an unanswered provider holds the account instead of clearing it", () => {
   const input = baseInput();
   input.providersChecked = true;
-  input.providers = [
-    provider("fingerprint", { status: "failed", errorCode: "http_500" }),
-    provider("proxycheck"),
-  ];
+  input.providers = cleanProviders().map((entry) => entry.provider === "fingerprint"
+    ? provider("fingerprint", {
+      status: "failed",
+      completeness: "unknown",
+      errorCode: "http_500",
+    })
+    : entry);
   const result = evaluateFiatPerkCandidate(input);
   assert.equal(result.verdict, "review");
   assert.equal(result.blockingReasons.length, 0);
@@ -325,8 +351,7 @@ test("MaxMind Factors is a first-class screening decision with reasons", () => {
   const input = baseInput();
   input.providersChecked = true;
   input.providers = [
-    provider("fingerprint"),
-    provider("proxycheck"),
+    ...cleanProviders().filter((entry) => entry.provider !== "maxmind"),
     provider("maxmind", {
       nativeScore: 82.5,
       response: {
@@ -351,20 +376,32 @@ test("MaxMind Factors is a first-class screening decision with reasons", () => {
 test("a low MaxMind score clears while missing MaxMind evidence holds review", () => {
   const clean = baseInput();
   clean.providersChecked = true;
-  clean.providers = [
-    provider("fingerprint"),
-    provider("proxycheck"),
-    provider("maxmind", {
-      nativeScore: 2.4,
-      response: { risk_score: 2.4, ip_address: { risk: 1.2 } },
-    }),
-  ];
+  clean.providers = cleanProviders();
   assert.equal(evaluateFiatPerkCandidate(clean).verdict, "pass");
 
   const missing = baseInput();
   missing.providersChecked = true;
   missing.providers = [provider("fingerprint"), provider("proxycheck")];
   assert.equal(evaluateFiatPerkCandidate(missing).verdict, "review");
+});
+
+test("Abstract Email is required and hard reputation evidence blocks access", () => {
+  const input = baseInput();
+  input.providersChecked = true;
+  input.providers = cleanProviders().map((entry) => entry.provider === "abstract_email"
+    ? provider("abstract_email", {
+      score: 60,
+      signals: [{
+        key: "abstract_email_disposable",
+        title: "Disposable email",
+        detail: "Disposable mailbox provider detected",
+        points: 35,
+      }],
+    })
+    : entry);
+  const result = evaluateFiatPerkCandidate(input);
+  assert.equal(result.verdict, "fail");
+  assert.ok(result.blockingReasons.includes("provider_abstract_email"));
 });
 
 test("the checkout gate refuses an account without a live perk", () => {

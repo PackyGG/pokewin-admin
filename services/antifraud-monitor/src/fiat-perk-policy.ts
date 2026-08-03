@@ -3,6 +3,7 @@ import {
   badIpReputation,
 } from "./fiat-eligibility-policy.js";
 import type { EnrichmentResult } from "./enrichment.js";
+import type { SignupProvider } from "./provider-contracts.js";
 
 /**
  * Fiat perk screening policy — "should this ACCOUNT be allowed to reach a card
@@ -41,6 +42,7 @@ export type FiatPerkCheckCategory =
   | "device"
   | "behaviour"
   | "history"
+  | "provider"
   | "maxmind";
 
 export type FiatPerkCheck = {
@@ -519,61 +521,62 @@ export function evaluatePerkProviderChecks(
   const byName = new Map(
     providers.map((provider) => [provider.provider, provider]),
   );
-  const fingerprint = byName.get("fingerprint");
-  const proxycheck = byName.get("proxycheck");
-  const badIp = badIpReputation(providers);
-  const badDevice = badDeviceReputation(providers);
   const checks: FiatPerkCheck[] = [];
 
-  // An unanswered provider is not a pass. Screening grants standing access, so
-  // "we could not verify" holds the account for a human instead of clearing it.
-  const ipAnswered = proxycheck?.status === "success";
-  checks.push({
-    key: "provider_ip_reputation",
-    label: "IP reputation",
-    category: "network",
-    status: !ipAnswered ? "warn" : badIp ? "fail" : "pass",
-    detail: !ipAnswered
-      ? `The independent IP check did not answer (${
-        proxycheck?.errorCode ?? "not run"
-      }).`
-      : badIp
-        ? "The account's last known IP is flagged as proxy, VPN, hosting or abusive."
-        : "The account's last known IP carries no anonymising or abuse signal.",
-    points: !ipAnswered ? 20 : badIp ? 100 : 0,
-  });
+  const providerLabels: Record<SignupProvider, string> = {
+    fingerprint: "Fingerprint Pro Plus",
+    proxycheck: "ProxyCheck v3",
+    abstract_ip: "Abstract IP Intelligence",
+    abstract_email: "Abstract Email Reputation",
+    opportify: "Opportify Fraud Check",
+    maxmind: "MaxMind Factors",
+  };
+  const abstractEmailHardSignals = new Set([
+    "abstract_email_catchall",
+    "abstract_email_undeliverable",
+    "abstract_email_invalid_smtp",
+    "abstract_email_disposable",
+    "abstract_email_high_risk",
+  ]);
 
-  const deviceAnswered = fingerprint?.status === "success";
-  checks.push({
-    key: "provider_device_reputation",
-    label: "Device reputation",
-    category: "device",
-    status: !deviceAnswered ? "warn" : badDevice ? "fail" : "pass",
-    detail: !deviceAnswered
-      ? `The Fingerprint event check did not answer (${
-        fingerprint?.errorCode ?? "not run"
-      }).`
-      : badDevice
-        ? "The account's device shows tampering, emulation or bot signals."
-        : "The account's device carries no tampering or automation signal.",
-    points: !deviceAnswered ? 20 : badDevice ? 100 : 0,
-  });
-
-  for (const name of ["abstract_ip", "opportify"] as const) {
+  for (const name of [
+    "fingerprint",
+    "proxycheck",
+    "abstract_ip",
+    "abstract_email",
+    "opportify",
+  ] as const) {
     const provider = byName.get(name);
-    if (!provider || provider.status === "skipped") continue;
-    const failed = provider.status === "failed";
+    const answered = provider?.status === "success";
+    const positiveSignals = provider?.signals.filter((signal) => signal.points > 0) ?? [];
+    const hardRisk = provider
+      ? name === "fingerprint"
+        ? badDeviceReputation([provider])
+        : name === "abstract_email"
+          ? positiveSignals.some((signal) => abstractEmailHardSignals.has(signal.key))
+          : badIpReputation([provider])
+      : false;
+    const incomplete = provider?.completeness !== "complete";
+    const status: FiatPerkCheckStatus = !answered || incomplete
+      ? "warn"
+      : hardRisk
+        ? "fail"
+        : positiveSignals.length > 0
+          ? "warn"
+          : "pass";
     checks.push({
       key: `provider_${name}`,
-      label: name === "abstract_ip" ? "Abstract IP" : "Opportify",
-      category: "network",
-      status: failed ? "warn" : "pass",
-      detail: failed
-        ? `The corroborating ${name} check did not answer.`
-        : `The corroborating ${name} check answered with score ${
-          provider.score ?? 0
-        }.`,
-      points: failed ? 10 : 0,
+      label: providerLabels[name],
+      category: "provider",
+      status,
+      detail: !provider
+        ? `${providerLabels[name]} was not run.`
+        : !answered
+          ? `${providerLabels[name]} ${provider.status} (${provider.errorCode ?? "no compatible evidence"}).`
+          : `${providerLabels[name]} returned score ${provider.score ?? 0}, ${
+            provider.completeness
+          } evidence and ${positiveSignals.length} material signal(s).`,
+      points: status === "fail" ? 100 : status === "warn" ? 20 : 0,
     });
   }
 

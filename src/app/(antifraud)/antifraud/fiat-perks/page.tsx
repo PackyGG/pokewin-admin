@@ -11,6 +11,7 @@ import {
   PageHeroIdentity,
 } from "@/components/modern-panels";
 import {
+  FIAT_PERK_PROVIDERS,
   listFiatPerkCandidates,
   listFiatPerkAccessBatches,
   listFiatPerkGrants,
@@ -36,6 +37,12 @@ type SearchParams = {
   mmMax?: string;
   mmAction?: string;
   providers?: string;
+  provider?: string;
+  providerStatus?: string;
+  providerCompleteness?: string;
+  providerMin?: string;
+  providerMax?: string;
+  providerSignal?: string;
   ageMin?: string;
   ageMax?: string;
   reason?: string;
@@ -71,6 +78,16 @@ async function Content({ params }: { params: SearchParams }) {
     && runs.data.some((run) => run.id === params.run)
     ? params.run
     : runs.data[0]?.id;
+  const providerName = (FIAT_PERK_PROVIDERS as readonly string[])
+    .includes(params.provider ?? "")
+    ? params.provider as (typeof FIAT_PERK_PROVIDERS)[number]
+    : undefined;
+  const providerStatus = providerName
+    && ["success", "skipped", "failed", "missing"]
+      .includes(params.providerStatus ?? "")
+    ? params.providerStatus as "success" | "skipped" | "failed" | "missing"
+    : undefined;
+  const providerHasEvidence = providerName && providerStatus !== "missing";
 
   const [candidates, grants, accessBatches] = await Promise.all([
     selectedRunId
@@ -96,6 +113,21 @@ async function Content({ params }: { params: SearchParams }) {
         maxMindDisposition: ["accept", "reject", "manual_review", "test"]
           .includes(params.mmAction ?? "")
           ? params.mmAction as "accept" | "reject" | "manual_review" | "test"
+          : undefined,
+        providerName,
+        providerStatus,
+        providerCompleteness: providerHasEvidence && ["complete", "partial", "unknown"]
+          .includes(params.providerCompleteness ?? "")
+          ? params.providerCompleteness as "complete" | "partial" | "unknown"
+          : undefined,
+        minProviderScore: providerHasEvidence
+          ? numberParam(params.providerMin, 100)
+          : undefined,
+        maxProviderScore: providerHasEvidence
+          ? numberParam(params.providerMax, 100)
+          : undefined,
+        providerSignal: providerHasEvidence
+          ? params.providerSignal?.trim() || undefined
           : undefined,
         providerChecked: params.providers === "yes"
           ? true
@@ -187,6 +219,12 @@ async function Content({ params }: { params: SearchParams }) {
           mmMax: params.mmMax ?? "",
           mmAction: params.mmAction ?? "",
           providers: params.providers ?? "",
+          provider: params.provider ?? "",
+          providerStatus: params.providerStatus ?? "",
+          providerCompleteness: params.providerCompleteness ?? "",
+          providerMin: params.providerMin ?? "",
+          providerMax: params.providerMax ?? "",
+          providerSignal: params.providerSignal ?? "",
           ageMin: params.ageMin ?? "",
           ageMax: params.ageMax ?? "",
           reason: params.reason ?? "",

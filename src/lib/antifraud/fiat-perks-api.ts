@@ -12,6 +12,7 @@ import {
   type FiatPerkAccessBatch,
   type FiatPerkGrant,
   type FiatPerkRun,
+  type FiatPerkProviderName,
   type FiatPerkScope,
 } from "./fiat-perks-contract";
 
@@ -28,6 +29,7 @@ export {
   DEFAULT_MIN_ACCOUNT_AGE_DAYS,
   FIAT_PERK_SCOPES,
   FIAT_PERK_SCOPE_LABELS,
+  FIAT_PERK_PROVIDERS,
   MAX_PERK_RUN_ACCOUNTS,
   perkCheckSchema,
 } from "./fiat-perks-contract";
@@ -141,6 +143,12 @@ export function listFiatPerkCandidates(input: {
   minMaxMindRisk?: number;
   maxMaxMindRisk?: number;
   maxMindDisposition?: "accept" | "reject" | "manual_review" | "test";
+  providerName?: FiatPerkProviderName;
+  providerStatus?: "success" | "skipped" | "failed" | "missing";
+  providerCompleteness?: "complete" | "partial" | "unknown";
+  minProviderScore?: number;
+  maxProviderScore?: number;
+  providerSignal?: string;
   providerChecked?: boolean;
   minAccountAgeDays?: number;
   maxAccountAgeDays?: number;
@@ -164,6 +172,12 @@ export function listFiatPerkCandidates(input: {
     minMaxMindRisk: input.minMaxMindRisk,
     maxMaxMindRisk: input.maxMaxMindRisk,
     maxMindDisposition: input.maxMindDisposition,
+    providerName: input.providerName,
+    providerStatus: input.providerStatus,
+    providerCompleteness: input.providerCompleteness,
+    minProviderScore: input.minProviderScore,
+    maxProviderScore: input.maxProviderScore,
+    providerSignal: input.providerSignal,
     providerChecked: input.providerChecked,
     minAccountAgeDays: input.minAccountAgeDays,
     maxAccountAgeDays: input.maxAccountAgeDays,

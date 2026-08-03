@@ -24,12 +24,24 @@ test("Fiat perk access changes are durable and backend-confirmed", () => {
   assert.match(access, /recoverPendingBatches/);
 });
 
-test("Fiat perk screening includes MaxMind and supports selected-account runs", () => {
+test("Fiat perk screening uses and persists every configured provider", () => {
   const service = source("services/antifraud-monitor/src/fiat-perks.ts");
   const policy = source("services/antifraud-monitor/src/fiat-perk-policy.ts");
+  const migration = source(
+    "services/antifraud-monitor/migrations/051_fiat_perk_provider_evidence.sql",
+  );
   assert.match(service, /"selected_accounts"/);
+  assert.match(service, /enrichment\.fingerprintCheck\(subject/);
+  assert.match(service, /enrichment\.proxycheck\(subject/);
+  assert.match(service, /enrichment\.abstractIpCheck\(subject/);
+  assert.match(service, /enrichment\.abstractEmailCheck\(subject/);
+  assert.match(service, /enrichment\.opportifyCheck\(subject/);
   assert.match(service, /enrichment\.maxmindCheck\(subject\)/);
+  assert.match(service, /fiat_perk_candidate_provider_evidence/);
   assert.match(service, /maxmind_reason_codes/);
+  assert.match(migration, /PRIMARY KEY \(candidate_id, provider\)/);
+  assert.match(migration, /'abstract_email'/);
+  assert.match(policy, /key: `provider_\$\{name\}`/);
   assert.match(policy, /key: "maxmind_risk"/);
   assert.match(policy, /key: "maxmind_ip_risk"/);
   assert.match(policy, /key: "maxmind_disposition"/);
@@ -44,6 +56,9 @@ test("Fiat perks UI exposes deep filters and single or bulk access controls", ()
   );
   assert.match(page, /selected_accounts/);
   assert.match(page, /MaxMind risk/);
+  assert.match(page, /Provider signal key/);
+  assert.match(page, /All provider evidence/);
+  assert.match(page, /Sanitized provider response/);
   assert.match(page, /Enable selected/);
   assert.match(page, /Disable selected/);
   assert.match(page, /Retry failed/);

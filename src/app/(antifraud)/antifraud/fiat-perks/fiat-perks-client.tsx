@@ -41,6 +41,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   DEFAULT_MIN_ACCOUNT_AGE_DAYS,
+  FIAT_PERK_PROVIDERS,
   FIAT_PERK_SCOPES,
   FIAT_PERK_SCOPE_LABELS,
   MAX_PERK_RUN_ACCOUNTS,
@@ -48,6 +49,7 @@ import {
   type FiatPerkAccessBatch,
   type FiatPerkCheck,
   type FiatPerkGrant,
+  type FiatPerkProviderEvidence,
   type FiatPerkRun,
   type FiatPerkScope,
 } from "@/lib/antifraud/fiat-perks-contract";
@@ -77,6 +79,12 @@ type Filters = {
   mmMax: string;
   mmAction: string;
   providers: string;
+  provider: string;
+  providerStatus: string;
+  providerCompleteness: string;
+  providerMin: string;
+  providerMax: string;
+  providerSignal: string;
   ageMin: string;
   ageMax: string;
   reason: string;
@@ -84,6 +92,18 @@ type Filters = {
   fiatMin: string;
   wagerMin: string;
   rewardMax: string;
+};
+
+const PROVIDER_LABELS: Record<
+  FiatPerkProviderEvidence["provider"],
+  string
+> = {
+  fingerprint: "Fingerprint Pro Plus",
+  proxycheck: "ProxyCheck v3",
+  abstract_ip: "Abstract IP Intelligence",
+  abstract_email: "Abstract Email Reputation",
+  opportify: "Opportify Fraud Check",
+  maxmind: "MaxMind Factors",
 };
 
 function errorMessage(error: unknown, fallback: string): string {
@@ -496,7 +516,7 @@ function ReviewQueue({
                 {run.scopeLabel} · {run.passCount} clear · {run.reviewCount}{" "}
                 borderline · {run.failCount} blocked
                 {run.providerChecks > 0
-                  ? ` · ${run.providerChecks} identity lookups`
+                  ? ` · ${run.providerChecks} accounts checked across all providers`
                   : ""}
               </span>
             )}
@@ -564,6 +584,16 @@ function ReviewQueue({
               mmMax: draft.mmMax || null,
               mmAction: draft.mmAction || null,
               providers: draft.providers || null,
+              provider: draft.provider || null,
+              providerStatus: draft.provider ? draft.providerStatus || null : null,
+              providerCompleteness: draft.provider
+                ? draft.providerCompleteness || null
+                : null,
+              providerMin: draft.provider ? draft.providerMin || null : null,
+              providerMax: draft.provider ? draft.providerMax || null : null,
+              providerSignal: draft.provider
+                ? draft.providerSignal.trim() || null
+                : null,
               ageMin: draft.ageMin || null,
               ageMax: draft.ageMax || null,
               reason: draft.reason.trim() || null,
@@ -588,6 +618,24 @@ function ReviewQueue({
             ["accept", "Accept"], ["manual_review", "Manual review"], ["reject", "Reject"], ["test", "Test"],
           ]} />
           <FilterSelect label="Provider checks" value={draft.providers} onChange={(providers) => setDraft({ ...draft, providers })} options={[["yes", "Completed"], ["no", "Not completed"]]} />
+          <FilterSelect
+            label="Provider"
+            value={draft.provider}
+            onChange={(provider) => setDraft({ ...draft, provider })}
+            options={FIAT_PERK_PROVIDERS.map((provider) => [
+              provider,
+              PROVIDER_LABELS[provider],
+            ])}
+          />
+          <FilterSelect label="Provider status" value={draft.providerStatus} onChange={(providerStatus) => setDraft({ ...draft, providerStatus })} options={[
+            ["success", "Answered"], ["failed", "Failed"],
+            ["skipped", "Skipped"], ["missing", "Missing on old run"],
+          ]} />
+          <FilterSelect label="Evidence completeness" value={draft.providerCompleteness} onChange={(providerCompleteness) => setDraft({ ...draft, providerCompleteness })} options={[
+            ["complete", "Complete"], ["partial", "Partial"], ["unknown", "Unknown"],
+          ]} />
+          <FilterRange label="Provider score" min={draft.providerMin} max={draft.providerMax} onMin={(providerMin) => setDraft({ ...draft, providerMin })} onMax={(providerMax) => setDraft({ ...draft, providerMax })} />
+          <FilterInput label="Provider signal key" value={draft.providerSignal} onChange={(providerSignal) => setDraft({ ...draft, providerSignal })} placeholder="fingerprint_vpn" />
           <FilterRange label="Account age days" min={draft.ageMin} max={draft.ageMax} onMin={(ageMin) => setDraft({ ...draft, ageMin })} onMax={(ageMax) => setDraft({ ...draft, ageMax })} />
           <FilterInput label="Blocking reason" value={draft.reason} onChange={(reason) => setDraft({ ...draft, reason })} placeholder="shared_device" />
           <FilterInput label="Min crypto funding $" value={draft.cryptoMin} onChange={(cryptoMin) => setDraft({ ...draft, cryptoMin })} type="number" />
@@ -603,6 +651,8 @@ function ReviewQueue({
               onClick={() => onFilter(Object.fromEntries([
                 "access", "country", "riskMin", "riskMax", "mmStatus", "mmMin",
                 "mmMax", "mmAction", "providers", "ageMin", "ageMax", "reason",
+                "provider", "providerStatus", "providerCompleteness", "providerMin",
+                "providerMax", "providerSignal",
                 "cryptoMin", "fiatMin", "wagerMin", "rewardMax",
               ].map((key) => [key, null])))}
             >
@@ -780,6 +830,68 @@ function FilterSelect({
         </SelectContent>
       </Select>
     </div>
+  );
+}
+
+function ProviderEvidenceCard({
+  evidence,
+}: {
+  evidence: FiatPerkProviderEvidence;
+}) {
+  const score = evidence.nativeScore ?? evidence.score;
+  const responseAvailable = Object.keys(evidence.response).length > 0;
+  return (
+    <article className="min-w-0 rounded-lg border border-border/60 bg-muted/20 p-3 [content-visibility:auto]">
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs font-medium">{PROVIDER_LABELS[evidence.provider]}</p>
+        <Badge variant="outline" className={cn(
+          "text-[10px]",
+          evidence.status === "success"
+            ? "border-emerald-500/30 text-emerald-700 dark:text-emerald-400"
+            : evidence.status === "failed"
+              ? "border-rose-500/30 text-rose-700 dark:text-rose-400"
+              : "border-amber-500/30 text-amber-700 dark:text-amber-400",
+        )}>
+          {evidence.status}
+        </Badge>
+        <span className="text-[10px] text-muted-foreground">
+          {evidence.completeness} · {evidence.source}
+        </span>
+      </div>
+      <p className="mt-1 text-[11px] text-muted-foreground">
+        {score === null ? "No score" : `Score ${score.toFixed(2)}`}
+        {evidence.nativeRank ? ` · ${evidence.nativeRank}` : ""}
+        {evidence.nativeConfidence !== null
+          ? ` · confidence ${evidence.nativeConfidence.toFixed(2)}`
+          : ""}
+        {` · ${evidence.providerModel} ${evidence.providerVersion}`}
+      </p>
+      {(evidence.errorCode || evidence.failureKind) && (
+        <p className="mt-1 break-words font-mono text-[10px] text-rose-700 dark:text-rose-400">
+          {[evidence.failureKind, evidence.errorCode].filter(Boolean).join(" · ")}
+        </p>
+      )}
+      {evidence.signals.length > 0 && (
+        <ul className="mt-2 space-y-1">
+          {evidence.signals.map((signal) => (
+            <li key={signal.key} className="text-[11px] text-muted-foreground">
+              <span className="font-medium text-foreground">{signal.title}</span>
+              {` · ${signal.detail} · ${signal.points} pts`}
+            </li>
+          ))}
+        </ul>
+      )}
+      {responseAvailable && (
+        <details className="mt-2 text-[11px]">
+          <summary className="cursor-pointer text-muted-foreground">
+            Sanitized provider response
+          </summary>
+          <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-md bg-background/70 p-2 font-mono text-[10px]">
+            {JSON.stringify(evidence.response, null, 2)}
+          </pre>
+        </details>
+      )}
+    </article>
   );
 }
 
@@ -996,39 +1108,56 @@ function CandidateRow({
                 : ""}
             </p>
           )}
-          {candidate.evidence.maxmind && (
-            <div className="mt-3 grid gap-3 rounded-lg border border-border/60 bg-muted/20 p-3 md:grid-cols-2">
-              <div>
-                <p className="text-xs font-medium">MaxMind Factors</p>
-                <p className="mt-1 text-xs text-muted-foreground">
-                  Overall {candidate.evidence.maxmind.riskScore?.toFixed(2) ?? "unknown"}
-                  {candidate.evidence.maxmind.ipRisk !== null
-                    ? ` · IP ${candidate.evidence.maxmind.ipRisk.toFixed(2)}`
-                    : ""}
-                  {candidate.evidence.maxmind.disposition
-                    ? ` · ${candidate.evidence.maxmind.disposition}`
-                    : ""}
-                </p>
-                {Object.keys(candidate.evidence.maxmind.factors).length > 0 && (
+          {(candidate.evidence.behaviour || candidate.evidence.network) && (
+            <div className="mt-3 grid gap-3 md:grid-cols-2">
+              {candidate.evidence.behaviour && (
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs font-medium">Funding and behaviour</p>
                   <p className="mt-1 text-[11px] text-muted-foreground">
-                    {Object.entries(candidate.evidence.maxmind.factors)
-                      .map(([key, value]) => `${key.replaceAll("_", " ")} ${value}`)
-                      .join(" · ")}
+                    Crypto ${candidate.evidence.behaviour.cryptoDepositUsd.toFixed(2)}
+                    {` (${candidate.evidence.behaviour.cryptoDeposits})`}
+                    {` · Fiat $${candidate.evidence.behaviour.fiatDepositUsd.toFixed(2)}`}
+                    {` (${candidate.evidence.behaviour.fiatDeposits})`}
+                    {` · wager $${candidate.evidence.behaviour.wagerUsd.toFixed(2)}`}
+                    {` · rewards $${candidate.evidence.behaviour.rewardUsd.toFixed(2)}`}
+                    {` · withdrawals $${candidate.evidence.behaviour.withdrawalUsd.toFixed(2)}`}
+                    {` (${candidate.evidence.behaviour.withdrawalRequests})`}
+                    {` · disputes ${candidate.evidence.behaviour.disputedFiat}`}
+                    {` · refunds ${candidate.evidence.behaviour.refundedFiat}`}
                   </p>
-                )}
-              </div>
-              <div>
-                <p className="text-xs font-medium">Risk reasons</p>
-                <p className="mt-1 text-[11px] text-muted-foreground">
-                  {candidate.evidence.maxmind.reasons.length > 0
-                    ? candidate.evidence.maxmind.reasons
-                      .map((reason) => reason.code.replaceAll("_", " "))
-                      .join(" · ")
-                    : "No material MaxMind risk reason was returned."}
-                </p>
-              </div>
+                </div>
+              )}
+              {candidate.evidence.network && (
+                <div className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                  <p className="text-xs font-medium">Identity network</p>
+                  <p className="mt-1 break-words text-[11px] text-muted-foreground">
+                    Shared device accounts {candidate.evidence.network.sharedDeviceUsers}
+                    {` · shared signup-IP accounts ${candidate.evidence.network.sharedSignupIpUsers}`}
+                    {candidate.evidence.network.signupIp
+                      ? ` · signup IP ${candidate.evidence.network.signupIp}`
+                      : ""}
+                    {candidate.evidence.network.visitorId
+                      ? ` · device ${candidate.evidence.network.visitorId}`
+                      : ""}
+                  </p>
+                </div>
+              )}
             </div>
           )}
+          {candidate.providers.length > 0 ? (
+            <div className="mt-3">
+              <p className="mb-2 text-xs font-medium">All provider evidence</p>
+              <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+                {candidate.providers.map((provider) => (
+                  <ProviderEvidenceCard key={provider.provider} evidence={provider} />
+                ))}
+              </div>
+            </div>
+          ) : candidate.providerChecked ? (
+            <p className="mt-3 text-xs text-muted-foreground">
+              This result predates normalized provider evidence. Re-screen the account to collect all six providers.
+            </p>
+          ) : null}
         </div>
       </CollapsibleContent>
     </Collapsible>

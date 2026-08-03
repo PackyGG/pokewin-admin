@@ -31,6 +31,16 @@ export const FIAT_PERK_SCOPE_LABELS: Record<FiatPerkScope, string> = {
 export const DEFAULT_MIN_ACCOUNT_AGE_DAYS = 14;
 export const MAX_PERK_RUN_ACCOUNTS = 500;
 
+export const FIAT_PERK_PROVIDERS = [
+  "fingerprint",
+  "proxycheck",
+  "abstract_ip",
+  "abstract_email",
+  "opportify",
+  "maxmind",
+] as const;
+export type FiatPerkProviderName = (typeof FIAT_PERK_PROVIDERS)[number];
+
 export const perkRunSchema = z.object({
   id: z.string().uuid(),
   scope: z.enum(FIAT_PERK_SCOPES),
@@ -62,6 +72,7 @@ export const perkCheckSchema = z.object({
     "device",
     "behaviour",
     "history",
+    "provider",
     "maxmind",
   ]),
   status: z.enum(["pass", "warn", "fail"]),
@@ -115,6 +126,30 @@ export const perkEvidenceSchema = z.object({
 });
 export type FiatPerkEvidence = z.infer<typeof perkEvidenceSchema>;
 
+export const perkProviderEvidenceSchema = z.object({
+  provider: z.enum(FIAT_PERK_PROVIDERS),
+  status: z.enum(["success", "skipped", "failed"]),
+  completeness: z.enum(["complete", "partial", "unknown"]),
+  score: z.coerce.number().nullable(),
+  nativeScore: z.coerce.number().nullable(),
+  nativeRank: z.string().nullable(),
+  nativeConfidence: z.coerce.number().nullable(),
+  providerModel: z.string(),
+  providerVersion: z.string(),
+  source: z.enum(["live", "cache", "input"]),
+  failureKind: z.string().nullable(),
+  errorCode: z.string().nullable(),
+  signalKeys: z.array(z.string()),
+  signals: z.array(z.object({
+    key: z.string(),
+    title: z.string(),
+    detail: z.string(),
+    points: z.number(),
+  })),
+  response: z.record(z.string(), z.unknown()),
+});
+export type FiatPerkProviderEvidence = z.infer<typeof perkProviderEvidenceSchema>;
+
 export const perkCandidateSchema = z.object({
   id: z.string().uuid(),
   runId: z.string().uuid(),
@@ -132,6 +167,7 @@ export const perkCandidateSchema = z.object({
   checks: z.array(perkCheckSchema).catch([]),
   evidence: perkEvidenceSchema.catch({}),
   providerChecked: z.boolean(),
+  providers: z.array(perkProviderEvidenceSchema).default([]),
   maxMindStatus: z.enum(["success", "failed", "skipped", "not_checked"])
     .default("not_checked"),
   maxMindRiskScore: z.number().nullable().default(null),

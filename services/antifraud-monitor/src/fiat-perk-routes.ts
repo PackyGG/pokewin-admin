@@ -62,6 +62,19 @@ const candidateQuerySchema = z.object({
   minMaxMindRisk: z.coerce.number().min(0).max(100).optional(),
   maxMaxMindRisk: z.coerce.number().min(0).max(100).optional(),
   maxMindDisposition: z.enum(["accept", "reject", "manual_review", "test"]).optional(),
+  providerName: z.enum([
+    "fingerprint",
+    "proxycheck",
+    "abstract_ip",
+    "abstract_email",
+    "opportify",
+    "maxmind",
+  ]).optional(),
+  providerStatus: z.enum(["success", "skipped", "failed", "missing"]).optional(),
+  providerCompleteness: z.enum(["complete", "partial", "unknown"]).optional(),
+  minProviderScore: z.coerce.number().min(0).max(100).optional(),
+  maxProviderScore: z.coerce.number().min(0).max(100).optional(),
+  providerSignal: z.string().trim().min(1).max(120).optional(),
   providerChecked: z.enum(["true", "false"]).transform((value) => value === "true").optional(),
   minAccountAgeDays: z.coerce.number().min(0).max(36500).optional(),
   maxAccountAgeDays: z.coerce.number().min(0).max(36500).optional(),
@@ -182,6 +195,31 @@ export async function registerFiatPerkRoutes(
     if (!params.success || !query.success) {
       return reply.code(400).send({ error: "invalid_request" });
     }
+    const hasProviderDetailFilter = query.data.providerStatus !== undefined
+      || query.data.providerCompleteness !== undefined
+      || query.data.minProviderScore !== undefined
+      || query.data.maxProviderScore !== undefined
+      || query.data.providerSignal !== undefined;
+    if (hasProviderDetailFilter && !query.data.providerName) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: "Choose a provider before filtering its evidence.",
+      });
+    }
+    if (
+      query.data.providerStatus === "missing"
+      && (
+        query.data.providerCompleteness !== undefined
+        || query.data.minProviderScore !== undefined
+        || query.data.maxProviderScore !== undefined
+        || query.data.providerSignal !== undefined
+      )
+    ) {
+      return reply.code(400).send({
+        error: "invalid_request",
+        message: "Missing provider evidence cannot have score or signal filters.",
+      });
+    }
     return {
       data: await service.listCandidates({
         runId: params.data.id,
@@ -195,6 +233,12 @@ export async function registerFiatPerkRoutes(
         minMaxMindRisk: query.data.minMaxMindRisk,
         maxMaxMindRisk: query.data.maxMaxMindRisk,
         maxMindDisposition: query.data.maxMindDisposition,
+        providerName: query.data.providerName,
+        providerStatus: query.data.providerStatus,
+        providerCompleteness: query.data.providerCompleteness,
+        minProviderScore: query.data.minProviderScore,
+        maxProviderScore: query.data.maxProviderScore,
+        providerSignal: query.data.providerSignal,
         providerChecked: query.data.providerChecked,
         minAccountAgeDays: query.data.minAccountAgeDays,
         maxAccountAgeDays: query.data.maxAccountAgeDays,
