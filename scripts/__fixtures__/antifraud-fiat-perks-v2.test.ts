@@ -65,3 +65,21 @@ test("Fiat perks UI exposes deep filters and single or bulk access controls", ()
   assert.match(actions, /changeFiatAccessBatch/);
   assert.match(actions, /requireAntifraudManager/);
 });
+
+test("Fiat perk run progress uses the durable live monitor transport", () => {
+  const types = source("services/antifraud-monitor/src/types.ts");
+  const service = source("services/antifraud-monitor/src/fiat-perks.ts");
+  const server = source("services/antifraud-monitor/src/server.ts");
+  const page = source(
+    "src/app/(antifraud)/antifraud/fiat-perks/fiat-perks-client.tsx",
+  );
+  assert.match(types, /"fiat_perk\.run\.progress"/);
+  assert.match(types, /"fiat_perk\.run\.completed"/);
+  assert.match(service, /provider_checks = \$2/);
+  assert.match(service, /publishRun\("fiat_perk\.run\.progress"/);
+  assert.match(service, /publishRun\("fiat_perk\.run\.completed"/);
+  assert.match(server, /fiatPerkAccess,\s*publishCommittedMutation,/);
+  assert.match(page, /useSseStream<unknown>/);
+  assert.match(page, /MONITOR_STREAM_PATH/);
+  assert.match(page, /RUN_LIVE_SAFETY_POLL_MS/);
+});
