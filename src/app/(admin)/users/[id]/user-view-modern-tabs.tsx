@@ -102,6 +102,7 @@ import { UserWagerRequirementCard } from "./user-wager-requirement-card";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { FraudLocksCard } from "./fraud-locks-card";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
+import { RewardFeatureLocksCard } from "./reward-feature-locks-card";
 import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
 import { FiatDepositAccessCard } from "./fiat-deposit-access-button";
 import { KycCard } from "./kyc-card";
@@ -2063,11 +2064,25 @@ export function AccountTab({
         open={featureLocksOpen}
         onOpenChange={setFeatureLocksOpen}
       >
-        <FeatureLocksCard
-          userId={user.id}
-          featureLocks={featureLocks}
-          canToggle={capabilities.canToggleFeatureLocks}
-        />
+        <div className="space-y-4">
+          <FeatureLocksCard
+            userId={user.id}
+            featureLocks={featureLocks}
+            canToggle={capabilities.canToggleFeatureLocks}
+          />
+          {featureLocksPromise ? (
+            <Suspense fallback={<SkeletonCard lines={6} />}>
+              <RewardFeatureLocksStreamed
+                userId={user.id}
+                featureLocksPromise={featureLocksPromise}
+                canManageRewardLocks={capabilities.canToggleFeatureLocks}
+                canManageFiatAutoApproval={data.sessionRole === "admin"}
+              />
+            </Suspense>
+          ) : (
+            <SkeletonCard lines={6} />
+          )}
+        </div>
       </CollapsibleSection>
 
       <CollapsibleSection
@@ -2457,6 +2472,28 @@ function FraudLocksStreamed({
   const featureLocks = use(featureLocksPromise);
   return (
     <FraudLocksCard userId={userId} data={featureLocks} canManage={canManage} />
+  );
+}
+
+function RewardFeatureLocksStreamed({
+  userId,
+  featureLocksPromise,
+  canManageRewardLocks,
+  canManageFiatAutoApproval,
+}: {
+  userId: string;
+  featureLocksPromise: Promise<UserFeatureLocks | null>;
+  canManageRewardLocks: boolean;
+  canManageFiatAutoApproval: boolean;
+}) {
+  const featureLocks = use(featureLocksPromise);
+  return (
+    <RewardFeatureLocksCard
+      userId={userId}
+      data={featureLocks}
+      canManageRewardLocks={canManageRewardLocks}
+      canManageFiatAutoApproval={canManageFiatAutoApproval}
+    />
   );
 }
 

@@ -8,6 +8,7 @@ import { RewardExpiryCard } from "./reward-expiry-card";
 import { CryptoFeesCard } from "./crypto-fees-card";
 import { DepositBonusConfigCard } from "./deposit-bonus-config-card";
 import { TelegramNotificationsCard } from "./telegram-notifications-card";
+import { FiatAutoApprovalCard } from "./fiat-auto-approval-card";
 import { VaultLockCard, type VaultLockTime } from "./vault-lock-card";
 import type { SiteConfigRow } from "@/lib/queries/security";
 import type { WagerRequirementDefaults } from "@/lib/backend-api/wager-requirements";
@@ -19,6 +20,7 @@ import type { RewardExpiry } from "@/lib/backend-api/reward-expiry";
 import type { CryptoFees } from "@/lib/backend-api/crypto-fees";
 import type { DepositBonusConfig } from "@/lib/backend-api/deposit-bonus-config";
 import type { TelegramNotificationSettings } from "@/lib/backend-api/telegram-notifications";
+import type { FiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
 
 /**
  * Single client boundary for all /security panels. The server page fetches
@@ -38,6 +40,7 @@ export function SecurityPageSections({
   cryptoFees,
   depositBonusConfig,
   telegramNotifications,
+  fiatAutomaticCredit,
 }: {
   config: SiteConfigRow[];
   rainConfigMoved: boolean;
@@ -51,6 +54,7 @@ export function SecurityPageSections({
   cryptoFees: CryptoFees | null;
   depositBonusConfig: DepositBonusConfig | null;
   telegramNotifications: TelegramNotificationSettings | null;
+  fiatAutomaticCredit: FiatDepositAutomaticCreditConfig | null;
 }) {
   return (
     <div className="space-y-6">
@@ -81,6 +85,10 @@ export function SecurityPageSections({
 
       <CollapsibleSecuritySection icon="gift" title="Deposit Bonus Cap">
         <DepositBonusConfigCard initial={depositBonusConfig} />
+      </CollapsibleSecuritySection>
+
+      <CollapsibleSecuritySection icon="banknote" title="Fiat Deposit Approval">
+        <FiatAutoApprovalCard initial={fiatAutomaticCredit} />
       </CollapsibleSecuritySection>
 
       <CollapsibleSecuritySection icon="bell" title="Telegram Notifications">

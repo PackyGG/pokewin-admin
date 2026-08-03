@@ -1,5 +1,12 @@
 import "server-only";
 
+import { z } from "zod";
+
+import {
+  REWARD_LOCK_CATEGORIES,
+  type RewardLockCategory,
+} from "@/lib/contracts/reward-locks";
+
 import { backendApi } from "./client";
 
 /**
@@ -17,30 +24,107 @@ import { backendApi } from "./client";
  * `/admin/...`. Errors surface as BackendApiError (`.status`,
  * `.isNotFound`) / BackendNetworkError — callers degrade gracefully.
  */
-export type UserFeatureLocks = {
-  user_id: string;
-  locked_deposits_crypto: string[];
-  locked_deposits_fiat: string[];
-  locked_deposits_at: string | null;
-  locked_deposits_reason: string | null;
-  locked_withdrawals_crypto: string[];
-  locked_withdrawals_items: boolean;
-  locked_withdrawals_at: string | null;
-  locked_withdrawals_reason: string | null;
-  locked_inventory_sales: boolean;
-  locked_exchanges: boolean;
-  locked_openings: boolean;
-  locked_vault: boolean;
-};
+const RewardLockCategorySchema = z.enum(REWARD_LOCK_CATEGORIES);
 
-type Success<T> = { success: boolean; data: T };
+export type { RewardLockCategory } from "@/lib/contracts/reward-locks";
+
+const UserFeatureLocksSchema = z.object({
+  user_id: z.string().min(1),
+  fiat_deposits_enabled: z.boolean(),
+  fiat_deposit_auto_approval_enabled: z.boolean(),
+  locked_deposits_crypto: z.array(z.string()),
+  locked_deposits_fiat: z.array(z.string()),
+  locked_deposits_at: z.string().nullable(),
+  locked_deposits_reason: z.string().nullable(),
+  locked_withdrawals_crypto: z.array(z.string()),
+  locked_withdrawals_items: z.boolean(),
+  locked_withdrawals_at: z.string().nullable(),
+  locked_withdrawals_reason: z.string().nullable(),
+  locked_inventory_sales: z.boolean(),
+  locked_exchanges: z.boolean(),
+  locked_openings: z.boolean(),
+  locked_vault: z.boolean(),
+  locked_reward_categories: z.array(RewardLockCategorySchema),
+  available_reward_categories: z.array(RewardLockCategorySchema),
+  locked_rewards_at: z.string().nullable(),
+  locked_rewards_by: z.string().nullable(),
+  locked_rewards_reason: z.string().nullable(),
+});
+
+const FeatureLocksResponseSchema = z.object({
+  success: z.literal(true),
+  data: UserFeatureLocksSchema,
+});
+
+const FiatAutoApprovalResponseSchema = z.object({
+  success: z.literal(true),
+  data: z.object({
+    user_id: z.string().min(1),
+    enabled: z.boolean(),
+  }),
+});
+
+export type UserFeatureLocks = z.infer<typeof UserFeatureLocksSchema>;
+export type FiatDepositAutoApproval = z.infer<
+  typeof FiatAutoApprovalResponseSchema
+>["data"];
+
+function parseFeatureLocks(
+  response: unknown,
+  requestedUserId: string,
+): UserFeatureLocks {
+  const parsed = FeatureLocksResponseSchema.safeParse(response);
+  if (!parsed.success || parsed.data.data.user_id !== requestedUserId) {
+    throw new Error("Backend returned an invalid feature-lock response");
+  }
+  return parsed.data.data;
+}
+
+function parseFiatAutoApproval(
+  response: unknown,
+  requestedUserId: string,
+): FiatDepositAutoApproval {
+  const parsed = FiatAutoApprovalResponseSchema.safeParse(response);
+  if (!parsed.success || parsed.data.data.user_id !== requestedUserId) {
+    throw new Error(
+      "Backend returned an invalid Fiat auto-approval response",
+    );
+  }
+  return parsed.data.data;
+}
 
 export const getUserFeatureLocks = (userId: string) =>
   backendApi
-    .get<Success<UserFeatureLocks>>(
+    .get<unknown>(
       `/admin/users/${encodeURIComponent(userId)}/feature-locks`,
     )
-    .then((r) => r.data);
+    .then((response) => parseFeatureLocks(response, userId));
+
+export const updateUserRewardLocks = (
+  userId: string,
+  categories: RewardLockCategory[],
+  adminUserId?: string,
+) =>
+  backendApi
+    .put<unknown>(
+      `/admin/users/${encodeURIComponent(userId)}/rewards-lock`,
+      { categories, reason: null },
+      adminUserId ? { headers: { "x-admin-user-id": adminUserId } } : {},
+    )
+    .then((response) => parseFeatureLocks(response, userId));
+
+export const updateUserFiatDepositAutoApproval = (
+  userId: string,
+  enabled: boolean,
+  adminUserId?: string,
+) =>
+  backendApi
+    .put<unknown>(
+      `/admin/users/${encodeURIComponent(userId)}/fiat-deposit-auto-approval`,
+      { enabled },
+      adminUserId ? { headers: { "x-admin-user-id": adminUserId } } : {},
+    )
+    .then((response) => parseFiatAutoApproval(response, userId));
 
 /**
  * Clear the fraud-signal deposit + withdrawal locks. Does not touch the
@@ -50,9 +134,9 @@ export const getUserFeatureLocks = (userId: string) =>
  */
 export const clearUserFraudLocks = (userId: string, adminUserId?: string) =>
   backendApi
-    .post<Success<UserFeatureLocks>>(
+    .post<unknown>(
       `/admin/users/${encodeURIComponent(userId)}/feature-locks/clear`,
       {},
       adminUserId ? { headers: { "x-admin-user-id": adminUserId } } : {},
     )
-    .then((r) => r.data);
+    .then((response) => parseFeatureLocks(response, userId));
