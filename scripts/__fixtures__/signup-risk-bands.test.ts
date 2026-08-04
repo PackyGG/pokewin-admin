@@ -14,7 +14,21 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
   assert.match(policy, /return 5 \* 60/);
   assert.match(policy, /return 10 \* 60/);
   assert.match(policy, /return 15 \* 60/);
-  assert.match(guide, /Fiat deposits, withdrawals, and tips are locked automatically/);
+  assert.match(guide, /notification: "#high-risk"/);
+  assert.match(guide, /notification: "#critical-risk"/);
+  assert.equal((guide.match(/review: "No"/g) ?? []).length, 2);
+  assert.equal((guide.match(/review: "Yes"/g) ?? []).length, 2);
+  assert.equal((guide.match(/locks: "None"/g) ?? []).length, 3);
+  assert.match(
+    guide,
+    /locks: "Fiat deposits · Crypto withdrawals · Item withdrawals · Tips"/,
+  );
+  assert.doesNotMatch(guide, /Staff are informed|Nothing else happens|No automatic restriction/);
+  assert.match(guide, /title: "1\. Sign-up check"/);
+  assert.match(guide, /title: "2\. Score it"/);
+  assert.match(guide, /title: "3\. Monitor higher scores"/);
+  assert.match(guide, /title: "4\. Decide"/);
+  assert.match(guide, /immediately if new points cross a higher threshold/);
 });
 
 test("high and critical signup actions own their Discord routes", () => {

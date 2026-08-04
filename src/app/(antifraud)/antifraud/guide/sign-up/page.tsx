@@ -22,9 +22,9 @@ const riskBands = [
     icon: ShieldCheck,
     accent: "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400",
     monitor: "No monitor",
-    notification: "No Discord notification",
-    review: "No Account Review",
-    action: "The assessment is saved. Nothing else happens.",
+    notification: "None",
+    review: "No",
+    locks: "None",
   },
   {
     range: "21-49",
@@ -33,8 +33,8 @@ const riskBands = [
     accent: "border-cyan-500/30 bg-cyan-500/5 text-cyan-600 dark:text-cyan-400",
     monitor: "5-minute monitor",
     notification: "Low-risk signup action",
-    review: "No Account Review",
-    action: "Staff are informed. No restriction is applied.",
+    review: "No",
+    locks: "None",
   },
   {
     range: "50-69",
@@ -42,9 +42,9 @@ const riskBands = [
     icon: ShieldAlert,
     accent: "border-orange-500/30 bg-orange-500/5 text-orange-600 dark:text-orange-400",
     monitor: "10-minute monitor",
-    notification: "High-risk signup action",
-    review: "Account Review opens",
-    action: "Staff review the evidence. No automatic restriction is applied.",
+    notification: "#high-risk",
+    review: "Yes",
+    locks: "None",
   },
   {
     range: "70-100",
@@ -52,32 +52,33 @@ const riskBands = [
     icon: Siren,
     accent: "border-rose-500/30 bg-rose-500/5 text-rose-600 dark:text-rose-400",
     monitor: "15-minute monitor",
-    notification: "Critical-risk signup action",
-    review: "Account Review opens",
-    action: "Fiat deposits, withdrawals, and tips are locked automatically.",
+    notification: "#critical-risk",
+    review: "Yes",
+    locks: "Fiat deposits · Crypto withdrawals · Item withdrawals · Tips",
   },
 ] as const;
 
 const flow = [
   {
     icon: SearchCheck,
-    title: "1. Check",
-    detail: "Internal account evidence and configured providers are checked.",
+    title: "1. Sign-up check",
+    detail: "Check the account, identity, network, device, and provider evidence.",
   },
   {
     icon: CheckCircle2,
-    title: "2. Score",
-    detail: "Evidence becomes a bounded score from 0 to 100.",
+    title: "2. Score it",
+    detail: "Turn the combined evidence into one score from 0 to 100.",
   },
   {
     icon: Clock3,
-    title: "3. Monitor",
-    detail: "Scores above 20 watch new activity for their band duration.",
+    title: "3. Monitor higher scores",
+    detail: "A score above 20 starts the monitor for that risk band.",
   },
   {
     icon: BellRing,
-    title: "4. Act",
-    detail: "The matching Discord, review, and lock actions run automatically.",
+    title: "4. Decide",
+    detail:
+      "The latest score decides the outcome when monitoring ends, or immediately if new points cross a higher threshold.",
   },
 ] as const;
 
@@ -140,11 +141,13 @@ export default async function AntifraudSignupGuidePage() {
                     {band.review}
                   </dd>
                 </div>
+                <div>
+                  <dt className="text-muted-foreground">Locks</dt>
+                  <dd className="mt-0.5 font-semibold text-foreground">
+                    {band.locks}
+                  </dd>
+                </div>
               </dl>
-
-              <p className="mt-4 border-t border-current/15 pt-3 text-xs leading-5 text-foreground">
-                {band.action}
-              </p>
             </article>
           );
         })}
