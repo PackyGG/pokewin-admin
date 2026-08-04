@@ -75,27 +75,16 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // what is still running or upcoming.
   const previousRows = listResult.ok ? listResult.preview.previous : [];
 
-  const heading = (
-    <SectionHeading
-      icon={Trophy}
-      title="Affiliate Leaderboards"
-      action={
-        <div className="flex flex-wrap items-center gap-2">
-          {previousRows.length > 0 && (
-            <PreviousLeaderboardsDialog rows={previousRows} />
-          )}
-          <CreateLeaderboardDialog userId={userId} />
-        </div>
-      }
-    />
-  );
-
   if (!listResult.ok) {
     return (
-      <div className="space-y-3">
-        {heading}
-        <Card size="sm">
-          <CardContent className="py-6">
+      <div className="flex h-full flex-col gap-3">
+        <SectionHeading
+          icon={Trophy}
+          title="Affiliate Leaderboards"
+          action={<CreateLeaderboardDialog userId={userId} />}
+        />
+        <Card size="sm" className="flex-1">
+          <CardContent className="flex flex-1 items-center justify-center py-6">
             <p className="text-sm text-muted-foreground">
               {listResult.message
                 ? `Could not load leaderboards: ${listResult.message}`
@@ -114,9 +103,15 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // Per-board wager driven + the admin sponsored % (the house-funded share
   // of each prize pool). The sponsorship map defaults a board to 100% when
   // un-annotated — same convention as the cost aggregates above.
+  //
+  // ENDED boards are in the same batch as the live ones: the "Previous
+  // leaderboards" modal shows the identical wagered / house-cost figures as
+  // the card body, and the wager read is ONE aggregate scan over the whole
+  // board set (not per board), so widening it costs a few extra tuples.
+  const costBoards = [...rows, ...previousRows];
   const [wagerMap, sponsorshipMap] = await Promise.all([
     getCreatorLeaderboardWagerBreakdownMap(
-      rows.map((r) => ({
+      costBoards.map((r) => ({
         id: r.id,
         creatorUserId: r.creator_user_id,
         coCreatorUserIds: r.co_creator_user_ids ?? [],
@@ -129,7 +124,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
       wagerFailed = true;
       return new Map<string, WagerBreakdown>();
     }),
-    getLeaderboardSponsorshipMap(rows.map((r) => r.id)).catch((e) => {
+    getLeaderboardSponsorshipMap(costBoards.map((r) => r.id)).catch((e) => {
       console.error(
         "[creator-hub.creators.leaderboards] sponsorship map failed:",
         e,
@@ -142,10 +137,46 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // must be distinguishable from a genuine no-wager board.
   const chipGaps = wagerFailed ? ["wagered chips"] : [];
 
+  /** Admin sponsored % (default 100% when un-annotated), clamped. */
+  const sponsoredPctOf = (id: string) =>
+    Math.min(100, Math.max(0, sponsorshipMap.get(id) ?? 100));
+
+  // Ended boards, carrying the SAME money figures the card body shows, so
+  // the modal isn't a strictly poorer view of the same board.
+  const previousItems = previousRows.map((r) => {
+    const wagered = wagerMap.get(r.id);
+    const sponsoredPct = sponsoredPctOf(r.id);
+    return {
+      id: r.id,
+      title: r.title,
+      total_prize_usd: r.total_prize_usd,
+      is_sponsored: r.is_sponsored,
+      start_date: r.start_date,
+      end_date: r.end_date,
+      approval_status: r.approval_status,
+      time_status: r.time_status,
+      sponsoredPct,
+      houseCostUsd: (Number(r.total_prize_usd) || 0) * (sponsoredPct / 100),
+      wageredRawUsd: wagered?.raw ?? 0,
+      wageredWeightedUsd: wagered?.weighted ?? 0,
+    };
+  });
+
   return (
-    <div className="space-y-3">
-      {heading}
-      <Card size="sm">
+    <div className="flex h-full flex-col gap-3">
+      <SectionHeading
+        icon={Trophy}
+        title="Affiliate Leaderboards"
+        action={
+          <div className="flex flex-wrap items-center gap-2">
+            {previousItems.length > 0 && (
+              <PreviousLeaderboardsDialog rows={previousItems} />
+            )}
+            <CreateLeaderboardDialog userId={userId} />
+          </div>
+        }
+      />
+      <Card size="sm" className="flex-1">
         <CardContent className="space-y-3">
           {chipGaps.length > 0 && (
             <HubNotice tone="amber" icon={Info} dashed>
@@ -177,10 +208,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 // House-funded share: admin sponsored % (default 100% when
                 // un-annotated) × the prize pool. This is what we actually
                 // pay off the board → rose (house spend).
-                const sponsoredPct = Math.min(
-                  100,
-                  Math.max(0, sponsorshipMap.get(r.id) ?? 100),
-                );
+                const sponsoredPct = sponsoredPctOf(r.id);
                 const prizeUsd = Number(r.total_prize_usd) || 0;
                 const houseCostUsd = prizeUsd * (sponsoredPct / 100);
                 return (

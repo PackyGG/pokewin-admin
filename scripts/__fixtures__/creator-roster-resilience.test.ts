@@ -61,6 +61,9 @@ test("all creator backend read families fall back to canonical PostgreSQL", () =
 test("creator detail leaderboard cards use the resilient shared read client", () => {
   for (const file of [
     "src/app/(admin)/creators/[userId]/leaderboards-card.tsx",
+    // `previous-leaderboards.ts` was folded into the windowed
+    // `leaderboards-preview.ts` read — one backend call now feeds both the
+    // card body and the "Previous leaderboards" modal.
     "src/app/(creator-hub)/creator-hub/creators/[id]/_queries/leaderboards-preview.ts",
   ]) {
     const source = read(file);
