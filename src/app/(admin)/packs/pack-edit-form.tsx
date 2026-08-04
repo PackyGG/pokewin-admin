@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Boxes, Image as ImageIcon, Package, Upload } from "lucide-react";
+import { AlertCircle, Boxes, Image as ImageIcon, Package, Scale, Upload } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -35,8 +35,28 @@ type pack_tag = (typeof pack_tag)[keyof typeof pack_tag];
 import { RiskLevelSlider } from "./risk-level-slider";
 import { ChangePackSet } from "./change-pack-set";
 import { invalidatePackDetailCache } from "./pack-detail-cache";
+import {
+  PACK_BUILDER_TICKET_TOTAL,
+  scaleToPackBuilderTickets,
+} from "@/lib/packs/builder-edge";
 
 type PackCard = SortableCard;
+
+const ODDS_EPSILON = 0.00005;
+
+function editableCardsFromPack(pack: PackEditData): PackCard[] {
+  return pack.cards.map((card) => ({
+    cardId: card.cardId,
+    name: card.name,
+    imageUrl: card.imageUrl,
+    priceUsd: card.priceUsd,
+    // Use the real normalized probability. A legacy/non-million ticket total
+    // must still open as 100%, rather than looking broken and being rewritten.
+    odds: Math.round(card.probability * 10_000) / 10_000,
+    color: card.color,
+    animation: card.animation,
+  }));
+}
 
 const TAG_LABELS: Record<pack_tag, string> = {
   pct1: "%1",
@@ -173,21 +193,69 @@ export function PackEditForm({
   const [difficulty, setDifficulty] = useState<number>(pack.difficulty ?? 0);
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [imagePreview, setImagePreview] = useState<string | null>(pack.imageUrl);
-  const [cards, setCards] = useState<PackCard[]>(
-    pack.cards.map((c) => ({
-      cardId: c.cardId,
-      name: c.name,
-      imageUrl: c.imageUrl,
-      priceUsd: c.priceUsd,
-      odds: Math.round((c.weight / 1_000_000) * 100 * 10000) / 10000,
-      color: c.color,
-      animation: c.animation,
-    })),
-  );
+  const [uploadedImageUrl, setUploadedImageUrl] = useState<string | null>();
+  const [cards, setCards] = useState<PackCard[]>(() => editableCardsFromPack(pack));
 
   const [pickerSets, setPickerSets] = useState<{ id: string; name: string }[]>([]);
   const [pickerRarities, setPickerRarities] = useState<string[]>([]);
   const [saving, setSaving] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  const formSignature = useMemo(
+    () =>
+      JSON.stringify({
+        name,
+        slug,
+        description,
+        price,
+        cardsPerOpen,
+        packType,
+        tags,
+        difficulty,
+        imagePreview,
+        cards,
+      }),
+    [
+      name,
+      slug,
+      description,
+      price,
+      cardsPerOpen,
+      packType,
+      tags,
+      difficulty,
+      imagePreview,
+      cards,
+    ],
+  );
+  const initialSignature = useRef(
+    JSON.stringify({
+      name: pack.name,
+      slug: pack.slug,
+      description: pack.description ?? "",
+      price: String(pack.priceUsd),
+      cardsPerOpen: String(pack.cardsPerOpen),
+      packType: pack.packType,
+      tags: pack.tags,
+      difficulty: pack.difficulty ?? 0,
+      imagePreview: pack.imageUrl,
+      cards: editableCardsFromPack(pack),
+    }),
+  );
+  const isDirty = formSignature !== initialSignature.current || imageFile !== null;
+
+  useEffect(() => {
+    if (!isDirty || saving) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isDirty, saving]);
+
+  useEffect(() => {
+    return () => {
+      if (imagePreview?.startsWith("blob:")) URL.revokeObjectURL(imagePreview);
+    };
+  }, [imagePreview]);
 
   useEffect(() => {
     if (pickerSets.length === 0) {
@@ -256,22 +324,83 @@ export function PackEditForm({
     expectedPayout,
     econ.targetEdgePct / 100,
   );
-  const oddsOff = cards.length > 0 && Math.abs(totalOdds - 100) > 0.000001;
+  const oddsOff = cards.length > 0 && Math.abs(totalOdds - 100) > ODDS_EPSILON;
+
+  const validationErrors = useMemo(() => {
+    const errors: string[] = [];
+    const numericPrice = Number(price);
+    const numericCardsPerOpen = Number(cardsPerOpen);
+    if (!name.trim()) errors.push("Enter a pack name");
+    if (name.trim().length > 60) errors.push("Pack name cannot exceed 60 characters");
+    if (!slug.trim()) errors.push("Enter a pack slug");
+    if (slug.trim().length > 60) errors.push("Pack slug cannot exceed 60 characters");
+    if (!Number.isFinite(numericPrice) || numericPrice <= 0) {
+      errors.push("Enter a price greater than $0");
+    } else if (Math.abs(numericPrice * 100 - Math.round(numericPrice * 100)) >= 1e-7) {
+      errors.push("Price can have at most 2 decimal places");
+    }
+    if (
+      !Number.isInteger(numericCardsPerOpen) ||
+      numericCardsPerOpen < 1 ||
+      numericCardsPerOpen > 100
+    ) {
+      errors.push("Cards per open must be a whole number from 1 to 100");
+    }
+    if (cards.length === 0) errors.push("Add at least one card");
+    if (cards.some((card) => !Number.isFinite(card.odds) || card.odds <= 0)) {
+      errors.push("Every card needs odds greater than 0%");
+    }
+    if (cards.length > 0 && oddsOff) errors.push("Balance card odds to exactly 100.0000%");
+    return errors;
+  }, [name, slug, price, cardsPerOpen, cards, oddsOff]);
+  const canSave = isDirty && validationErrors.length === 0 && !saving;
 
   function oddsToWeights(entries: PackCard[]): number[] {
-    return entries.map((c) => Math.max(1, Math.round((c.odds / 100) * 1_000_000)));
+    return scaleToPackBuilderTickets(entries.map((card) => card.odds)) ?? [];
+  }
+
+  function balanceOdds() {
+    const weights = oddsToWeights(cards);
+    if (weights.length !== cards.length) {
+      toast.error("Enter odds greater than 0% before balancing");
+      return;
+    }
+    setCards((current) =>
+      current.map((card, index) => ({
+        ...card,
+        odds: weights[index]! / (PACK_BUILDER_TICKET_TOTAL / 100),
+      })),
+    );
+    setSubmitError(null);
   }
 
   async function handleSubmit() {
     if (saving) return;
+    if (validationErrors.length > 0) {
+      const message = validationErrors[0]!;
+      setSubmitError(message);
+      toast.error(message);
+      return;
+    }
     setSaving(true);
+    setSubmitError(null);
     try {
-      let imageUrl = imagePreview === null ? null : pack.imageUrl;
+      let imageUrl =
+        uploadedImageUrl !== undefined
+          ? uploadedImageUrl
+          : imagePreview === null
+            ? null
+            : pack.imageUrl;
       if (imageFile) {
         imageUrl = await uploadImageClient(imageFile, "/packs");
+        setUploadedImageUrl(imageUrl);
+        setImageFile(null);
       }
 
       const weights = oddsToWeights(cards);
+      if (weights.length !== cards.length) {
+        throw new Error("Card odds could not be converted to a valid 100% ticket pool");
+      }
       const result = await updatePack(pack.id, {
         expectedUpdatedAt: pack.updatedAt,
         name,
@@ -292,8 +421,15 @@ export function PackEditForm({
         })),
       });
 
+      if (!result.success) {
+        setSubmitError(result.error);
+        toast.error(result.error);
+        return;
+      }
+      const saved = result.data;
+
       invalidatePackDetailCache(pack.id);
-      if (result.liveCacheReloaded) {
+      if (saved.liveCacheReloaded) {
         toast.success("Pack updated, verified, and live");
       } else {
         toast.warning(
@@ -303,7 +439,7 @@ export function PackEditForm({
       const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
       onSaved?.({
         ...pack,
-        updatedAt: result.updatedAt,
+        updatedAt: saved.updatedAt,
         name: name.trim(),
         slug: slug.trim(),
         description: description.trim() || null,
@@ -322,7 +458,12 @@ export function PackEditForm({
       });
       router.refresh();
     } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to update pack");
+      const message =
+        e instanceof Error
+          ? e.message
+          : "The save request failed before it reached the server. Please try again.";
+      setSubmitError(message);
+      toast.error(message);
     } finally {
       setSaving(false);
     }
@@ -432,10 +573,12 @@ export function PackEditForm({
             preview={imagePreview}
             onFile={(file) => {
               setImageFile(file);
+              setUploadedImageUrl(undefined);
               setImagePreview(URL.createObjectURL(file));
             }}
             onClear={() => {
               setImageFile(null);
+              setUploadedImageUrl(null);
               setImagePreview(null);
             }}
           />
@@ -480,6 +623,19 @@ export function PackEditForm({
                 EV/card {formatCurrency(econ.evPerCard)} · EV/open{" "}
                 {formatCurrency(expectedPayout)}
               </span>
+              {oddsOff ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="h-7 gap-1.5 text-xs"
+                  onClick={balanceOdds}
+                  disabled={saving}
+                >
+                  <Scale className="size-3.5" />
+                  Balance to 100%
+                </Button>
+              ) : null}
             </div>
             <SortableCardTable cards={cards} onReorder={setCards} updateCard={updateCard} removeCard={removeCard} />
           </>
@@ -495,6 +651,12 @@ export function PackEditForm({
       {/* Sticky action bar: the card table is long, and the edge/odds status
           has to stay reachable next to Save without scrolling back up. */}
       <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-between gap-3 border-t bg-background/95 px-1 py-3 backdrop-blur supports-[backdrop-filter]:bg-background/80">
+        {submitError || validationErrors.length > 0 ? (
+          <p className="flex items-center gap-1.5 text-xs text-destructive" role="alert">
+            <AlertCircle className="size-3.5 shrink-0" />
+            {submitError ?? validationErrors[0]}
+          </p>
+        ) : null}
         <p className="text-xs text-muted-foreground tabular-nums">
           {econ.showEdge
             ? `House edge ${econ.edgePct.toFixed(2)}% · target ${econ.targetEdgePct.toFixed(2)}%`
@@ -504,12 +666,21 @@ export function PackEditForm({
         </p>
         <div className="flex items-center gap-2">
           {showCancel && onCancel ? (
-            <Button type="button" variant="outline" onClick={onCancel} disabled={saving}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (!isDirty || window.confirm("Discard your unsaved pack changes?")) {
+                  onCancel();
+                }
+              }}
+              disabled={saving}
+            >
               Cancel
             </Button>
           ) : null}
-          <Button onClick={handleSubmit} disabled={saving || !name || !price}>
-            {saving ? "Saving..." : "Save Changes"}
+          <Button onClick={handleSubmit} disabled={!canSave}>
+            {saving ? "Saving and verifying..." : isDirty ? "Save Changes" : "No Changes"}
           </Button>
         </div>
       </div>

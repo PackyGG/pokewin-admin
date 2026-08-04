@@ -49,6 +49,13 @@ export type SnapshotCard = {
   order: number;
 };
 
+export type CapturedPackState = {
+  price: number;
+  cards: SnapshotCard[];
+  tags: string[];
+  risk?: PackRisk | null;
+};
+
 /**
  * READ-ONLY (MAIN): the pack's current price + full pack_cards pool with the
  * metadata a revert needs to faithfully re-create the rows (weight, color,
@@ -188,6 +195,31 @@ export async function capturePackSnapshot(
 
     const risk = await computeCurrentRisk(input.packId, state.price);
 
+    return capturePackSnapshotFromState(input, {
+      ...state,
+      risk,
+    });
+  } catch (err) {
+    console.error("[pack-history] capturePackSnapshot failed", err);
+    return null;
+  }
+}
+
+/**
+ * Persist a caller-supplied state that was read from the authoritative MAIN
+ * transaction. Full-state editors use this after commit so a mirror delay or a
+ * failed write cannot create a misleading history entry.
+ */
+export async function capturePackSnapshotFromState(
+  input: CapturePackSnapshotInput,
+  state: CapturedPackState,
+): Promise<string | null> {
+  try {
+    if (!isUuid(input.packId)) {
+      console.error("[pack-history] capturePackSnapshotFromState: invalid pack id");
+      return null;
+    }
+
     const row = await insertSnapshotRow({
       data: {
         pack_id: input.packId,
@@ -198,14 +230,14 @@ export async function capturePackSnapshot(
         // The pack's tags at capture time — a revert restores them so the tag
         // control's write is undoable like every other pack mutation.
         tags: state.tags,
-        risk: risk ?? undefined,
+        risk: state.risk ?? undefined,
         note: input.note ?? null,
       },
       select: { id: true },
     });
     return row.id;
   } catch (err) {
-    console.error("[pack-history] capturePackSnapshot failed", err);
+    console.error("[pack-history] capturePackSnapshotFromState failed", err);
     return null;
   }
 }

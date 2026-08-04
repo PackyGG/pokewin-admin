@@ -53,7 +53,15 @@ export type SortableCard = {
   animation: boolean;
 };
 
-function OddsInput({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+function OddsInput({
+  value,
+  onChange,
+  label,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  label: string;
+}) {
   const [text, setText] = useState(String(value));
   const focusedRef = useRef(false);
 
@@ -70,6 +78,7 @@ function OddsInput({ value, onChange }: { value: number; onChange: (v: number) =
       inputMode="decimal"
       placeholder="0.0001 – 100"
       value={text}
+      aria-label={label}
       onFocus={() => {
         focusedRef.current = true;
       }}
@@ -93,10 +102,18 @@ function OddsInput({ value, onChange }: { value: number; onChange: (v: number) =
   );
 }
 
-function ColorSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+function ColorSelect({
+  value,
+  onChange,
+  label,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  label: string;
+}) {
   return (
     <Select value={value} onValueChange={(v) => onChange(v ?? "")}>
-      <SelectTrigger size="sm" className="h-7 w-full text-xs">
+      <SelectTrigger size="sm" className="h-7 w-full text-xs" aria-label={label}>
         <SelectValue />
       </SelectTrigger>
       <SelectContent>
@@ -141,6 +158,7 @@ function SortableCardRow({
       <td className="pl-2 pr-0 py-2 w-6">
         <button
           type="button"
+          aria-label={`Reorder ${card.name}`}
           className="cursor-grab touch-none text-muted-foreground hover:text-foreground"
           {...attributes}
           {...listeners}
@@ -166,23 +184,31 @@ function SortableCardRow({
         <OddsInput
           value={card.odds}
           onChange={(odds) => updateCard(index, { odds })}
+          label={`${card.name} odds percent`}
         />
       </td>
       <td className="p-2">
         <ColorSelect
           value={card.color ?? ""}
           onChange={(color) => updateCard(index, { color: color || null })}
+          label={`${card.name} color`}
         />
       </td>
       <td className="p-2">
         <Switch
           size="sm"
+          aria-label={`Animate ${card.name}`}
           checked={card.animation}
           onCheckedChange={(checked) => updateCard(index, { animation: !!checked })}
         />
       </td>
       <td className="p-2">
-        <Button variant="ghost" size="icon-sm" onClick={() => removeCard(index)}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`Remove ${card.name}`}
+          onClick={() => removeCard(index)}
+        >
           <Trash2 className="size-3.5 text-destructive" />
         </Button>
       </td>

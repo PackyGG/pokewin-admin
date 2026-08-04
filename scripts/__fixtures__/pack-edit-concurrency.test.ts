@@ -17,7 +17,7 @@ test("stale pack edits are rejected under a row lock", () => {
     actions,
     /SELECT active, updated_at::text AS updated_at[\s\S]*?FOR UPDATE/,
   );
-  assert.match(actions, /locked\.updated_at !== data\.expectedUpdatedAt/);
+  assert.match(actions, /locked\.updated_at !== clean\.expectedUpdatedAt/);
   assert.match(actions, /Your stale form was not saved/);
 });
 
@@ -28,4 +28,31 @@ test("a save verifies the committed card count and total weight", () => {
   assert.match(form, /Pack updated, verified, and live/);
   assert.match(actions, /const liveCacheReloaded = await reloadPacksConfirmed\(\)/);
   assert.match(actions, /await reloadPacksConfirmed\(3\)/);
+});
+
+test("expected edit failures cross the production action boundary as typed results", () => {
+  assert.match(actions, /Promise<UpdatePackResult>/);
+  assert.match(actions, /return fail\(error\.message, error\.code\)/);
+  assert.match(actions, /return fail\("A different pack already uses this slug"/);
+  assert.match(form, /if \(!result\.success\)/);
+  assert.match(form, /toast\.error\(result\.error\)/);
+});
+
+test("the editor refuses malformed pools and emits exactly one million tickets", () => {
+  assert.match(actions, /totalWeight !== PACK_BUILDER_TICKET_TOTAL/);
+  assert.match(actions, /The same card cannot be added twice/);
+  assert.match(actions, /One or more selected cards no longer exist/);
+  assert.match(form, /scaleToPackBuilderTickets/);
+  assert.match(form, /Balance to 100%/);
+  assert.match(form, /disabled=\{!canSave\}/);
+});
+
+test("history captures the authoritative locked before-state only after commit", () => {
+  assert.match(actions, /price::text AS price, tags::text\[\] AS tags/);
+  assert.match(actions, /const priorRows = await tx\.execute/);
+  assert.match(actions, /await capturePackSnapshotFromState/);
+  assert.ok(
+    actions.indexOf("await capturePackSnapshotFromState") >
+      actions.indexOf("writeResult = await db.transaction"),
+  );
 });
