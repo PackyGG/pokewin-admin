@@ -522,6 +522,11 @@ export function UserViewModern({
                 deviceConfidence={user.deviceConfidence}
                 deviceVisitorId={user.deviceVisitorId}
                 deviceVisitorIdCount={user.deviceVisitorIdCount}
+                deviceSignupCaptureCount={user.deviceSignupCaptureCount}
+                deviceLoginCaptureCount={user.deviceLoginCaptureCount}
+                deviceLastLoginAt={user.deviceLastLoginAt}
+                deviceLastLoginIp={user.deviceLastLoginIp}
+                deviceLastLoginVisitorId={user.deviceLastLoginVisitorId}
                 signupIpSharedCount={user.signupIpSharedCount}
               />
             </div>
@@ -736,6 +741,11 @@ function HeroFlagsStrip({
   deviceConfidence,
   deviceVisitorId,
   deviceVisitorIdCount,
+  deviceSignupCaptureCount,
+  deviceLoginCaptureCount,
+  deviceLastLoginAt,
+  deviceLastLoginIp,
+  deviceLastLoginVisitorId,
   signupIpSharedCount,
 }: {
   statusKey: "active" | "locked" | "banned";
@@ -755,6 +765,11 @@ function HeroFlagsStrip({
   deviceVisitorId: string | null;
   /** Distinct visitor_ids for this user (>1 = seen on multiple devices). */
   deviceVisitorIdCount: number;
+  deviceSignupCaptureCount: number;
+  deviceLoginCaptureCount: number;
+  deviceLastLoginAt: string | null;
+  deviceLastLoginIp: string | null;
+  deviceLastLoginVisitorId: string | null;
   /** Other accounts sharing this user's signup IP. 0 = unique to them. */
   signupIpSharedCount: number;
 }) {
@@ -843,6 +858,11 @@ function HeroFlagsStrip({
           deviceVisitorIdCount > 1
             ? ` Seen on ${deviceVisitorIdCount} distinct devices.`
             : "";
+        const captureBreakdown =
+          ` Signup captures: ${deviceSignupCaptureCount}. Login captures: ${deviceLoginCaptureCount}.`;
+        const loginLabel = deviceLoginCaptureCount > 0
+          ? ` Latest verified login: ${deviceLastLoginAt?.replace("T", " ").slice(0, 16) ?? "unknown time"} UTC${deviceLastLoginIp ? ` from ${deviceLastLoginIp}` : ""}${deviceLastLoginVisitorId ? ` on ${deviceLastLoginVisitorId}` : ""}.`
+          : " No verified login fingerprint has been captured yet.";
         // FULL visitor_id here, unlike the /users list which truncates to fit
         // a table cell. The detail page has the room, and a truncated
         // identifier can't be matched against the DB or a log line by eye —
@@ -859,7 +879,7 @@ function HeroFlagsStrip({
               icon={Fingerprint}
               label={idLabel ? `Alt · ${idLabel}` : "Suspected Alt"}
               className="border-rose-500/30 bg-rose-500/15 font-mono text-rose-600 dark:text-rose-400"
-              title={`Suspected alt — device fingerprinting flagged this account at signup/login.${sharedLabel}${devicesLabel}\n${idTitle}`}
+              title={`Suspected alt — device fingerprinting flagged this account at signup/login.${sharedLabel}${devicesLabel}${captureBreakdown}${loginLabel}\n${idTitle}`}
             />
           );
         }
@@ -872,7 +892,7 @@ function HeroFlagsStrip({
               icon={Fingerprint}
               label="No device ID"
               className="border-amber-500/30 bg-amber-500/15 text-amber-600 dark:text-amber-400"
-              title="No device fingerprint was captured for this account — alt-detection cannot evaluate it. Usually a missing fingerprint_request_id cookie at signup."
+              title={`No device fingerprint was captured for this account — alt-detection cannot evaluate it.${captureBreakdown}${loginLabel}`}
             />
           );
         }
@@ -884,7 +904,7 @@ function HeroFlagsStrip({
             icon={Fingerprint}
             label={idLabel ?? "Device ID"}
             className="border-border/60 bg-muted/50 font-mono text-muted-foreground"
-            title={`${idTitle}\nCaptured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}${devicesLabel}`}
+            title={`${idTitle}\nCaptured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}${devicesLabel}${captureBreakdown}${loginLabel}`}
           />
         );
       })()}

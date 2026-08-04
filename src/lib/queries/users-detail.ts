@@ -614,11 +614,17 @@ export async function getUserDetail(id: string) {
         best_confidence: number | null;
         visitor_id: string | null;
         distinct_visitor_ids: number | null;
+        signup_capture_count: number | null;
+        login_capture_count: number | null;
+        last_login_at: Date | string | null;
+        last_login_ip: string | null;
+        last_login_visitor_id: string | null;
       }[]
     >(
       `
       WITH my_fp AS (
-        SELECT visitor_id, suspected_alt_triggered, confidence, created_at
+        SELECT visitor_id, suspected_alt_triggered, confidence, created_at,
+          event_type, ip
         FROM fingerprints
         WHERE user_id = $1
       )
@@ -632,6 +638,13 @@ export async function getUserDetail(id: string) {
         -- that matters when reviewing the account now.
         (array_agg(visitor_id ORDER BY created_at DESC))[1] AS visitor_id,
         COUNT(DISTINCT visitor_id)::int AS distinct_visitor_ids,
+        COUNT(*) FILTER (WHERE event_type::text = 'signup')::int AS signup_capture_count,
+        COUNT(*) FILTER (WHERE event_type::text = 'login')::int AS login_capture_count,
+        MAX(created_at) FILTER (WHERE event_type::text = 'login') AS last_login_at,
+        (array_agg(ip::text ORDER BY created_at DESC)
+          FILTER (WHERE event_type::text = 'login'))[1] AS last_login_ip,
+        (array_agg(visitor_id ORDER BY created_at DESC)
+          FILTER (WHERE event_type::text = 'login'))[1] AS last_login_visitor_id,
         (
           SELECT COUNT(DISTINCT f.user_id)
           FROM fingerprints f
@@ -657,6 +670,13 @@ export async function getUserDetail(id: string) {
       deviceConfidence: rows[0]?.best_confidence ?? null,
       deviceVisitorId: rows[0]?.visitor_id ?? null,
       deviceVisitorIdCount: Number(rows[0]?.distinct_visitor_ids ?? 0),
+      deviceSignupCaptureCount: Number(rows[0]?.signup_capture_count ?? 0),
+      deviceLoginCaptureCount: Number(rows[0]?.login_capture_count ?? 0),
+      deviceLastLoginAt: rows[0]?.last_login_at
+        ? new Date(rows[0].last_login_at).toISOString()
+        : null,
+      deviceLastLoginIp: rows[0]?.last_login_ip ?? null,
+      deviceLastLoginVisitorId: rows[0]?.last_login_visitor_id ?? null,
     }))
     .catch((e) => {
       logError("users.detail.fingerprint", "query failed", e);
@@ -668,6 +688,11 @@ export async function getUserDetail(id: string) {
         deviceConfidence: null,
         deviceVisitorId: null,
         deviceVisitorIdCount: 0,
+        deviceSignupCaptureCount: 0,
+        deviceLoginCaptureCount: 0,
+        deviceLastLoginAt: null,
+        deviceLastLoginIp: null,
+        deviceLastLoginVisitorId: null,
       };
     });
 
@@ -1074,6 +1099,11 @@ export async function getUserDetail(id: string) {
       deviceConfidence: fingerprintSignal.deviceConfidence,
       deviceVisitorId: fingerprintSignal.deviceVisitorId,
       deviceVisitorIdCount: fingerprintSignal.deviceVisitorIdCount,
+      deviceSignupCaptureCount: fingerprintSignal.deviceSignupCaptureCount,
+      deviceLoginCaptureCount: fingerprintSignal.deviceLoginCaptureCount,
+      deviceLastLoginAt: fingerprintSignal.deviceLastLoginAt,
+      deviceLastLoginIp: fingerprintSignal.deviceLastLoginIp,
+      deviceLastLoginVisitorId: fingerprintSignal.deviceLastLoginVisitorId,
       country: user.country,
       countryCode: user.country_code,
       city: user.city,

@@ -35,6 +35,16 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_signup_latest_idx
   ON fingerprints (user_id, event_type, created_at DESC)
   INCLUDE (request_id, visitor_id, confidence, ip);
 
+-- Global verified-login stream. The partial predicate keeps this compact and
+-- matches the tuple cursor used by fetchNewLoginFingerprints exactly.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_login_cursor_idx
+  ON fingerprints (created_at, id)
+  INCLUDE (
+    user_id, request_id, visitor_id, confidence, ip,
+    suspected_alt_triggered
+  )
+  WHERE event_type = 'login';
+
 CREATE INDEX CONCURRENTLY IF NOT EXISTS antifraud_fingerprints_network_device_idx
   ON fingerprints (visitor_id, user_id)
   WHERE confidence >= 0.9;

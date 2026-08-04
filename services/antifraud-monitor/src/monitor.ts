@@ -58,8 +58,10 @@ import {
 import { parseFailedSignup } from "./signup-failure.js";
 import {
   fetchActivity,
+  fetchNewLoginFingerprints,
   fetchNewSignups,
   signupContext,
+  type LoginFingerprint,
   type SourceActivity,
 } from "./source.js";
 import {
@@ -524,6 +526,7 @@ export class MonitorEngine {
         INSERT INTO source_cursors(stream, occurred_at, source_id)
         VALUES
           ('signups', now() - interval '2 minutes', ''),
+          ('login_fingerprints', now() - interval '24 hours', ''),
           ($1, now() - interval '10 minutes', '')
         ON CONFLICT (stream) DO NOTHING
       `,
@@ -568,6 +571,9 @@ export class MonitorEngine {
 
       const signupMetrics = await this.runPhase("signups", () =>
         this.scanSignups(),
+      );
+      await this.runPhase("login-fingerprints", () =>
+        this.scanLoginFingerprints(),
       );
       await this.runPhase("fiat-withdrawal-holds", () =>
         this.scanFiatWithdrawalHolds(),
@@ -738,6 +744,161 @@ export class MonitorEngine {
         ? Math.max(0, Date.now() - latestAt.getTime())
         : 0,
     };
+  }
+
+  private async scanLoginFingerprints(): Promise<void> {
+    const cursor = await this.db.antifraud.query<{
+      occurred_at: Date;
+      source_id: string;
+    }>(
+      "SELECT occurred_at, source_id FROM source_cursors WHERE stream = 'login_fingerprints'",
+    );
+    const current = cursor.rows[0];
+    if (!current) throw new Error("Login fingerprint cursor is missing");
+
+    let latestAt = current.occurred_at;
+    let latestId = current.source_id;
+    for (let batch = 0; batch < this.config.POLL_MAX_SIGNUP_BATCHES; batch += 1) {
+      const rows = await fetchNewLoginFingerprints(
+        this.db.source,
+        { occurredAt: latestAt, sourceId: latestId },
+        this.config.POLL_SIGNUP_BATCH_SIZE,
+      );
+      if (rows.length === 0) break;
+      for (const row of rows) await this.persistLoginFingerprint(row);
+      const last = rows.at(-1);
+      if (!last) break;
+      latestAt = last.created_at;
+      latestId = last.id;
+      if (rows.length < this.config.POLL_SIGNUP_BATCH_SIZE) break;
+    }
+  }
+
+  private async persistLoginFingerprint(login: LoginFingerprint): Promise<void> {
+    const newDevice = login.prior_capture_count > 0
+      && login.previous_visitor_id !== login.visitor_id;
+    const ipChanged = login.previous_ip !== null
+      && login.ip !== null
+      && login.previous_ip !== login.ip;
+    const sharedDevice = login.shared_account_count > 0;
+    const actionableDevice = sharedDevice || login.suspected_alt_triggered;
+    const score = actionableDevice ? 35 : 0;
+    const evidenceSuffix =
+      ` Device ${login.visitor_id}${login.ip ? ` from ${login.ip}` : ""}`
+      + ` at ${Math.round(login.confidence * 100)}% confidence.`;
+    const detail = (sharedDevice
+      ? `The verified login device is also linked to ${login.shared_account_count} other account${login.shared_account_count === 1 ? "" : "s"}.`
+      : login.suspected_alt_triggered
+        ? "The platform marked this verified login fingerprint as a suspected alternate account."
+      : newDevice
+        ? "The account logged in with a new verified device ID."
+        : "A verified login fingerprint was captured.") + evidenceSuffix;
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          INSERT INTO subjects(
+            user_id, username, email, avatar_url, source_created_at
+          ) VALUES ($1,$2,$3,$4,$5)
+          ON CONFLICT (user_id) DO UPDATE SET
+            username=EXCLUDED.username,
+            email=EXCLUDED.email,
+            avatar_url=EXCLUDED.avatar_url,
+            updated_at=now()
+        `,
+        [
+          login.user_id,
+          login.username,
+          login.email,
+          login.image,
+          login.source_created_at,
+        ],
+      );
+
+      let caseId: string | null = null;
+      if (actionableDevice) {
+        const opened = await client.query<{ id: string }>(
+          `
+            INSERT INTO cases(
+              user_id, subject_type, status, severity, score, peak_score, summary
+            ) VALUES ($1,'account','open','medium',$2,$2,$3)
+            ON CONFLICT (user_id) WHERE subject_type='account'
+              AND status IN ('open','monitoring','in_review','escalated')
+            DO UPDATE SET
+              score=GREATEST(cases.score, EXCLUDED.score),
+              peak_score=GREATEST(cases.peak_score, EXCLUDED.peak_score),
+              severity=CASE
+                WHEN cases.severity IN ('high','critical') THEN cases.severity
+                ELSE EXCLUDED.severity
+              END,
+              summary=EXCLUDED.summary,
+              updated_at=now()
+            RETURNING id
+          `,
+          [
+            login.user_id,
+            score,
+            sharedDevice
+              ? `Verified login device shared with ${login.shared_account_count} other account${login.shared_account_count === 1 ? "" : "s"}`
+              : "Platform login fingerprint marked as a suspected alternate account",
+          ],
+        );
+        caseId = opened.rows[0]?.id ?? null;
+        if (!caseId) throw new Error("Failed to open login fingerprint case");
+      }
+
+      await client.query(
+        `
+          INSERT INTO risk_events(
+            case_id, user_id, event_type, source, source_ref,
+            score_delta, score_after, title, detail, payload, occurred_at
+          ) VALUES ($1,$2,'login_fingerprint_captured','fingerprint_login_archive',$3,
+            $4,$4,$5,$6,$7::jsonb,$8)
+          ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+          DO NOTHING
+        `,
+        [
+          caseId,
+          login.user_id,
+          login.id,
+          score,
+          actionableDevice ? "Suspicious device used to log in" : "Login fingerprint captured",
+          detail,
+          JSON.stringify({
+            requestId: login.request_id,
+            visitorId: login.visitor_id,
+            confidence: login.confidence,
+            ip: login.ip,
+            previousVisitorId: login.previous_visitor_id,
+            previousIp: login.previous_ip,
+            newDevice,
+            ipChanged,
+            priorCaptureCount: login.prior_capture_count,
+            sharedAccountCount: login.shared_account_count,
+            platformSuspectedAlt: login.suspected_alt_triggered,
+          }),
+          login.created_at,
+        ],
+      );
+      await client.query(
+        `
+          UPDATE source_cursors
+          SET occurred_at=$1, source_id=$2, updated_at=now()
+          WHERE stream='login_fingerprints'
+            AND (occurred_at, source_id) < ($1,$2)
+        `,
+        [login.created_at, login.id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    await this.onSignupAssessed?.(login.user_id);
   }
 
   private async replayFailedSignups(): Promise<number> {

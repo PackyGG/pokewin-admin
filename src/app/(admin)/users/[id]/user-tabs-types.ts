@@ -41,6 +41,16 @@ export type UserDetail = {
     deviceVisitorId: string | null;
     /** Distinct visitor_ids for this user (>1 = seen on multiple devices). */
     deviceVisitorIdCount: number;
+    /** Verified signup fingerprint captures. */
+    deviceSignupCaptureCount: number;
+    /** Verified login fingerprint captures. */
+    deviceLoginCaptureCount: number;
+    /** Most recent verified login fingerprint time. */
+    deviceLastLoginAt: string | null;
+    /** IP supplied by Fingerprint for the most recent verified login. */
+    deviceLastLoginIp: string | null;
+    /** Device ID supplied by the most recent verified login. */
+    deviceLastLoginVisitorId: string | null;
     country: string | null;
     countryCode: string | null;
     city: string | null;

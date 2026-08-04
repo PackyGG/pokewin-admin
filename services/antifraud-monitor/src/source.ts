@@ -4,6 +4,25 @@ import type pg from "pg";
 
 import type { ActiveSession, Signup } from "./types.js";
 
+export type LoginFingerprint = {
+  id: string;
+  user_id: string;
+  username: string | null;
+  email: string | null;
+  image: string | null;
+  source_created_at: Date;
+  request_id: string;
+  visitor_id: string;
+  confidence: number;
+  ip: string | null;
+  suspected_alt_triggered: boolean;
+  created_at: Date;
+  previous_visitor_id: string | null;
+  previous_ip: string | null;
+  prior_capture_count: number;
+  shared_account_count: number;
+};
+
 /**
  * MAIN stores `user.created_at`, `ledger_transactions.created_at` and
  * `user_rewards.granted_at/opened_at` as `timestamp WITHOUT time zone`.
@@ -118,6 +137,70 @@ export async function fetchNewSignups(
         (date_trunc('milliseconds', $1::timestamptz ${UTC}), $2::text)
         AND u.created_at <= (now() ${UTC}) - interval '30 seconds'
       ORDER BY ${CURSOR_MILLISECONDS}, u.id
+      LIMIT $3
+    `,
+    [cursor.occurredAt, cursor.sourceId, limit],
+  );
+  return result.rows;
+}
+
+/**
+ * Reads every verified login fingerprint, independently from signup polling.
+ * The backend owns verification; this consumer only archives the trusted row
+ * and derives account/device overlap evidence from the read-only MAIN mirror.
+ */
+export async function fetchNewLoginFingerprints(
+  source: pg.Pool,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = 100,
+): Promise<LoginFingerprint[]> {
+  const result = await source.query<LoginFingerprint>(
+    `
+      SELECT
+        fp.id::text AS id,
+        fp.user_id,
+        u.username,
+        u.email,
+        u.image,
+        u.created_at ${UTC} AS source_created_at,
+        fp.request_id,
+        fp.visitor_id,
+        fp.confidence,
+        fp.ip::text AS ip,
+        fp.suspected_alt_triggered,
+        fp.created_at,
+        previous.visitor_id AS previous_visitor_id,
+        previous.ip::text AS previous_ip,
+        history.prior_capture_count,
+        shared.shared_account_count
+      FROM fingerprints fp
+      JOIN "user" u ON u.id = fp.user_id
+      LEFT JOIN LATERAL (
+        SELECT older.visitor_id, older.ip
+        FROM fingerprints older
+        WHERE older.user_id = fp.user_id
+          AND (older.created_at, older.id) < (fp.created_at, fp.id)
+        ORDER BY older.created_at DESC, older.id DESC
+        LIMIT 1
+      ) previous ON true
+      JOIN LATERAL (
+        SELECT COUNT(*)::int AS prior_capture_count
+        FROM fingerprints older
+        WHERE older.user_id = fp.user_id
+          AND (older.created_at, older.id) < (fp.created_at, fp.id)
+      ) history ON true
+      JOIN LATERAL (
+        SELECT COUNT(DISTINCT other.user_id)::int AS shared_account_count
+        FROM fingerprints other
+        WHERE other.visitor_id = fp.visitor_id
+          AND other.user_id IS NOT NULL
+          AND other.user_id <> fp.user_id
+          AND other.confidence >= 0.9
+      ) shared ON true
+      WHERE fp.event_type = 'login'
+        AND (fp.created_at, fp.id::text) > ($1::timestamptz, $2::text)
+        AND fp.created_at <= now() - interval '30 seconds'
+      ORDER BY fp.created_at, fp.id::text
       LIMIT $3
     `,
     [cursor.occurredAt, cursor.sourceId, limit],
@@ -407,6 +490,43 @@ export async function fetchSessionActivity(
         AND lt.created_at >=
           ($2::timestamptz ${UTC}) - ($5::int * interval '1 millisecond')
         AND lt.created_at <= ($6::timestamptz ${UTC})
+
+      UNION ALL
+
+      SELECT
+        fp.user_id,
+        'account_logged_in',
+        'fingerprint_login',
+        fp.id::text,
+        'Account logged in',
+        CASE
+          WHEN previous.visitor_id IS NULL THEN 'The first verified login device was captured.'
+          WHEN previous.visitor_id <> fp.visitor_id THEN 'The account logged in with a different verified device ID.'
+          ELSE 'The account logged in with a previously seen verified device ID.'
+        END,
+        fp.created_at,
+        jsonb_build_object(
+          'request_id', fp.request_id,
+          'visitor_id', fp.visitor_id,
+          'confidence', fp.confidence,
+          'ip', fp.ip::text,
+          'suspected_alt_triggered', fp.suspected_alt_triggered,
+          'new_device', previous.visitor_id IS NOT NULL
+            AND previous.visitor_id <> fp.visitor_id
+        )
+      FROM fingerprints fp
+      LEFT JOIN LATERAL (
+        SELECT older.visitor_id
+        FROM fingerprints older
+        WHERE older.user_id = fp.user_id
+          AND (older.created_at, older.id) < (fp.created_at, fp.id)
+        ORDER BY older.created_at DESC, older.id DESC
+        LIMIT 1
+      ) previous ON true
+      WHERE fp.user_id = $1
+        AND fp.event_type = 'login'
+        AND fp.created_at >= $2::timestamptz - ($5::int * interval '1 millisecond')
+        AND fp.created_at <= $6::timestamptz
 
       UNION ALL
 

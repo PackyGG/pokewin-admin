@@ -443,7 +443,13 @@ export const MONITOR_EVENT_CATALOG: MonitorEventDefinition[] = [
   ),
   event("chat_message_sent", "Chat message sent", "Social", "The player sends a public chat message.", "Planned source", "planned"),
   event("rain_joined", "Rain joined", "Social", "The player joins an active rain.", "Planned source", "planned"),
-  event("account_logged_in", "Account logged in", "Account", "The player starts an authenticated session.", "Planned source", "planned"),
+  event(
+    "account_logged_in",
+    "Account logged in",
+    "Account",
+    "The player starts a session with a backend-verified login fingerprint.",
+    "Login fingerprint poller",
+  ),
   event("email_verified", "Email verified", "Account", "The player verifies their email address.", "Planned source", "planned"),
   event(
     "affiliate_code_applied",
