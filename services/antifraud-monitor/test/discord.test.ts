@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildDiscordAlertPayload } from "../src/discord.js";
+import {
+  buildDiscordAlertPayload,
+  SIGNUP_RISK_FIELD_NAMES,
+} from "../src/discord.js";
 
 // This service no longer decides who is tagged, so it no longer carries a copy
 // of the recipient ids. Mention text and its `allowed_mentions` allowlist are
@@ -30,18 +33,20 @@ test("regular alerts include the dashboard button without recipient input", () =
   assert.equal(payload.components[0]?.components[0]?.label, "Open Antifraud");
 });
 
-test("high-risk signup alerts show structured evidence and link to the case", () => {
+test("high-risk signup alerts show a clean account and evidence summary", () => {
   const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
       title: "High-risk signup detected",
-      description:
-        "This account crossed the automated signup review threshold.",
+      description: "Review the account indicators and current locks below.",
+      presentation: "signup-risk",
       username: "review_me",
       userId: "user-123",
+      location: { city: "Berlin", country: "Germany", countryCode: "DE" },
+      locks: [],
       caseId: "case-123",
       score: 60,
-      severity: "medium",
+      severity: "high",
       trigger: "Signup score reached 60+",
       signals: [
         {
@@ -59,44 +64,112 @@ test("high-risk signup alerts show structured evidence and link to the case", ()
   );
 
   const fields = payload.embeds[0]?.fields ?? [];
-  assert.equal(payload.embeds[0]?.color, 0xf59e0b);
+  assert.equal(payload.embeds[0]?.color, 0xf97316);
   assert.equal(
     payload.embeds[0]?.url,
     "https://fraud.packydash.com/monitor/cases/case-123",
   );
-  assert.equal(payload.components[0]?.components[0]?.label, "Review case");
+  assert.equal(
+    payload.components[0]?.components[0]?.label,
+    "Open Account Review",
+  );
   assert.equal(
     payload.components[0]?.components[0]?.url,
     "https://fraud.packydash.com/monitor/cases/case-123",
   );
   assert.match(
-    fields.find((field) => field.name === "Account")?.value ?? "",
-    /\*\*review\\_me\*\*\nUser ID `user-123`/,
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.username)
+      ?.value ?? "",
+    /\*\*review\\_me\*\*/,
   );
   assert.equal(
-    fields.find((field) => field.name === "Risk score")?.value,
-    "**60 points**\nMedium risk",
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.userId)
+      ?.value,
+    "`user-123`",
+  );
+  assert.equal(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.riskScore)
+      ?.value,
+    "**60 points**\nHigh risk",
+  );
+  assert.equal(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.location)
+      ?.value,
+    "Berlin, Germany \\(DE\\)",
+  );
+  assert.equal(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)?.value,
+    "\u{2705} None",
   );
   assert.match(
-    fields.find((field) => field.name === "Why it was flagged")?.value ?? "",
-    /\*\*\+60 \| Shared device\*\*[\s\S]*\*\*-20 \| Irreversible deposit\*\*/,
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.reasons)
+      ?.value ?? "",
+    /\*\*\+60\*\* \u00b7 Shared device[\s\S]*\*\*-20\*\* \u00b7 Irreversible deposit/,
   );
   assert.equal(
-    fields.find((field) => field.name === "Case ID")?.value,
-    "`case-123`",
+    fields.some((field) => field.name === "Trigger"),
+    false,
+  );
+  assert.equal(
+    fields.some((field) => field.name === "Case ID"),
+    false,
+  );
+  assert.doesNotMatch(
+    JSON.stringify(payload),
+    /Three accounts share this device/,
   );
 });
 
-test("risk accents follow the score severity", () => {
-  const high = buildDiscordAlertPayload(
+test("critical signup alerts list every automatic lock", () => {
+  const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
-      title: "High",
-      description: "High risk",
-      score: 80,
-      severity: "high",
+      title: "Critical-risk signup",
+      description: "Review the account indicators and current locks below.",
+      presentation: "signup-risk",
+      username: "critical_user",
+      userId: "user-critical",
+      location: { countryCode: "NL" },
+      locks: [
+        "Fiat deposits",
+        "Crypto withdrawals",
+        "Item withdrawals",
+        "Tips",
+      ],
+      caseId: "case-critical",
+      score: 92,
+      severity: "critical",
+      signals: [
+        { title: "Disposable email", detail: "Hidden detail", points: 40 },
+      ],
     },
   );
+
+  const fields = payload.embeds[0]?.fields ?? [];
+  assert.match(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)
+      ?.value ?? "",
+    /Fiat deposits[\s\S]*Crypto withdrawals[\s\S]*Item withdrawals[\s\S]*Tips/,
+  );
+  assert.equal(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.location)
+      ?.value,
+    "NL",
+  );
+  assert.equal(
+    fields.some((field) => field.name === "Case ID"),
+    false,
+  );
+  assert.doesNotMatch(JSON.stringify(payload), /Hidden detail/);
+});
+
+test("risk accents follow the score severity", () => {
+  const high = buildDiscordAlertPayload("https://fraud.packydash.com/monitor", {
+    title: "High",
+    description: "High risk",
+    score: 80,
+    severity: "high",
+  });
   const critical = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
@@ -160,14 +233,8 @@ test("untrusted alert text cannot create extra mentions", () => {
     },
   );
 
-  assert.equal(
-    payload.embeds[0]?.title,
-    "🛡️ everyone user 123456789012345678",
-  );
-  assert.equal(
-    payload.embeds[0]?.description,
-    "here role 123456789012345678",
-  );
+  assert.equal(payload.embeds[0]?.title, "🛡️ everyone user 123456789012345678");
+  assert.equal(payload.embeds[0]?.description, "here role 123456789012345678");
   assert.ok(!("escalate" in payload));
 });
 

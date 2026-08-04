@@ -103,44 +103,42 @@ export async function DiscordConfigSection() {
                 Example alert
               </span>
               <p className="mt-2 text-sm font-semibold">
-                High-risk signup detected
+                {"\u{26A0}\u{FE0F} High-risk signup"}
               </p>
-              <p className="mt-1 text-xs text-muted-foreground">
-                This account crossed the automated signup review threshold and
-                needs a staff decision.
-              </p>
-              <div className="mt-4 grid gap-3 text-[11px] sm:grid-cols-3">
+              <div className="mt-4 grid gap-3 text-[11px] sm:grid-cols-2">
                 <span>
-                  <span className="block text-muted-foreground">Account</span>
+                  <span className="block text-muted-foreground">{"\u{1F464} Username"}</span>
                   <strong>review_me</strong>
-                  <code className="block font-mono text-[10px] text-muted-foreground">
-                    user-123
-                  </code>
                 </span>
                 <span>
-                  <span className="block text-muted-foreground">Risk score</span>
+                  <span className="block text-muted-foreground">{"\u{1F194} User ID"}</span>
+                  <code className="font-mono text-[10px]">user-123</code>
+                </span>
+                <span>
+                  <span className="block text-muted-foreground">{"\u{1F4CA} Risk score"}</span>
                   <strong>55 points</strong>
                   <span className="block text-orange-600 dark:text-orange-400">
                     High risk
                   </span>
                 </span>
                 <span>
-                  <span className="block text-muted-foreground">Trigger</span>
-                  <strong>Signup score 50-69</strong>
+                  <span className="block text-muted-foreground">{"\u{1F30D} Location / country"}</span>
+                  <strong>Berlin, Germany (DE)</strong>
+                </span>
+                <span>
+                  <span className="block text-muted-foreground">{"\u{1F512} Locks"}</span>
+                  <strong>{"\u{2705} None"}</strong>
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  Why it was flagged
+                  {"\u{1F50E} Why it was flagged"}
                 </span>
-                <p className="mt-1 text-xs font-semibold">+55 | Shared device</p>
-                <p className="text-[11px] text-muted-foreground">
-                  Three accounts share this device.
-                </p>
+                <p className="mt-1 text-xs font-semibold">{"\u{2022} +55 \u{00B7} Shared device"}</p>
               </div>
               <span className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-3 text-xs font-semibold text-white">
                 <ExternalLink className="size-3.5" />
-                Review case
+                Open Account Review
               </span>
             </div>
           </div>

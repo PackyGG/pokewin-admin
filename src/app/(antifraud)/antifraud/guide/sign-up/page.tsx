@@ -97,12 +97,6 @@ export default async function AntifraudSignupGuidePage() {
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">
           Sign-up checks
         </h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-          Every compatible signup receives one initial risk score. That score
-          decides how long the account is monitored, which Discord action is
-          used, whether staff review opens, and whether money features are
-          locked.
-        </p>
       </div>
 
       <section className="grid gap-4 xl:grid-cols-4">

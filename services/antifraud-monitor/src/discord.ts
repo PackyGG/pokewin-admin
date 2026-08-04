@@ -19,6 +19,15 @@ const DISCORD_DESCRIPTION_LIMIT = 1_200;
 const DISCORD_FIELD_LIMIT = 1_024;
 const MAX_SIGNAL_ROWS = 4;
 
+export const SIGNUP_RISK_FIELD_NAMES = {
+  username: "\u{1F464} Username",
+  userId: "\u{1F194} User ID",
+  riskScore: "\u{1F4CA} Risk score",
+  location: "\u{1F30D} Location / country",
+  locks: "\u{1F512} Locks",
+  reasons: "\u{1F50E} Why it was flagged",
+} as const;
+
 type AlertSeverity = "low" | "medium" | "high" | "critical";
 
 export type DiscordAlertSignal = {
@@ -30,9 +39,16 @@ export type DiscordAlertSignal = {
 export type DiscordAlert = {
   title: string;
   description: string;
+  presentation?: "signup-risk";
   urgent?: boolean;
   userId?: string;
   username?: string | null;
+  location?: {
+    city?: string | null;
+    country?: string | null;
+    countryCode?: string | null;
+  };
+  locks?: readonly string[];
   caseId?: string;
   score?: number;
   scoreDelta?: number;
@@ -44,13 +60,15 @@ export type DiscordAlert = {
   url?: string;
 };
 
-export function discordRuntimeStatus(config: Pick<
-  Config,
-  | "ANTIFRAUD_INGEST_URL"
-  | "ANTIFRAUD_INGEST_SECRET"
-  | "ADMIN_GUILD_ID"
-  | "ANTIFRAUD_DASHBOARD_URL"
->): {
+export function discordRuntimeStatus(
+  config: Pick<
+    Config,
+    | "ANTIFRAUD_INGEST_URL"
+    | "ANTIFRAUD_INGEST_SECRET"
+    | "ADMIN_GUILD_ID"
+    | "ANTIFRAUD_DASHBOARD_URL"
+  >,
+): {
   /**
    * Every antifraud alert goes onto the Discord bot's delivery queue, so there
    * is ONE readiness fact, not one per destination. The old per-webhook flags
@@ -62,8 +80,8 @@ export function discordRuntimeStatus(config: Pick<
   return {
     botQueueConfigured: Boolean(
       config.ANTIFRAUD_INGEST_URL &&
-        config.ANTIFRAUD_INGEST_SECRET &&
-        config.ADMIN_GUILD_ID,
+      config.ANTIFRAUD_INGEST_SECRET &&
+      config.ADMIN_GUILD_ID,
     ),
     dashboardUrlConfigured: Boolean(config.ANTIFRAUD_DASHBOARD_URL),
   };
@@ -170,13 +188,40 @@ function accountValue(alert: DiscordAlert): string {
   return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
 }
 
+function locationValue(
+  location: NonNullable<DiscordAlert["location"]>,
+): string {
+  const city = location.city?.trim();
+  const country = location.country?.trim();
+  const countryCode = location.countryCode?.trim().toUpperCase();
+  const countryLabel = country
+    ? countryCode && country.toUpperCase() !== countryCode
+      ? `${country} (${countryCode})`
+      : country
+    : countryCode;
+  return escapeMarkdown(
+    [city, countryLabel]
+      .filter((value): value is string => Boolean(value))
+      .join(", ") || "Unknown",
+  );
+}
+
+function locksValue(locks: readonly string[]): string {
+  if (locks.length === 0) return "\u{2705} None";
+  return clean(
+    locks.map((lock) => `\u{1F512} ${escapeMarkdown(lock, 96)}`).join("\n"),
+    DISCORD_FIELD_LIMIT,
+  );
+}
+
 function signalValue(signals: readonly DiscordAlertSignal[]): string {
   const ordered = [...signals]
     .filter((signal) => signal.points !== 0)
     .sort((left, right) => Math.abs(right.points) - Math.abs(left.points));
   const visible = ordered.slice(0, MAX_SIGNAL_ROWS);
   const lines = visible.map((signal) => {
-    const points = signal.points > 0 ? `+${signal.points}` : String(signal.points);
+    const points =
+      signal.points > 0 ? `+${signal.points}` : String(signal.points);
     return `**${points} | ${escapeMarkdown(signal.title, 96)}**\n${escapeMarkdown(signal.detail, 120)}`;
   });
   const hidden = ordered.length - visible.length;
@@ -184,6 +229,23 @@ function signalValue(signals: readonly DiscordAlertSignal[]): string {
     lines.push(
       `*+${hidden} more signal${hidden === 1 ? "" : "s"} in the case*`,
     );
+  }
+  return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
+}
+
+function compactSignalValue(signals: readonly DiscordAlertSignal[]): string {
+  const ordered = [...signals]
+    .filter((signal) => signal.points !== 0)
+    .sort((left, right) => Math.abs(right.points) - Math.abs(left.points));
+  const visible = ordered.slice(0, MAX_SIGNAL_ROWS);
+  const lines = visible.map((signal) => {
+    const points =
+      signal.points > 0 ? `+${signal.points}` : String(signal.points);
+    return `\u{2022} **${points}** \u{00B7} ${escapeMarkdown(signal.title, 120)}`;
+  });
+  const hidden = ordered.length - visible.length;
+  if (hidden > 0) {
+    lines.push(`*+${hidden} more indicator${hidden === 1 ? "" : "s"}*`);
   }
   return clean(lines.join("\n"), DISCORD_FIELD_LIMIT);
 }
@@ -204,8 +266,22 @@ export function buildDiscordAlertPayload(
     alert.url ? undefined : alert.caseId,
   );
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
+  const signupRisk = alert.presentation === "signup-risk";
 
-  if (alert.username || alert.userId) {
+  if (signupRisk) {
+    fields.push({
+      name: SIGNUP_RISK_FIELD_NAMES.username,
+      value: alert.username
+        ? `**${escapeMarkdown(alert.username)}**`
+        : "Unknown",
+      inline: true,
+    });
+    fields.push({
+      name: SIGNUP_RISK_FIELD_NAMES.userId,
+      value: alert.userId ? inlineCode(alert.userId) : "Unknown",
+      inline: true,
+    });
+  } else if (alert.username || alert.userId) {
     fields.push({
       name: "Account",
       value: accountValue(alert),
@@ -215,14 +291,25 @@ export function buildDiscordAlertPayload(
   if (alert.score !== undefined) {
     const score = clampRiskScore(alert.score);
     fields.push({
-      name: "Risk score",
+      name: signupRisk ? SIGNUP_RISK_FIELD_NAMES.riskScore : "Risk score",
       value: alert.severity
         ? `**${score} points**\n${severityLabel(alert.severity)} risk`
         : `**${score} points**`,
       inline: true,
     });
   }
-  if (alert.trigger) {
+  if (signupRisk) {
+    fields.push({
+      name: SIGNUP_RISK_FIELD_NAMES.location,
+      value: locationValue(alert.location ?? {}),
+      inline: true,
+    });
+    fields.push({
+      name: SIGNUP_RISK_FIELD_NAMES.locks,
+      value: locksValue(alert.locks ?? []),
+      inline: true,
+    });
+  } else if (alert.trigger) {
     fields.push({
       name: "Trigger",
       value: escapeMarkdown(alert.trigger),
@@ -245,12 +332,14 @@ export function buildDiscordAlertPayload(
   }
   if (alert.signals?.length) {
     fields.push({
-      name: "Why it was flagged",
-      value: signalValue(alert.signals),
+      name: signupRisk ? SIGNUP_RISK_FIELD_NAMES.reasons : "Why it was flagged",
+      value: signupRisk
+        ? compactSignalValue(alert.signals)
+        : signalValue(alert.signals),
       inline: false,
     });
   }
-  if (alert.caseId) {
+  if (alert.caseId && !signupRisk) {
     fields.push({
       name: "Case ID",
       value: inlineCode(alert.caseId),
@@ -282,7 +371,11 @@ export function buildDiscordAlertPayload(
           {
             type: 2,
             style: 5,
-            label: alert.caseId ? "Review case" : "Open Antifraud",
+            label: signupRisk
+              ? "Open Account Review"
+              : alert.caseId
+                ? "Review case"
+                : "Open Antifraud",
             url,
           },
         ],

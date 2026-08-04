@@ -52,7 +52,6 @@ import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import { isNonActionableRewardEnrollmentEvent } from "./event-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
-  CRITICAL_RISK_SIGNUP_SCORE,
   HIGH_RISK_SIGNUP_SCORE,
   signupDiscordAlertKind,
   signupMonitorDurationSeconds,
@@ -1586,6 +1585,9 @@ export class MonitorEngine {
       user_id: string;
       case_id: string | null;
       username: string | null;
+      city: string | null;
+      country: string | null;
+      country_code: string | null;
       score: number;
       signals: unknown;
       occurred_at: Date;
@@ -1596,12 +1598,15 @@ export class MonitorEngine {
     const pending = await this.db.antifraud.query<PendingAlert>(
       `
         SELECT
-          user_id, case_id, username, score, signals, occurred_at,
-          discord_delivered_at, attempt_count
-        FROM signup_alert_outbox
-        WHERE next_attempt_at <= now()
-          AND discord_delivered_at IS NULL
-        ORDER BY created_at
+          alert.user_id, alert.case_id, alert.username,
+          subject.city, subject.country, subject.country_code,
+          alert.score, alert.signals, alert.occurred_at,
+          alert.discord_delivered_at, alert.attempt_count
+        FROM signup_alert_outbox alert
+        LEFT JOIN subjects subject ON subject.user_id = alert.user_id
+        WHERE alert.next_attempt_at <= now()
+          AND alert.discord_delivered_at IS NULL
+        ORDER BY alert.created_at
         LIMIT 25
       `,
     );
@@ -1629,23 +1634,35 @@ export class MonitorEngine {
               title: lowRisk
                 ? "Low-risk signup detected"
                 : criticalRisk
-                  ? "Critical-risk signup detected"
-                  : "High-risk signup detected",
+                  ? "Critical-risk signup"
+                  : "High-risk signup",
               description: lowRisk
                 ? "This account entered the low-risk signup band and is being monitored. No staff review or automatic restriction was opened."
-                : criticalRisk
-                  ? "This account entered the critical signup band. Fiat deposits, withdrawals, and tips were locked automatically while staff review it."
-                  : "This account entered the high-risk signup band and needs a staff decision. No automatic restriction was applied.",
+                : "Review the account indicators and current locks below.",
+              presentation: lowRisk ? undefined : "signup-risk",
               userId: alert.user_id,
               username: alert.username,
+              location: lowRisk
+                ? undefined
+                : {
+                    city: alert.city,
+                    country: alert.country,
+                    countryCode: alert.country_code,
+                  },
+              locks: lowRisk
+                ? undefined
+                : criticalRisk
+                  ? [
+                      "Fiat deposits",
+                      "Crypto withdrawals",
+                      "Item withdrawals",
+                      "Tips",
+                    ]
+                  : [],
               caseId: lowRisk ? undefined : (alert.case_id ?? undefined),
               score: alert.score,
               severity: lowRisk ? "low" : severity(alert.score),
-              trigger: lowRisk
-                ? "Signup score reached 21-49"
-                : criticalRisk
-                  ? `Signup score reached ${CRITICAL_RISK_SIGNUP_SCORE}-100`
-                  : `Signup score reached ${HIGH_RISK_SIGNUP_SCORE}-${CRITICAL_RISK_SIGNUP_SCORE - 1}`,
+              trigger: lowRisk ? "Signup score reached 21-49" : undefined,
               signals: storedSignals(alert.signals),
               occurredAt: alert.occurred_at,
             },
