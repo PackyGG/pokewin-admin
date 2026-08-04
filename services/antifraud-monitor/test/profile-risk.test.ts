@@ -10,7 +10,7 @@ import {
 } from "../src/profile-risk.js";
 
 const now = new Date("2026-07-30T12:00:00.000Z");
-const providers = ["fingerprint", "proxycheck", "abstract_ip", "abstract_email", "opportify"].map(
+const providers = ["fingerprint", "proxycheck", "abstract_ip", "abstract_email", "maxmind"].map(
   (provider) => ({ provider, outcome: "success" as const, required: true }),
 );
 
@@ -59,7 +59,7 @@ test("required provider failures are incomplete, never clean", () => {
     providers: [
       ...providers.slice(0, 4),
       {
-        provider: "opportify",
+        provider: "maxmind",
         outcome: "failed",
         required: true,
         failureKind: "timeout",
@@ -80,7 +80,7 @@ test("partial provider responses are incomplete, never clean", () => {
   const assessment = assessProfile({
     signals: [],
     providers: providers.map((provider) =>
-      provider.provider === "opportify"
+      provider.provider === "maxmind"
         ? { ...provider, completeness: "partial" as const }
         : { ...provider, completeness: "complete" as const }
     ),

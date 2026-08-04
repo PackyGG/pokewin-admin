@@ -93,7 +93,6 @@ const runtimeConfigSchema = z.object({
     proxycheckConfigured: z.boolean(),
     abstractIpConfigured: z.boolean(),
     abstractEmailConfigured: z.boolean(),
-    opportifyConfigured: z.boolean(),
     maxmindFactorsConfigured: z.boolean(),
     maxmindAlertsConfigured: z.boolean(),
   }),
@@ -120,13 +119,6 @@ const runtimeConfigSchema = z.object({
       requiredDatum: z.string(),
     }),
     abstract_email: z.object({
-      model: z.string(),
-      version: z.string(),
-      endpoint: z.string(),
-      method: z.string(),
-      requiredDatum: z.string(),
-    }),
-    opportify: z.object({
       model: z.string(),
       version: z.string(),
       endpoint: z.string(),

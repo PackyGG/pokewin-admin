@@ -92,7 +92,6 @@ const BAD_IP_REPUTATION_KEYS = new Set([
   "abstract_ip_hosting",
   "abstract_ip_relay",
   "abstract_ip_abuse",
-  "opportify_ip_evidence",
 ]);
 
 /** Provider signal keys that mark the checkout device as bad. */
@@ -279,7 +278,7 @@ export function badIpReputation(
     if (keys.has(key)) return true;
   }
   const successful = successfulProviders(providers);
-  for (const name of ["proxycheck", "abstract_ip", "opportify"]) {
+  for (const name of ["proxycheck", "abstract_ip"]) {
     const score = successful.get(name)?.score;
     if (typeof score === "number" && score >= BAD_IP_SCORE_FLOOR) return true;
   }
@@ -522,8 +521,8 @@ export function evaluateFiatEligibility(
 
   // ── Fail closed on provider gaps ─────────────────────────────────────────
   // Fingerprint and proxycheck are mandatory: the identity binding and the
-  // independent IP opinion come from them. Abstract and Opportify are
-  // corroborating, so a failure there costs points instead of the checkout.
+  // independent IP opinion come from them. Abstract is corroborating, so a
+  // failure there costs points instead of the checkout.
   const byName = new Map(
     input.providers.map((provider) => [provider.provider, provider]),
   );
@@ -543,7 +542,7 @@ export function evaluateFiatEligibility(
     blocking: true,
     source: "ip",
   });
-  for (const name of ["abstract_ip", "opportify"] as const) {
+  for (const name of ["abstract_ip"] as const) {
     const provider = byName.get(name);
     add(provider !== undefined && provider.status === "failed", {
       key: `${name}_check_degraded`,

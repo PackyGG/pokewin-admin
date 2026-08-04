@@ -67,7 +67,6 @@ test("bootstrap credential scan reports provider names without secret values", (
     PROXYCHECK_API_KEY: "",
     ABSTRACT_IP_INTELLIGENCE_API_KEY: "abstract-ip-secret",
     ABSTRACT_EMAIL_REPUTATION_API_KEY: "abstract-email-secret",
-    OPPORTIFY_API_KEY: "opportify-secret",
     MAXMIND_ACCOUNT_ID: "123",
     MAXMIND_LICENSE_KEY: "maxmind-secret",
   });

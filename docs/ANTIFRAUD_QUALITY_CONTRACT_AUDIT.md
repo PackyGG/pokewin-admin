@@ -16,7 +16,7 @@ not be released as the requested recode without resolving the divergences below.
 | 30-second signup stabilization | Signup cursor waits 5 seconds | Diverges |
 | 10-minute standard and 15-minute high monitor | One configurable duration defaults to 180 seconds | Diverges |
 | Fiat off by default | No explicit true-only account/environment switch exists; missing lock state is treated as unlocked, and a previously cached allow returns before current account policy is loaded | Direct conflict |
-| Fingerprint Pro Plus, ProxyCheck v3, Abstract IP/email, Opportify required | All five are required; ProxyCheck version/tag and provider timeouts are explicit | Conforms |
+| Fingerprint Pro Plus, ProxyCheck v3, Abstract IP/email, MaxMind required | All five are required; ProxyCheck version/tag and provider timeouts are explicit | Conforms |
 | Provider failures never clean | Failed required providers dead-letter and retry; missing provider input is scored/skipped instead of treated as an outage | Mostly conforms |
 | Retain overlaps but cap one underlying fact | Overlapping evidence is retained and some provider-local duplicates score zero, but signup totals sum every signal without fact-group caps | Diverges |
 | Sanitized Sumsub KYC | Sanitized country/review/document evidence is bounded; raw identity documents are not persisted | Conforms |
@@ -50,7 +50,7 @@ not be released as the requested recode without resolving the divergences below.
 ## Current end-to-end implementation
 
 1. `antifraud-monitor` reads signups and activity from the read-only MAIN mirror.
-2. Every signup requires Fingerprint, ProxyCheck, Abstract IP, Abstract email, and Opportify enrichment.
+2. Every signup requires Fingerprint, ProxyCheck, Abstract IP, Abstract email, and MaxMind enrichment.
 3. Provider failures are stored in `provider_checks`, dead-letter the signup, advance the source cursor atomically with the failure, and remain replayable.
 4. Confirmed email blacklist and Abstract catch-all containment are persisted before unrelated provider failures can block them.
 5. Signup signals produce one current assessment. Scores at 25+ start monitoring by default. Scores at 60+ open Account Review and enqueue Discord even though the generic severity remains `medium` until 80. This is current behavior, not proof of the owner’s 0–100/timing policy.
@@ -85,7 +85,7 @@ not be released as the requested recode without resolving the divergences below.
 - Applied migrations store only filenames, not checksums. Editing an already-applied SQL file is silently ignored and schema drift cannot be detected by the runner.
 - Backfill migrations have no executable pre/post count, duplicate, parity, or post-commit recovery assertions. `014_signup_live_behavior_tuning.sql` deletes legacy weights, `022_split_high_risk_fiat_destination.sql` deletes delivery rows, and `028_dashboard_delivery_receipts.sql` changes historical delivery state.
 - Signup and Fiat assessments overwrite the current row. The historical model contract is absent for signup.
-- Unknown historical provider payloads are handled inconsistently. Fingerprint can reuse stored signals, Opportify refetches when parsing fails, while cached ProxyCheck/Abstract parsing can reject the whole signup replay.
+- Unknown historical provider payloads are handled inconsistently. Fingerprint can reuse stored signals, while cached ProxyCheck/Abstract parsing can reject the whole signup replay.
 - The mirror index bundle has no dedicated `(user_id, created_at)` coverage for sponsored `battle_participants`, and no expression/time indexes for affiliate-code or country signup clustering. Those reads are time bounded but may become repeated scans under signup bursts or many active sessions.
 - The migration sequence contains duplicate numeric prefixes (`002`, `003`, `014`, `018`, `022`). Full filenames keep ordering deterministic, but operator references such as “migration 014” are ambiguous.
 

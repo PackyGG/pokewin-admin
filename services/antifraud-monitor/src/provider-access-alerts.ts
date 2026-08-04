@@ -35,7 +35,6 @@ const PROVIDER_LABELS: Record<SignupProvider, string> = {
   proxycheck: "ProxyCheck",
   abstract_ip: "Abstract IP Intelligence",
   abstract_email: "Abstract Email Reputation",
-  opportify: "Opportify",
   maxmind: "MaxMind minFraud",
 };
 
@@ -200,7 +199,6 @@ const REQUIRED_PROVIDER_ENV: ReadonlyArray<{
   { provider: "proxycheck", keys: ["PROXYCHECK_API_KEY"] },
   { provider: "abstract_ip", keys: ["ABSTRACT_IP_INTELLIGENCE_API_KEY"] },
   { provider: "abstract_email", keys: ["ABSTRACT_EMAIL_REPUTATION_API_KEY"] },
-  { provider: "opportify", keys: ["OPPORTIFY_API_KEY"] },
   { provider: "maxmind", keys: ["MAXMIND_ACCOUNT_ID", "MAXMIND_LICENSE_KEY"] },
 ];
 

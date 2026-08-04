@@ -118,7 +118,7 @@ export function categoryForSignal(key: string): RiskCategory {
   }
   if (/fund|deposit|withdraw|creator_tip|sponsor/.test(key)) return "funding";
   if (/relationship|affiliate|shared_account/.test(key)) return "relationship";
-  if (/provider|opportify|abstract|maxmind/.test(key)) return "provider";
+  if (/provider|abstract|maxmind/.test(key)) return "provider";
   if (/lock|kyc|ban|restricted/.test(key)) return "account";
   return "behavior";
 }

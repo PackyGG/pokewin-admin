@@ -52,7 +52,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   proxycheckConfigured: "ProxyCheck v3 Pro",
   abstractIpConfigured: "Abstract IP Intelligence",
   abstractEmailConfigured: "Abstract Email Reputation",
-  opportifyConfigured: "Opportify Full Fraud Check",
   maxmindFactorsConfigured: "MaxMind minFraud Factors",
   maxmindAlertsConfigured: "MaxMind risk-score alerts",
 };

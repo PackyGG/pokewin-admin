@@ -45,7 +45,7 @@ function access(): FiatEligibilityAccess {
 }
 
 function provider(
-  providerName: "fingerprint" | "proxycheck" | "abstract_ip" | "opportify",
+  providerName: "fingerprint" | "proxycheck" | "abstract_ip",
   overrides: Partial<EnrichmentResult> = {},
 ): EnrichmentResult {
   return {
@@ -153,7 +153,7 @@ function reviewInput(
 
 /** A provider result carrying one named signal, for reputation coverage. */
 function providerWithSignal(
-  providerName: "fingerprint" | "proxycheck" | "abstract_ip" | "opportify",
+  providerName: "fingerprint" | "proxycheck" | "abstract_ip",
   key: string,
   points = 40,
 ): EnrichmentResult {
@@ -872,15 +872,14 @@ test("a degraded corroborating provider scores but never blocks", () => {
       provider("fingerprint"),
       provider("proxycheck"),
       provider("abstract_ip", { status: "failed", errorCode: "timeout" }),
-      provider("opportify", { status: "failed", errorCode: "timeout" }),
     ],
   });
   assert.equal(reviewed.decision, "allow");
-  for (const key of ["abstract_ip_check_degraded", "opportify_check_degraded"]) {
-    const signal = reviewed.signals.find((candidate) => candidate.key === key);
-    assert.equal(signal?.blocking, false);
-    assert.equal(signal?.points, 10);
-  }
+  const signal = reviewed.signals.find(
+    (candidate) => candidate.key === "abstract_ip_check_degraded",
+  );
+  assert.equal(signal?.blocking, false);
+  assert.equal(signal?.points, 10);
 });
 
 test("fresh Fingerprint identity is mandatory and replay-safe", () => {
@@ -1058,7 +1057,6 @@ test("concurrent identical requests share one automatic provider review", async 
       return provider("proxycheck");
     },
     abstractIpCheck: async () => provider("abstract_ip"),
-    opportifyCheck: async () => provider("opportify"),
   };
   const service = new FiatEligibilityService(
     {
@@ -1090,9 +1088,8 @@ test("concurrent identical requests share one automatic provider review", async 
 });
 
 test("a hanging corroborating provider cannot stall a checkout", async () => {
-  // Abstract and Opportify can only ever ADD POINTS. If the endpoint waited out
-  // their own SDK budgets (5s / 8s) a paying customer would wait with them, so
-  // they get a 2s checkout deadline and a breach is scored, not awaited.
+  // Abstract can only ever add points. Its own 5s SDK budget must not make a
+  // paying customer wait, so it gets a 2s deadline and a breach is scored.
   assert.equal(
     fiatEligibilityInternals.CORROBORATING_PROVIDER_TIMEOUT_MS,
     2_000,
@@ -1129,7 +1126,6 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
     userID: "user-1",
   };
   let recordedAbstractStatus: unknown = null;
-  let recordedOpportifyStatus: unknown = null;
   const answer = async (text: string, params?: unknown[]) => {
     if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
     if (text.includes("signup_risk_score")) return { rows: [] };
@@ -1140,7 +1136,6 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
     if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
       const values = (params ?? []) as unknown[];
       recordedAbstractStatus = values[12];
-      recordedOpportifyStatus = values[13];
       return {
         rows: [{
           id: "decision-hanging",
@@ -1149,7 +1144,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
             request.ipAddress,
           ),
           decision: "allow",
-          risk_score: 20,
+          risk_score: 10,
           reason_codes: [],
           enforcement: "none",
           enforcement_reasons: [],
@@ -1186,9 +1181,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
         },
       }),
     proxycheck: async () => provider("proxycheck"),
-    // Both corroborating providers hang forever.
     abstractIpCheck: () => never,
-    opportifyCheck: () => never,
   };
   const service = new FiatEligibilityService(
     { source, fiatDevSource: null, antifraud } as never,
@@ -1203,12 +1196,11 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
 
   assert.equal(decision.decisionId, "decision-hanging");
   assert.equal(decision.allowed, true);
-  // Bounded by the corroborating deadline, not by the 8s Opportify budget.
+  // Bounded by the corroborating deadline, not Abstract's 5s SDK budget.
   assert.ok(elapsed >= 1_800, `returned too early (${elapsed}ms)`);
   assert.ok(elapsed < 5_000, `checkout waited too long (${elapsed}ms)`);
   // The breach is recorded as a provider failure so the policy can score it.
   assert.equal(recordedAbstractStatus, "failed");
-  assert.equal(recordedOpportifyStatus, "failed");
 });
 
 test("missing or false global Fiat config can never return allow", async () => {

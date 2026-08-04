@@ -32,7 +32,7 @@ MAIN mirror
   | signups, fingerprints, audit activity, ledger, fiat, battles, locks
   v
 antifraud-monitor
-  |-- provider enrichment: Fingerprint, ProxyCheck, Opportify
+  |-- provider enrichment: Fingerprint, ProxyCheck, Abstract, MaxMind
   |-- KYC enrichment: Sumsub (current working-tree integration)
   |-- signup/session/rule scoring
   |-- fiat, network, creator, free-battle assessments
@@ -141,7 +141,7 @@ There are currently two related case models:
 | `score-catalog.ts` | Editable score vocabulary and defaults |
 | `score-weight-store.ts` | Cached weights and audited idempotent updates |
 | `event-catalog.ts` | Live/planned behavior event vocabulary |
-| `enrichment.ts` | Fingerprint, ProxyCheck, Abstract IP/email, and Opportify parsing, weighting, caching |
+| `enrichment.ts` | Fingerprint, ProxyCheck, and Abstract IP/email parsing, weighting, caching |
 | `network-risk.ts` | Account graph, creator-cohort fraud, async scan jobs |
 | `fiat-risk.ts` | Fiat evidence, score, verdict, assessment persistence |
 | `fiat-eligibility.ts` | Synchronous automatic checkout allow/deny decision |
@@ -208,10 +208,7 @@ so one failed phase does not suppress later cleanup.
 3. Capture email containment evidence before external providers.
 4. Load signup/account context and editable weights.
 5. Fetch or reuse Fingerprint, ProxyCheck, Abstract IP Intelligence, Abstract
-   Email Reputation, and Opportify evidence. Opportify
-   receives only the signup fields its private server API supports and adds
-   independent email, IP, username-content, velocity, and geographic evidence;
-   no Fingerprint result or internal fraud state is sent to it.
+   Email Reputation, and MaxMind evidence.
 6. Fail to the durable signup dead-letter when required enrichment is
    unavailable.
 7. Score base, provider, and risky-location signals.

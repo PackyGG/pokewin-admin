@@ -33,7 +33,6 @@ const schema = z.object({
   PROXYCHECK_API_KEY: z.string().min(1),
   ABSTRACT_IP_INTELLIGENCE_API_KEY: z.string().min(1),
   ABSTRACT_EMAIL_REPUTATION_API_KEY: z.string().min(1),
-  OPPORTIFY_API_KEY: z.string().min(1),
   MAXMIND_ACCOUNT_ID: z.string().regex(/^\d+$/).optional(),
   MAXMIND_LICENSE_KEY: z.string().min(16).optional(),
   MAXMIND_ALERT_WEBHOOK_SECRET: z.string().min(20).max(100).optional(),

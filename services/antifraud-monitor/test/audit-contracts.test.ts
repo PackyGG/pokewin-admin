@@ -194,7 +194,6 @@ const runtimeConfig: Config = {
   PROXYCHECK_API_KEY: "proxycheck-secret",
   ABSTRACT_IP_INTELLIGENCE_API_KEY: "abstract-ip-secret",
   ABSTRACT_EMAIL_REPUTATION_API_KEY: "abstract-email-secret",
-  OPPORTIFY_API_KEY: "opportify-secret",
   MAXMIND_ACCOUNT_ID: "123456",
   MAXMIND_LICENSE_KEY: "maxmind-license-key-for-testing",
   MAXMIND_ALERT_WEBHOOK_SECRET: "maxmind-alert-secret-at-least-32-characters",
@@ -278,7 +277,6 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     proxycheckConfigured: true,
     abstractIpConfigured: true,
     abstractEmailConfigured: true,
-    opportifyConfigured: true,
     maxmindFactorsConfigured: true,
     maxmindAlertsConfigured: true,
   });
@@ -289,10 +287,6 @@ test("authoritative runtime status returns presence and compiled ids only", () =
   assert.equal(
     status.providerContracts.proxycheck.version,
     "24-June-2026",
-  );
-  assert.equal(
-    status.providerContracts.opportify.requiredDatum,
-    "email_or_signup_ip",
   );
   assert.deepEqual(status.live, {
     redisConfigured: true,
@@ -310,7 +304,6 @@ test("authoritative runtime status returns presence and compiled ids only", () =
     runtimeConfig.REDIS_URL,
     runtimeConfig.FINGERPRINT_SECRET_API_KEY,
     runtimeConfig.PROXYCHECK_API_KEY,
-    runtimeConfig.OPPORTIFY_API_KEY,
     runtimeConfig.API_TOKEN,
     runtimeConfig.API_ADMIN_TOKEN,
     runtimeConfig.FIAT_ALERT_DASHBOARD_URL,
@@ -552,13 +545,6 @@ test("editable score migration seeds every runtime weight", async () => {
     await readFile(
       new URL(
         "../migrations/035_abstract_signup_intelligence.sql",
-        import.meta.url,
-      ),
-      "utf8",
-    ),
-    await readFile(
-      new URL(
-        "../migrations/036_opportify_signup_intelligence.sql",
         import.meta.url,
       ),
       "utf8",

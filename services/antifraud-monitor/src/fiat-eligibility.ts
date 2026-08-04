@@ -98,9 +98,9 @@ const REWARD_TYPES = [
  */
 const SOURCE_READ_TIMEOUT_MS = 3_000;
 /**
- * Deadline for the CORROBORATING providers (Abstract IP, Opportify). They can
- * only ever add points — neither can block a decision — so their own SDK
- * timeouts (5s and 8s) must not set the latency a paying customer waits. On a
+ * Deadline for the corroborating Abstract IP provider. It can
+ * only ever add points and cannot block a decision, so its 5s SDK timeout must
+ * not set the latency a paying customer waits. On a
  * breach the provider is reported as failed, which the policy scores as
  * `*_check_degraded` (10 points, never blocking). The MANDATORY providers keep
  * their full budget: without Fingerprint and proxycheck there is no decision to
@@ -709,7 +709,6 @@ export class FiatEligibilityService {
       fingerprint,
       proxycheck,
       abstractIp,
-      opportify,
       network,
       history,
       velocity,
@@ -721,10 +720,6 @@ export class FiatEligibilityService {
         this.enrichment.abstractIpCheck(providerSubject, weights),
         "abstract_ip",
       ),
-      boundedCorroboration(
-        this.enrichment.opportifyCheck(providerSubject, weights),
-        "opportify",
-      ),
       networkPromise,
       this.loadFraudHistory(input),
       this.loadVelocity(input),
@@ -732,7 +727,7 @@ export class FiatEligibilityService {
     ]);
 
     const identity = fingerprintEventIdentity(fingerprint.response);
-    const providers = [fingerprint, proxycheck, abstractIp, opportify];
+    const providers = [fingerprint, proxycheck, abstractIp];
     const behaviour = behaviourFrom(subject, now);
     const outcome = evaluateFiatEligibility({
       now,
@@ -937,7 +932,7 @@ export class FiatEligibilityService {
             environment, user_id, request_hash, request_created_at, request_ip,
             fingerprint_request_id, signup_ip, signup_visitor_id,
             checkout_visitor_id, account_age_days, fingerprint_status,
-            proxycheck_status, abstract_ip_status, opportify_status,
+            proxycheck_status, abstract_ip_status,
             risk_score, decision, enforcement, reason_codes,
             enforcement_reasons, signals, behaviour_evidence,
             provider_evidence, expires_at
@@ -946,10 +941,10 @@ export class FiatEligibilityService {
             $1, $2, $3, $4, $5::inet,
             $6, $7, $8,
             $9, $10, $11,
-            $12, $13, $14,
-            $15, $16, $17, $18::text[],
-            $19::text[], $20::jsonb, $21::jsonb,
-            $22::jsonb, $23
+            $12, $13,
+            $14, $15, $16, $17::text[],
+            $18::text[], $19::jsonb, $20::jsonb,
+            $21::jsonb, $22
           )
           ON CONFLICT (fingerprint_request_id) DO NOTHING
           RETURNING
@@ -970,7 +965,6 @@ export class FiatEligibilityService {
           byName.get("fingerprint")?.status ?? "skipped",
           byName.get("proxycheck")?.status ?? "skipped",
           byName.get("abstract_ip")?.status ?? "skipped",
-          byName.get("opportify")?.status ?? "skipped",
           outcome.riskScore,
           outcome.decision,
           context.contain

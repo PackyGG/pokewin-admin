@@ -9,7 +9,6 @@ import {
   parseAbstractEmailResponse,
   parseAbstractIpResponse,
   parseFingerprintResponse,
-  parseOpportifyResponse,
   parseProxycheckResponse,
   providerContractMetadata,
   reweightFingerprintSignals,
@@ -118,7 +117,6 @@ type PreparedSignup = {
   proxycheck: EnrichmentResult;
   abstractIp: EnrichmentResult;
   abstractEmail: EnrichmentResult;
-  opportify: EnrichmentResult;
   maxmind: EnrichmentResult;
   weights: ScoreWeights;
   identifierBlocklistSignals: Signal[];
@@ -461,7 +459,6 @@ export class MonitorEngine {
     return [
       this.config.FINGERPRINT_SECRET_API_KEY,
       this.config.PROXYCHECK_API_KEY,
-      this.config.OPPORTIFY_API_KEY,
       this.config.API_TOKEN,
       this.config.API_ADMIN_TOKEN,
       this.config.SOURCE_DATABASE_URL,
@@ -1033,12 +1030,11 @@ export class MonitorEngine {
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
     ]);
-    const [fingerprint, proxycheck, abstractIp, abstractEmail, opportify, maxmind] = await Promise.all([
+    const [fingerprint, proxycheck, abstractIp, abstractEmail, maxmind] = await Promise.all([
       this.cachedFingerprint(signup, weights),
       this.cachedProxycheck(signup, weights),
       this.cachedAbstractIp(signup, weights),
       this.cachedAbstractEmail(signup, weights),
-      this.cachedOpportify(signup, weights),
       this.cachedMaxmind(signup),
     ]);
     await Promise.all([
@@ -1046,7 +1042,6 @@ export class MonitorEngine {
       this.saveProviderCheck(signup.id, proxycheck, signup.created_at),
       this.saveProviderCheck(signup.id, abstractIp, signup.created_at),
       this.saveProviderCheck(signup.id, abstractEmail, signup.created_at),
-      this.saveProviderCheck(signup.id, opportify, signup.created_at),
       this.saveProviderCheck(signup.id, maxmind, signup.created_at),
     ]);
     const unavailable = [
@@ -1054,7 +1049,6 @@ export class MonitorEngine {
       proxycheck,
       abstractIp,
       abstractEmail,
-      opportify,
       maxmind,
     ]
       .filter((result) => result.status === "failed")
@@ -1067,7 +1061,6 @@ export class MonitorEngine {
         ...proxycheck.signals,
         ...abstractIp.signals,
         ...abstractEmail.signals,
-        ...opportify.signals,
         ...maxmind.signals,
       ];
       const catchallSignal = abstractEmail.signals.find(
@@ -1108,7 +1101,6 @@ export class MonitorEngine {
         proxycheck,
         abstractIp,
         abstractEmail,
-        opportify,
         maxmind,
       ]);
       throw new Error(
@@ -1121,7 +1113,6 @@ export class MonitorEngine {
       proxycheck,
       abstractIp,
       abstractEmail,
-      opportify,
       maxmind,
       weights,
       identifierBlocklistSignals,
@@ -1234,7 +1225,6 @@ export class MonitorEngine {
       proxycheck,
       abstractIp,
       abstractEmail,
-      opportify,
       maxmind,
       weights,
       identifierBlocklistSignals,
@@ -1253,7 +1243,6 @@ export class MonitorEngine {
       ...proxycheck.signals,
       ...abstractIp.signals,
       ...abstractEmail.signals,
-      ...opportify.signals,
       ...maxmind.signals,
       ...(locationPolicy
         ? [
@@ -1273,7 +1262,6 @@ export class MonitorEngine {
         proxycheck,
         abstractIp,
         abstractEmail,
-        opportify,
         maxmind,
       ]),
       assessedAt: signup.created_at,
@@ -2296,69 +2284,6 @@ export class MonitorEngine {
       response: sanitized,
       signals: parsed.signals,
     };
-  }
-
-  private async cachedOpportify(
-    signup: Signup,
-    weights: ScoreWeights,
-  ): Promise<EnrichmentResult> {
-    const cached = await this.db.antifraud.query<{
-      response: Record<string, unknown> | null;
-    }>(
-      `
-        SELECT response
-        FROM provider_checks
-        WHERE user_id = $1
-          AND provider = 'opportify'
-          AND status = 'success'
-        ORDER BY checked_at DESC
-        LIMIT 1
-      `,
-      [signup.id],
-    );
-    if (!cached.rows[0]) {
-      return this.enrichment.opportifyCheck(signup, weights);
-    }
-    try {
-      const parsed = parseOpportifyResponse(
-        cached.rows[0].response ?? {},
-        weights,
-      );
-      const sources =
-        parsed.response.sources
-        && typeof parsed.response.sources === "object"
-          ? parsed.response.sources as Record<string, unknown>
-          : {};
-      const expectedSources = [
-        signup.email ? "email" : null,
-        signup.signup_ip ? "ip" : null,
-        signup.name || signup.username ? "content" : null,
-      ].filter((value): value is string => Boolean(value));
-      const completeness = expectedSources.every((source) => {
-        const value = sources[source];
-        return Boolean(
-          value
-          && typeof value === "object"
-          && Object.keys(value as Record<string, unknown>).length > 0,
-        );
-      })
-        ? "complete"
-        : "partial";
-      return {
-        provider: "opportify",
-        status: "success",
-        lookupKey: `user:${signup.id}`,
-        score: parsed.score,
-        ...providerContractMetadata("opportify", "cache", completeness, {
-          nativeScore: parsed.score,
-          nativeRank: parsed.level,
-        }),
-        response: parsed.response,
-        signals: parsed.signals,
-      };
-    } catch {
-      return this.enrichment.opportifyCheck(signup, weights);
-    }
   }
 
   private async cachedMaxmind(signup: Signup): Promise<EnrichmentResult> {

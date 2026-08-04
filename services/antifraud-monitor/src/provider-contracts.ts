@@ -27,13 +27,6 @@ export const PROVIDER_CONTRACTS = {
     method: "POST",
     requiredDatum: "email",
   },
-  opportify: {
-    model: "Opportify Full Fraud Check",
-    version: "intel-v1-fraud-analyze",
-    endpoint: "/intel/v1/fraud/analyze",
-    method: "POST",
-    requiredDatum: "email_or_signup_ip",
-  },
   maxmind: {
     model: "MaxMind minFraud Factors",
     version: "v2.0",

@@ -411,9 +411,7 @@ function ProviderCheckCard({
 }: {
   check: AntifraudMonitorProviderCheck;
 }) {
-  const signals = check.provider === "opportify"
-    ? check.signals
-    : check.signals.filter((signal) => signal.points !== 0);
+  const signals = check.signals.filter((signal) => signal.points !== 0);
   return (
     <div className="space-y-2 rounded-xl border border-border/60 bg-card p-3">
       <div className="flex items-center gap-2">

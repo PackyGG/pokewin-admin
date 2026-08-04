@@ -85,8 +85,6 @@ The compiled signup contracts are:
 - Abstract Email Reputation: echoed-email validation, deliverability,
   SMTP/MX, catch-all, disposable/subaddress/role, quality score, address/domain
   risk ranks, domain age/TLD, and breach counts/dates.
-- Opportify Full Fraud Check: composite score/level/factors and the sanitized
-  email, IP, content, velocity, geographic, and session source groups.
 
 Direct email/IP/request/account identifiers, exact coordinates, hostnames,
 mail hosts, provider contacts, and opaque unknown provider products are not
@@ -96,13 +94,13 @@ fraud signals remain in those bounded signals.
 A missing compatible datum is explicit `skipped` evidence with
 `missing_compatible_datum`; it is not success. Timeout, rate limit,
 authentication, invalid-response, upstream, and unknown failures remain
-distinct. A successful response missing a compatible Opportify source group is
-`partial`, which keeps the overall profile incomplete.
+distinct. A successful but incomplete compatible response is `partial`, which
+keeps the overall profile incomplete.
 
 Version note: Fingerprint exposes the pinned server SDK contract, not a claimed
-upstream fraud-model version. Abstract `v1` and Opportify
-`intel-v1-fraud-analyze` are endpoint contract identifiers. No native score,
-rank, or confidence is invented when a response family does not provide one.
+upstream fraud-model version. Abstract `v1` is an endpoint contract identifier.
+No native score, rank, or confidence is invented when a response family does
+not provide one.
 
 ## Recovery
 

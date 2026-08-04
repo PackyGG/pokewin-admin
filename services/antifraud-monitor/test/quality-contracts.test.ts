@@ -35,7 +35,7 @@ test("current signup review and severity thresholds stay explicit", () => {
   );
 });
 
-test("all six signup providers are required and failures enter recovery", async () => {
+test("all five signup providers are required and failures enter recovery", async () => {
   const monitor = await source("../src/monitor.ts");
   const prepareStart = monitor.indexOf("private async prepareSignup");
   const prepareEnd = monitor.indexOf("private async persistSignup", prepareStart);
@@ -46,7 +46,6 @@ test("all six signup providers are required and failures enter recovery", async 
     ["cachedProxycheck", "signup, weights"],
     ["cachedAbstractIp", "signup, weights"],
     ["cachedAbstractEmail", "signup, weights"],
-    ["cachedOpportify", "signup, weights"],
     ["cachedMaxmind", "signup"],
   ]) {
     assert.match(prepare, new RegExp(`this\\.${provider}\\(${args}\\)`));

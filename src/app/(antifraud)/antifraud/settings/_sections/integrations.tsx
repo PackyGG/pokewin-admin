@@ -65,7 +65,6 @@ export async function IntegrationsSection() {
       | "proxycheck"
       | "abstract_ip"
       | "abstract_email"
-      | "opportify"
       | "maxmind",
     fallback: string,
   ) => {
@@ -146,15 +145,6 @@ export async function IntegrationsSection() {
       note: contractNote(
         "abstract_email",
         "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
-      ),
-    },
-    {
-      name: "Opportify Full Fraud Check",
-      envs: ["OPPORTIFY_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.opportifyConfigured),
-      note: contractNote(
-        "opportify",
-        "Private server-side signup analysis across email, IP, username content, provider velocity, and geographic consistency.",
       ),
     },
     {

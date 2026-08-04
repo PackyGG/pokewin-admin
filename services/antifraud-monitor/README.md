@@ -123,9 +123,9 @@ environment is rejected.
 event must be no more than two minutes old, must be linked to `userID`, and its
 authoritative IP must match `ipAddress`. Every valid assessment performs the
 full Fingerprint Pro Plus event lookup, an independent proxycheck.io lookup, and
-corroborating Abstract IP-intelligence and Opportify lookups. Fingerprint and
-proxycheck are mandatory and fail closed; Abstract and Opportify only add points
-when they degrade. It compares the checkout with signup IP/device, account age,
+a corroborating Abstract IP-intelligence lookup. Fingerprint and proxycheck are
+mandatory and fail closed; Abstract only adds points when it degrades. It
+compares the checkout with signup IP/device, account age,
 account and Fiat locks, KYC, country policy, operator IP/fingerprint
 blocklists, shared networks, signup/case history, deposit, play and reward
 behaviour, previous Fiat history and recent eligibility velocity.
@@ -241,8 +241,7 @@ source of truth for deployed monitor configuration. Its response is:
     },
     "providers": {
       "fingerprintConfigured": true,
-      "proxycheckConfigured": true,
-      "opportifyConfigured": true
+      "proxycheckConfigured": true
     },
     "live": {
       "redisConfigured": true,

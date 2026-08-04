@@ -12,7 +12,6 @@ export function sanitizedRuntimeConfig(
     proxycheckConfigured: boolean;
     abstractIpConfigured: boolean;
     abstractEmailConfigured: boolean;
-    opportifyConfigured: boolean;
     maxmindFactorsConfigured: boolean;
     maxmindAlertsConfigured: boolean;
   };
@@ -51,7 +50,6 @@ export function sanitizedRuntimeConfig(
       abstractEmailConfigured: Boolean(
         config.ABSTRACT_EMAIL_REPUTATION_API_KEY,
       ),
-      opportifyConfigured: Boolean(config.OPPORTIFY_API_KEY),
       maxmindFactorsConfigured: Boolean(
         config.MAXMIND_ACCOUNT_ID && config.MAXMIND_LICENSE_KEY,
       ),
