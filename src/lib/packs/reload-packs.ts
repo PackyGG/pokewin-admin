@@ -16,19 +16,33 @@ import { logError } from "@/lib/errors/logger";
  * Never throws: a cache-reload failure must not fail the committed admin
  * mutation — it logs and the backend's next reload reconciles.
  */
-export async function reloadPacksInternal(): Promise<void> {
+export async function reloadPacksConfirmed(attempts = 1): Promise<boolean> {
   // Routes through the central backendApi client so env-specific URL+key,
   // CF Access service tokens, and `x-bypass-secret` are all picked up.
-  try {
-    await backendApi.post("/admin/reload-packs");
-  } catch (err) {
-    if (err instanceof BackendApiError) {
-      logError(
-        "packs.reloadPacks",
-        `backend error status=${err.status} code=${err.code ?? "none"} payload=${JSON.stringify(err.payload)}`,
-      );
-      return;
+  const boundedAttempts = Math.min(Math.max(Math.floor(attempts), 1), 3);
+  for (let attempt = 1; attempt <= boundedAttempts; attempt += 1) {
+    try {
+      await backendApi.post("/admin/reload-packs");
+      return true;
+    } catch (err) {
+      if (attempt < boundedAttempts) {
+        await new Promise((resolve) => setTimeout(resolve, attempt * 250));
+        continue;
+      }
+      if (err instanceof BackendApiError) {
+        logError(
+          "packs.reloadPacks",
+          `backend error status=${err.status} code=${err.code ?? "none"} payload=${JSON.stringify(err.payload)}`,
+        );
+      } else {
+        logError("packs.reloadPacks", "failed to reach backend", err);
+      }
     }
-    logError("packs.reloadPacks", "failed to reach backend", err);
   }
+  return false;
+}
+
+/** Compatibility wrapper for callers whose committed mutation is fire-and-forget. */
+export async function reloadPacksInternal(): Promise<void> {
+  await reloadPacksConfirmed();
 }

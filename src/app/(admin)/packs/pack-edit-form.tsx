@@ -48,6 +48,8 @@ const TAG_LABELS: Record<pack_tag, string> = {
 
 export type PackEditData = {
   id: string;
+  /** MAIN row version. Every full-state save must compare this under a lock. */
+  updatedAt: string;
   name: string;
   slug: string;
   description: string | null;
@@ -156,7 +158,7 @@ export function PackEditForm({
 }: {
   pack: PackEditData;
   onCancel?: () => void;
-  onSaved?: () => void;
+  onSaved?: (saved: PackEditData) => void;
   showCancel?: boolean;
 }) {
   const router = useRouter();
@@ -270,7 +272,8 @@ export function PackEditForm({
       }
 
       const weights = oddsToWeights(cards);
-      await updatePack(pack.id, {
+      const result = await updatePack(pack.id, {
+        expectedUpdatedAt: pack.updatedAt,
         name,
         slug,
         description,
@@ -290,8 +293,33 @@ export function PackEditForm({
       });
 
       invalidatePackDetailCache(pack.id);
-      toast.success("Pack updated");
-      onSaved?.();
+      if (result.liveCacheReloaded) {
+        toast.success("Pack updated, verified, and live");
+      } else {
+        toast.warning(
+          "Pack saved and verified. The live game cache is retrying its refresh.",
+        );
+      }
+      const totalWeight = weights.reduce((sum, weight) => sum + weight, 0);
+      onSaved?.({
+        ...pack,
+        updatedAt: result.updatedAt,
+        name: name.trim(),
+        slug: slug.trim(),
+        description: description.trim() || null,
+        imageUrl,
+        priceUsd: parseFloat(price),
+        cardsPerOpen: parseInt(cardsPerOpen),
+        packType,
+        tags,
+        difficulty: difficulty || null,
+        cards: cards.map((card, index) => ({
+          ...card,
+          weight: weights[index],
+          probability:
+            totalWeight > 0 ? (weights[index] / totalWeight) * 100 : 0,
+        })),
+      });
       router.refresh();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : "Failed to update pack");

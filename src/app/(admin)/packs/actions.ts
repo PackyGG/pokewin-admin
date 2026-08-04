@@ -84,7 +84,10 @@ import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 // capability-holding non-admins these actions serve — fired-and-forgotten it
 // silently left the backend pack cache stale. Call sites here are already
 // capability-gated; the reload runs post-response via `after()`.
-import { reloadPacksInternal } from "@/lib/packs/reload-packs";
+import {
+  reloadPacksConfirmed,
+  reloadPacksInternal,
+} from "@/lib/packs/reload-packs";
 import {
   autoRetuneTargets,
   resolveIntendedHitRate,
@@ -284,6 +287,28 @@ export type PackCardInput = {
   order: number;
 };
 
+const updatePackSchema = z.object({
+  expectedUpdatedAt: z.string().trim().min(1).max(64),
+  name: z.string().trim().min(1, "Name is required").max(60),
+  slug: z.string().trim().min(1, "Slug is required").max(60),
+  description: z.string().max(10_000),
+  price: z.number().finite().positive("Price must be greater than 0"),
+  cardsPerOpen: z.number().int().positive(),
+  packType: z.string().min(1),
+  imageUrl: z.string().max(10_000).nullable(),
+  tags: z.array(z.enum(Object.values(pack_tag))),
+  difficulty: z.number().finite().nullable(),
+  cards: z.array(
+    z.object({
+      cardId: z.string().uuid(),
+      weight: z.number().int().positive(),
+      color: z.string().max(64).nullable(),
+      animation: z.boolean(),
+      order: z.number().int().nonnegative(),
+    }),
+  ),
+});
+
 const MANAGEABLE_PACK_TYPES = new Set([
   "official",
   "custom",
@@ -373,6 +398,7 @@ export async function createPack(data: {
 export async function updatePack(
   id: string,
   data: {
+    expectedUpdatedAt: string;
     name: string;
     slug: string;
     description: string;
@@ -384,15 +410,15 @@ export async function updatePack(
     difficulty: number | null;
     cards: PackCardInput[];
   },
-): Promise<void> {
+): Promise<{ updatedAt: string; liveCacheReloaded: boolean }> {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/packs");
 
-  if (!data.name.trim()) throw new Error("Name is required");
-  if (!data.slug.trim()) throw new Error("Slug is required");
-  if (data.price <= 0) throw new Error("Price must be greater than 0");
+  if (!isUuid(id)) throw new Error("Invalid pack id");
+  const parsed = updatePackSchema.safeParse(data);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  assertManageablePackType(data.packType);
+  assertManageablePackType(parsed.data.packType);
 
   await requireCapability(session, "__can_update_pack", "update packs");
 
@@ -424,18 +450,29 @@ export async function updatePack(
     packCreatorCanEditLive = perms
       ? hasCapability(perms.allowed_pages, "__can_edit_live_packs")
       : false;
-    // Fast-fail before the snapshot capture below. NOT the authoritative
-    // gate — `packs.active` can flip between this read and the write, so the
-    // transaction re-checks under a row lock (see FOR UPDATE below).
-    const target = (
-      await db.execute<{ active: boolean }>(sql`
-        SELECT active FROM packs WHERE id = ${id}::uuid LIMIT 1
-      `)
-    ).rows[0];
-    if (!target) throw new Error("Pack not found");
-    if (target.active && !packCreatorCanEditLive) {
-      throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
-    }
+  }
+
+  // Fast-fail stale editor tabs before creating a history snapshot. This is
+  // deliberately a PRIMARY read: the editor payload normally comes from the
+  // read-only mirror, and a lagging mirror must never be allowed to overwrite
+  // a newer committed MAIN row. The transaction below repeats this check under
+  // FOR UPDATE and is the authoritative concurrency gate.
+  const target = (
+    await db.execute<{ active: boolean; updated_at: string }>(sql`
+      SELECT active, updated_at::text AS updated_at
+      FROM packs
+      WHERE id = ${id}::uuid
+      LIMIT 1
+    `)
+  ).rows[0];
+  if (!target) throw new Error("Pack not found");
+  if (target.updated_at !== data.expectedUpdatedAt) {
+    throw new Error(
+      "This pack changed after you opened it. Your stale form was not saved. Reload the pack and review the latest version before trying again.",
+    );
+  }
+  if (isPackCreator && target.active && !packCreatorCanEditLive) {
+    throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
   }
 
   // Capture the PRIOR state (price + every card weight) into the ADMIN change
@@ -444,29 +481,35 @@ export async function updatePack(
   // fail the committed edit (the helper swallows + logs its own errors).
   await capturePackSnapshot({ packId: id, action: "edit", capturedBy: session.userId });
 
-  const editedLivePackUnderCapability = await db.transaction(async (tx) => {
+  const writeResult = await db.transaction(async (tx) => {
     // Close the check-then-write race (TOCTOU): the demo-only gate above read
     // `packs.active` OUTSIDE this transaction, so a pack activated in the gap
     // could slip past a demo-only pack_creator's restriction. Re-check under a
     // row lock inside the write transaction; the audit flag is derived from
     // the locked value so it reflects the state actually written against.
     let editedLiveUnderCapability = false;
-    if (isPackCreator) {
-      const locked = (
-        await tx.execute<{ active: boolean }>(sql`
-          SELECT active FROM packs WHERE id = ${id}::uuid FOR UPDATE
-        `)
-      ).rows[0];
-      if (!locked) throw new Error("Pack not found");
-      if (locked.active) {
-        if (!packCreatorCanEditLive) {
-          throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
-        }
-        editedLiveUnderCapability = true;
+    const locked = (
+      await tx.execute<{ active: boolean; updated_at: string }>(sql`
+        SELECT active, updated_at::text AS updated_at
+        FROM packs
+        WHERE id = ${id}::uuid
+        FOR UPDATE
+      `)
+    ).rows[0];
+    if (!locked) throw new Error("Pack not found");
+    if (locked.updated_at !== data.expectedUpdatedAt) {
+      throw new Error(
+        "This pack changed while you were saving. Your stale form was not saved. Reload the pack and review the latest version before trying again.",
+      );
+    }
+    if (isPackCreator && locked.active) {
+      if (!packCreatorCanEditLive) {
+        throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
       }
+      editedLiveUnderCapability = true;
     }
 
-    const updated = await tx.execute<{ id: string }>(sql`
+    const updated = await tx.execute<{ id: string; updated_at: string }>(sql`
       UPDATE packs
       SET name = ${data.name.trim()},
           slug = ${data.slug.trim()},
@@ -479,7 +522,7 @@ export async function updatePack(
           difficulty = ${data.difficulty},
           updated_at = NOW()
       WHERE id = ${id}::uuid
-      RETURNING id
+      RETURNING id, updated_at::text AS updated_at
     `);
     if (updated.rows.length === 0) throw new Error("Pack not found");
 
@@ -501,7 +544,27 @@ export async function updatePack(
       `);
     }
 
-    return editedLiveUnderCapability;
+    const persisted = (
+      await tx.execute<{ card_count: number; total_weight: string }>(sql`
+        SELECT COUNT(*)::int AS card_count,
+               COALESCE(SUM(weight), 0)::text AS total_weight
+        FROM pack_cards
+        WHERE pack_id = ${id}::uuid
+      `)
+    ).rows[0];
+    const expectedWeight = data.cards.reduce((sum, card) => sum + card.weight, 0);
+    if (
+      !persisted ||
+      persisted.card_count !== data.cards.length ||
+      Number(persisted.total_weight) !== expectedWeight
+    ) {
+      throw new Error("Pack verification failed. No changes were committed.");
+    }
+
+    return {
+      editedLiveUnderCapability,
+      updatedAt: updated.rows[0].updated_at,
+    };
   });
 
   await createAdminAuditEvent({
@@ -515,16 +578,27 @@ export async function updatePack(
       // the explicit `__can_edit_live_packs` capability. Lets audit
       // reviews answer "who changed the house edge on a live pack?"
       // without re-deriving from role + pack.active at the time.
-      ...(editedLivePackUnderCapability && {
+      ...(writeResult.editedLiveUnderCapability && {
         edited_live_pack_under_capability: true,
       }),
     },
   });
 
-  afterResponse(() => reloadPacksInternal());
+  // Confirm the public game backend consumed the committed pack before the UI
+  // calls the edit fully live. If the synchronous refresh fails, the database
+  // save remains authoritative and a bounded post-response retry reconciles
+  // the cache; the client receives an explicit warning instead of a false
+  // success that looks like the edit reset.
+  const liveCacheReloaded = await reloadPacksConfirmed();
+  if (!liveCacheReloaded) {
+    afterResponse(async () => {
+      await reloadPacksConfirmed(3);
+    });
+  }
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${id}`);
+  return { updatedAt: writeResult.updatedAt, liveCacheReloaded };
 }
 
 export async function deletePack(packId: string): Promise<void> {

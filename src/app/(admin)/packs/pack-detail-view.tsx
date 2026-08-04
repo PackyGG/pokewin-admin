@@ -377,9 +377,40 @@ export function PackDetailView({
             key={detail.id}
             pack={detail}
             onCancel={exitEditMode}
-            onSaved={() => {
+            onSaved={(saved) => {
+              const currentCards = new Map(
+                detail.cards.map((card) => [card.cardId, card]),
+              );
+              setHeaderSeed({
+                id: saved.id,
+                name: saved.name,
+                slug: saved.slug,
+                imageUrl: saved.imageUrl,
+                active: detail.active,
+                priceUsd: saved.priceUsd,
+              });
+              setState({
+                status: "ready",
+                payload: {
+                  detail: {
+                    ...detail,
+                    ...saved,
+                    cards: saved.cards.map((card, order) => {
+                      const current = currentCards.get(card.cardId);
+                      return {
+                        id: current?.id ?? `${saved.id}:${card.cardId}`,
+                        ...card,
+                        imageUrl: card.imageUrl ?? "",
+                        rarity: current?.rarity ?? null,
+                        setName: current?.setName ?? null,
+                        order,
+                      };
+                    }),
+                  },
+                  stats: null,
+                },
+              });
               exitEditMode();
-              load(true);
             }}
           />
         ) : null}
