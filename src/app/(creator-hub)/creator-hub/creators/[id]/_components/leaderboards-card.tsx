@@ -9,7 +9,6 @@ import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
-import { getCreatorLeaderboardCost } from "../../../../../(admin)/creators/[userId]/_queries/leaderboard-cost-by-creator";
 import {
   getCreatorLeaderboardWagerBreakdownMap,
   type WagerBreakdown,
@@ -19,7 +18,6 @@ import {
   getLeaderboardsPreviewCached,
   type LeaderboardPreviewRow,
 } from "../_queries/leaderboards-preview";
-import { getPreviousLeaderboardsCached } from "../_queries/previous-leaderboards";
 import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
 import { PreviousLeaderboardsDialog } from "./previous-leaderboards-dialog";
 import { HubNotice } from "../../../_components/hub-notice";
@@ -32,19 +30,19 @@ import {
  * Affiliate Leaderboards card (right half of the Overview "Deal | Affiliate
  * Leaderboards" row).
  *
- * Read-only summary of this creator's leaderboards: the realized house cost
- * (sponsored-% weighted, from the existing `getCreatorLeaderboardCost`) + a
- * preview of recent boards from the existing backend list endpoint — now
- * read through `getLeaderboardsPreviewCached` (120s TTL, tag-flushed on
- * leaderboard mutations) so Overview re-renders / `?activityPeriod=`
- * switches stop re-firing the backend call. "Create Leaderboard" opens the
+ * Read-only summary of this creator's LIVE boards (upcoming + active) from
+ * the existing backend list endpoint, read through
+ * `getLeaderboardsPreviewCached` (120s TTL, tag-flushed on leaderboard
+ * mutations) so Overview re-renders / `?activityPeriod=` switches stop
+ * re-firing the backend call. Ended boards are deliberately NOT in the card —
+ * they are reachable only through the "Previous leaderboards" modal, which
+ * reads from the same windowed fetch. "Create Leaderboard" opens the
  * hub-native create dialog (reuses admin server actions).
  *
  * House-POV: leaderboard prize cost is house spend → rose. Best-effort: a
- * backend outage degrades to a note, and a failed cost/wager chip read now
- * renders a visible muted "chips unavailable" note instead of silently
- * omitting the chips. Streamed in its own Suspense boundary from the
- * Overview tab.
+ * backend outage degrades to a note, and a failed wager chip read renders a
+ * visible muted "chips unavailable" note instead of silently omitting the
+ * chips. Streamed in its own Suspense boundary from the Overview tab.
  */
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
@@ -60,38 +58,22 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   // list read is wrapped OUTSIDE the cache so a transport / non-2xx failure
   // returns a marker instead of throwing the card down (a throw is never
   // cached).
-  const [listResult, costResult, previousResult] = await Promise.all([
-    getLeaderboardsPreviewCached(userId)
-      .then((r) => ({ ok: true as const, preview: r }))
-      .catch((err: unknown) => {
-        const msg = err instanceof BackendApiError ? err.message : null;
-        if (!(err instanceof BackendApiError)) {
-          console.error(
-            "[creator-hub.creators.leaderboards] backend fetch failed:",
-            err,
-          );
-        }
-        return { ok: false as const, message: msg };
-      }),
-    getCreatorLeaderboardCost(userId)
-      .then((cost) => ({ ok: true as const, cost }))
-      .catch((e: unknown) => {
+  const listResult = await getLeaderboardsPreviewCached(userId)
+    .then((r) => ({ ok: true as const, preview: r }))
+    .catch((err: unknown) => {
+      const msg = err instanceof BackendApiError ? err.message : null;
+      if (!(err instanceof BackendApiError)) {
         console.error(
-          "[creator-hub.creators.leaderboards] cost fetch failed:",
-          e,
+          "[creator-hub.creators.leaderboards] backend fetch failed:",
+          err,
         );
-        return { ok: false as const };
-      }),
-    getPreviousLeaderboardsCached(userId).catch((e: unknown) => {
-      console.error(
-        "[creator-hub.creators.leaderboards] previous boards fetch failed:",
-        e,
-      );
-      return [];
-    }),
-  ]);
-  const cost = costResult.ok ? costResult.cost : null;
-  const previousRows = previousResult;
+      }
+      return { ok: false as const, message: msg };
+    });
+  // Ended boards never appear in the card body — they live behind the
+  // "Previous leaderboards" modal only (owner call), so the box shows just
+  // what is still running or upcoming.
+  const previousRows = listResult.ok ? listResult.preview.previous : [];
 
   const heading = (
     <SectionHeading
@@ -126,7 +108,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   }
 
   const rows: LeaderboardPreviewRow[] = listResult.preview.rows;
-  const total = listResult.preview.total;
+  const liveTotal = listResult.preview.liveTotal;
 
   let wagerFailed = false;
   // Per-board wager driven + the admin sponsored % (the house-funded share
@@ -156,12 +138,9 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
     }),
   ]);
 
-  // Visible (muted) note when a chip source failed — a missing cost/wager
-  // chip must be distinguishable from a genuine $0 / no-wager board.
-  const chipGaps = [
-    ...(!costResult.ok ? ["house-cost chip"] : []),
-    ...(wagerFailed ? ["wagered chips"] : []),
-  ];
+  // Visible (muted) note when a chip source failed — a missing wager chip
+  // must be distinguishable from a genuine no-wager board.
+  const chipGaps = wagerFailed ? ["wagered chips"] : [];
 
   return (
     <div className="space-y-3">
@@ -175,23 +154,19 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             </HubNotice>
           )}
 
-          {/* Realized house cost (sponsored-% weighted) → rose. */}
-          {cost && cost.leaderboardCount > 0 && (
-            <div className="flex items-center justify-between gap-3 rounded-lg border bg-background/40 px-3 py-2">
-              <span className="text-xs text-muted-foreground">
-                House cost · {cost.leaderboardCount} approved
-              </span>
-              <span className="text-sm font-semibold tabular-nums text-rose-600 dark:text-rose-400">
-                {formatCurrency(cost.costUsd)}
-              </span>
-            </div>
-          )}
-
           {rows.length === 0 ? (
             <EmptyState
               icon={Trophy}
-              title="No leaderboards yet"
-              description="This creator hasn't set up any leaderboards. Use Create Leaderboard to add one."
+              title={
+                previousRows.length > 0
+                  ? "No live leaderboards"
+                  : "No leaderboards yet"
+              }
+              description={
+                previousRows.length > 0
+                  ? "Nothing running or upcoming. Ended boards are in Previous leaderboards; use Create Leaderboard to start a new one."
+                  : "This creator hasn't set up any leaderboards. Use Create Leaderboard to add one."
+              }
               compact
             />
           ) : (
@@ -274,8 +249,8 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             href={manageHref}
             className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
           >
-            {total > rows.length
-              ? `View all ${total} leaderboards`
+            {liveTotal > rows.length
+              ? `View all ${liveTotal} live leaderboards`
               : "Manage leaderboards"}
             <ExternalLink className="size-3.5" />
           </Link>

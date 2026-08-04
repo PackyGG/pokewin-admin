@@ -5,8 +5,9 @@ import { unstable_cache } from "next/cache";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 
 /**
- * Cached leaderboards preview for the hub Overview **Affiliate
- * Leaderboards card** (newest 6 boards for one creator).
+ * Cached leaderboards read for the hub Overview **Affiliate Leaderboards
+ * card**: this creator's LIVE boards (upcoming + active) for the card body,
+ * plus the ENDED ones for the "Previous leaderboards" modal.
  *
  * The card used to fire the backend endpoint directly
  * inline on EVERY Overview re-render — including each `?activityPeriod=`
@@ -15,6 +16,14 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
  * actions (create + the shared post-mutation revalidate) flushes it so a
  * new/approved/cancelled board shows immediately (`revalidatePath` does
  * NOT bust `unstable_cache`).
+ *
+ * WHY ONE WINDOWED READ: the card body shows only live boards and ended ones
+ * are modal-only, but the backend list endpoint has no `time_status` filter
+ * (only approval `status` / `creator_user_id` / `include_cancelled`). A
+ * "newest 6" page would therefore hide an active board behind six ended ones.
+ * So we scan a bounded window ONCE and split it in code — one backend call
+ * feeding both surfaces, replacing the two overlapping list reads the card
+ * used to fire (this one + `previous-leaderboards.ts`).
  *
  * Backend API only inside (no request cookie reads) → env-safe to cache.
  * A THROWN fetch is NOT cached (Next only caches resolved values), so a
@@ -41,25 +50,38 @@ export type LeaderboardPreviewRow = {
 };
 
 export type LeaderboardsPreview = {
+  /** Live boards (upcoming + active) shown in the card, capped. */
   rows: LeaderboardPreviewRow[];
-  total: number;
+  /** Live boards found in the window — drives the "view all" affordance. */
+  liveTotal: number;
+  /** Ended boards from the same window — the "Previous leaderboards" modal. */
+  previous: LeaderboardPreviewRow[];
 };
 
 export const LEADERBOARDS_PREVIEW_LIMIT = 6;
+
+/**
+ * Boards scanned per read. Bounded so the call stays cheap; a creator with
+ * more boards than this still reaches the rest through "Manage leaderboards".
+ */
+const LEADERBOARDS_WINDOW = 50;
 
 const cachedLeaderboardsPreview = unstable_cache(
   async (userId: string): Promise<LeaderboardsPreview> => {
     const res = await affiliateLeaderboardsApi.list({
       creator_user_id: userId,
-      limit: LEADERBOARDS_PREVIEW_LIMIT,
+      limit: LEADERBOARDS_WINDOW,
       offset: 0,
     });
+    const all = res.leaderboards ?? [];
+    const live = all.filter((r) => r.time_status !== "ended");
     return {
-      rows: res.leaderboards ?? [],
-      total: res.total ?? 0,
+      rows: live.slice(0, LEADERBOARDS_PREVIEW_LIMIT),
+      liveTotal: live.length,
+      previous: all.filter((r) => r.time_status === "ended"),
     };
   },
-  ["creator-hub-leaderboards-preview-v1"],
+  ["creator-hub-leaderboards-preview-v2"],
   { revalidate: 120, tags: ["creator-leaderboards"] },
 );
 
