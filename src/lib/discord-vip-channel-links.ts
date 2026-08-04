@@ -9,6 +9,7 @@ import {
 } from "@/lib/db-schema/admin/schema";
 import { user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
+import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
 
 export const VIPS_GUILD_ID = "1505650386894327919";
 
@@ -89,6 +90,37 @@ export async function previewVipChannelLink(
   userId: string,
 ): Promise<VipLinkUserPreview> {
   return requireUser(userId);
+}
+
+export async function getVipDashboardContext(input: {
+  guildId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<{ userId: string }> {
+  if (!isDiscordDashboardOperator(input.actorDiscordUserId)) {
+    throw new VipChannelLinkError(
+      403,
+      "dashboard_actor_forbidden",
+      "Only an authorized dashboard operator can open VIP accounts.",
+    );
+  }
+
+  const result = await adminDrizzle.execute<{ user_id: string }>(sql`
+    SELECT user_id
+    FROM discord_vip_channel_links
+    WHERE guild_id = ${input.guildId}
+      AND channel_id = ${input.channelId}
+    LIMIT 1
+  `);
+  const link = result.rows[0];
+  if (!link) {
+    throw new VipChannelLinkError(
+      404,
+      "vip_channel_not_linked",
+      "This VIP channel is not linked to a Packy account yet.",
+    );
+  }
+  return { userId: link.user_id };
 }
 
 export async function saveVipChannelLink(input: {

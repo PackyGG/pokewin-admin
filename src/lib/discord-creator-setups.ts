@@ -14,6 +14,7 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import { isDiscordBotSuperuser } from "@/lib/discord-bot-superusers";
+import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
 
 export const CREATOR_SETUP_GUILD_ID = "1402743122789929022";
 
@@ -340,6 +341,50 @@ export async function requireLinkedSetupActor(input: {
     );
   }
   return setup as SetupRow & { creator_user_id: string };
+}
+
+export async function getCreatorDashboardContext(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<{ userId: string }> {
+  if (!isDiscordDashboardOperator(input.actorDiscordUserId)) {
+    throw new CreatorSetupError(
+      403,
+      "setup_actor_forbidden",
+      "Only an authorized dashboard operator can open creator accounts.",
+    );
+  }
+
+  const setupResult = await adminDrizzle.execute<{ creator_user_id: string | null }>(sql`
+    SELECT creator_user_id
+    FROM discord_creator_setups
+    WHERE guild_id = ${input.guildId}
+      AND category_id = ${input.categoryId}
+      AND (
+        chat_channel_id = ${input.channelId}
+        OR logs_channel_id = ${input.channelId}
+      )
+      AND status = 'active'
+    LIMIT 1
+  `);
+  const setup = setupResult.rows[0];
+  if (!setup) {
+    throw new CreatorSetupError(
+      404,
+      "setup_not_found",
+      "This channel does not belong to an active creator section.",
+    );
+  }
+  if (!setup.creator_user_id) {
+    throw new CreatorSetupError(
+      409,
+      "setup_not_linked",
+      "This creator section is not linked to a Packy account yet.",
+    );
+  }
+  return { userId: setup.creator_user_id };
 }
 
 export async function getCreatorSetupStats(input: {

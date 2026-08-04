@@ -8,6 +8,8 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
   const [
     previewRoute,
     linkRoute,
+    dashboardContextRoute,
+    operators,
     service,
     migration,
     memberMigration,
@@ -16,6 +18,8 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
   ] = await Promise.all([
     read("src/app/api/v1/discord/vips/link-preview/route.ts"),
     read("src/app/api/v1/discord/vips/link/route.ts"),
+    read("src/app/api/v1/discord/vips/dashboard-context/route.ts"),
+    read("src/lib/discord-dashboard-operators.ts"),
     read("src/lib/discord-vip-channel-links.ts"),
     read(
       "drizzle/admin/migrations/20260730_discord_vip_channel_links.sql",
@@ -29,6 +33,13 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
 
   assert.match(previewRoute, /scopes: \["discord:vips:link"\]/);
   assert.match(linkRoute, /scopes: \["discord:vips:link"\]/);
+  assert.match(dashboardContextRoute, /scopes: \["discord:vips:link"\]/);
+  assert.match(dashboardContextRoute, /getVipDashboardContext/);
+  assert.match(dashboardContextRoute, /guildId !== VIPS_GUILD_ID/);
+  assert.match(service, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);
+  assert.match(operators, /"660132586630414338"/);
+  assert.match(operators, /"934854938641715240"/);
+  assert.match(operators, /"188051599099297802"/);
   assert.match(previewRoute, /guildId !== VIPS_GUILD_ID/);
   assert.match(linkRoute, /guildId !== VIPS_GUILD_ID/);
   assert.match(
@@ -78,5 +89,6 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
 
   assert.match(scopes, /"discord:vips:link"/);
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/link-preview/);
+  assert.match(endpoints, /\/api\/v1\/discord\/vips\/dashboard-context/);
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/link"/);
 });

@@ -97,6 +97,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/dashboard-context",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns only the linked Packy user ID for an authorized dashboard operator in an active creator section.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/deal",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns the current active or scheduled creator-facing deal terms for the Packy creator linked to that private Discord section. Internal IDs, notes, versions, and admin metadata are omitted.",
@@ -114,6 +121,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     path: "/api/v1/discord/vips/link-preview",
     summary:
       "Body { guildId, channelId, memberDiscordUserId, userId, actorDiscordUserId }. VIPs-only read that returns the Packy username and VIP-tag preview before a staff member confirms a channel link.",
+    scopes: ["discord:vips:link"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/vips/dashboard-context",
+    summary:
+      "Body { guildId, channelId, actorDiscordUserId }. Returns only the Packy user ID linked to that VIP channel for an authorized dashboard operator.",
     scopes: ["discord:vips:link"],
   },
   {
