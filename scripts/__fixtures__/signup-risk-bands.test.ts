@@ -29,6 +29,26 @@ test("high and critical signup actions own their Discord routes", () => {
   assert.match(migration, /enabled = false/);
 });
 
+test("the duplicate need-review signup route is retired without touching review operations", () => {
+  const migration = read(
+    "drizzle/admin/migrations/20260804_retire_signup_need_review_route.sql",
+  );
+  const catalog = read(
+    "src/app/(antifraud)/antifraud/automation/automation-catalog.ts",
+  );
+
+  assert.match(migration, /channel_id = '1532248557740884039'/);
+  assert.match(migration, /event_key = 'antifraud\.review_opened'/);
+  assert.match(migration, /enabled = false/);
+  assert.doesNotMatch(migration, /antifraud\.review_reminder/);
+  assert.doesNotMatch(migration, /antifraud\.account_(?:locked|banned)/);
+  assert.doesNotMatch(migration, /antifraud\.kyc_required/);
+  assert.doesNotMatch(catalog, /"antifraud\.review_opened"/);
+  assert.match(catalog, /"antifraud\.review_reminder"/);
+  assert.match(catalog, /"antifraud\.account_locked"/);
+  assert.match(catalog, /"antifraud\.kyc_required"/);
+});
+
 test("critical signup containment requires and applies all three locks", () => {
   const ingest = read("src/app/api/antifraud/ingest/route.ts");
 

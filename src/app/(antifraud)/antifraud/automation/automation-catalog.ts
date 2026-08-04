@@ -242,7 +242,6 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "Send durable review and account-action notifications",
     ],
     discordEvents: [
-      "antifraud.review_opened",
       "antifraud.review_reminder",
       "antifraud.account_banned",
       "antifraud.account_locked",
