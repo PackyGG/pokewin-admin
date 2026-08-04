@@ -1,13 +1,13 @@
 import "server-only";
 
-import { and, desc, eq, or, sql } from "drizzle-orm";
+import { and, desc, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
   admin_audit_events,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
-import { account, affiliate_codes, user } from "@/lib/db-schema/main/schema";
+import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
@@ -204,64 +204,6 @@ async function ensureActiveCreator(
     );
   }
   return { roleGranted: !promoted.already_creator };
-}
-
-async function requireDiscordOwnership(
-  discordUserId: string,
-  creatorUserId: string,
-): Promise<void> {
-  const db = getProdReadDrizzleDb();
-  const linkedAccounts = await db
-    .select({
-      accountId: account.accountId,
-      userId: account.userId,
-    })
-    .from(account)
-    .where(
-      and(
-        eq(account.providerId, "discord"),
-        or(
-          eq(account.accountId, discordUserId),
-          eq(account.userId, creatorUserId),
-        ),
-      ),
-    )
-    .limit(3);
-
-  const assignedDiscord = linkedAccounts.find(
-    (linked) => linked.accountId === discordUserId,
-  );
-  const creatorDiscordAccounts = linkedAccounts.filter(
-    (linked) => linked.userId === creatorUserId,
-  );
-
-  if (assignedDiscord && assignedDiscord.userId !== creatorUserId) {
-    throw new CreatorSetupError(
-      409,
-      "creator_mismatch",
-      "The Discord account assigned by /setup belongs to another Packy user.",
-    );
-  }
-  if (
-    creatorDiscordAccounts.length > 1 ||
-    creatorDiscordAccounts.some(
-      (linked) => linked.accountId !== discordUserId,
-    )
-  ) {
-    throw new CreatorSetupError(
-      409,
-      "creator_mismatch",
-      "That Packy account is linked to a different Discord account.",
-    );
-  }
-
-  if (!assignedDiscord) {
-    throw new CreatorSetupError(
-      409,
-      "discord_link_missing",
-      "That Packy account is not linked to the Discord account assigned by /setup.",
-    );
-  }
 }
 
 type UsageStatsRow = {
@@ -699,6 +641,7 @@ export async function linkCreatorSetup(input: {
   apiKeyPrefix: string;
 }): Promise<{ status: "linked" | "already_linked"; setup: CreatorSetup }> {
   return adminDrizzle.transaction(async (tx) => {
+    const actorIsSuperuser = isDiscordBotSuperuser(input.actorDiscordUserId);
     const auditRoleGrant = async (
       setupId: string,
       creatorDiscordUserId: string,
@@ -771,13 +714,9 @@ export async function linkCreatorSetup(input: {
           "That Discord interaction is already bound to another creator link.",
         );
       }
-      await requireDiscordOwnership(
-        interactionSetup.creator_discord_user_id,
-        input.creatorUserId,
-      );
       const { roleGranted } = await ensureActiveCreator(
         input.creatorUserId,
-        isDiscordBotSuperuser(input.actorDiscordUserId),
+        actorIsSuperuser,
       );
       if (roleGranted) {
         await auditRoleGrant(
@@ -825,7 +764,7 @@ export async function linkCreatorSetup(input: {
       );
     }
     if (
-      !isDiscordBotSuperuser(input.actorDiscordUserId) &&
+      !actorIsSuperuser &&
       input.actorDiscordUserId !== setup.creator_discord_user_id &&
       input.actorDiscordUserId !== setup.created_by_discord_user_id
     ) {
@@ -844,13 +783,9 @@ export async function linkCreatorSetup(input: {
           "This creator section is already linked to another Packy account.",
         );
       }
-      await requireDiscordOwnership(
-        setup.creator_discord_user_id,
-        input.creatorUserId,
-      );
       const { roleGranted } = await ensureActiveCreator(
         input.creatorUserId,
-        isDiscordBotSuperuser(input.actorDiscordUserId),
+        actorIsSuperuser,
       );
       if (roleGranted) {
         await auditRoleGrant(setup.id, setup.creator_discord_user_id);
@@ -859,6 +794,14 @@ export async function linkCreatorSetup(input: {
         status: "already_linked" as const,
         setup: linkedSetup(setup),
       };
+    }
+
+    if (!actorIsSuperuser) {
+      throw new CreatorSetupError(
+        403,
+        "setup_actor_forbidden",
+        "Only authorized Packy staff can link a new Packy account to this section.",
+      );
     }
 
     const conflictingResult = await tx.execute<{ id: string }>(sql`
@@ -876,19 +819,11 @@ export async function linkCreatorSetup(input: {
       );
     }
 
-    // `/setup` is the source of truth for the Discord identity. Staff may
-    // select the Packy user ID, but the actor's ID is never substituted for
-    // the creator assigned to this section. Missing or different OAuth
-    // associations fail closed; this dashboard must not manufacture or
-    // overwrite customer authentication identities in MAIN.
-    await requireDiscordOwnership(
-      setup.creator_discord_user_id,
-      input.creatorUserId,
-    );
-    const { roleGranted } = await ensureActiveCreator(
-      input.creatorUserId,
-      isDiscordBotSuperuser(input.actorDiscordUserId),
-    );
+    // `/link` owns only the creator-section mapping. The Discord member stored
+    // by `/setup` is intentionally not read from or written to the Packy OAuth
+    // account table. First-time binding is staff-only because no OAuth identity
+    // proof is required by this workflow.
+    const { roleGranted } = await ensureActiveCreator(input.creatorUserId, true);
 
     const updated = await tx.execute<SetupRow>(sql`
       UPDATE discord_creator_setups

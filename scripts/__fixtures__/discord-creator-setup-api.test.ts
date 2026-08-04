@@ -99,7 +99,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /if \(!allowGrant\)/);
   assert.match(
     service,
-    /ensureActiveCreator\(\s*input\.creatorUserId,\s*isDiscordBotSuperuser\(input\.actorDiscordUserId\)/,
+    /const actorIsSuperuser = isDiscordBotSuperuser\(input\.actorDiscordUserId\)/,
   );
   assert.match(
     service,
@@ -107,20 +107,18 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   );
   assert.match(service, /event_type: "discord_creator_role_granted"/);
   assert.match(service, /eq\(user\.id,\s*creatorUserId\)/);
+  assert.doesNotMatch(service, /requireDiscordOwnership/);
+  assert.doesNotMatch(service, /discord_link_missing/);
+  assert.doesNotMatch(service, /account\.providerId/);
   assert.match(
     service,
-    /await requireDiscordOwnership\(\s*setup\.creator_discord_user_id,\s*input\.creatorUserId/,
+    /if \(!actorIsSuperuser\) \{\s*throw new CreatorSetupError\(\s*403,\s*"setup_actor_forbidden",\s*"Only authorized Packy staff can link a new Packy account to this section\."/s,
   );
-  assert.doesNotMatch(
+  assert.match(
     service,
-    /requireDiscordOwnership\(\s*input\.actorDiscordUserId/,
+    /const \{ roleGranted \} = await ensureActiveCreator\(input\.creatorUserId, true\)/,
   );
   assert.match(service, /creatorRoleGranted: roleGranted/);
-  assert.match(service, /"creator_mismatch"/);
-  assert.match(service, /"discord_link_missing"/);
-  assert.match(service, /eq\(account\.userId, creatorUserId\)/);
-  assert.match(service, /creatorDiscordAccounts\.length > 1/);
-  assert.match(service, /\.limit\(3\)/);
   assert.match(service, /roleGranted: !promoted\.already_creator/);
   assert.match(service, /"setup_actor_forbidden"/);
   assert.match(service, /"setup_link_conflict"/);
@@ -145,6 +143,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/repair/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/cancel/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
+  assert.match(endpoints, /does not require or change the account's on-site Discord OAuth link/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deal/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);

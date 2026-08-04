@@ -85,7 +85,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-setups/link",
     summary:
-      "Body { guildId, categoryId, channelId, creatorUserId, actorDiscordUserId, interactionId }. Links an active creator section to the selected Packy creator account. The channel, actor, site creator role, self-link ownership, conflicts, and idempotency are verified server-side.",
+      "Body { guildId, categoryId, channelId, creatorUserId, actorDiscordUserId, interactionId }. Staff-only first-time binding links an active creator section to the selected Packy account and grants its missing creator role. This system mapping does not require or change the account's on-site Discord OAuth link. Channel, actor, conflicts, and idempotency are verified server-side.",
     scopes: ["discord:creator:setup"],
   },
   {
