@@ -125,6 +125,26 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/reminders",
+    summary:
+      "Body { interactionId, guildId, sourceChannelId, userId }. Idempotently schedules a one-hour reminder; the destination and due time are derived server-side.",
+    scopes: ["discord:reminders"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/reminders/jobs/claim",
+    summary: "Body { workerId, limit }. Leases due reminder jobs for delivery.",
+    scopes: ["discord:reminders"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/reminders/jobs/[id]/ack",
+    summary:
+      "Body { leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Completes or retries a leased reminder job.",
+    scopes: ["discord:reminders"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/deposit-settings",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns whether automatic deposit notifications are enabled for the linked creator section and its current logs channel.",

@@ -65,6 +65,12 @@ export const API_SCOPES = {
       "Preview a Packy user and link that user to the current channel in the VIPs Discord server. Reads the user from the production mirror and writes the durable channel mapping only to the admin database.",
     access: "admin-write",
   },
+  "discord:reminders": {
+    label: "Schedule Discord reminders",
+    description:
+      "Create and deliver durable one-hour reminders for the fixed Creator and VIP destinations. Writes only reminder delivery state to the admin database.",
+    access: "admin-write",
+  },
   "discord:antifraud": {
     label: "Deliver Antifraud notifications",
     description:
