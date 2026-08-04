@@ -30,6 +30,7 @@ import {
   type ReviewSeverity,
 } from "./constants";
 import {
+  isNonActionableRewardEnrollmentTrailEntry,
   NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS,
   withoutNonActionableRewardEnrollmentSignals,
 } from "./signal-display";
@@ -517,10 +518,10 @@ export async function getReviewDetail(
   // that quietly shows nothing is worse than an honest error.
   const body = await safeQueryOrNull(
     async () => {
-      const [notes, signals, workflows, accountResult] = await Promise.all([
+      const [rawNotes, signals, workflows, accountResult] = await Promise.all([
         adminDrizzle.select().from(antifraud_review_notes)
           .where(eq(antifraud_review_notes.review_id, reviewId))
-          .orderBy(desc(antifraud_review_notes.created_at)).limit(100),
+          .orderBy(desc(antifraud_review_notes.created_at)).limit(200),
         adminDrizzle.select().from(antifraud_signals)
           .where(
             and(
@@ -547,6 +548,13 @@ export async function getReviewDetail(
           3_000,
         ),
       ]);
+      const notes = rawNotes
+        .filter(
+          (note) =>
+            note.kind !== "signal" ||
+            !isNonActionableRewardEnrollmentTrailEntry(note.body),
+        )
+        .slice(0, 100);
 
       const identities = await loadAdminIdentities([
         review.assigned_to,

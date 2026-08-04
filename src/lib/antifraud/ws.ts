@@ -22,6 +22,8 @@
  * it, and it must stay cheap to import.
  */
 
+import { isNonActionableRewardEnrollmentSignal } from "./signal-display";
+
 // ─── Wire contract ────────────────────────────────────────────────────────
 
 /** Severity vocabulary, shared with `antifraud_signals.severity`. */
@@ -114,6 +116,7 @@ export const SIGNUP_REVIEW_SCORE_FLOOR = 50;
 export function shouldOpenReviewForSignal(
   signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
 ): boolean {
+  if (isNonActionableRewardEnrollmentSignal(signal.kind)) return false;
   return (
     signal.kind === "abstract_email_catchall" ||
     ((signal.kind === "high_risk_signup" ||
