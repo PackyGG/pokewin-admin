@@ -96,7 +96,8 @@ test("Fraud guide keeps access control and documents signup risk actions", () =>
   assert.match(page, /High risk/);
   assert.match(page, /Critical risk/);
   assert.match(page, /Discord/);
-  assert.match(page, /Account Review/);
+  assert.match(page, /Review/);
+  assert.doesNotMatch(page, /Critical containment/);
 });
 
 test("deposit reviews preserve their queue in a URL-driven drawer", () => {
