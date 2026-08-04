@@ -62,12 +62,14 @@ test("custom flow create contract accepts complete ordered flows", () => {
   assert.equal(parsed.enabled, true);
 });
 
-test("automatic reward enrollments are retained but hidden from activity", () => {
+test("automatic reward enrollments are excluded while real opens stay live", () => {
   assert.equal(isNonActionableRewardEnrollmentEvent("welcome_reward_granted"), true);
   assert.equal(isNonActionableRewardEnrollmentEvent("level_one_reward_granted"), true);
   assert.equal(isNonActionableRewardEnrollmentEvent("daily_reward_granted"), true);
   assert.equal(isNonActionableRewardEnrollmentEvent("other_reward_granted"), true);
   assert.equal(isNonActionableRewardEnrollmentEvent("daily_reward_opened"), false);
+  assert.equal(isDocumentedMonitorEvent("daily_reward_granted"), false);
+  assert.equal(isLiveMonitorEvent("daily_reward_opened"), true);
 });
 
 test("custom flows can only send matches to manual review", () => {

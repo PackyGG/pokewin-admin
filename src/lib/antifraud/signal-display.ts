@@ -4,9 +4,8 @@ export const FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND =
 /**
  * Automatic `user_rewards` enrollment rows created for every account.
  *
- * They are retained as source/audit evidence, but they are not player actions,
- * do not prove a level was reached, and carry no fraud score. Fraud surfaces
- * must therefore omit them instead of presenting them as actionable signals.
+ * They are source bookkeeping, not player actions. They do not prove a level
+ * was reached and carry no fraud score, so Fraud surfaces must omit them.
  */
 export const NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS = [
   "welcome_reward_granted",
@@ -30,6 +29,31 @@ export function withoutNonActionableRewardEnrollmentSignals(
 ): string[] {
   return signals.filter(
     (signal) => !isNonActionableRewardEnrollmentSignal(signal),
+  );
+}
+
+/**
+ * Hides historic case-note copies written before enrollment events were
+ * suppressed at ingest. Supports both the old raw-kind format and the later
+ * readable-label format; real reward-open entries never match.
+ */
+export function isNonActionableRewardEnrollmentTrailEntry(
+  body: string,
+): boolean {
+  const normalized = body.trim().toLowerCase();
+  if (
+    normalized.includes("welcome_reward_granted") ||
+    normalized.includes("level_one_reward_granted") ||
+    normalized.includes("daily_reward_granted") ||
+    normalized.includes("other_reward_granted")
+  ) {
+    return true;
+  }
+  return (
+    normalized.startsWith("welcome reward enrolled at signup (") ||
+    normalized.startsWith("level 1 daily pack enrolled at signup (") ||
+    normalized.startsWith("daily pack enrolled at signup (") ||
+    normalized.startsWith("reward enrolled at signup (")
   );
 }
 

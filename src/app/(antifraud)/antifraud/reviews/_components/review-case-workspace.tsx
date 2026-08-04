@@ -575,47 +575,42 @@ function CaseTrail({ detail }: { detail: ReviewDetail }) {
     <section className="space-y-3">
       <SectionHeading
         icon={FileText}
-        title={
-          <>
-            Case trail
-            <span className="text-xs font-normal text-muted-foreground">
-              append-only — notes and system entries
-            </span>
-          </>
-        }
+        title="Case trail"
       />
       {notes.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-10 text-center text-xs text-muted-foreground">
-          No notes yet. Anything you write is kept permanently — the trail is
-          append-only.
+        <div className="rounded-lg border border-dashed border-border/70 px-4 py-7 text-center text-xs text-muted-foreground">
+          No notes or activity yet.
         </div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          {notes.map((note, index) => (
+        <div className="divide-y divide-border/50 overflow-hidden rounded-lg border border-border/60 bg-card">
+          {notes.map((note) => (
             <div
               key={note.id}
-              className={cn(
-                "p-3 sm:p-4",
-                index > 0 && "border-t border-border/60",
-              )}
+              className="flex gap-3 px-3 py-3 sm:px-4"
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs font-semibold">
-                  {note.author?.label ?? "System"}
-                </span>
-                <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-                  {note.kind}
-                </span>
-                <span
-                  className="ml-auto text-[11px] text-muted-foreground"
-                  title={formatDateTime(note.createdAt)}
-                >
-                  {formatRelative(note.createdAt)}
-                </span>
+              <span
+                className={cn(
+                  "mt-1.5 size-2 shrink-0 rounded-full",
+                  note.author ? "bg-primary/70" : "bg-muted-foreground/45",
+                )}
+              />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="truncate text-xs font-semibold">
+                    {note.author?.label ?? "System update"}
+                  </span>
+                  <time
+                    className="shrink-0 text-[11px] text-muted-foreground"
+                    dateTime={note.createdAt.toISOString()}
+                    title={formatDateTime(note.createdAt)}
+                  >
+                    {formatRelative(note.createdAt)}
+                  </time>
+                </div>
+                <p className="mt-1 whitespace-pre-wrap text-sm leading-5 text-foreground/90">
+                  {note.body}
+                </p>
               </div>
-              <p className="mt-1.5 whitespace-pre-wrap text-xs leading-relaxed">
-                {note.body}
-              </p>
             </div>
           ))}
         </div>

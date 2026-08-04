@@ -2451,6 +2451,13 @@ export class MonitorEngine {
     try {
       await client.query("BEGIN");
       for (const activity of activities) {
+        // Signup creates reward-enrollment rows for every configured pack.
+        // They are not player activity and must not enter the Fraud event log.
+        // Advance the cursor so they are consumed once, then ignore them.
+        if (isNonActionableRewardEnrollmentEvent(activity.event_type)) {
+          await this.advanceActivityCursor(client, session.id, activity);
+          continue;
+        }
         const delta = this.pointsFor(activity, weights);
         const inserted = await client.query<{ id: string; score_after: number }>(
           `

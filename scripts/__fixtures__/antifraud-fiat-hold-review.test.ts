@@ -5,6 +5,7 @@ import {
   FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND,
   isFiatWithdrawalHoldSignal,
   isNonActionableRewardEnrollmentSignal,
+  isNonActionableRewardEnrollmentTrailEntry,
   reviewSignalLabel,
   withoutNonActionableRewardEnrollmentSignals,
 } from "../../src/lib/antifraud/signal-display";
@@ -53,6 +54,14 @@ test("automatic reward enrollment never appears as Fraud activity", () => {
 
   for (const kind of enrollmentKinds) {
     assert.equal(isNonActionableRewardEnrollmentSignal(kind), true);
+    assert.equal(
+      shouldOpenReviewForSignal({
+        kind,
+        severity: "critical",
+        riskScore: 100,
+      }),
+      false,
+    );
   }
   assert.equal(isNonActionableRewardEnrollmentSignal("daily_reward_opened"), false);
   assert.deepEqual(
@@ -62,5 +71,23 @@ test("automatic reward enrollment never appears as Fraud activity", () => {
       "fiat_deposit",
     ]),
     ["daily_reward_opened", "fiat_deposit"],
+  );
+  assert.equal(
+    isNonActionableRewardEnrollmentTrailEntry(
+      "Daily pack enrolled at signup (0 pts, case 100) — Level 100 granted",
+    ),
+    true,
+  );
+  assert.equal(
+    isNonActionableRewardEnrollmentTrailEntry(
+      "[critical] daily_reward_granted — Level 100 granted",
+    ),
+    true,
+  );
+  assert.equal(
+    isNonActionableRewardEnrollmentTrailEntry(
+      "Daily pack opened (+10 pts, case 60) — Level 10 opened",
+    ),
+    false,
   );
 });

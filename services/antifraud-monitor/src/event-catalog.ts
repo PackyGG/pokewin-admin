@@ -83,24 +83,10 @@ export const MONITOR_EVENT_CATALOG: MonitorEventDefinition[] = [
     "Ledger",
   ),
   event(
-    "welcome_reward_granted",
-    "Welcome reward granted",
-    "Rewards",
-    "The one-time reward containing three welcome-rewards packs is granted.",
-    "User rewards",
-  ),
-  event(
     "welcome_reward_opened",
     "Welcome reward opened",
     "Rewards",
     "The player opens the one-time reward containing three welcome-rewards packs.",
-    "User rewards",
-  ),
-  event(
-    "level_one_reward_granted",
-    "Level 1 daily pack granted",
-    "Rewards",
-    "The level-0-unlocked daily reward named Level 1 is granted.",
     "User rewards",
   ),
   event(
@@ -111,24 +97,10 @@ export const MONITOR_EVENT_CATALOG: MonitorEventDefinition[] = [
     "User rewards",
   ),
   event(
-    "daily_reward_granted",
-    "Level 10–100 daily pack granted",
-    "Rewards",
-    "A daily pack gated by an earned account level is granted.",
-    "User rewards",
-  ),
-  event(
     "daily_reward_opened",
     "Level 10–100 daily pack opened",
     "Rewards",
     "The player opens a daily pack gated by an earned account level.",
-    "User rewards",
-  ),
-  event(
-    "other_reward_granted",
-    "Other configured reward granted",
-    "Rewards",
-    "A configured reward outside the known welcome and daily-pack programs is granted.",
     "User rewards",
   ),
   event(
