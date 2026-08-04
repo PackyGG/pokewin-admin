@@ -38,7 +38,11 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Banned users",
     "Risk locations",
     "Sign-up checks",
-    "Automation & rules",
+    // System group — one entry per destination an operator actually edits.
+    "Automation",
+    "Rules & scoring",
+    "Event catalog",
+    "Integrations",
     "Audit log",
   ]) {
     assert.match(

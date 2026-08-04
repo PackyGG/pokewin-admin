@@ -11,6 +11,7 @@ import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { cn } from "@/lib/utils";
 import { DiscordConfigSection } from "./_components/discord-config-section";
+import { EngineHealthSection } from "./_components/engine-health-section";
 import {
   SettingsTabNav,
   type SettingsTab,
@@ -26,25 +27,48 @@ export default async function SettingsPage({
   await requireAntifraudManagerPage();
   const requestedTab = (await searchParams).tab;
   const tab: SettingsTab =
-    requestedTab === "discord" ? "discord" : "general";
+    requestedTab === "discord" || requestedTab === "health"
+      ? requestedTab
+      : "general";
 
+  // Active-tab-only: each branch owns its reads, so opening Integrations never
+  // pays for the poller/notification-route reads the Health tab needs.
   return (
     <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
 
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+          What the fraud engine is wired to, whether it is answering, and where
+          its alerts are delivered.
+        </p>
+      </div>
+
       <SettingsTabNav active={tab} />
 
-      {tab === "discord" ? (
-        <Suspense fallback={<Skeleton className="h-[520px] w-full rounded-xl" />}>
+      <Suspense
+        key={tab}
+        fallback={
+          <Skeleton
+            className={
+              tab === "discord"
+                ? "h-[520px] w-full rounded-xl"
+                : "h-72 w-full rounded-xl"
+            }
+          />
+        }
+      >
+        {tab === "discord" ? (
           <DiscordConfigSection />
-        </Suspense>
-      ) : (
-        <Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
+        ) : tab === "health" ? (
+          <EngineHealthSection />
+        ) : (
           <IntegrationSection />
-        </Suspense>
-      )}
+        )}
+      </Suspense>
     </div>
   );
 }

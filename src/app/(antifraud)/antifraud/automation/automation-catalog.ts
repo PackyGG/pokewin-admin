@@ -52,7 +52,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "antifraud.signup_high_risk",
     ],
     controls: [
-      { label: "Edit risk points", href: "/antifraud/points?tab=scoring" },
+      { label: "Edit risk points", href: "/antifraud/points" },
       { label: "Provider status", href: "/antifraud/settings" },
       { label: "Review queue", href: "/antifraud/reviews" },
     ],
@@ -165,7 +165,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: ["antifraud.fiat_risk", "antifraud.fiat_operations"],
     controls: [
       { label: "Open deposit queue", href: "/antifraud/fiat-deposits" },
-      { label: "Edit risk points", href: "/antifraud/points?tab=scoring" },
+      { label: "Edit risk points", href: "/antifraud/points" },
       { label: "Refund operations", href: "/antifraud/refunds" },
     ],
     mode: "mixed",
@@ -184,7 +184,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: [],
     controls: [
       { label: "Inspect decision policy", href: "/antifraud/fiat-eligibility" },
-      { label: "Global Fiat review", href: "/antifraud/config" },
+      { label: "Global Fiat review", href: "/antifraud/automation?tab=controls" },
       { label: "Screen access cohorts", href: "/antifraud/fiat-perks" },
     ],
     mode: "mixed",
