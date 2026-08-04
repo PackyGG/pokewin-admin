@@ -149,7 +149,7 @@ const SEVERITY_DOT: Record<string, string> = {
 
 /**
  * Mirrors `SEVERITY_BANDS` in `services/antifraud-monitor/src/score-catalog.ts`
- * (low 0-20, medium 21-49, high 50-69, critical 70-100). The publisher only
+ * (no risk 0-20, low 21-49, high 50-69, critical 70-100). The publisher only
  * stamps a severity on some frames; deriving it here keeps a score that climbs
  * mid-window from being badged with the severity it had when it started.
  */

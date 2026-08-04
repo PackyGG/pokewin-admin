@@ -13,6 +13,9 @@ test("low-risk signups have a configurable Discord action without review", () =>
   const adminMigration = read(
     "drizzle/admin/migrations/20260804_low_risk_signup_discord_event.sql",
   );
+  const splitMigration = read(
+    "drizzle/admin/migrations/20260804_signup_risk_discord_split.sql",
+  );
 
   assert.match(policy, /LOW_RISK_SIGNUP_SCORE = 21/);
   assert.match(policy, /HIGH_RISK_SIGNUP_SCORE = 50/);
@@ -25,6 +28,6 @@ test("low-risk signups have a configurable Discord action without review", () =>
   assert.doesNotMatch(monitorMigration, /INSERT INTO signup_alert_outbox/);
   assert.match(adminMigration, /'antifraud\.signup_low_risk'/);
   assert.match(adminMigration, /'Signups'/);
-  assert.match(adminMigration, /7\.5-minute monitoring window/);
+  assert.match(splitMigration, /21-49 and entered a 5-minute monitor/);
   assert.doesNotMatch(adminMigration, /discord_notification_routes/);
 });

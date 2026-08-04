@@ -1,0 +1,43 @@
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import test from "node:test";
+
+const read = (path: string) => readFileSync(path, "utf8");
+
+test("signup risk bands expose the agreed monitoring and staff actions", () => {
+  const guide = read("src/app/(antifraud)/antifraud/guide/sign-up/page.tsx");
+  const policy = read("services/antifraud-monitor/src/signup-alerts.ts");
+
+  for (const range of ["0-20", "21-49", "50-69", "70-100"]) {
+    assert.match(guide, new RegExp(`range: "${range}"`));
+  }
+  assert.match(policy, /return 5 \* 60/);
+  assert.match(policy, /return 10 \* 60/);
+  assert.match(policy, /return 15 \* 60/);
+  assert.match(guide, /Fiat deposits, withdrawals, and tips are locked automatically/);
+});
+
+test("high and critical signup actions own their Discord routes", () => {
+  const migration = read(
+    "drizzle/admin/migrations/20260804_signup_risk_discord_split.sql",
+  );
+
+  assert.match(migration, /'antifraud\.signup_high', '1534296433241493774'/);
+  assert.match(migration, /'antifraud\.signup_critical', '1534296454129254523'/);
+  assert.match(migration, /category_id = '1532207307683795026'/);
+  assert.match(migration, /DELETE FROM discord_notification_routes\s+WHERE event_key = 'antifraud\.signup_high_risk'/);
+  assert.match(migration, /enabled = false/);
+});
+
+test("critical signup containment requires and applies all three locks", () => {
+  const ingest = read("src/app/api/antifraud/ingest/route.ts");
+
+  assert.match(ingest, /signal\.kind === "critical_risk_signup"/);
+  assert.match(ingest, /"lock_fiat_deposits"/);
+  assert.match(ingest, /"lock_withdrawals"/);
+  assert.match(ingest, /"lock_tips"/);
+  assert.match(ingest, /locked_deposits_fiat = ARRAY\['all'\]::text\[\]/);
+  assert.match(ingest, /locked_withdrawals_crypto = ARRAY\['all'\]::text\[\]/);
+  assert.match(ingest, /locked_withdrawals_items = TRUE/);
+  assert.match(ingest, /updateUserRewardLocks/);
+});

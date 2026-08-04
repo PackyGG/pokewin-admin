@@ -52,9 +52,11 @@ import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import { isNonActionableRewardEnrollmentEvent } from "./event-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
+  CRITICAL_RISK_SIGNUP_SCORE,
   HIGH_RISK_SIGNUP_SCORE,
-  highRiskSignupMarker,
   signupDiscordAlertKind,
+  signupMonitorDurationSeconds,
+  signupReviewMarker,
 } from "./signup-alerts.js";
 import { parseFailedSignup } from "./signup-failure.js";
 import {
@@ -1087,7 +1089,10 @@ export class MonitorEngine {
             catchallSignal,
             signals,
             score,
-            durationSeconds: this.config.MONITOR_DURATION_SECONDS,
+            durationSeconds: Math.max(
+              this.config.MONITOR_DURATION_SECONDS,
+              signupMonitorDurationSeconds(score),
+            ),
           },
           (client, containedSignup, containedSignals, containedScore, duration) =>
             this.openMonitor(
@@ -1384,9 +1389,12 @@ export class MonitorEngine {
           ],
         );
       }
-      if (signupAlertKind === "high_risk") {
-        if (!opened) throw new Error("High-risk signup did not open a case");
-        const marker = highRiskSignupMarker({
+      if (
+        signupAlertKind === "high_risk" ||
+        signupAlertKind === "critical_risk"
+      ) {
+        if (!opened) throw new Error("Reviewable signup did not open a case");
+        const marker = signupReviewMarker({
           userId: signup.id,
           caseId: opened.caseId,
           score,
@@ -1607,19 +1615,27 @@ export class MonitorEngine {
           throw new Error("Signup alert outbox contains a score below 21");
         }
         const lowRisk = alertKind === "low_risk";
+        const criticalRisk = alertKind === "critical_risk";
+        const eventKey = lowRisk
+          ? "antifraud.signup_low_risk" as const
+          : criticalRisk
+            ? "antifraud.signup_critical" as const
+            : "antifraud.signup_high" as const;
         return {
           delivered: await this.discord.send(
-            lowRisk
-              ? "antifraud.signup_low_risk"
-              : "antifraud.signup_high_risk",
+            eventKey,
             `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
             {
               title: lowRisk
                 ? "Low-risk signup detected"
-                : "High-risk signup detected",
+                : criticalRisk
+                  ? "Critical-risk signup detected"
+                  : "High-risk signup detected",
               description: lowRisk
                 ? "This account entered the low-risk signup band and is being monitored. No staff review or automatic restriction was opened."
-                : "This account crossed the automated signup review threshold and needs a staff decision.",
+                : criticalRisk
+                  ? "This account entered the critical signup band. Fiat deposits, withdrawals, and tips were locked automatically while staff review it."
+                  : "This account entered the high-risk signup band and needs a staff decision. No automatic restriction was applied.",
               userId: alert.user_id,
               username: alert.username,
               caseId: lowRisk ? undefined : (alert.case_id ?? undefined),
@@ -1627,7 +1643,9 @@ export class MonitorEngine {
               severity: lowRisk ? "low" : severity(alert.score),
               trigger: lowRisk
                 ? "Signup score reached 21-49"
-                : "Signup score reached 50+",
+                : criticalRisk
+                  ? `Signup score reached ${CRITICAL_RISK_SIGNUP_SCORE}-100`
+                  : `Signup score reached ${HIGH_RISK_SIGNUP_SCORE}-${CRITICAL_RISK_SIGNUP_SCORE - 1}`,
               signals: storedSignals(alert.signals),
               occurredAt: alert.occurred_at,
             },

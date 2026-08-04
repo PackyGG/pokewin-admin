@@ -84,7 +84,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
 
-test("Fraud guide starts with an access-controlled empty sign-up page", () => {
+test("Fraud guide keeps access control and documents signup risk actions", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/guide/sign-up/page.tsx",
   );
@@ -92,7 +92,11 @@ test("Fraud guide starts with an access-controlled empty sign-up page", () => {
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(page, /<PageHero>/);
   assert.match(page, />\s*Sign-up checks\s*</);
-  assert.doesNotMatch(page, /Low|Medium|High|Critical|Discord|review|score/i);
+  assert.match(page, /Low risk/);
+  assert.match(page, /High risk/);
+  assert.match(page, /Critical risk/);
+  assert.match(page, /Discord/);
+  assert.match(page, /Account Review/);
 });
 
 test("deposit reviews preserve their queue in a URL-driven drawer", () => {

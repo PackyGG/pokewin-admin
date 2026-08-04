@@ -99,7 +99,8 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
 
   for (const event of [
     "antifraud.signup_low_risk",
-    "antifraud.signup_high_risk",
+    "antifraud.signup_high",
+    "antifraud.signup_critical",
     "antifraud.rule_matched",
     "antifraud.email_blacklist",
     "antifraud.fiat_risk",

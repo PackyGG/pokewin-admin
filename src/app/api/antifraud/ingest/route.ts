@@ -10,6 +10,11 @@ import {
 import { adminDrizzle } from "@/lib/drizzle";
 import { getProdPrimaryDrizzleDb } from "@/lib/db";
 import {
+  getUserFeatureLocks,
+  updateUserRewardLocks,
+  type RewardLockCategory,
+} from "@/lib/backend-api/feature-locks";
+import {
   parseAntifraudEvent,
   SEVERITY_RANK,
   shouldOpenReviewForSignal,
@@ -58,14 +63,16 @@ import {
  * Normally writes only the ADMIN DB. The dedicated
  * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
  * `signup_policy_recommendation`, `risky_free_battle_containment`,
- * `behavioral_withdrawal_containment`, `fiat_eligibility_containment` and
+ * `behavioral_withdrawal_containment`, `critical_risk_signup`,
+ * `fiat_eligibility_containment` and
  * `fiat_deposit_identity_containment`
  * signals are also application-authorized containment commands: after
  * signature and payload validation, a first-time (non-duplicate) delivery
  * applies deterministic MAIN containment before acknowledgement. Active
  * blocked domains and Abstract-confirmed catch-all domains ban; suspicious
  * clusters and free-battle hard signals lock withdrawals only; a refused Fiat
- * checkout turns Fiat deposits off and locks withdrawals.
+ * checkout turns Fiat deposits off and locks withdrawals; a critical signup
+ * also locks tips.
  *
  * KYC: automated signals do NOT mutate KYC state, with exactly one owner-
  * approved exception — `fiat_deposit_identity_containment` also requires KYC,
@@ -681,6 +688,110 @@ async function containBehavioralRiskAccount(
   return locked.rows.length > 0 ? "locked" : "skipped";
 }
 
+const CRITICAL_SIGNUP_ACTIONS = [
+  "lock_fiat_deposits",
+  "lock_withdrawals",
+  "lock_tips",
+] as const;
+
+async function containCriticalSignupAccount(
+  signal: AntifraudSignalEvent,
+): Promise<"locked" | "skipped"> {
+  const userId = signal.userId;
+  const rawActions = Array.isArray(signal.payload?.actions)
+    ? signal.payload.actions
+    : [];
+  const validActions = new Set(
+    rawActions.filter((action): action is string => typeof action === "string"),
+  );
+  if (
+    !userId ||
+    signal.riskScore == null ||
+    signal.riskScore < 70 ||
+    signal.riskScore > 100 ||
+    signal.payload?.riskBand !== "critical" ||
+    signal.payload?.reasonCode !== "critical_signup_score" ||
+    signal.payload?.containmentRequired !== true ||
+    validActions.size !== CRITICAL_SIGNUP_ACTIONS.length ||
+    !CRITICAL_SIGNUP_ACTIONS.every((action) => validActions.has(action))
+  ) {
+    console.error(
+      "[antifraud-ingest] skipping invalid critical-signup containment signal",
+      { externalId: signal.id || null, userId: signal.userId ?? null },
+    );
+    return "skipped";
+  }
+
+  const reason = (
+    `Automatic fraud lock: critical signup scored ${signal.riskScore}/100`
+  ).slice(0, 500);
+  const db = getProdPrimaryDrizzleDb();
+  const locked = await db.execute<{ user_id: string }>(sql`
+    INSERT INTO user_feature_locks (
+      id, user_id,
+      locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
+      locked_deposits_reason,
+      locked_withdrawals_crypto, locked_withdrawals_items,
+      locked_withdrawals_at, locked_withdrawals_by,
+      locked_withdrawals_reason,
+      created_at, updated_at
+    )
+    SELECT
+      ${crypto.randomUUID()}, u.id,
+      ARRAY['all']::text[], NOW(), NULL, ${reason},
+      ARRAY['all']::text[], TRUE, NOW(), NULL, ${reason},
+      NOW(), NOW()
+    FROM "user" u
+    WHERE u.id = ${userId}
+    ON CONFLICT (user_id) DO UPDATE SET
+      locked_deposits_fiat = ARRAY['all']::text[],
+      locked_deposits_at = COALESCE(
+        user_feature_locks.locked_deposits_at,
+        EXCLUDED.locked_deposits_at
+      ),
+      locked_deposits_reason = COALESCE(
+        user_feature_locks.locked_deposits_reason,
+        EXCLUDED.locked_deposits_reason
+      ),
+      locked_withdrawals_crypto = ARRAY['all']::text[],
+      locked_withdrawals_items = TRUE,
+      locked_withdrawals_at = COALESCE(
+        user_feature_locks.locked_withdrawals_at,
+        EXCLUDED.locked_withdrawals_at
+      ),
+      locked_withdrawals_reason = COALESCE(
+        user_feature_locks.locked_withdrawals_reason,
+        EXCLUDED.locked_withdrawals_reason
+      ),
+      updated_at = NOW()
+    RETURNING user_id
+  `);
+  if (locked.rows.length === 0) return "skipped";
+
+  const current = await getUserFeatureLocks(userId);
+  if (!current.available_reward_categories.includes("tips")) {
+    throw new Error("Backend does not expose the tips reward lock");
+  }
+  if (!current.locked_reward_categories.includes("tips")) {
+    const nextLocks = Array.from(
+      new Set<RewardLockCategory>([
+        ...current.locked_reward_categories,
+        "tips",
+      ]),
+    );
+    const updated = await updateUserRewardLocks(
+      userId,
+      nextLocks,
+      undefined,
+      reason,
+    );
+    if (!updated.locked_reward_categories.includes("tips")) {
+      throw new Error("Backend did not confirm the tips reward lock");
+    }
+  }
+  return "locked";
+}
+
 /**
  * Containment rules the automatic Fiat-checkout endpoint is allowed to enforce.
  * The monitor decides; this list is the dashboard's independent second opinion,
@@ -923,6 +1034,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       signal.kind === "signup_policy_recommendation" ||
       signal.kind === "risky_free_battle_containment" ||
       signal.kind === "behavioral_withdrawal_containment" ||
+      signal.kind === "critical_risk_signup" ||
       signal.kind === "fiat_eligibility_containment" ||
       signal.kind === "fiat_deposit_identity_containment"
     )
@@ -951,6 +1063,8 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           ? (await containFiatEligibilityAccount(signal)) === "skipped"
         : signal.kind === "fiat_deposit_identity_containment"
           ? (await containFiatIdentityAccount(signal)) === "skipped"
+        : signal.kind === "critical_risk_signup"
+          ? (await containCriticalSignupAccount(signal)) === "skipped"
           : (await containBehavioralRiskAccount(signal)) === "skipped";
   }
 

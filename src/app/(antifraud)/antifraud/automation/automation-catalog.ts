@@ -45,11 +45,12 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     actions: [
       "Persist the score and provider evidence",
       "Open or update Account Review at the review threshold",
-      "Apply priority withdrawal containment at the critical threshold",
+      "At critical risk, lock Fiat deposits, withdrawals, and tips",
     ],
     discordEvents: [
       "antifraud.signup_low_risk",
-      "antifraud.signup_high_risk",
+      "antifraud.signup_high",
+      "antifraud.signup_critical",
     ],
     controls: [
       { label: "Edit risk points", href: "/antifraud/points" },
@@ -123,7 +124,11 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "Known VPN rules add bounded risk without direct containment",
       "Single-account bans permanently save all known identifiers first",
     ],
-    discordEvents: ["antifraud.signup_high_risk", "antifraud.fiat_risk"],
+    discordEvents: [
+      "antifraud.signup_high",
+      "antifraud.signup_critical",
+      "antifraud.fiat_risk",
+    ],
     controls: [
       { label: "Edit IP rules", href: "/antifraud/ip-blacklist" },
       {
@@ -145,7 +150,10 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "Extend the live monitor window",
       "Never contain, ban, or require KYC from country evidence alone",
     ],
-    discordEvents: ["antifraud.signup_high_risk"],
+    discordEvents: [
+      "antifraud.signup_high",
+      "antifraud.signup_critical",
+    ],
     controls: [
       { label: "Edit location rules", href: "/antifraud/risky-locations" },
     ],

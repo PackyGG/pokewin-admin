@@ -108,15 +108,16 @@ export const NOTIFY_SEVERITY_FLOOR: AntifraudSeverity = "high";
 export const SIGNUP_REVIEW_SCORE_FLOOR = 50;
 
 /**
- * High-risk signup scores are an explicit queue contract aligned with the
- * canonical 50-point review floor.
+ * High- and critical-risk signup scores are explicit queue contracts aligned
+ * with the canonical 50-point review floor.
  */
 export function shouldOpenReviewForSignal(
   signal: Pick<AntifraudSignalEvent, "kind" | "riskScore" | "severity">,
 ): boolean {
   return (
     signal.kind === "abstract_email_catchall" ||
-    (signal.kind === "high_risk_signup" &&
+    ((signal.kind === "high_risk_signup" ||
+      signal.kind === "critical_risk_signup") &&
       signal.riskScore !== null &&
       signal.riskScore !== undefined &&
       signal.riskScore >= SIGNUP_REVIEW_SCORE_FLOOR) ||

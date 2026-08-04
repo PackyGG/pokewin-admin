@@ -104,11 +104,12 @@ export const updateUserRewardLocks = (
   userId: string,
   categories: RewardLockCategory[],
   adminUserId?: string,
+  reason: string | null = null,
 ) =>
   backendApi
     .put<unknown>(
       `/admin/users/${encodeURIComponent(userId)}/rewards-lock`,
-      { categories, reason: null },
+      { categories, reason },
       adminUserId ? { headers: { "x-admin-user-id": adminUserId } } : {},
     )
     .then((response) => parseFeatureLocks(response, userId));

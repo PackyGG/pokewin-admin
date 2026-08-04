@@ -634,10 +634,15 @@ async function computeAntifraudOverviewData(
   const signalFeed: AntifraudActionFeedItem[] = recentSignals.map((signal) => ({
     id: `signal:${signal.id}`,
     type:
-      signal.kind === "high_risk_signup" ? "high_risk_signup" : "signal",
+      signal.kind === "high_risk_signup" ||
+      signal.kind === "critical_risk_signup"
+        ? "high_risk_signup"
+        : "signal",
     title:
-      signal.kind === "high_risk_signup"
-        ? `High-risk signup${signal.username ? ` · @${signal.username}` : ""}`
+      signal.kind === "critical_risk_signup"
+        ? `Critical-risk signup${signal.username ? ` · @${signal.username}` : ""}`
+        : signal.kind === "high_risk_signup"
+          ? `High-risk signup${signal.username ? ` · @${signal.username}` : ""}`
         : feedTitle(signal.kind, signal.username),
     detail: signal.summary,
     occurredAt: signal.receivedAt,

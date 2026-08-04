@@ -4,6 +4,7 @@ import type {
   ProviderCompleteness,
   ProviderFailureKind,
 } from "./provider-contracts.js";
+import { signupMonitorDurationSeconds } from "./signup-alerts.js";
 import type { Signal } from "./types.js";
 
 export const PROFILE_ASSESSMENT_VERSION = "signup-v3";
@@ -155,9 +156,9 @@ function decayedPoints(signal: ProfileSignal, assessedAt: Date): number {
 }
 
 function profileSeverity(score: number): ProfileAssessment["severity"] {
-  if (score >= 100) return "critical";
-  if (score >= 80) return "high";
-  if (score >= 40) return "medium";
+  if (score >= 70) return "critical";
+  if (score >= 50) return "high";
+  if (score >= 21) return "medium";
   return "low";
 }
 
@@ -356,7 +357,7 @@ export function assessProfile(input: {
   let monitorDurationSeconds = 0;
   if (score >= 21) {
     recommendedActions.add("monitor");
-    monitorDurationSeconds = score >= 50 ? 900 : 450;
+    monitorDurationSeconds = signupMonitorDurationSeconds(score);
   }
   if (score >= 50) {
     recommendedActions.add("notify_standard");

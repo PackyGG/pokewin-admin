@@ -200,6 +200,10 @@ export class IngestDelivery {
               AND re.dashboard_delivered_at IS NULL
             )
             OR (
+              re.event_type = 'critical_risk_signup'
+              AND re.dashboard_delivered_at IS NULL
+            )
+            OR (
               re.event_type = 'fiat_deposit_identity_containment'
               AND re.dashboard_delivered_at IS NULL
             )

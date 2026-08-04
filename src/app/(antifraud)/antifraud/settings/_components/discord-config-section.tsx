@@ -16,12 +16,12 @@ import { cn } from "@/lib/utils";
 /** Rows whose value is a compiled-in code fact; `null` = not determinable here. */
 const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   { label: "Standard accent", value: "Discord blurple · #5865F2" },
-  { label: "Review accent", value: "Amber | score 21-49" },
+  { label: "Low-risk accent", value: "Green | score 21-49" },
   { label: "High accent", value: "Orange | score 50-69" },
   { label: "Critical / urgent accent", value: "Red · #EF4444" },
   // Replaced with the monitor-reported presence state inside the component.
   { label: "Button destination", value: null },
-  { label: "Automatic trigger", value: "Signup score 50+ or matched rule" },
+  { label: "Review trigger", value: "Signup score 50-100 or matched rule" },
   // Was "Not defined yet" while urgent was already live: free-battle risk marks
   // an alert urgent whenever its alert level is critical.
   { label: "Urgent trigger", value: "Critical alert level" },
@@ -126,7 +126,7 @@ export async function DiscordConfigSection() {
                 </span>
                 <span>
                   <span className="block text-muted-foreground">Trigger</span>
-                  <strong>Signup score 50+</strong>
+                  <strong>Signup score 50-69</strong>
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">

@@ -22,7 +22,7 @@ test("signup score and timing policy match the owner contract", async () => {
   const monitor = await source("../src/monitor.ts");
   const profileRisk = await source("../src/profile-risk.ts");
 
-  assert.match(config, /MONITOR_DURATION_SECONDS[\s\S]*?default\(450\)/);
+  assert.match(config, /MONITOR_DURATION_SECONDS[\s\S]*?default\(300\)/);
   assert.match(sourceReader, /interval '30 seconds'/);
   assert.match(profileRisk, /score >= 21/);
   assert.match(profileRisk, /score >= 50/);

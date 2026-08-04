@@ -260,10 +260,10 @@ export type ScoreDefinition = {
 };
 
 export const SEVERITY_BANDS = [
-  { key: "low", label: "Low", minimum: 0, maximum: 20 },
-  { key: "medium", label: "Medium", minimum: 21, maximum: 49 },
-  { key: "high", label: "High", minimum: 50, maximum: 69 },
-  { key: "critical", label: "Critical", minimum: 70, maximum: 100 },
+  { key: "low", label: "No risk", minimum: 0, maximum: 20 },
+  { key: "medium", label: "Low risk", minimum: 21, maximum: 49 },
+  { key: "high", label: "High risk", minimum: 50, maximum: 69 },
+  { key: "critical", label: "Critical risk", minimum: 70, maximum: 100 },
 ] as const;
 
 function option(

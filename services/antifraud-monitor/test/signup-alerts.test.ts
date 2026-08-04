@@ -3,24 +3,39 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  CRITICAL_RISK_SIGNUP_SCORE,
   HIGH_RISK_SIGNUP_SCORE,
   LOW_RISK_SIGNUP_SCORE,
-  highRiskSignupMarker,
   signupDiscordAlertKind,
+  signupMonitorDurationSeconds,
+  signupReviewMarker,
 } from "../src/signup-alerts.js";
 
-test("signup Discord bands keep 0–20 silent and split low from high risk", () => {
+test("signup Discord bands have distinct low, high, and critical actions", () => {
   assert.equal(LOW_RISK_SIGNUP_SCORE, 21);
+  assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
+  assert.equal(CRITICAL_RISK_SIGNUP_SCORE, 70);
   assert.equal(signupDiscordAlertKind(20), null);
   assert.equal(signupDiscordAlertKind(21), "low_risk");
   assert.equal(signupDiscordAlertKind(49), "low_risk");
   assert.equal(signupDiscordAlertKind(50), "high_risk");
+  assert.equal(signupDiscordAlertKind(69), "high_risk");
+  assert.equal(signupDiscordAlertKind(70), "critical_risk");
+  assert.equal(signupDiscordAlertKind(100), "critical_risk");
+});
+
+test("signup monitoring durations follow the four risk bands", () => {
+  assert.equal(signupMonitorDurationSeconds(20), 0);
+  assert.equal(signupMonitorDurationSeconds(21), 300);
+  assert.equal(signupMonitorDurationSeconds(49), 300);
+  assert.equal(signupMonitorDurationSeconds(50), 600);
+  assert.equal(signupMonitorDurationSeconds(69), 600);
+  assert.equal(signupMonitorDurationSeconds(70), 900);
+  assert.equal(signupMonitorDurationSeconds(100), 900);
 });
 
 test("50 is the inclusive signup review notification floor", () => {
-  assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
-
-  const marker = highRiskSignupMarker({
+  const marker = signupReviewMarker({
     userId: "user-1",
     caseId: "case-1",
     score: 60,
@@ -38,9 +53,30 @@ test("50 is the inclusive signup review notification floor", () => {
   assert.equal(marker.source, "signup_alert");
   assert.equal(marker.sourceRef, "user-1:high_risk_signup");
   assert.equal(marker.payload.monitorCaseId, "case-1");
+  assert.equal(marker.payload.riskBand, "high");
+  assert.equal(marker.payload.containmentRequired, false);
 });
 
-test("score-50 signup delivery uses durable independent sinks", async () => {
+test("critical signup marker requires all three containment actions", () => {
+  const marker = signupReviewMarker({
+    userId: "user-critical",
+    caseId: "case-critical",
+    score: 70,
+    signals: [],
+  });
+  assert.equal(marker.eventType, "critical_risk_signup");
+  assert.equal(marker.sourceRef, "user-critical:critical_risk_signup");
+  assert.equal(marker.payload.riskBand, "critical");
+  assert.equal(marker.payload.containmentRequired, true);
+  assert.equal(marker.payload.reasonCode, "critical_signup_score");
+  assert.deepEqual(marker.payload.actions, [
+    "lock_fiat_deposits",
+    "lock_withdrawals",
+    "lock_tips",
+  ]);
+});
+
+test("score-21 signup delivery uses durable independent sinks", async () => {
   const source = await readFile(
     new URL("../src/monitor.ts", import.meta.url),
     "utf8",
@@ -57,11 +93,14 @@ test("score-50 signup delivery uses durable independent sinks", async () => {
   assert.match(source, /score >= HIGH_RISK_SIGNUP_SCORE/);
   assert.match(source, /INSERT INTO signup_alert_outbox/);
   assert.match(source, /INSERT INTO risk_events/);
-  assert.match(source, /highRiskSignupMarker/);
-  assert.match(source, /:\s*"High-risk signup detected"/);
-  assert.match(source, /title: lowRisk[\s\S]*?"Low-risk signup detected"/);
+  assert.match(source, /signupReviewMarker/);
+  assert.match(source, /"High-risk signup detected"/);
+  assert.match(source, /"Critical-risk signup detected"/);
+  assert.match(source, /"Low-risk signup detected"/);
   assert.match(source, /"antifraud\.signup_low_risk"/);
-  assert.match(source, /severity: lowRisk \? "low" : severity\(alert\.score\)/);
+  assert.match(source, /"antifraud\.signup_high"/);
+  assert.match(source, /"antifraud\.signup_critical"/);
+  assert.match(source, /caseId: lowRisk \? undefined/);
   assert.match(source, /signals,/);
   assert.match(source, /deliverPendingSignupAlerts/);
   assert.match(migration, /CHECK \(score >= 60\)/);
