@@ -20,7 +20,7 @@ test("fraud navigation owns a manager-only Notifications Discord route", () => {
     )?.[1] ?? "";
 
   assert.match(sidebar, /label="Notifications"/);
-  assert.match(sidebar, /label:\s*"Discord"/);
+  assert.match(sidebar, /label:\s*"Discord routing"/);
   assert.match(sidebar, /href:\s*"\/antifraud\/discord"/);
   assert.match(sidebar, /\{canManage && \([\s\S]*NOTIFICATION_NAV/);
   assert.match(antifraudHost, /"discord"/);

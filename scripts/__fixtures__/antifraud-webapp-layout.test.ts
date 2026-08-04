@@ -29,15 +29,15 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Deposits",
     "Refunds",
     "KYC reviews",
-    "Discord",
+    "Discord routing",
+    "Dashboard inbox",
     "Domains",
     "IPs",
     "Fingerprints",
     "Banned users",
     "Risk locations",
-    "Risk engine",
+    "Automation & rules",
     "Audit log",
-    "Settings",
   ]) {
     assert.match(
       sidebar,
@@ -59,6 +59,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
   assert.doesNotMatch(sidebar, /label: "Providers"/);
+  assert.doesNotMatch(sidebar, /label: "Config"|label: "Risk engine"|label: "Settings"/);
   for (const removedItem of [
     "System health",
     "API",
