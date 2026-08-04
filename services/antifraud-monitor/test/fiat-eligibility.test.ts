@@ -82,6 +82,11 @@ function subjectFixture(
     visitor_id: "visitor-1",
     fingerprint_confidence: 0.99,
     fingerprint_ip: "203.0.113.20",
+    latest_login_ip: "203.0.113.20",
+    latest_login_visitor_id: "visitor-1",
+    latest_login_at: new Date("2026-07-29T11:58:00.000Z"),
+    latest_login_confidence: 0.99,
+    latest_login_suspected_alt: false,
     user_agent: null,
     is_banned: false,
     is_locked: false,
@@ -600,6 +605,75 @@ test("changed IP and device plus bad reputation contains at any age", () => {
   }
 });
 
+test("latest verified login is a second checkout identity baseline", () => {
+  const base = reviewInput();
+  const matching = fiatEligibilityInternals.automaticReview(base);
+  assert.equal(
+    matching.signals.some((signal) => signal.key.startsWith("latest_login_")),
+    false,
+  );
+
+  const changedIp = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({ latest_login_ip: "198.51.100.4" }),
+  });
+  assert.ok(
+    changedIp.signals.some((signal) => signal.key === "latest_login_ip_changed"),
+  );
+
+  const changedDevice = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({ latest_login_visitor_id: "login-device" }),
+  });
+  assert.ok(
+    changedDevice.signals.some(
+      (signal) => signal.key === "latest_login_fingerprint_changed",
+    ),
+  );
+});
+
+test("checkout differing from a recent login on both IP and device is denied", () => {
+  const base = reviewInput();
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({
+      latest_login_ip: "198.51.100.4",
+      latest_login_visitor_id: "login-device",
+      latest_login_at: new Date("2026-07-29T11:55:00.000Z"),
+    }),
+  });
+  assert.equal(reviewed.decision, "deny");
+  assert.equal(reviewed.enforce, false);
+  assert.equal(
+    reviewed.signals.find(
+      (signal) => signal.key === "recent_login_identity_mismatch",
+    )?.blocking,
+    true,
+  );
+});
+
+test("bad checkout identity drift from latest login contains at any age", () => {
+  const base = reviewInput();
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...base,
+    subject: subjectFixture({
+      latest_login_ip: "198.51.100.4",
+      latest_login_visitor_id: "login-device",
+      latest_login_at: new Date("2026-07-01T00:00:00.000Z"),
+    }),
+    providers: [
+      provider("fingerprint"),
+      providerWithSignal("proxycheck", "proxycheck_anonymous", 55),
+    ],
+  });
+  assert.equal(reviewed.decision, "deny");
+  assert.ok(
+    reviewed.enforcementReasons.includes(
+      "checkout_identity_changed_from_latest_login_with_bad_reputation",
+    ),
+  );
+});
+
 test("a live provider risk score alone counts as bad reputation", () => {
   assert.equal(
     fiatEligibilityInternals.badIpReputation([
@@ -657,11 +731,53 @@ test("an operator blocklist hit on the checkout IP or device contains", () => {
         value: kind === "ip" ? "203.0.113.20" : "visitor-1",
         reason: "manual fraud rule",
         effect: "block",
+        matched_on: "checkout",
       }],
     });
     assert.equal(reviewed.decision, "deny");
     assert.deepEqual(reviewed.enforcementReasons, [`blocklist_${kind}_match`]);
   }
+});
+
+test("pre-Fiat source and blocklist reads include latest login identity", async () => {
+  let sourceSql = "";
+  await fiatEligibilityInternals.loadSourceSubject({
+    query: async (text: string) => {
+      sourceSql = text;
+      return { rows: [] };
+    },
+  } as never, "user-1");
+  assert.match(sourceSql, /event_type = 'signup'/);
+  assert.match(sourceSql, /event_type = 'login'/);
+  assert.match(sourceSql, /latest_login_visitor_id/);
+  assert.match(sourceSql, /latest_login_ip/);
+
+  let blocklistValues: unknown[] = [];
+  let blocklistSql = "";
+  await fiatEligibilityInternals.loadBlocklistMatches({
+    query: async (text: string, values: unknown[]) => {
+      blocklistSql = text;
+      blocklistValues = values;
+      return { rows: [] };
+    },
+  } as never, {
+    requestIp: "203.0.113.20",
+    checkoutVisitorId: "checkout-device",
+    latestLoginIp: "198.51.100.4",
+    latestLoginVisitorId: "login-device",
+    signupIp: "192.0.2.8",
+    signupVisitorId: "signup-device",
+  });
+  assert.deepEqual(blocklistValues, [
+    "203.0.113.20",
+    "checkout-device",
+    "198.51.100.4",
+    "login-device",
+    "192.0.2.8",
+    "signup-device",
+  ]);
+  assert.match(blocklistSql, /'latest_login'/);
+  assert.match(blocklistSql, /ROW_NUMBER\(\) OVER/);
 });
 
 test("a known VPN IP raises Fiat risk without containing", () => {
@@ -673,6 +789,7 @@ test("a known VPN IP raises Fiat risk without containing", () => {
       value: "203.0.113.20",
       reason: "shared VPN exit",
       effect: "known_vpn",
+      matched_on: "checkout",
     }],
   });
   assert.equal(reviewed.enforce, false);
@@ -826,6 +943,7 @@ test("every containment reason is one the dashboard will honour", () => {
     "new_account_checkout_ip_changed",
     "new_account_checkout_device_changed",
     "checkout_identity_changed_with_bad_reputation",
+    "checkout_identity_changed_from_latest_login_with_bad_reputation",
     "repeat_fiat_within_sixty_seconds",
     "blocklist_ip_match",
     "blocklist_fingerprint_match",

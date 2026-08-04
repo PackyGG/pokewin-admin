@@ -111,6 +111,11 @@ const ANTIFRAUD_READ_TIMEOUT_MS = 2_500;
 const PERSIST_TIMEOUT_MS = 5_000;
 
 type SourceSubjectRow = Omit<Signup, "user_agent"> & {
+  latest_login_ip: string | null;
+  latest_login_visitor_id: string | null;
+  latest_login_at: Date | null;
+  latest_login_confidence: number | null;
+  latest_login_suspected_alt: boolean;
   is_banned: boolean;
   is_locked: boolean;
   is_self_excluded: boolean;
@@ -260,6 +265,12 @@ async function loadSourceSubject(
         fp.visitor_id,
         fp.confidence AS fingerprint_confidence,
         fp.ip::text AS fingerprint_ip,
+        login_fp.visitor_id AS latest_login_visitor_id,
+        login_fp.ip::text AS latest_login_ip,
+        login_fp.created_at AS latest_login_at,
+        login_fp.confidence AS latest_login_confidence,
+        COALESCE(login_fp.suspected_alt_triggered, false)
+          AS latest_login_suspected_alt,
         COALESCE(cardinality(ufl.locked_deposits_fiat), 0) > 0 AS fiat_locked,
         COALESCE(cr.blocked, false) AS country_blocked,
         COALESCE(cardinality(cr.locked_deposits_fiat), 0) > 0
@@ -296,6 +307,14 @@ async function loadSourceSubject(
         ORDER BY created_at DESC
         LIMIT 1
       ) fp ON true
+      LEFT JOIN LATERAL (
+        SELECT
+          visitor_id, ip, created_at, confidence, suspected_alt_triggered
+        FROM fingerprints
+        WHERE user_id = u.id AND event_type = 'login'
+        ORDER BY created_at DESC, id DESC
+        LIMIT 1
+      ) login_fp ON true
       LEFT JOIN LATERAL (
         SELECT
           COUNT(*)::int AS prior_paid_fiat,
@@ -426,10 +445,53 @@ async function loadNetworkEvidence(
  */
 async function loadBlocklistMatches(
   antifraud: Pool,
-  input: { requestIp: string; visitorId: string | null },
+  input: {
+    requestIp: string;
+    checkoutVisitorId: string | null;
+    latestLoginIp: string | null;
+    latestLoginVisitorId: string | null;
+    signupIp: string | null;
+    signupVisitorId: string | null;
+  },
 ): Promise<FiatEligibilityBlocklistMatch[]> {
   const result = await antifraud.query<FiatEligibilityBlocklistMatch>(
     `
+      WITH candidates(kind, value, matched_on, priority) AS (
+        VALUES
+          ('ip', $1::text, 'checkout', 1),
+          ('fingerprint', $2::text, 'checkout', 1),
+          ('ip', $3::text, 'latest_login', 2),
+          ('fingerprint', $4::text, 'latest_login', 2),
+          ('ip', $5::text, 'signup', 3),
+          ('fingerprint', $6::text, 'signup', 3)
+      ), matches AS (
+        SELECT
+          rules.id,
+          rules.kind,
+          candidates.matched_on,
+          candidates.priority,
+          rules.match_mode,
+          rules.ip_network,
+          rules.fingerprint_id,
+          rules.reason,
+          rules.effect,
+          ROW_NUMBER() OVER (
+            PARTITION BY rules.id ORDER BY candidates.priority
+          ) AS match_rank
+        FROM identifier_blocklists rules
+        JOIN candidates ON candidates.kind = rules.kind
+          AND candidates.value IS NOT NULL
+          AND CASE
+            WHEN rules.kind = 'ip'
+              AND pg_input_is_valid(candidates.value, 'inet')
+              THEN candidates.value::inet <<= rules.ip_network
+            WHEN rules.kind = 'fingerprint'
+              THEN rules.fingerprint_id = candidates.value
+            ELSE false
+          END
+        WHERE rules.enabled
+          AND (rules.expires_at IS NULL OR rules.expires_at > now())
+      )
       SELECT
         id,
         kind,
@@ -439,23 +501,21 @@ async function loadBlocklistMatches(
           ELSE fingerprint_id
         END AS value,
         reason,
-        effect
-      FROM identifier_blocklists
-      WHERE enabled
-        AND (expires_at IS NULL OR expires_at > now())
-        AND (
-          (
-            kind = 'ip'
-            AND pg_input_is_valid($1::text, 'inet')
-            AND $1::inet <<= ip_network
-          )
-          OR (kind = 'fingerprint' AND $2::text IS NOT NULL
-              AND fingerprint_id = $2)
-        )
-      ORDER BY kind, created_at
+        effect,
+        matched_on
+      FROM matches
+      WHERE match_rank = 1
+      ORDER BY kind, id
       LIMIT 20
     `,
-    [input.requestIp, input.visitorId],
+    [
+      input.requestIp,
+      input.checkoutVisitorId,
+      input.latestLoginIp,
+      input.latestLoginVisitorId,
+      input.signupIp,
+      input.signupVisitorId,
+    ],
   );
   return result.rows;
 }
@@ -630,6 +690,25 @@ export class FiatEligibilityService {
         })),
       () => ({ sharedCheckoutVisitorUsers: 0, sharedCurrentIpUsers: 0 }),
     );
+    const blocklistPromise = fingerprintPromise.then((result) => {
+      const checkoutIdentity = fingerprintEventIdentity(result.response);
+      return withDeadline(
+        loadBlocklistMatches(this.db.antifraud, {
+          requestIp,
+          checkoutVisitorId: checkoutIdentity.visitorId,
+          latestLoginIp: subject.latest_login_ip
+            ? canonicalIp(subject.latest_login_ip) ?? null
+            : null,
+          latestLoginVisitorId: subject.latest_login_visitor_id,
+          signupIp: subject.signup_ip
+            ? canonicalIp(subject.signup_ip) ?? null
+            : null,
+          signupVisitorId: subject.visitor_id,
+        }),
+        ANTIFRAUD_READ_TIMEOUT_MS,
+        "fiat_blocklist_read",
+      );
+    });
 
     const [
       fingerprint,
@@ -655,14 +734,7 @@ export class FiatEligibilityService {
       networkPromise,
       this.loadFraudHistory(input),
       this.loadVelocity(input),
-      withDeadline(
-        loadBlocklistMatches(this.db.antifraud, {
-          requestIp,
-          visitorId: subject.visitor_id,
-        }),
-        ANTIFRAUD_READ_TIMEOUT_MS,
-        "fiat_blocklist_read",
-      ),
+      blocklistPromise,
       this.loadPerkGrant(input),
     ]);
 
@@ -677,6 +749,9 @@ export class FiatEligibilityService {
         ...subject,
         signup_ip: subject.signup_ip
           ? canonicalIp(subject.signup_ip) ?? subject.signup_ip
+          : null,
+        latest_login_ip: subject.latest_login_ip
+          ? canonicalIp(subject.latest_login_ip) ?? subject.latest_login_ip
           : null,
       },
       identity,
@@ -956,6 +1031,24 @@ export class FiatEligibilityService {
               }]),
             ),
             identity: context.identity,
+            identityBaselines: {
+              checkout: {
+                ip: context.requestIp,
+                visitorId: context.identity.visitorId,
+                occurredAt: context.identity.eventTime,
+              },
+              latestLogin: {
+                ip: subject.latest_login_ip,
+                visitorId: subject.latest_login_visitor_id,
+                occurredAt: subject.latest_login_at,
+                confidence: subject.latest_login_confidence,
+                suspectedAlt: subject.latest_login_suspected_alt,
+              },
+              signup: {
+                ip: subject.signup_ip,
+                visitorId: subject.visitor_id,
+              },
+            },
             network: context.network,
             reputation: {
               badIp: badIpReputation([...byName.values()]),
@@ -964,6 +1057,7 @@ export class FiatEligibilityService {
             blocklistMatches: context.blocklistMatches.map((match) => ({
               kind: match.kind,
               value: match.value,
+              matchedOn: match.matched_on,
             })),
             providerSignals: context.providerSignals,
           }),
@@ -1084,6 +1178,8 @@ export class FiatEligibilityService {
 
 export const fiatEligibilityInternals = {
   automaticReview: evaluateFiatEligibility,
+  loadSourceSubject,
+  loadBlocklistMatches,
   behaviourSignals,
   badIpReputation,
   badDeviceReputation,

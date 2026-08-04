@@ -691,6 +691,7 @@ const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
   "new_account_checkout_ip_changed",
   "new_account_checkout_device_changed",
   "checkout_identity_changed_with_bad_reputation",
+  "checkout_identity_changed_from_latest_login_with_bad_reputation",
   "repeat_fiat_within_sixty_seconds",
   "blocklist_ip_match",
   "blocklist_fingerprint_match",

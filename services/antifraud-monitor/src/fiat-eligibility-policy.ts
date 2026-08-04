@@ -35,6 +35,8 @@ export const IP_CHANGE_CONTAINMENT_AGE_DAYS = 7;
 export const DEVICE_CHANGE_CONTAINMENT_AGE_HOURS = 36;
 /** A second checkout this soon after a paid deposit is card testing. */
 export const RECENT_PAID_FIAT_CONTAINMENT_MS = 60_000;
+/** A login this recent is expected to describe the checkout session. */
+export const RECENT_LOGIN_IDENTITY_WINDOW_MS = 30 * 60_000;
 /** Account age at which the trust credits and lighter drift weights unlock. */
 export const ESTABLISHED_ACCOUNT_DAYS = 7;
 /** Account age treated as a long-standing customer for behaviour credit. */
@@ -146,6 +148,11 @@ export type FiatEligibilitySubject = {
   created_at: Date;
   signup_ip: string | null;
   visitor_id: string | null;
+  latest_login_ip: string | null;
+  latest_login_visitor_id: string | null;
+  latest_login_at: Date | null;
+  latest_login_confidence: number | null;
+  latest_login_suspected_alt: boolean;
   is_suspected_alt: boolean;
   is_banned: boolean;
   is_locked: boolean;
@@ -196,6 +203,7 @@ export type FiatEligibilityBlocklistMatch = {
   value: string;
   reason: string;
   effect: "block" | "known_vpn";
+  matched_on: "checkout" | "latest_login" | "signup";
 };
 
 export type FiatEligibilityPolicyInput = {
@@ -611,10 +619,14 @@ export function evaluateFiatEligibility(
 
   // ── Operator blocklists ──────────────────────────────────────────────────
   for (const match of input.blocklistMatches) {
+    const evidenceLabel = match.matched_on === "latest_login"
+      ? "latest verified login"
+      : match.matched_on;
     if (match.effect === "known_vpn") {
       add(true, {
         key: "known_vpn_ip_match",
-        detail: `The checkout IP matches a known shared VPN: ${match.reason}`,
+        detail:
+          `The ${evidenceLabel} IP matches a known shared VPN: ${match.reason}`,
         points: 15,
         containing: false,
         source: "policy",
@@ -624,7 +636,8 @@ export function evaluateFiatEligibility(
     add(true, {
       key: `blocklist_${match.kind}_match`,
       detail:
-        `The checkout ${match.kind === "ip" ? "IP" : "device"} matches an `
+        `The ${evidenceLabel} ${match.kind === "ip" ? "IP" : "device"} `
+        + "matches an "
         + `active operator blocklist rule: ${match.reason}`,
       points: 100,
       containing: true,
@@ -642,6 +655,20 @@ export function evaluateFiatEligibility(
     && identity.visitorId
     && input.subject.visitor_id !== identity.visitorId,
   );
+  const latestLoginIpChanged = Boolean(
+    input.subject.latest_login_ip
+    && input.subject.latest_login_ip !== input.requestIp,
+  );
+  const latestLoginDeviceChanged = Boolean(
+    input.subject.latest_login_visitor_id
+    && identity.visitorId
+    && input.subject.latest_login_visitor_id !== identity.visitorId,
+  );
+  const latestLoginAgeMs = input.subject.latest_login_at
+    ? input.now.getTime() - input.subject.latest_login_at.getTime()
+    : Number.POSITIVE_INFINITY;
+  const latestLoginIsRecent = latestLoginAgeMs >= 0
+    && latestLoginAgeMs <= RECENT_LOGIN_IDENTITY_WINDOW_MS;
 
   add(
     ipChanged && ageDays < IP_CHANGE_CONTAINMENT_AGE_DAYS,
@@ -682,6 +709,38 @@ export function evaluateFiatEligibility(
       source: "policy",
     },
   );
+  add(
+    latestLoginIsRecent
+      && latestLoginIpChanged
+      && latestLoginDeviceChanged,
+    {
+      key: "recent_login_identity_mismatch",
+      detail:
+        "Both the checkout IP and device differ from the latest verified "
+        + "login for the active session.",
+      points: 100,
+      blocking: true,
+      source: "policy",
+    },
+  );
+  add(
+    latestLoginIpChanged
+      && latestLoginDeviceChanged
+      && (badIp || badDevice),
+    {
+      key: "checkout_identity_changed_from_latest_login_with_bad_reputation",
+      detail:
+        "Both the checkout IP and device differ from the latest verified "
+        + `login and the ${badIp && badDevice
+          ? "IP and device"
+          : badIp
+            ? "IP"
+            : "device"} carries a bad provider reputation.`,
+      points: 100,
+      containing: true,
+      source: "policy",
+    },
+  );
 
   // Card testing: a paid deposit landed seconds ago and another checkout is
   // already being opened.
@@ -713,6 +772,25 @@ export function evaluateFiatEligibility(
     key: "signup_fingerprint_changed",
     detail: "The checkout device differs from the signup device.",
     points: established ? 20 : 35,
+    source: "fingerprint",
+  });
+  add(latestLoginIpChanged, {
+    key: "latest_login_ip_changed",
+    detail: "The checkout IP differs from the latest verified login IP.",
+    points: latestLoginIsRecent ? 30 : established ? 10 : 20,
+    source: "network",
+  });
+  add(latestLoginDeviceChanged, {
+    key: "latest_login_fingerprint_changed",
+    detail:
+      "The checkout device differs from the latest verified login device.",
+    points: latestLoginIsRecent ? 40 : established ? 20 : 30,
+    source: "fingerprint",
+  });
+  add(input.subject.latest_login_suspected_alt, {
+    key: "latest_login_suspected_alt",
+    detail: "The latest verified login was marked as suspected alternate use.",
+    points: 55,
     source: "fingerprint",
   });
 
