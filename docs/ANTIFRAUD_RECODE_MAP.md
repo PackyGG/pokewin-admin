@@ -272,7 +272,7 @@ so one failed phase does not suppress later cleanup.
 - The signed operations tick projects each live review into one staff queue:
   `priority` for a withdrawal lock, finished provider KYC, or risk 70+;
   `waiting_kyc` for an unfinished required cycle; otherwise `normal`.
-- An explicit staff postponement overlays `postponed` for 2.5 hours, suppresses
+- An explicit staff postponement overlays `postponed` for 2 hours, suppresses
   reminders until due, and writes the review trail plus ADMIN audit atomically.
 - Staff can assign, note, mark fine, flag, ban, or lock withdrawals according
   to capability.

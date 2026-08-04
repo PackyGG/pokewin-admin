@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { enqueueDiscordEvent } from "./router";
 import { REVIEW_REMINDER_DELAYS_MS } from "./antifraud-policy";
+import { buildReviewReminderMessage } from "./review-reminder-card";
 
 const MAX_REMINDERS_PER_TICK = 25;
 
@@ -13,67 +14,14 @@ type DueReminder = {
   review_id: string;
   target_user_id: string;
   target_username: string | null;
-  reason: string;
+  assigned_to: string | null;
+  assigned_staff_username: string | null;
+  opened_staff_username: string | null;
   reminder_kind: "normal" | "urgent" | "postponed";
   queue_state: "priority" | "normal" | "waiting_kyc" | null;
   next_reminder_at: string;
   lease_token: string;
 };
-
-function reviewUrl(reviewId: string): string {
-  const url = new URL("https://fraud.packydash.com/reviews");
-  url.searchParams.set("review", reviewId);
-  return url.toString();
-}
-
-function safeDiscordText(value: string, max: number): string {
-  return value
-    .replace(/@/g, "@\u200b")
-    .replace(/[`*_~|>]/g, "\\$&")
-    .replace(/[\u0000-\u001f\u007f]/g, " ")
-    .trim()
-    .slice(0, max);
-}
-
-function reminderEmbed(row: DueReminder, correlationId: string) {
-  const url = reviewUrl(row.review_id);
-  return {
-    title:
-      row.reminder_kind === "urgent"
-        ? "🚨 Urgent account review reminder"
-        : "⏰ Account review reminder",
-    description:
-      "This account review is still unresolved and needs a staff decision.",
-    url,
-    color: row.reminder_kind === "urgent" ? 0xed4245 : 0x5865f2,
-    fields: [
-      {
-        name: "Account",
-        value: row.target_username
-          ? `**${safeDiscordText(row.target_username, 100)}**\nUser ID \`${safeDiscordText(row.target_user_id, 100)}\``
-          : `User ID \`${safeDiscordText(row.target_user_id, 100)}\``,
-        inline: true,
-      },
-      {
-        name: "Queue",
-        value:
-          row.queue_state === "priority"
-            ? "High priority"
-            : row.queue_state === "waiting_kyc"
-              ? "Waiting KYC"
-              : "Normal review",
-        inline: true,
-      },
-      {
-        name: "Reason",
-        value: safeDiscordText(row.reason, 900),
-        inline: false,
-      },
-    ],
-    footer: { text: `Correlation ${correlationId}` },
-    timestamp: new Date().toISOString(),
-  };
-}
 
 export async function enqueueDueReviewReminders(): Promise<{
   inspected: number;
@@ -130,13 +78,17 @@ export async function enqueueDueReviewReminders(): Promise<{
       review.id::text AS review_id,
       review.target_user_id,
       review.target_username,
-      review.reason,
+      review.assigned_to::text,
+      assignee.username AS assigned_staff_username,
+      opener.username AS opened_staff_username,
       reminder.reminder_kind,
       workflow.queue_state,
       reminder.next_reminder_at::text,
       reminder.lease_token::text
     FROM claimed AS reminder
     JOIN antifraud_reviews AS review ON review.id = reminder.review_id
+    LEFT JOIN admin_users AS assignee ON assignee.id = review.assigned_to
+    LEFT JOIN admin_users AS opener ON opener.id = review.opened_by
     LEFT JOIN antifraud_review_workflow AS workflow
       ON workflow.review_id = reminder.review_id
     ORDER BY reminder.next_reminder_at, reminder.review_id
@@ -145,26 +97,26 @@ export async function enqueueDueReviewReminders(): Promise<{
   let queued = 0;
   for (const row of due.rows) {
     const correlationId = randomUUID();
+    const message = buildReviewReminderMessage(
+      {
+        reviewId: row.review_id,
+        targetUserId: row.target_user_id,
+        targetUsername: row.target_username,
+        staffAction: row.assigned_to ? "claimed" : "started",
+        staffUsername: row.assigned_to
+          ? row.assigned_staff_username ?? "Unknown staff"
+          : row.opened_staff_username ?? "System",
+      },
+      correlationId,
+    );
     const result = await enqueueDiscordEvent({
       guildId: process.env.ADMIN_GUILD_ID ?? "",
       eventKey: "antifraud.review_reminder",
       dedupeKey: `review-reminder:${row.review_id}:${row.next_reminder_at}`,
       // The destination channel's selection is the complete tag list, even for
       // urgent reminders.
-      embed: reminderEmbed(row, correlationId),
-      components: [
-        {
-          type: 1,
-          components: [
-            {
-              type: 2,
-              style: 5,
-              label: "Review account",
-              url: reviewUrl(row.review_id),
-            },
-          ],
-        },
-      ],
+      embed: message.embed,
+      components: message.components,
     });
     if (result.enqueued + result.duplicate === 0) continue;
     queued += result.enqueued;
