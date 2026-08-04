@@ -571,11 +571,6 @@ export class FiatEligibilityService {
      * withheld, so the endpoint can run in observe-only mode.
      */
     private readonly containmentEnabled: boolean = true,
-    /**
-     * Fiat perk allowlist enforcement. Off by default: the screening workspace
-     * can populate grants long before checkouts start depending on them.
-     */
-    private readonly perkGateEnabled: boolean = false,
   ) {
     this.enrichment = enrichment;
   }
@@ -719,7 +714,6 @@ export class FiatEligibilityService {
       history,
       velocity,
       blocklistMatches,
-      perkGranted,
     ] = await Promise.all([
       fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
@@ -735,7 +729,6 @@ export class FiatEligibilityService {
       this.loadFraudHistory(input),
       this.loadVelocity(input),
       blocklistPromise,
-      this.loadPerkGrant(input),
     ]);
 
     const identity = fingerprintEventIdentity(fingerprint.response);
@@ -763,10 +756,6 @@ export class FiatEligibilityService {
       activeCaseSeverity: history.activeCaseSeverity,
       attempts10m: velocity.attempts10m,
       deniedAttempts24h: velocity.deniedAttempts24h,
-      perkGate: {
-        enabled: this.perkGateEnabled && input.env === "prod",
-        granted: perkGranted,
-      },
     });
 
     return this.persist({
@@ -826,32 +815,6 @@ export class FiatEligibilityService {
       signupRiskScore: result.rows[0]?.signup_risk_score ?? 0,
       activeCaseSeverity: result.rows[0]?.active_case_severity ?? null,
     };
-  }
-
-  /**
-   * Does this account hold a live Fiat perk? Only consulted for production —
-   * the allowlist is built from the production population, so a dev checkout
-   * must not be judged against it. Skipped entirely while the gate is off so a
-   * disabled feature costs the checkout nothing.
-   */
-  private async loadPerkGrant(
-    input: FiatEligibilityRequest,
-  ): Promise<boolean> {
-    if (!this.perkGateEnabled || input.env !== "prod") return true;
-    const result = await withDeadline(
-      this.db.antifraud.query<{ granted: boolean }>(
-        `
-          SELECT true AS granted
-          FROM fiat_perk_grants
-          WHERE user_id = $1 AND status = 'granted'
-          LIMIT 1
-        `,
-        [input.userID],
-      ),
-      ANTIFRAUD_READ_TIMEOUT_MS,
-      "fiat_perk_grant_read",
-    );
-    return result.rows[0]?.granted === true;
   }
 
   private async loadVelocity(input: FiatEligibilityRequest): Promise<{

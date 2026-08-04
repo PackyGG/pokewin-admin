@@ -69,6 +69,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   // global Fiat switch, its own page) and the audit log. "Risk engine" stays
   // retired.
   assert.doesNotMatch(sidebar, /label: "Risk engine"/);
+  assert.doesNotMatch(sidebar, /fiat-perks|Screening/);
   for (const removedItem of [
     "System health",
     "API",

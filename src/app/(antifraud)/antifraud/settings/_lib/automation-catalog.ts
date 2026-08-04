@@ -192,8 +192,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: [],
     controls: [
       { label: "Inspect decision policy", href: "/antifraud/fiat-eligibility" },
-      { label: "Global Fiat review", href: "/antifraud/config" },
-      { label: "Screen access cohorts", href: "/antifraud/fiat-perks" },
+      { label: "Global Fiat controls", href: "/antifraud/config" },
     ],
     mode: "mixed",
     icon: KeyRound,

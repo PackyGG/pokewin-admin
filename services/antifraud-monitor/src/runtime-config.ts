@@ -38,8 +38,6 @@ export function sanitizedRuntimeConfig(
     devSourceConfigured: boolean;
     devIpAllowlistConfigured: boolean;
     prodIpAllowlistConfigured: boolean;
-    /** Perk allowlist enforcement — off until the allowlist is populated. */
-    perkGateEnabled: boolean;
   };
 } {
   return {
@@ -94,7 +92,6 @@ export function sanitizedRuntimeConfig(
       prodIpAllowlistConfigured: Boolean(
         config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS.trim(),
       ),
-      perkGateEnabled: config.FIAT_PERK_GATE_ENABLED,
     },
   };
 }

@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { Settings2 } from "lucide-react";
+import { BadgeDollarSign, Power } from "lucide-react";
 
 import {
   PageHero,
@@ -8,19 +8,15 @@ import {
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getFiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
+import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
+import { hasAnyWhopFiatDepositLock } from "@/lib/fiat-jurisdiction-policy";
+import { getFiatConfig } from "@/lib/queries/fiat";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { GlobalFiatReviewCard } from "./fiat-auto-approval-card";
+import { GlobalFiatAvailabilityCard } from "./fiat-availability-card";
 
 export const metadata = { title: "Config · Antifraud" };
 
-/**
- * CONFIG — the global Fiat automatic-credit switch.
- *
- * Deliberately its own System page rather than a tab on Fraud Settings: this
- * switch turns automatic crediting of real player deposits on and off, so it
- * gets a destination an operator navigates to on purpose, not one they can
- * land on while flipping through configuration tabs.
- */
 export default async function AntifraudConfigPage() {
   await requireAntifraudManagerPage();
 
@@ -30,17 +26,62 @@ export default async function AntifraudConfigPage() {
         <PageHeroIdentity />
       </PageHero>
 
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600 dark:text-cyan-400">
+          System
+        </p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Config</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+          Global Fiat availability and credit behavior. Account, country, KYC,
+          payment, and fraud restrictions remain independent.
+        </p>
+      </div>
+
       <section className="space-y-3">
-        <SectionHeading icon={Settings2} title="Global Fiat review" />
+        <SectionHeading icon={Power} title="Fiat availability" />
+        <Suspense fallback={<Skeleton className="h-56 w-full rounded-xl" />}>
+          <GlobalFiatAvailabilityData />
+        </Suspense>
+      </section>
+
+      <section className="space-y-3">
+        <SectionHeading icon={BadgeDollarSign} title="Fiat credit" />
         <Suspense fallback={<Skeleton className="h-52 w-full rounded-xl" />}>
-          <GlobalFiatReviewData />
+          <GlobalFiatCreditData />
         </Suspense>
       </section>
     </div>
   );
 }
 
-async function GlobalFiatReviewData() {
+async function GlobalFiatAvailabilityData() {
+  const result = await safeQuery(
+    getFiatConfig,
+    [],
+    "antifraud.config.fiat-availability",
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const row = result.data.find(({ key }) => key === "locked_deposits_fiat");
+  if (result.error || !row) {
+    return <GlobalFiatAvailabilityCard initialAllowed={null} />;
+  }
+
+  try {
+    const parsed: unknown = JSON.parse(row.value);
+    if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) {
+      return <GlobalFiatAvailabilityCard initialAllowed={null} />;
+    }
+    return (
+      <GlobalFiatAvailabilityCard
+        initialAllowed={!hasAnyWhopFiatDepositLock(parsed)}
+      />
+    );
+  } catch {
+    return <GlobalFiatAvailabilityCard initialAllowed={null} />;
+  }
+}
+
+async function GlobalFiatCreditData() {
   try {
     const config = await getFiatDepositAutomaticCreditConfig();
     return (

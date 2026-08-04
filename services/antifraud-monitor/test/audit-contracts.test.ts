@@ -181,7 +181,6 @@ const runtimeConfig: Config = {
   NODE_ENV: "test",
   FIAT_ELIGIBILITY_CONTAINMENT_ENABLED: true,
   FIAT_DEPOSIT_IDENTITY_CONTAINMENT_ENABLED: true,
-  FIAT_PERK_GATE_ENABLED: false,
   TZ: "UTC",
   PORT: 4100,
   SOURCE_DATABASE_URL: "postgresql://source-user:source-secret@source/db",
@@ -710,23 +709,6 @@ test("live replay envelopes require valid ids and object payloads", () => {
     ),
     null,
   );
-});
-
-test("live replay accepts Fiat perk run progress frames", () => {
-  const parsed = parseEnvelope(
-    "1720000000001-1",
-    JSON.stringify({
-      type: "fiat_perk.run.progress",
-      at: "2026-08-04T00:00:00.000Z",
-      correlationId: "fiat-run-1",
-      data: {
-        runId: "run-1",
-        run: { status: "running", scannedCount: 200, candidateCount: 50 },
-      },
-    }),
-  );
-  assert.equal(parsed?.type, "fiat_perk.run.progress");
-  assert.equal(parsed?.data.runId, "run-1");
 });
 
 test("live publish persists and broadcasts through one atomic Redis command", async () => {

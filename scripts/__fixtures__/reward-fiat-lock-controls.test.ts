@@ -19,6 +19,9 @@ const fiatConfigApi = read("src/lib/backend-api/fiat-deposit-review.ts");
 const fraudConfigCard = read(
   "src/app/(antifraud)/antifraud/config/fiat-auto-approval-card.tsx",
 );
+const fraudAvailabilityCard = read(
+  "src/app/(antifraud)/antifraud/config/fiat-availability-card.tsx",
+);
 const fraudConfigActions = read(
   "src/app/(antifraud)/antifraud/config/fiat-auto-approval-actions.ts",
 );
@@ -95,10 +98,7 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
 });
 
-test("dedicated Fiat switch owns the Config page and stays hidden from raw Security config", () => {
-  // Its own destination on purpose: this switch credits real player deposits,
-  // so it must not be somewhere an operator lands while flipping through
-  // configuration tabs.
+test("Fraud Config owns both global Fiat controls and hides raw Security config", () => {
   assert.match(fraudConfigPage, /requireAntifraudManagerPage\(\)/);
   assert.match(fraudConfigPage, /getFiatDepositAutomaticCreditConfig\(\)/);
   assert.match(
@@ -107,6 +107,8 @@ test("dedicated Fiat switch owns the Config page and stays hidden from raw Secur
   );
   assert.doesNotMatch(fraudConfigPage, /redirect\(/);
   assert.match(settingsPage, /\{ value: "automation", label: "Automation" \}/);
+  assert.match(fraudConfigPage, /GlobalFiatAvailabilityCard/);
+  assert.match(fraudAvailabilityCard, /setGlobalFiatDeposits/);
   assert.match(fraudSidebar, /label: "Config",\s*href: "\/antifraud\/config"/);
   assert.match(automationCatalog, /href: "\/antifraud\/config"/);
   assert.match(

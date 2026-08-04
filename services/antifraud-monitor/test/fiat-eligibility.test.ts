@@ -1137,7 +1137,6 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
       return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
     }
     if (text.includes("FROM identifier_blocklists")) return { rows: [] };
-    if (text.includes("FROM fiat_perk_grants")) return { rows: [] };
     if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
       const values = (params ?? []) as unknown[];
       recordedAbstractStatus = values[12];

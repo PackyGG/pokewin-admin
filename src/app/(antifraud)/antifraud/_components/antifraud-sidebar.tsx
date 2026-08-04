@@ -15,7 +15,6 @@ import {
   Network,
   RadioTower,
   RotateCcw,
-  ScanSearch,
   ScrollText,
   Settings2,
   ShieldAlert,
@@ -93,11 +92,6 @@ const TRANSACTION_NAV: NavItem[] = [
 
 const KYC_NAV: NavItem[] = [
   { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
-];
-
-// Manager-only: a perk decision hands an account a live money rail.
-const FIAT_PERK_NAV: NavItem[] = [
-  { label: "Screening", href: "/antifraud/fiat-perks", icon: ScanSearch },
 ];
 
 const NOTIFICATION_NAV: NavItem[] = [
@@ -455,14 +449,6 @@ export function AntifraudSidebar({
         {canManage && (
           <>
             <NavSection
-              label="Fiat perks"
-              items={FIAT_PERK_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-              storageKey={`antifraud-nav:v1:${viewerId}:fiat-perks`}
-            />
-            <NavSection
               label="Notifications"
               items={NOTIFICATION_NAV}
               pathname={pathname}
@@ -490,7 +476,7 @@ export function AntifraudSidebar({
                 ...BLACKLIST_NAV,
                 ...GUIDE_NAV,
                 ...(canManage
-                  ? [...FIAT_PERK_NAV, ...NOTIFICATION_NAV, ...SYSTEM_NAV]
+                  ? [...NOTIFICATION_NAV, ...SYSTEM_NAV]
                   : []),
               ]}
               pathname={pathname}

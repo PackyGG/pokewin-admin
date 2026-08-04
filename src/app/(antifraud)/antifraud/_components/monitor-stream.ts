@@ -232,8 +232,7 @@ export function parseMonitorFrame(raw: unknown): MonitorStreamMessage | null {
   // notifications consumed by the cache-invalidation layer, not the UI.
   if (
     frame.type === "connected" ||
-    frame.type === "score_weight.updated" ||
-    frame.type.startsWith("fiat_perk.run.")
+    frame.type === "score_weight.updated"
   ) {
     return null;
   }

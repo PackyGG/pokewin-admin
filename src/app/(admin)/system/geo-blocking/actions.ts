@@ -88,6 +88,7 @@ function revalidateFiatPolicyPages(): void {
   revalidatePath("/system/geo-blocking");
   revalidatePath("/fiat");
   revalidatePath("/security");
+  revalidatePath("/antifraud/config");
 }
 
 /**
