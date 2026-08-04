@@ -43,6 +43,10 @@ export function RosterCard({
   /** "Wager" on active tab; "Lifetime wager" on past tab. */
   wagerLabel?: string;
 }) {
+  // Discord is owned by the bot chip below — a legacy hand-typed discord
+  // social row must never render a SECOND Discord chip.
+  const socialChips = c.socials.filter((s) => s.platform !== "discord");
+
   return (
     <Link
       href={CreatorHref(c.id)}
@@ -82,7 +86,7 @@ export function RosterCard({
         {!c.isPastCreator && <DealStatusBadge status={c.dealStatus} />}
       </div>
 
-      {(c.discord != null || c.socials.length > 0) && (
+      {(c.discord != null || socialChips.length > 0) && (
         <div className="flex flex-wrap gap-1">
           {c.discord && (
             /**
@@ -97,10 +101,15 @@ export function RosterCard({
               title={`Discord — ${c.discord.categoryName ?? "linked"}`}
             >
               <DiscordIcon className="size-3 text-indigo-600 dark:text-indigo-400" />
-              <span className="max-w-[90px] truncate">Discord</span>
+              {/* Reads like the other social chips: the name, not the
+                  platform word. The bot names the creator's category after
+                  them, so that IS the handle we know. */}
+              <span className="max-w-[90px] truncate">
+                {c.discord.categoryName ?? "Discord"}
+              </span>
             </span>
           )}
-          {c.socials.map((s) => {
+          {socialChips.map((s) => {
             const meta = PLATFORM_META[s.platform];
             const Icon = meta?.icon ?? MessageCircle;
             return (
