@@ -47,7 +47,10 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "Open or update Account Review at the review threshold",
       "Apply priority withdrawal containment at the critical threshold",
     ],
-    discordEvents: ["antifraud.signup_high_risk"],
+    discordEvents: [
+      "antifraud.signup_low_risk",
+      "antifraud.signup_high_risk",
+    ],
     controls: [
       { label: "Edit risk points", href: "/antifraud/points?tab=scoring" },
       { label: "Provider status", href: "/antifraud/settings" },

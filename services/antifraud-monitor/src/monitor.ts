@@ -54,6 +54,7 @@ import type { ScoreWeightStore } from "./score-weight-store.js";
 import {
   HIGH_RISK_SIGNUP_SCORE,
   highRiskSignupMarker,
+  signupDiscordAlertKind,
 } from "./signup-alerts.js";
 import { parseFailedSignup } from "./signup-failure.js";
 import {
@@ -1357,15 +1358,9 @@ export class MonitorEngine {
           durationSeconds,
         };
       }
-      if (assessment.recommendedActions.includes("notify_standard")
-        || assessment.recommendedActions.includes("notify_priority")) {
-        if (!opened) throw new Error("High-risk signup did not open a case");
-        const marker = highRiskSignupMarker({
-          userId: signup.id,
-          caseId: opened.caseId,
-          score,
-          signals: scoredSignals,
-        });
+      const signupAlertKind = signupDiscordAlertKind(score);
+      if (signupAlertKind) {
+        if (!opened) throw new Error("Notifiable signup did not open a case");
         await client.query(
           `
             INSERT INTO signup_alert_outbox (
@@ -1388,6 +1383,15 @@ export class MonitorEngine {
             signup.created_at,
           ],
         );
+      }
+      if (signupAlertKind === "high_risk") {
+        if (!opened) throw new Error("High-risk signup did not open a case");
+        const marker = highRiskSignupMarker({
+          userId: signup.id,
+          caseId: opened.caseId,
+          score,
+          signals: scoredSignals,
+        });
         await client.query(
           `
             INSERT INTO risk_events (
@@ -1597,25 +1601,39 @@ export class MonitorEngine {
     await drainOutbox<PendingAlert>({
       fetchPending: async () => pending.rows,
       attemptCount: (alert) => alert.attempt_count,
-      attempt: async (alert) => ({
-        delivered: await this.discord.send(
-          "antifraud.signup_high_risk",
-          `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
-          {
-            title: "High-risk signup detected",
-            description:
-              "This account crossed the automated signup review threshold and needs a staff decision.",
-            userId: alert.user_id,
-            username: alert.username,
-            caseId: alert.case_id ?? undefined,
-            score: alert.score,
-            severity: severity(alert.score),
-            trigger: "Signup score reached 50+",
-            signals: storedSignals(alert.signals),
-            occurredAt: alert.occurred_at,
-          },
-        ),
-      }),
+      attempt: async (alert) => {
+        const alertKind = signupDiscordAlertKind(alert.score);
+        if (!alertKind) {
+          throw new Error("Signup alert outbox contains a score below 21");
+        }
+        const lowRisk = alertKind === "low_risk";
+        return {
+          delivered: await this.discord.send(
+            lowRisk
+              ? "antifraud.signup_low_risk"
+              : "antifraud.signup_high_risk",
+            `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
+            {
+              title: lowRisk
+                ? "Low-risk signup detected"
+                : "High-risk signup detected",
+              description: lowRisk
+                ? "This account entered the low-risk signup band and is being monitored. No staff review or automatic restriction was opened."
+                : "This account crossed the automated signup review threshold and needs a staff decision.",
+              userId: alert.user_id,
+              username: alert.username,
+              caseId: lowRisk ? undefined : (alert.case_id ?? undefined),
+              score: alert.score,
+              severity: lowRisk ? "low" : severity(alert.score),
+              trigger: lowRisk
+                ? "Signup score reached 21-49"
+                : "Signup score reached 50+",
+              signals: storedSignals(alert.signals),
+              occurredAt: alert.occurred_at,
+            },
+          ),
+        };
+      },
       record: async (alert, outcome) => {
         await this.db.antifraud.query(
         `
