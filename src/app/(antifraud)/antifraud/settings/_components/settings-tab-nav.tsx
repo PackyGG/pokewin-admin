@@ -1,20 +1,21 @@
 "use client";
 
-import { BellRing, Settings2 } from "lucide-react";
+import { Activity, BellRing, Settings2 } from "lucide-react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 
 import { Spinner } from "@/components/ux";
 import { cn } from "@/lib/utils";
 
-export type SettingsTab = "general" | "discord";
+export type SettingsTab = "general" | "discord" | "health";
 
 const TABS: Array<{
   value: SettingsTab;
   label: string;
   icon: typeof Settings2;
 }> = [
-  { value: "general", label: "General", icon: Settings2 },
+  { value: "general", label: "Integrations", icon: Settings2 },
+  { value: "health", label: "Engine health", icon: Activity },
   { value: "discord", label: "Discord", icon: BellRing },
 ];
 

@@ -36,13 +36,14 @@ import { FlowBuilder } from "../flows/flow-builder";
 import { ScoreWeightEditor } from "./score-weight-editor";
 import { AnalysisRuleEditor } from "./analysis-rule-editor";
 
-export const metadata = { title: "Risk Scoring · Antifraud" };
+export const metadata = { title: "Rules & Scoring · Antifraud" };
 
-type RiskScoringTab = "scoring" | "flows";
+type RiskScoringTab = "scoring" | "flows" | "network";
 
 const RISK_SCORING_TABS = [
   { value: "scoring", label: "Risk scoring" },
   { value: "flows", label: "Point flows" },
+  { value: "network", label: "Network & creator" },
 ] as const;
 
 export default async function AntifraudPointsPage({
@@ -53,15 +54,29 @@ export default async function AntifraudPointsPage({
   await requireAntifraudManagerPage();
   const requestedTab = (await searchParams).tab;
   const tab: RiskScoringTab =
-    requestedTab === "flows" ? "flows" : "scoring";
+    requestedTab === "flows" || requestedTab === "network"
+      ? requestedTab
+      : "scoring";
 
   // Shell-first and active-tab-only: the selected tab is the only branch
   // mounted, so its monitor API reads do not run until that tab is selected.
+  // The connected-account and creator checks moved onto their own tab, so the
+  // scoring tab no longer pays for `listAnalysisRules()` on every visit.
   return (
     <div className="space-y-4">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
+
+      <div>
+        <h1 className="text-2xl font-semibold tracking-tight">
+          Rules &amp; scoring
+        </h1>
+        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
+          What turns evidence into points, which sequences escalate a case, and
+          how connected accounts and creator networks are judged.
+        </p>
+      </div>
 
       <TabChips
         items={RISK_SCORING_TABS}
@@ -72,19 +87,69 @@ export default async function AntifraudPointsPage({
 
       <Suspense
         key={tab}
-        fallback={tab === "flows" ? <FlowBuilderSkeleton /> : <PointsSkeleton />}
+        fallback={
+          tab === "flows" ? (
+            <FlowBuilderSkeleton />
+          ) : tab === "network" ? (
+            <NetworkSkeleton />
+          ) : (
+            <PointsSkeleton />
+          )
+        }
       >
-        {tab === "flows" ? <FlowBuilderData /> : <ScoringDashboard />}
+        {tab === "flows" ? (
+          <FlowBuilderData />
+        ) : tab === "network" ? (
+          <NetworkChecks />
+        ) : (
+          <ScoringDashboard />
+        )}
       </Suspense>
     </div>
   );
 }
 
+async function NetworkChecks() {
+  const analysis = await listAnalysisRules();
+  if (!analysis.configured) {
+    return <Unavailable text="The monitor service is not configured." />;
+  }
+  if (analysis.error) {
+    return <Unavailable text="The network and creator checks could not be loaded." />;
+  }
+  const network = analysis.data.filter((rule) => rule.category === "network");
+  const creator = analysis.data.filter((rule) => rule.category === "creator");
+  if (network.length === 0 && creator.length === 0) {
+    return <Unavailable text="No network or creator checks are configured." />;
+  }
+  return (
+    <div className="space-y-4">
+      {network.length > 0 && (
+        <AnalysisRules
+          icon={Users}
+          title="Account network checks"
+          description="full connected-component scoring"
+          rules={network}
+        />
+      )}
+      {creator.length > 0 && (
+        <AnalysisRules
+          icon={Radar}
+          title="Creator fraud checks"
+          description="referred-account networks and activity; creator behavior is excluded"
+          rules={creator}
+        />
+      )}
+      <p className="text-[11px] text-muted-foreground">
+        Edits apply to new assessments. Existing case history keeps the values
+        recorded when it occurred.
+      </p>
+    </div>
+  );
+}
+
 async function ScoringDashboard() {
-  const [result, analysis] = await Promise.all([
-    getAntifraudScoringConfig(),
-    listAnalysisRules(),
-  ]);
+  const result = await getAntifraudScoringConfig();
   if (!result.configured) {
     return <Unavailable text="The monitor service is not configured." />;
   }
@@ -166,22 +231,6 @@ async function ScoringDashboard() {
         definitions={config.activitySignals}
       />
       <BehaviorRules config={config} />
-      {analysis.configured && !analysis.error && (
-        <>
-          <AnalysisRules
-            icon={Users}
-            title="Account network checks"
-            description="full connected-component scoring"
-            rules={analysis.data.filter((rule) => rule.category === "network")}
-          />
-          <AnalysisRules
-            icon={Radar}
-            title="Creator fraud checks"
-            description="referred-account networks and activity; creator behavior is excluded"
-            rules={analysis.data.filter((rule) => rule.category === "creator")}
-          />
-        </>
-      )}
 
       <p className="text-[11px] text-muted-foreground">
         Point edits apply to new signup assessments and new live activity.
@@ -197,11 +246,11 @@ async function FlowBuilderData() {
     getAntifraudEventCatalog(),
   ]);
   if (!scoring.configured || !events.configured) {
-    return <UnavailableWithIcon text="The monitor service is not configured." />;
+    return <Unavailable text="The monitor service is not configured." />;
   }
   if (scoring.error || events.error || !scoring.data) {
     return (
-      <UnavailableWithIcon text="The flow builder could not load the live monitor configuration." />
+      <Unavailable text="The flow builder could not load the live monitor configuration." />
     );
   }
   return (
@@ -431,11 +480,13 @@ function Unavailable({ text }: { text: string }) {
   );
 }
 
-function UnavailableWithIcon({ text }: { text: string }) {
+function NetworkSkeleton() {
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
-      <RadioTower className="mx-auto mb-3 size-6 text-muted-foreground" aria-hidden />
-      <p className="text-sm text-muted-foreground">{text}</p>
+    <div className="space-y-4">
+      <Skeleton className="h-8 w-56 rounded-lg" />
+      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-8 w-56 rounded-lg" />
+      <Skeleton className="h-64 rounded-xl" />
     </div>
   );
 }

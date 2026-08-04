@@ -10,13 +10,17 @@ import {
   Banknote,
   ChevronRight,
   Fingerprint,
+  Gauge,
   LayoutDashboard,
+  ListChecks,
   MailWarning,
   MapPinned,
   Network,
+  Plug,
   RadioTower,
   RotateCcw,
   ScanSearch,
+  ScrollText,
   ShieldAlert,
   Webhook,
   type LucideIcon,
@@ -143,12 +147,25 @@ const GUIDE_NAV: NavItem[] = [
   },
 ];
 
+/**
+ * System — how the fraud engine is configured, and whether it is healthy.
+ *
+ * This used to be two entries ("Automation & rules" + "Audit log") in front of
+ * five real pages: Rules & scoring, the event catalog, integrations and the
+ * Fiat switch were all reachable only by clicking a card on the Automation
+ * page, so nothing in the nav said they existed. Each destination that an
+ * operator edits now has its own entry, and each of those pages carries its
+ * own tabs for its sections.
+ */
 const SYSTEM_NAV: NavItem[] = [
-  { label: "Automation & rules", href: "/antifraud/automation", icon: Bot },
+  { label: "Automation", href: "/antifraud/automation", icon: Bot },
+  { label: "Rules & scoring", href: "/antifraud/points", icon: Gauge },
+  { label: "Event catalog", href: "/antifraud/events", icon: ListChecks },
+  { label: "Integrations", href: "/antifraud/settings", icon: Plug },
   {
     label: "Audit log",
     href: "/antifraud/audit",
-    icon: Activity,
+    icon: ScrollText,
   },
 ];
 
