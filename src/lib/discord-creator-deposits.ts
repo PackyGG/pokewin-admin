@@ -179,6 +179,19 @@ export async function updateCreatorDepositSettings(input: {
         WHERE setup_id = ${setup.id}::uuid
           AND status IN ('pending', 'leased')
       `);
+      await tx.execute(sql`
+        UPDATE discord_creator_signup_jobs
+        SET
+          status = 'dead',
+          lease_token = NULL,
+          lease_owner = NULL,
+          leased_until = NULL,
+          last_error_code = 'notifications_disabled',
+          last_error_message = 'Creator disabled activity notifications.',
+          updated_at = now()
+        WHERE setup_id = ${setup.id}::uuid
+          AND status IN ('pending', 'leased')
+      `);
     }
 
     await tx.insert(admin_audit_events).values({

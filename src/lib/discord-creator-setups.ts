@@ -895,6 +895,11 @@ export async function linkCreatorSetup(input: {
       SET creator_user_id = ${input.creatorUserId},
           linked_by_discord_user_id = ${input.actorDiscordUserId},
           link_interaction_id = ${input.interactionId},
+          deposit_notifications_enabled_at = CASE
+            WHEN deposit_notifications_enabled = true
+              THEN now()
+            ELSE NULL
+          END,
           linked_at = now()
       WHERE id = ${setup.id}::uuid
         AND creator_user_id IS NULL
@@ -1137,6 +1142,11 @@ export async function completeCreatorSetup(input: {
           chat_channel_id = ${input.chatChannelId},
           logs_channel_id = ${input.logsChannelId},
           category_name = ${input.categoryName},
+          deposit_notifications_enabled_at = CASE
+            WHEN deposit_notifications_enabled = true
+              THEN COALESCE(deposit_notifications_enabled_at, now())
+            ELSE NULL
+          END,
           completed_at = now()
       WHERE id = ${input.reservationId}::uuid
         AND status = 'pending'

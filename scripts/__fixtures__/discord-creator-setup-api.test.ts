@@ -150,33 +150,43 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
 });
 
-test("creator deposit notifications are opt-in, durable, and creator-guild pinned", async () => {
-  const [service, readSettings, updateSettings, claim, ack, migration, endpoints] =
+test("creator activity notifications default on, are durable, and creator-guild pinned", async () => {
+  const [service, signupService, readSettings, updateSettings, claim, ack, signupAck,
+    migration, signupMigration, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-deposits.ts"),
+      read("src/lib/discord-creator-signups.ts"),
       read("src/app/api/v1/discord/creator-setups/deposit-settings/route.ts"),
       read("src/app/api/v1/discord/creator-setups/deposit-settings/update/route.ts"),
       read("src/app/api/v1/discord/creator-deposits/jobs/claim/route.ts"),
       read("src/app/api/v1/discord/creator-deposits/jobs/[id]/ack/route.ts"),
+      read("src/app/api/v1/discord/creator-signups/jobs/[id]/ack/route.ts"),
       read("drizzle/admin/migrations/20260730_creator_deposit_notifications.sql"),
+      read("drizzle/admin/migrations/20260804_creator_signup_notifications.sql"),
       read("src/lib/api-auth/endpoints.ts"),
     ]);
 
-  for (const route of [readSettings, updateSettings, claim, ack]) {
+  for (const route of [readSettings, updateSettings, claim, ack, signupAck]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(readSettings, /getCreatorDepositSettings/);
   assert.match(updateSettings, /updateCreatorDepositSettings/);
   assert.match(updateSettings, /principal\.keyId/);
   assert.match(claim, /claimCreatorDepositJobs/);
+  assert.match(claim, /claimCreatorSignupJobs/);
   assert.match(claim, /CREATOR_SETUP_GUILD_ID/);
   assert.match(ack, /acknowledgeCreatorDepositJob/);
   assert.match(ack, /CREATOR_SETUP_GUILD_ID/);
+  assert.match(signupAck, /acknowledgeCreatorSignupJob/);
 
   assert.match(migration, /"deposit_notifications_enabled" BOOLEAN NOT NULL DEFAULT false/);
   assert.match(migration, /CREATE TABLE IF NOT EXISTS "discord_creator_deposit_jobs"/);
   assert.match(migration, /"source_deposit_id" UUID NOT NULL/);
   assert.match(migration, /discord_creator_deposit_scan_state/);
+  assert.match(signupMigration, /ALTER COLUMN "deposit_notifications_enabled" SET DEFAULT true/);
+  assert.match(signupMigration, /"deposit_notifications_updated_at" IS NULL/);
+  assert.match(signupMigration, /CREATE TABLE IF NOT EXISTS "discord_creator_signup_jobs"/);
+  assert.match(signupMigration, /discord_creator_signup_scan_state/);
   assert.match(service, /deposit\.status = 'completed'/);
   assert.match(service, /deposit\.amount::numeric > 0/);
   assert.match(service, /INTERVAL '7 days'/);
@@ -185,8 +195,14 @@ test("creator deposit notifications are opt-in, durable, and creator-guild pinne
   assert.match(service, /FOR UPDATE OF job SKIP LOCKED/);
   assert.match(service, /event_type: input\.enabled/);
   assert.doesNotMatch(service, /getProdWrite/);
+  assert.match(signupService, /usage\.usage_type::text = 'signup'/);
+  assert.match(signupService, /usage\.status::text = 'completed'/);
+  assert.match(signupService, /ON CONFLICT \(source_signup_id\) DO NOTHING/);
+  assert.match(signupService, /FOR UPDATE OF job SKIP LOCKED/);
+  assert.doesNotMatch(signupService, /getProdWrite/);
 
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deposit-settings/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-deposits\/jobs\/claim/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-deposits\/jobs\/\[id\]\/ack/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-signups\/jobs\/\[id\]\/ack/);
 });
