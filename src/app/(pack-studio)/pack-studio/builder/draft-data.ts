@@ -4,7 +4,10 @@ import { sql } from "drizzle-orm";
 
 import { getReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
-import { getPackBuildDraftForEdit } from "@/lib/packs/build-requests";
+import {
+  getPackBuildDraftForEdit,
+  listPackBuildDraftRevisions,
+} from "@/lib/packs/build-requests";
 import { scaleToPackBuilderTickets } from "@/lib/packs/builder-edge";
 import { shapeWeights } from "@/app/(admin)/insights/edge-calc/risk";
 import type {
@@ -30,6 +33,7 @@ export async function loadPackBuilderDraft(input: {
 }): Promise<PackBuilderInitialDraft | null> {
   const draft = await getPackBuildDraftForEdit(input);
   if (!draft) return null;
+  const history = await listPackBuildDraftRevisions(input);
 
   const requestedCards = draft.requestPayload.cards;
   if (requestedCards.some((card) => !("cardId" in card))) {
@@ -103,6 +107,8 @@ export async function loadPackBuilderDraft(input: {
 
   return {
     id: draft.id,
+    revision: draft.revision,
+    updatedAt: draft.updatedAt,
     name: draft.requestPayload.name,
     slug: draft.requestPayload.slug,
     description: draft.requestPayload.description ?? null,
@@ -118,5 +124,6 @@ export async function loadPackBuilderDraft(input: {
       floorRatioMin: draft.requestPayload.targets.floorRatioMin ?? null,
       nearMissMin: draft.requestPayload.targets.nearMissMin ?? null,
     },
+    history,
   };
 }

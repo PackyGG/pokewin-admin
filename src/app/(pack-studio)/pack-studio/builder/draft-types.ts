@@ -10,6 +10,8 @@ export type PackBuilderDraftCard = {
 
 export type PackBuilderInitialDraft = {
   id: string;
+  revision: number;
+  updatedAt: string;
   name: string;
   slug: string;
   description: string | null;
@@ -25,4 +27,10 @@ export type PackBuilderInitialDraft = {
     floorRatioMin: number | null;
     nearMissMin: number | null;
   };
+  history: Array<{
+    revision: number;
+    changedByUsername: string | null;
+    changeKind: string;
+    createdAt: string;
+  }>;
 };

@@ -93,7 +93,7 @@ async function BuilderBody({
 
   return (
     <PackBuilderForm
-      key={initialDraft?.id ?? "new"}
+      key={initialDraft ? `${initialDraft.id}:${initialDraft.revision}` : "new"}
       sets={sets}
       rarities={rarities}
       defaultMaxWinCap={maxWinCap}

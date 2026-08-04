@@ -15,6 +15,7 @@ import {
   PACK_IMAGE_REQUIRED_ERROR,
   submitPackBuildDraftForApproval,
   updatePackBuildDraftImage,
+  restorePackBuildDraftRevision,
 } from "@/lib/packs/build-requests";
 
 /**
@@ -249,5 +250,44 @@ export async function discardPackBuildDraftAction(
           ? error.message
           : "Could not discard this build draft.",
     };
+  }
+}
+
+export async function restorePackBuildDraftRevisionAction(input: {
+  requestId: string;
+  revision: number;
+  expectedRevision: number;
+}): Promise<PackBuildDraftActionResult> {
+  try {
+    const session = await requireBuildDraftOperator();
+    const parsed = z.object({
+      requestId: z.string().uuid(),
+      revision: z.number().int().positive(),
+      expectedRevision: z.number().int().positive(),
+    }).safeParse(input);
+    if (!parsed.success) return { ok: false, error: "Invalid draft revision." };
+    const outcome = await restorePackBuildDraftRevision({
+      ...parsed.data,
+      actorId: session.userId,
+      canManageAll: canManageEveryBuildDraft(session),
+    });
+    if (outcome === "stale") {
+      return { ok: false, error: "This build changed in another tab. Reload before restoring history." };
+    }
+    if (outcome === "unavailable") {
+      return { ok: false, error: "This build or revision is no longer available." };
+    }
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_build_draft_revision_restored",
+      metadata: { request_id: parsed.data.requestId, restored_revision: parsed.data.revision },
+    });
+    revalidatePath("/pack-studio/builder");
+    revalidatePath("/pack-studio/builder-drafts");
+    revalidateTag("pack-build-drafts");
+    return { ok: true };
+  } catch (error) {
+    unstable_rethrow(error);
+    return { ok: false, error: error instanceof Error ? error.message : "Could not restore this revision." };
   }
 }

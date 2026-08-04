@@ -22,6 +22,10 @@ import {
 import { CardImage } from "@/components/card-image";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { isPackBuilderEdgeInRange } from "@/lib/packs/builder-edge";
 import { cn } from "@/lib/utils";
@@ -49,6 +53,10 @@ export function BuildDraftsList({
   const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [activeAction, setActiveAction] = useState<string | null>(null);
+  const [confirmation, setConfirmation] = useState<{
+    kind: "submit" | "discard";
+    draft: PackBuildDraftItem;
+  } | null>(null);
 
   function requestApproval(draft: PackBuildDraftItem) {
     if (!draft.imageUrl) {
@@ -61,13 +69,6 @@ export function BuildDraftsList({
       toast.error(
         "This saved build is outside the strict 10.95%–11.50% edge band and cannot be sent live.",
       );
-      return;
-    }
-    if (
-      !window.confirm(
-        `Send "${draft.name}" to the owner queue as a live request?`,
-      )
-    ) {
       return;
     }
     setActiveAction(`submit:${draft.id}`);
@@ -116,7 +117,6 @@ export function BuildDraftsList({
   }
 
   function discard(draft: PackBuildDraftItem) {
-    if (!window.confirm(`Discard the saved build "${draft.name}"?`)) return;
     setActiveAction(`discard:${draft.id}`);
     startTransition(async () => {
       try {
@@ -159,6 +159,30 @@ export function BuildDraftsList({
 
   return (
     <div className="space-y-3">
+      <AlertDialog open={confirmation !== null} onOpenChange={(open) => !open && setConfirmation(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{confirmation?.kind === "discard" ? "Discard saved build?" : "Request live approval?"}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {confirmation?.kind === "discard"
+                ? `“${confirmation.draft.name}” will leave Saved Builds. Its revision history remains auditable.`
+                : `“${confirmation?.draft.name}” will move to the owner approval queue. Nothing goes live until an owner approves it.`}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={() => {
+              const selected = confirmation;
+              setConfirmation(null);
+              if (!selected) return;
+              if (selected.kind === "discard") discard(selected.draft);
+              else requestApproval(selected.draft);
+            }}>
+              {confirmation?.kind === "discard" ? "Discard build" : "Submit request"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       {drafts.map((draft) => {
         const submitting = activeAction === `submit:${draft.id}`;
         const discarding = activeAction === `discard:${draft.id}`;
@@ -270,7 +294,7 @@ export function BuildDraftsList({
                   type="button"
                   variant="outline"
                   disabled={isPending}
-                  onClick={() => discard(draft)}
+                  onClick={() => setConfirmation({ kind: "discard", draft })}
                   className="gap-2"
                 >
                   {discarding ? (
@@ -285,7 +309,7 @@ export function BuildDraftsList({
                   disabled={
                     isPending || !draft.imageUrl || !edgeWithinProductionBand
                   }
-                  onClick={() => requestApproval(draft)}
+                  onClick={() => setConfirmation({ kind: "submit", draft })}
                   className="gap-2"
                 >
                   {submitting ? (

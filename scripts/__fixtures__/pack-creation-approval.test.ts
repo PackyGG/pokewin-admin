@@ -242,6 +242,7 @@ test("saved Pack Builder drafts preserve and restore their exact odds", async ()
 
   assert.match(builderForm, /ticketWeights:\s*cards\.map\(\(c\) => oddsPercentToUnits\(c\.odds\)\)/);
   assert.match(buildRequests, /ticketWeights:\s*z\.array\(z\.number\(\)\.int\(\)\.nonnegative\(\)\)\.optional\(\)/);
+  assert.match(buildRequests, /request\.ticketWeights\.some\(\(weight\) => weight <= 0\)/);
   assert.match(buildRequests, /hasExactPackBuilderTicketTotal\(request\.ticketWeights\)/);
   assert.match(draftData, /draft\.requestPayload\.ticketWeights \?\?/);
   assert.match(draftData, /odds:\s*ticketWeights\[index\]! \/ 10_000/);
@@ -251,6 +252,11 @@ test("saved Pack Builder drafts preserve and restore their exact odds", async ()
     "the shared exact-odds resolver must be defined and used by preview plus approval",
   );
   assert.match(actions, /tickets:\s*\[\.\.\.input\.ticketWeights\]/);
+  assert.match(buildRequests, /new Set\(cardIds\)\.size !== cardIds\.length/);
+  assert.match(buildRequests, /revision = revision \+ 1/);
+  assert.match(buildRequests, /AND revision = \$\{input\.expectedRevision\}/);
+  assert.match(builderForm, /Recovered unsaved Pack Builder changes/);
+  assert.match(builderForm, /restorePackBuildDraftRevisionAction/);
 });
 
 test("the normal Packs dashboard has no pack edit entry point", async () => {

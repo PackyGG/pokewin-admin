@@ -1581,6 +1581,8 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 	review_started_at: timestamp({ withTimezone: true, mode: 'string' }),
 	reviewed_at: timestamp({ withTimezone: true, mode: 'string' }),
 	preview_max_win: numeric({ precision: 20, scale:  2 }),
+	revision: integer().default(1).notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("pack_creation_requests_pending_slug_key").using("btree", sql`lower(slug)`).where(sql`(status = ANY (ARRAY['pending'::text, 'processing'::text]))`),
 	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
@@ -1597,6 +1599,27 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 		}).onUpdate("cascade").onDelete("set null"),
 	check("pack_creation_requests_payload_object_check", sql`jsonb_typeof(request_payload) = 'object'::text`),
 	check("pack_creation_requests_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'approved'::text, 'declined'::text])`),
+]);
+
+export const pack_build_draft_revisions = pgTable("pack_build_draft_revisions", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	request_id: uuid().notNull(),
+	revision: integer().notNull(),
+	changed_by: uuid(),
+	change_kind: text().default('saved').notNull(),
+	name: text().notNull(),
+	slug: text().notNull(),
+	request_payload: jsonb().notNull(),
+	preview_edge: numeric({ precision: 8, scale: 6 }).notNull(),
+	preview_win_rate: numeric({ precision: 8, scale: 6 }).notNull(),
+	preview_max_win: numeric({ precision: 14, scale: 2 }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("pack_build_draft_revisions_request_created_idx").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("pack_build_draft_revisions_request_revision_key").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.revision.asc().nullsLast().op("int4_ops")),
+	foreignKey({ columns: [table.request_id], foreignColumns: [pack_creation_requests.id], name: "pack_build_draft_revisions_request_id_fkey" }).onUpdate("cascade").onDelete("cascade"),
+	foreignKey({ columns: [table.changed_by], foreignColumns: [admin_users.id], name: "pack_build_draft_revisions_changed_by_fkey" }).onUpdate("cascade").onDelete("set null"),
+	check("pack_build_draft_revisions_payload_object_check", sql`jsonb_typeof(request_payload) = 'object'::text`),
 ]);
 
 export const discord_notification_guilds = pgTable("discord_notification_guilds", {

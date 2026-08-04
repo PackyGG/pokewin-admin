@@ -14,6 +14,7 @@ import {
   CheckCircle2,
   Flame,
   Gauge,
+  History,
   Layers,
   Rocket,
   Save,
@@ -89,6 +90,7 @@ import {
   oddsPercentToUnits,
 } from "./builder-pricing";
 import type { BuilderCardItem } from "./actions";
+import { restorePackBuildDraftRevisionAction } from "./actions";
 import type { PackBuilderInitialDraft } from "./draft-types";
 
 /**
@@ -146,6 +148,24 @@ type PoolCard = {
   autoOdds: boolean;
   color: string | null;
   animation: boolean;
+};
+
+type BuilderRecovery = {
+  savedAt: number;
+  name: string;
+  slug: string;
+  price: string;
+  autoTune: boolean;
+  imagePreview: string | null;
+  cards: PoolCard[];
+  winRatePct: number;
+  capEnabled: boolean;
+  maxWinCap: string;
+  nearMissPct: number;
+  spiciness: Spiciness;
+  customEdgeEnabled: boolean;
+  customEdgePct: string;
+  difficulty: number;
 };
 
 function autoSlug(val: string): string {
@@ -322,6 +342,64 @@ export function PackBuilderForm({
   // AlertDialogAction is a plain button, not a Close — it wouldn't auto-close
   // on the error path otherwise).
   const [activateConfirmOpen, setActivateConfirmOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const [recoveryReady, setRecoveryReady] = useState(false);
+  const recoveryKey = `pack-builder-recovery:${initialDraft?.id ?? "new"}`;
+
+  const recoveryState = useMemo<BuilderRecovery>(() => ({
+    savedAt: Date.now(), name, slug, price, autoTune,
+    imagePreview: imagePreview?.startsWith("blob:") ? null : imagePreview,
+    cards, winRatePct, capEnabled, maxWinCap, nearMissPct, spiciness,
+    customEdgeEnabled, customEdgePct, difficulty,
+  }), [name, slug, price, autoTune, imagePreview, cards, winRatePct, capEnabled, maxWinCap, nearMissPct, spiciness, customEdgeEnabled, customEdgePct, difficulty]);
+  const recoverySerialized = JSON.stringify({ ...recoveryState, savedAt: 0 });
+  const serverSnapshotRef = useRef(recoverySerialized);
+  const hasUnsavedChanges = recoveryReady && recoverySerialized !== serverSnapshotRef.current;
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(recoveryKey);
+      if (raw) {
+        const saved = JSON.parse(raw) as Partial<BuilderRecovery>;
+        const serverUpdated = initialDraft ? Date.parse(initialDraft.updatedAt) : 0;
+        if (typeof saved.savedAt === "number" && saved.savedAt > serverUpdated && Array.isArray(saved.cards)) {
+          if (typeof saved.name === "string") setName(saved.name);
+          if (typeof saved.slug === "string") setSlug(saved.slug);
+          if (typeof saved.price === "string") setPrice(saved.price);
+          if (typeof saved.autoTune === "boolean") setAutoTune(saved.autoTune);
+          if (typeof saved.imagePreview === "string" || saved.imagePreview === null) setImagePreview(saved.imagePreview);
+          setCards(saved.cards as PoolCard[]);
+          if (typeof saved.winRatePct === "number") setWinRatePct(saved.winRatePct);
+          if (typeof saved.capEnabled === "boolean") setCapEnabled(saved.capEnabled);
+          if (typeof saved.maxWinCap === "string") setMaxWinCap(saved.maxWinCap);
+          if (typeof saved.nearMissPct === "number") setNearMissPct(saved.nearMissPct);
+          if (saved.spiciness === "calmer" || saved.spiciness === "balanced" || saved.spiciness === "spicier") setSpiciness(saved.spiciness);
+          if (typeof saved.customEdgeEnabled === "boolean") setCustomEdgeEnabled(saved.customEdgeEnabled);
+          if (typeof saved.customEdgePct === "string") setCustomEdgePct(saved.customEdgePct);
+          if (typeof saved.difficulty === "number") setDifficulty(saved.difficulty);
+          toast.info("Recovered unsaved Pack Builder changes from this browser.");
+        }
+      }
+    } catch {
+      localStorage.removeItem(recoveryKey);
+    } finally {
+      setRecoveryReady(true);
+    }
+  // Recovery runs once for this server revision.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recoveryKey]);
+
+  useEffect(() => {
+    if (!recoveryReady || !hasUnsavedChanges) return;
+    localStorage.setItem(recoveryKey, JSON.stringify(recoveryState));
+  }, [hasUnsavedChanges, recoveryKey, recoveryReady, recoveryState]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [hasUnsavedChanges]);
 
   const packPrice = parseFloat(price) || 0;
   const capValue = parseFloat(maxWinCap);
@@ -485,6 +563,8 @@ export function PackBuilderForm({
   const oddsTotalUnits = getBuilderOddsTotalUnits(cards);
   const oddsTotalPct = oddsTotalUnits / 10_000;
   const oddsTotalExact = hasExactBuilderOddsTotal(cards);
+  const hasZeroOdds = cards.some((card) => oddsPercentToUnits(card.odds) <= 0);
+  const hasDuplicateCards = new Set(cards.map((card) => card.cardId)).size !== cards.length;
 
   // ── Table glue (reuse the shared SortableCardTable) ──────────────
   const tableCards: SortableCard[] = cards.map((c) => ({
@@ -541,10 +621,12 @@ export function PackBuilderForm({
     packPrice > 0 &&
     cards.length > 0 &&
     oddsTotalExact &&
+    !hasZeroOdds &&
+    !hasDuplicateCards &&
     (!customEdgeEnabled || customEdgeValid) &&
     edgeWithinBuilderRange &&
-    !shapeError &&
-    Boolean(shapeOk);
+    !overCap &&
+    (!autoTune || (!shapeError && Boolean(shapeOk)));
   const canRequestLive =
     canSubmit && (imageFile !== null || imagePreview !== null);
 
@@ -592,12 +674,14 @@ export function PackBuilderForm({
             floorRatioMin,
             nearMissMin,
           },
-        }, initialDraft?.id);
+        }, initialDraft ? { id: initialDraft.id, revision: initialDraft.revision } : undefined);
 
         if (!result.ok) {
           toast.error(result.error);
           return;
         }
+
+        localStorage.removeItem(`pack-builder-recovery:${initialDraft?.id ?? "new"}`);
 
         if (result.requestedActive) {
           toast.success(
@@ -626,15 +710,61 @@ export function PackBuilderForm({
     });
   }
 
+  function restoreRevision(revision: number) {
+    if (!initialDraft) return;
+    startTransition(async () => {
+      const result = await restorePackBuildDraftRevisionAction({
+        requestId: initialDraft.id,
+        revision,
+        expectedRevision: initialDraft.revision,
+      });
+      if (!result.ok) {
+        toast.error(result.error);
+        return;
+      }
+      localStorage.removeItem(`pack-builder-recovery:${initialDraft.id}`);
+      setHistoryOpen(false);
+      toast.success(`Revision ${revision} restored as a new revision.`);
+      router.refresh();
+    });
+  }
+
   return (
     <div className="space-y-6">
       {initialDraft && (
         <div className="flex items-start gap-2 rounded-lg border border-blue-500/30 bg-blue-500/10 px-4 py-3 text-sm text-blue-600 dark:text-blue-400">
           <Save className="mt-0.5 size-4 shrink-0" />
-          <p>
+          <p className="flex-1">
             Editing saved build <strong>{initialDraft.name}</strong>. Saving
-            updates this draft in place.
+            updates this draft in place. Revision {initialDraft.revision}.
           </p>
+          <AlertDialog open={historyOpen} onOpenChange={setHistoryOpen}>
+            <AlertDialogTrigger className={cn(buttonVariants({ variant: "outline", size: "sm" }), "gap-2")}>
+              <History className="size-4" /> History
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Build revision history</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Restoring creates a new revision. Existing history is never deleted.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="max-h-72 space-y-2 overflow-y-auto">
+                {initialDraft.history.map((entry) => (
+                  <div key={entry.revision} className="flex items-center justify-between rounded-lg border p-3 text-sm">
+                    <div>
+                      <p className="font-medium">Revision {entry.revision} · {entry.changeKind}</p>
+                      <p className="text-xs text-muted-foreground">{entry.changedByUsername ?? "system"} · {new Date(entry.createdAt).toLocaleString()}</p>
+                    </div>
+                    <Button type="button" size="sm" variant="outline" disabled={isPending || entry.revision === initialDraft.revision} onClick={() => restoreRevision(entry.revision)}>
+                      Restore
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <AlertDialogFooter><AlertDialogCancel>Close</AlertDialogCancel></AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )}
       {!canBuild && (
@@ -808,6 +938,14 @@ export function PackBuilderForm({
                       ? " — reduce the odds."
                       : " — add the missing odds."}
                   </p>
+                )}
+                {hasZeroOdds && (
+                  <div className="flex items-center justify-between gap-3 text-xs text-destructive">
+                    <span>Every saved card needs odds above 0%.</span>
+                    <Button type="button" size="sm" variant="outline" onClick={() => setCards((current) => current.filter((card) => oddsPercentToUnits(card.odds) > 0))}>
+                      Remove 0% cards
+                    </Button>
+                  </div>
                 )}
               </>
             ) : (
@@ -1037,7 +1175,7 @@ export function PackBuilderForm({
                 <KpiTile
                   label="Win-rate"
                   value={`${(previewRisk.winRate * 100).toFixed(1)}%`}
-                  sub={`near-miss ${(previewRisk.nearMiss * 100).toFixed(1)}%`}
+                  sub={`target ${winRatePct.toFixed(1)}% · near-miss ${(previewRisk.nearMiss * 100).toFixed(1)}%`}
                   icon={Target}
                   accent="blue"
                 />
@@ -1117,7 +1255,7 @@ export function PackBuilderForm({
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="sticky bottom-4 z-10 space-y-2 rounded-xl border bg-background/95 p-3 shadow-lg backdrop-blur">
                 {/* Live intent is queued. The owner approval click is the only
                     path that may create and activate the pack. */}
                 <AlertDialog

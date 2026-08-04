@@ -3142,10 +3142,10 @@ async function previewPackBuildRequest(
  */
 export async function buildPack(
   input: BuildPackInput,
-  draftId?: string,
+  draft?: { id: string; revision: number },
 ): Promise<BuildPackResult> {
   try {
-    return await buildPackInner(input, draftId);
+    return await buildPackInner(input, draft);
   } catch (error) {
     // Next masks thrown Server Action messages in production. Keep expected
     // builder refusals as typed data so the form can show the real problem.
@@ -3162,7 +3162,7 @@ export async function buildPack(
 
 async function buildPackInner(
   input: BuildPackInput,
-  draftId?: string,
+  draft?: { id: string; revision: number },
 ): Promise<BuildPackResult> {
   const session = await requirePackStudioAccess(
     "The pack builder is restricted to authorized operators.",
@@ -3179,17 +3179,17 @@ async function buildPackInner(
   if (!parsed.success) {
     throw new Error(parsed.error.issues[0]?.message ?? "Invalid pack input");
   }
-  const parsedDraftId = draftId
-    ? z.string().uuid().safeParse(draftId)
+  const parsedDraft = draft
+    ? z.object({ id: z.string().uuid(), revision: z.number().int().positive() }).safeParse(draft)
     : null;
-  if (parsedDraftId && !parsedDraftId.success) {
+  if (parsedDraft && !parsedDraft.success) {
     throw new Error("Invalid build draft id");
   }
   const preview = await previewPackBuildRequest(parsed.data);
   if (!preview.ok) return preview;
 
-  const requestId = parsedDraftId?.success
-    ? parsedDraftId.data
+  const requestId = parsedDraft?.success
+    ? parsedDraft.data.id
     : await enqueuePackCreationRequest({
         requestedBy: session.userId,
         payload: parsed.data,
@@ -3197,7 +3197,7 @@ async function buildPackInner(
         previewWinRate: preview.winRate,
         previewMaxWin: preview.maxWin,
       });
-  if (parsedDraftId?.success) {
+  if (parsedDraft?.success) {
     const updated = await updatePackBuildDraft({
       requestId,
       actorId: session.userId,
@@ -3206,8 +3206,14 @@ async function buildPackInner(
       previewEdge: preview.edge,
       previewWinRate: preview.winRate,
       previewMaxWin: preview.maxWin,
+      expectedRevision: parsedDraft.data.revision,
     });
-    if (!updated) {
+    if (updated === "stale") {
+      throw new Error(
+        "This build changed in another tab. Reload it before saving so newer work is not overwritten.",
+      );
+    }
+    if (updated === "unavailable") {
       throw new Error(
         "This build draft is no longer available or belongs to another builder.",
       );
@@ -3219,12 +3225,12 @@ async function buildPackInner(
     eventType:
       parsed.data.activate === true
         ? "pack_creation_requested"
-        : parsedDraftId?.success
+        : parsedDraft?.success
           ? "pack_build_draft_updated"
           : "pack_build_draft_saved",
     metadata: {
       request_id: requestId,
-      updated: parsedDraftId?.success ?? false,
+      updated: parsedDraft?.success ?? false,
       name: parsed.data.name,
       slug: parsed.data.slug,
       requested_active: parsed.data.activate === true,

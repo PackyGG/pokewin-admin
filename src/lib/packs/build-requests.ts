@@ -59,6 +59,16 @@ export const buildPackRequestSchema = storedBuildPackRequestSchema.superRefine(
         message: PACK_BUILDER_EDGE_ERROR,
       });
     }
+    const cardIds = request.cards.flatMap((card) =>
+      "cardId" in card ? [card.cardId] : [],
+    );
+    if (new Set(cardIds).size !== cardIds.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["cards"],
+        message: "Each card may only appear once in a pack build.",
+      });
+    }
     if (request.activate === true && !request.imageUrl) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -69,12 +79,13 @@ export const buildPackRequestSchema = storedBuildPackRequestSchema.superRefine(
     if (
       request.ticketWeights !== undefined &&
       (request.ticketWeights.length !== request.cards.length ||
-        !hasExactPackBuilderTicketTotal(request.ticketWeights))
+        !hasExactPackBuilderTicketTotal(request.ticketWeights) ||
+        request.ticketWeights.some((weight) => weight <= 0))
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["ticketWeights"],
-        message: "Pack Builder odds must contain one weight per card and total exactly 100.0000%.",
+        message: "Pack Builder odds must be above 0% for every card and total exactly 100.0000%.",
       });
     }
   },
@@ -106,6 +117,8 @@ export type PackCreationRequest = {
   createdAt: string;
   reviewStartedAt: string | null;
   reviewedAt: string | null;
+  revision: number;
+  updatedAt: string;
 };
 
 type RawPackCreationRequest = {
@@ -125,6 +138,8 @@ type RawPackCreationRequest = {
   created_at: string;
   review_started_at: string | null;
   reviewed_at: string | null;
+  revision: number;
+  updated_at: string;
 };
 
 function parseRequestRow(row: RawPackCreationRequest): PackCreationRequest {
@@ -161,7 +176,40 @@ function parseRequestRow(row: RawPackCreationRequest): PackCreationRequest {
     createdAt: row.created_at,
     reviewStartedAt: row.review_started_at,
     reviewedAt: row.reviewed_at,
+    revision: row.revision,
+    updatedAt: row.updated_at,
   };
+}
+
+export type PackBuildDraftRevision = {
+  revision: number;
+  changedByUsername: string | null;
+  changeKind: string;
+  createdAt: string;
+};
+
+async function recordPackBuildDraftRevision(input: {
+  requestId: string;
+  revision: number;
+  changedBy: string;
+  changeKind: string;
+  payload: ParsedBuildPackInput;
+  previewEdge: number;
+  previewWinRate: number;
+  previewMaxWin: number;
+}): Promise<void> {
+  await adminDrizzle.execute(sql`
+    INSERT INTO pack_build_draft_revisions (
+      request_id, revision, changed_by, change_kind, name, slug,
+      request_payload, preview_edge, preview_win_rate, preview_max_win
+    ) VALUES (
+      ${input.requestId}::uuid, ${input.revision}, ${input.changedBy}::uuid,
+      ${input.changeKind}, ${input.payload.name}, ${input.payload.slug},
+      ${JSON.stringify(input.payload)}::jsonb, ${input.previewEdge},
+      ${input.previewWinRate}, ${input.previewMaxWin}
+    )
+    ON CONFLICT (request_id, revision) DO NOTHING
+  `);
 }
 
 export async function enqueuePackCreationRequest(input: {
@@ -197,6 +245,16 @@ export async function enqueuePackCreationRequest(input: {
     `);
     const row = result.rows[0];
     if (!row) throw new Error("Pack request insert returned no row");
+    await recordPackBuildDraftRevision({
+      requestId: row.id,
+      revision: 1,
+      changedBy: input.requestedBy,
+      changeKind: "initial",
+      payload: input.payload,
+      previewEdge: input.previewEdge,
+      previewWinRate: input.previewWinRate,
+      previewMaxWin: input.previewMaxWin,
+    });
     return row.id;
   } catch (error) {
     if (isPostgresError(error, "23505")) {
@@ -228,6 +286,8 @@ export async function listPackCreationRequests(
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
       r.reviewed_at::text AS reviewed_at
+      , r.revision
+      , r.updated_at::text AS updated_at
     FROM pack_creation_requests r
     JOIN admin_users requester ON requester.id = r.requested_by
     LEFT JOIN admin_users reviewer ON reviewer.id = r.reviewed_by
@@ -276,6 +336,8 @@ export async function listPackBuildDrafts(input: {
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
       r.reviewed_at::text AS reviewed_at
+      , r.revision
+      , r.updated_at::text AS updated_at
     FROM pack_creation_requests r
     JOIN admin_users requester ON requester.id = r.requested_by
     LEFT JOIN admin_users reviewer ON reviewer.id = r.reviewed_by
@@ -312,6 +374,8 @@ export async function getPackBuildDraftForEdit(input: {
       r.created_at::text AS created_at,
       r.review_started_at::text AS review_started_at,
       r.reviewed_at::text AS reviewed_at
+      , r.revision
+      , r.updated_at::text AS updated_at
     FROM pack_creation_requests r
     JOIN admin_users requester ON requester.id = r.requested_by
     LEFT JOIN admin_users reviewer ON reviewer.id = r.reviewed_by
@@ -341,7 +405,8 @@ export async function updatePackBuildDraft(input: {
   previewEdge: number;
   previewWinRate: number;
   previewMaxWin: number;
-}): Promise<boolean> {
+  expectedRevision: number;
+}): Promise<"updated" | "stale" | "unavailable"> {
   try {
     const result = await adminDrizzle.execute<{ id: string }>(sql`
       UPDATE pack_creation_requests
@@ -352,23 +417,125 @@ export async function updatePackBuildDraft(input: {
         request_payload = ${JSON.stringify(input.payload)}::jsonb,
         preview_edge = ${input.previewEdge},
         preview_win_rate = ${input.previewWinRate},
-        preview_max_win = ${input.previewMaxWin}
+        preview_max_win = ${input.previewMaxWin},
+        revision = revision + 1,
+        updated_at = NOW()
       WHERE id = ${input.requestId}::uuid
         AND status = 'pending'
         AND requested_active = false
+        AND revision = ${input.expectedRevision}
         AND (
           requested_by = ${input.actorId}::uuid
           OR ${input.canManageAll}
         )
-      RETURNING id
+      RETURNING id, revision
     `);
-    return result.rows.length === 1;
+    const updated = result.rows[0] as { id: string; revision: number } | undefined;
+    if (updated) {
+      await recordPackBuildDraftRevision({
+        requestId: updated.id,
+        revision: updated.revision,
+        changedBy: input.actorId,
+        changeKind: input.payload.activate === true ? "submitted" : "saved",
+        payload: input.payload,
+        previewEdge: input.previewEdge,
+        previewWinRate: input.previewWinRate,
+        previewMaxWin: input.previewMaxWin,
+      });
+      return "updated";
+    }
+    const current = await adminDrizzle.execute<{ revision: number }>(sql`
+      SELECT revision FROM pack_creation_requests
+      WHERE id = ${input.requestId}::uuid AND status = 'pending'
+        AND requested_active = false
+        AND (requested_by = ${input.actorId}::uuid OR ${input.canManageAll})
+      LIMIT 1
+    `);
+    return current.rows.length === 1 ? "stale" : "unavailable";
   } catch (error) {
     if (isPostgresError(error, "23505")) {
       throw new Error("A pending pack request already uses this slug");
     }
     throw error;
   }
+}
+
+export async function listPackBuildDraftRevisions(input: {
+  requestId: string;
+  actorId: string;
+  canManageAll: boolean;
+}): Promise<PackBuildDraftRevision[]> {
+  const result = await adminDrizzle.execute<{
+    revision: number;
+    changed_by_username: string | null;
+    change_kind: string;
+    created_at: string;
+  }>(sql`
+    SELECT h.revision, u.username AS changed_by_username, h.change_kind,
+      h.created_at::text AS created_at
+    FROM pack_build_draft_revisions h
+    LEFT JOIN admin_users u ON u.id = h.changed_by
+    JOIN pack_creation_requests r ON r.id = h.request_id
+    WHERE h.request_id = ${input.requestId}::uuid
+      AND (r.requested_by = ${input.actorId}::uuid OR ${input.canManageAll})
+    ORDER BY h.revision DESC
+    LIMIT 25
+  `);
+  return result.rows.map((row) => ({
+    revision: row.revision,
+    changedByUsername: row.changed_by_username,
+    changeKind: row.change_kind,
+    createdAt: row.created_at,
+  }));
+}
+
+export async function restorePackBuildDraftRevision(input: {
+  requestId: string;
+  revision: number;
+  expectedRevision: number;
+  actorId: string;
+  canManageAll: boolean;
+}): Promise<"restored" | "stale" | "unavailable"> {
+  const result = await adminDrizzle.execute<{ id: string }>(sql`
+    WITH snapshot AS (
+      SELECT h.* FROM pack_build_draft_revisions h
+      JOIN pack_creation_requests owned ON owned.id = h.request_id
+      WHERE h.request_id = ${input.requestId}::uuid
+        AND h.revision = ${input.revision}
+        AND (owned.requested_by = ${input.actorId}::uuid OR ${input.canManageAll})
+    )
+    UPDATE pack_creation_requests r SET
+      name = snapshot.name,
+      slug = snapshot.slug,
+      request_payload = jsonb_set(snapshot.request_payload, '{activate}', 'false'::jsonb),
+      preview_edge = snapshot.preview_edge,
+      preview_win_rate = snapshot.preview_win_rate,
+      preview_max_win = snapshot.preview_max_win,
+      revision = r.revision + 1,
+      updated_at = NOW()
+    FROM snapshot
+    WHERE r.id = snapshot.request_id AND r.status = 'pending'
+      AND r.requested_active = false AND r.revision = ${input.expectedRevision}
+    RETURNING r.id
+  `);
+  if (result.rows.length === 1) {
+    const current = await getPackBuildDraftForEdit(input);
+    if (current) {
+      await recordPackBuildDraftRevision({
+        requestId: current.id,
+        revision: current.revision,
+        changedBy: input.actorId,
+        changeKind: `restored:${input.revision}`,
+        payload: current.requestPayload,
+        previewEdge: current.previewEdge,
+        previewWinRate: current.previewWinRate,
+        previewMaxWin: current.previewMaxWin ?? 0,
+      });
+    }
+    return "restored";
+  }
+  const current = await getPackBuildDraftForEdit(input);
+  return current ? "stale" : "unavailable";
 }
 
 /**
@@ -504,6 +671,8 @@ export async function claimPackCreationRequest(
       claimed.created_at::text AS created_at,
       claimed.review_started_at::text AS review_started_at,
       claimed.reviewed_at::text AS reviewed_at
+      , claimed.revision
+      , claimed.updated_at::text AS updated_at
     FROM claimed
     JOIN admin_users requester ON requester.id = claimed.requested_by
     LEFT JOIN admin_users reviewer ON reviewer.id = claimed.reviewed_by
