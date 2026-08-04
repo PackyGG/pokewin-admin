@@ -9,13 +9,11 @@
 -- still carry a reward-page URL are KEPT as that carrier and only the
 -- discord-link payload is dropped. Discord rows are excluded from every
 -- socials read, so nothing renders them.
-
-BEGIN;
+--
+-- The runner (scripts/apply-admin-sql.mjs) supplies the transaction.
 
 DELETE FROM creator_socials
  WHERE platform = 'discord'
    AND (reward_page_url IS NULL OR btrim(reward_page_url) = '');
 
 ALTER TABLE creator_socials DROP COLUMN IF EXISTS discord_channel_url;
-
-COMMIT;

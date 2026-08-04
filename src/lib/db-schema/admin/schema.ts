@@ -120,7 +120,6 @@ export const creator_socials = pgTable("creator_socials", {
 	engagement_rate: numeric({ precision: 5, scale:  4 }),
 	likes_avg: integer(),
 	stats_json: jsonb(),
-	discord_channel_url: text(),
 	reward_page_url: text(),
 }, (table) => [
 	unique("creator_socials_target_user_id_platform_key").on(table.platform, table.target_user_id),
