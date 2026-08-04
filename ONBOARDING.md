@@ -212,8 +212,13 @@ without a credited ledger row stay out of financial totals until reconciliation 
   A **true** per-user value overrides a **false** global value; users without an override need admin
   approval while the global value is false. Fraud, KYC, payment-binding, dispute/refund, amount,
   country, and compliance checks stay independent of both.
-- `/antifraud/fiat-perks` (screening + controlled rollout) and its provider-evidence and
-  grant-confirmation contracts live in `docs/ANTIFRAUD_CONTRACTS.md`.
+- Fraud System → Config also owns the separate site-wide Fiat availability switch. It updates the
+  existing `locked_deposits_fiat` policy for card and wallet methods and refreshes the backend
+  site-config cache. Enabling it never bypasses narrower account, country, KYC, payment, or fraud
+  restrictions.
+- The retired Fiat screening workspace, monitor routes/services, access batches, and eligibility
+  grant gate must stay absent. Historical migrations 048/050/051 and stored Antifraud evidence
+  remain untouched for audit history; they are not active runtime contracts.
 
 ### Keno engine
 
