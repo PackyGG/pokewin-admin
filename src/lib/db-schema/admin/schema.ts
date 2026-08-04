@@ -1737,6 +1737,7 @@ export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
 	guild_id: text().notNull(),
 	user_id: text().notNull(),
 	channel_id: text().notNull(),
+	member_discord_user_id: text(),
 	linked_by_discord_user_id: text().notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
@@ -1744,9 +1745,11 @@ export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
 	index("discord_vip_channel_links_updated_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.updated_at.desc().nullsFirst().op("timestamptz_ops")),
 	unique("discord_vip_channel_links_guild_channel_unique").on(table.guild_id, table.channel_id),
 	unique("discord_vip_channel_links_guild_user_unique").on(table.guild_id, table.user_id),
+	uniqueIndex("discord_vip_channel_links_guild_member_unique").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.member_discord_user_id.asc().nullsLast().op("text_ops")).where(sql`member_discord_user_id IS NOT NULL`),
 	check("discord_vip_channel_links_actor_id_check", sql`linked_by_discord_user_id ~ '^[0-9]{17,20}$'::text`),
 	check("discord_vip_channel_links_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
 	check("discord_vip_channel_links_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
 	check("discord_vip_channel_links_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
 ]);
 
@@ -1755,8 +1758,10 @@ export const discord_vip_channel_link_operations = pgTable("discord_vip_channel_
 	guild_id: text().notNull(),
 	user_id: text().notNull(),
 	channel_id: text().notNull(),
+	member_discord_user_id: text(),
 	actor_discord_user_id: text().notNull(),
 	status: text().notNull(),
+	vip_tag_added: boolean().default(false).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("discord_vip_channel_link_operations_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
@@ -1764,6 +1769,7 @@ export const discord_vip_channel_link_operations = pgTable("discord_vip_channel_
 	check("discord_vip_channel_link_operations_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
 	check("discord_vip_channel_link_operations_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
 	check("discord_vip_channel_link_operations_interaction_id_check", sql`interaction_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
 	check("discord_vip_channel_link_operations_status_check", sql`status = ANY (ARRAY['linked'::text, 'updated'::text, 'already_linked'::text])`),
 	check("discord_vip_channel_link_operations_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
 ]);

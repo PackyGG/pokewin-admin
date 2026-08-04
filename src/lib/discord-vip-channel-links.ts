@@ -1,9 +1,12 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { admin_audit_events } from "@/lib/db-schema/admin/schema";
+import {
+  admin_audit_events,
+  admin_user_tags,
+} from "@/lib/db-schema/admin/schema";
 import { user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 
@@ -13,11 +16,13 @@ export type VipLinkUserPreview = {
   userId: string;
   username: string | null;
   displayUsername: string | null;
+  hasVipTag: boolean;
 };
 
 export type VipChannelLink = VipLinkUserPreview & {
   guildId: string;
   channelId: string;
+  memberDiscordUserId: string | null;
 };
 
 export class VipChannelLinkError extends Error {
@@ -35,6 +40,7 @@ type LinkRow = {
   guild_id: string;
   user_id: string;
   channel_id: string;
+  member_discord_user_id: string | null;
   linked_by_discord_user_id: string;
 };
 
@@ -43,8 +49,10 @@ type OperationRow = {
   guild_id: string;
   user_id: string;
   channel_id: string;
+  member_discord_user_id: string | null;
   actor_discord_user_id: string;
   status: "linked" | "updated" | "already_linked";
+  vip_tag_added: boolean;
 };
 
 async function requireUser(userId: string): Promise<VipLinkUserPreview> {
@@ -66,7 +74,15 @@ async function requireUser(userId: string): Promise<VipLinkUserPreview> {
       "That Packy user ID does not exist.",
     );
   }
-  return found;
+  const [vipTag] = await adminDrizzle
+    .select({ id: admin_user_tags.id })
+    .from(admin_user_tags)
+    .where(and(
+      eq(admin_user_tags.target_user_id, userId),
+      eq(admin_user_tags.tag, "vip"),
+    ))
+    .limit(1);
+  return { ...found, hasVipTag: Boolean(vipTag) };
 }
 
 export async function previewVipChannelLink(
@@ -78,6 +94,7 @@ export async function previewVipChannelLink(
 export async function saveVipChannelLink(input: {
   guildId: string;
   channelId: string;
+  memberDiscordUserId: string | null;
   userId: string;
   actorDiscordUserId: string;
   interactionId: string;
@@ -86,25 +103,30 @@ export async function saveVipChannelLink(input: {
 }): Promise<{
   status: "linked" | "updated" | "already_linked";
   link: VipChannelLink;
+  vipTagAdded: boolean;
 }> {
   const preview = await requireUser(input.userId);
 
   return adminDrizzle.transaction(async (tx) => {
     await tx.execute(sql`
       SELECT pg_advisory_xact_lock(
-        hashtextextended(${`discord-vip-link-user:${input.guildId}:${input.userId}`}, 0)
-      )
-    `);
-    await tx.execute(sql`
-      SELECT pg_advisory_xact_lock(
-        hashtextextended(${`discord-vip-link-channel:${input.guildId}:${input.channelId}`}, 0)
-      )
-    `);
-    await tx.execute(sql`
-      SELECT pg_advisory_xact_lock(
         hashtextextended(${`discord-vip-link-interaction:${input.interactionId}`}, 0)
       )
     `);
+    const resourceLocks = [
+      `discord-vip-link-resource:${input.guildId}:channel:${input.channelId}`,
+      `discord-vip-link-resource:${input.guildId}:user:${input.userId}`,
+      input.memberDiscordUserId
+        ? `discord-vip-link-resource:${input.guildId}:member:${input.memberDiscordUserId}`
+        : null,
+    ].filter((value): value is string => Boolean(value)).sort();
+    for (const resourceLock of resourceLocks) {
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(${resourceLock}, 0)
+        )
+      `);
+    }
 
     const operationResult = await tx.execute<OperationRow>(sql`
       SELECT
@@ -112,8 +134,10 @@ export async function saveVipChannelLink(input: {
         guild_id,
         user_id,
         channel_id,
+        member_discord_user_id,
         actor_discord_user_id,
-        status
+        status,
+        vip_tag_added
       FROM discord_vip_channel_link_operations
       WHERE interaction_id = ${input.interactionId}
       FOR UPDATE
@@ -124,6 +148,7 @@ export async function saveVipChannelLink(input: {
         operation.guild_id !== input.guildId ||
         operation.user_id !== input.userId ||
         operation.channel_id !== input.channelId ||
+        operation.member_discord_user_id !== input.memberDiscordUserId ||
         operation.actor_discord_user_id !== input.actorDiscordUserId
       ) {
         throw new VipChannelLinkError(
@@ -134,12 +159,20 @@ export async function saveVipChannelLink(input: {
       }
       return {
         status: operation.status,
-        link: { ...preview, guildId: input.guildId, channelId: input.channelId },
+        link: {
+          ...preview,
+          hasVipTag: true,
+          guildId: input.guildId,
+          channelId: input.channelId,
+          memberDiscordUserId: input.memberDiscordUserId,
+        },
+        vipTagAdded: operation.vip_tag_added,
       };
     }
 
     const channelResult = await tx.execute<LinkRow>(sql`
-      SELECT guild_id, user_id, channel_id, linked_by_discord_user_id
+      SELECT guild_id, user_id, channel_id, member_discord_user_id,
+        linked_by_discord_user_id
       FROM discord_vip_channel_links
       WHERE guild_id = ${input.guildId}
         AND channel_id = ${input.channelId}
@@ -154,8 +187,33 @@ export async function saveVipChannelLink(input: {
       );
     }
 
+    const memberLink = input.memberDiscordUserId
+      ? (await tx.execute<LinkRow>(sql`
+          SELECT guild_id, user_id, channel_id, member_discord_user_id,
+            linked_by_discord_user_id
+          FROM discord_vip_channel_links
+          WHERE guild_id = ${input.guildId}
+            AND member_discord_user_id = ${input.memberDiscordUserId}
+          FOR UPDATE
+        `)).rows[0]
+      : undefined;
+    if (
+      memberLink
+      && (
+        memberLink.user_id !== input.userId
+        || memberLink.channel_id !== input.channelId
+      )
+    ) {
+      throw new VipChannelLinkError(
+        409,
+        "discord_member_link_conflict",
+        "That Discord member is already linked to another VIP channel or Packy user.",
+      );
+    }
+
     const userResult = await tx.execute<LinkRow>(sql`
-      SELECT guild_id, user_id, channel_id, linked_by_discord_user_id
+      SELECT guild_id, user_id, channel_id, member_discord_user_id,
+        linked_by_discord_user_id
       FROM discord_vip_channel_links
       WHERE guild_id = ${input.guildId}
         AND user_id = ${input.userId}
@@ -164,6 +222,7 @@ export async function saveVipChannelLink(input: {
     const existing = userResult.rows[0];
     const status =
       existing?.channel_id === input.channelId
+        && existing?.member_discord_user_id === input.memberDiscordUserId
         ? ("already_linked" as const)
         : existing
           ? ("updated" as const)
@@ -175,11 +234,13 @@ export async function saveVipChannelLink(input: {
           guild_id,
           user_id,
           channel_id,
+          member_discord_user_id,
           linked_by_discord_user_id
         ) VALUES (
           ${input.guildId},
           ${input.userId},
           ${input.channelId},
+          ${input.memberDiscordUserId},
           ${input.actorDiscordUserId}
         )
       `);
@@ -188,6 +249,7 @@ export async function saveVipChannelLink(input: {
         UPDATE discord_vip_channel_links
         SET
           channel_id = ${input.channelId},
+          member_discord_user_id = ${input.memberDiscordUserId},
           linked_by_discord_user_id = ${input.actorDiscordUserId},
           updated_at = NOW()
         WHERE guild_id = ${input.guildId}
@@ -195,21 +257,33 @@ export async function saveVipChannelLink(input: {
       `);
     }
 
+    const vipTagResult = await tx.execute<{ id: string }>(sql`
+      INSERT INTO admin_user_tags (target_user_id, tag)
+      VALUES (${input.userId}, 'vip')
+      ON CONFLICT (target_user_id, tag) DO NOTHING
+      RETURNING id
+    `);
+    const vipTagAdded = vipTagResult.rows.length > 0;
+
     await tx.execute(sql`
       INSERT INTO discord_vip_channel_link_operations (
         interaction_id,
         guild_id,
         user_id,
         channel_id,
+        member_discord_user_id,
         actor_discord_user_id,
-        status
+        status,
+        vip_tag_added
       ) VALUES (
         ${input.interactionId},
         ${input.guildId},
         ${input.userId},
         ${input.channelId},
+        ${input.memberDiscordUserId},
         ${input.actorDiscordUserId},
-        ${status}
+        ${status},
+        ${vipTagAdded}
       )
     `);
 
@@ -219,9 +293,11 @@ export async function saveVipChannelLink(input: {
       metadata: {
         guildId: input.guildId,
         channelId: input.channelId,
+        memberDiscordUserId: input.memberDiscordUserId,
         actorDiscordUserId: input.actorDiscordUserId,
         interactionId: input.interactionId,
         status,
+        vipTagAdded,
         apiKeyId: input.apiKeyId,
         apiKeyPrefix: input.apiKeyPrefix,
       },
@@ -229,7 +305,14 @@ export async function saveVipChannelLink(input: {
 
     return {
       status,
-      link: { ...preview, guildId: input.guildId, channelId: input.channelId },
+      link: {
+        ...preview,
+        hasVipTag: true,
+        guildId: input.guildId,
+        channelId: input.channelId,
+        memberDiscordUserId: input.memberDiscordUserId,
+      },
+      vipTagAdded,
     };
   });
 }

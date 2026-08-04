@@ -17,6 +17,7 @@ export const dynamic = "force-dynamic";
 const BodySchema = z.object({
   guildId: DiscordIdSchema,
   channelId: DiscordIdSchema,
+  memberDiscordUserId: DiscordIdSchema.optional(),
   userId: z
     .string()
     .trim()
@@ -55,6 +56,7 @@ export const POST = withApiKey(
     try {
       const result = await saveVipChannelLink({
         ...parsed.data,
+        memberDiscordUserId: parsed.data.memberDiscordUserId ?? null,
         apiKeyId: principal.keyId,
         apiKeyPrefix: principal.prefix,
       });

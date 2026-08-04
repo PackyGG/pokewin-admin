@@ -27,6 +27,7 @@ const UserIdSchema = z
 const BodySchema = z.object({
   guildId: DiscordIdSchema,
   channelId: DiscordIdSchema,
+  memberDiscordUserId: DiscordIdSchema.optional(),
   userId: UserIdSchema,
   actorDiscordUserId: DiscordIdSchema,
 });

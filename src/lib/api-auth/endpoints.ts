@@ -113,14 +113,14 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/vips/link-preview",
     summary:
-      "Body { guildId, channelId, userId, actorDiscordUserId }. VIPs-only read that returns the Packy username preview before a staff member confirms a channel link.",
+      "Body { guildId, channelId, memberDiscordUserId, userId, actorDiscordUserId }. VIPs-only read that returns the Packy username and VIP-tag preview before a staff member confirms a channel link.",
     scopes: ["discord:vips:link"],
   },
   {
     method: "POST",
     path: "/api/v1/discord/vips/link",
     summary:
-      "Body { guildId, channelId, userId, actorDiscordUserId, interactionId }. VIPs-only idempotent write that stores the Packy user to Discord channel mapping in the Admin DB.",
+      "Body { guildId, channelId, memberDiscordUserId, userId, actorDiscordUserId, interactionId }. VIPs-only idempotent write that adds the Admin VIP tag when missing and stores the Packy user, Discord member, and channel mapping.",
     scopes: ["discord:vips:link"],
   },
   {

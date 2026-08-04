@@ -10,6 +10,7 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
     linkRoute,
     service,
     migration,
+    memberMigration,
     scopes,
     endpoints,
   ] = await Promise.all([
@@ -18,6 +19,9 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
     read("src/lib/discord-vip-channel-links.ts"),
     read(
       "drizzle/admin/migrations/20260730_discord_vip_channel_links.sql",
+    ),
+    read(
+      "drizzle/admin/migrations/20260804_discord_vip_member_links.sql",
     ),
     read("src/lib/api-auth/scopes.ts"),
     read("src/lib/api-auth/endpoints.ts"),
@@ -29,11 +33,11 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
   assert.match(linkRoute, /guildId !== VIPS_GUILD_ID/);
   assert.match(
     previewRoute,
-    /guildId: DiscordIdSchema[\s\S]*channelId: DiscordIdSchema[\s\S]*userId: UserIdSchema[\s\S]*actorDiscordUserId: DiscordIdSchema/,
+    /guildId: DiscordIdSchema[\s\S]*channelId: DiscordIdSchema[\s\S]*memberDiscordUserId: DiscordIdSchema\.optional\(\)[\s\S]*userId: UserIdSchema[\s\S]*actorDiscordUserId: DiscordIdSchema/,
   );
   assert.match(
     linkRoute,
-    /guildId: DiscordIdSchema[\s\S]*channelId: DiscordIdSchema[\s\S]*userId:[\s\S]*actorDiscordUserId: DiscordIdSchema[\s\S]*interactionId: DiscordIdSchema/,
+    /guildId: DiscordIdSchema[\s\S]*channelId: DiscordIdSchema[\s\S]*memberDiscordUserId: DiscordIdSchema\.optional\(\)[\s\S]*userId:[\s\S]*actorDiscordUserId: DiscordIdSchema[\s\S]*interactionId: DiscordIdSchema/,
   );
 
   assert.match(service, /VIPS_GUILD_ID = "1505650386894327919"/);
@@ -45,7 +49,12 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
   assert.match(service, /UPDATE discord_vip_channel_links/);
   assert.match(service, /discord_vip_channel_link_operations/);
   assert.match(service, /channel_link_conflict/);
+  assert.match(service, /discord_member_link_conflict/);
   assert.match(service, /idempotency_conflict/);
+  assert.match(service, /INSERT INTO admin_user_tags/);
+  assert.match(service, /ON CONFLICT \(target_user_id, tag\) DO NOTHING/);
+  assert.match(service, /member_discord_user_id/);
+  assert.match(service, /vipTagAdded/);
   assert.match(service, /discord_vip_channel_linked/);
   assert.doesNotMatch(service, /getProdWrite|MAIN_DATABASE_URL/);
 
@@ -63,6 +72,9 @@ test("VIP channel links preview MAIN users and persist only in Admin", async () 
     /CREATE TABLE IF NOT EXISTS "discord_vip_channel_link_operations"/,
   );
   assert.match(migration, /interaction_id" text PRIMARY KEY/);
+  assert.match(memberMigration, /ADD COLUMN IF NOT EXISTS "member_discord_user_id"/);
+  assert.match(memberMigration, /ADD COLUMN IF NOT EXISTS "vip_tag_added"/);
+  assert.match(memberMigration, /discord_vip_channel_links_guild_member_unique/);
 
   assert.match(scopes, /"discord:vips:link"/);
   assert.match(endpoints, /\/api\/v1\/discord\/vips\/link-preview/);
