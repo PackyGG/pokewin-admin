@@ -26,17 +26,6 @@ export default async function AntifraudConfigPage() {
         <PageHeroIdentity />
       </PageHero>
 
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600 dark:text-cyan-400">
-          System
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Config</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-          Global Fiat availability and credit behavior. Account, country, KYC,
-          payment, and fraud restrictions remain independent.
-        </p>
-      </div>
-
       <section className="space-y-3">
         <SectionHeading icon={Power} title="Fiat availability" />
         <Suspense fallback={<Skeleton className="h-56 w-full rounded-xl" />}>
