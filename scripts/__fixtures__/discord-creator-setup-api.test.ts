@@ -95,13 +95,33 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /logs_channel_id = \$\{input\.channelId\}/);
   assert.match(service, /input\.actorDiscordUserId !== setup\.creator_discord_user_id/);
   assert.match(service, /input\.actorDiscordUserId !== setup\.created_by_discord_user_id/);
-  assert.match(service, /requireActiveCreator\(input\.creatorUserId\)/);
+  assert.match(service, /await creatorsApi\.promote\(creatorUserId\)/);
+  assert.match(service, /if \(!allowGrant\)/);
+  assert.match(
+    service,
+    /ensureActiveCreator\(\s*input\.creatorUserId,\s*isDiscordBotSuperuser\(input\.actorDiscordUserId\)/,
+  );
+  assert.match(
+    service,
+    /promoted\.user_id !== creatorUserId[\s\S]*promoted\.role !== "creator"/,
+  );
+  assert.match(service, /event_type: "discord_creator_role_granted"/);
   assert.match(service, /eq\(user\.id,\s*creatorUserId\)/);
   assert.match(
     service,
-    /input\.actorDiscordUserId === setup\.creator_discord_user_id[\s\S]*input\.actorDiscordUserId !== setup\.created_by_discord_user_id[\s\S]*requireDiscordOwnership/,
+    /await requireDiscordOwnership\(\s*setup\.creator_discord_user_id,\s*input\.creatorUserId/,
   );
+  assert.doesNotMatch(
+    service,
+    /requireDiscordOwnership\(\s*input\.actorDiscordUserId/,
+  );
+  assert.match(service, /creatorRoleGranted: roleGranted/);
   assert.match(service, /"creator_mismatch"/);
+  assert.match(service, /"discord_link_missing"/);
+  assert.match(service, /eq\(account\.userId, creatorUserId\)/);
+  assert.match(service, /creatorDiscordAccounts\.length > 1/);
+  assert.match(service, /\.limit\(3\)/);
+  assert.match(service, /roleGranted: !promoted\.already_creator/);
   assert.match(service, /"setup_actor_forbidden"/);
   assert.match(service, /"setup_link_conflict"/);
   assert.match(service, /"idempotency_conflict"/);
