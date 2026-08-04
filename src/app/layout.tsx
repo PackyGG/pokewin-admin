@@ -4,6 +4,8 @@ import { SpeedInsights } from "@vercel/speed-insights/next";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
+import { ThemeCookieSync } from "@/components/theme-cookie-sync";
+import { THEME_COOKIE_SEED_SCRIPT } from "@/lib/theme-cookie";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -104,6 +106,16 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${geistSans.variable} ${geistMono.variable} ${chakraPetch.variable}`} suppressHydrationWarning>
       <body className="antialiased overflow-x-hidden">
+        {/* Cross-subdomain theme seed — MUST stay directly above
+            <ThemeProvider>, because next-themes renders its own
+            pre-hydration script inline at the provider's position and we
+            need `localStorage` reconciled with the shared cookie BEFORE it
+            reads. Without this, each hostname (apex / packs. / fraud. /
+            marketing.) keeps a separate localStorage theme and the sub-apps
+            drift to different palettes. See `src/lib/theme-cookie.ts`. */}
+        <script
+          dangerouslySetInnerHTML={{ __html: THEME_COOKIE_SEED_SCRIPT }}
+        />
         {/* Grailed Dark is THE default theme for everyone (owner 2026-07-12).
             `storageKey` is bumped to "pokewin-theme-v2" so previously-saved
             themes (under the old default "theme" key) are invalidated — every
@@ -117,6 +129,9 @@ export default function RootLayout({
           storageKey="pokewin-theme-v2"
           themes={["light", "dark", "grailed", "grailed-light"]}
         >
+          {/* Write half of the shared-theme mechanic: mirrors every theme
+              change into the `.packydash.com` cookie the seed script reads. */}
+          <ThemeCookieSync />
           <TooltipProvider>
             {children}
           </TooltipProvider>
