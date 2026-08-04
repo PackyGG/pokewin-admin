@@ -302,7 +302,10 @@ export class DiscordAlerts {
   ) {}
 
   async send(
-    eventKey: "antifraud.signup_high_risk" | "antifraud.rule_matched",
+    eventKey:
+      | "antifraud.signup_low_risk"
+      | "antifraud.signup_high_risk"
+      | "antifraud.rule_matched",
     dedupeKey: string,
     alert: DiscordAlert,
   ): Promise<boolean> {
