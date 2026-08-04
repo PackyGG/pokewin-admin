@@ -5,6 +5,7 @@ import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
+  hasExactPackBuilderTicketTotal,
   isPackBuilderEdgeInRange,
   PACK_BUILDER_EDGE_ERROR,
 } from "@/lib/packs/builder-edge";
@@ -34,6 +35,7 @@ const storedBuildPackRequestSchema = z.object({
   difficulty: z.number().min(0).max(1).optional(),
   activate: z.boolean().optional(),
   cards: z.array(buildPackCardSchema).min(1, "At least one card is required"),
+  ticketWeights: z.array(z.number().int().nonnegative()).optional(),
   targets: z.object({
     // Stored rows remain readable if the strict band changes later. Every new
     // submission and final production write is checked by the super-refinement.
@@ -62,6 +64,17 @@ export const buildPackRequestSchema = storedBuildPackRequestSchema.superRefine(
         code: z.ZodIssueCode.custom,
         path: ["imageUrl"],
         message: PACK_IMAGE_REQUIRED_ERROR,
+      });
+    }
+    if (
+      request.ticketWeights !== undefined &&
+      (request.ticketWeights.length !== request.cards.length ||
+        !hasExactPackBuilderTicketTotal(request.ticketWeights))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ticketWeights"],
+        message: "Pack Builder odds must contain one weight per card and total exactly 100.0000%.",
       });
     }
   },

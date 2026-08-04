@@ -23,13 +23,11 @@ export function PacksList({
   view,
   canToggle,
   canDelete,
-  canEdit,
 }: {
   data: PackListItem[];
   view: EntityView;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
 }) {
   const router = useRouter();
 
@@ -134,14 +132,13 @@ export function PacksList({
               pack={p}
               canToggle={canToggle}
               canDelete={canDelete}
-              canEdit={canEdit}
               size="sm"
             />
           </div>
         ),
       },
     ],
-    [canToggle, canDelete, canEdit],
+    [canToggle, canDelete],
   );
 
   return view === "grid" ? (
@@ -149,7 +146,6 @@ export function PacksList({
       data={data}
       canToggle={canToggle}
       canDelete={canDelete}
-      canEdit={canEdit}
     />
   ) : (
     <EntityTable

@@ -76,7 +76,6 @@ async function PacksContent({
   view,
   canToggle,
   canDelete,
-  canEdit,
 }: {
   page: number;
   perPage: number;
@@ -89,7 +88,6 @@ async function PacksContent({
   view: EntityView;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
 }) {
   const { data: result, error } = await loadPrimary(
     () =>
@@ -115,7 +113,6 @@ async function PacksContent({
           view={view}
           canToggle={canToggle}
           canDelete={canDelete}
-          canEdit={canEdit}
         />
       </FadeIn>
       <DataTablePagination
@@ -149,12 +146,10 @@ export function PacksCatalogTab({
   searchParams,
   canToggle,
   canDelete,
-  canEdit,
 }: {
   searchParams: Record<string, string | undefined>;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
 }) {
   const params = searchParams;
 
@@ -246,7 +241,6 @@ export function PacksCatalogTab({
             view={view}
             canToggle={canToggle}
             canDelete={canDelete}
-            canEdit={canEdit}
           />
         </Suspense>
       </div>

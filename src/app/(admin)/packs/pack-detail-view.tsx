@@ -11,7 +11,6 @@ import {
   History,
   Layers,
   Package,
-  Pencil,
   Percent,
   TrendingUp,
 } from "lucide-react";
@@ -48,7 +47,6 @@ import {
   loadPackGamesPage,
   loadPackStats,
 } from "./pack-detail-cache";
-import { PackEditForm } from "./pack-edit-form";
 
 type DetailState =
   | { status: "loading" }
@@ -57,7 +55,6 @@ type DetailState =
   | { status: "error" };
 
 type ContentTab = "cards" | "games";
-type ViewMode = "overview" | "edit";
 
 type HeaderSeed = {
   id: string;
@@ -83,19 +80,11 @@ export function PackDetailView({
   packId,
   canToggle,
   canDelete,
-  canEdit,
-  canEditLive,
-  isPackCreator,
-  initialViewMode = "overview",
   initialPayload = null,
 }: {
   packId: string;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
-  canEditLive: boolean;
-  isPackCreator: boolean;
-  initialViewMode?: ViewMode;
   /**
    * Server-prefetched full detail. When present the view paints ready
    * immediately and skips the initial client fetch (no hydrate→action
@@ -113,7 +102,6 @@ export function PackDetailView({
       : { status: "loading" },
   );
   const [tab, setTab] = React.useState<ContentTab>("cards");
-  const [viewMode, setViewMode] = React.useState<ViewMode>(initialViewMode);
   const [statsRetrying, setStatsRetrying] = React.useState(false);
 
   const load = React.useCallback(
@@ -160,7 +148,6 @@ export function PackDetailView({
 
   React.useEffect(() => {
     setTab("cards");
-    setViewMode(initialViewMode);
     // Server-prefetched payload (incl. after a pack→pack navigation that
     // re-runs the server page): paint it directly, skip the client fetch.
     if (initialPayload) {
@@ -169,7 +156,7 @@ export function PackDetailView({
       return;
     }
     return load(false);
-  }, [packId, initialViewMode, load, initialPayload]);
+  }, [packId, load, initialPayload]);
 
   // Seed the header identity from the lightweight list-seed lookup while the
   // heavy detail streams in — but ONLY while there's no already-seeded header
@@ -208,16 +195,10 @@ export function PackDetailView({
   const packType = detail?.packType ?? null;
   const loading = state.status === "loading";
 
-  const showEditButton =
-    canEdit &&
-    detail != null &&
-    (!isPackCreator || !detail.active || canEditLive);
-
   const showActions =
     !loading &&
-    viewMode === "overview" &&
     detail != null &&
-    (showEditButton || canToggle || canDelete);
+    (canToggle || canDelete);
 
   // The server now prefetches only the core detail (stats === null) so the
   // page paints fast. Auto-load the heavy stats ONCE per pack here so the
@@ -265,19 +246,6 @@ export function PackDetailView({
     }
   }
 
-  function enterEditMode() {
-    setViewMode("edit");
-    router.replace(`/packs/${packId}?edit=1`, { scroll: false });
-  }
-
-  function exitEditMode() {
-    setViewMode("overview");
-    // Pass edit=0 explicitly: the detail page now defaults to edit mode for
-    // editors, so a bare /packs/:id would re-open the editor. edit=0 pins
-    // the overview when the user steps back out of the form.
-    router.replace(`/packs/${packId}?edit=0`, { scroll: false });
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex items-center gap-2">
@@ -295,12 +263,6 @@ export function PackDetailView({
           action={
             showActions && detail ? (
               <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
-                {showEditButton ? (
-                  <Button size="sm" variant="outline" onClick={enterEditMode}>
-                    <Pencil className="mr-1 size-3.5" />
-                    Edit
-                  </Button>
-                ) : null}
                 {canToggle ? (
                   <TogglePackButton
                     packId={detail.id}
@@ -343,13 +305,6 @@ export function PackDetailView({
             </div>
           </div>
         </div>
-        {viewMode === "edit" ? (
-          <div className="mt-3">
-            <Button size="sm" variant="ghost" onClick={exitEditMode}>
-              ← Back to overview
-            </Button>
-          </div>
-        ) : null}
       </PageHero>
 
       <div className="space-y-5">
@@ -372,50 +327,7 @@ export function PackDetailView({
           />
         )}
 
-        {viewMode === "edit" && detail ? (
-          <PackEditForm
-            key={detail.id}
-            pack={detail}
-            onCancel={exitEditMode}
-            onSaved={(saved) => {
-              const currentCards = new Map(
-                detail.cards.map((card) => [card.cardId, card]),
-              );
-              setHeaderSeed({
-                id: saved.id,
-                name: saved.name,
-                slug: saved.slug,
-                imageUrl: saved.imageUrl,
-                active: detail.active,
-                priceUsd: saved.priceUsd,
-              });
-              setState({
-                status: "ready",
-                payload: {
-                  detail: {
-                    ...detail,
-                    ...saved,
-                    cards: saved.cards.map((card, order) => {
-                      const current = currentCards.get(card.cardId);
-                      return {
-                        id: current?.id ?? `${saved.id}:${card.cardId}`,
-                        ...card,
-                        imageUrl: card.imageUrl ?? "",
-                        rarity: current?.rarity ?? null,
-                        setName: current?.setName ?? null,
-                        order,
-                      };
-                    }),
-                  },
-                  stats: null,
-                },
-              });
-              exitEditMode();
-            }}
-          />
-        ) : null}
-
-        {viewMode === "overview" && state.status === "ready" ? (
+        {state.status === "ready" ? (
           <ReadyBody
             payload={state.payload}
             tab={tab}

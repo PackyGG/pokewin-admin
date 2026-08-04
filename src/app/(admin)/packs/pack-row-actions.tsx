@@ -34,13 +34,11 @@ export function PackRowActions({
   pack,
   canToggle,
   canDelete,
-  canEdit,
   size = "default",
 }: {
   pack: PackListItem;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
   size?: "default" | "sm";
 }) {
   const router = useRouter();
@@ -117,17 +115,6 @@ export function PackRowActions({
             <Pencil className="size-3.5" />
             Open pack
           </DropdownMenuItem>
-          {canEdit && (
-            <DropdownMenuItem
-              onClick={(e) => {
-                stop(e);
-                router.push(`/packs/${pack.id}?edit=1`);
-              }}
-            >
-              <Pencil className="size-3.5" />
-              Edit pack
-            </DropdownMenuItem>
-          )}
           {canToggle && (
             <DropdownMenuItem onClick={handleToggle} disabled={isPending}>
               {pack.active ? (

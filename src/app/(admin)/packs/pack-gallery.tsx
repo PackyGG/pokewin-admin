@@ -14,12 +14,10 @@ export function PackGallery({
   data,
   canToggle,
   canDelete,
-  canEdit,
 }: {
   data: PackListItem[];
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
 }) {
   if (data.length === 0) {
     return (
@@ -41,7 +39,6 @@ export function PackGallery({
           pack={pack}
           canToggle={canToggle}
           canDelete={canDelete}
-          canEdit={canEdit}
         />
       ))}
     </div>
@@ -52,14 +49,12 @@ function PackTile({
   pack,
   canToggle,
   canDelete,
-  canEdit,
 }: {
   pack: PackListItem;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
 }) {
-  const showActions = canToggle || canDelete || canEdit;
+  const showActions = canToggle || canDelete;
   const href = `/packs/${pack.id}`;
 
   return (
@@ -88,7 +83,6 @@ function PackTile({
             pack={pack}
             canToggle={canToggle}
             canDelete={canDelete}
-            canEdit={canEdit}
           />
         </div>
       )}
