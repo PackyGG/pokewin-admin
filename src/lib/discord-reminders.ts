@@ -9,6 +9,7 @@ export const VIP_REMINDER_GUILD_ID = "1505650386894327919";
 export const REMINDER_USER_IDS = [
   "660132586630414338",
   "934854938641715240",
+  "188051599099297802",
 ] as const;
 
 const REMINDER_CHANNELS = new Map([
@@ -31,6 +32,10 @@ export function reminderChannelForGuild(guildId: string): string | null {
   return REMINDER_CHANNELS.get(guildId) ?? null;
 }
 
+export function isReminderUserAllowed(userId: string): boolean {
+  return REMINDER_USER_IDS.includes(userId as typeof REMINDER_USER_IDS[number]);
+}
+
 export async function createDiscordReminder(input: {
   interactionId: string;
   guildId: string;
@@ -39,7 +44,7 @@ export async function createDiscordReminder(input: {
 }): Promise<{ id: string; dueAt: string; targetChannelId: string }> {
   const targetChannelId = reminderChannelForGuild(input.guildId);
   if (!targetChannelId) throw new Error("Reminder guild is not allowed.");
-  if (!REMINDER_USER_IDS.includes(input.userId as typeof REMINDER_USER_IDS[number])) {
+  if (!isReminderUserAllowed(input.userId)) {
     throw new Error("Reminder user is not allowed.");
   }
 

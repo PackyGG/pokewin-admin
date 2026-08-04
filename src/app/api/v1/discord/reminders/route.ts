@@ -3,8 +3,8 @@ import { z } from "zod";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import {
   createDiscordReminder,
+  isReminderUserAllowed,
   reminderChannelForGuild,
-  REMINDER_USER_IDS,
 } from "@/lib/discord-reminders";
 
 export const runtime = "nodejs";
@@ -28,7 +28,7 @@ export const POST = withApiKey(
     if (!reminderChannelForGuild(parsed.data.guildId)) {
       return apiError(403, "guild_not_allowed", "This guild is not allowed.");
     }
-    if (!REMINDER_USER_IDS.includes(parsed.data.userId as typeof REMINDER_USER_IDS[number])) {
+    if (!isReminderUserAllowed(parsed.data.userId)) {
       return apiError(403, "user_not_allowed", "This user is not allowed.");
     }
     try {
