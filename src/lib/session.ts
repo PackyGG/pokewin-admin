@@ -221,19 +221,32 @@ export async function deletePendingSession() {
 // auth) and `adminUserId` scopes it to the acting account so a register
 // challenge can't be replayed into an auth flow or across users.
 
-type WebauthnChallengePayload = {
+type WebauthnChallengeInput = {
   challenge: string;
   // "register" = profile passkey enrollment; "auth" = passkey at the login 2FA
-  // step; "stepup" = passkey satisfying an in-app action gate (require2FA).
+  // step; "login" = a discoverable passkey used as the complete login;
+  // "stepup" = passkey satisfying an in-app action gate (require2FA).
   // Pinning the ceremony keeps a challenge from one flow being replayed into
   // another (e.g. a login-time "auth" challenge can't clear a money-action gate).
-  type: "register" | "auth" | "stepup";
-  adminUserId: string;
+} & (
+  | {
+      type: "login";
+      // Passwordless login resolves the account from the asserted discoverable
+      // credential, so it intentionally has no user id before verification.
+      adminUserId?: never;
+    }
+  | {
+      type: "register" | "auth" | "stepup";
+      adminUserId: string;
+    }
+);
+
+type WebauthnChallengePayload = WebauthnChallengeInput & {
   expiresAt: string;
 };
 
 export async function createWebauthnChallenge(
-  payload: Omit<WebauthnChallengePayload, "expiresAt">,
+  payload: WebauthnChallengeInput,
 ) {
   const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
   const token = await encryptGeneric(
