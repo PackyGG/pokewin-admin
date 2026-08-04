@@ -96,15 +96,16 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /Require admin approval for Fiat deposits/);
   assert.match(fraudConfigCard, /per-account auto-approval override/);
   assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
+  assert.match(fraudConfigCard, /<Badge variant="outline">Unavailable<\/Badge>/);
+  assert.match(fraudConfigCard, /checked=\{false\}[\s\S]*?disabled/);
 });
 
 test("Fraud Config owns both global Fiat controls and hides raw Security config", () => {
   assert.match(fraudConfigPage, /requireAntifraudManagerPage\(\)/);
-  assert.match(fraudConfigPage, /getFiatDepositAutomaticCreditConfig\(\)/);
-  assert.match(
-    fraudConfigPage,
-    /initialEnabled=\{config\.fiat_deposit_automatic_credit_enabled\}/,
-  );
+  assert.match(fraudConfigPage, /getFiatDepositAutomaticCreditConfig/);
+  assert.match(fraudConfigPage, /safeQueryOrNull\(/);
+  assert.match(fraudConfigPage, /BACKEND_CONFIG_TIMEOUT_MS/);
+  assert.match(fraudConfigPage, /result\.data\?\.fiat_deposit_automatic_credit_enabled/);
   assert.doesNotMatch(fraudConfigPage, /redirect\(/);
   assert.match(settingsPage, /\{ value: "automation", label: "Automation" \}/);
   assert.match(fraudConfigPage, /GlobalFiatAvailabilityCard/);

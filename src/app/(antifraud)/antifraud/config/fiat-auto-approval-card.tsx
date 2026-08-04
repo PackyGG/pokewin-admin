@@ -50,6 +50,14 @@ export function GlobalFiatReviewCard({
           </CardDescription>
         </CardHeader>
         <CardContent>
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <Badge variant="outline">Unavailable</Badge>
+            <Switch
+              aria-label="Global Fiat automatic credit"
+              checked={false}
+              disabled
+            />
+          </div>
           <div className="flex items-start gap-3 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-600 dark:text-amber-400">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
             <div className="space-y-1">

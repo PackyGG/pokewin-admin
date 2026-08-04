@@ -8,7 +8,11 @@ import {
 } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { getFiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
-import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
+import {
+  REWARD_QUERY_TIMEOUT_MS,
+  safeQuery,
+  safeQueryOrNull,
+} from "@/lib/errors/safe-query";
 import { hasAnyWhopFiatDepositLock } from "@/lib/fiat-jurisdiction-policy";
 import { getFiatConfig } from "@/lib/queries/fiat";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
@@ -16,6 +20,8 @@ import { GlobalFiatReviewCard } from "./fiat-auto-approval-card";
 import { GlobalFiatAvailabilityCard } from "./fiat-availability-card";
 
 export const metadata = { title: "Config · Antifraud" };
+
+const BACKEND_CONFIG_TIMEOUT_MS = 5_000;
 
 export default async function AntifraudConfigPage() {
   await requireAntifraudManagerPage();
@@ -71,15 +77,16 @@ async function GlobalFiatAvailabilityData() {
 }
 
 async function GlobalFiatCreditData() {
-  try {
-    const config = await getFiatDepositAutomaticCreditConfig();
-    return (
-      <GlobalFiatReviewCard
-        initialEnabled={config.fiat_deposit_automatic_credit_enabled}
-      />
-    );
-  } catch (error) {
-    console.error("[antifraud-config] Fiat approval config read failed:", error);
-    return <GlobalFiatReviewCard initialEnabled={null} />;
-  }
+  const result = await safeQueryOrNull(
+    getFiatDepositAutomaticCreditConfig,
+    "antifraud.config.fiat-credit",
+    BACKEND_CONFIG_TIMEOUT_MS,
+  );
+  return (
+    <GlobalFiatReviewCard
+      initialEnabled={
+        result.data?.fiat_deposit_automatic_credit_enabled ?? null
+      }
+    />
+  );
 }
