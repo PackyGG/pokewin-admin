@@ -66,8 +66,8 @@ const APPS: readonly AppEntry[] = [
   {
     key: "creator-hub",
     href: "/creator-hub",
-    label: "Creators",
-    title: "Creator Hub — CM team workspace",
+    label: "Marketing",
+    title: "Marketing — CM team workspace",
     icon: Megaphone,
     accent: "text-pink-600 dark:text-pink-400",
   },
