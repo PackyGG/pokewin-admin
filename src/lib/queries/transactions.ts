@@ -431,7 +431,9 @@ async function computeDepositTransactions(
  */
 const cachedDepositTransactions = unstable_cache(
   computeDepositTransactions,
-  ["transactions-deposits-list-v2"],
+  // v3 discards entries whose refreshes failed while mirror pool sessions
+  // were being terminated with PostgreSQL 57P05.
+  ["transactions-deposits-list-v3"],
   { revalidate: 300, tags: ["transactions-deposits-list"] },
 );
 

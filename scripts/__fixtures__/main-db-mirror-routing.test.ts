@@ -77,19 +77,37 @@ test("serverless mirror pools preserve shared role connection headroom", () => {
 
   assert.match(source, /max:\s*isReadMirror\s*\?\s*2\s*:\s*3/);
   assert.match(source, /maxUses:\s*isReadMirror\s*\?\s*100\s*:\s*Infinity/);
-  assert.match(source, /idle_session_timeout=5s/);
+  assert.doesNotMatch(source, /idle_session_timeout=/);
   assert.match(source, /work_mem=32MB/);
   assert.match(source, /random_page_cost=1\.1/);
   assert.match(
     source,
     /idleTimeoutMillis:\s*isReadMirror\s*\?\s*1_000\s*:\s*10_000/,
   );
+  assert.match(source, /maxLifetimeSeconds:\s*600/);
   assert.match(warmRoute, /export const maxDuration = 60/);
   assert.match(warmRoute, /Array\.from\(\{ length: 2 \}/);
   assert.match(
     fs.readFileSync(path.join(repoRoot, "src/lib/drizzle-query.ts"), "utf8"),
     /withTransientPostgresReadRetry/,
   );
+});
+
+test("mirror session recovery release discards outage-era cache namespaces", () => {
+  const deposits = fs.readFileSync(
+    path.join(repoRoot, "src/lib/queries/transactions.ts"),
+    "utf8",
+  );
+  const userDetail = fs.readFileSync(
+    path.join(repoRoot, "src/lib/queries/users-detail-cache.ts"),
+    "utf8",
+  );
+
+  assert.match(deposits, /transactions-deposits-list-v3/);
+  assert.match(userDetail, /users-detail-aggregate-v4/);
+  assert.match(userDetail, /users-detail-pnl-v7/);
+  assert.match(userDetail, /users-detail-gaming-tx-v6/);
+  assert.match(userDetail, /users-detail-financial-tx-v3/);
 });
 
 test("mirror index failures expose safe, actionable connection diagnostics", () => {
