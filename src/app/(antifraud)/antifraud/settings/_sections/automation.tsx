@@ -1,34 +1,22 @@
-import { Suspense } from "react";
-import {
-  CheckCircle2,
-  ListChecks,
-  Lock,
-  ShieldCheck,
-  Workflow,
-} from "lucide-react";
+import { CheckCircle2, ListChecks, Lock, Workflow } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { getAntifraudScoringConfig } from "@/lib/antifraud/monitor-api";
-import { getFiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
-import { GlobalFiatReviewCard } from "../../config/fiat-auto-approval-card";
 import { AUTOMATION_FLOWS, type AutomationFlow } from "../_lib/automation-catalog";
 import { EmptyState, ModeBadge, StatusBadge } from "./shared";
 
 /**
- * AUTOMATION TAB — everything that can fire, split by who owns it, plus the one
- * automation switch this workspace owns outright.
+ * AUTOMATION TAB — everything that can fire, split by who owns it.
  *
  * Operator-editable point flows come first (they are the part staff actually
  * change), then the code-owned catalog grouped by how much of it is editable,
  * so "can I change this without a release?" is answerable at a glance instead
  * of by reading each card's badge.
  *
- * The global Fiat auto-credit switch used to sit on its own near-empty
- * `/antifraud/config` page. It is an automation control, so it lives here; that
- * route now redirects to this tab.
+ * The global Fiat auto-credit switch is deliberately NOT here: it credits real
+ * player deposits, so it keeps its own `/antifraud/config` destination.
  */
 export async function AutomationSection() {
   const scoring = await getAntifraudScoringConfig();
@@ -59,13 +47,6 @@ export async function AutomationSection() {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-3">
-        <SectionHeading icon={ShieldCheck} title="Global Fiat review" />
-        <Suspense fallback={<Skeleton className="h-52 w-full rounded-xl" />}>
-          <GlobalFiatReviewData />
-        </Suspense>
-      </section>
-
       <PointFlows rules={rules} available={available} />
 
       {groups.map((group) => {
@@ -96,20 +77,6 @@ export async function AutomationSection() {
       })}
     </div>
   );
-}
-
-async function GlobalFiatReviewData() {
-  try {
-    const config = await getFiatDepositAutomaticCreditConfig();
-    return (
-      <GlobalFiatReviewCard
-        initialEnabled={config.fiat_deposit_automatic_credit_enabled}
-      />
-    );
-  } catch (error) {
-    console.error("[antifraud-settings] Fiat approval config read failed:", error);
-    return <GlobalFiatReviewCard initialEnabled={null} />;
-  }
 }
 
 function PointFlows({

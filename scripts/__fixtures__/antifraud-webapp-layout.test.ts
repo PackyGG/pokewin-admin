@@ -41,6 +41,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     // System group — one Settings page (every config section is a tab on it)
     // plus the staff audit log.
     "Settings",
+    "Config",
     "Audit log",
   ]) {
     assert.match(
@@ -64,9 +65,10 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
   assert.doesNotMatch(sidebar, /label: "Providers"/);
-  // "Settings" is the System group's single entry now (every config section is
-  // a tab on it); "Config" and "Risk engine" stay retired.
-  assert.doesNotMatch(sidebar, /label: "Config"|label: "Risk engine"/);
+  // System is Settings (every config section is a tab on it), Config (the
+  // global Fiat switch, its own page) and the audit log. "Risk engine" stays
+  // retired.
+  assert.doesNotMatch(sidebar, /label: "Risk engine"/);
   for (const removedItem of [
     "System health",
     "API",

@@ -69,6 +69,14 @@ const SEVERITY_ORDER: Record<IssueSeverity, number> = {
   warning: 1,
 };
 
+/**
+ * Matches the monitor's own readiness threshold for a stale tick
+ * (`services/antifraud-monitor/src/server.ts`). Keeping the two in step means
+ * the dashboard escalates exactly when the service stops calling itself ready
+ * — never before.
+ */
+const POLLER_STALE_MS = 5 * 60_000;
+
 function list(values: string[]): string {
   if (values.length <= 1) return values[0] ?? "";
   return `${values.slice(0, -1).join(", ")} and ${values[values.length - 1]}`;
@@ -79,7 +87,11 @@ function list(values: string[]): string {
  * An empty array means every wired-up check passed, which the page renders as
  * an explicit all-clear rather than as "no data".
  */
-export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
+export function collectSystemIssues(
+  input: SystemIssueInput,
+  /** Injectable clock — the poller staleness check is time-relative. */
+  now: number = Date.now(),
+): SystemIssue[] {
   const issues: SystemIssue[] = [];
 
   // ── Transport: nothing else is trustworthy if the monitor is unreachable ──
@@ -198,14 +210,34 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
 
   const poller = input.poller;
   if (poller) {
-    if (poller.status === "degraded") {
+    // `status: "degraded"` is a COMPOSITE flag, not proof of an outage: the
+    // monitor sets it for a stale tick, repeated tick failures, a possible
+    // signup backlog, OR signups pending recovery. The last two are operator
+    // queue items — the monitor's own /ready handler deliberately stays ready
+    // through them ("an operator queue item, not an infrastructure fault").
+    // Reporting the raw flag as critical claimed the engine was broken while
+    // it was ticking cleanly with a few signups queued, and buried the real
+    // signal under a false alarm. Escalate only on the HARD faults the service
+    // itself gates on, and let the queue conditions below speak for themselves.
+    const lastSuccessMs = poller.lastSuccessfulTickAt
+      ? Date.parse(poller.lastSuccessfulTickAt)
+      : Number.NaN;
+    const tickStale =
+      !Number.isFinite(lastSuccessMs) || now - lastSuccessMs > POLLER_STALE_MS;
+
+    if (poller.status === "starting" || (tickStale && poller.leader)) {
       issues.push({
-        id: "poller-degraded",
+        id: "poller-stalled",
         severity: "critical",
-        title: "The ingestion poller is degraded",
+        title:
+          poller.status === "starting"
+            ? "The ingestion poller has not completed a tick"
+            : "The ingestion poller has stalled",
         detail:
           poller.lastError ??
-          "The monitor reports a degraded ingestion loop. New signups and live activity may not be assessed.",
+          (poller.status === "starting"
+            ? "The monitor has not finished a single ingestion tick, so no new signup or live activity is being assessed."
+            : `No successful tick in over ${Math.round(POLLER_STALE_MS / 60_000)} minutes. New signups and live activity are not being assessed.`),
         href: "/antifraud/settings?tab=health",
         actionLabel: "Open engine health",
       });

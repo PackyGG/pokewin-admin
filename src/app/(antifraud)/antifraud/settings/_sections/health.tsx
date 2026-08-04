@@ -139,6 +139,21 @@ const STATUS_ACCENT = {
   degraded: "rose",
 } as const;
 
+/**
+ * "Degraded" is the monitor's word for four different conditions, only two of
+ * which are faults. Saying which one is in play here stops this tile from
+ * reading as an outage when the loop is ticking cleanly with a queue behind it.
+ */
+function statusSub(health: AntifraudPollerHealth): string {
+  if (health.status === "degraded") {
+    if (health.consecutiveFailures > 0) return "Ticks are failing";
+    if (health.signupFailuresPending > 0) return "Signups queued for recovery";
+    if (health.signupBacklogPossible) return "Cursor is behind new signups";
+    return "No recent successful tick";
+  }
+  return health.running ? "Loop running" : "Loop not running";
+}
+
 function PollerPanel({ health }: { health: AntifraudPollerHealth }) {
   const rows: Array<[string, string]> = [
     [
@@ -179,7 +194,7 @@ function PollerPanel({ health }: { health: AntifraudPollerHealth }) {
         <KpiTile
           label="Status"
           value={health.status[0]!.toUpperCase() + health.status.slice(1)}
-          sub={health.running ? "Loop running" : "Loop not running"}
+          sub={statusSub(health)}
           icon={RadioTower}
           accent={STATUS_ACCENT[health.status]}
         />

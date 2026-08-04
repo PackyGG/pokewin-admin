@@ -17,6 +17,7 @@ import {
   RotateCcw,
   ScanSearch,
   ScrollText,
+  Settings2,
   ShieldAlert,
   SlidersHorizontal,
   Webhook,
@@ -147,12 +148,14 @@ const GUIDE_NAV: NavItem[] = [
 /**
  * System — one Settings page carrying every configuration section as a tab
  * (overview, automation, scoring, point flows, events, alerts, integrations,
- * engine health), plus the staff audit log, which is a record rather than a
- * setting. The old per-surface routes (`/automation`, `/points`, `/events`,
- * `/config`, `/flows`) redirect to their tab.
+ * engine health); Config, which owns the global Fiat automatic-credit switch on
+ * its own page because it credits real player deposits; and the staff audit
+ * log, which is a record rather than a setting. The retired per-surface routes
+ * (`/automation`, `/points`, `/events`, `/flows`) redirect to their tab.
  */
 const SYSTEM_NAV: NavItem[] = [
   { label: "Settings", href: "/antifraud/settings", icon: SlidersHorizontal },
+  { label: "Config", href: "/antifraud/config", icon: Settings2 },
   {
     label: "Audit log",
     href: "/antifraud/audit",

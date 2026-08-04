@@ -63,8 +63,6 @@ export async function updateFiatAutomaticCreditAction(input: {
     },
   });
 
-  // The switch renders on the Fraud Settings page's Automation tab;
-  // `/antifraud/config` is only a redirect to it now.
-  revalidatePath("/antifraud/settings");
+  revalidatePath("/antifraud/config");
   return { success: true, data: updated };
 }

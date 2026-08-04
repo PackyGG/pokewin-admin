@@ -28,17 +28,21 @@ test("Fraud Settings is one page with a tab per System section", () => {
     assert.match(page, new RegExp(`\\{ value: "${tab}", label: `));
   }
   assert.match(page, /paramKey="tab"/);
+  // No eyebrow, page title or blurb: the sidebar names the page, the tab bar
+  // names the section.
+  assert.doesNotMatch(page, /Control center/);
+  assert.doesNotMatch(page, /<h1/);
 
   // The System group is the one Settings entry plus the audit log; a
   // regression that re-splits the sections into their own nav entries is the
   // shape this replaced.
   assert.match(sidebar, /label: "Settings",\s*href: "\/antifraud\/settings"/);
   assert.match(sidebar, /label: "Audit log",\s*href: "\/antifraud\/audit"/);
+  assert.match(sidebar, /label: "Config",\s*href: "\/antifraud\/config"/);
   for (const gone of [
     "/antifraud/automation",
     "/antifraud/points",
     "/antifraud/events",
-    "/antifraud/config",
     "/antifraud/flows",
   ]) {
     assert.doesNotMatch(
@@ -58,7 +62,6 @@ test("the retired section routes redirect to their tab", () => {
     ["automation", "/antifraud/settings\\?tab=automation"],
     ["events", "/antifraud/settings\\?tab=events"],
     ["flows", "/antifraud/settings\\?tab=flows"],
-    ["config", "/antifraud/settings\\?tab=automation"],
   ] as const) {
     const source = read(`src/app/(antifraud)/antifraud/${route}/page.tsx`);
     // Still gated: a redirect is a route, and an ungated one leaks the
@@ -87,8 +90,10 @@ test("each tab owns its own reads and the page body awaits none of them", () => 
 
   assert.match(overview, /getAntifraudPollerHealth\(\)/);
   assert.match(overview, /collectSystemIssues\(/);
-  assert.match(automation, /getFiatDepositAutomaticCreditConfig\(\)/);
   assert.match(automation, /getAntifraudScoringConfig\(\)/);
+  // The Fiat auto-credit switch is NOT a tab: it credits real player deposits
+  // and keeps its own /antifraud/config destination.
+  assert.doesNotMatch(automation, /getFiatDepositAutomaticCreditConfig\(\)/);
   assert.match(scoring, /listAnalysisRules\(\)/);
   assert.match(flows, /<FlowBuilder/);
   assert.match(events, /<EventCatalog/);
@@ -152,6 +157,33 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
   )) {
     assert.match(page, new RegExp(`\\{ value: "${tab}", label: `), tab);
   }
+});
+
+test("a degraded poller only escalates on the faults the monitor itself gates on", () => {
+  const issues = read(`${SETTINGS}/_lib/system-issues.ts`);
+  const server = read("services/antifraud-monitor/src/server.ts");
+
+  // The monitor's `status: "degraded"` is a COMPOSITE flag — stale tick, tick
+  // failures, possible backlog, OR signups pending recovery. Its own /ready
+  // handler stays ready through the last two ("an operator queue item, not an
+  // infrastructure fault"), so a raw `status === "degraded"` → critical rule
+  // reports an outage while the loop ticks cleanly. That regression shipped
+  // once; this pins the corrected shape.
+  assert.doesNotMatch(
+    issues,
+    /status === "degraded"[\s\S]{0,120}severity: "critical"/,
+    "a raw degraded flag must not be reported as a critical outage",
+  );
+  assert.match(issues, /POLLER_STALE_MS/);
+  assert.match(issues, /poller\.status === "starting" \|\| \(tickStale && poller\.leader\)/);
+
+  // The dashboard threshold must track the service's readiness threshold.
+  assert.match(server, /5 \* 60_000/);
+  assert.match(issues, /const POLLER_STALE_MS = 5 \* 60_000;/);
+
+  // The genuinely actionable queue conditions keep their own warning rows.
+  assert.match(issues, /id: "signup-failures-pending"/);
+  assert.match(issues, /id: "signup-backlog"/);
 });
 
 test("system issues rank criticals first and always carry a fix link", () => {

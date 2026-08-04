@@ -66,18 +66,8 @@ export default async function AntifraudSettingsPage({
         <PageHeroIdentity />
       </PageHero>
 
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600 dark:text-cyan-400">
-          Control center
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Settings</h1>
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-          Detection, scoring, automatic account actions, alert delivery and
-          engine health — what is live, what is broken, and everything you can
-          change.
-        </p>
-      </div>
-
+      {/* No eyebrow, title or blurb: the sidebar already names the page and the
+          tab bar already names the section. */}
       <TabChips
         items={SETTINGS_TABS}
         current={tab}
