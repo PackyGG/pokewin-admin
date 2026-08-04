@@ -3,6 +3,7 @@ export type PackBuilderDraftCard = {
   name: string;
   imageUrl: string | null;
   priceUsd: number;
+  odds: number;
   color: string | null;
   animation: boolean;
 };

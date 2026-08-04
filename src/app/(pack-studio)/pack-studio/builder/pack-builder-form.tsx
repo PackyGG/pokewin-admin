@@ -86,6 +86,7 @@ import {
   getBuilderOddsTotalUnits,
   hasExactBuilderOddsTotal,
   normalizeBuilderOdds,
+  oddsPercentToUnits,
 } from "./builder-pricing";
 import type { BuilderCardItem } from "./actions";
 import type { PackBuilderInitialDraft } from "./draft-types";
@@ -283,8 +284,7 @@ export function PackBuilderForm({
   const [cards, setCards] = useState<PoolCard[]>(() =>
     (initialDraft?.cards ?? []).map((card) => ({
       ...card,
-      odds: 0,
-      autoOdds: true,
+      autoOdds: false,
     })),
   );
 
@@ -582,6 +582,7 @@ export function PackBuilderForm({
             color: c.color,
             animation: c.animation,
           })),
+          ticketWeights: cards.map((c) => oddsPercentToUnits(c.odds)),
           targets: {
             // The pack's OWN per-pack target edge (edge curve), so the server
             // re-shape matches the live preview — not a flat 10.99%.
@@ -783,7 +784,7 @@ export function PackBuilderForm({
                   {autoTune
                     ? "Auto-tune is on: odds are re-shaped to the target edge + win-rate whenever the pool, price or dials change. Editing an odds cell pins that row."
                     : "Auto-tune is off: these odds stay exactly as you set them. Turn it back on to let the solver re-shape the pool."}{" "}
-                  The server re-shapes weights authoritatively on submit.
+                  These exact odds are saved and used for owner approval.
                 </p>
                 <div
                   className={cn(

@@ -4,7 +4,6 @@ import { isUuid } from "@/lib/utils/ids";
 import {
   getUserPermissions,
   requirePageAccess,
-  sessionHasRole,
   sessionIsAdmin,
   sessionIsOwner,
 } from "@/lib/dal";
@@ -32,9 +31,6 @@ type CatalogCaps = {
   canCreate: boolean;
   canToggle: boolean;
   canDelete: boolean;
-  canEdit: boolean;
-  canEditLive: boolean;
-  isPackCreator: boolean;
 };
 
 /**
@@ -50,9 +46,6 @@ async function resolveCatalogCaps(session: SessionPayload): Promise<CatalogCaps>
       canCreate: true,
       canToggle: true,
       canDelete: true,
-      canEdit: true,
-      canEditLive: true,
-      isPackCreator: sessionHasRole(session, "pack_creator"),
     };
   }
   const { data: perms } = await safeQuery(
@@ -64,9 +57,6 @@ async function resolveCatalogCaps(session: SessionPayload): Promise<CatalogCaps>
     canCreate: hasCapability(perms, "__can_create_pack"),
     canToggle: hasCapability(perms, "__can_toggle_pack_active"),
     canDelete: hasCapability(perms, "__can_delete_pack"),
-    canEdit: hasCapability(perms, "__can_update_pack"),
-    canEditLive: hasCapability(perms, "__can_edit_live_packs"),
-    isPackCreator: sessionHasRole(session, "pack_creator"),
   };
 }
 
@@ -174,7 +164,6 @@ export default async function PacksPage({
           searchParams={params}
           canToggle={caps!.canToggle}
           canDelete={caps!.canDelete}
-          canEdit={caps!.canEdit}
         />
       )}
     </div>

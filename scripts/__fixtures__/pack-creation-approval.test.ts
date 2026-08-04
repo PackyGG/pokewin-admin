@@ -232,6 +232,40 @@ test("saved Pack Builder drafts can be edited in place", async () => {
   assert.match(draftData, /getReadDrizzleDb/);
 });
 
+test("saved Pack Builder drafts preserve and restore their exact odds", async () => {
+  const [actions, builderForm, buildRequests, draftData] = await Promise.all([
+    readFile(actionsPath, "utf8"),
+    readFile(builderFormPath, "utf8"),
+    readFile(buildRequestsPath, "utf8"),
+    readFile(builderDraftDataPath, "utf8"),
+  ]);
+
+  assert.match(builderForm, /ticketWeights:\s*cards\.map\(\(c\) => oddsPercentToUnits\(c\.odds\)\)/);
+  assert.match(buildRequests, /ticketWeights:\s*z\.array\(z\.number\(\)\.int\(\)\.nonnegative\(\)\)\.optional\(\)/);
+  assert.match(buildRequests, /hasExactPackBuilderTicketTotal\(request\.ticketWeights\)/);
+  assert.match(draftData, /draft\.requestPayload\.ticketWeights \?\?/);
+  assert.match(draftData, /odds:\s*ticketWeights\[index\]! \/ 10_000/);
+  assert.equal(
+    actions.match(/resolvePackBuildTickets\(/g)?.length,
+    3,
+    "the shared exact-odds resolver must be defined and used by preview plus approval",
+  );
+  assert.match(actions, /tickets:\s*\[\.\.\.input\.ticketWeights\]/);
+});
+
+test("the normal Packs dashboard has no pack edit entry point", async () => {
+  const [page, detailPage, detailView, rowActions] = await Promise.all([
+    readFile("src/app/(admin)/packs/page.tsx", "utf8"),
+    readFile("src/app/(admin)/packs/[id]/page.tsx", "utf8"),
+    readFile("src/app/(admin)/packs/pack-detail-view.tsx", "utf8"),
+    readFile("src/app/(admin)/packs/pack-row-actions.tsx", "utf8"),
+  ]);
+
+  for (const source of [page, detailPage, detailView, rowActions]) {
+    assert.doesNotMatch(source, /PackEditForm|\?edit=1|Edit pack|initialViewMode/);
+  }
+});
+
 test("Pack Builder preserves card color and animation through owner approval", async () => {
   const [actions, builderForm, buildRequests] = await Promise.all([
     readFile(actionsPath, "utf8"),
@@ -277,15 +311,12 @@ test("Pack Builder production enforces exact tickets and the 10.95% to 11.50% ed
   assert.match(buildRequests, /isPackBuilderEdgeInRange\(request\.targets\.targetEdge\)/);
   assert.match(builderForm, /clampPackBuilderEdge\(/);
   assert.match(builderForm, /isPackBuilderEdgeInRange\(/);
-  assert.equal(
-    actions.match(/getPackBuilderEdgeError\(shaped\.risk\.edge\)/g)?.length,
-    2,
-    "submission preview and owner materialization must both reject out-of-range edges",
-  );
+  assert.match(actions, /getPackBuilderEdgeError\(risk\.edge\)/);
+  assert.match(actions, /getPackBuilderEdgeError\(shaped\.risk\.edge\)/);
   assert.equal(
     actions.match(/getPackBuilderTicketTotalError\(/g)?.length,
-    3,
-    "submission preview, owner solve, and persisted rows must all require exact ticket mass",
+    4,
+    "stored odds, compatibility solve, owner write, and persisted rows must require exact ticket mass",
   );
   assert.match(
     actions,

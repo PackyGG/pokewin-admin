@@ -2798,6 +2798,54 @@ type MaterializedPackResult =
   | { ok: true; packId: string; edge: number; winRate: number; active: boolean }
   | { ok: false; error: string };
 
+function resolvePackBuildTickets(
+  input: ParsedBuildPackInput,
+  values: readonly number[],
+):
+  | { ok: true; tickets: number[]; risk: PackRisk }
+  | { ok: false; error: string } {
+  if (input.ticketWeights !== undefined) {
+    if (input.ticketWeights.length !== values.length) {
+      return { ok: false, error: "Pack Builder odds no longer match the card pool." };
+    }
+    const ticketError = getPackBuilderTicketTotalError(input.ticketWeights);
+    if (ticketError) return { ok: false, error: ticketError };
+    const risk = computePackRisk({
+      cards: values.map((value, index) => ({
+        value,
+        weight: input.ticketWeights![index]!,
+      })),
+      price: input.price,
+    });
+    const edgeError = getPackBuilderEdgeError(risk.edge);
+    if (edgeError) return { ok: false, error: edgeError };
+    if (
+      input.targets.maxWinCap !== undefined &&
+      risk.maxWin > input.targets.maxWinCap + 1e-9
+    ) {
+      return { ok: false, error: "The saved odds exceed the selected max-win cap." };
+    }
+    return { ok: true, tickets: [...input.ticketWeights], risk };
+  }
+
+  const shaped = shapeWeights({
+    cards: values.map((value) => ({ value })),
+    price: input.price,
+    targetEdge: resolveRetuneTargetEdge(input.targets.targetEdge),
+    targetWinRate: input.targets.targetWinRate,
+    maxWinCap: input.targets.maxWinCap,
+    floorRatioMin: input.targets.floorRatioMin,
+    nearMissMin: input.targets.nearMissMin,
+  });
+  if ("error" in shaped) return { ok: false, error: shaped.error };
+  const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
+  if (edgeError) return { ok: false, error: edgeError };
+  const tickets = scaleToPackBuilderTickets(shaped.weights) ?? [];
+  const ticketError = getPackBuilderTicketTotalError(tickets);
+  if (ticketError) return { ok: false, error: ticketError };
+  return { ok: true, tickets, risk: shaped.risk };
+}
+
 /**
  * Materialize an owner-approved pack whose card weights are shaped to a target
  * edge + win-rate. Validates input with Zod, resolves each card's VALUE (read fresh
@@ -2891,27 +2939,16 @@ async function materializeApprovedPack(
     };
   });
 
-  const shaped = shapeWeights({
-    cards: slots.map((s) => ({ value: s.value })),
-    price: data.price,
-    targetEdge,
-    targetWinRate: data.targets.targetWinRate,
-    maxWinCap: data.targets.maxWinCap,
-    floorRatioMin: data.targets.floorRatioMin,
-    nearMissMin: data.targets.nearMissMin,
-  });
-  if ("error" in shaped) {
-    return { ok: false, error: shaped.error };
-  }
-  const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
-  if (edgeError) {
-    return { ok: false, error: edgeError };
-  }
+  const resolved = resolvePackBuildTickets(
+    data,
+    slots.map((slot) => slot.value),
+  );
+  if (!resolved.ok) return resolved;
   // The solver returns PROPORTIONAL integer weights (gcd-reduced, arbitrary
   // total). Production packs ship on the exact 1,000,000-ticket grid, so the
   // proportions are rescaled onto it and the persisted rows carry the scaled
   // vector — odds then sum to exactly 100.0000%.
-  const solvedTickets = scaleToPackBuilderTickets(shaped.weights) ?? [];
+  const solvedTickets = resolved.tickets;
   const solvedTicketError = getPackBuilderTicketTotalError(solvedTickets);
   if (solvedTicketError) {
     return { ok: false, error: solvedTicketError };
@@ -3003,8 +3040,8 @@ async function materializeApprovedPack(
         floorRatioMin: data.targets.floorRatioMin ?? null,
         nearMissMin: data.targets.nearMissMin ?? null,
       },
-      edge: shaped.risk.edge,
-      winRate: shaped.risk.winRate,
+      edge: resolved.risk.edge,
+      winRate: resolved.risk.winRate,
     },
   });
 
@@ -3026,8 +3063,8 @@ async function materializeApprovedPack(
   return {
     ok: true,
     packId: pack.id,
-    edge: shaped.risk.edge,
-    winRate: shaped.risk.winRate,
+    edge: resolved.risk.edge,
+    winRate: resolved.risk.winRate,
     active: activate,
   };
 }
@@ -3068,25 +3105,14 @@ async function previewPackBuildRequest(
       ? { cardId: card.cardId, value: prices.get(card.cardId)! }
       : { cardId: null, value: card.value },
   );
-  const shaped = shapeWeights({
-    cards: slots.map((slot) => ({ value: slot.value })),
-    price: input.price,
-    targetEdge: resolveRetuneTargetEdge(input.targets.targetEdge),
-    targetWinRate: input.targets.targetWinRate,
-    maxWinCap: input.targets.maxWinCap,
-    floorRatioMin: input.targets.floorRatioMin,
-    nearMissMin: input.targets.nearMissMin,
-  });
-  if ("error" in shaped) return { ok: false, error: shaped.error };
-  const edgeError = getPackBuilderEdgeError(shaped.risk.edge);
-  if (edgeError) return { ok: false, error: edgeError };
-  const ticketError = getPackBuilderTicketTotalError(
-    scaleToPackBuilderTickets(shaped.weights) ?? [],
+  const resolved = resolvePackBuildTickets(
+    input,
+    slots.map((slot) => slot.value),
   );
-  if (ticketError) return { ok: false, error: ticketError };
+  if (!resolved.ok) return resolved;
 
   const valueOnlyWithWeight = slots.some(
-    (slot, index) => slot.cardId === null && shaped.weights[index]! > 0,
+    (slot, index) => slot.cardId === null && resolved.tickets[index]! > 0,
   );
   if (valueOnlyWithWeight) {
     return {
@@ -3103,8 +3129,8 @@ async function previewPackBuildRequest(
 
   return {
     ok: true,
-    edge: shaped.risk.edge,
-    winRate: shaped.risk.winRate,
+    edge: resolved.risk.edge,
+    winRate: resolved.risk.winRate,
     maxWin: poolMaxWin,
   };
 }
