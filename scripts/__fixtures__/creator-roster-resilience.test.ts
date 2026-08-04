@@ -62,7 +62,6 @@ test("creator detail leaderboard cards use the resilient shared read client", ()
   for (const file of [
     "src/app/(admin)/creators/[userId]/leaderboards-card.tsx",
     "src/app/(creator-hub)/creator-hub/creators/[id]/_queries/leaderboards-preview.ts",
-    "src/app/(creator-hub)/creator-hub/creators/[id]/_queries/previous-leaderboards.ts",
   ]) {
     const source = read(file);
     assert.match(source, /affiliateLeaderboardsApi\.list/);

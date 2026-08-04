@@ -94,7 +94,8 @@ test("Fraud guide keeps access control and documents signup risk actions", () =>
 
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(page, /<PageHero>/);
-  assert.match(page, />\s*Sign Up &amp; Monitor\s*</);
+  assert.doesNotMatch(page, />\s*Sign Up &amp; Monitor\s*</);
+  assert.doesNotMatch(page, />\s*Guide\s*</);
   assert.match(page, /Low risk/);
   assert.match(page, /High risk/);
   assert.match(page, /Critical risk/);
