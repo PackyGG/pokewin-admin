@@ -59,7 +59,7 @@ FROM (
 JOIN discord_notification_channels AS channel
   ON channel.guild_id = '1483064422778798112'
  AND channel.channel_id = route.channel_id
- AND channel.category_id = '1532207307683795026'
+ AND channel.parent_id = '1532207307683795026'
  AND channel.available = true
 ON CONFLICT (guild_id, event_key, channel_id) DO UPDATE SET
   enabled = true,

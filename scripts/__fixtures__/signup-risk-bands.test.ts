@@ -24,7 +24,7 @@ test("high and critical signup actions own their Discord routes", () => {
 
   assert.match(migration, /'antifraud\.signup_high', '1534296433241493774'/);
   assert.match(migration, /'antifraud\.signup_critical', '1534296454129254523'/);
-  assert.match(migration, /category_id = '1532207307683795026'/);
+  assert.match(migration, /parent_id = '1532207307683795026'/);
   assert.match(migration, /DELETE FROM discord_notification_routes\s+WHERE event_key = 'antifraud\.signup_high_risk'/);
   assert.match(migration, /enabled = false/);
 });
