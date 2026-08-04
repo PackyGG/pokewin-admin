@@ -125,28 +125,6 @@ export async function ReviewCaseWorkspace({
 
 // ─── Sections ─────────────────────────────────────────────────────────
 
-/**
- * Signals split by whether they actually moved the score.
- *
- * `riskScore` on a signal row is the *running case total* after that event, so
- * once a case is capped every later row reads the same maxed number — reward
- * bookkeeping written at signup ends up looking as alarming as the rule that
- * opened the case. Ranking on `scoreDelta` (the event's own contribution)
- * separates the drivers from the noise. `scoreDelta === null` means the
- * producer does not score per event, so those stay with the drivers rather
- * than being hidden.
- */
-function splitSignals(signals: ReviewDetail["relatedSignals"]) {
-  const drivers = signals.filter((s) => s.scoreDelta !== 0);
-  const context = signals.filter((s) => s.scoreDelta === 0);
-  return {
-    drivers: [...drivers].sort(
-      (a, b) => (b.scoreDelta ?? 0) - (a.scoreDelta ?? 0),
-    ),
-    context,
-  };
-}
-
 /** The points a single event contributed — not the running case total. */
 function ScoreDeltaBadge({ delta }: { delta: number | null }) {
   if (delta == null) {
@@ -216,29 +194,8 @@ function CaseFacts({ detail }: { detail: ReviewDetail }) {
 function RelatedSignals({ detail }: { detail: ReviewDetail }) {
   const { relatedSignals } = detail;
   if (relatedSignals.length === 0) return null;
-  const { drivers, context } = splitSignals(relatedSignals);
-
-  // Zero-score rows repeat heavily (one per daily-reward enrollment), so they
-  // collapse into one line per kind with a count instead of eleven rows.
-  const grouped = new Map<
-    string,
-    { kind: string; count: number; latest: Date }
-  >();
-  for (const signal of context) {
-    const existing = grouped.get(signal.kind);
-    if (existing) {
-      existing.count += 1;
-      if (signal.receivedAt > existing.latest) existing.latest = signal.receivedAt;
-    } else {
-      grouped.set(signal.kind, {
-        kind: signal.kind,
-        count: 1,
-        latest: signal.receivedAt,
-      });
-    }
-  }
-  const contextGroups = [...grouped.values()].sort(
-    (a, b) => b.latest.getTime() - a.latest.getTime(),
+  const drivers = relatedSignals.filter((signal) => signal.scoreDelta !== 0).sort(
+    (a, b) => (b.scoreDelta ?? 0) - (a.scoreDelta ?? 0),
   );
 
   return (
@@ -311,46 +268,6 @@ function RelatedSignals({ detail }: { detail: ReviewDetail }) {
         </div>
       )}
 
-      {contextGroups.length > 0 && (
-        <details className="group overflow-hidden rounded-xl border border-border/60 bg-muted/20">
-          <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2.5 text-xs text-muted-foreground hover:bg-muted/40 sm:px-4">
-            <span>
-              <span className="font-semibold text-foreground">
-                {context.length} signal{context.length === 1 ? "" : "s"} with no
-                score impact
-              </span>{" "}
-              — bookkeeping and routine play, kept for the timeline
-            </span>
-            <span className="shrink-0 text-[10px] uppercase tracking-wide">
-              <span className="group-open:hidden">show</span>
-              <span className="hidden group-open:inline">hide</span>
-            </span>
-          </summary>
-          <ul className="border-t border-border/60">
-            {contextGroups.map((group) => (
-              <li
-                key={group.kind}
-                className="flex flex-wrap items-center justify-between gap-2 border-b border-border/40 px-3 py-2 last:border-b-0 sm:px-4"
-              >
-                <span className="flex min-w-0 items-center gap-1.5">
-                  <ReviewSignalBadge signal={group.kind} />
-                  {group.count > 1 && (
-                    <span className="text-[10px] tabular-nums text-muted-foreground">
-                      ×{group.count}
-                    </span>
-                  )}
-                </span>
-                <span
-                  className="shrink-0 text-[10px] text-muted-foreground"
-                  title={formatDateTime(group.latest)}
-                >
-                  {formatRelative(group.latest)}
-                </span>
-              </li>
-            ))}
-          </ul>
-        </details>
-      )}
     </section>
   );
 }

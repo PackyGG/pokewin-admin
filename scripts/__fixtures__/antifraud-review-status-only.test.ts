@@ -38,5 +38,8 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.doesNotMatch(workspace, /label: "Source"/);
   assert.doesNotMatch(workspace, /label: "Resolved"/);
   assert.doesNotMatch(workspace, /label: "Last updated"/);
+  assert.doesNotMatch(workspace, /signals? with no\s+score impact/);
+  assert.doesNotMatch(workspace, /bookkeeping and routine play/);
+  assert.doesNotMatch(workspace, /contextGroups|const grouped = new Map/);
   assert.match(detail, /redirect\(`\/antifraud\/reviews\?review=/);
 });
