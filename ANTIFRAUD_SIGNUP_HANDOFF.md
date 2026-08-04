@@ -55,10 +55,14 @@ immediately.
 
 ## Guide state
 
-The staff guide is live at `/antifraud/guide/sign-up`. It shows the four bands,
-monitoring, Discord destination/action, Review Yes/No, locks, and the four-step
-flow: check -> score -> monitor -> decide. Card footer copy and the separate
-Critical containment explainer box were intentionally removed.
+The staff guide is live at `/antifraud/guide/sign-up` as **Sign Up & Monitor**.
+It shows the four bands, monitoring, Discord destination/action, Review Yes/No,
+locks, and the four-step signup flow: check -> score -> monitor -> decide. A
+separate Monitor flow below it explains the 5/10/15-minute timers, fresh
+evidence, immediate upward risk movement, and the final latest-score decision.
+The Low-risk Discord action remains available but is not routed to a channel.
+Card footer copy and the separate Critical containment explainer box were
+intentionally removed.
 
 ## Production evidence
 

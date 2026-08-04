@@ -16,6 +16,7 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
   assert.match(policy, /return 15 \* 60/);
   assert.match(guide, /notification: "#high-risk"/);
   assert.match(guide, /notification: "#critical-risk"/);
+  assert.match(guide, /notification: "Action available · No channel"/);
   assert.equal((guide.match(/review: "No"/g) ?? []).length, 2);
   assert.equal((guide.match(/review: "Yes"/g) ?? []).length, 2);
   assert.equal((guide.match(/locks: "None"/g) ?? []).length, 3);
@@ -29,6 +30,10 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
   assert.match(guide, /title: "3\. Monitor higher scores"/);
   assert.match(guide, /title: "4\. Decide"/);
   assert.match(guide, /immediately if new points cross a higher threshold/);
+  assert.match(guide, /title: "1\. Start the timer"/);
+  assert.match(guide, /title: "2\. Watch new activity"/);
+  assert.match(guide, /title: "3\. Move up immediately"/);
+  assert.match(guide, /title: "4\. Finish on the latest score"/);
   assert.doesNotMatch(guide, /Critical containment/);
 });
 

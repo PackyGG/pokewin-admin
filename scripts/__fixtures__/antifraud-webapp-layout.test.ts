@@ -37,7 +37,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Fingerprints",
     "Banned users",
     "Risk locations",
-    "Sign-up checks",
+    "Sign Up & Monitor",
     // System group — one Settings page (every config section is a tab on it)
     // plus the staff audit log.
     "Settings",
@@ -93,12 +93,13 @@ test("Fraud guide keeps access control and documents signup risk actions", () =>
 
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(page, /<PageHero>/);
-  assert.match(page, />\s*Sign-up checks\s*</);
+  assert.match(page, />\s*Sign Up &amp; Monitor\s*</);
   assert.match(page, /Low risk/);
   assert.match(page, /High risk/);
   assert.match(page, /Critical risk/);
   assert.match(page, /Discord/);
   assert.match(page, /Review/);
+  assert.match(page, /Monitor flow/);
   assert.doesNotMatch(page, /Critical containment/);
 });
 

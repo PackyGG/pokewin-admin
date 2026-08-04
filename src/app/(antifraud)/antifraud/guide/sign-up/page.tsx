@@ -12,7 +12,7 @@ import {
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 
-export const metadata = { title: "Sign-up Checks Guide · Antifraud" };
+export const metadata = { title: "Sign Up & Monitor Guide · Antifraud" };
 
 const riskBands = [
   {
@@ -31,7 +31,7 @@ const riskBands = [
     icon: Eye,
     accent: "border-cyan-500/30 bg-cyan-500/5 text-cyan-600 dark:text-cyan-400",
     monitor: "5-minute monitor",
-    notification: "Low-risk signup action",
+    notification: "Action available · No channel",
     review: "No",
     locks: "None",
   },
@@ -81,6 +81,30 @@ const flow = [
   },
 ] as const;
 
+const monitorFlow = [
+  {
+    icon: Clock3,
+    title: "1. Start the timer",
+    detail: "Low risk runs for 5 minutes, High for 10, and Critical for 15.",
+  },
+  {
+    icon: Eye,
+    title: "2. Watch new activity",
+    detail: "Fresh account activity and evidence are added while the timer is active.",
+  },
+  {
+    icon: ShieldAlert,
+    title: "3. Move up immediately",
+    detail:
+      "If new evidence raises the score into High or Critical, its Discord, Review, and lock actions happen immediately.",
+  },
+  {
+    icon: CheckCircle2,
+    title: "4. Finish on the latest score",
+    detail: "When monitoring ends, the latest score decides the final risk result.",
+  },
+] as const;
+
 export default async function AntifraudSignupGuidePage() {
   await requireAntifraudPageAccess();
 
@@ -95,7 +119,7 @@ export default async function AntifraudSignupGuidePage() {
           Guide
         </p>
         <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-          Sign-up checks
+          Sign Up &amp; Monitor
         </h1>
       </div>
 
@@ -168,6 +192,36 @@ export default async function AntifraudSignupGuidePage() {
 
         <div className="mt-5 grid gap-3 md:grid-cols-4">
           {flow.map((step) => {
+            const Icon = step.icon;
+            return (
+              <div key={step.title} className="rounded-lg border border-border/60 bg-muted/20 p-3">
+                <Icon className="size-4 text-cyan-600 dark:text-cyan-400" />
+                <p className="mt-3 text-xs font-semibold">{step.title}</p>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {step.detail}
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <section className="rounded-xl border border-border/70 bg-card p-5">
+        <div className="flex items-start gap-3">
+          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
+            <Clock3 className="size-4" />
+          </span>
+          <div>
+            <h2 className="text-sm font-semibold">Monitor flow</h2>
+            <p className="mt-1 text-xs leading-5 text-muted-foreground">
+              Monitoring starts only for scores above 20. Low-risk alerts have
+              an available Discord action, but it is not routed to a channel.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 md:grid-cols-4">
+          {monitorFlow.map((step) => {
             const Icon = step.icon;
             return (
               <div key={step.title} className="rounded-lg border border-border/60 bg-muted/20 p-3">

@@ -139,7 +139,7 @@ const BLACKLIST_NAV: NavItem[] = [
 
 const GUIDE_NAV: NavItem[] = [
   {
-    label: "Sign-up checks",
+    label: "Sign Up & Monitor",
     href: "/antifraud/guide/sign-up",
     icon: BookOpen,
   },
