@@ -36,7 +36,7 @@ export async function updateKenoConfigAction(
   | { success: true; data: KenoConfig }
   | { success: false; error: string }
 > {
-  const session = await requirePageAccess("/keno");
+  const session = await requirePageAccess("/analytics");
   if (!sessionIsAdmin(session) && !sessionIsOwner(session)) {
     return { success: false, error: "Admin access is required" };
   }

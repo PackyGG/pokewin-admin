@@ -28,7 +28,8 @@ import {
  * Keno bet and payout limit editor.
  *
  * Keno's maximum bet and maximum win share the dedicated backend admin
- * endpoint. The three destination wager weights live only on /security.
+ * endpoint in Analytics → Games → Keno. The three destination wager weights
+ * live only on /security.
  *
  * The minimum bet, grid, draw count, pick range, risk modes and payout tables
  * remain compile-time backend constants.

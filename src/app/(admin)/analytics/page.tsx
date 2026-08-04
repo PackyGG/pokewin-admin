@@ -1,5 +1,9 @@
 import { Suspense } from "react";
-import { requirePageAccess } from "@/lib/dal";
+import {
+  requirePageAccess,
+  sessionIsAdmin,
+  sessionIsOwner,
+} from "@/lib/dal";
 import { AutoRefresh } from "../dashboard/auto-refresh";
 import { PeriodFilter } from "./period-filter";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
@@ -18,6 +22,7 @@ import { MapTab } from "./tab-map";
 import { parseMetric } from "./map/utils";
 import { parsePage } from "@/lib/utils/pagination";
 import { TabSkeleton } from "./tab-skeleton";
+import { parseKenoTab } from "../keno/tabs";
 
 export const metadata = { title: "Analytics" };
 
@@ -68,15 +73,16 @@ export default async function AnalyticsPage({
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
-  await requirePageAccess("/analytics");
+  const session = await requirePageAccess("/analytics");
   const params = await searchParams;
   const period = parsePeriod(params.period);
   const tab = parseTab(params.tab);
   // Double Down tab params (absorbed from /insights/double-down): `q` is the
   // audit-log search, `page` its pagination. Parsed defensively — a fuzzed
   // ?page= must never reach the query's OFFSET.
-  // Games tab sub-view (?g=): packs | battles | upgrader | double-down.
+  // Games tab sub-view (?g=): packs | battles | upgrader | double-down | keno.
   const gameView = parseGameView(params.g);
+  const kenoTab = parseKenoTab(params.kenoTab);
   const ddSearch = (params.q ?? "").trim();
   // Shared parser: rejects NaN / ≤ 0 / fractional like the hand-rolled guard
   // this replaces, and additionally caps the reachable OFFSET so a fuzzed
@@ -123,7 +129,8 @@ export default async function AnalyticsPage({
         <div className="min-w-0 flex-1">
           <AnalyticsTabNav />
         </div>
-        {PERIOD_DRIVEN_TABS.has(tab) && (
+        {PERIOD_DRIVEN_TABS.has(tab) &&
+          !(tab === "games" && gameView === "keno") && (
           <div className="shrink-0">
             <PeriodFilter />
           </div>
@@ -136,7 +143,7 @@ export default async function AnalyticsPage({
           skeleton keeps navigation snappy between tabs without jumping the
           layout on swap. */}
       <Suspense
-        key={`${tab}-${period}-${mapMetric}-${gameView}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
+        key={`${tab}-${period}-${mapMetric}-${gameView}-${kenoTab}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
         fallback={<TabSkeleton />}
       >
         {tab === "overview" && <OverviewTab period={period} />}
@@ -148,6 +155,8 @@ export default async function AnalyticsPage({
             search={ddSearch}
             page={ddPage}
             packsSort={packsSort}
+            kenoTab={kenoTab}
+            canEditKeno={sessionIsAdmin(session) || sessionIsOwner(session)}
           />
         )}
         {tab === "crm" && <CrmTab />}

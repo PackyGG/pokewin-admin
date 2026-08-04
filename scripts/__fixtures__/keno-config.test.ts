@@ -29,7 +29,7 @@ test("Keno config reads and writes through the dedicated backend endpoint", () =
     api,
     /\.put<Success<KenoConfig>>\("\/admin\/keno-config", input\)/,
   );
-  assert.match(action, /requirePageAccess\("\/keno"\)/);
+  assert.match(action, /requirePageAccess\("\/analytics"\)/);
   assert.match(action, /eventType: "keno_config_updated"/);
   assert.match(action, /max_win_usd: z\.number\(\)\.finite\(\)\.positive\(\)/);
   assert.match(action, /revalidateTag\(KENO_CONFIG_CACHE_TAG\)/);
