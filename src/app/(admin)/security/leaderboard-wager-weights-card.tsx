@@ -73,8 +73,16 @@ const FIELDS: {
       </>
     ),
   },
-  // Keno is deliberately absent: it is edited in Content → Keno, so
-  // leaderboard_wager_weight_keno_bps has exactly one editable surface.
+  {
+    key: "keno_bps",
+    label: "Keno weight",
+    help: (
+      <>
+        How much Keno wagers count on leaderboards. Default 1×;{" "}
+        <code>0×</code> removes Keno bets from leaderboards entirely.
+      </>
+    ),
+  },
 ];
 
 // Tolerates a field the backend hasn't shipped yet (e.g. keno_bps against an
@@ -204,7 +212,7 @@ export function LeaderboardWagerWeightsCard({
           </p>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           {FIELDS.map((f) => {
             const raw = values[f.key].trim();
             const x = raw === "" ? null : Number(raw);

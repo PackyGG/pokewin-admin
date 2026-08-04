@@ -18,7 +18,7 @@ import type { MultiplierWagerWeights } from "@/lib/backend-api/multiplier-wager-
  * Each tab is a DIFFERENT AXIS of "how much does this wager count", not a
  * duplicate of the others:
  *
- *   - Leaderboards  — BY GAME (packs/battles/upgrader), feeds official
+ *   - Leaderboards  — BY GAME (packs/battles/upgrader/keno), feeds official
  *     races + creator/affiliate leaderboards.
  *   - Rakeback      — BY GAME, feeds the rakeback wager base. Same axis as
  *     Leaderboards, different destination — kept as its own tab (not

@@ -37,9 +37,9 @@ import {
  * backend admin endpoints. This card consolidates them in the dedicated
  * Content → Keno workspace.
  *
- * It is the sole editor for all five Keno keys. The destination-oriented
- * cards and generic site_config table on /security deliberately omit them,
- * so each key has exactly one editable surface.
+ * The three weights are also available in their destination-oriented cards
+ * on /security. Both surfaces reuse the same backend actions and cache tags,
+ * while the generic site_config table continues to hide the raw keys.
  *
  * Saving reuses the established security server actions, so auth, the audit
  * event, and cache revalidation keep the same production contract — one audit

@@ -145,8 +145,16 @@ const FIELDS: {
       </>
     ),
   },
-  // Keno is deliberately absent: it is edited in Content → Keno, so
-  // wager_weight_keno_bps has exactly one editable surface.
+  {
+    key: "wager_weight_keno_bps",
+    label: "Keno wager weight",
+    help: (
+      <>
+        How much Keno wagers count toward the requirement. Default 0.8× — a
+        $100 Keno bet adds $80 of progress.
+      </>
+    ),
+  },
 ];
 
 // Tolerates a field the backend hasn't shipped yet (e.g. wager_weight_keno_bps
