@@ -97,29 +97,53 @@ export async function DealCard({
   }
 
   const deals: CreatorDealResponse[] = data?.deals.data ?? [];
-  // Prefer the active deal; otherwise the most recently created.
+  // Only a LIVE deal belongs in this card: the active one, else the next
+  // scheduled one. An ended deal (completed/terminated) must NEVER be shown
+  // here as if it were the creator's terms — it lives in "Previous deals".
   const deal =
     deals.find((d) => d.status === "active") ??
-    [...deals].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ??
+    deals
+      .filter((d) => d.status === "scheduled")
+      .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc))[0] ??
     null;
 
-  // The active deal drives the terminate / edit actions (both apply only to a
-  // live deal). "Previous" = deals ended by any means (completed/terminated).
-  const activeDeal = deals.find((d) => d.status === "active") ?? null;
+  // The live deal drives the terminate / edit actions (both apply to an
+  // active or a not-yet-started scheduled deal, same as the admin deals
+  // table). "Previous" = deals ended by any means (completed/terminated).
+  const activeDeal = deal;
   const previousDeals = deals.filter(
     (d) => d.status === "completed" || d.status === "terminated",
   );
 
   if (!deal) {
+    const ended = previousDeals.length > 0;
     return (
       <div className="space-y-3">
-        {heading}
+        <SectionHeading
+          icon={HandCoins}
+          title="Deal"
+          action={
+            <div className="flex items-center gap-2">
+              <NewDealDialog userId={userId} />
+              <DealActionsMenu
+                userId={userId}
+                username={username}
+                activeDeal={null}
+                previousDeals={previousDeals}
+              />
+            </div>
+          }
+        />
         <Card size="sm">
           <CardContent className="py-2">
             <EmptyState
               icon={HandCoins}
-              title="No deal yet"
-              description="This creator has no fill deal. Use New Deal to set one up."
+              title={ended ? "No active deal" : "No deal yet"}
+              description={
+                ended
+                  ? `This creator's last deal ended. ${previousDeals.length} previous deal${previousDeals.length === 1 ? "" : "s"} are in the actions menu. Use New Deal to set up a new one.`
+                  : "This creator has no fill deal. Use New Deal to set one up."
+              }
               compact
             />
           </CardContent>
@@ -226,9 +250,10 @@ export async function DealCard({
             >
               Site leaderboards {deal.allow_site_leaderboards ? "on" : "off"}
             </Badge>
-            {deals.length > 1 && (
+            {previousDeals.length > 0 && (
               <span className="text-[11px] text-muted-foreground">
-                +{deals.length - 1} more deal{deals.length - 1 === 1 ? "" : "s"}
+                +{previousDeals.length} previous deal
+                {previousDeals.length === 1 ? "" : "s"}
               </span>
             )}
           </div>
