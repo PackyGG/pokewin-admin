@@ -15,7 +15,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { EmptyState } from "@/components/empty-state";
-import { formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 import {
@@ -34,6 +34,14 @@ export type PreviousLeaderboardItem = {
   end_date: string;
   approval_status: LeaderboardApprovalStatus;
   time_status: LeaderboardTimeStatus;
+  /** Admin sponsored share of the prize pool (0–100, default 100). */
+  sponsoredPct: number;
+  /** House-funded prize spend = prize × sponsoredPct → rose. */
+  houseCostUsd: number;
+  /** Raw (unweighted) wager driven by the board's codes in its window. */
+  wageredRawUsd: number;
+  /** Leaderboard-weighted wager (settled boards: the snapshot total). */
+  wageredWeightedUsd: number;
 };
 
 /**
@@ -56,7 +64,7 @@ export function PreviousLeaderboardsDialog({
         Previous leaderboards
       </DialogTrigger>
 
-      <DialogContent className="sm:max-w-lg">
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-zinc-500/15 text-zinc-600 ring-1 ring-inset ring-zinc-500/30 dark:text-zinc-400">
@@ -90,6 +98,12 @@ export function PreviousLeaderboardsDialog({
                     <span className="truncate text-sm font-medium">
                       {r.title}
                     </span>
+                    {r.wageredRawUsd > 0 && (
+                      <span className="shrink-0 text-xs tabular-nums text-emerald-600 dark:text-emerald-400">
+                        · {formatCurrency(r.wageredRawUsd)} wagered ·{" "}
+                        {formatCurrency(r.wageredWeightedUsd)} weighted
+                      </span>
+                    )}
                     {r.is_sponsored && (
                       <Badge variant="outline" className="text-[10px]">
                         sponsored
@@ -98,6 +112,12 @@ export function PreviousLeaderboardsDialog({
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">
                     {formatDate(r.start_date)} → {formatDate(r.end_date)}
+                  </div>
+                  <div className="mt-0.5 truncate text-[11px] text-muted-foreground">
+                    House paid {r.sponsoredPct}% ·{" "}
+                    <span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">
+                      {formatCurrency(r.houseCostUsd)}
+                    </span>
                   </div>
                 </div>
                 <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0">

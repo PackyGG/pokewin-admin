@@ -96,9 +96,9 @@ export async function DealCard({
 
   if (error) {
     return (
-      <div className="space-y-3">
+      <div className="flex h-full flex-col gap-3">
         {heading}
-        <Card size="sm" className={DEAL_CARD_FILLED_HEIGHT}>
+        <Card size="sm" className={cn("flex-1", DEAL_CARD_FILLED_HEIGHT)}>
           <CardContent className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               Could not load the deal — the backend was unreachable. Refresh to
@@ -132,7 +132,7 @@ export async function DealCard({
   if (!deal) {
     const ended = previousDeals.length > 0;
     return (
-      <div className="space-y-3">
+      <div className="flex h-full flex-col gap-3">
         <SectionHeading
           icon={HandCoins}
           title="Deal"
@@ -143,7 +143,7 @@ export async function DealCard({
             </div>
           }
         />
-        <Card size="sm" className={DEAL_CARD_FILLED_HEIGHT}>
+        <Card size="sm" className={cn("flex-1", DEAL_CARD_FILLED_HEIGHT)}>
           <CardContent className="flex flex-1 items-center justify-center">
             <EmptyState
               icon={HandCoins}
@@ -165,7 +165,7 @@ export async function DealCard({
   const withdrawCapUsed = num(deal.withdraw_cap_used_usd);
 
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3">
       <SectionHeading
         icon={HandCoins}
         title="Deal"
@@ -176,7 +176,7 @@ export async function DealCard({
           </div>
         }
       />
-      <Card size="sm">
+      <Card size="sm" className="flex-1">
         <CardContent className="space-y-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2">

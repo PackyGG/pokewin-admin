@@ -81,7 +81,9 @@ export function OverviewTab({
 
       {/* 2 ── Deal | Affiliate Leaderboards (50/50). Each card streams in its
           own boundary so a slow backend call on one doesn't block the other. */}
-      <div className="grid gap-4 lg:grid-cols-2 lg:items-start">
+      {/* items-stretch (the grid default) + `h-full` inside each card keeps
+          the two boxes the same height whatever their content length. */}
+      <div className="grid gap-4 lg:grid-cols-2">
         <Suspense fallback={<HalfCardSkeleton />}>
           <DealCard userId={userId} username={username} />
         </Suspense>
@@ -216,9 +218,9 @@ export { parseCreatorActivityPeriod };
 
 function HalfCardSkeleton() {
   return (
-    <div className="space-y-3">
+    <div className="flex h-full flex-col gap-3">
       <Skeleton className="h-6 w-40" />
-      <Card size="sm" className="space-y-3 p-4">
+      <Card size="sm" className="flex-1 space-y-3 p-4">
         <Skeleton className="h-5 w-32" />
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
           {[0, 1, 2, 3, 4, 5].map((i) => (
