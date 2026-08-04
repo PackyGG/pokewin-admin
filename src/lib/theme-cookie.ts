@@ -23,11 +23,21 @@
 
 import { ROOT_DOMAIN } from "@/lib/app-hosts";
 
-/** next-themes `storageKey` — must stay in sync with `src/app/layout.tsx`. */
-export const THEME_STORAGE_KEY = "pokewin-theme-v2";
+/**
+ * next-themes `storageKey` — must stay in sync with `src/app/layout.tsx`.
+ *
+ * Bumped to v3 together with the cookie name below: when the sync first went
+ * live it propagated whichever theme each host happened to hold, and the
+ * outlier (`dark`, stored on `marketing.`) won and spread everywhere. Bumping
+ * BOTH keys invalidates the stale value on every host at once, so the app
+ * falls back to `defaultTheme="grailed"` — the owner's standing default — and
+ * the cookie takes over from there. Bumping only one key would not work: the
+ * seed script would just re-apply the stale cookie under the new storage key.
+ */
+export const THEME_STORAGE_KEY = "pokewin-theme-v3";
 
 /** Domain-wide cookie mirroring {@link THEME_STORAGE_KEY}. */
-export const THEME_COOKIE_NAME = "pokewin-theme";
+export const THEME_COOKIE_NAME = "pokewin-theme-v2";
 
 /** One year, in seconds. */
 export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;

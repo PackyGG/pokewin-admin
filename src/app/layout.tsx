@@ -5,7 +5,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/theme-provider";
 import { ThemeCookieSync } from "@/components/theme-cookie-sync";
-import { THEME_COOKIE_SEED_SCRIPT } from "@/lib/theme-cookie";
+import { THEME_COOKIE_SEED_SCRIPT, THEME_STORAGE_KEY } from "@/lib/theme-cookie";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -117,16 +117,16 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: THEME_COOKIE_SEED_SCRIPT }}
         />
         {/* Grailed Dark is THE default theme for everyone (owner 2026-07-12).
-            `storageKey` is bumped to "pokewin-theme-v2" so previously-saved
-            themes (under the old default "theme" key) are invalidated — every
-            existing user falls back to `defaultTheme="grailed"` once, then any
-            new toggle choice persists under the new key. `enableSystem` stays
-            on so "System" is still selectable; users can still switch. */}
+            `storageKey` lives in `theme-cookie.ts` next to the cookie name so
+            the two can only ever be bumped together — a bump invalidates every
+            saved theme and drops everyone back on `defaultTheme="grailed"`
+            once, after which a toggle choice persists (and now syncs across
+            hosts). `enableSystem` stays on so "System" is still selectable. */}
         <ThemeProvider
           attribute="class"
           defaultTheme="grailed"
           enableSystem
-          storageKey="pokewin-theme-v2"
+          storageKey={THEME_STORAGE_KEY}
           themes={["light", "dark", "grailed", "grailed-light"]}
         >
           {/* Write half of the shared-theme mechanic: mirrors every theme
