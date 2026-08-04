@@ -35,7 +35,7 @@ import {
  *
  * Keno's maximum bet, maximum win, and three live weights are exposed by four
  * backend admin endpoints. This card consolidates them in the dedicated
- * Content → Keno workspace.
+ * Analytics → Games → Keno workspace.
  *
  * It is the sole editor for all five Keno keys. The destination-oriented
  * cards and generic site_config table on /security deliberately omit them,

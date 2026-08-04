@@ -1,6 +1,13 @@
 import { Suspense } from "react";
 import Link from "next/link";
-import { Dices, LineChart, Package, Swords, ArrowUpCircle } from "lucide-react";
+import {
+  Dices,
+  LineChart,
+  Package,
+  Swords,
+  ArrowUpCircle,
+  Grid3X3,
+} from "lucide-react";
 
 import { SectionHeading } from "@/components/modern-panels";
 import {
@@ -28,11 +35,16 @@ import { DoubleDownChartsSection } from "../insights/double-down/charts-section"
 import { PacksBattlesTab } from "./tab-packs";
 import { UpgraderCharts } from "./upgrader-charts";
 import type { AnalyticsPeriod } from "./types";
+import { KenoTabNav } from "../keno/_components/keno-tab-nav";
+import { KenoOverviewTab } from "../keno/_components/overview-tab";
+import { KenoConfigurationTab } from "../keno/_components/configuration-tab";
+import { KenoOddsTab } from "../keno/_components/odds-tab";
+import type { KenoTab } from "../keno/tabs";
 
 const LOG_PER_PAGE = 25;
 
 /**
- * The four things a player can actually put money into.
+ * The five things a player can actually put money into.
  *
  * Packs and battles were briefly dropped here (2026-07-23) alongside the Top
  * Performers tab and restored the same day — they are the two biggest modes
@@ -43,6 +55,7 @@ export const GAME_VIEWS = [
   "battles",
   "upgrader",
   "double-down",
+  "keno",
 ] as const;
 export type GameView = (typeof GAME_VIEWS)[number];
 
@@ -57,6 +70,7 @@ const VIEW_META: { value: GameView; label: string; icon: typeof Dices }[] = [
   { value: "battles", label: "Battles", icon: Swords },
   { value: "upgrader", label: "Upgrader", icon: ArrowUpCircle },
   { value: "double-down", label: "Double Down", icon: Dices },
+  { value: "keno", label: "Keno", icon: Grid3X3 },
 ];
 
 /**
@@ -78,6 +92,8 @@ export function GamesTab({
   search,
   page,
   packsSort,
+  kenoTab,
+  canEditKeno,
 }: {
   view: GameView;
   period: AnalyticsPeriod;
@@ -85,6 +101,8 @@ export function GamesTab({
   search: string;
   page: number;
   packsSort: string | undefined;
+  kenoTab: KenoTab;
+  canEditKeno: boolean;
 }) {
   return (
     <div className="space-y-6">
@@ -136,6 +154,42 @@ export function GamesTab({
       {view === "double-down" && (
         <DoubleDownSection search={search} page={page} period={ddPeriod} />
       )}
+      {view === "keno" && (
+        <KenoSection tab={kenoTab} canEdit={canEditKeno} period={period} />
+      )}
+    </div>
+  );
+}
+
+function KenoSection({
+  tab,
+  canEdit,
+  period,
+}: {
+  tab: KenoTab;
+  canEdit: boolean;
+  period: AnalyticsPeriod;
+}) {
+  return (
+    <div className="space-y-6">
+      <KenoTabNav current={tab} period={period} />
+      <Suspense
+        key={tab}
+        fallback={
+          <div className="space-y-6">
+            <KpiStripSkeleton count={6} />
+            <TableSkeleton rows={8} columns={6} />
+          </div>
+        }
+      >
+        {tab === "configuration" ? (
+          <KenoConfigurationTab canEdit={canEdit} />
+        ) : tab === "odds" ? (
+          <KenoOddsTab />
+        ) : (
+          <KenoOverviewTab />
+        )}
+      </Suspense>
     </div>
   );
 }

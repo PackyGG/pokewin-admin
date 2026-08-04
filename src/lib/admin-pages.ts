@@ -135,7 +135,6 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "Content", label: "Cards", key: "/cards" },
   { group: "Content", label: "Sets", key: "/sets" },
   { group: "Content", label: "Upgrader", key: "/upgrader" },
-  { group: "Content", label: "Keno", key: "/keno" },
   // Transaction surfaces merged into the Content nav group (commit
   // d28479f3 folded the standalone "Transactions" sidebar group into
   // Content). Mirror that here so the role-permissions picker lists them
