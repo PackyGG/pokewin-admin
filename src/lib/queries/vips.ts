@@ -52,6 +52,10 @@ export type VipRosterRow = {
   pnl: number | null;
   totalDeposited: number | null;
   totalWithdrawn: number | null;
+  /** Lifetime lossback credited by admins (`lossback` adjustments). */
+  lossbackGiven: number;
+  /** Lifetime manual bonus credited by admins (`bonus` + `deposit_bonus`). */
+  bonusGiven: number;
   discord: VipDiscordLink | null;
 };
 
@@ -137,6 +141,58 @@ async function hydrateUsers(userIds: string[]) {
   return new Map(rows.map((r) => [r.id, r]));
 }
 
+type AdjustmentTotals = { lossback: number; bonus: number };
+
+/**
+ * Lifetime admin-adjustment credits per player, split into the two lines
+ * the VIP desk cares about:
+ *   • `lossback` → `metadata.adjustment_category = 'lossback'`
+ *   • `bonus`    → `bonus` + `deposit_bonus` (both manual bonus credits)
+ *
+ * Both are CREDITS only (`amount > 0`, money the house gave the player) —
+ * a categorized debit clawback is a house gain and must never net against
+ * what was handed out. Categories are the canonical keys written by
+ * `adjustBalance` (see `@/lib/balance-adjustment-categories`).
+ *
+ * Bounded to the current page slice and served by
+ * `idx_ledger_tx_user_type_status_created_at` (user_id, type, status).
+ */
+async function getAdjustmentTotals(
+  userIds: string[],
+): Promise<Map<string, AdjustmentTotals>> {
+  const totals = new Map<string, AdjustmentTotals>();
+  if (userIds.length === 0) return totals;
+
+  const db = await getReadDrizzleDb();
+  const { rows } = await db.execute<{
+    user_id: string;
+    lossback: string;
+    bonus: string;
+  }>(sql`
+    SELECT
+      lt.user_id,
+      COALESCE(SUM(CASE
+        WHEN lt.metadata->>'adjustment_category' = 'lossback'
+        THEN lt.amount::numeric ELSE 0 END), 0)::text AS lossback,
+      COALESCE(SUM(CASE
+        WHEN lt.metadata->>'adjustment_category' IN ('bonus', 'deposit_bonus')
+        THEN lt.amount::numeric ELSE 0 END), 0)::text AS bonus
+    FROM ledger_transactions lt
+    WHERE lt.user_id = ANY(${pgArrayParam(userIds)}::text[])
+      AND lt.type = 'admin_balance_adjustment'::ledger_transaction_type
+      AND lt.status = 'completed'::ledger_transaction_status
+      AND lt.amount::numeric > 0
+    GROUP BY lt.user_id
+  `);
+  for (const row of rows) {
+    totals.set(row.user_id, {
+      lossback: Number(row.lossback),
+      bonus: Number(row.bonus),
+    });
+  }
+  return totals;
+}
+
 /**
  * Paginated VIP roster with the Discord channel link folded in.
  *
@@ -200,15 +256,17 @@ export async function getVipRoster({
   if (rows.length === 0) return { items: [], total };
 
   const userIds = rows.map((r) => r.target_user_id);
-  const [userById, pnlByUserId] = await Promise.all([
+  const [userById, pnlByUserId, adjustmentsByUserId] = await Promise.all([
     hydrateUsers(userIds),
     calculateUsersPnlBatch(userIds),
+    getAdjustmentTotals(userIds),
   ]);
 
   return {
     items: rows.map((r) => {
       const player = userById.get(r.target_user_id);
       const userPnl = pnlByUserId.get(r.target_user_id) ?? null;
+      const adjustments = adjustmentsByUserId.get(r.target_user_id);
       return {
         userId: r.target_user_id,
         username: player?.username ?? null,
@@ -221,6 +279,8 @@ export async function getVipRoster({
         pnl: userPnl ? -userPnl.pnl : null,
         totalDeposited: userPnl?.deposits ?? null,
         totalWithdrawn: userPnl?.withdrawals ?? null,
+        lossbackGiven: adjustments?.lossback ?? 0,
+        bonusGiven: adjustments?.bonus ?? 0,
         discord: r.channel_id
           ? {
               guildId: VIPS_GUILD_ID,

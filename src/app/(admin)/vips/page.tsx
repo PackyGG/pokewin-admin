@@ -208,6 +208,22 @@ function PnlCell({ value }: { value: number | null }) {
   );
 }
 
+/**
+ * Money the house handed the player through admin balance adjustments
+ * (lossback / bonus). House POV: the player gained, we paid → 🔴 rose.
+ * Zero renders muted so a row with nothing given stays quiet.
+ */
+function GivenCell({ value }: { value: number }) {
+  if (value <= 0) {
+    return <span className="tabular-nums text-muted-foreground">—</span>;
+  }
+  return (
+    <span className="font-medium tabular-nums text-rose-400">
+      {formatCurrency(value)}
+    </span>
+  );
+}
+
 /** Channel + member affordances for one VIP row. */
 function DiscordCell({ discord }: { discord: VipRosterRow["discord"] }) {
   if (!discord) {
@@ -354,7 +370,7 @@ async function VipsListSection({
           </div>
         ) : (
           <div className="mt-4 overflow-x-auto">
-            <table className="w-full min-w-[980px] text-sm">
+            <table className="w-full min-w-[1180px] text-sm">
               <thead>
                 <tr className="border-b text-left text-xs text-muted-foreground">
                   <th className="pb-2 pr-4 font-medium">Player</th>
@@ -362,6 +378,8 @@ async function VipsListSection({
                   <th className="pb-2 pr-4 font-medium">Lifetime PnL</th>
                   <th className="pb-2 pr-4 font-medium">Deposits</th>
                   <th className="pb-2 pr-4 font-medium">Withdrawals</th>
+                  <th className="pb-2 pr-4 font-medium">Lossback given</th>
+                  <th className="pb-2 pr-4 font-medium">Bonus given</th>
                   <th className="pb-2 pr-4 font-medium">Country</th>
                   <th className="pb-2 font-medium">Tagged at</th>
                 </tr>
@@ -395,6 +413,12 @@ async function VipsListSection({
                       {row.totalWithdrawn === null
                         ? "—"
                         : formatCurrency(row.totalWithdrawn)}
+                    </td>
+                    <td className="py-3 pr-4">
+                      <GivenCell value={row.lossbackGiven} />
+                    </td>
+                    <td className="py-3 pr-4">
+                      <GivenCell value={row.bonusGiven} />
                     </td>
                     <td className="py-3 pr-4 text-muted-foreground">
                       {row.country ?? row.countryCode ?? "—"}
