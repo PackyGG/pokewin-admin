@@ -10,8 +10,8 @@ import { backendApi } from "./client";
  * leaderboards, shard earning) an enable toggle plus an ordered tier list.
  * A bet with payout multiplier m counts at the FIRST tier (ascending max_x)
  * where m < max_x, else at 100%. Only upgrader bets have a player-chosen
- * multiplier — packs and battles are unaffected. Backend defaults: below
- * 1.25× → 20%, 1.25–1.50× → 50%, all destinations disabled.
+ * multiplier — packs, battles, and Keno are unaffected. Backend defaults:
+ * below 1.25× → 20%, 1.25–1.50× → 50%, all destinations disabled.
  *
  * Source of truth (request/response shapes + validation):
  *   packy-backend/src/routes/v1/admin/multiplier-wager-weights.ts

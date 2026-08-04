@@ -52,7 +52,13 @@ test("Keno Configuration owns the live bet and win caps and hides their raw keys
   assert.match(card, /updateKenoConfigAction\(/);
   assert.match(card, /keno_max_bet_usd/);
   assert.match(card, /keno_max_win_usd/);
-  assert.match(card, /All 5 active settings/);
+  assert.match(card, /2 live settings/);
+  assert.doesNotMatch(card, /wager_weight_keno_bps/);
+  assert.doesNotMatch(card, /leaderboard_wager_weight_keno_bps/);
+  assert.doesNotMatch(card, /rakeback_wager_weight_keno_bps/);
+  assert.doesNotMatch(card, /updateWagerRequirementDefaultsAction/);
+  assert.doesNotMatch(card, /updateLeaderboardWagerWeightsAction/);
+  assert.doesNotMatch(card, /updateRakebackWagerWeightsAction/);
   assert.match(keys, /"keno_max_bet_usd"/);
   assert.match(keys, /"keno_max_win_usd"/);
   assert.match(security, /\.\.\.KENO_SITE_CONFIG_KEYS/);

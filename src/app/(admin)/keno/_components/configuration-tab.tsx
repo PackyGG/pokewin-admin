@@ -12,11 +12,6 @@ import {
   SectionHeading,
   StatPanel,
 } from "@/components/modern-panels";
-import {
-  getCachedLeaderboardWagerWeights,
-  getCachedRakebackWagerWeights,
-  getCachedWagerRequirementDefaults,
-} from "../../security/_cached-reads";
 import { getCachedKenoConfig } from "../_cached-reads";
 import {
   getKenoRtp,
@@ -37,22 +32,7 @@ export async function KenoConfigurationTab({
 }: {
   canEdit: boolean;
 }) {
-  const [kenoConfigResult, wagerResult, leaderboardResult, rakebackResult] =
-    await Promise.allSettled([
-      getCachedKenoConfig(),
-      getCachedWagerRequirementDefaults(),
-      getCachedLeaderboardWagerWeights(),
-      getCachedRakebackWagerWeights(),
-    ]);
-
-  const kenoConfig =
-    kenoConfigResult.status === "fulfilled" ? kenoConfigResult.value : null;
-  const wagerDefaults =
-    wagerResult.status === "fulfilled" ? wagerResult.value : null;
-  const leaderboardWeights =
-    leaderboardResult.status === "fulfilled" ? leaderboardResult.value : null;
-  const rakebackWeights =
-    rakebackResult.status === "fulfilled" ? rakebackResult.value : null;
+  const kenoConfig = await getCachedKenoConfig().catch(() => null);
   const configuredRtps = KENO_RISK_MODES.flatMap((risk) =>
     Array.from(
       { length: KENO_MAX_PICKS - KENO_MIN_PICKS + 1 },
@@ -70,15 +50,12 @@ export async function KenoConfigurationTab({
           title="System configuration"
           action={
             <Badge variant="outline" className="font-normal">
-              5 live settings · {canEdit ? "Editing enabled" : "Read only"}
+              2 live settings · {canEdit ? "Editing enabled" : "Read only"}
             </Badge>
           }
         />
         <KenoSettingsCard
           kenoConfig={kenoConfig}
-          wagerDefaults={wagerDefaults}
-          leaderboardWeights={leaderboardWeights}
-          rakebackWeights={rakebackWeights}
           canEdit={canEdit}
         />
       </section>
@@ -143,10 +120,10 @@ export async function KenoConfigurationTab({
         </div>
         <p className="text-xs leading-relaxed text-muted-foreground">
           The grid, draws, picks, minimum bet, risk modes, and payout curves
-          are compile-time backend constants. The maximum bet, maximum win,
-          and three wager weights above are database-backed and change through
-          the backend admin API. The win cap limits the final payout after the
-          selected multiplier is applied.
+          are compile-time backend constants. The maximum bet and maximum win
+          above are database-backed and change through the backend admin API.
+          The win cap limits the final payout after the selected multiplier is
+          applied.
         </p>
       </section>
 

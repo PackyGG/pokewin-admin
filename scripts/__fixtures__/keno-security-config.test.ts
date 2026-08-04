@@ -43,3 +43,12 @@ test("Security Keno controls keep the existing validated backend write paths", (
   assert.match(leaderboardAction, /keno_bps: Bps\.optional\(\)/);
   assert.match(rakebackAction, /keno_bps: Bps\.optional\(\)/);
 });
+
+test("Multiplier tiers remain upgrader-only and explicitly exclude Keno", () => {
+  const card = source(
+    "src/app/(admin)/security/multiplier-wager-weights-card.tsx",
+  );
+
+  assert.match(card, /Only upgrader bets have a player-chosen payout multiplier/);
+  assert.match(card, /Packs,[\s\S]*battles, and Keno do not use these tiers/);
+});

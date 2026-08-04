@@ -34,7 +34,7 @@ import type {
  * enable toggle plus an ordered tier list that discounts low-multiplier
  * upgrader bets: a bet with payout multiplier m counts at the FIRST tier
  * (ascending bound) where m < max_x, else at 100%. Only upgrader bets have
- * a player-chosen multiplier — packs and battles are unaffected.
+ * a player-chosen multiplier — packs, battles, and Keno are unaffected.
  *
  * Stored on the backend as bps ints (10000 = 100%), but admins think in
  * percent, so the weight inputs are % with up to 2 decimals (50 = 50% =
@@ -313,11 +313,12 @@ export function MultiplierWagerWeightsCard({
         <div className="flex gap-2 rounded-md border border-blue-500/40 bg-blue-500/10 p-3 text-xs text-blue-600 dark:text-blue-400">
           <Info className="size-4 shrink-0 mt-0.5" />
           <p className="text-blue-600/80 dark:text-blue-400/80">
-            Only upgrader bets have a player-chosen payout multiplier — packs
-            and battles always count in full. A bet takes the first tier
-            (ascending bound) whose bound is above its multiplier; at or
-            above the highest bound it counts 100%. Saving a destination&apos;s
-            tiers replaces its stored list wholesale.
+            Only upgrader bets have a player-chosen payout multiplier. Packs,
+            battles, and Keno do not use these tiers and keep their own wager
+            weights. An upgrader bet takes the first tier (ascending bound)
+            whose bound is above its multiplier; at or above the highest bound
+            it counts 100%. Saving a destination&apos;s tiers replaces its stored
+            list wholesale.
           </p>
         </div>
 
