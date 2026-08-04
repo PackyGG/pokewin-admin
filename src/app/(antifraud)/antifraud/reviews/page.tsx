@@ -6,10 +6,10 @@ import {
   CheckCircle2,
   ChevronRight,
   Clock3,
-  Eye,
   FolderOpen,
   Search,
   ShieldAlert,
+  UserCheck,
   UserRound,
 } from "lucide-react";
 
@@ -46,6 +46,7 @@ import { ReviewStatusBadge } from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { ReviewCaseDialog } from "./_components/review-case-dialog";
 import { ReviewCaseWorkspace } from "./_components/review-case-workspace";
+import { ReviewOpenButton } from "./_components/review-open-button";
 import { ReviewSignalBadge } from "./_components/review-signal-badge";
 
 export const metadata = { title: "Account Review" };
@@ -321,7 +322,12 @@ async function QueueList({
       ) : (
         <ul className="space-y-3">
           {reviews.map((review) => (
-            <CaseRow key={review.id} review={review} current={current} />
+            <CaseRow
+              key={review.id}
+              review={review}
+              current={current}
+              viewerId={viewerId}
+            />
           ))}
         </ul>
       )}
@@ -374,9 +380,11 @@ async function QueueList({
 function CaseRow({
   review,
   current,
+  viewerId,
 }: {
   review: ReviewListItem;
   current: SearchParams;
+  viewerId: string;
 }) {
   const name = review.targetUsername ?? review.targetUserId;
   return (
@@ -390,6 +398,12 @@ function CaseRow({
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-sm font-semibold">{name}</span>
               <ReviewStatusBadge status={review.status} />
+              {review.assignee && (
+                <span className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/30 bg-cyan-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">
+                  <UserCheck className="size-3" />
+                  {review.assignee.label}
+                </span>
+              )}
               {review.workflow && (
                 <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
                   {REVIEW_QUEUE_LABELS[review.workflow.queueState]}
@@ -452,15 +466,13 @@ function CaseRow({
               <UserRound className="size-3.5" />
               Profile
             </HostLink>
-            <HostLink
+            <ReviewOpenButton
+              reviewId={review.id}
+              viewerId={viewerId}
+              status={review.status}
               href={buildHref({ review: review.id }, current)}
-              scroll={false}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Review ${review.targetUsername ?? review.targetUserId}`}
-            >
-              <Eye className="size-3.5" />
-              Review
-            </HostLink>
+              label={review.targetUsername ?? review.targetUserId}
+            />
           </div>
         </div>
       </div>

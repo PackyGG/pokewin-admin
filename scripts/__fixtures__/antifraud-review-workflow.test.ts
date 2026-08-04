@@ -20,6 +20,27 @@ test("Account Reviews use the exact four operational tabs", () => {
   assert.match(page, /<ReviewCaseDialog/);
 });
 
+test("opening a live review claims it and the queue shows its analyst", () => {
+  const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
+  const openButton = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-open-button.tsx",
+  );
+  const workspace = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-case-workspace.tsx",
+  );
+
+  assert.match(
+    openButton,
+    /await assignReview\(\{ reviewId, adminUserId: viewerId \}\)/,
+  );
+  assert.match(openButton, /TERMINAL_STATUSES\.has\(status\)/);
+  assert.match(page, /review\.assignee\.label/);
+  assert.match(workspace, /Signed up/);
+  assert.doesNotMatch(workspace, /label: "Source"/);
+  assert.doesNotMatch(workspace, /label: "Resolved"/);
+  assert.doesNotMatch(workspace, /label: "Last updated"/);
+});
+
 test("priority and waiting classification use lock, KYC, and 70+ evidence", () => {
   const workflow = source("src/lib/antifraud/review-workflow.ts");
 

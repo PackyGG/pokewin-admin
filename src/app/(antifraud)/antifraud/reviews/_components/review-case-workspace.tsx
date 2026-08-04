@@ -8,7 +8,6 @@ import {
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
@@ -68,7 +67,7 @@ export async function ReviewCaseWorkspace({
     );
   }
 
-  const { review, assignee, opener, resolver, notes } = detail.detail;
+  const { review, assignee, notes } = detail.detail;
   const name = review.targetUsername ?? review.targetUserId;
 
   return (
@@ -88,9 +87,6 @@ export async function ReviewCaseWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-            <Badge variant="outline" className="capitalize">
-              {review.source}
-            </Badge>
             <ReviewStatusBadge status={review.status} />
             <Button
               size="sm"
@@ -109,9 +105,7 @@ export async function ReviewCaseWorkspace({
           </div>
         </div>
         <p className="mt-3 text-xs text-muted-foreground">
-          Opened {formatDateTime(review.createdAt)}
-          {opener ? ` by ${opener.label}` : ""} · last updated{" "}
-          {formatRelative(review.updatedAt)}
+          Signed up {formatDateTime(review.createdAt)}
         </p>
       </div>
 
@@ -125,7 +119,7 @@ export async function ReviewCaseWorkspace({
       <div className="grid gap-5 lg:grid-cols-[minmax(0,1.45fr)_minmax(300px,0.7fr)]">
         <div className="min-w-0 space-y-5">
           <WhyThisCase detail={detail.detail} />
-          <CaseFacts detail={detail.detail} resolver={resolver} />
+          <CaseFacts detail={detail.detail} />
           <RelatedSignals detail={detail.detail} />
           <CaseTrail detail={detail.detail} />
         </div>
@@ -395,40 +389,17 @@ function WorkflowEvidence({ workflow }: { workflow: ReviewWorkflow }) {
   );
 }
 
-function CaseFacts({
-  detail,
-  resolver,
-}: {
-  detail: ReviewDetail;
-  resolver: ReviewDetail["resolver"];
-}) {
-  const { review, assignee, opener } = detail;
+function CaseFacts({ detail }: { detail: ReviewDetail }) {
+  const { review, assignee } = detail;
   const facts: { label: string; value: string; mono?: boolean; title?: string }[] =
     [
       { label: "Player id", value: review.targetUserId, mono: true },
-      { label: "Source", value: review.source },
       {
-        label: "Opened",
-        value: `${formatRelative(review.createdAt)}${
-          opener ? ` by ${opener.label}` : ""
-        }`,
+        label: "Signed up",
+        value: formatRelative(review.createdAt),
         title: formatDateTime(review.createdAt),
       },
       { label: "Assigned to", value: assignee?.label ?? "Unassigned" },
-      {
-        label: "Resolved",
-        value: review.resolvedAt
-          ? `${formatRelative(review.resolvedAt)}${
-              resolver ? ` by ${resolver.label}` : ""
-            }`
-          : "Not resolved yet",
-        title: review.resolvedAt ? formatDateTime(review.resolvedAt) : undefined,
-      },
-      {
-        label: "Last updated",
-        value: formatRelative(review.updatedAt),
-        title: formatDateTime(review.updatedAt),
-      },
     ];
   return (
     <section className="space-y-3">

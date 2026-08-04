@@ -5,13 +5,14 @@ import test from "node:test";
 const reviewRoot = "src/app/(antifraud)/antifraud/reviews";
 
 test("Account Review exposes status workflow without severity controls", async () => {
-  const [queue, detail, workspace, controls, dialog, actions, reads] =
+  const [queue, detail, workspace, controls, dialog, openButton, actions, reads] =
     await Promise.all([
       readFile(`${reviewRoot}/page.tsx`, "utf8"),
       readFile(`${reviewRoot}/[id]/page.tsx`, "utf8"),
       readFile(`${reviewRoot}/_components/review-case-workspace.tsx`, "utf8"),
       readFile(`${reviewRoot}/_components/case-controls.tsx`, "utf8"),
       readFile(`${reviewRoot}/_components/open-case-dialog.tsx`, "utf8"),
+      readFile(`${reviewRoot}/_components/review-open-button.tsx`, "utf8"),
       readFile(`${reviewRoot}/actions.ts`, "utf8"),
       readFile("src/lib/antifraud/reviews.ts", "utf8"),
     ]);
@@ -32,8 +33,9 @@ test("Account Review exposes status workflow without severity controls", async (
   const filterBar = queue.slice(queue.indexOf("function FilterBar"));
   assert.doesNotMatch(hero, /OpenCaseDialog/);
   assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
-  assert.match(queue, />\s*Review\s*<\/HostLink>/);
-  assert.match(queue, /aria-label={`Review \$\{/);
+  assert.match(queue, /<ReviewOpenButton/);
+  assert.match(openButton, /Review\s*<\/button>/);
+  assert.match(openButton, /aria-label={`Review \$\{/);
   assert.match(queue, /review:\s*review\.id/);
   assert.match(queue, /<ReviewCaseDialog/);
   assert.match(workspace, /aria-label="Review progress"/);
