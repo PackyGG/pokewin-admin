@@ -103,7 +103,7 @@ export type DiscordWebhookPayload = {
   username: string;
   embeds: Array<{
     title: string;
-    description: string;
+    description?: string;
     url: string;
     color: number;
     fields: Array<{ name: string; value: string; inline: boolean }>;
@@ -209,9 +209,9 @@ function locationValue(
 }
 
 function locksValue(locks: readonly string[]): string {
-  if (locks.length === 0) return "\u{2705} None";
+  if (locks.length === 0) return "None";
   return clean(
-    `\u{1F512} ${locks.map((lock) => escapeMarkdown(lock, 120)).join(" \u{00B7} ")}`,
+    locks.map((lock) => escapeMarkdown(lock, 120)).join(" \u{00B7} "),
     DISCORD_FIELD_LIMIT,
   );
 }
@@ -360,7 +360,9 @@ export function buildDiscordAlertPayload(
     embeds: [
       {
         title: clean(`${alertEmoji(alert)} ${alert.title}`, 256),
-        description: clean(alert.description, DISCORD_DESCRIPTION_LIMIT),
+        ...(signupRisk
+          ? {}
+          : { description: clean(alert.description, DISCORD_DESCRIPTION_LIMIT) }),
         url,
         color: riskColor(alert),
         fields,

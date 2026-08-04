@@ -124,7 +124,7 @@ export async function DiscordConfigSection() {
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F512} Locks"}</span>
-                  <span>{"\u{2705} None"}</span>
+                  <span>None</span>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F552} Time"}</span>

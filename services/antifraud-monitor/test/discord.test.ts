@@ -66,6 +66,7 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
 
   const fields = payload.embeds[0]?.fields ?? [];
   assert.equal(payload.embeds[0]?.color, 0xf97316);
+  assert.equal("description" in (payload.embeds[0] ?? {}), false);
   assert.equal(
     payload.embeds[0]?.url,
     "https://fraud.packydash.com/monitor/cases/case-123",
@@ -100,7 +101,7 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)?.value,
-    "\u{2705} None",
+    "None",
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.time)?.value,
@@ -151,10 +152,11 @@ test("critical signup alerts list every automatic lock", () => {
   );
 
   const fields = payload.embeds[0]?.fields ?? [];
+  assert.equal("description" in (payload.embeds[0] ?? {}), false);
   assert.match(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)
       ?.value ?? "",
-    /^\u{1F512} Fiat deposits \u{00B7} Crypto withdrawals \u{00B7} Item withdrawals \u{00B7} Tips$/u,
+    /^Fiat deposits \u{00B7} Crypto withdrawals \u{00B7} Item withdrawals \u{00B7} Tips$/u,
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.location)
@@ -268,7 +270,7 @@ test("long evidence stays inside Discord field limits", () => {
     },
   );
 
-  assert.ok((payload.embeds[0]?.description.length ?? 0) <= 1_200);
+  assert.ok((payload.embeds[0]?.description?.length ?? 0) <= 1_200);
   for (const field of payload.embeds[0]?.fields ?? []) {
     assert.ok(field.value.length <= 1_024);
   }
