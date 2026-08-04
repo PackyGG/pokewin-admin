@@ -9,7 +9,6 @@ import {
 
 import { SectionHeading } from "@/components/modern-panels";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
@@ -53,7 +52,7 @@ export async function ReviewCaseWorkspace({
     );
   }
 
-  const { review, account, opener, resolver } = detail.detail;
+  const { review, account } = detail.detail;
   const name = review.targetUsername ?? review.targetUserId;
   const country = account?.country ?? account?.countryCode ?? "Country unavailable";
 
@@ -70,9 +69,6 @@ export async function ReviewCaseWorkspace({
               <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
                 <h1 className="truncate text-base font-semibold">{name}</h1>
                 <ReviewStatusBadge status={review.status} />
-                <Badge variant="outline" className="capitalize">
-                  {review.source}
-                </Badge>
               </div>
               <div className="mt-0.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
                 <span className="font-mono">{review.targetUserId}</span>
@@ -85,8 +81,7 @@ export async function ReviewCaseWorkspace({
                   {country}
                 </span>
                 <span title={formatDateTime(review.createdAt)}>
-                  Opened {formatRelative(review.createdAt)}
-                  {opener ? ` by ${opener.label}` : ""}
+                  Signed up {formatRelative(review.createdAt)}
                 </span>
               </div>
             </div>
@@ -120,7 +115,7 @@ export async function ReviewCaseWorkspace({
 
       {/* ── KPI strip ────────────────────────────────────────────── */}
       <div className="min-w-0 space-y-5">
-        <CaseFacts detail={detail.detail} resolver={resolver} />
+        <CaseFacts detail={detail.detail} />
         <RelatedSignals detail={detail.detail} />
         <CaseTrail detail={detail.detail} />
       </div>
@@ -180,39 +175,17 @@ function ScoreDeltaBadge({ delta }: { delta: number | null }) {
   );
 }
 
-function CaseFacts({
-  detail,
-  resolver,
-}: {
-  detail: ReviewDetail;
-  resolver: ReviewDetail["resolver"];
-}) {
-  const { review, opener } = detail;
+function CaseFacts({ detail }: { detail: ReviewDetail }) {
+  const { review, assignee } = detail;
   const facts: { label: string; value: string; mono?: boolean; title?: string }[] =
     [
       { label: "Player id", value: review.targetUserId, mono: true },
-      { label: "Source", value: review.source },
       {
-        label: "Opened",
-        value: `${formatRelative(review.createdAt)}${
-          opener ? ` by ${opener.label}` : ""
-        }`,
+        label: "Signed up",
+        value: formatRelative(review.createdAt),
         title: formatDateTime(review.createdAt),
       },
-      {
-        label: "Resolved",
-        value: review.resolvedAt
-          ? `${formatRelative(review.resolvedAt)}${
-              resolver ? ` by ${resolver.label}` : ""
-            }`
-          : "Not resolved yet",
-        title: review.resolvedAt ? formatDateTime(review.resolvedAt) : undefined,
-      },
-      {
-        label: "Last updated",
-        value: formatRelative(review.updatedAt),
-        title: formatDateTime(review.updatedAt),
-      },
+      { label: "Assigned to", value: assignee?.label ?? "Unassigned" },
     ];
   return (
     <section className="space-y-3">

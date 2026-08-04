@@ -16,6 +16,8 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
 
   assert.doesNotMatch(actions, /updateReviewSeverity|severitySchema/);
   assert.match(actions, /severity:\s*"medium"/);
+  assert.match(actions, /export async function startReview/);
+  assert.match(actions, /assigned_to:\s*session\.userId/);
   assert.match(reads, /filters\.severities/);
 
   assert.doesNotMatch(queue, /Assigned to me|params\.mine|assignedTo:/);
@@ -27,9 +29,14 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.doesNotMatch(hero, /OpenCaseDialog/);
   assert.match(filterBar, /<OpenCaseDialog \{\.\.\.openCaseProps\} \/>/);
   assert.match(queue, /<StartReviewButton/);
+  assert.match(queue, /review\.assignee\.label/);
   assert.match(queue, /review:\s*review\.id/);
   assert.match(queue, /<ReviewCaseDialog/);
   assert.doesNotMatch(workspace, /aria-label="Review progress"/);
   assert.doesNotMatch(queue, /<QuickReviewActions/);
+  assert.match(workspace, /Signed up/);
+  assert.doesNotMatch(workspace, /label: "Source"/);
+  assert.doesNotMatch(workspace, /label: "Resolved"/);
+  assert.doesNotMatch(workspace, /label: "Last updated"/);
   assert.match(detail, /redirect\(`\/antifraud\/reviews\?review=/);
 });

@@ -9,6 +9,7 @@ import {
   Search,
   ShieldAlert,
   ShieldCheck,
+  UserCheck,
   UserRound,
 } from "lucide-react";
 
@@ -414,6 +415,12 @@ function CaseRow({
               <span className="truncate text-sm font-semibold">{name}</span>
               <ReviewSeverityBadge severity={review.severity} />
               <ReviewStatusBadge status={review.status} />
+              {review.assignee && (
+                <span className="inline-flex items-center gap-1 rounded-sm border border-cyan-500/30 bg-cyan-500/5 px-1.5 py-0.5 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300">
+                  <UserCheck className="size-3" />
+                  {review.assignee.label}
+                </span>
+              )}
               {review.riskScore != null && (
                 <span
                   className={cn(
