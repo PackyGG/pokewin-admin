@@ -55,10 +55,10 @@ function createPool(
     // Antifraud. Two slots prevent one slow read from serializing every query
     // on a page, while remaining far below the old eight-session fan-out.
     // Reuse a checkout within a hot isolate so a page with several reads does
-    // not pay a fresh TLS/PostgreSQL handshake for every query. The mirror's
-    // server-side idle_session_timeout remains the authoritative frozen-
-    // isolate backstop, and the short client idle timeout closes normally
-    // scheduled isolates even sooner. Primary pools remain at three.
+    // not pay a fresh TLS/PostgreSQL handshake for every query. The short
+    // client idle timeout closes normally scheduled isolates; maxLifetime
+    // bounds sockets that remain busy or survive repeated reuse. Primary
+    // pools remain at three.
     max: isReadMirror ? 2 : 3,
     maxUses: isReadMirror ? 100 : Infinity,
     idleTimeoutMillis: isReadMirror ? 1_000 : 10_000,
@@ -76,9 +76,9 @@ function createPool(
     allowExitOnIdle: true,
     // Defense in depth: even if a caller accidentally sends mutation SQL
     // through a mirror client, PostgreSQL rejects it before state can change.
-    // The server-side idle timeout is also essential on Vercel: an isolate can
-    // freeze after the response before node-postgres finishes sending its
-    // socket close, so PostgreSQL must reclaim that orphaned session itself.
+    // Do not set idle_session_timeout here. Vercel may freeze an isolate before
+    // node-postgres runs its idle cleanup timer; killing that pooled socket on
+    // the server makes the first query after thaw fail with PostgreSQL 57P05.
     // work_mem: the mirror server runs the PostgreSQL default of 4MB, which
     // spilled ~98GB of sort/hash temp files and made analytics reads thrash
     // disk instead of finishing in memory. 32MB per sort node across at most
@@ -90,7 +90,7 @@ function createPool(
     ...(isReadMirror
       ? {
           options:
-            "-c default_transaction_read_only=on -c TimeZone=UTC -c idle_session_timeout=5s -c work_mem=32MB -c random_page_cost=1.1",
+            "-c default_transaction_read_only=on -c TimeZone=UTC -c work_mem=32MB -c random_page_cost=1.1",
         }
       : {}),
   });

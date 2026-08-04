@@ -825,7 +825,17 @@ export class FiatPerkService {
     private readonly enrichment: EnrichmentService,
     private readonly scoreWeights: ScoreWeightStore,
     private readonly access: FiatPerkAccessService,
+    private readonly publishLive?: FiatPerkLivePublisher,
   ) {}
+
+  private async publishRun(
+    type: FiatPerkRunLiveEvent,
+    runId: string,
+  ): Promise<void> {
+    if (!this.publishLive) return;
+    const run = await this.getRun(runId);
+    if (run) await this.publishLive(type, { runId, run });
+  }
 
   /**
    * A deploy or crash mid-run leaves a row claiming to be running forever.
@@ -894,7 +904,7 @@ export class FiatPerkService {
           runId,
           error: error instanceof Error ? error.message : String(error),
         });
-        await this.db.antifraud
+        const failed = await this.db.antifraud
           .query(
             `
               UPDATE fiat_perk_runs
@@ -907,6 +917,9 @@ export class FiatPerkService {
             ],
           )
           .catch(() => undefined);
+        if ((failed?.rowCount ?? 0) > 0) {
+          await this.publishRun("fiat_perk.run.failed", runId).catch(() => undefined);
+        }
       })
       .finally(() => {
         this.running.delete(runId);
@@ -914,6 +927,7 @@ export class FiatPerkService {
 
     const run = await this.getRun(runId);
     if (!run) throw new Error("fiat_perk_run_persistence_failed");
+    await this.publishLive?.("fiat_perk.run.started", { runId, run });
     return run;
   }
 
@@ -931,6 +945,7 @@ export class FiatPerkService {
       `UPDATE fiat_perk_runs SET scanned_count = $2 WHERE id = $1`,
       [runId, userIds.length],
     );
+    await this.publishRun("fiat_perk.run.progress", runId);
 
     const weights = await this.scoreWeights.get();
     // One six-provider bundle per account identity inside the run.
@@ -995,7 +1010,8 @@ export class FiatPerkService {
         },
       );
 
-      await this.persistCandidates(runId, now, evaluated);
+      await this.persistCandidates(runId, now, providerChecks, evaluated);
+      await this.publishRun("fiat_perk.run.progress", runId);
     }
 
     await this.db.antifraud.query(
@@ -1008,11 +1024,13 @@ export class FiatPerkService {
       `,
       [runId, providerChecks],
     );
+    await this.publishRun("fiat_perk.run.completed", runId);
   }
 
   private async persistCandidates(
     runId: string,
     now: Date,
+    providerChecks: number,
     evaluated: readonly {
       row: SubjectRow;
       evaluation: FiatPerkEvaluation;
@@ -1126,7 +1144,8 @@ export class FiatPerkService {
           SET candidate_count = counts.total,
               pass_count = counts.pass,
               review_count = counts.review,
-              fail_count = counts.fail
+              fail_count = counts.fail,
+              provider_checks = $2
           FROM (
             SELECT
               count(*)::int AS total,
@@ -1138,7 +1157,7 @@ export class FiatPerkService {
           ) counts
           WHERE r.id = $1
         `,
-        [runId],
+        [runId, providerChecks],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -1541,6 +1560,21 @@ export class FiatPerkService {
 }
 
 type EnrichmentBundle = Awaited<ReturnType<typeof loadProviderBundle>>;
+
+export const FIAT_PERK_RUN_LIVE_EVENTS = [
+  "fiat_perk.run.started",
+  "fiat_perk.run.progress",
+  "fiat_perk.run.completed",
+  "fiat_perk.run.failed",
+] as const;
+
+export type FiatPerkRunLiveEvent =
+  (typeof FIAT_PERK_RUN_LIVE_EVENTS)[number];
+
+export type FiatPerkLivePublisher = (
+  type: FiatPerkRunLiveEvent,
+  data: Record<string, unknown>,
+) => Promise<void>;
 
 /**
  * The provider fan-out for one identity. Never rejects: a provider that fails

@@ -105,7 +105,9 @@ const FINANCIAL_TX_REVALIDATE_SECONDS = 30;
 function cachedUserDetail(userId: string) {
   return unstable_cache(
     () => getUserDetail(userId),
-    ["users-detail-aggregate-v3", userId],
+    // v4 discards outage-era values retained when PostgreSQL 57P05 prevented
+    // stale-while-revalidate from refilling this balance/detail aggregate.
+    ["users-detail-aggregate-v4", userId],
     { revalidate: REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
 }
@@ -133,7 +135,8 @@ function cachedUserDetail(userId: string) {
 function cachedUserPnlBreakdown(userId: string): Promise<PnlBreakdown> {
   return unstable_cache(
     (): Promise<PnlBreakdown> => getUserPnlBreakdown(userId),
-    ["users-detail-pnl-v6", userId],
+    // v7 discards outage-era values retained after 57P05 mirror termination.
+    ["users-detail-pnl-v7", userId],
     { revalidate: REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
 }
@@ -215,7 +218,9 @@ function cachedUserGamingTransactions(
 ) {
   return unstable_cache(
     () => getUserTransactions(userId, page, perPage, { types }),
-    ["users-detail-gaming-tx-v5", userId, String(page), String(perPage), types.join(",")],
+    // v6 clears the affected Overview/Gaming preview namespace after 57P05
+    // mirror termination blocked its cache revalidation in production.
+    ["users-detail-gaming-tx-v6", userId, String(page), String(perPage), types.join(",")],
     { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
 }
@@ -268,7 +273,8 @@ function cachedUserFinancialTransactions(
   return unstable_cache(
     () => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
     [
-      "users-detail-financial-tx-v2",
+      // v3 clears outage-era Overview finance values retained after 57P05.
+      "users-detail-financial-tx-v3",
       userId,
       String(page),
       String(perPage),

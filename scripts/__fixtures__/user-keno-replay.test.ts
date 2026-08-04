@@ -71,7 +71,7 @@ test("Gaming shows one settled outcome row per Keno game", () => {
   assert.match(transactionQuery, /kg\.created_at >= tx\.created_at - INTERVAL '1 day'/);
   assert.match(transactionQuery, /kg\.bet_ledger_tx_id = tx\.id/);
   assert.match(transactionQuery, /kg\.payout_ledger_tx_id = tx\.id/);
-  assert.match(transactionCache, /users-detail-gaming-tx-v5/);
+  assert.match(transactionCache, /users-detail-gaming-tx-v6/);
   assert.doesNotMatch(transactions, /label: "User won"/);
   assert.doesNotMatch(transactions, /label: "User lost"/);
   assert.doesNotMatch(transactions, /gamingOutcomeRowClass/);

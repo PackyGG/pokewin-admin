@@ -52,6 +52,10 @@ test("Discord management stays inside exact approved categories and live markers
   assert.match(config, /parent\.position < boundary_bottom\.position/);
   assert.match(config, /boundary_top\.position < boundary_bottom\.position/);
   assert.match(workspace, /APPROVED_DISCORD_CATEGORY_IDS/);
+  assert.match(workspace, /function ChannelTagSummary/);
+  assert.match(workspace, /aria-label={`Tags for #\${channel\.name}`}/);
+  assert.match(workspace, /groupKeys=\{/);
+  assert.match(workspace, />Nobody</);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
 });
 

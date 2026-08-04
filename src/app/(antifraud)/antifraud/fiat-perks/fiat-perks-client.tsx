@@ -55,6 +55,8 @@ import {
 } from "@/lib/antifraud/fiat-perks-contract";
 import { formatRelative } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { useSseStream } from "@/lib/hooks/use-sse";
+import { MONITOR_STREAM_PATH } from "../_components/monitor-stream";
 import {
   decidePerkCandidate,
   changeFiatAccessBatch,
@@ -63,8 +65,23 @@ import {
   startPerkScreeningRun,
 } from "./actions";
 
-/** How often a still-running sweep re-reads its progress. */
-const RUN_POLL_MS = 4_000;
+/** Poll quickly only when the live transport is down; otherwise it is a safety net. */
+const RUN_OFFLINE_POLL_MS = 4_000;
+const RUN_LIVE_SAFETY_POLL_MS = 30_000;
+const LIVE_REFRESH_DEBOUNCE_MS = 150;
+
+const FIAT_PERK_RUN_EVENT_TYPES = new Set([
+  "fiat_perk.run.started",
+  "fiat_perk.run.progress",
+  "fiat_perk.run.completed",
+  "fiat_perk.run.failed",
+]);
+
+function object(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
 
 type Filters = {
   verdict: "pass" | "review" | "fail" | null;
@@ -167,6 +184,48 @@ export function FiatPerksClient({
   const searchParams = useSearchParams();
   const selectedRun = runs.find((run) => run.id === selectedRunId) ?? null;
 
+  const [liveConnected, setLiveConnected] = React.useState(false);
+  const refreshTimer = React.useRef<number | null>(null);
+
+  const refreshFromLive = React.useCallback(() => {
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current);
+    }
+    refreshTimer.current = window.setTimeout(() => {
+      refreshTimer.current = null;
+      router.refresh();
+    }, LIVE_REFRESH_DEBOUNCE_MS);
+  }, [router]);
+
+  useSseStream<unknown>(
+    MONITOR_STREAM_PATH,
+    {
+      onInit: () => {},
+      onRow: (raw) => {
+        const frame = object(raw);
+        if (!frame || typeof frame.type !== "string") return;
+        if (frame.type === "transport") {
+          const data = object(frame.data);
+          setLiveConnected(data?.state === "open");
+          return;
+        }
+        if (!FIAT_PERK_RUN_EVENT_TYPES.has(frame.type)) return;
+        const data = object(frame.data);
+        if (typeof data?.runId === "string") refreshFromLive();
+      },
+      onReconnect: () => setLiveConnected(false),
+      onGiveUp: () => setLiveConnected(false),
+      onStale: () => setLiveConnected(false),
+    },
+    { resumeParam: "after", staleAfterMs: 45_000 },
+  );
+
+  React.useEffect(() => () => {
+    if (refreshTimer.current !== null) {
+      window.clearTimeout(refreshTimer.current);
+    }
+  }, []);
+
   // A sweep finishes server-side. Poll only while one is actually running, and
   // stop the moment it is not — an idle workspace must not keep refetching.
   const running = selectedRun?.status === "running"
@@ -174,9 +233,12 @@ export function FiatPerksClient({
     || accessBatches.some((batch) => batch.status === "queued" || batch.status === "running");
   React.useEffect(() => {
     if (!running) return;
-    const timer = window.setInterval(() => router.refresh(), RUN_POLL_MS);
+    const timer = window.setInterval(
+      () => router.refresh(),
+      liveConnected ? RUN_LIVE_SAFETY_POLL_MS : RUN_OFFLINE_POLL_MS,
+    );
     return () => window.clearInterval(timer);
-  }, [running, router]);
+  }, [liveConnected, running, router]);
 
   const setParam = React.useCallback(
     (updates: Record<string, string | null>) => {
@@ -197,6 +259,7 @@ export function FiatPerksClient({
       <RunHistory
         runs={runs}
         selectedRunId={selectedRunId}
+        liveConnected={liveConnected}
         onSelect={(runId) => setParam({ run: runId, q: null })}
       />
       <ReviewQueue
@@ -382,16 +445,31 @@ function ScreeningForm({ disabled }: { disabled: boolean }) {
 function RunHistory({
   runs,
   selectedRunId,
+  liveConnected,
   onSelect,
 }: {
   runs: FiatPerkRun[];
   selectedRunId: string | null;
+  liveConnected: boolean;
   onSelect: (runId: string) => void;
 }) {
   if (runs.length === 0) return null;
   return (
     <section className="space-y-3">
-      <SectionHeading icon={Users} title="Runs" />
+      <div className="flex items-center justify-between gap-3">
+        <SectionHeading icon={Users} title="Runs" />
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px]",
+            liveConnected
+              ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+              : "text-muted-foreground",
+          )}
+        >
+          {liveConnected ? "live updates" : "reconnecting"}
+        </Badge>
+      </div>
       <div className="flex gap-2 overflow-x-auto pb-1">
         {runs.map((run) => {
           const active = run.id === selectedRunId;
