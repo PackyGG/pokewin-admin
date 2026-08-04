@@ -9,7 +9,6 @@ import {
 } from "./antifraud-policy";
 import {
   approvedCategoryIds,
-  escalationGroupKeys,
   mentionGroupMemberRows,
   silentCategoryIds,
 } from "./policy-sql";
@@ -164,9 +163,8 @@ export async function syncDiscordChannels(input: {
  * pre-rendered `content` string, which meant one hardcoded tag list applied to
  * every destination and operators could not change it without a deploy.
  *
- * `escalate` is the one thing a producer still controls: an urgent alert adds
- * the escalation groups on top of whatever a channel selected, so a paged
- * incident cannot be silenced by misconfiguring a single channel.
+ * Alert severity never changes recipients. The channel's saved selection is
+ * the complete tag list, including for urgent alerts and review reminders.
  */
 export async function enqueueDiscordEvent(input: {
   guildId: string;
@@ -174,7 +172,6 @@ export async function enqueueDiscordEvent(input: {
   dedupeKey: string;
   embed: Record<string, unknown>;
   components?: Array<Record<string, unknown>>;
-  escalate?: boolean;
 }): Promise<{ enqueued: number; duplicate: number }> {
   const guildId = snowflake(input.guildId, "guildId");
   const key = eventKey(input.eventKey);
@@ -182,7 +179,6 @@ export async function enqueueDiscordEvent(input: {
   if (!dedupeKey || dedupeKey.length > 200) {
     throw new Error("dedupeKey must contain 1-200 characters.");
   }
-  const escalate = input.escalate === true;
   const embedJson = JSON.stringify(input.embed);
   if (embedJson.length > 24_000) throw new Error("embed is too large.");
   const componentsJson = JSON.stringify(input.components ?? []);
@@ -228,22 +224,14 @@ export async function enqueueDiscordEvent(input: {
           AND parent.position > boundary_top.position
           AND parent.position < boundary_bottom.position
       ),
-      -- Every group that should be tagged in each destination channel: the
-      -- operator's own selection, plus the escalation groups when the producer
-      -- marked this alert urgent. UNION dedupes a group picked by both paths.
+      -- The operator's saved selection is the complete recipient policy for
+      -- each channel. Alert severity cannot add recipients behind the UI.
       channel_groups AS (
         SELECT eligible.channel_id, selection.group_key
         FROM eligible
         JOIN discord_notification_channel_mentions AS selection
           ON selection.guild_id = ${guildId}
          AND selection.channel_id = eligible.channel_id
-        UNION
-        SELECT eligible.channel_id, escalation.group_key
-        FROM eligible
-        CROSS JOIN unnest(
-          ARRAY[${escalationGroupKeys()}]::text[]
-        ) AS escalation(group_key)
-        WHERE ${escalate}::boolean
       ),
       -- DISTINCT on the id, not the group: one teammate can sit in two selected
       -- groups and must still be tagged exactly once.

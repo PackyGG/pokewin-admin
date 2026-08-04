@@ -59,6 +59,7 @@ test("review reminders run every 2 hours while postponement remains 2.5 hours", 
   assert.match(policy, /urgent:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(reminders, /review\.created_at \+ interval '2 hours'/);
   assert.match(reminders, /workflow\.postponed_until > now\(\)/);
+  assert.doesNotMatch(reminders, /escalate:/);
   assert.doesNotMatch(reminders, /48\s*\*\s*60\s*\*\s*60/);
 });
 

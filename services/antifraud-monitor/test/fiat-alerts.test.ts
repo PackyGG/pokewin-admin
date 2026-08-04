@@ -41,9 +41,7 @@ test("fiat problem payload is safe, useful, and has no Discord mentions", () => 
   );
 
   assert.equal(payload.username, "PackyGG Fiat");
-  // Tagging moved to per-channel configuration resolved at enqueue time, so the
-  // producer only states that this alert does not escalate.
-  assert.equal(payload.escalate, false);
+  assert.ok(!("escalate" in payload));
   assert.equal(payload.embeds[0]?.title, "Fiat deposit failed");
   assert.equal(payload.embeds[0]?.color, 0xef4444);
   assert.equal(payload.embeds[0]?.url, FIAT_WORKSPACE_URL);
@@ -194,7 +192,7 @@ test("signup blacklist alerts identify the signup email", () => {
     "person@stolas.org",
   );
   assert.doesNotMatch(JSON.stringify(payload), /Whop checkout email/);
-  assert.equal(payload.escalate, false);
+  assert.ok(!("escalate" in payload));
 });
 
 test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {

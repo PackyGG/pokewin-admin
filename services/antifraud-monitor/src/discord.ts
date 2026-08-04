@@ -82,7 +82,6 @@ export function discordRuntimeStatus(config: Pick<
  */
 export type DiscordWebhookPayload = {
   username: string;
-  escalate: boolean;
   embeds: Array<{
     title: string;
     description: string;
@@ -261,9 +260,6 @@ export function buildDiscordAlertPayload(
 
   return {
     username: "PackyGG Fraud",
-    // Urgent alerts add the escalation groups on top of the destination
-    // channel's own mention groups; everything else the channel decides.
-    escalate: alert.urgent === true,
     embeds: [
       {
         title: clean(`${alertEmoji(alert)} ${alert.title}`, 256),

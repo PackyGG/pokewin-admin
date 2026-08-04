@@ -51,7 +51,6 @@ import type {
 } from "@/lib/discord-notifications/config";
 import {
   APPROVED_DISCORD_CATEGORY_IDS,
-  DISCORD_ESCALATION_GROUP_KEYS,
   DISCORD_MENTION_GROUPS,
   isSilentDiscordCategory,
 } from "@/lib/discord-notifications/antifraud-policy";
@@ -1019,13 +1018,8 @@ function ChannelEditorDialog({
                 </p>
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Urgent alerts always add{" "}
-                  {DISCORD_ESCALATION_GROUP_KEYS.map(
-                    (key) =>
-                      DISCORD_MENTION_GROUPS.find((group) => group.key === key)
-                        ?.label ?? key,
-                  ).join(" and ")}
-                  , even if they are not selected here.
+                  This selection is the complete tag list, including for urgent
+                  alerts and review reminders.
                 </p>
               )}
             </div>

@@ -5,7 +5,6 @@ import { sql, type SQL } from "drizzle-orm";
 import {
   ANTIFRAUD_TEAM_IDS,
   APPROVED_DISCORD_CATEGORY_IDS,
-  DISCORD_ESCALATION_GROUP_KEYS,
   DISCORD_MENTION_GROUPS,
   SILENT_DISCORD_CATEGORY_IDS,
 } from "./antifraud-policy";
@@ -46,9 +45,4 @@ export function mentionGroupMemberRows(): SQL {
     ),
   );
   return sql.join(rows, sql`, `);
-}
-
-/** Group keys that urgent alerts add on top of a channel's own selection. */
-export function escalationGroupKeys(): SQL {
-  return idList(DISCORD_ESCALATION_GROUP_KEYS);
 }

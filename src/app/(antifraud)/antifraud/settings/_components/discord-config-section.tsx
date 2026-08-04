@@ -4,7 +4,6 @@ import { ExternalLink, ShieldCheck, Users } from "lucide-react";
 import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
 import {
   ANTIFRAUD_TEAM_IDS,
-  DISCORD_ESCALATION_GROUP_KEYS,
   DISCORD_MENTION_GROUPS,
 } from "@/lib/discord-notifications/antifraud-policy";
 import { cn } from "@/lib/utils";
@@ -26,13 +25,7 @@ const DELIVERY_FACTS: ReadonlyArray<{ label: string; value: string | null }> = [
   // Was "Not defined yet" while urgent was already live: free-battle risk marks
   // an alert urgent whenever its alert level is critical.
   { label: "Urgent trigger", value: "Critical alert level" },
-  {
-    label: "Urgent adds",
-    value: DISCORD_ESCALATION_GROUP_KEYS.map(
-      (key) =>
-        DISCORD_MENTION_GROUPS.find((group) => group.key === key)?.label ?? key,
-    ).join(" + "),
-  },
+  { label: "Recipients", value: "Channel selection only" },
 ];
 
 const TEAM_ROLES = DISCORD_MENTION_GROUPS.map((group) => ({

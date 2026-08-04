@@ -149,9 +149,8 @@ export async function enqueueDueReviewReminders(): Promise<{
       guildId: process.env.ADMIN_GUILD_ID ?? "",
       eventKey: "antifraud.review_reminder",
       dedupeKey: `review-reminder:${row.review_id}:${row.next_reminder_at}`,
-      // Who gets tagged is the destination channel's own configuration now;
-      // urgent reminders escalate on top of it.
-      escalate: row.reminder_kind === "urgent",
+      // The destination channel's selection is the complete tag list, even for
+      // urgent reminders.
       embed: reminderEmbed(row, correlationId),
       components: [
         {

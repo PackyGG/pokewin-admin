@@ -89,12 +89,12 @@ export const DISCORD_MENTION_GROUPS = [
   {
     key: "owner",
     label: "Owner",
-    description: "Escalation owner. Always added to urgent alerts.",
+    description: "Owner notifications when selected.",
   },
   {
     key: "managers",
     label: "Manager",
-    description: "Shift managers. Always added to urgent alerts.",
+    description: "Shift managers when selected.",
   },
   { key: "dev", label: "Developer", description: "On-call engineering." },
   { key: "support", label: "Support", description: "First-line review queue." },
@@ -103,14 +103,6 @@ export const DISCORD_MENTION_GROUPS = [
   label: string;
   description: string;
 }>;
-
-/**
- * Groups added on top of a channel's own selection when a producer marks an
- * alert urgent. This is deliberately NOT operator-editable: a paged incident
- * must not be silenceable by misconfiguring a single channel. It reproduces the
- * pre-existing `alert.urgent` behaviour in `buildDiscordAlertPayload`.
- */
-export const DISCORD_ESCALATION_GROUP_KEYS = ["owner", "managers"] as const;
 
 export function isDiscordMentionGroup(
   value: string,

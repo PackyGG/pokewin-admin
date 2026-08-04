@@ -37,6 +37,8 @@ test("Discord management stays inside exact approved categories and live markers
   const actions = read(
     "src/app/(antifraud)/antifraud/discord/actions.ts",
   );
+  const router = read("src/lib/discord-notifications/router.ts");
+  const ingest = read("src/app/api/antifraud/discord-events/route.ts");
 
   for (const id of [
     "1532207307683795026",
@@ -56,6 +58,8 @@ test("Discord management stays inside exact approved categories and live markers
   assert.match(workspace, /aria-label={`Tags for #\${channel\.name}`}/);
   assert.match(workspace, /groupKeys=\{/);
   assert.match(workspace, />Nobody</);
+  assert.doesNotMatch(router, /\bescalate\b/);
+  assert.doesNotMatch(ingest, /parsed\.data\.escalate/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
 });
 
@@ -87,9 +91,10 @@ test("Discord recipients and error destinations match the owner contract", () =>
   ]) {
     assert.match(policy, new RegExp(`"${destination}"`));
   }
-  // The producer no longer picks recipients at all: it only reports whether the
-  // alert escalates, and the queue resolves tags from the channel's own groups.
-  assert.match(discord, /escalate: alert\.urgent === true/);
+  // Producers cannot add recipients: the channel selection is the complete
+  // policy even when the alert is urgent.
+  assert.doesNotMatch(discord, /escalate:/);
+  assert.doesNotMatch(policy, /DISCORD_ESCALATION_GROUP_KEYS/);
   // The compiled-in recipient arrays are gone; only prose may mention them.
   assert.doesNotMatch(discord, /^export const SUPPORT_USER_IDS/m);
   assert.match(discord, /components:/);

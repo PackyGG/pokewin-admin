@@ -7,7 +7,7 @@ import { buildDiscordAlertPayload } from "../src/discord.js";
 // of the recipient ids. Mention text and its `allowed_mentions` allowlist are
 // built per destination channel by `enqueueDiscordEvent` in the admin app.
 
-test("regular alerts do not escalate and include the dashboard button", () => {
+test("regular alerts include the dashboard button without recipient input", () => {
   const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
@@ -16,7 +16,7 @@ test("regular alerts do not escalate and include the dashboard button", () => {
     },
   );
 
-  assert.equal(payload.escalate, false);
+  assert.ok(!("escalate" in payload));
   assert.equal(payload.username, "PackyGG Fraud");
   // No content and no allowed_mentions: both used to be built here and then
   // silently dropped before the payload ever reached Discord.
@@ -136,7 +136,7 @@ test("rule alerts show the score change and review outcome", () => {
   );
 });
 
-test("urgent alerts ask the queue to add the escalation groups", () => {
+test("urgent alerts change presentation without changing recipients", () => {
   const payload = buildDiscordAlertPayload(
     "https://fraud.packydash.com/monitor",
     {
@@ -146,7 +146,9 @@ test("urgent alerts ask the queue to add the escalation groups", () => {
     },
   );
 
-  assert.equal(payload.escalate, true);
+  assert.ok(!("escalate" in payload));
+  assert.equal(payload.embeds[0]?.color, 0xed4245);
+  assert.match(payload.embeds[0]?.footer.text ?? "", /URGENT/);
 });
 
 test("untrusted alert text cannot create extra mentions", () => {
@@ -166,7 +168,7 @@ test("untrusted alert text cannot create extra mentions", () => {
     payload.embeds[0]?.description,
     "here role 123456789012345678",
   );
-  assert.equal(payload.escalate, false);
+  assert.ok(!("escalate" in payload));
 });
 
 test("long evidence stays inside Discord field limits", () => {
@@ -210,5 +212,5 @@ test("an alert can link directly to Account Review", () => {
     payload.components[0]?.components[0]?.url,
     "https://fraud.packydash.com/antifraud/reviews",
   );
-  assert.equal(payload.escalate, false);
+  assert.ok(!("escalate" in payload));
 });
