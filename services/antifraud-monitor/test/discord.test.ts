@@ -80,7 +80,7 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
   assert.match(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.username)
       ?.value ?? "",
-    /\*\*review\\_me\*\*/,
+    /`review_me`/,
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.userId)
@@ -90,21 +90,21 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.riskScore)
       ?.value,
-    "**60 points**\nHigh risk",
+    "`60 points`",
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.location)
       ?.value,
-    "Berlin, Germany \\(DE\\)",
+    "`Berlin, Germany (DE)`",
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)?.value,
-    "\u{2705} None",
+    "`\u{2705} None`",
   );
   assert.match(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.reasons)
       ?.value ?? "",
-    /\*\*\+60\*\* \u00b7 Shared device[\s\S]*\*\*-20\*\* \u00b7 Irreversible deposit/,
+    /`\+60 \u00b7 Shared device`[\s\S]*`-20 \u00b7 Irreversible deposit`/,
   );
   assert.equal(
     fields.some((field) => field.name === "Trigger"),
@@ -149,12 +149,22 @@ test("critical signup alerts list every automatic lock", () => {
   assert.match(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.locks)
       ?.value ?? "",
-    /Fiat deposits[\s\S]*Crypto withdrawals[\s\S]*Item withdrawals[\s\S]*Tips/,
+    /^`\u{1F512} Fiat deposits \u{00B7} Crypto withdrawals \u{00B7} Item withdrawals \u{00B7} Tips`$/u,
   );
   assert.equal(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.location)
       ?.value,
-    "NL",
+    "`NL`",
+  );
+  assert.equal(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.riskScore)
+      ?.value,
+    "`92 points`",
+  );
+  assert.doesNotMatch(
+    fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.riskScore)
+      ?.value ?? "",
+    /Critical risk/,
   );
   assert.equal(
     fields.some((field) => field.name === "Case ID"),

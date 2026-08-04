@@ -108,7 +108,7 @@ export async function DiscordConfigSection() {
               <div className="mt-4 grid gap-3 text-[11px] sm:grid-cols-2">
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F464} Username"}</span>
-                  <strong>review_me</strong>
+                  <code className="font-mono text-[10px]">review_me</code>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F194} User ID"}</span>
@@ -116,25 +116,26 @@ export async function DiscordConfigSection() {
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F4CA} Risk score"}</span>
-                  <strong>55 points</strong>
-                  <span className="block text-orange-600 dark:text-orange-400">
-                    High risk
-                  </span>
+                  <code className="font-mono text-[10px]">55 points</code>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F30D} Location / country"}</span>
-                  <strong>Berlin, Germany (DE)</strong>
+                  <code className="font-mono text-[10px]">Berlin, Germany (DE)</code>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F512} Locks"}</span>
-                  <strong>{"\u{2705} None"}</strong>
+                  <code className="font-mono text-[10px]">{"\u{2705} None"}</code>
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                   {"\u{1F50E} Why it was flagged"}
                 </span>
-                <p className="mt-1 text-xs font-semibold">{"\u{2022} +55 \u{00B7} Shared device"}</p>
+                <div className="mt-1 space-y-1 text-xs">
+                  <p><code>{"+25 \u{00B7} Shared device"}</code></p>
+                  <p><code>{"+20 \u{00B7} Disposable email"}</code></p>
+                  <p><code>{"+10 \u{00B7} Signup velocity"}</code></p>
+                </div>
               </div>
               <span className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-3 text-xs font-semibold text-white">
                 <ExternalLink className="size-3.5" />

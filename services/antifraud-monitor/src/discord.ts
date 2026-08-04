@@ -199,19 +199,17 @@ function locationValue(
       ? `${country} (${countryCode})`
       : country
     : countryCode;
-  return escapeMarkdown(
+  return clean(
     [city, countryLabel]
       .filter((value): value is string => Boolean(value))
       .join(", ") || "Unknown",
+    DISCORD_FIELD_LIMIT - 2,
   );
 }
 
 function locksValue(locks: readonly string[]): string {
-  if (locks.length === 0) return "\u{2705} None";
-  return clean(
-    locks.map((lock) => `\u{1F512} ${escapeMarkdown(lock, 96)}`).join("\n"),
-    DISCORD_FIELD_LIMIT,
-  );
+  if (locks.length === 0) return inlineCode("\u{2705} None");
+  return inlineCode(`\u{1F512} ${locks.join(" \u{00B7} ")}`);
 }
 
 function signalValue(signals: readonly DiscordAlertSignal[]): string {
@@ -241,7 +239,7 @@ function compactSignalValue(signals: readonly DiscordAlertSignal[]): string {
   const lines = visible.map((signal) => {
     const points =
       signal.points > 0 ? `+${signal.points}` : String(signal.points);
-    return `\u{2022} **${points}** \u{00B7} ${escapeMarkdown(signal.title, 120)}`;
+    return `\u{2022} ${inlineCode(`${points} \u{00B7} ${signal.title}`)}`;
   });
   const hidden = ordered.length - visible.length;
   if (hidden > 0) {
@@ -271,9 +269,7 @@ export function buildDiscordAlertPayload(
   if (signupRisk) {
     fields.push({
       name: SIGNUP_RISK_FIELD_NAMES.username,
-      value: alert.username
-        ? `**${escapeMarkdown(alert.username)}**`
-        : "Unknown",
+      value: inlineCode(alert.username ?? "Unknown"),
       inline: true,
     });
     fields.push({
@@ -292,16 +288,18 @@ export function buildDiscordAlertPayload(
     const score = clampRiskScore(alert.score);
     fields.push({
       name: signupRisk ? SIGNUP_RISK_FIELD_NAMES.riskScore : "Risk score",
-      value: alert.severity
-        ? `**${score} points**\n${severityLabel(alert.severity)} risk`
-        : `**${score} points**`,
+      value: signupRisk
+        ? inlineCode(`${score} points`)
+        : alert.severity
+          ? `**${score} points**\n${severityLabel(alert.severity)} risk`
+          : `**${score} points**`,
       inline: true,
     });
   }
   if (signupRisk) {
     fields.push({
       name: SIGNUP_RISK_FIELD_NAMES.location,
-      value: locationValue(alert.location ?? {}),
+      value: inlineCode(locationValue(alert.location ?? {})),
       inline: true,
     });
     fields.push({
