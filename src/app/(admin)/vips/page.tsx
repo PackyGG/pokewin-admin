@@ -20,12 +20,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import { CopyButton } from "@/components/copy-button";
-import {
-  KpiTile,
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -104,23 +99,6 @@ export default async function VipsPage({
 
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity
-          action={
-            <a
-              href={`https://discord.com/channels/${VIPS_GUILD_ID}`}
-              target="_blank"
-              rel="noreferrer noopener"
-              className="inline-flex h-9 items-center gap-1.5 rounded-md border bg-background px-3 text-xs font-semibold hover:bg-muted"
-            >
-              <Bot className="size-3.5" aria-hidden />
-              Open VIP server
-              <ExternalLink className="size-3" aria-hidden />
-            </a>
-          }
-        />
-      </PageHero>
-
       <Suspense fallback={<KpiStripSkeleton count={5} />}>
         <VipStatsSection />
       </Suspense>
