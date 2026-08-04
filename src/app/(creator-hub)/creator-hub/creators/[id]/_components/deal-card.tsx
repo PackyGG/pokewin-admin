@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 import { NewDealDialog } from "./new-deal-dialog";
-import { DealActionsMenu } from "./deal-actions-menu";
+import { DealCardActions, PreviousDealsButton } from "./deal-actions";
 import { DEAL_STATUS_COLORS } from "./status-badges";
 
 /**
@@ -37,6 +37,20 @@ function num(v: string | null | undefined): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
 }
+
+/**
+ * Height of the FILLED deal card, applied to the empty + degraded states so
+ * the Deal box never changes size and stays aligned with the Affiliate
+ * Leaderboards card beside it (they share a `lg:grid-cols-2` row).
+ *
+ * Derived from the filled layout, not guessed: card `py-3` (24) + status row
+ * (badge h-5 = 20) + `space-y-3` gap (12) + the terms grid + gap (12) +
+ * the badges/actions row (`pt-1` 4 + the h-7 buttons 28 = 32). A DealTerm is
+ * 56.5 tall (border 2 + `py-2` 16 + 11px label ~16.5 + `mt-0.5` 2 + `text-sm`
+ * 20), and the grid is 2 columns below `sm` (3 rows) and 3 columns from `sm`
+ * up (2 rows) — the only reason this needs two values.
+ */
+const DEAL_CARD_FILLED_HEIGHT = "min-h-[286px] sm:min-h-[221px]";
 
 function DealTerm({
   label,
@@ -123,14 +137,9 @@ export async function DealCard({
           icon={HandCoins}
           title="Deal"
           action={
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
+              <PreviousDealsButton deals={previousDeals} />
               <NewDealDialog userId={userId} />
-              <DealActionsMenu
-                userId={userId}
-                username={username}
-                activeDeal={null}
-                previousDeals={previousDeals}
-              />
             </div>
           }
         />
@@ -161,14 +170,9 @@ export async function DealCard({
         icon={HandCoins}
         title="Deal"
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <PreviousDealsButton deals={previousDeals} />
             <NewDealDialog userId={userId} />
-            <DealActionsMenu
-              userId={userId}
-              username={username}
-              activeDeal={activeDeal}
-              previousDeals={previousDeals}
-            />
           </div>
         }
       />
@@ -250,12 +254,17 @@ export async function DealCard({
             >
               Site leaderboards {deal.allow_site_leaderboards ? "on" : "off"}
             </Badge>
-            {previousDeals.length > 0 && (
-              <span className="text-[11px] text-muted-foreground">
-                +{previousDeals.length} previous deal
-                {previousDeals.length === 1 ? "" : "s"}
-              </span>
-            )}
+            {/* Edit / Terminate live here rather than in the heading: the
+                heading stays [Previous deals] [New Deal], mirroring the
+                Affiliate Leaderboards card, and four inline buttons up there
+                wrapped badly. */}
+            <div className="ml-auto flex items-center gap-1.5">
+              <DealCardActions
+                userId={userId}
+                username={username}
+                deal={activeDeal}
+              />
+            </div>
           </div>
         </CardContent>
       </Card>
