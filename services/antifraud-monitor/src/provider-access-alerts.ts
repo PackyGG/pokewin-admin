@@ -6,13 +6,19 @@ import {
   type DiscordAlert,
 } from "./discord.js";
 import { sendBotDiscordEvent } from "./discord-events.js";
-import type { SignupProvider } from "./provider-contracts.js";
+import {
+  classifyProviderFailure,
+  type SignupProvider,
+} from "./provider-contracts.js";
 
 export type ProviderAccessIssueKind =
   | "missing_credential"
   | "invalid_credential"
+  | "expired_credential"
   | "quota_exhausted"
-  | "quota_low";
+  | "quota_low"
+  | "timeout"
+  | "request_failed";
 
 export type ProviderAccessIssue = {
   provider: SignupProvider;
@@ -80,10 +86,16 @@ export function providerFailureAccessIssue(
   if (/http_402|payment.required|out.of.(queries|credits|funds)|quota.exhausted/.test(code)) {
     return { provider, kind: "quota_exhausted" };
   }
+  if (/expired|revoked/.test(code)) {
+    return { provider, kind: "expired_credential" };
+  }
   if (/http_(401|403)|auth|invalid.*(key|credential)|license.*invalid/.test(code)) {
     return { provider, kind: "invalid_credential" };
   }
-  return undefined;
+  const failure = classifyProviderFailure(errorCode);
+  if (failure === "missing_compatible_datum") return undefined;
+  if (failure === "timeout") return { provider, kind: "timeout" };
+  return { provider, kind: "request_failed" };
 }
 
 function issueAlert(issue: ProviderAccessIssue): DiscordAlert {
@@ -111,6 +123,11 @@ function issueAlert(issue: ProviderAccessIssue): DiscordAlert {
       description: `${provider} rejected its configured credential. Replace or re-authorize the key.`,
       outcome: "invalid credential",
     },
+    expired_credential: {
+      title: "Third-party API key expired",
+      description: `${provider} reports that its configured credential expired or was revoked. Replace or re-authorize the key.`,
+      outcome: "expired credential",
+    },
     quota_exhausted: {
       title: "Third-party API credits are empty",
       description: `${provider} has no usable paid queries or funds remaining${balance ? ` (${balance})` : ""}.`,
@@ -121,12 +138,26 @@ function issueAlert(issue: ProviderAccessIssue): DiscordAlert {
       description: `${provider} is approaching exhaustion${balance ? ` (${balance})` : ""}. Refill it before provider checks stop.`,
       outcome: "credits low",
     },
+    timeout: {
+      title: "Third-party API timed out",
+      description: `${provider} did not answer within the bounded request window. The failure stays in the third-party API category.`,
+      outcome: "provider timeout",
+    },
+    request_failed: {
+      title: "Third-party API failed unexpectedly",
+      description: `${provider} returned an invalid, malformed, upstream, or otherwise unexpected failure. Inspect the sanitized provider evidence.`,
+      outcome: "unexpected provider failure",
+    },
   };
   const selected = copy[issue.kind];
   return {
     ...selected,
     trigger: provider,
-    severity: issue.kind === "quota_low" ? "medium" : "high",
+    severity:
+      issue.kind === "quota_low" || issue.kind === "timeout"
+        ? "medium"
+        : "high",
+    server: "Antifraud monitor · Railway production",
   };
 }
 
@@ -152,7 +183,7 @@ export async function sendProviderAccessIssue(
   now = new Date(),
 ): Promise<boolean> {
   return sendBotDiscordEvent(config, log, {
-    eventKey: "antifraud.error.provider_access",
+    eventKey: "antifraud.error.third_party_api",
     dedupeKey: `provider-access:${issue.provider}:${issue.kind}:${dedupeWindow(issue, now)}`,
     payload: buildDiscordAlertPayload(
       config.ANTIFRAUD_DASHBOARD_URL,

@@ -140,3 +140,34 @@ test("errors and KYC channels post without tagging anyone", () => {
   // reintroduce a ping in those categories.
   assert.match(router, /eligible\.parent_id IN \(\$\{silentCategoryIds\(\)\}\) THEN NULL/);
 });
+
+test("error routing uses only the four surviving channels", () => {
+  const migration = read(
+    "drizzle/admin/migrations/20260805_consolidate_error_discord_routing.sql",
+  );
+  const router = read("src/lib/discord-notifications/router.ts");
+  const webapp = read("src/app/api/antifraud/webapp-errors/route.ts");
+  const provider = read(
+    "services/antifraud-monitor/src/provider-access-alerts.ts",
+  );
+
+  for (const channelId of [
+    "1532248855133945956",
+    "1532249079999103077",
+    "1532248846103613552",
+    "1532248582525157458",
+  ]) {
+    assert.match(migration, new RegExp(channelId));
+  }
+  for (const retired of ["code", "failed_action", "provider_access", "system", "timeout"]) {
+    assert.match(migration, new RegExp(`antifraud\\.error\\.${retired}`));
+  }
+  assert.match(router, /canonicalDiscordEventKey/);
+  assert.match(router, /normalized\.startsWith\("antifraud\.error\."\)/);
+  assert.match(webapp, /name: "Webapp"/);
+  assert.match(webapp, /name: "Server"/);
+  assert.match(webapp, /verifySession\(\)/);
+  assert.match(provider, /eventKey: "antifraud\.error\.third_party_api"/);
+  assert.match(provider, /kind: "request_failed"/);
+  assert.match(provider, /server: "Antifraud monitor · Railway production"/);
+});

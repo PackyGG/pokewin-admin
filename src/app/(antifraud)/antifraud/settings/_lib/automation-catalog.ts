@@ -255,23 +255,20 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     icon: BellRing,
   },
   {
-    name: "Provider and system failures",
-    scope: "Third-party providers, signed transport, Discord commands, and webapp health",
+    name: "Error routing",
+    scope: "Webapps, third-party APIs, Discord, and uncategorized operational failures",
     trigger:
-      "A provider credential is missing or rejected, paid credits run low, an action fails, a timeout occurs, or a monitored service reports an operational error.",
+      "A webapp or code path fails, a provider key or request fails, Discord has a problem, or an uncategorized operational error occurs.",
     actions: [
-      "Persist a sanitized operational failure without secrets",
-      "Deduplicate credential alerts hourly and balance alerts daily",
-      "Notify operators without changing a player account",
+      "Route Admin, Marketing, Packs, and Fraud code errors to Webapp errors",
+      "Keep provider timeouts and unexpected responses with Third-party API",
+      "Keep Discord problems with Discord and use General only as the fallback",
     ],
     discordEvents: [
-      "antifraud.error.provider_access",
       "antifraud.error.third_party_api",
-      "antifraud.error.failed_action",
-      "antifraud.error.timeout",
       "antifraud.error.discord_command",
-      "antifraud.error.system",
       "antifraud.error.webapp",
+      "antifraud.error.general",
     ],
     controls: [
       { label: "Edit error routing", href: "/antifraud/discord" },

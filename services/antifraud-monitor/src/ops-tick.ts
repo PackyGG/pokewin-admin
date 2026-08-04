@@ -195,6 +195,19 @@ export class DashboardOpsTick {
     description: string,
     color: number,
   ): Promise<boolean> {
+    const fields = [
+      { name: "Webapp", value: "fraud", inline: true },
+      {
+        name: "Server",
+        value: "fraud.packydash.com · Vercel production",
+        inline: true,
+      },
+      {
+        name: "Detected by",
+        value: "Antifraud monitor · Railway production",
+        inline: false,
+      },
+    ];
     return sendBotDiscordEvent(this.config, this.log, {
       eventKey: "antifraud.error.webapp",
       dedupeKey,
@@ -205,6 +218,7 @@ export class DashboardOpsTick {
             description,
             url: "https://fraud.packydash.com",
             color,
+            fields,
             footer: { text: `Correlation ${correlationId}` },
             timestamp: new Date().toISOString(),
           },

@@ -2,9 +2,10 @@ import { createHash, randomUUID } from "node:crypto";
 
 import { z } from "zod";
 
+import { resolveAppHost } from "@/lib/app-hosts";
 import { buildCacheKey, rateLimit } from "@/lib/cache/redis";
+import { verifySession } from "@/lib/dal";
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
-import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -47,10 +48,22 @@ function response(body: unknown, status: number): Response {
   });
 }
 
+function webappName(
+  hostname: string,
+): "admin" | "marketing" | "packs" | "fraud" {
+  const app = resolveAppHost(hostname);
+  if (app?.basePath === "/creator-hub") return "marketing";
+  if (app?.basePath === "/pack-studio") return "packs";
+  if (app?.basePath === "/antifraud") return "fraud";
+  return "admin";
+}
+
 export async function POST(request: Request): Promise<Response> {
   let actorId: string;
   try {
-    actorId = (await requireAntifraudReadAccess()).userId;
+    // Global browser reporting covers Admin, Marketing, Packs, and Fraud. The
+    // former Fraud-only gate silently dropped errors from the other webapps.
+    actorId = (await verifySession()).userId;
   } catch {
     return response({ error: "unauthorized" }, 401);
   }
@@ -95,6 +108,8 @@ export async function POST(request: Request): Promise<Response> {
   if (!guildId) return response({ error: "not_configured" }, 503);
 
   const report = parsed.data;
+  const hostname = requestUrl.hostname.toLowerCase();
+  const appName = webappName(hostname);
   const correlationId = randomUUID();
   // Repeat crashes stay visible once per hour without flooding Discord on
   // every render retry or reconnect loop.
@@ -102,6 +117,8 @@ export async function POST(request: Request): Promise<Response> {
   const fingerprint = createHash("sha256")
     .update(
       JSON.stringify([
+        appName,
+        hostname,
         report.source,
         report.boundary,
         report.route,
@@ -114,6 +131,12 @@ export async function POST(request: Request): Promise<Response> {
     .digest("hex")
     .slice(0, 32);
   const fields = [
+    { name: "Webapp", value: appName, inline: true },
+    {
+      name: "Server",
+      value: `${hostname} · Vercel production`,
+      inline: true,
+    },
     { name: "Source", value: report.source, inline: true },
     { name: "Boundary", value: report.boundary, inline: true },
     { name: "Route", value: `\`${report.route}\``, inline: false },
@@ -139,10 +162,10 @@ export async function POST(request: Request): Promise<Response> {
       eventKey: "antifraud.error.webapp",
       dedupeKey: `browser:${fingerprint}`,
       embed: {
-        title: "🚨 Fraud webapp runtime error",
+        title: `🚨 ${appName} webapp runtime error`,
         description:
           "A browser or React boundary caught an error. Raw messages and stack traces were intentionally excluded.",
-        url: "https://fraud.packydash.com",
+        url: requestUrl.origin,
         color: 0xed4245,
         fields,
         footer: { text: `Correlation ${correlationId}` },

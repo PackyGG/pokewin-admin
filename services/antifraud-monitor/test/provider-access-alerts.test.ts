@@ -9,7 +9,7 @@ import {
   providerFailureAccessIssue,
 } from "../src/provider-access-alerts.js";
 
-test("provider access failures distinguish invalid keys from exhausted credits", () => {
+test("provider failures cover credentials, timeouts, and unexpected responses", () => {
   assert.deepEqual(providerFailureAccessIssue("fingerprint", "http_401"), {
     provider: "fingerprint",
     kind: "invalid_credential",
@@ -18,7 +18,22 @@ test("provider access failures distinguish invalid keys from exhausted credits",
     provider: "maxmind",
     kind: "quota_exhausted",
   });
-  assert.equal(providerFailureAccessIssue("proxycheck", "http_500"), undefined);
+  assert.deepEqual(providerFailureAccessIssue("abstract_ip", "credential_expired"), {
+    provider: "abstract_ip",
+    kind: "expired_credential",
+  });
+  assert.deepEqual(providerFailureAccessIssue("proxycheck", "TimeoutError"), {
+    provider: "proxycheck",
+    kind: "timeout",
+  });
+  assert.deepEqual(providerFailureAccessIssue("proxycheck", "http_500"), {
+    provider: "proxycheck",
+    kind: "request_failed",
+  });
+  assert.equal(
+    providerFailureAccessIssue("proxycheck", "missing_ip"),
+    undefined,
+  );
 });
 
 test("MaxMind balance metadata raises exhausted and proactive low-credit issues", () => {

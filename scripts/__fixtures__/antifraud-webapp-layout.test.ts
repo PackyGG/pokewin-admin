@@ -130,7 +130,7 @@ test("unrequested profile and connection indexes stay out of Fraud", () => {
   assert.match(errorBoundary, /does not prove that a preceding action failed/);
 });
 
-test("browser and React failures are routed to webapp error notifications", () => {
+test("all four webapps route browser and React failures with source context", () => {
   const route = read("src/app/api/antifraud/webapp-errors/route.ts");
   const reporter = read("src/lib/errors/report-webapp-error.ts");
   const routeBoundary = read("src/app/(antifraud)/antifraud/error.tsx");
@@ -139,7 +139,10 @@ test("browser and React failures are routed to webapp error notifications", () =
   );
   const instrumentation = read("src/instrumentation-client.ts");
 
-  assert.match(route, /requireAntifraudReadAccess/);
+  assert.match(route, /verifySession\(\)/);
+  assert.match(route, /"admin" \| "marketing" \| "packs" \| "fraud"/);
+  assert.match(route, /name: "Webapp"/);
+  assert.match(route, /name: "Server"/);
   assert.match(route, /sec-fetch-site/);
   assert.match(route, /rateLimit/);
   assert.match(route, /eventKey: "antifraud\.error\.webapp"/);

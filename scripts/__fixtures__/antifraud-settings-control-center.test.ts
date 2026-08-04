@@ -127,7 +127,7 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
     "Automatic withdrawal hold",
     "KYC and Sumsub lifecycle",
     "Review operations and reminders",
-    "Provider and system failures",
+    "Error routing",
   ]) {
     assert.match(catalog, new RegExp(flow));
   }
@@ -144,7 +144,9 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
     "antifraud.sumsub_started",
     "antifraud.sumsub_ready",
     "antifraud.review_reminder",
-    "antifraud.error.provider_access",
+    "antifraud.error.third_party_api",
+    "antifraud.error.discord_command",
+    "antifraud.error.general",
     "antifraud.error.webapp",
   ]) {
     assert.match(catalog, new RegExp(event.replaceAll(".", "\\.")));

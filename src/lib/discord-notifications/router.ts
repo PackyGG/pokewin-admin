@@ -17,6 +17,33 @@ import { ensureDiscordLinkButton } from "./link-button";
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
 
+const ERROR_EVENT_KEYS = {
+  webapp: "antifraud.error.webapp",
+  thirdPartyApi: "antifraud.error.third_party_api",
+  discord: "antifraud.error.discord_command",
+  general: "antifraud.error.general",
+} as const;
+
+/** Keep every operational error on one of the four live error routes. */
+export function canonicalDiscordEventKey(value: string): string {
+  const normalized = eventKey(value);
+  if (Object.values(ERROR_EVENT_KEYS).includes(
+    normalized as (typeof ERROR_EVENT_KEYS)[keyof typeof ERROR_EVENT_KEYS],
+  )) {
+    return normalized;
+  }
+  if (normalized === "antifraud.error.code") {
+    return ERROR_EVENT_KEYS.webapp;
+  }
+  if (normalized === "antifraud.error.provider_access") {
+    return ERROR_EVENT_KEYS.thirdPartyApi;
+  }
+  if (normalized.startsWith("antifraud.error.")) {
+    return ERROR_EVENT_KEYS.general;
+  }
+  return normalized;
+}
+
 export type SyncedDiscordChannel = {
   id: string;
   name: string;
@@ -175,7 +202,7 @@ export async function enqueueDiscordEvent(input: {
   components?: Array<Record<string, unknown>>;
 }): Promise<{ enqueued: number; duplicate: number }> {
   const guildId = snowflake(input.guildId, "guildId");
-  const key = eventKey(input.eventKey);
+  const key = canonicalDiscordEventKey(input.eventKey);
   const dedupeKey = input.dedupeKey.trim();
   if (!dedupeKey || dedupeKey.length > 200) {
     throw new Error("dedupeKey must contain 1-200 characters.");

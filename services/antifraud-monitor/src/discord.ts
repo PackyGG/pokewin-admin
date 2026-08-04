@@ -56,6 +56,7 @@ export type DiscordAlert = {
   severity?: AlertSeverity;
   trigger?: string;
   outcome?: string;
+  server?: string;
   signals?: readonly DiscordAlertSignal[];
   occurredAt?: Date;
   url?: string;
@@ -335,6 +336,13 @@ export function buildDiscordAlertPayload(
     fields.push({
       name: "Outcome",
       value: escapeMarkdown(humanize(alert.outcome)),
+      inline: true,
+    });
+  }
+  if (alert.server) {
+    fields.push({
+      name: "Server",
+      value: escapeMarkdown(alert.server),
       inline: true,
     });
   }
