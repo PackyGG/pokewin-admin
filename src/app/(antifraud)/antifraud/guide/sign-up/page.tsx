@@ -114,15 +114,6 @@ export default async function AntifraudSignupGuidePage() {
         <PageHeroIdentity />
       </PageHero>
 
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600 dark:text-cyan-400">
-          Guide
-        </p>
-        <h1 className="mt-1 text-2xl font-semibold tracking-tight">
-          Sign Up &amp; Monitor
-        </h1>
-      </div>
-
       <section className="grid gap-4 xl:grid-cols-4">
         {riskBands.map((band) => {
           const Icon = band.icon;
