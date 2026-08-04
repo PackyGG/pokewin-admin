@@ -11,16 +11,20 @@ Agent rulebook for Codex/Cursor sessions in this repo. **The binding rules live 
 
 ## Repository and production boundary
 
-Stay inside this repository. Do not edit, commit, push, migrate, deploy, or
-operate another repository unless the owner explicitly names it in the current
-request. Cross-repository work is a handoff by default.
+Agents working from `pokewin-admin` may also access, inspect, edit, verify,
+commit, and release the sibling `Packy.GG-Administration-Bot` and
+`Packy.GG-Rewards-Bot` repositories when a task requires bot-side work. This is
+a standing cross-repository exception; no additional permission is needed.
+Other repositories remain out of scope unless a rule below or the owner
+explicitly authorizes them.
 
-This repository has the global standing `pokewin-admin` exception: agents may
-commit and push finished, appropriately verified task changes to `origin/main`
-without asking for push permission again, including the automatic production
-deployment triggered by that push. Before pushing, verify the repository root,
-remote, target branch, and production impact, and include only task-owned
-changes.
+Finished, appropriately verified task changes in `pokewin-admin`,
+`Packy.GG-Administration-Bot`, and `Packy.GG-Rewards-Bot` must be committed and
+pushed immediately through each repository's established production
+branch/deployment path. Do not stop at a local change or wait for separate push
+or deployment permission. Before pushing, verify the repository root,
+canonical origin, target branch, configured production target, and production
+impact, and include only task-owned changes.
 
 The exception covers every deployable item stored inside this repository:
 admin-dashboard sub-apps and subdomains, API/serverless/edge functions, and
@@ -37,9 +41,18 @@ service configuration, operate Redis, and make required Admin/Antifraud data
 changes without separate permission after verifying the exact production
 target and recovery impact.
 
-This authority does not extend to the MAIN game/customer database, unrelated
-secret rotation, moving components to new infrastructure, the separate
-`frontend` or `backend`, or any other repository.
+The sibling `frontend` and `backend` repositories may be read and inspected for
+contracts and diagnosis. Do not edit, commit, push, deploy, or open a PR in
+either repository unless the owner explicitly authorizes that repository and
+PR in the current request. Even with PR permission, do not push or deploy its
+production branch without separate explicit production authorization.
+
+MAIN game/customer production databases remain strictly read-only. The Admin
+DB and Antifraud DB may be operated fully for task-scoped work, including
+reviewed DDL, DML, migrations, configuration, and recovery work, after verifying
+the exact target, production impact, and recovery path. This authority does not
+extend to unrelated secret rotation, moving components to new infrastructure,
+or any other repository.
 
 ---
 

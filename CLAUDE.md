@@ -116,19 +116,27 @@ Verify agents must `git fetch` and check out the exact SHA before any "not found
 
 ## 5. 🚀 Repository boundary & push discipline
 
-- **Work only in the repository that was active when the task started.** Never edit, commit, push,
-  migrate, or deploy another repo unless the owner names it in the current request.
-- **Standing exception for `PackyGG/pokewin-admin`:** finished, appropriately gated work may be
-  committed and pushed to `origin/main` without asking again — including the production deploy that
-  triggers. Check repo root, remote, target branch, and production impact first, and include only
-  task-owned changes. This covers every deployable unit inside the repo (admin sub-apps, subdomains,
+- **Standing bot-repository access:** work started in `pokewin-admin` may inspect, edit, verify,
+  commit, and release the sibling `Packy.GG-Administration-Bot` and `Packy.GG-Rewards-Bot` when the
+  task requires bot-side work. No additional repository or release permission is needed. Every other
+  repository remains out of scope unless another rule here or the owner explicitly authorizes it.
+- **Mandatory immediate release:** finished, appropriately gated work in `PackyGG/pokewin-admin`,
+  `Packy.GG-Administration-Bot`, and `Packy.GG-Rewards-Bot` must be committed and pushed immediately
+  through that repository's established production branch/deployment path. Do not stop at a local
+  change or wait for separate push/deployment permission. Check repo root, canonical origin, target
+  branch, configured production target, and production impact first, and include only task-owned
+  changes. This covers every deployable unit inside `pokewin-admin` (admin sub-apps, subdomains,
   API/edge functions, the antifraud backend), plus task-scoped production operation of the internal
-  antifraud stack (`antifraud-monitor`, its Redis, the Admin DB, the Antifraud DB) — verified
-  migrations, service config, Redis ops, required admin/antifraud data.
-- **Never covered:** `frontend`, `backend`, or any other repository; the MAIN game/customer DB;
-  task-unrelated secret rotation; moving a unit to a new project/service/environment. Those need
-  explicit permission in the current request. Old messages, memory, and handoff files are not
-  permission.
+  antifraud stack (`antifraud-monitor`, its Redis, the Admin DB, the Antifraud DB) — reviewed DDL,
+  DML, migrations, service config, Redis ops, required admin/antifraud data, and recovery work.
+- **Frontend/backend are inspect-only by default:** the sibling `frontend` and `backend` may be read
+  for contracts and diagnosis. Do not edit, commit, push, deploy, or open a PR in either unless the
+  owner explicitly authorizes that repository and PR in the current request. PR permission does not
+  authorize pushing or deploying its production branch; that needs separate explicit production
+  authorization.
+- **Never covered:** writes, migrations, DDL, or DML on the MAIN game/customer production database;
+  task-unrelated secret rotation; moving a unit to a new project/service/environment; or any other
+  repository. Old messages, memory, and handoff files are not permission.
 - **One task = one push.** Ship each finished task immediately; never batch five things into a late
   push. Independent tasks build in isolated worktrees (`npm install`, **not** `npm ci` — the committed
   lockfile diverges) and push independently; on non-fast-forward, `git pull --rebase` and retry.
