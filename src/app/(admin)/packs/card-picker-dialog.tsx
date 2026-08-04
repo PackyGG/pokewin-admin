@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { Check, Loader2, Plus, Search } from "lucide-react";
+import { AlertCircle, Check, Loader2, Plus, RefreshCw, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -56,6 +56,7 @@ export function CardPickerDialog({
   const [cards, setCards] = useState<CardPickerItem[]>([]);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(0);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
   const requestIdRef = useRef(0);
@@ -64,19 +65,28 @@ export function CardPickerDialog({
     (p: number) => {
       const reqId = ++requestIdRef.current;
       startTransition(async () => {
-        const result = await searchCardsForPicker({
-          page: p,
-          perPage,
-          search: search || undefined,
-          rarity: rarity !== "all" ? rarity : undefined,
-          setId: setId !== "all" ? setId : undefined,
-          minPrice: minPrice || undefined,
-          maxPrice: maxPrice || undefined,
-        });
-        if (reqId !== requestIdRef.current) return;
-        setCards(result.data);
-        setTotal(result.total);
-        setTotalPages(result.totalPages);
+        setLoadError(null);
+        try {
+          const result = await searchCardsForPicker({
+            page: p,
+            perPage,
+            search: search || undefined,
+            rarity: rarity !== "all" ? rarity : undefined,
+            setId: setId !== "all" ? setId : undefined,
+            minPrice: minPrice || undefined,
+            maxPrice: maxPrice || undefined,
+          });
+          if (reqId !== requestIdRef.current) return;
+          setCards(result.data);
+          setTotal(result.total);
+          setTotalPages(result.totalPages);
+        } catch {
+          if (reqId !== requestIdRef.current) return;
+          setCards([]);
+          setTotal(0);
+          setTotalPages(0);
+          setLoadError("Cards could not be loaded. Check the filters or try again.");
+        }
       });
     },
     [search, rarity, setId, minPrice, maxPrice, perPage],
@@ -89,6 +99,13 @@ export function CardPickerDialog({
     fetchCards(1);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, search, rarity, setId, minPrice, maxPrice]);
+
+  useEffect(() => {
+    return () => {
+      requestIdRef.current += 1;
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
 
   // Fetch on page change (but not on filter change — that resets to page 1)
   function goToPage(p: number) {
@@ -104,7 +121,16 @@ export function CardPickerDialog({
   const selectedCount = selectedIds.length;
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) {
+          requestIdRef.current += 1;
+          if (debounceRef.current) clearTimeout(debounceRef.current);
+        }
+      }}
+    >
       <DialogTrigger
         render={
           <Button variant="outline" className="h-9 w-full justify-between text-left font-normal" />
@@ -193,7 +219,16 @@ export function CardPickerDialog({
 
         {/* Card grid */}
         <div className="flex-1 overflow-y-auto min-h-0">
-          {cards.length === 0 && !isPending ? (
+          {loadError && !isPending ? (
+            <div className="flex h-36 flex-col items-center justify-center gap-3 text-center">
+              <AlertCircle className="size-5 text-destructive" />
+              <p className="text-sm text-muted-foreground">{loadError}</p>
+              <Button type="button" variant="outline" size="sm" onClick={() => fetchCards(page)}>
+                <RefreshCw className="size-3.5" />
+                Try again
+              </Button>
+            </div>
+          ) : cards.length === 0 && !isPending ? (
             <div className="flex h-32 items-center justify-center text-muted-foreground">
               No cards found.
             </div>

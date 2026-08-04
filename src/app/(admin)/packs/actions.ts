@@ -77,6 +77,13 @@ import {
 import { TARGET_HOUSE_EDGE } from "@/app/(admin)/insights/edge-calc/math";
 import { z } from "zod";
 import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  fail,
+  ok,
+  type ServerActionResult,
+} from "@/lib/errors/server-action-result";
+import { logError } from "@/lib/errors/logger";
+import { isPostgresError } from "@/lib/postgres-errors";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getCards, getRarities, getSets } from "@/lib/queries/cards";
 // Ungated internal helper, NOT the `reloadPacks` server action: that action
@@ -106,7 +113,9 @@ import {
 } from "@/app/(admin)/packs/_lib/risk-config";
 import {
   capturePackSnapshot,
+  capturePackSnapshotFromState,
   getPackSnapshot,
+  type CapturedPackState,
   type SnapshotCard,
 } from "@/app/(admin)/packs/_lib/pack-history";
 import { computePoolFingerprint } from "@/app/(admin)/packs/_lib/pool-fingerprint";
@@ -124,6 +133,7 @@ import {
 import {
   getPackBuilderEdgeError,
   getPackBuilderTicketTotalError,
+  PACK_BUILDER_TICKET_TOTAL,
   scaleToPackBuilderTickets,
 } from "@/lib/packs/builder-edge";
 
@@ -292,12 +302,24 @@ const updatePackSchema = z.object({
   name: z.string().trim().min(1, "Name is required").max(60),
   slug: z.string().trim().min(1, "Slug is required").max(60),
   description: z.string().max(10_000),
-  price: z.number().finite().positive("Price must be greater than 0"),
-  cardsPerOpen: z.number().int().positive(),
+  price: z
+    .number()
+    .finite()
+    .positive("Price must be greater than 0")
+    .max(1_000_000, "Price is too large")
+    .refine(
+      (value) => Math.abs(value * 100 - Math.round(value * 100)) < 1e-7,
+      "Price can have at most 2 decimal places",
+    ),
+  cardsPerOpen: z
+    .number()
+    .int("Cards per open must be a whole number")
+    .min(1, "Cards per open must be at least 1")
+    .max(100, "Cards per open cannot exceed 100"),
   packType: z.string().min(1),
   imageUrl: z.string().max(10_000).nullable(),
-  tags: z.array(z.enum(Object.values(pack_tag))),
-  difficulty: z.number().finite().nullable(),
+  tags: z.array(z.enum(Object.values(pack_tag))).max(5),
+  difficulty: z.number().finite().min(0).max(1).nullable(),
   cards: z.array(
     z.object({
       cardId: z.string().uuid(),
@@ -306,8 +328,53 @@ const updatePackSchema = z.object({
       animation: z.boolean(),
       order: z.number().int().nonnegative(),
     }),
-  ),
+  ).min(1, "Add at least one card before saving").max(1_000),
+}).superRefine((data, ctx) => {
+  const ids = new Set<string>();
+  for (const [index, card] of data.cards.entries()) {
+    if (ids.has(card.cardId)) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["cards", index, "cardId"],
+        message: "The same card cannot be added twice",
+      });
+    }
+    ids.add(card.cardId);
+    if (card.order !== index) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["cards", index, "order"],
+        message: "Card order is invalid. Reorder the cards and try again.",
+      });
+    }
+  }
+  if (new Set(data.tags).size !== data.tags.length) {
+    ctx.addIssue({ code: "custom", path: ["tags"], message: "Pack tags must be unique" });
+  }
+  const totalWeight = data.cards.reduce((sum, card) => sum + card.weight, 0);
+  if (totalWeight !== PACK_BUILDER_TICKET_TOTAL) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["cards"],
+      message: "Card odds must total exactly 100.0000% before saving",
+    });
+  }
 });
+
+class PackEditRefusal extends Error {
+  constructor(
+    message: string,
+    readonly code: string,
+  ) {
+    super(message);
+    this.name = "PackEditRefusal";
+  }
+}
+
+export type UpdatePackResult = ServerActionResult<{
+  updatedAt: string;
+  liveCacheReloaded: boolean;
+}>;
 
 const MANAGEABLE_PACK_TYPES = new Set([
   "official",
@@ -410,17 +477,29 @@ export async function updatePack(
     difficulty: number | null;
     cards: PackCardInput[];
   },
-): Promise<{ updatedAt: string; liveCacheReloaded: boolean }> {
-  const db = await getPrimaryDrizzleDb();
+): Promise<UpdatePackResult> {
   const session = await requirePageAccess("/packs");
 
-  if (!isUuid(id)) throw new Error("Invalid pack id");
+  if (!isUuid(id)) return fail("Invalid pack id", "INVALID_INPUT");
   const parsed = updatePackSchema.safeParse(data);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  if (!parsed.success) {
+    return fail(
+      parsed.error.issues[0]?.message ?? "Check the pack details and try again",
+      "INVALID_INPUT",
+    );
+  }
+  const clean = parsed.data;
 
-  assertManageablePackType(parsed.data.packType);
+  if (!MANAGEABLE_PACK_TYPES.has(clean.packType)) {
+    return fail("Unsupported pack type", "INVALID_INPUT");
+  }
 
-  await requireCapability(session, "__can_update_pack", "update packs");
+  try {
+    await requireCapability(session, "__can_update_pack", "update packs");
+  } catch (error) {
+    unstable_rethrow(error);
+    return fail("You do not have permission to update packs", "FORBIDDEN");
+  }
 
   // Pack creators can iterate on their demo packs (active=false) but
   // are blocked from editing packs already live in production —
@@ -435,6 +514,14 @@ export async function updatePack(
   // stacking pack_creator under a higher-priority primary role. A real
   // admin short-circuits earlier in requireCapability, so this branch is
   // never reached for admins.
+  let writeResult: {
+    editedLiveUnderCapability: boolean;
+    updatedAt: string;
+    priorState: CapturedPackState;
+  };
+
+  try {
+  const db = await getPrimaryDrizzleDb();
   const isPackCreator = sessionHasRole(session, "pack_creator");
   let packCreatorCanEditLive = false;
   if (isPackCreator) {
@@ -465,23 +552,18 @@ export async function updatePack(
       LIMIT 1
     `)
   ).rows[0];
-  if (!target) throw new Error("Pack not found");
-  if (target.updated_at !== data.expectedUpdatedAt) {
-    throw new Error(
+  if (!target) throw new PackEditRefusal("Pack not found", "NOT_FOUND");
+  if (target.updated_at !== clean.expectedUpdatedAt) {
+    throw new PackEditRefusal(
       "This pack changed after you opened it. Your stale form was not saved. Reload the pack and review the latest version before trying again.",
+      "STALE_PACK",
     );
   }
   if (isPackCreator && target.active && !packCreatorCanEditLive) {
-    throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
+    throw new PackEditRefusal(LIVE_PACK_EDIT_DENIED_MESSAGE, "LIVE_EDIT_FORBIDDEN");
   }
 
-  // Capture the PRIOR state (price + every card weight) into the ADMIN change
-  // history BEFORE the MAIN write below replaces it — so this snapshot is the
-  // state the owner can revert TO. Best-effort: a snapshot failure must NOT
-  // fail the committed edit (the helper swallows + logs its own errors).
-  await capturePackSnapshot({ packId: id, action: "edit", capturedBy: session.userId });
-
-  const writeResult = await db.transaction(async (tx) => {
+  writeResult = await db.transaction(async (tx) => {
     // Close the check-then-write race (TOCTOU): the demo-only gate above read
     // `packs.active` OUTSIDE this transaction, so a pack activated in the gap
     // could slip past a demo-only pack_creator's restriction. Re-check under a
@@ -489,37 +571,88 @@ export async function updatePack(
     // the locked value so it reflects the state actually written against.
     let editedLiveUnderCapability = false;
     const locked = (
-      await tx.execute<{ active: boolean; updated_at: string }>(sql`
-        SELECT active, updated_at::text AS updated_at
+      await tx.execute<{
+        active: boolean;
+        updated_at: string;
+        price: string;
+        tags: string[];
+      }>(sql`
+        SELECT active, updated_at::text AS updated_at,
+               price::text AS price, tags::text[] AS tags
         FROM packs
         WHERE id = ${id}::uuid
         FOR UPDATE
       `)
     ).rows[0];
-    if (!locked) throw new Error("Pack not found");
-    if (locked.updated_at !== data.expectedUpdatedAt) {
-      throw new Error(
+    if (!locked) throw new PackEditRefusal("Pack not found", "NOT_FOUND");
+    if (locked.updated_at !== clean.expectedUpdatedAt) {
+      throw new PackEditRefusal(
         "This pack changed while you were saving. Your stale form was not saved. Reload the pack and review the latest version before trying again.",
+        "STALE_PACK",
       );
     }
     if (isPackCreator && locked.active) {
       if (!packCreatorCanEditLive) {
-        throw new Error(LIVE_PACK_EDIT_DENIED_MESSAGE);
+        throw new PackEditRefusal(LIVE_PACK_EDIT_DENIED_MESSAGE, "LIVE_EDIT_FORBIDDEN");
       }
       editedLiveUnderCapability = true;
     }
 
+    const slugOwner = (
+      await tx.execute<{ id: string }>(sql`
+        SELECT id FROM packs
+        WHERE slug = ${clean.slug} AND id <> ${id}::uuid
+        LIMIT 1
+      `)
+    ).rows[0];
+    if (slugOwner) {
+      throw new PackEditRefusal(
+        "A different pack already uses this slug",
+        "SLUG_CONFLICT",
+      );
+    }
+
+    const knownCards = await tx.execute<{ id: string }>(sql`
+      SELECT id FROM cards
+      WHERE id = ANY(${pgArrayParam(clean.cards.map((card) => card.cardId))}::uuid[])
+    `);
+    if (knownCards.rows.length !== clean.cards.length) {
+      throw new PackEditRefusal(
+        "One or more selected cards no longer exist. Reload the pack and review its card pool.",
+        "CARD_NOT_FOUND",
+      );
+    }
+
+    const priorRows = await tx.execute<SnapshotCard & { card_price: string }>(sql`
+      SELECT pc.card_id, pc.weight, pc.color, pc.animation, pc."order",
+             c.price::text AS card_price
+      FROM pack_cards pc
+      JOIN cards c ON c.id = pc.card_id
+      WHERE pc.pack_id = ${id}::uuid
+      ORDER BY pc."order"
+    `);
+    const priorCards = priorRows.rows.map(({ card_price: _cardPrice, ...card }) => card);
+    const priorRisk = priorRows.rows.length > 0
+      ? computePackRisk({
+          cards: priorRows.rows.map((card) => ({
+            value: Number(card.card_price),
+            weight: card.weight,
+          })),
+          price: Number(locked.price),
+        })
+      : null;
+
     const updated = await tx.execute<{ id: string; updated_at: string }>(sql`
       UPDATE packs
-      SET name = ${data.name.trim()},
-          slug = ${data.slug.trim()},
-          description = ${data.description.trim() || null},
-          image_url = ${data.imageUrl},
-          price = ${data.price},
-          cards_per_open = ${data.cardsPerOpen},
-          pack_type = ${data.packType},
-          tags = ${pgArrayParam(packTagDbValues(data.tags))}::pack_tag[],
-          difficulty = ${data.difficulty},
+      SET name = ${clean.name},
+          slug = ${clean.slug},
+          description = ${clean.description.trim() || null},
+          image_url = ${clean.imageUrl},
+          price = ${clean.price},
+          cards_per_open = ${clean.cardsPerOpen},
+          pack_type = ${clean.packType},
+          tags = ${pgArrayParam(packTagDbValues(clean.tags))}::pack_tag[],
+          difficulty = ${clean.difficulty},
           updated_at = NOW()
       WHERE id = ${id}::uuid
       RETURNING id, updated_at::text AS updated_at
@@ -528,18 +661,18 @@ export async function updatePack(
 
     await tx.execute(sql`DELETE FROM pack_cards WHERE pack_id = ${id}::uuid`);
 
-    if (data.cards.length > 0) {
+    if (clean.cards.length > 0) {
       await tx.execute(sql`
         INSERT INTO pack_cards (
           pack_id, card_id, weight, color, animation, "order"
         )
         SELECT ${id}::uuid, *
         FROM unnest(
-          ${pgArrayParam(data.cards.map((c) => c.cardId))}::uuid[],
-          ${pgArrayParam(data.cards.map((c) => c.weight))}::int[],
-          ${pgArrayParam(data.cards.map((c) => c.color))}::text[],
-          ${pgArrayParam(data.cards.map((c) => c.animation))}::boolean[],
-          ${pgArrayParam(data.cards.map((c) => c.order))}::int[]
+          ${pgArrayParam(clean.cards.map((c) => c.cardId))}::uuid[],
+          ${pgArrayParam(clean.cards.map((c) => c.weight))}::int[],
+          ${pgArrayParam(clean.cards.map((c) => c.color))}::text[],
+          ${pgArrayParam(clean.cards.map((c) => c.animation))}::boolean[],
+          ${pgArrayParam(clean.cards.map((c) => c.order))}::int[]
         )
       `);
     }
@@ -552,37 +685,74 @@ export async function updatePack(
         WHERE pack_id = ${id}::uuid
       `)
     ).rows[0];
-    const expectedWeight = data.cards.reduce((sum, card) => sum + card.weight, 0);
+    const expectedWeight = clean.cards.reduce((sum, card) => sum + card.weight, 0);
     if (
       !persisted ||
-      persisted.card_count !== data.cards.length ||
+      persisted.card_count !== clean.cards.length ||
       Number(persisted.total_weight) !== expectedWeight
     ) {
-      throw new Error("Pack verification failed. No changes were committed.");
+      throw new PackEditRefusal(
+        "Pack verification failed. No changes were committed.",
+        "VERIFY_FAILED",
+      );
     }
 
     return {
       editedLiveUnderCapability,
       updatedAt: updated.rows[0].updated_at,
+      priorState: {
+        price: Number(locked.price),
+        tags: Array.isArray(locked.tags) ? locked.tags.map(String) : [],
+        cards: priorCards,
+        risk: priorRisk,
+      },
     };
   });
+  } catch (error) {
+    unstable_rethrow(error);
+    if (error instanceof PackEditRefusal) {
+      return fail(error.message, error.code);
+    }
+    if (isPostgresError(error, "23505")) {
+      return fail("A different pack already uses this slug", "SLUG_CONFLICT");
+    }
+    logError("packs.update", `pack ${id} update failed`, error);
+    return fail(
+      "The pack could not be saved. No changes were committed. Please try again.",
+      "SAVE_FAILED",
+    );
+  }
 
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "pack_updated",
-    metadata: {
-      pack_id: id,
-      name: data.name,
-      card_count: data.cards.length,
+  // The MAIN transaction is committed at this point. Persist the exact locked
+  // before-state, not a potentially lagging mirror read, and never create a
+  // history row for a rejected/rolled-back edit.
+  await capturePackSnapshotFromState(
+    { packId: id, action: "edit", capturedBy: session.userId },
+    writeResult.priorState,
+  );
+
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "pack_updated",
+      metadata: {
+        pack_id: id,
+        name: clean.name,
+        card_count: clean.cards.length,
       // Flag the rare case: a pack_creator edited an ACTIVE pack via
       // the explicit `__can_edit_live_packs` capability. Lets audit
       // reviews answer "who changed the house edge on a live pack?"
       // without re-deriving from role + pack.active at the time.
-      ...(writeResult.editedLiveUnderCapability && {
-        edited_live_pack_under_capability: true,
-      }),
-    },
-  });
+        ...(writeResult.editedLiveUnderCapability && {
+          edited_live_pack_under_capability: true,
+        }),
+      },
+    });
+  } catch (error) {
+    // The MAIN transaction already committed. Do not lie to the operator by
+    // reporting the save as failed because a secondary ADMIN audit write did.
+    logError("packs.update.audit", `pack ${id} audit failed after commit`, error);
+  }
 
   // Confirm the public game backend consumed the committed pack before the UI
   // calls the edit fully live. If the synchronous refresh fails, the database
@@ -598,7 +768,7 @@ export async function updatePack(
 
   revalidatePath("/packs");
   revalidatePath(`/packs/${id}`);
-  return { updatedAt: writeResult.updatedAt, liveCacheReloaded };
+  return ok({ updatedAt: writeResult.updatedAt, liveCacheReloaded });
 }
 
 export async function deletePack(packId: string): Promise<void> {
