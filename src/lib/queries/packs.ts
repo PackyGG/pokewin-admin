@@ -611,6 +611,7 @@ export async function getPackDetail(id: string) {
   const result = await db.execute<{
     id: string; name: string; slug: string; description: string | null;
     image_url: string | null; price: string; cards_per_open: number;
+    updated_at: string;
     total_openings: string; total_revenue: string; total_payout: string;
     actual_rtp: string; actual_house_edge: string; active: boolean;
     pack_type: string; tags: PackTag[]; difficulty: number | null;
@@ -618,6 +619,7 @@ export async function getPackDetail(id: string) {
   }>(sql`
     SELECT p.id, p.name, p.slug, p.description, p.image_url,
            p.price::text AS price, p.cards_per_open,
+           p.updated_at::text AS updated_at,
            p.total_openings::text AS total_openings,
            p.total_revenue::text AS total_revenue,
            p.total_payout::text AS total_payout,
@@ -650,6 +652,7 @@ export async function getPackDetail(id: string) {
 
   return {
     id: pack.id,
+    updatedAt: pack.updated_at,
     name: pack.name,
     slug: pack.slug,
     description: pack.description,
