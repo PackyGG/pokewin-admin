@@ -28,6 +28,9 @@ const fraudConfigPage = read(
 const fraudSidebar = read(
   "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
 );
+const automation = read(
+  "src/app/(antifraud)/antifraud/automation/page.tsx",
+);
 const appHosts = read("src/lib/app-hosts.ts");
 const securityLoader = read(
   "src/app/(admin)/security/security-sections-loader.tsx",
@@ -96,8 +99,9 @@ test("dedicated Fiat switch lives in Fraud Config and stays hidden from raw Secu
     fraudConfigPage,
     /initialEnabled=\{config\.fiat_deposit_automatic_credit_enabled\}/,
   );
-  assert.match(fraudSidebar, /label: "Config"/);
-  assert.match(fraudSidebar, /href: "\/antifraud\/config"/);
+  assert.match(fraudSidebar, /label: "Automation & rules"/);
+  assert.match(automation, /href: "\/antifraud\/config"/);
+  assert.doesNotMatch(fraudSidebar, /href: "\/antifraud\/config"/);
   assert.match(
     appHosts,
     /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[[\s\S]*?"config"/,

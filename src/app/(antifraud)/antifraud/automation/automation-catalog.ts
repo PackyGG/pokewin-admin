@@ -1,0 +1,273 @@
+import type { LucideIcon } from "lucide-react";
+import {
+  Ban,
+  Banknote,
+  BellRing,
+  CircleAlert,
+  Fingerprint,
+  KeyRound,
+  ListChecks,
+  MapPinned,
+  Network,
+  RefreshCw,
+  ScanSearch,
+  ShieldAlert,
+} from "lucide-react";
+
+export type AutomationLink = {
+  label: string;
+  href: string;
+};
+
+export type AutomationFlow = {
+  name: string;
+  scope: string;
+  trigger: string;
+  actions: string[];
+  discordEvents: string[];
+  controls: AutomationLink[];
+  mode: "editable" | "mixed" | "fixed";
+  icon: LucideIcon;
+};
+
+/**
+ * The operator-facing map of built-in Antifraud behavior. Dynamic point flows
+ * and Discord routes are appended from their live stores by the page. Keep
+ * this list focused on code-owned detectors and response rails so operators
+ * can tell which safety behavior is editable and which needs a code release.
+ */
+export const AUTOMATION_FLOWS: AutomationFlow[] = [
+  {
+    name: "Signup assessment",
+    scope: "Every compatible new account",
+    trigger:
+      "Internal identity checks and all configured signup providers produce a bounded 0–100 risk assessment.",
+    actions: [
+      "Persist the score and provider evidence",
+      "Open or update Account Review at the review threshold",
+      "Apply priority withdrawal containment at the critical threshold",
+    ],
+    discordEvents: ["antifraud.signup_high_risk"],
+    controls: [
+      { label: "Edit risk points", href: "/antifraud/points?tab=scoring" },
+      { label: "Provider status", href: "/antifraud/settings" },
+      { label: "Review queue", href: "/antifraud/reviews" },
+    ],
+    mode: "mixed",
+    icon: ScanSearch,
+  },
+  {
+    name: "Live behavior and point flows",
+    scope: "Accepted events during an active monitor window",
+    trigger:
+      "Ordered event sequences match inside their configured time window, with optional exclusion events.",
+    actions: [
+      "Add or subtract the configured points",
+      "Send the account to manual review",
+      "Store immutable flow-match evidence on the case",
+    ],
+    discordEvents: ["antifraud.rule_matched"],
+    controls: [
+      { label: "Edit point flows", href: "/antifraud/points?tab=flows" },
+      { label: "Browse event sources", href: "/antifraud/events" },
+    ],
+    mode: "editable",
+    icon: ListChecks,
+  },
+  {
+    name: "Free and sponsored battle abuse",
+    scope: "Global continuous battle-participant scan",
+    trigger:
+      "Distinct sponsored joins correlate with creator risk, fraud KYC, suspected-alt, and connected-account evidence.",
+    actions: [
+      "Keep the first qualifying battle as evidence",
+      "Lock withdrawals and item shipping after two qualifying battles",
+      "Open Account Review without automatically requiring KYC",
+    ],
+    discordEvents: ["antifraud.rule_matched"],
+    controls: [
+      { label: "Review cases", href: "/antifraud/reviews" },
+      { label: "Edit related point flows", href: "/antifraud/points?tab=flows" },
+    ],
+    mode: "mixed",
+    icon: Network,
+  },
+  {
+    name: "Email containment",
+    scope: "New signups and Whop checkouts",
+    trigger:
+      "An email matches an enabled exact-domain rule or the confirmed suspicious checkout-cluster policy.",
+    actions: [
+      "Persist the source-specific match",
+      "Apply the signed account containment command",
+      "Ban confirmed blocked-domain accounts and open review",
+    ],
+    discordEvents: ["antifraud.email_blacklist"],
+    controls: [
+      { label: "Edit blocked domains", href: "/antifraud/email-blacklist" },
+      { label: "Review contained accounts", href: "/antifraud/reviews" },
+    ],
+    mode: "mixed",
+    icon: Ban,
+  },
+  {
+    name: "IP and fingerprint policy",
+    scope: "Signup, Fiat checks, and staff ban actions",
+    trigger:
+      "An exact IP, CIDR, or Fingerprint visitor ID matches an enabled operator rule.",
+    actions: [
+      "Hard blocks contain the account and open review",
+      "Known VPN rules add bounded risk without direct containment",
+      "Single-account bans permanently save all known identifiers first",
+    ],
+    discordEvents: ["antifraud.signup_high_risk", "antifraud.fiat_risk"],
+    controls: [
+      { label: "Edit IP rules", href: "/antifraud/ip-blacklist" },
+      {
+        label: "Edit fingerprint rules",
+        href: "/antifraud/fingerprint-blacklist",
+      },
+      { label: "Manage banned users", href: "/antifraud/banned-users" },
+    ],
+    mode: "editable",
+    icon: Fingerprint,
+  },
+  {
+    name: "Risky signup locations",
+    scope: "New signups from configured countries",
+    trigger:
+      "The signup country matches an enabled location rule during its configured monitoring duration.",
+    actions: [
+      "Add the configured bounded risk weight",
+      "Extend the live monitor window",
+      "Never contain, ban, or require KYC from country evidence alone",
+    ],
+    discordEvents: ["antifraud.signup_high_risk"],
+    controls: [
+      { label: "Edit location rules", href: "/antifraud/risky-locations" },
+    ],
+    mode: "editable",
+    icon: MapPinned,
+  },
+  {
+    name: "Fiat payment risk and operations",
+    scope: "Whop payment lifecycle and MAIN reconciliation",
+    trigger:
+      "A payment is risky, locked, failed, delayed, disputed, refunded, or paid without completed reconciliation.",
+    actions: [
+      "Persist a versioned Fiat assessment",
+      "Route risky accounts into review",
+      "Keep financial and operational failures separate",
+    ],
+    discordEvents: ["antifraud.fiat_risk", "antifraud.fiat_operations"],
+    controls: [
+      { label: "Open deposit queue", href: "/antifraud/fiat-deposits" },
+      { label: "Edit risk points", href: "/antifraud/points?tab=scoring" },
+      { label: "Refund operations", href: "/antifraud/refunds" },
+    ],
+    mode: "mixed",
+    icon: Banknote,
+  },
+  {
+    name: "Automatic Fiat eligibility",
+    scope: "Every backend checkout eligibility request",
+    trigger:
+      "The environment-bound gate evaluates account state, current device/network evidence, risk policy, and the master switch.",
+    actions: [
+      "Return a short-lived allow or deny decision",
+      "Persist the full internal decision evidence",
+      "Queue containment only for explicit containing rules",
+    ],
+    discordEvents: [],
+    controls: [
+      { label: "Inspect decision policy", href: "/antifraud/fiat-eligibility" },
+      { label: "Global Fiat review", href: "/antifraud/config" },
+      { label: "Screen access cohorts", href: "/antifraud/fiat-perks" },
+    ],
+    mode: "mixed",
+    icon: KeyRound,
+  },
+  {
+    name: "Automatic withdrawal hold",
+    scope: "Lifetime Fiat threshold state",
+    trigger:
+      "The monitor observes the backend-owned automatic lifetime-deposit withdrawal lock on the read-only mirror.",
+    actions: [
+      "Persist a high-severity risk event",
+      "Open or update Account Review",
+      "Keep the backend lock authoritative",
+    ],
+    discordEvents: ["antifraud.withdrawal_hold"],
+    controls: [{ label: "Review held accounts", href: "/antifraud/reviews" }],
+    mode: "fixed",
+    icon: ShieldAlert,
+  },
+  {
+    name: "KYC and Sumsub lifecycle",
+    scope: "Staff-requested KYC cycles",
+    trigger:
+      "A manager starts KYC for an eligible locked account, or Sumsub reports a provider lifecycle change.",
+    actions: [
+      "Track active and completed KYC evidence",
+      "Move Account Review into or out of Waiting KYC",
+      "Notify when a review starts or becomes ready",
+    ],
+    discordEvents: ["antifraud.sumsub_started", "antifraud.sumsub_ready"],
+    controls: [
+      { label: "Open KYC queue", href: "/antifraud/kyc" },
+      { label: "Review account cases", href: "/antifraud/reviews" },
+    ],
+    mode: "mixed",
+    icon: RefreshCw,
+  },
+  {
+    name: "Review operations and reminders",
+    scope: "Open Account Review cases",
+    trigger:
+      "A case opens, changes containment state, is postponed, or reaches its reminder cadence.",
+    actions: [
+      "Assign, postpone, resolve, or record analyst notes",
+      "Fine, ban, lock or unlock withdrawals, and require KYC when eligible",
+      "Send durable review and account-action notifications",
+    ],
+    discordEvents: [
+      "antifraud.review_opened",
+      "antifraud.review_reminder",
+      "antifraud.account_banned",
+      "antifraud.account_locked",
+      "antifraud.kyc_required",
+    ],
+    controls: [
+      { label: "Operate review queue", href: "/antifraud/reviews" },
+      { label: "Edit Discord routing", href: "/antifraud/discord" },
+    ],
+    mode: "mixed",
+    icon: BellRing,
+  },
+  {
+    name: "Provider and system failures",
+    scope: "Third-party providers, signed transport, Discord commands, and webapp health",
+    trigger:
+      "A provider credential is missing or rejected, paid credits run low, an action fails, a timeout occurs, or a monitored service reports an operational error.",
+    actions: [
+      "Persist a sanitized operational failure without secrets",
+      "Deduplicate credential alerts hourly and balance alerts daily",
+      "Notify operators without changing a player account",
+    ],
+    discordEvents: [
+      "antifraud.error.provider_access",
+      "antifraud.error.third_party_api",
+      "antifraud.error.failed_action",
+      "antifraud.error.timeout",
+      "antifraud.error.discord_command",
+      "antifraud.error.system",
+      "antifraud.error.webapp",
+    ],
+    controls: [
+      { label: "Edit error routing", href: "/antifraud/discord" },
+      { label: "Inspect integrations", href: "/antifraud/settings" },
+    ],
+    mode: "mixed",
+    icon: CircleAlert,
+  },
+];

@@ -5,10 +5,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  Bot,
   Banknote,
   ChevronRight,
   Fingerprint,
-  Gauge,
   LayoutDashboard,
   MailWarning,
   MapPinned,
@@ -16,8 +16,6 @@ import {
   RadioTower,
   RotateCcw,
   ScanSearch,
-  Settings,
-  Settings2,
   ShieldAlert,
   Webhook,
   type LucideIcon,
@@ -100,9 +98,9 @@ const FIAT_PERK_NAV: NavItem[] = [
 ];
 
 const NOTIFICATION_NAV: NavItem[] = [
-  { label: "Discord", href: "/antifraud/discord", icon: Webhook },
+  { label: "Discord routing", href: "/antifraud/discord", icon: Webhook },
   {
-    label: "Dashboard",
+    label: "Dashboard inbox",
     href: "/antifraud/notifications",
     icon: Activity,
   },
@@ -137,14 +135,12 @@ const BLACKLIST_NAV: NavItem[] = [
 ];
 
 const SYSTEM_NAV: NavItem[] = [
-  { label: "Config", href: "/antifraud/config", icon: Settings2 },
-  { label: "Risk engine", href: "/antifraud/points", icon: Gauge },
+  { label: "Automation & rules", href: "/antifraud/automation", icon: Bot },
   {
     label: "Audit log",
     href: "/antifraud/audit",
     icon: Activity,
   },
-  { label: "Settings", href: "/antifraud/settings", icon: Settings },
 ];
 
 function NavMenu({
