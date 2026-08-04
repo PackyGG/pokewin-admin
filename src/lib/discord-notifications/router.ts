@@ -12,6 +12,7 @@ import {
   mentionGroupMemberRows,
   silentCategoryIds,
 } from "./policy-sql";
+import { ensureDiscordLinkButton } from "./link-button";
 
 const SNOWFLAKE = /^\d{15,21}$/;
 const EVENT_KEY = /^[a-z0-9][a-z0-9._-]{2,79}$/;
@@ -181,7 +182,9 @@ export async function enqueueDiscordEvent(input: {
   }
   const embedJson = JSON.stringify(input.embed);
   if (embedJson.length > 24_000) throw new Error("embed is too large.");
-  const componentsJson = JSON.stringify(input.components ?? []);
+  const componentsJson = JSON.stringify(
+    ensureDiscordLinkButton(input.embed, input.components),
+  );
   if (componentsJson.length > 8_000) {
     throw new Error("components are too large.");
   }
