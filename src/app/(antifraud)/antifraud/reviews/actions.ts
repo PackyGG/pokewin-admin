@@ -35,6 +35,7 @@ import {
   restoreWithdrawalLocksForReopenedCase,
 } from "@/lib/antifraud/withdrawal-release";
 import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
+import { submitAntifraudCaseDecision } from "@/lib/antifraud/monitor-api";
 
 /**
  * Account-review mutations.
@@ -266,6 +267,33 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function monitorCaseIdFromMetadata(metadata: unknown): string | null {
+  if (!isRecord(metadata)) return null;
+  const value = metadata.monitorCaseId;
+  return typeof value === "string" && uuid.safeParse(value).success
+    ? value
+    : null;
+}
+
+async function syncLinkedMonitorCase(input: {
+  monitorCaseId: string | null;
+  decision: "in_review" | "resolved_safe" | "resolved_fraud";
+  reason: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+}): Promise<void> {
+  if (!input.monitorCaseId) return;
+  await submitAntifraudCaseDecision({
+    caseId: input.monitorCaseId,
+    decision: input.decision,
+    reason: input.reason,
+    idempotencyKey: input.idempotencyKey,
+    actorId: input.actorId,
+    actorUsername: input.actorUsername,
+  });
+}
+
 function assertStatusReplayMatches(
   existing: {
     adminUserId: string | null;
@@ -345,10 +373,12 @@ async function releaseClearedCaseWithdrawals(params: {
         review_id: params.reviewId,
         admin_user_id: params.adminUserId,
         kind: "action",
-        body:
-          "Cleared: crypto and item withdrawals unlocked " +
-          `(was ${outcome.previousCrypto.length > 0 ? "crypto" : "no crypto"}` +
-          `${outcome.previousItems ? " + items" : ""} locked).`,
+        body: [
+          outcome.releasedFiat ? "Fiat deposits" : null,
+          outcome.previousCrypto.length > 0 ? "crypto withdrawals" : null,
+          outcome.previousItems ? "item withdrawals" : null,
+          outcome.releasedTips ? "tips" : null,
+        ].filter(Boolean).join(", ") + " unlocked after approval.",
       });
     } catch (error) {
       console.error("[antifraud] release note failed:", error);
@@ -449,12 +479,18 @@ export async function updateReviewStatus(
     // post-commit withdrawal step can release or re-lock without a second
     // lookup — including on a replay, which is what repairs a transition whose
     // account-side effect never got to run.
-    | { kind: "replayed"; targetUserId: string; previousStatus: string | null }
+    | {
+        kind: "replayed";
+        targetUserId: string;
+        previousStatus: string | null;
+        monitorCaseId: string | null;
+      }
     | {
         kind: "applied";
         applied: Applied;
         targetUserId: string;
         previousStatus: string;
+        monitorCaseId: string | null;
       }
     | { kind: "conflict"; conflictReviewId: string | null };
 
@@ -466,6 +502,7 @@ export async function updateReviewStatus(
         opened_by: antifraud_reviews.opened_by,
         resolved_by: antifraud_reviews.resolved_by,
         updated_at: antifraud_reviews.updated_at,
+        metadata: antifraud_reviews.metadata,
       }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
       if (!current) throw new Error("That case no longer exists");
 
@@ -488,6 +525,7 @@ export async function updateReviewStatus(
           kind: "replayed",
           targetUserId: current.target_user_id,
           previousStatus: replayedFromStatus(existingReplay.metadata),
+          monitorCaseId: monitorCaseIdFromMetadata(current.metadata),
         };
       }
 
@@ -539,6 +577,7 @@ export async function updateReviewStatus(
           kind: "replayed",
           targetUserId: current.target_user_id,
           previousStatus: replayedFromStatus(racedReplay?.metadata),
+          monitorCaseId: monitorCaseIdFromMetadata(current.metadata),
         };
       }
 
@@ -597,6 +636,7 @@ export async function updateReviewStatus(
         kind: "applied",
         targetUserId: current.target_user_id,
         previousStatus: current.status,
+        monitorCaseId: monitorCaseIdFromMetadata(current.metadata),
         applied: {
           openedBy: current.opened_by,
         },
@@ -664,6 +704,26 @@ export async function updateReviewStatus(
           })
         : "not_applicable";
 
+  if (status === "in_review" || status === "cleared" || status === "flagged") {
+    await syncLinkedMonitorCase({
+      monitorCaseId: outcome.monitorCaseId,
+      decision:
+        status === "in_review"
+          ? "in_review"
+          : status === "cleared"
+            ? "resolved_safe"
+            : "resolved_fraud",
+      reason:
+        resolution ??
+        (status === "in_review"
+          ? "Account Review started."
+          : `Account Review changed to ${REVIEW_STATUS_LABELS[status]}.`),
+      idempotencyKey,
+      actorId: session.userId,
+      actorUsername: session.username ?? undefined,
+    });
+  }
+
   // On a replay a previous response may have failed during cache invalidation
   // after the transaction committed — re-running these is safe either way.
   revalidatePath("/antifraud/reviews");
@@ -717,10 +777,25 @@ export async function runQuickReviewAccountAction(
     .where(eq(antifraud_reviews.id, reviewId))
     .limit(1);
   if (!review) throw new Error("That case no longer exists");
-  if (review.status !== expectedStatus) throw new Error(STALE_CASE_MESSAGE);
   if (isTerminalStatus(review.status)) {
+    const intendedStatus = action === "fine" ? "cleared" : action === "ban" ? "flagged" : null;
+    if (intendedStatus === review.status) {
+      const replay = await updateReviewStatus({
+        reviewId,
+        status: intendedStatus,
+        expectedStatus,
+        resolution:
+          intendedStatus === "cleared"
+            ? "Account marked fine from Account Review."
+            : "Account banned from Account Review.",
+        idempotencyKey,
+      });
+      if (!replay.ok) throw new Error(replay.message);
+      return { withdrawalRelease: replay.withdrawalRelease };
+    }
     throw new Error("This case is already closed.");
   }
+  if (review.status !== expectedStatus) throw new Error(STALE_CASE_MESSAGE);
 
   if (action === "fine") {
     const result = await updateReviewStatus({
@@ -915,6 +990,111 @@ const assignSchema = z.object({
   adminUserId: z.union([uuid, z.literal("")]).nullable().optional(),
 });
 
+const startReviewSchema = z.object({
+  reviewId: uuid,
+  expectedStatus: z.enum(REVIEW_STATUSES),
+  idempotencyKey: z.string().uuid("Invalid idempotency key"),
+});
+
+/**
+ * Open the workspace and take ownership in one guarded command. A retry with
+ * the same key also retries the linked monitor transition after an upstream
+ * timeout, without writing a second assignment or status note.
+ */
+export async function startReview(input: unknown): Promise<void> {
+  const session = await requireAntifraudAccess();
+  const parsed = startReviewSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const { reviewId, expectedStatus, idempotencyKey } = parsed.data;
+
+  const outcome = await adminDrizzle.transaction(async (tx) => {
+    const [current] = await tx.select({
+      status: antifraud_reviews.status,
+      assignedTo: antifraud_reviews.assigned_to,
+      targetUserId: antifraud_reviews.target_user_id,
+      metadata: antifraud_reviews.metadata,
+      updatedAt: antifraud_reviews.updated_at,
+    }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
+    if (!current) throw new Error("That case no longer exists");
+
+    const replayPredicate = and(
+      eq(admin_audit_events.event_type, "antifraud_review_status_changed"),
+      sql`${admin_audit_events.metadata} ->> 'idempotencyKey' = ${idempotencyKey}`,
+    );
+    const [replay] = await tx.select({
+      adminUserId: admin_audit_events.admin_user_id,
+      metadata: admin_audit_events.metadata,
+    }).from(admin_audit_events).where(replayPredicate).limit(1);
+    if (replay) {
+      const stored = replay.metadata;
+      if (
+        replay.adminUserId !== session.userId ||
+        !isRecord(stored) ||
+        stored.reviewId !== reviewId ||
+        stored.operation !== "start_review"
+      ) {
+        throw new Error("That review retry key was already used for a different command.");
+      }
+      return { monitorCaseId: monitorCaseIdFromMetadata(current.metadata), sync: true };
+    }
+
+    if (current.status === "in_review" && current.assignedTo === session.userId) {
+      return { monitorCaseId: monitorCaseIdFromMetadata(current.metadata), sync: false };
+    }
+    if (current.status !== expectedStatus) throw new Error(STALE_CASE_MESSAGE);
+    if (current.status !== "open") throw new Error("Only a new review can be started.");
+
+    const metadata = {
+      reviewId,
+      from: current.status,
+      to: "in_review",
+      resolution: null,
+      operation: "start_review",
+      idempotencyKey,
+    };
+    const inserted = await tx.insert(admin_audit_events).values({
+      admin_user_id: session.userId,
+      event_type: "antifraud_review_status_changed",
+      target_user_id: current.targetUserId,
+      metadata,
+    }).onConflictDoNothing().returning({ id: admin_audit_events.id });
+    if (inserted.length === 0) throw new Error(STALE_CASE_MESSAGE);
+
+    const updated = await tx.update(antifraud_reviews).set({
+      assigned_to: session.userId,
+      status: "in_review",
+      updated_at: new Date().toISOString(),
+    }).where(and(
+      eq(antifraud_reviews.id, reviewId),
+      eq(antifraud_reviews.status, current.status),
+      eq(antifraud_reviews.updated_at, current.updatedAt),
+      sql`${antifraud_reviews.assigned_to} IS NOT DISTINCT FROM ${current.assignedTo}::uuid`,
+    )).returning({ id: antifraud_reviews.id });
+    if (updated.length === 0) throw new Error(STALE_CASE_MESSAGE);
+
+    await tx.insert(antifraud_review_notes).values({
+      review_id: reviewId,
+      admin_user_id: session.userId,
+      kind: "status",
+      body: "Picked this case up and started review.",
+    });
+    return { monitorCaseId: monitorCaseIdFromMetadata(current.metadata), sync: true };
+  });
+
+  if (outcome.sync) {
+    await syncLinkedMonitorCase({
+      monitorCaseId: outcome.monitorCaseId,
+      decision: "in_review",
+      reason: "Account Review started.",
+      idempotencyKey,
+      actorId: session.userId,
+      actorUsername: session.username ?? undefined,
+    });
+  }
+  revalidatePath("/antifraud/reviews");
+  revalidatePath(`/antifraud/reviews/${reviewId}`);
+}
+
 /** Put a case in someone's queue (or take it yourself, or clear it). */
 export async function assignReview(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
@@ -1002,15 +1182,16 @@ const noteSchema = z.object({
 
 const postponeSchema = z.object({
   reviewId: uuid,
+  expectedStatus: z.enum(REVIEW_STATUSES),
   idempotencyKey: z.string().uuid("Invalid idempotency key"),
 });
 
-/** Hide a live case from active queues and reminders for exactly 2.5 hours. */
+/** Hide a live case from active queues and schedule its reminder for 2 hours. */
 export async function postponeReview(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
   const parsed = postponeSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { reviewId, idempotencyKey } = parsed.data;
+  const { reviewId, expectedStatus, idempotencyKey } = parsed.data;
 
   await adminDrizzle.transaction(async (tx) => {
     const [replay] = await tx
@@ -1032,6 +1213,7 @@ export async function postponeReview(input: unknown): Promise<void> {
       .where(eq(antifraud_reviews.id, reviewId))
       .limit(1);
     if (!review) throw new Error("That case no longer exists");
+    if (review.status !== expectedStatus) throw new Error(STALE_CASE_MESSAGE);
     if (!isLiveCaseStatus(review.status)) {
       throw new Error("Only a live review can be postponed");
     }
@@ -1103,7 +1285,7 @@ export async function postponeReview(input: unknown): Promise<void> {
       review_id: reviewId,
       admin_user_id: session.userId,
       kind: "postponed",
-      body: "Postponed for 2.5 hours. Active reminders are suppressed until due.",
+      body: "Postponed for 2 hours. A Discord reminder is scheduled for the due time.",
     });
   });
 

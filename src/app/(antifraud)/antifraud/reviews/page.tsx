@@ -5,9 +5,7 @@ import {
   ArrowUp,
   CheckCircle2,
   ChevronRight,
-  Clock3,
   Eye,
-  FolderOpen,
   Search,
   ShieldAlert,
   UserRound,
@@ -16,7 +14,6 @@ import {
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { safeQuery } from "@/lib/errors/safe-query";
 import {
-  KpiTile,
   PageHero,
   PageHeroIdentity,
   SectionHeading,
@@ -28,25 +25,22 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
-  getReviewQueueStats,
+  getAccountReviewTabCounts,
   listReviewPage,
   REVIEW_PAGE_SIZE,
-  isReviewStatus,
   type ReviewFilters,
   type ReviewListItem,
 } from "@/lib/antifraud/reviews";
-import {
-  REVIEW_QUEUE_LABELS,
-  REVIEW_QUEUE_STATES,
-  type ReviewQueueState,
-} from "@/lib/antifraud/review-workflow";
 import { canManageAntifraud } from "@/lib/antifraud/access";
-import { FilterButton, FilterGroup } from "../_components/list-page";
-import { ReviewStatusBadge } from "../_components/badges";
+import {
+  ReviewSeverityBadge,
+  ReviewStatusBadge,
+} from "../_components/badges";
 import { OpenCaseDialog } from "./_components/open-case-dialog";
 import { ReviewCaseDialog } from "./_components/review-case-dialog";
 import { ReviewCaseWorkspace } from "./_components/review-case-workspace";
 import { ReviewSignalBadge } from "./_components/review-signal-badge";
+import { StartReviewButton } from "./_components/start-review-button";
 
 export const metadata = { title: "Account Review" };
 
@@ -57,16 +51,15 @@ export const metadata = { title: "Account Review" };
  * paging, dialog state, and direct links stay shareable. Review details stream
  * into an accessible dialog without replacing the queue underneath it.
  *
- * Shell-first: the hero + filter bar paint immediately, the KPI strip and the
- * list stream behind their own Suspense boundary keyed on the active filter so
- * switching filters shows a skeleton instead of a stale list.
+ * Shell-first: the hero paints immediately, while the count-backed tabs and
+ * active list stream behind one keyed Suspense boundary. Hidden tabs never
+ * load their case data.
  */
 
 const QUERY_TIMEOUT_MS = 10_000;
 
 type SearchParams = {
   tab?: string;
-  status?: string;
   q?: string;
   cursor?: string;
   open?: string;
@@ -77,6 +70,15 @@ type SearchParams = {
   review?: string;
 };
 
+const REVIEW_TABS = ["reviews", "in_review", "postponed"] as const;
+type ReviewTab = (typeof REVIEW_TABS)[number];
+
+const REVIEW_TAB_LABELS: Record<ReviewTab, string> = {
+  reviews: "Reviews",
+  in_review: "In review",
+  postponed: "Postponed",
+};
+
 export default async function ReviewQueuePage({
   searchParams,
 }: {
@@ -85,17 +87,9 @@ export default async function ReviewQueuePage({
   const session = await requireAntifraudPageAccess();
   const params = await searchParams;
 
-  const status =
-    params.status === "all"
-      ? "all"
-      : params.status && isReviewStatus(params.status)
-        ? params.status
-        : "unresolved";
-  const tab = (REVIEW_QUEUE_STATES as readonly string[]).includes(
-    params.tab ?? "",
-  )
-    ? (params.tab as ReviewQueueState)
-    : "priority";
+  const tab = (REVIEW_TABS as readonly string[]).includes(params.tab ?? "")
+    ? (params.tab as ReviewTab)
+    : "reviews";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
   const selectedReviewId = z.string().uuid().safeParse(params.review).success
@@ -103,39 +97,42 @@ export default async function ReviewQueuePage({
     : undefined;
 
   const filters: ReviewFilters = {
-    status,
-    queue: tab,
+    status:
+      tab === "in_review"
+        ? "in_review"
+        : tab === "reviews"
+          ? "open"
+          : "unresolved",
+    postponed: tab === "postponed",
+    severities: ["critical", "high"],
+    severityFirst: true,
     search,
     limit: REVIEW_PAGE_SIZE,
   };
 
-  const filterKey = `${tab}-${status}-${search ?? ""}-${cursor ?? "first"}`;
+  const filterKey = `${tab}-${search ?? ""}-${cursor ?? "first"}`;
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
 
-      <FilterBar
-        tab={tab}
-        status={status}
-        search={search}
-        openCaseProps={{
-          prefill: {
-            targetUserId: params.targetUserId,
-            targetUsername: params.targetUsername,
-            reason: params.reason,
-            monitorCaseId: params.monitorCaseId,
-          },
-          autoOpen: params.open === "1",
-        }}
-      />
-
       <Suspense key={filterKey} fallback={<QueueSkeleton />}>
         <QueueList
           filters={filters}
           cursor={cursor}
-          current={{ tab, status, q: search, cursor }}
+          current={{ tab, q: search, cursor }}
+          tab={tab}
+          search={search}
+          openCaseProps={{
+            prefill: {
+              targetUserId: params.targetUserId,
+              targetUsername: params.targetUsername,
+              reason: params.reason,
+              monitorCaseId: params.monitorCaseId,
+            },
+            autoOpen: params.open === "1",
+          }}
           selectedReviewId={selectedReviewId}
           viewerId={session.userId}
           canManage={canManageAntifraud(session)}
@@ -159,42 +156,65 @@ function buildHref(next: Partial<SearchParams>, current: SearchParams): string {
 
 function FilterBar({
   tab,
-  status,
   search,
+  counts,
   openCaseProps,
 }: {
-  tab: ReviewQueueState;
-  status: string;
+  tab: ReviewTab;
   search?: string;
+  counts: Record<ReviewTab, number>;
   openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
 }) {
   const current: SearchParams = {
     tab,
-    status,
     q: search,
   };
 
   return (
     <div className="rounded-xl border border-border/70 bg-card p-3 sm:p-4">
       <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-        <FilterGroup label="Queue">
-          {REVIEW_QUEUE_STATES.map((value) => (
-            <FilterButton
-              key={value}
-              href={buildHref(
-                { tab: value, status: "unresolved", cursor: undefined },
-                current,
-              )}
-              active={tab === value}
-              label={REVIEW_QUEUE_LABELS[value]}
-            />
-          ))}
-        </FilterGroup>
+        <div>
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+            Queue
+          </p>
+          <nav
+            aria-label="Review queue"
+            className="inline-flex flex-wrap items-center gap-1 rounded-xl border border-border/60 bg-muted/30 p-1"
+          >
+            {REVIEW_TABS.map((value) => (
+              <HostLink
+                key={value}
+                href={buildHref(
+                  { tab: value, cursor: undefined, review: undefined },
+                  current,
+                )}
+                aria-current={tab === value ? "page" : undefined}
+                className={cn(
+                  "inline-flex min-h-10 items-center gap-2 rounded-lg px-4 py-2 text-sm font-semibold transition-colors",
+                  tab === value
+                    ? "border border-border/70 bg-background text-foreground shadow-sm"
+                    : "text-muted-foreground hover:bg-background/60 hover:text-foreground",
+                )}
+              >
+                {REVIEW_TAB_LABELS[value]}
+                <span
+                  className={cn(
+                    "inline-flex min-w-6 items-center justify-center rounded-full px-1.5 py-0.5 text-xs tabular-nums",
+                    tab === value
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                >
+                  {counts[value].toLocaleString()}
+                </span>
+              </HostLink>
+            ))}
+          </nav>
+        </div>
         <div className="flex w-full flex-wrap items-center gap-2 xl:w-auto xl:flex-nowrap">
           {/* GET form — no client JS, and the URL stays shareable. */}
           <form className="flex min-w-0 flex-1 gap-2">
             <input type="hidden" name="tab" value={tab} />
-            {status && <input type="hidden" name="status" value={status} />}
             <Input
               type="search"
               name="q"
@@ -221,6 +241,9 @@ async function QueueList({
   filters,
   cursor,
   current,
+  tab,
+  search,
+  openCaseProps,
   selectedReviewId,
   viewerId,
   canManage,
@@ -228,6 +251,9 @@ async function QueueList({
   filters: ReviewFilters;
   cursor?: string;
   current: SearchParams;
+  tab: ReviewTab;
+  search?: string;
+  openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
   selectedReviewId?: string;
   viewerId: string;
   canManage: boolean;
@@ -236,16 +262,15 @@ async function QueueList({
     async () => {
       const [page, stats] = await Promise.all([
         listReviewPage(filters, cursor),
-        getReviewQueueStats(),
+        getAccountReviewTabCounts(),
       ]);
       return { page, stats };
     },
     {
       page: { items: [], nextCursor: null, total: 0 },
       stats: {
-        priority: 0,
-        normal: 0,
-        waitingKyc: 0,
+        reviews: 0,
+        inReview: 0,
         postponed: 0,
       },
     },
@@ -254,39 +279,20 @@ async function QueueList({
   );
   const { page, stats } = data;
   const reviews = page.items;
+  const counts: Record<ReviewTab, number> = {
+    reviews: stats.reviews,
+    in_review: stats.inReview,
+    postponed: stats.postponed,
+  };
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <KpiTile
-          icon={ShieldAlert}
-          accent="rose"
-          label="High priority"
-          value={stats.priority.toLocaleString()}
-          sub="locked, finished KYC, or 70+"
-        />
-        <KpiTile
-          icon={FolderOpen}
-          accent="blue"
-          label="Normal"
-          value={stats.normal.toLocaleString()}
-          sub="unusual score, no full lock"
-        />
-        <KpiTile
-          icon={Clock3}
-          accent="amber"
-          label="Waiting KYC"
-          value={stats.waitingKyc.toLocaleString()}
-          sub="provider result pending"
-        />
-        <KpiTile
-          icon={Clock3}
-          accent="cyan"
-          label="Postponed"
-          value={stats.postponed.toLocaleString()}
-          sub="hidden until due"
-        />
-      </div>
+      <FilterBar
+        tab={tab}
+        search={search}
+        counts={counts}
+        openCaseProps={openCaseProps}
+      />
 
       <SectionHeading
         icon={ShieldAlert}
@@ -321,7 +327,12 @@ async function QueueList({
       ) : (
         <ul className="space-y-3">
           {reviews.map((review) => (
-            <CaseRow key={review.id} review={review} current={current} />
+            <CaseRow
+              key={review.id}
+              review={review}
+              current={current}
+              tab={tab}
+            />
           ))}
         </ul>
       )}
@@ -374,9 +385,11 @@ async function QueueList({
 function CaseRow({
   review,
   current,
+  tab,
 }: {
   review: ReviewListItem;
   current: SearchParams;
+  tab: ReviewTab;
 }) {
   const name = review.targetUsername ?? review.targetUserId;
   return (
@@ -389,12 +402,8 @@ function CaseRow({
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-1.5">
               <span className="truncate text-sm font-semibold">{name}</span>
+              <ReviewSeverityBadge severity={review.severity} />
               <ReviewStatusBadge status={review.status} />
-              {review.workflow && (
-                <span className="rounded-sm border border-border/60 px-1.5 py-0.5 text-[10px] font-semibold text-muted-foreground">
-                  {REVIEW_QUEUE_LABELS[review.workflow.queueState]}
-                </span>
-              )}
               {review.riskScore != null && (
                 <span
                   className={cn(
@@ -446,21 +455,33 @@ function CaseRow({
               href={`/users/${review.targetUserId}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-background px-3 text-xs font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              className="inline-flex h-9 min-w-28 items-center justify-center gap-1.5 rounded-md border border-border bg-background px-3 text-sm font-medium shadow-sm transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               aria-label={`Open profile of ${review.targetUsername ?? review.targetUserId} in a new tab`}
             >
               <UserRound className="size-3.5" />
               Profile
             </HostLink>
-            <HostLink
-              href={buildHref({ review: review.id }, current)}
-              scroll={false}
-              className="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-xs font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              aria-label={`Review ${review.targetUsername ?? review.targetUserId}`}
-            >
-              <Eye className="size-3.5" />
-              Review
-            </HostLink>
+            {tab === "reviews" && review.status === "open" ? (
+              <StartReviewButton
+                reviewId={review.id}
+                href={buildHref(
+                  { review: review.id, tab: "in_review" },
+                  current,
+                )}
+                label="Review"
+                subject={review.targetUsername ?? review.targetUserId}
+              />
+            ) : (
+              <HostLink
+                href={buildHref({ review: review.id }, current)}
+                scroll={false}
+                className="inline-flex h-9 min-w-28 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={`Open review for ${review.targetUsername ?? review.targetUserId}`}
+              >
+                <Eye className="size-4" />
+                Open review
+              </HostLink>
+            )}
           </div>
         </div>
       </div>
@@ -526,11 +547,7 @@ function CaseDialogSkeleton() {
 function QueueSkeleton() {
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <Skeleton key={i} className="h-24 rounded-xl" />
-        ))}
-      </div>
+      <Skeleton className="h-24 w-full rounded-xl" />
       <div className="flex items-center gap-2.5">
         <Skeleton className="size-7 rounded-lg" />
         <Skeleton className="h-4 w-32" />

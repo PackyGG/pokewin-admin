@@ -1,11 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Ban, LockKeyhole, ShieldCheck } from "lucide-react";
+import { Ban, Clock3, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
 import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
@@ -18,7 +17,10 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
+  postponeReview,
   runQuickReviewAccountAction,
   type QuickReviewAccountAction,
 } from "../actions";
@@ -31,18 +33,18 @@ const ACTIONS: Array<{
   confirm: string;
   success: string;
   icon: typeof ShieldCheck;
-  variant: "outline" | "destructive" | "secondary";
+  variant: "destructive" | "secondary";
 }> = [
   {
     action: "fine",
-    label: "Fine",
-    title: "Mark this account fine?",
+    label: "Approve",
+    title: "Approve this account?",
     description: (account) =>
-      `${account} will be cleared from Account Review and their crypto and item withdrawals will be unlocked.`,
-    confirm: "Yes, mark fine",
-    success: "Account marked fine",
+      `${account} will be cleared from Account Review and every automatic review lock will be removed.`,
+    confirm: "Yes, approve account",
+    success: "Account approved and review locks removed",
     icon: ShieldCheck,
-    variant: "outline",
+    variant: "secondary",
   },
   {
     action: "ban",
@@ -54,17 +56,6 @@ const ACTIONS: Array<{
     success: "Account banned",
     icon: Ban,
     variant: "destructive",
-  },
-  {
-    action: "lock_withdrawals",
-    label: "Lock withdrawals",
-    title: "Lock all withdrawals?",
-    description: (account) =>
-      `${account} will be blocked from crypto and item withdrawals. The review stays open.`,
-    confirm: "Yes, lock withdrawals",
-    success: "Withdrawals locked",
-    icon: LockKeyhole,
-    variant: "secondary",
   },
 ];
 
@@ -84,7 +75,7 @@ export function QuickReviewActions({
   if (status === "cleared" || status === "flagged") return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5">
+    <div className="flex flex-wrap items-center gap-2">
       {ACTIONS.map((item) => (
         <QuickActionButton
           key={item.action}
@@ -95,7 +86,58 @@ export function QuickReviewActions({
           compact={compact}
         />
       ))}
+      <PostponeButton reviewId={reviewId} status={status} compact={compact} />
     </div>
+  );
+}
+
+function PostponeButton({
+  reviewId,
+  status,
+  compact,
+}: {
+  reviewId: string;
+  status: string;
+  compact: boolean;
+}) {
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+  const idempotencyKey = useRef<string | null>(null);
+
+  function handlePostpone() {
+    startTransition(async () => {
+      try {
+        idempotencyKey.current ??= crypto.randomUUID();
+        await postponeReview({
+          reviewId,
+          expectedStatus: status,
+          idempotencyKey: idempotencyKey.current,
+        });
+        toast.success("Review postponed for 2 hours");
+        router.refresh();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "The action failed",
+        );
+      }
+    });
+  }
+
+  return (
+    <Button
+      type="button"
+      size="sm"
+      variant="outline"
+      disabled={pending}
+      onClick={handlePostpone}
+      className={cn(
+        "border-orange-500/40 bg-orange-500/10 text-orange-700 hover:bg-orange-500/20 hover:text-orange-800 dark:text-orange-300 dark:hover:text-orange-200",
+        compact && "h-8 px-2.5 text-xs",
+      )}
+    >
+      <Clock3 className="mr-1.5 size-3.5" />
+      {pending ? "Postponing…" : "Postpone"}
+    </Button>
   );
 }
 
@@ -121,33 +163,33 @@ function QuickActionButton({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [credential, setCredential] = useState("");
-  const sensitive = action === "ban" || action === "lock_withdrawals";
+  const idempotencyKey = useRef<string | null>(null);
+  const sensitive = action === "ban";
 
   function handleConfirm() {
     startTransition(async () => {
       try {
+        idempotencyKey.current ??= crypto.randomUUID();
         const result = await runQuickReviewAccountAction({
           reviewId,
           action,
           expectedStatus: status,
-          idempotencyKey: crypto.randomUUID(),
+          idempotencyKey: idempotencyKey.current,
           credential: sensitive ? credential : undefined,
         });
         setCredential("");
-        // The verdict landed either way; a failed release is the analyst's to
-        // finish by hand, so it must not read as a plain success.
         if (result.withdrawalRelease === "failed") {
           toast.warning(
-            "Account marked fine, but withdrawals could not be unlocked — unlock them on the user page.",
+            "Account approved, but one or more review locks could not be removed. Check the user profile.",
           );
         } else if (result.withdrawalRelease === "kyc_gated") {
           toast.warning(
-            "Account marked fine. Withdrawals stay locked until an owner or admin approves KYC.",
+            "Account approved. KYC-controlled locks stay active until KYC is approved.",
           );
         } else {
           toast.success(
             result.withdrawalRelease === "released"
-              ? "Account marked fine — withdrawals unlocked"
+              ? "Account approved — review locks removed"
               : success,
           );
         }
@@ -169,7 +211,11 @@ function QuickActionButton({
             size="sm"
             variant={variant}
             disabled={pending}
-            className={compact ? "h-7 px-2 text-[11px]" : undefined}
+            className={cn(
+              action === "fine" &&
+                "border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-700 dark:border-emerald-500 dark:bg-emerald-600 dark:hover:bg-emerald-500",
+              compact && "h-8 px-2.5 text-xs",
+            )}
           />
         }
       >

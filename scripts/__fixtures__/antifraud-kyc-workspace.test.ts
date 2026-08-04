@@ -190,13 +190,13 @@ test("finished KYC records save and expose account-country mismatches", () => {
   assert.match(page, /Review the saved country evidence/);
 });
 
-test("account reviews keep KYC users in the explicit waiting workflow", () => {
+test("account reviews keep KYC workflow sync outside the simplified queue", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
   const reviews = source("src/lib/antifraud/reviews.ts");
   const workflow = source("src/lib/antifraud/review-workflow.ts");
   const ops = source("src/app/api/antifraud/ops/tick/route.ts");
 
-  assert.match(page, /REVIEW_QUEUE_STATES/);
+  assert.match(page, /REVIEW_TABS = \["reviews", "in_review", "postponed"\]/);
   assert.match(ops, /syncReviewWorkflowStates\(\)/);
   assert.doesNotMatch(page, /syncReviewWorkflowStates\(\)/);
   assert.doesNotMatch(page, /listKycRequiredUserIds/);

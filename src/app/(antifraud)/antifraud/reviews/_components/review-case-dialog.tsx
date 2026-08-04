@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -53,14 +52,9 @@ export function ReviewCaseDialog({
         className="gap-0 overflow-hidden p-0 sm:h-[min(92vh,64rem)] sm:max-h-[92vh] sm:w-[min(88rem,calc(100%-2rem))] sm:max-w-[88rem]"
         showCloseButton
       >
-        <DialogHeader className="shrink-0 border-b bg-background px-4 py-3 pr-14 sm:px-5">
+        <DialogHeader className="shrink-0 border-b bg-background px-4 py-2 pr-14 sm:px-5">
           <div className="flex items-center justify-between gap-4">
-            <div className="min-w-0">
-              <DialogTitle>Account review</DialogTitle>
-              <DialogDescription>
-                Inspect, document, and decide without leaving the queue.
-              </DialogDescription>
-            </div>
+            <DialogTitle className="text-sm">Account review</DialogTitle>
             <div className="flex shrink-0 items-center gap-1">
               <Button
                 size="icon-sm"

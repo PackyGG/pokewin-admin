@@ -6,16 +6,14 @@ function source(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Account Reviews use the exact four operational tabs", () => {
-  const workflow = source("src/lib/antifraud/review-workflow.ts");
+test("Account Reviews use the three counted operational tabs", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
 
-  assert.match(
-    workflow,
-    /REVIEW_QUEUE_STATES = \[\s*"priority",\s*"normal",\s*"waiting_kyc",\s*"postponed",\s*\]/,
-  );
-  assert.match(page, /: "priority"/);
-  assert.match(page, /REVIEW_QUEUE_STATES\.map/);
+  assert.match(page, /REVIEW_TABS = \["reviews", "in_review", "postponed"\]/);
+  assert.match(page, /REVIEW_TABS\.map/);
+  assert.match(page, /getAccountReviewTabCounts/);
+  assert.match(page, /severities: \["critical", "high"\]/);
+  assert.match(page, /severityFirst: true/);
   assert.match(page, /review:\s*review\.id/);
   assert.match(page, /<ReviewCaseDialog/);
 });
@@ -35,7 +33,7 @@ test("priority and waiting classification use lock, KYC, and 70+ evidence", () =
   assert.match(workflow, /user_kyc/);
 });
 
-test("review reminders run every 2 hours while postponement remains 2.5 hours", () => {
+test("review reminders and postponement run after 2 hours", () => {
   const actions = source(
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
@@ -54,7 +52,7 @@ test("review reminders run every 2 hours while postponement remains 2.5 hours", 
   assert.match(actions, /antifraud_review_notes/);
   assert.match(actions, /onConflictDoNothing\(\)/);
   assert.match(migration, /admin_audit_review_postponed_idempotency_idx/);
-  assert.match(policy, /postponed:\s*2\.5 \* 60 \* 60 \* 1_000/);
+  assert.match(policy, /postponed:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(policy, /normal:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(policy, /urgent:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(reminders, /review\.created_at \+ interval '2 hours'/);
@@ -63,16 +61,10 @@ test("review reminders run every 2 hours while postponement remains 2.5 hours", 
   assert.doesNotMatch(reminders, /48\s*\*\s*60\s*\*\s*60/);
 });
 
-test("KYC request is shown only for a fully locked account and rechecked server-side", () => {
-  const workspace = source(
-    "src/app/(antifraud)/antifraud/reviews/_components/review-case-workspace.tsx",
-  );
+test("KYC eligibility remains server-side after review actions are simplified", () => {
   const eligibility = source("src/lib/antifraud/kyc-eligibility.ts");
   const actions = source("src/app/(antifraud)/antifraud/kyc/actions.ts");
 
-  assert.match(workspace, /workflow\?\.evidence\.fullyLocked/);
-  assert.match(workspace, /!detail\.detail\.workflow\.evidence\.kycRequired/);
-  assert.match(workspace, /<RequireKycDialog/);
   assert.match(eligibility, /locked_withdrawals_items = TRUE/);
   assert.match(eligibility, /cardinality\(locked_withdrawals_crypto\), 0\) > 0/);
   assert.match(actions, /isLockedAccountEligibleForKyc\(userId\)/);

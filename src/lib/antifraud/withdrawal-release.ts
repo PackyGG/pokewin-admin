@@ -7,6 +7,13 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPrimaryDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import { user_kyc } from "@/lib/db-schema/main/schema";
 import { logError } from "@/lib/errors/logger";
+import {
+  getUserFeatureLocks,
+  updateUserRewardLocks,
+} from "@/lib/backend-api/feature-locks";
+
+const CRITICAL_SIGNUP_LOCK_REASON_PREFIX =
+  "Automatic fraud lock: critical signup scored ";
 
 /**
  * WITHDRAWAL RELEASE — the account side of an Account Review verdict.
@@ -46,7 +53,13 @@ import { logError } from "@/lib/errors/logger";
 
 export type WithdrawalReleaseOutcome =
   /** Locks were on and are now off. */
-  | { status: "released"; previousCrypto: string[]; previousItems: boolean }
+  | {
+      status: "released";
+      previousCrypto: string[];
+      previousItems: boolean;
+      releasedFiat: boolean;
+      releasedTips: boolean;
+    }
   /** Nothing to do — no lock row, or withdrawals were already open. */
   | { status: "already_open" }
   /** KYC is pending an owner/admin decision — only they may lift this. */
@@ -57,6 +70,8 @@ export type WithdrawalReleaseOutcome =
 type ReleaseRow = {
   previous_crypto: string[] | null;
   previous_items: boolean | null;
+  released_fiat: boolean;
+  released_withdrawals: boolean;
 };
 
 /**
@@ -101,6 +116,38 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
+  let releasedTips = false;
+  try {
+    const current = await getUserFeatureLocks(userId);
+    if (
+      current.locked_reward_categories.includes("tips") &&
+      current.locked_rewards_reason?.startsWith(
+        CRITICAL_SIGNUP_LOCK_REASON_PREFIX,
+      )
+    ) {
+      const next = current.locked_reward_categories.filter(
+        (category) => category !== "tips",
+      );
+      const updated = await updateUserRewardLocks(
+        userId,
+        next,
+        adminUserId,
+        next.length > 0 ? current.locked_rewards_reason : null,
+      );
+      if (updated.locked_reward_categories.includes("tips")) {
+        throw new Error("Backend did not confirm the tips unlock");
+      }
+      releasedTips = true;
+    }
+  } catch (error) {
+    logError(
+      "antifraud.review.releaseCriticalSignupTips",
+      `tips release failed for review ${reviewId}`,
+      error,
+    );
+    return { status: "failed" };
+  }
+
   let row: ReleaseRow | undefined;
   try {
     const db = await getPrimaryDrizzleDb();
@@ -111,29 +158,95 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
       WITH previous AS (
         SELECT
           user_id,
+          locked_deposits_crypto AS deposits_crypto,
+          locked_deposits_fiat AS deposits_fiat,
+          locked_deposits_reason AS deposits_reason,
           locked_withdrawals_crypto AS crypto,
-          locked_withdrawals_items AS items
+          locked_withdrawals_items AS items,
+          locked_withdrawals_reason AS withdrawals_reason
         FROM user_feature_locks
         WHERE user_id = ${userId}
         FOR UPDATE
       )
       UPDATE user_feature_locks AS locks
       SET
-        locked_withdrawals_crypto = '{}'::text[],
-        locked_withdrawals_items = FALSE,
-        locked_withdrawals_at = NULL,
-        locked_withdrawals_by = NULL,
-        locked_withdrawals_reason = NULL,
+        locked_deposits_fiat = CASE
+          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN '{}'::text[]
+          ELSE locks.locked_deposits_fiat
+        END,
+        locked_deposits_at = CASE
+          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
+            THEN NULL
+          ELSE locks.locked_deposits_at
+        END,
+        locked_deposits_by = CASE
+          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
+            THEN NULL
+          ELSE locks.locked_deposits_by
+        END,
+        locked_deposits_reason = CASE
+          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
+            THEN NULL
+          ELSE locks.locked_deposits_reason
+        END,
+        locked_withdrawals_crypto = CASE
+          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN '{}'::text[]
+          ELSE locks.locked_withdrawals_crypto
+        END,
+        locked_withdrawals_items = CASE
+          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN FALSE
+          ELSE locks.locked_withdrawals_items
+        END,
+        locked_withdrawals_at = CASE
+          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN NULL
+          ELSE locks.locked_withdrawals_at
+        END,
+        locked_withdrawals_by = CASE
+          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN NULL
+          ELSE locks.locked_withdrawals_by
+        END,
+        locked_withdrawals_reason = CASE
+          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            THEN NULL
+          ELSE locks.locked_withdrawals_reason
+        END,
         updated_at = NOW()
       FROM previous
       WHERE locks.user_id = previous.user_id
         AND (
-          COALESCE(array_length(previous.crypto, 1), 0) > 0
-          OR previous.items
+          (
+            previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
+          ) OR (
+            previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            AND (
+              COALESCE(array_length(previous.crypto, 1), 0) > 0
+              OR previous.items
+            )
+          )
         )
       RETURNING
         previous.crypto AS previous_crypto,
-        previous.items AS previous_items
+        previous.items AS previous_items,
+        (
+          previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
+        ) AS released_fiat,
+        (
+          previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          AND (
+            COALESCE(array_length(previous.crypto, 1), 0) > 0
+            OR previous.items
+          )
+        ) AS released_withdrawals
     `);
     row = released.rows[0];
   } catch (error) {
@@ -145,16 +258,20 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
-  if (!row) return { status: "already_open" };
+  if (!row && !releasedTips) return { status: "already_open" };
 
-  const previousCrypto = row.previous_crypto ?? [];
-  const previousItems = row.previous_items === true;
+  const previousCrypto = row?.previous_crypto ?? [];
+  const previousItems = row?.previous_items === true;
+  const releasedFiat = row?.released_fiat === true;
+  const releasedWithdrawals = row?.released_withdrawals === true;
   const metadata = {
     source: "antifraud_review",
     reviewId,
     idempotencyKey,
     previousCrypto,
     previousItems,
+    releasedFiat,
+    releasedTips,
   };
 
   // Best effort: MAIN is already released. A failed mirror must not report the
@@ -163,33 +280,33 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
   try {
     await createAdminAuditEvent({
       adminUserId,
-      eventType: "antifraud_withdrawals_unlocked",
+      eventType: "antifraud_critical_signup_restrictions_unlocked",
       targetUserId: userId,
       metadata,
     });
     // Both channels are open after this write, so both canonical toggles are
     // recorded — the staff-checked derivation needs the pair, not just the
     // channel that happened to be locked.
-    await createAdminAuditEvent({
-      adminUserId,
-      eventType: "locked_withdrawals_crypto_disabled",
-      targetUserId: userId,
-      metadata: {
-        ...metadata,
-        feature: "locked_withdrawals_crypto",
-        locked: false,
-      },
-    });
-    await createAdminAuditEvent({
-      adminUserId,
-      eventType: "locked_withdrawals_items_disabled",
-      targetUserId: userId,
-      metadata: {
-        ...metadata,
-        feature: "locked_withdrawals_items",
-        locked: false,
-      },
-    });
+    if (releasedWithdrawals) {
+      await createAdminAuditEvent({
+        adminUserId,
+        eventType: "antifraud_withdrawals_unlocked",
+        targetUserId: userId,
+        metadata,
+      });
+      await createAdminAuditEvent({
+        adminUserId,
+        eventType: "locked_withdrawals_crypto_disabled",
+        targetUserId: userId,
+        metadata: { ...metadata, feature: "locked_withdrawals_crypto", locked: false },
+      });
+      await createAdminAuditEvent({
+        adminUserId,
+        eventType: "locked_withdrawals_items_disabled",
+        targetUserId: userId,
+        metadata: { ...metadata, feature: "locked_withdrawals_items", locked: false },
+      });
+    }
   } catch (error) {
     logError(
       "antifraud.review.releaseWithdrawals",
@@ -198,7 +315,13 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     );
   }
 
-  return { status: "released", previousCrypto, previousItems };
+  return {
+    status: "released",
+    previousCrypto,
+    previousItems,
+    releasedFiat,
+    releasedTips,
+  };
 }
 
 export type WithdrawalRestoreOutcome =

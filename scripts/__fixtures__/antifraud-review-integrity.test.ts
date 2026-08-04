@@ -84,11 +84,14 @@ test("manual case open keeps case, trail and audit in one transaction", () => {
   assert.match(body, /conflictReviewId/);
 });
 
-test("clearing a case releases the player's withdrawal locks", () => {
+test("approving a case releases only automatic critical-signup locks", () => {
   const release = read("src/lib/antifraud/withdrawal-release.ts");
   assert.match(release, /UPDATE user_feature_locks/);
-  assert.match(release, /locked_withdrawals_crypto = '\{\}'::text\[\]/);
-  assert.match(release, /locked_withdrawals_items = FALSE/);
+  assert.match(release, /CRITICAL_SIGNUP_LOCK_REASON_PREFIX/);
+  assert.match(release, /locked_withdrawals_crypto = CASE/);
+  assert.match(release, /locked_withdrawals_items = CASE/);
+  assert.match(release, /locked_deposits_fiat = CASE/);
+  assert.match(release, /locked_reward_categories\.includes\("tips"\)/);
   // Idempotent: only a genuinely locked row is touched, so a replay is a no-op.
   assert.match(
     release,
@@ -98,7 +101,8 @@ test("clearing a case releases the player's withdrawal locks", () => {
   assert.match(release, /locked_withdrawals_items_disabled/);
   assert.match(release, /antifraud_withdrawals_unlocked/);
   // Deposit locks stay untouched — only the two withdrawal channels move.
-  assert.doesNotMatch(release, /locked_deposits/);
+  assert.match(release, /previous\.deposits_reason LIKE/);
+  assert.match(release, /previous\.withdrawals_reason LIKE/);
   // A KYC gate is owner/admin + 2FA only. An analyst's clear must never lift
   // it, and an unreadable KYC state fails CLOSED.
   assert.match(
@@ -143,15 +147,14 @@ test("clearing a case releases the player's withdrawal locks", () => {
   assert.match(actions, /if \(!result\.ok\) throw new Error\(result\.message\);\s*return \{ withdrawalRelease: result\.withdrawalRelease \}/);
   // The release runs after the ADMIN transaction commits, including on a
   // replay — that is what repairs a clear whose release never ran.
-  assert.match(actions, /kind: "replayed"; targetUserId: string/);
+  assert.match(actions, /kind: "replayed";[\s\S]*?targetUserId: string/);
 
   for (const surface of [
     "src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
-    "src/app/(antifraud)/antifraud/reviews/_components/case-controls.tsx",
   ]) {
     const source = read(surface);
     assert.match(source, /withdrawalRelease === "failed"/, `${surface} must surface a failed release`);
-    assert.match(source, /unlock/i, `${surface} must tell the analyst what clearing does`);
+    assert.match(source, /locks removed/i, `${surface} must tell the analyst what approving does`);
   }
 });
 
