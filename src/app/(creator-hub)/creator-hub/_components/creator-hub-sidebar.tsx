@@ -218,14 +218,14 @@ export function CreatorHubSidebar({
 
   return (
     <Sidebar collapsible="icon">
-      {/* Packy wordmark — same assets + sizing as the main AppSidebar header.
-          Creator Hub title/subtitle sit below the logo when expanded. */}
-      <SidebarHeader className="border-b border-border px-4 py-4 flex items-center justify-center group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:h-16 group-data-[collapsible=icon]:py-0">
+      {/* Packy wordmark — same assets, sizing AND header height (h-16) as the
+          main AppSidebar header, so the logo box lines up with the top bar. */}
+      <SidebarHeader className="border-b border-border px-4 h-16 flex items-center justify-center group-data-[collapsible=icon]:px-0">
         <Link
           href={toHref("/creator-hub")}
           onClick={handleNavTap}
           title="Creator Hub"
-          className="flex flex-col items-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
+          className="flex justify-center rounded-md outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring motion-safe:transition-[transform,opacity] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-95"
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
@@ -245,14 +245,6 @@ export function CreatorHubSidebar({
             alt="PackyGG"
             className="h-8 w-8 hidden group-data-[collapsible=icon]:block"
           />
-          <span className="mt-1 min-w-0 text-center group-data-[collapsible=icon]:hidden">
-            <span className="block truncate text-xs font-semibold text-foreground">
-              Creator Hub
-            </span>
-            <span className="block truncate text-[11px] text-muted-foreground">
-              CM team workspace
-            </span>
-          </span>
         </Link>
       </SidebarHeader>
 
