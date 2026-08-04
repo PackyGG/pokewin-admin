@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ComponentType } from "react";
 import Link from "next/link";
 import {
   Check,
@@ -12,10 +12,10 @@ import {
   Twitch,
   X,
   Youtube,
-  type LucideIcon,
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { DiscordIcon, KickIcon } from "@/components/brand-icons";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -43,10 +43,16 @@ import { RejectReasonPicker, SocialReviewActions } from "./review-actions";
  */
 
 // Platform → icon + tint, mirroring the Hub roster card's PLATFORM_META
-// (lucide has no brand icons for X/Kick/Discord — same stand-ins as there).
+// (lucide ships no Kick/Discord glyph — those come from `brand-icons`; X
+// still falls back to a lucide stand-in).
 const PLATFORM_META: Record<
   string,
-  { icon: LucideIcon; color: string; label: string }
+  {
+    /** Widened past `LucideIcon` so the brand glyphs (Kick/Discord) fit. */
+    icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+    color: string;
+    label: string;
+  }
 > = {
   twitch: {
     icon: Twitch,
@@ -59,7 +65,7 @@ const PLATFORM_META: Record<
     label: "YouTube",
   },
   kick: {
-    icon: Twitch,
+    icon: KickIcon,
     color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
     label: "Kick",
   },
@@ -79,7 +85,7 @@ const PLATFORM_META: Record<
     label: "TikTok",
   },
   discord: {
-    icon: MessageCircle,
+    icon: DiscordIcon,
     color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     label: "Discord",
   },

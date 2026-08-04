@@ -7,6 +7,7 @@ import type { CreatorSocialPlatform } from "@/lib/backend-api";
 import {
   getCreatorLinkedSocialsCached,
   isLinkedSocialUsername,
+  isRetiredSocialPlatform,
 } from "../../_queries/socials-by-user";
 
 /** Shape consumed by the `HeaderSocials` chip row. */
@@ -56,6 +57,7 @@ export async function getCreatorHeaderSocials(
     (typeof adminSocials)[number]
   >();
   for (const row of adminSocials) {
+    if (isRetiredSocialPlatform(row.platform)) continue;
     const chip: CreatorSocialPlatform =
       row.platform === "twitter" ? "x" : (row.platform as CreatorSocialPlatform);
     adminByChip.set(chip, row);

@@ -26,6 +26,11 @@ import {
 import { getMultiplierCreatorIds } from "../../../../(admin)/creators/_queries/multiplier-creator-count";
 import type { CreatorsTab } from "../../../../(admin)/creators/_lib/search-params";
 
+import {
+  getDiscordLinksByUser,
+  type CreatorDiscordLink,
+} from "@/lib/creator-discord-links";
+
 import { type DashboardPeriod } from "@/lib/queries/dashboard-period";
 import type { RosterActiveTab, RosterSortMode } from "../_lib/roster-params";
 
@@ -66,6 +71,11 @@ export type RosterCreator = {
   isLive: boolean;
   /** Approved social handles (platform + handle/url) for the card chips. */
   socials: CreatorSocialSummary[];
+  /**
+   * Live Discord link state from the creator-setup bot (admin DB), null when
+   * the creator has no active, linked setup — the chip then hides entirely.
+   */
+  discord: CreatorDiscordLink | null;
   /** Primary affiliate code owned by the creator (oldest-first). */
   code: string | null;
   /** Lifetime sign-ups referred by the creator's code. */
@@ -215,8 +225,15 @@ export async function listRosterCreators(
     )
     .map((c) => ({ userId: c.id, dealId: c.current_deal!.id }));
 
-  const [codeWager, socials, netGgr, lifetimePnl, dealValues, checklistByUser] =
-    await Promise.all([
+  const [
+    codeWager,
+    socials,
+    netGgr,
+    lifetimePnl,
+    dealValues,
+    checklistByUser,
+    discordLinks,
+  ] = await Promise.all([
       getCodeAndWagerByUser(ids).catch((err) => {
         console.error(
           "[creator-hub roster] code+wager fetch failed (cols render 0):",
@@ -259,7 +276,14 @@ export async function listRosterCreators(
         );
         return {} as Record<string, RosterChecklistProgress>;
       }),
-    ]);
+    getDiscordLinksByUser(ids).catch((err) => {
+      console.error(
+        "[creator-hub roster] discord link fetch failed (chips hidden):",
+        err,
+      );
+      return new Map<string, CreatorDiscordLink>();
+    }),
+  ]);
 
   const ggrByUser = new Map<string, CreatorNetGgrRow>(
     (netGgr?.byCreator ?? []).map((r) => [r.creatorUserId, r]),
@@ -284,6 +308,7 @@ export async function listRosterCreators(
       dealStatus: c.current_deal?.status ?? null,
       isLive: c.active_session_id !== null,
       socials: socials.get(c.id) ?? [],
+      discord: discordLinks.get(c.id) ?? null,
       code: cw?.code ?? null,
       signups: cw?.signups ?? 0,
       ftds: cw?.ftds ?? 0,

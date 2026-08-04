@@ -9,9 +9,7 @@ import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { CREATOR_LINKED_SOCIALS_CACHE_TAG } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import {
-  clearDiscordChannelUrl,
   clearRewardPageUrl,
-  persistDiscordChannelUrl,
   persistRewardPageUrl,
 } from "@/lib/creator-social-urls";
 import { fetchPublicStats } from "@/lib/socials-public";
@@ -36,14 +34,15 @@ import { fetchPublicStats } from "@/lib/socials-public";
  *   • revalidates the creator detail route so the tab re-reads.
  */
 
-// The platforms a manager can edit from the Creator tab. These are the four
-// the owner spec calls out (Twitter / Kick / Discord ID / Reward page) minus
-// "Reward page" — there is NO `social_platform` enum value or column for a
-// reward URL today, so it is intentionally NOT writable here (the tab renders
-// it as a clearly-labelled "not storable yet" field rather than guessing a
-// home for it). All four allowed values below are real `social_platform`
-// members.
-const EDITABLE_PLATFORMS = ["twitter", "kick", "discord"] as const;
+// The platforms a manager can edit from the Creator tab. Both are real
+// `social_platform` enum members.
+//
+// DISCORD IS DELIBERATELY ABSENT: the creator ↔ Discord link is owned by the
+// Discord creator-setup bot (`discord_creator_setups`, surfaced via
+// `getDiscordLinkForUser`). Nothing on this page types a Discord handle or a
+// Discord channel URL by hand anymore, so no action here writes a
+// `creator_socials` discord row or `discord_channel_url`.
+const EDITABLE_PLATFORMS = ["twitter", "kick"] as const;
 type EditablePlatform = (typeof EDITABLE_PLATFORMS)[number];
 
 function assertEditablePlatform(p: string): asserts p is EditablePlatform {
@@ -66,15 +65,13 @@ function revalidateCreator(userId: string) {
 
 /**
  * Create or update a creator's handle for one platform. `username` is the
- * raw handle (for Discord this is the Discord ID / username — Discord has no
- * public profile URL, so it's stored as-is for reference). An empty username
- * is rejected; use {@link removeCreatorSocial} to clear a platform.
+ * raw handle. An empty username is rejected; use {@link removeCreatorSocial}
+ * to clear a platform.
  */
 export async function upsertCreatorSocial(
   targetUserId: string,
   platform: string,
   username: string,
-  options?: { discordChannelUrl?: string | null },
 ): Promise<{ followerCount: number | null }> {
   const session = await requireCreatorHubAccess();
 
@@ -85,9 +82,8 @@ export async function upsertCreatorSocial(
   if (!trimmed) throw new Error("Handle is required");
   if (trimmed.length > 100) throw new Error("Handle is too long");
 
-  // Best-effort public-stat refresh. Discord has no public follower API in
-  // `fetchPublicStats` (returns null), and any scraper miss degrades to null
-  // rather than failing the save — the handle is what matters.
+  // Best-effort public-stat refresh — any scraper miss degrades to null
+  // rather than failing the save; the handle is what matters.
   const stats = await fetchPublicStats(platform, trimmed).catch(() => ({
     followerCount: null as number | null,
     platformUserId: null as string | null,
@@ -117,14 +113,6 @@ export async function upsertCreatorSocial(
     // Only the id is consumed — explicit select avoids a RETURNING * crash if
     // the generated client knows a column prod hasn't migrated yet.
     .returning({ id: creator_socials.id });
-
-  if (platform === "discord" && options?.discordChannelUrl?.trim()) {
-    await persistDiscordChannelUrl(
-      targetUserId,
-      options.discordChannelUrl,
-      trimmed,
-    );
-  }
 
   await createAdminAuditEvent({
     adminUserId: session.userId,
@@ -175,64 +163,6 @@ export async function removeCreatorSocial(
   revalidateCreator(targetUserId);
 }
 
-/** Save the per-creator Discord channel deep-link (admin DB only). */
-export async function upsertCreatorDiscordChannel(
-  targetUserId: string,
-  channelUrl: string,
-): Promise<void> {
-  const session = await requireCreatorHubAccess();
-  if (!targetUserId) throw new Error("Missing creator id");
-
-  const existing = (
-    await adminDrizzle
-      .select({ username: creator_socials.username })
-      .from(creator_socials)
-      .where(
-        and(
-          eq(creator_socials.target_user_id, targetUserId),
-          eq(creator_socials.platform, "discord"),
-        ),
-      )
-      .limit(1)
-  )[0];
-
-  await persistDiscordChannelUrl(
-    targetUserId,
-    channelUrl,
-    existing?.username,
-  );
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "creator_social_edited",
-    targetUserId,
-    metadata: {
-      field: "discord_channel_url",
-      via: "creator_hub_tab",
-    },
-  });
-
-  revalidateCreator(targetUserId);
-}
-
-export async function removeCreatorDiscordChannel(
-  targetUserId: string,
-): Promise<void> {
-  const session = await requireCreatorHubAccess();
-  if (!targetUserId) throw new Error("Missing creator id");
-
-  await clearDiscordChannelUrl(targetUserId);
-
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "creator_social_removed",
-    targetUserId,
-    metadata: { field: "discord_channel_url", via: "creator_hub_tab" },
-  });
-
-  revalidateCreator(targetUserId);
-}
-
 /** Save or clear the creator reward-page URL (admin DB only). */
 export async function upsertCreatorRewardPage(
   targetUserId: string,
@@ -241,20 +171,11 @@ export async function upsertCreatorRewardPage(
   const session = await requireCreatorHubAccess();
   if (!targetUserId) throw new Error("Missing creator id");
 
-  const existing = (
-    await adminDrizzle
-      .select({ username: creator_socials.username })
-      .from(creator_socials)
-      .where(
-        and(
-          eq(creator_socials.target_user_id, targetUserId),
-          eq(creator_socials.platform, "discord"),
-        ),
-      )
-      .limit(1)
-  )[0];
-
-  await persistRewardPageUrl(targetUserId, rewardUrl, existing?.username);
+  // No discord-row lookup: this page no longer reads or writes hand-typed
+  // discord rows. `persistRewardPageUrl` only needs a username when it has to
+  // CREATE the carrier row; an existing row keeps its own username (the
+  // upsert's SET touches reward_page_url only).
+  await persistRewardPageUrl(targetUserId, rewardUrl);
 
   await createAdminAuditEvent({
     adminUserId: session.userId,

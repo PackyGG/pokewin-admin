@@ -40,8 +40,12 @@ import { SocialLinksEditor } from "./social-links-editor";
  * `creators/[id]` — **Creator (metadata)** tab.
  *
  * Owner spec: a tab holding ALL of the creator's metadata, an in-place editor
- * for the social links (Twitter / Kick / Discord ID / Reward page), and a
- * "set up by" line showing which manager onboarded them.
+ * for the social links (Twitter / Kick / Reward page), and a "set up by" line
+ * showing which manager onboarded them.
+ *
+ * DISCORD IS NOT EDITED HERE. The creator ↔ Discord link is owned by the
+ * Discord creator-setup bot and rendered on the banner — no hand-typed
+ * Discord handle or channel URL exists on this page anymore.
  *
  * Self-contained: takes only `userId` and fetches its OWN data
  * (`getCreatorMetadata`) when rendered. LAZY — wrapped in its own keyed
@@ -109,7 +113,7 @@ async function CreatorMetadataTabContent({
   // shape it reads. Other linked platforms (youtube/instagram) still show in
   // the read-only "all linked socials" summary below.
   const editorSocials = meta.socials
-    .filter((s) => ["twitter", "kick", "discord"].includes(s.platform))
+    .filter((s) => ["twitter", "kick"].includes(s.platform))
     .map((s) => ({ platform: s.platform, username: s.username }));
 
   return (
@@ -260,7 +264,6 @@ async function CreatorMetadataTabContent({
         <SocialLinksEditor
           userId={meta.userId}
           initialSocials={editorSocials}
-          initialDiscordChannelUrl={meta.discordChannelUrl}
           initialRewardPageUrl={meta.rewardPageUrl}
         />
 
@@ -350,6 +353,9 @@ function OnboardedByLine({
  * Read-only chips for linked platforms the editor doesn't manage
  * (youtube / instagram). Keeps every linked social visible without offering an
  * edit affordance the owner spec didn't ask for on this tab.
+ *
+ * `discord` is excluded on purpose: any legacy hand-typed Discord row is dead
+ * data now — the real link comes from the bot and shows on the banner.
  */
 function OtherSocials({
   socials,

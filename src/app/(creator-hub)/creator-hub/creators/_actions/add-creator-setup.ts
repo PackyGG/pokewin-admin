@@ -9,10 +9,7 @@ import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { creator_socials } from "@/lib/db-schema/admin/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
-import {
-  persistDiscordChannelUrl,
-  persistRewardPageUrl,
-} from "@/lib/creator-social-urls";
+import { persistRewardPageUrl } from "@/lib/creator-social-urls";
 import { fetchPublicStats } from "@/lib/socials-public";
 
 import { promoteUserToCreator } from "../../../../(admin)/creators/backend-actions";
@@ -20,8 +17,6 @@ import { enrollCreatorInOnboardingChecklist } from "../[id]/_queries/onboarding-
 
 const SetupSchema = z.object({
   userId: z.string().min(1),
-  discordId: z.string().trim().min(1).max(100),
-  discordChannelUrl: z.string().trim().url().max(2048),
   twitter: z.string().trim().max(100).optional(),
   kick: z.string().trim().max(100).optional(),
   rewardPageUrl: z.string().trim().url().max(2048).optional().or(z.literal("")),
@@ -118,52 +113,12 @@ export async function completeCreatorOnboarding(
 ): Promise<{ userId: string }> {
   await requireCreatorHubAccess("Not authorized to add creators in Creator Hub.");
   const parsed = SetupSchema.parse(input);
-  const discordId = parsed.discordId.replace(/^@/, "");
-
-  const discordStats = await fetchPublicStats("discord", discordId).catch(
-    () => ({
-      followerCount: null as number | null,
-      platformUserId: null as string | null,
-    }),
-  );
-
-  const now = new Date().toISOString();
-  await adminDrizzle
-    .insert(creator_socials)
-    .values({
-      target_user_id: parsed.userId,
-      platform: "discord",
-      username: discordId,
-      platform_user_id: discordStats.platformUserId ?? null,
-      follower_count: discordStats.followerCount ?? null,
-      last_fetched_at: now,
-    })
-    .onConflictDoUpdate({
-      target: [creator_socials.target_user_id, creator_socials.platform],
-      set: {
-        username: discordId,
-        platform_user_id: discordStats.platformUserId ?? null,
-        follower_count: discordStats.followerCount ?? null,
-        last_fetched_at: now,
-        updated_at: now,
-      },
-    });
-
-  await persistDiscordChannelUrl(
-    parsed.userId,
-    parsed.discordChannelUrl,
-    discordId,
-  );
 
   await saveOptionalSocial(parsed.userId, "twitter", parsed.twitter);
   await saveOptionalSocial(parsed.userId, "kick", parsed.kick);
 
   if (parsed.rewardPageUrl?.trim()) {
-    await persistRewardPageUrl(
-      parsed.userId,
-      parsed.rewardPageUrl,
-      discordId,
-    );
+    await persistRewardPageUrl(parsed.userId, parsed.rewardPageUrl);
   }
 
   await promoteUserToCreator(parsed.userId);

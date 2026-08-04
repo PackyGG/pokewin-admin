@@ -38,6 +38,20 @@ function num(v: string | null | undefined): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/**
+ * Height of the FILLED deal card, applied to the empty + degraded states so
+ * the Deal box never changes size and stays aligned with the Affiliate
+ * Leaderboards card beside it (they share a `lg:grid-cols-2` row).
+ *
+ * Derived from the filled layout, not guessed: card `py-3` (24) + status row
+ * (badge h-5 = 20) + `space-y-3` gap (12) + the terms grid + gap (12) +
+ * allowance badges row (`pt-1` 4 + h-5 20 = 24). A DealTerm is 56.5 tall
+ * (border 2 + `py-2` 16 + 11px label ~16.5 + `mt-0.5` 2 + `text-sm` 20), and
+ * the grid is 2 columns below `sm` (3 rows) and 3 columns from `sm` up
+ * (2 rows) — the only reason this needs two values.
+ */
+const DEAL_CARD_FILLED_HEIGHT = "min-h-[278px] sm:min-h-[213px]";
+
 function DealTerm({
   label,
   value,
@@ -84,8 +98,8 @@ export async function DealCard({
     return (
       <div className="space-y-3">
         {heading}
-        <Card size="sm">
-          <CardContent className="py-6">
+        <Card size="sm" className={DEAL_CARD_FILLED_HEIGHT}>
+          <CardContent className="flex flex-1 items-center justify-center">
             <p className="text-sm text-muted-foreground">
               Could not load the deal — the backend was unreachable. Refresh to
               retry.
@@ -134,8 +148,8 @@ export async function DealCard({
             </div>
           }
         />
-        <Card size="sm">
-          <CardContent className="py-2">
+        <Card size="sm" className={DEAL_CARD_FILLED_HEIGHT}>
+          <CardContent className="flex flex-1 items-center justify-center">
             <EmptyState
               icon={HandCoins}
               title={ended ? "No active deal" : "No deal yet"}
