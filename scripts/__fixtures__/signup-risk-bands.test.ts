@@ -29,6 +29,7 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
   assert.match(guide, /title: "3\. Monitor higher scores"/);
   assert.match(guide, /title: "4\. Decide"/);
   assert.match(guide, /immediately if new points cross a higher threshold/);
+  assert.doesNotMatch(guide, /Critical containment/);
 });
 
 test("high and critical signup actions own their Discord routes", () => {

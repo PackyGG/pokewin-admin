@@ -3,7 +3,6 @@ import {
   CheckCircle2,
   Clock3,
   Eye,
-  LockKeyhole,
   SearchCheck,
   ShieldAlert,
   ShieldCheck,
@@ -183,22 +182,6 @@ export default async function AntifraudSignupGuidePage() {
         </div>
       </section>
 
-      <section className="rounded-xl border border-rose-500/25 bg-rose-500/5 p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
-            <LockKeyhole className="size-4" />
-          </span>
-          <div>
-            <h2 className="text-sm font-semibold">Critical containment</h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              A score of 70 or more immediately disables Fiat deposits, locks
-              crypto and item withdrawals, and locks tips. It does not
-              automatically ban the account or request KYC. Staff make the
-              final decision from Account Review.
-            </p>
-          </div>
-        </div>
-      </section>
     </div>
   );
 }
