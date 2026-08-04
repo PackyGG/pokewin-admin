@@ -20,6 +20,7 @@ import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { FadeIn } from "@/components/fade-in";
 import { CopyButton } from "@/components/copy-button";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { KpiStripSkeleton } from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -57,6 +58,11 @@ function channelUrl(guildId: string, channelId: string) {
 
 function memberUrl(memberDiscordUserId: string) {
   return `https://discord.com/users/${memberDiscordUserId}`;
+}
+
+/** Two-letter avatar fallback — same shape as the /transactions tables. */
+function initialsFor(username: string | null, userId: string): string {
+  return (username ?? userId).slice(0, 2).toUpperCase();
 }
 
 function parseFilter(value: string | undefined): VipRosterFilter {
@@ -390,13 +396,23 @@ async function VipsListSection({
                     <td className="py-3 pr-4">
                       <Link
                         href={`/users/${row.userId}`}
-                        className="font-semibold hover:underline"
+                        className="flex items-center gap-3"
                       >
-                        {row.username ?? row.userId}
+                        <Avatar className="size-8 shrink-0">
+                          {row.image && <AvatarImage src={row.image} alt="" />}
+                          <AvatarFallback className="text-xs">
+                            {initialsFor(row.username, row.userId)}
+                          </AvatarFallback>
+                        </Avatar>
+                        <div className="min-w-0">
+                          <div className="truncate font-semibold hover:underline">
+                            {row.username ?? row.userId}
+                          </div>
+                          <div className="truncate text-xs text-muted-foreground">
+                            {row.email ?? "—"}
+                          </div>
+                        </div>
                       </Link>
-                      <div className="text-xs text-muted-foreground">
-                        {row.email ?? "—"}
-                      </div>
                     </td>
                     <td className="py-3 pr-4">
                       <DiscordCell discord={row.discord} />

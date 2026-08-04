@@ -40,6 +40,8 @@ export type VipRosterRow = {
   userId: string;
   username: string | null;
   email: string | null;
+  /** Profile picture URL from MAIN `user.image`; null when unset. */
+  image: string | null;
   country: string | null;
   countryCode: string | null;
   taggedAt: string;
@@ -121,6 +123,7 @@ async function hydrateUsers(userIds: string[]) {
         id: string;
         username: string | null;
         email: string | null;
+        image: string | null;
         country: string | null;
         country_code: string | null;
       }
@@ -131,10 +134,11 @@ async function hydrateUsers(userIds: string[]) {
     id: string;
     username: string | null;
     email: string | null;
+    image: string | null;
     country: string | null;
     country_code: string | null;
   }>(sql`
-    SELECT id, username, email, country, country_code
+    SELECT id, username, email, image, country, country_code
     FROM "user"
     WHERE id = ANY(${pgArrayParam(userIds)}::text[])
   `);
@@ -271,6 +275,7 @@ export async function getVipRoster({
         userId: r.target_user_id,
         username: player?.username ?? null,
         email: player?.email ?? null,
+        image: player?.image ?? null,
         country: player?.country ?? null,
         countryCode: player?.country_code ?? null,
         taggedAt: new Date(r.created_at).toISOString(),
