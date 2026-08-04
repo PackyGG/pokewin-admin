@@ -212,12 +212,6 @@ export type FiatEligibilityPolicyInput = {
   activeCaseSeverity: string | null;
   attempts10m: number;
   deniedAttempts24h: number;
-  /**
-   * Fiat perk allowlist state. Optional so the endpoint behaves exactly as
-   * before until the gate is switched on; when it is enabled, an account with
-   * no live grant is refused before any other evidence is weighed.
-   */
-  perkGate?: { enabled: boolean; granted: boolean };
 };
 
 export type FiatEligibilityPolicyOutcome = {
@@ -481,19 +475,6 @@ export function evaluateFiatEligibility(
     blocking: true,
     source: "account",
   });
-  // The perk allowlist decides WHETHER this account may use cards at all; the
-  // rest of this function decides whether THIS checkout is safe. Deny without
-  // containment: not being on the allowlist is not evidence of an attack.
-  add(
-    input.perkGate?.enabled === true && input.perkGate.granted !== true,
-    {
-      key: "fiat_perk_not_granted",
-      detail: "The account does not hold an approved Fiat perk.",
-      points: 100,
-      blocking: true,
-      source: "account",
-    },
-  );
   add(input.subject.country_blocked || input.subject.country_fiat_locked, {
     key: "fiat_disabled_for_country",
     detail: "Fiat deposits are unavailable for the account country.",

@@ -45,7 +45,7 @@ test("Automation is a tabbed control center over the same live reads", () => {
     /label:\s*"Automation",\s*href:\s*"\/antifraud\/automation"/,
   );
   assert.doesNotMatch(sidebar, /label:\s*"Risk engine"/);
-  assert.doesNotMatch(sidebar, /label:\s*"Config"/);
+  assert.match(sidebar, /label:\s*"Config",\s*href:\s*"\/antifraud\/config"/);
   assert.doesNotMatch(sidebar, /label:\s*"Settings"/);
   assert.match(
     appHosts,
@@ -62,6 +62,7 @@ test("every System destination has its own nav entry", () => {
   // page. A regression that drops them from the nav hides them again.
   for (const [label, href] of [
     ["Automation", "/antifraud/automation"],
+    ["Config", "/antifraud/config"],
     ["Rules & scoring", "/antifraud/points"],
     ["Event catalog", "/antifraud/events"],
     ["Integrations", "/antifraud/settings"],

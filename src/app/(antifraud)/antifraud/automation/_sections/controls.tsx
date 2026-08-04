@@ -1,59 +1,29 @@
-import { Suspense } from "react";
 import {
   Activity,
   BellRing,
   Gauge,
   ListChecks,
   Settings2,
-  ShieldCheck,
   Workflow,
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { SectionHeading } from "@/components/modern-panels";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import { getFiatDepositAutomaticCreditConfig } from "@/lib/backend-api/fiat-deposit-review";
-import { GlobalFiatReviewCard } from "../../config/fiat-auto-approval-card";
 
-/**
- * CONTROLS TAB — the switches that live in this workspace, plus the index of
- * where every other setting is edited.
- *
- * The global Fiat auto-credit switch used to sit on its own near-empty
- * `/antifraud/config` page; it belongs here, next to the rest of the
- * automation controls. That route now redirects to this tab.
- */
+/** Index of the pages that own each authoritative control. */
 export function AutomationControls() {
-  return (
-    <div className="space-y-6">
-      <section className="space-y-3">
-        <SectionHeading icon={ShieldCheck} title="Global Fiat review" />
-        <Suspense fallback={<Skeleton className="h-52 w-full rounded-xl" />}>
-          <GlobalFiatReviewData />
-        </Suspense>
-      </section>
-
-      <ConfigurationIndex />
-    </div>
-  );
-}
-
-async function GlobalFiatReviewData() {
-  try {
-    const config = await getFiatDepositAutomaticCreditConfig();
-    return (
-      <GlobalFiatReviewCard
-        initialEnabled={config.fiat_deposit_automatic_credit_enabled}
-      />
-    );
-  } catch (error) {
-    console.error("[antifraud-automation] Fiat approval config read failed:", error);
-    return <GlobalFiatReviewCard initialEnabled={null} />;
-  }
+  return <ConfigurationIndex />;
 }
 
 const CONTROLS = [
+  {
+    title: "Global Fiat controls",
+    text: "Enable or disable Fiat deposits site-wide and choose automatic credit or admin approval after verification.",
+    href: "/antifraud/config",
+    label: "Edit Fiat controls",
+    icon: Settings2,
+  },
   {
     title: "Risk scoring",
     text: "Point weights for signup, provider, activity, network, and creator signals, plus the severity bands they map into.",

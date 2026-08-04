@@ -74,10 +74,6 @@ export const LIVE_EVENT_TYPES = [
   "rule.created",
   "rule.updated",
   "score_weight.updated",
-  "fiat_perk.run.started",
-  "fiat_perk.run.progress",
-  "fiat_perk.run.completed",
-  "fiat_perk.run.failed",
 ] as const;
 
 export type LiveEventType = (typeof LIVE_EVENT_TYPES)[number];

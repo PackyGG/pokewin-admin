@@ -82,19 +82,6 @@ human action to the service fallback. Reusing a key succeeds only when the
 case/rule, action or patch, actor and reason exactly match the original
 request; a changed request returns `409 idempotency_conflict`.
 
-## Manual Fiat deposit access client
-
-`FiatDepositAccessClient` provides typed GET/PUT access to
-`https://packy.gg/v1/admin/users/:userId/fiat-deposit-access` for future
-Antifraud workflows. Configure `ADMIN_API_KEY` and `xbypasssecret`. Requests
-send `x-admin-api-key` plus the `xbypasssecret` rate-limit bypass header.
-Missing credentials, non-2xx responses, timeouts, and malformed response
-bodies fail closed. The response contract is identical to the admin dashboard:
-`{ success: true, data: { user_id, enabled } }`, including a check that the
-returned user matches the requested user. This client is only for per-user
-access; the global Fiat switch continues through the existing site-config API
-and cache-refresh flow.
-
 ## Sanitized Sumsub review reads
 
 Configure `SUMSUB_ADMIN_TOKEN` and `SUMSUB_ADMIN_KEY` together. The protected

@@ -100,13 +100,10 @@ export default async function AntifraudAutomationPage({
 function TabSkeleton({ tab }: { tab: AutomationTab }) {
   if (tab === "controls") {
     return (
-      <div className="space-y-6">
-        <Skeleton className="h-52 rounded-xl" />
-        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-          {Array.from({ length: 6 }, (_, index) => (
-            <Skeleton key={index} className="h-36 rounded-xl" />
-          ))}
-        </div>
+      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        {Array.from({ length: 7 }, (_, index) => (
+          <Skeleton key={index} className="h-36 rounded-xl" />
+        ))}
       </div>
     );
   }
