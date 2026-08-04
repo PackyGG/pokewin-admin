@@ -8,6 +8,7 @@ import {
   Eye,
   Search,
   ShieldAlert,
+  ShieldCheck,
   UserRound,
 } from "lucide-react";
 
@@ -32,6 +33,11 @@ import {
   type ReviewListItem,
 } from "@/lib/antifraud/reviews";
 import { canManageAntifraud } from "@/lib/antifraud/access";
+import {
+  reviewQueueEvidenceSignals,
+  reviewQueueSafeguard,
+  reviewSignalLabel,
+} from "@/lib/antifraud/signal-display";
 import {
   ReviewSeverityBadge,
   ReviewStatusBadge,
@@ -392,6 +398,10 @@ function CaseRow({
   tab: ReviewTab;
 }) {
   const name = review.targetUsername ?? review.targetUserId;
+  const safeguard = reviewQueueSafeguard(review.signals);
+  const evidenceSignals = reviewQueueEvidenceSignals(review.signals);
+  const shownSignals = evidenceSignals.slice(0, 4);
+  const hiddenSignals = evidenceSignals.slice(4);
   return (
     <li className="rounded-xl border border-border/70 bg-card shadow-sm">
       <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
@@ -419,17 +429,49 @@ function CaseRow({
                 </span>
               )}
             </div>
-            <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
-              {review.reason}
-            </p>
-            {review.signals.length > 0 && (
+            {safeguard ? (
+              <div
+                className={cn(
+                  "mt-2 flex max-w-2xl items-start gap-2.5 rounded-lg border px-3 py-2",
+                  safeguard.tone === "critical"
+                    ? "border-rose-500/25 bg-gradient-to-r from-rose-500/10 via-rose-500/5 to-transparent"
+                    : "border-amber-500/25 bg-gradient-to-r from-amber-500/10 via-amber-500/5 to-transparent",
+                )}
+              >
+                <ShieldCheck
+                  className={cn(
+                    "mt-0.5 size-4 shrink-0",
+                    safeguard.tone === "critical"
+                      ? "text-rose-600 dark:text-rose-400"
+                      : "text-amber-600 dark:text-amber-400",
+                  )}
+                />
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-foreground">
+                    {safeguard.title}
+                  </p>
+                  <p className="text-[11px] leading-4 text-muted-foreground">
+                    {safeguard.detail}
+                  </p>
+                </div>
+              </div>
+            ) : (
+              <p className="mt-0.5 line-clamp-2 text-xs leading-5 text-muted-foreground">
+                {review.reason}
+              </p>
+            )}
+            {evidenceSignals.length > 0 && (
               <div className="mt-1.5 flex flex-wrap gap-1">
-                {review.signals.slice(0, 4).map((signal) => (
+                {shownSignals.map((signal) => (
                   <ReviewSignalBadge key={signal} signal={signal} />
                 ))}
-                {review.signals.length > 4 && (
-                  <span className="text-[10px] text-muted-foreground">
-                    +{review.signals.length - 4} more
+                {hiddenSignals.length > 0 && (
+                  <span
+                    className="rounded-sm border border-border/60 bg-muted/30 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+                    title={hiddenSignals.map(reviewSignalLabel).join(", ")}
+                  >
+                    +{hiddenSignals.length} more evidence signal
+                    {hiddenSignals.length === 1 ? "" : "s"}
                   </span>
                 )}
               </div>

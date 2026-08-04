@@ -5,6 +5,8 @@ import {
   FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND,
   isFiatWithdrawalHoldSignal,
   isNonActionableRewardEnrollmentSignal,
+  reviewQueueEvidenceSignals,
+  reviewQueueSafeguard,
   reviewSignalLabel,
   withoutNonActionableRewardEnrollmentSignals,
 } from "../../src/lib/antifraud/signal-display";
@@ -41,6 +43,34 @@ test("fiat withdrawal holds are accepted as high-severity review signals", () =>
 test("unmapped review signals receive a readable label", () => {
   assert.equal(reviewSignalLabel("multi_account"), "Multi account");
   assert.equal(isFiatWithdrawalHoldSignal("multi_account"), false);
+});
+
+test("critical queue cards prioritize safeguards and real evidence", () => {
+  const signals = [
+    "critical_risk_signup",
+    "behavioral_withdrawal_containment",
+    "fingerprint_suspect_score",
+    "fingerprint_privacy_settings",
+  ];
+
+  assert.deepEqual(reviewQueueEvidenceSignals(signals), [
+    "fingerprint_suspect_score",
+    "fingerprint_privacy_settings",
+  ]);
+  assert.deepEqual(reviewQueueSafeguard(signals), {
+    title: "Safeguards active",
+    detail:
+      "Fiat deposits, withdrawals, and tips are paused until staff approves or bans the account.",
+    tone: "critical",
+  });
+  assert.equal(
+    reviewSignalLabel("fingerprint_suspect_score"),
+    "Device risk score",
+  );
+  assert.equal(
+    reviewSignalLabel("fingerprint_privacy_settings"),
+    "Privacy protections detected",
+  );
 });
 
 test("automatic reward enrollment never appears as Fraud activity", () => {

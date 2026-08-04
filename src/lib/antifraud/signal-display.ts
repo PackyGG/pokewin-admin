@@ -45,6 +45,17 @@ export function withoutNonActionableRewardEnrollmentSignals(
  */
 const SIGNAL_LABELS: Record<string, string> = {
   [FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND]: "Fiat-triggered withdrawal hold",
+  critical_risk_signup: "Critical signup threshold",
+  high_risk_signup: "High-risk signup threshold",
+  behavioral_withdrawal_containment: "Automatic withdrawal protection",
+  fingerprint_suspect_score: "Device risk score",
+  fingerprint_privacy_settings: "Privacy protections detected",
+  fingerprint_tampering: "Browser tampering detected",
+  fingerprint_developer_tools: "Developer tools detected",
+  fingerprint_virtual_machine: "Virtual machine detected",
+  fingerprint_automation: "Browser automation detected",
+  fingerprint_vpn: "VPN detected",
+  fingerprint_proxy: "Proxy detected",
   welcome_reward_granted: "Welcome reward enrolled at signup",
   level_one_reward_granted: "Level 1 daily pack enrolled at signup",
   daily_reward_granted: "Daily pack enrolled at signup",
@@ -62,6 +73,14 @@ const SIGNAL_LABELS: Record<string, string> = {
 const SIGNAL_NOTES: Record<string, string> = {
   [FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND]:
     "Lifetime completed deposits triggered automatic balance-to-crypto and physical-item withdrawal locks.",
+  critical_risk_signup:
+    "The stabilized signup assessment reached the critical band and activated automatic account safeguards.",
+  behavioral_withdrawal_containment:
+    "This is the protection action created by the risk engine, not a separate piece of fraud evidence.",
+  fingerprint_suspect_score:
+    "Fingerprint's native suspect score materially increased the signup assessment.",
+  fingerprint_privacy_settings:
+    "Fingerprint detected browser settings that conceal or randomize identity attributes.",
   welcome_reward_granted:
     "Enrollment row written at signup, not an earned reward. Carries no risk score.",
   level_one_reward_granted:
@@ -90,4 +109,46 @@ export function reviewSignalNote(signal: string): string {
 
 export function isFiatWithdrawalHoldSignal(signal: string): boolean {
   return signal === FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND;
+}
+
+const REVIEW_QUEUE_OPERATIONAL_SIGNALS = new Set([
+  "critical_risk_signup",
+  "high_risk_signup",
+  "behavioral_withdrawal_containment",
+]);
+
+/** Queue cards show evidence, not the workflow markers created from it. */
+export function reviewQueueEvidenceSignals(
+  signals: readonly string[],
+): string[] {
+  return signals.filter((signal) => !REVIEW_QUEUE_OPERATIONAL_SIGNALS.has(signal));
+}
+
+export type ReviewQueueSafeguard = {
+  title: string;
+  detail: string;
+  tone: "critical" | "high";
+};
+
+/** Replaces repetitive score copy with the account state staff must act on. */
+export function reviewQueueSafeguard(
+  signals: readonly string[],
+): ReviewQueueSafeguard | null {
+  if (signals.includes("critical_risk_signup")) {
+    return {
+      title: "Safeguards active",
+      detail:
+        "Fiat deposits, withdrawals, and tips are paused until staff approves or bans the account.",
+      tone: "critical",
+    };
+  }
+  if (signals.includes("behavioral_withdrawal_containment")) {
+    return {
+      title: "Withdrawal protection active",
+      detail:
+        "Crypto and item withdrawals are paused until staff finishes this review.",
+      tone: "high",
+    };
+  }
+  return null;
 }
