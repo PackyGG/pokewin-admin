@@ -108,7 +108,7 @@ export async function DiscordConfigSection() {
               <div className="mt-4 grid gap-3 text-[11px] sm:grid-cols-2">
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F464} Username"}</span>
-                  <code className="font-mono text-[10px]">review_me</code>
+                  <span>review_me</span>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F194} User ID"}</span>
@@ -116,15 +116,19 @@ export async function DiscordConfigSection() {
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F4CA} Risk score"}</span>
-                  <code className="font-mono text-[10px]">55 points</code>
+                  <strong>55 points</strong>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F30D} Location / country"}</span>
-                  <code className="font-mono text-[10px]">Berlin, Germany (DE)</code>
+                  <span>Berlin, Germany (DE)</span>
                 </span>
                 <span>
                   <span className="block text-muted-foreground">{"\u{1F512} Locks"}</span>
-                  <code className="font-mono text-[10px]">{"\u{2705} None"}</code>
+                  <span>{"\u{2705} None"}</span>
+                </span>
+                <span>
+                  <span className="block text-muted-foreground">{"\u{1F552} Time"}</span>
+                  <time>August 4, 2026 at 11:30 PM</time>
                 </span>
               </div>
               <div className="mt-4 border-t border-border/60 pt-3">
@@ -132,9 +136,9 @@ export async function DiscordConfigSection() {
                   {"\u{1F50E} Why it was flagged"}
                 </span>
                 <div className="mt-1 space-y-1 text-xs">
-                  <p><code>{"+25 \u{00B7} Shared device"}</code></p>
-                  <p><code>{"+20 \u{00B7} Disposable email"}</code></p>
-                  <p><code>{"+10 \u{00B7} Signup velocity"}</code></p>
+                  <p>{"\u{2022} "}<strong>+25 points</strong>{" \u{00B7} Shared device"}</p>
+                  <p>{"\u{2022} "}<strong>+20 points</strong>{" \u{00B7} Disposable email"}</p>
+                  <p>{"\u{2022} "}<strong>+10 points</strong>{" \u{00B7} Signup velocity"}</p>
                 </div>
               </div>
               <span className="mt-4 inline-flex h-8 items-center gap-1.5 rounded-md bg-amber-500 px-3 text-xs font-semibold text-white">

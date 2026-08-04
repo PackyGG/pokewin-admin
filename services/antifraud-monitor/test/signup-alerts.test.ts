@@ -103,6 +103,7 @@ test("score-21 signup delivery uses durable independent sinks", async () => {
   assert.match(source, /caseId: lowRisk \? undefined/);
   assert.match(source, /LEFT JOIN subjects subject/);
   assert.match(source, /presentation: lowRisk \? undefined : "signup-risk"/);
+  assert.match(source, /occurredAt: alert\.occurred_at/);
   assert.match(source, /"Fiat deposits"/);
   assert.match(source, /"Crypto withdrawals"/);
   assert.match(source, /"Item withdrawals"/);

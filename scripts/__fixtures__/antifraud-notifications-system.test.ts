@@ -99,6 +99,7 @@ test("Discord recipients and error destinations match the owner contract", () =>
   assert.doesNotMatch(discord, /^export const SUPPORT_USER_IDS/m);
   assert.match(discord, /components:/);
   assert.match(discord, /Why it was flagged/);
+  assert.match(discord, /SIGNUP_RISK_FIELD_NAMES\.time/);
 });
 
 test("audit stays manager-only and runtime config never renders secrets", () => {

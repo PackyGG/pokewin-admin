@@ -25,6 +25,7 @@ export const SIGNUP_RISK_FIELD_NAMES = {
   riskScore: "\u{1F4CA} Risk score",
   location: "\u{1F30D} Location / country",
   locks: "\u{1F512} Locks",
+  time: "\u{1F552} Time",
   reasons: "\u{1F50E} Why it was flagged",
 } as const;
 
@@ -208,8 +209,11 @@ function locationValue(
 }
 
 function locksValue(locks: readonly string[]): string {
-  if (locks.length === 0) return inlineCode("\u{2705} None");
-  return inlineCode(`\u{1F512} ${locks.join(" \u{00B7} ")}`);
+  if (locks.length === 0) return "\u{2705} None";
+  return clean(
+    `\u{1F512} ${locks.map((lock) => escapeMarkdown(lock, 120)).join(" \u{00B7} ")}`,
+    DISCORD_FIELD_LIMIT,
+  );
 }
 
 function signalValue(signals: readonly DiscordAlertSignal[]): string {
@@ -239,7 +243,7 @@ function compactSignalValue(signals: readonly DiscordAlertSignal[]): string {
   const lines = visible.map((signal) => {
     const points =
       signal.points > 0 ? `+${signal.points}` : String(signal.points);
-    return `\u{2022} ${inlineCode(`${points} \u{00B7} ${signal.title}`)}`;
+    return `\u{2022} **${points} points** \u{00B7} ${escapeMarkdown(signal.title, 96)}`;
   });
   const hidden = ordered.length - visible.length;
   if (hidden > 0) {
@@ -265,11 +269,12 @@ export function buildDiscordAlertPayload(
   );
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
   const signupRisk = alert.presentation === "signup-risk";
+  const occurredAt = alert.occurredAt ?? new Date();
 
   if (signupRisk) {
     fields.push({
       name: SIGNUP_RISK_FIELD_NAMES.username,
-      value: inlineCode(alert.username ?? "Unknown"),
+      value: escapeMarkdown(alert.username ?? "Unknown"),
       inline: true,
     });
     fields.push({
@@ -289,7 +294,7 @@ export function buildDiscordAlertPayload(
     fields.push({
       name: signupRisk ? SIGNUP_RISK_FIELD_NAMES.riskScore : "Risk score",
       value: signupRisk
-        ? inlineCode(`${score} points`)
+        ? `**${score} points**`
         : alert.severity
           ? `**${score} points**\n${severityLabel(alert.severity)} risk`
           : `**${score} points**`,
@@ -299,12 +304,17 @@ export function buildDiscordAlertPayload(
   if (signupRisk) {
     fields.push({
       name: SIGNUP_RISK_FIELD_NAMES.location,
-      value: inlineCode(locationValue(alert.location ?? {})),
+      value: escapeMarkdown(locationValue(alert.location ?? {})),
       inline: true,
     });
     fields.push({
       name: SIGNUP_RISK_FIELD_NAMES.locks,
       value: locksValue(alert.locks ?? []),
+      inline: true,
+    });
+    fields.push({
+      name: SIGNUP_RISK_FIELD_NAMES.time,
+      value: `<t:${Math.floor(occurredAt.getTime() / 1_000)}:F>`,
       inline: true,
     });
   } else if (alert.trigger) {
@@ -359,7 +369,7 @@ export function buildDiscordAlertPayload(
             ? "URGENT | PackyGG Fraud"
             : "Automated risk alert | PackyGG Fraud",
         },
-        timestamp: (alert.occurredAt ?? new Date()).toISOString(),
+        timestamp: occurredAt.toISOString(),
       },
     ],
     components: [
