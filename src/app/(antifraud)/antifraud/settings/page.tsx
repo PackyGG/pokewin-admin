@@ -1,38 +1,65 @@
 import { Suspense } from "react";
-import { AlertTriangle, Check, Plug, X } from "lucide-react";
 
-import {
-  PageHero,
-  PageHeroIdentity,
-  SectionHeading,
-} from "@/components/modern-panels";
+import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
-import { getAntifraudRuntimeConfig } from "@/lib/antifraud/monitor-api";
+import { TabChips } from "@/components/ux";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
-import { cn } from "@/lib/utils";
-import { DiscordConfigSection } from "./_components/discord-config-section";
-import { EngineHealthSection } from "./_components/engine-health-section";
-import {
-  SettingsTabNav,
-  type SettingsTab,
-} from "./_components/settings-tab-nav";
+import { AlertsSection } from "./_sections/alerts";
+import { AutomationSection } from "./_sections/automation";
+import { EventsSection } from "./_sections/events";
+import { FlowsSection } from "./_sections/flows";
+import { EngineHealthSection } from "./_sections/health";
+import { IntegrationsSection } from "./_sections/integrations";
+import { OverviewSection } from "./_sections/overview";
+import { ScoringSection } from "./_sections/scoring";
 
-export const metadata = { title: "Settings" };
+export const metadata = { title: "Settings · Antifraud" };
 
-export default async function SettingsPage({
+/**
+ * FRAUD SETTINGS — one page, one tab switcher, every System section.
+ *
+ * The System group used to be a nav entry per surface (Automation, Rules &
+ * scoring, Event catalog, Integrations, Config, Flows), each its own route with
+ * its own tabs — the same handful of settings scattered across six places. It
+ * is all one page now: the sidebar carries "Settings" and the sections are tabs
+ * on it. The old routes redirect to their tab so existing links and bookmarks
+ * keep working.
+ *
+ * Active-tab-only (house rule): each tab is its own async component and ONLY
+ * the selected branch is mounted, so a hidden tab never fires its reads. The
+ * `key={tab}` Suspense boundary re-suspends on every switch so the skeleton
+ * matches the incoming tab rather than the outgoing one.
+ */
+
+const SETTINGS_TABS = [
+  { value: "overview", label: "Overview" },
+  { value: "automation", label: "Automation" },
+  { value: "scoring", label: "Scoring" },
+  { value: "flows", label: "Point flows" },
+  { value: "events", label: "Events" },
+  { value: "alerts", label: "Alerts" },
+  { value: "integrations", label: "Integrations" },
+  { value: "health", label: "Engine health" },
+] as const;
+
+type SettingsTab = (typeof SETTINGS_TABS)[number]["value"];
+
+const TAB_VALUES = new Set<string>(SETTINGS_TABS.map((tab) => tab.value));
+
+function resolveTab(value: string | undefined): SettingsTab {
+  return value && TAB_VALUES.has(value) ? (value as SettingsTab) : "overview";
+}
+
+export default async function AntifraudSettingsPage({
   searchParams,
 }: {
   searchParams: Promise<{ tab?: string }>;
 }) {
   await requireAntifraudManagerPage();
-  const requestedTab = (await searchParams).tab;
-  const tab: SettingsTab =
-    requestedTab === "discord" || requestedTab === "health"
-      ? requestedTab
-      : "general";
+  const tab = resolveTab((await searchParams).tab);
 
-  // Active-tab-only: each branch owns its reads, so opening Integrations never
-  // pays for the poller/notification-route reads the Health tab needs.
+  // Shell-first: the header, the tab bar and the tab's own skeleton paint
+  // immediately; no monitor read is awaited in this body.
   return (
     <div className="space-y-4">
       <PageHero>
@@ -40,287 +67,85 @@ export default async function SettingsPage({
       </PageHero>
 
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight">Integrations</h1>
-        <p className="mt-1 max-w-3xl text-sm leading-6 text-muted-foreground">
-          What the fraud engine is wired to, whether it is answering, and where
-          its alerts are delivered.
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-cyan-600 dark:text-cyan-400">
+          Control center
+        </p>
+        <h1 className="mt-1 text-2xl font-semibold tracking-tight">Settings</h1>
+        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+          Detection, scoring, automatic account actions, alert delivery and
+          engine health — what is live, what is broken, and everything you can
+          change.
         </p>
       </div>
 
-      <SettingsTabNav active={tab} />
+      <TabChips
+        items={SETTINGS_TABS}
+        current={tab}
+        paramKey="tab"
+        defaultValue="overview"
+      />
 
-      <Suspense
-        key={tab}
-        fallback={
-          <Skeleton
-            className={
-              tab === "discord"
-                ? "h-[520px] w-full rounded-xl"
-                : "h-72 w-full rounded-xl"
-            }
-          />
-        }
-      >
-        {tab === "discord" ? (
-          <DiscordConfigSection />
+      <Suspense key={tab} fallback={<TabSkeleton tab={tab} />}>
+        {tab === "automation" ? (
+          <AutomationSection />
+        ) : tab === "scoring" ? (
+          <ScoringSection />
+        ) : tab === "flows" ? (
+          <FlowsSection />
+        ) : tab === "events" ? (
+          <EventsSection />
+        ) : tab === "alerts" ? (
+          <AlertsSection />
+        ) : tab === "integrations" ? (
+          <IntegrationsSection />
         ) : tab === "health" ? (
           <EngineHealthSection />
         ) : (
-          <IntegrationSection />
+          <OverviewSection />
         )}
       </Suspense>
     </div>
   );
 }
 
-/**
- * A pair of env vars can be half-set — URL without token, or token without URL.
- * Both halves are required, so a half-configured integration is DEAD, and it
- * must never render the same green as a working one.
- */
-type IntegrationStatus = "ready" | "partial" | "missing" | "unknown";
+function TabSkeleton({ tab }: { tab: SettingsTab }) {
+  if (tab === "flows") {
+    return (
+      <div className="grid gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
+        <Skeleton className="h-[520px] rounded-xl" />
+        <div className="space-y-4">
+          <Skeleton className="h-24 rounded-xl" />
+          <Skeleton className="h-72 rounded-xl" />
+          <Skeleton className="h-40 rounded-xl" />
+        </div>
+      </div>
+    );
+  }
 
-const STATUS_LABEL: Record<IntegrationStatus, string> = {
-  ready: "Configured",
-  partial: "Half-configured",
-  missing: "Not set",
-  unknown: "Unavailable",
-};
+  if (tab === "integrations") {
+    return <Skeleton className="h-[520px] w-full rounded-xl" />;
+  }
 
-function pairStatus(first: boolean, second: boolean): IntegrationStatus {
-  if (first && second) return "ready";
-  return first || second ? "partial" : "missing";
-}
+  if (tab === "automation") {
+    return (
+      <div className="space-y-6">
+        <Skeleton className="h-52 rounded-xl" />
+        <Skeleton className="h-72 rounded-xl" />
+        <Skeleton className="h-64 rounded-xl" />
+      </div>
+    );
+  }
 
-function reportedStatus(value: boolean | undefined): IntegrationStatus {
-  if (value === undefined) return "unknown";
-  return value ? "ready" : "missing";
-}
-
-async function IntegrationSection() {
-  // Presence only — never the value. `Boolean()` on the raw env is the whole
-  // check; nothing below ever reads a secret into the render tree.
-  const monitorUrl = Boolean(process.env.ANTIFRAUD_MONITOR_API_URL);
-  const monitorToken = Boolean(process.env.ANTIFRAUD_MONITOR_API_TOKEN);
-  const monitorStatus = pairStatus(monitorUrl, monitorToken);
-  const runtime = await getAntifraudRuntimeConfig();
-  const runtimeData = runtime.data ?? undefined;
-  const liveValues = runtimeData
-    ? Object.values(runtimeData.live)
-    : undefined;
-  const liveStatus: IntegrationStatus = liveValues
-    ? liveValues.every(Boolean)
-      ? "ready"
-      : liveValues.some(Boolean)
-        ? "partial"
-        : "missing"
-    : "unknown";
-  const receiverIngestConfigured = Boolean(
-    process.env.ANTIFRAUD_INGEST_SECRET,
-  );
-  const senderIngestValues = runtimeData
-    ? Object.values(runtimeData.ingest)
-    : undefined;
-  const ingestStatus: IntegrationStatus = senderIngestValues
-    ? receiverIngestConfigured && senderIngestValues.every(Boolean)
-      ? "ready"
-      : receiverIngestConfigured || senderIngestValues.some(Boolean)
-        ? "partial"
-        : "missing"
-    : "unknown";
-  const contractNote = (
-    provider:
-      | "fingerprint"
-      | "proxycheck"
-      | "abstract_ip"
-      | "abstract_email"
-      | "opportify"
-      | "maxmind",
-    fallback: string,
-  ) => {
-    const contract = runtimeData?.providerContracts?.[provider];
-    return contract
-      ? `${contract.model} · ${contract.version} · ${contract.method} ${contract.endpoint} · required input: ${contract.requiredDatum.replaceAll("_", " ")}. Each compatible signup check runs independently.`
-      : fallback;
-  };
-
-  const integrations: Array<{
-    name: string;
-    envs: readonly string[];
-    status: IntegrationStatus;
-    note: string;
-  }> = [
-    {
-      name: "Signed ingest webhook",
-      envs: ["ANTIFRAUD_INGEST_URL", "ANTIFRAUD_INGEST_SECRET"],
-      status: ingestStatus,
-      note:
-        ingestStatus === "partial"
-          ? "The dashboard receiver or monitor sender is incomplete, so durable delivery is not working end to end."
-          : "Shared HMAC delivery from committed monitor risk events, including score-50 signups, into Account Review.",
-    },
-    {
-      name: "Live monitor API",
-      envs: ["ANTIFRAUD_MONITOR_API_URL", "ANTIFRAUD_MONITOR_API_TOKEN"],
-      status: monitorStatus,
-      note:
-        monitorStatus === "partial"
-          ? `Both halves are required. ${
-              monitorUrl
-                ? "ANTIFRAUD_MONITOR_API_TOKEN"
-                : "ANTIFRAUD_MONITOR_API_URL"
-            } is missing, so the Live Monitor and Risk Scoring pages read nothing.`
-          : "Base URL plus bearer token for the monitor service. Drives the Live Monitor console and the Risk Scoring page.",
-    },
-    {
-      name: "Monitor live transport",
-      envs: ["REDIS_URL", "API_TOKEN", "API_ADMIN_TOKEN", "ALLOWED_ORIGINS"],
-      status: liveStatus,
-      note:
-        liveStatus === "partial"
-          ? "The deployed monitor reports an incomplete Redis, token, or exact-origin configuration."
-          : "Authoritative status reported by the deployed monitor; values are never returned.",
-    },
-    {
-      name: "Fingerprint Pro Plus",
-      envs: ["FINGERPRINT_SECRET_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.fingerprintConfigured),
-      note: contractNote(
-        "fingerprint",
-        "Provider presence reported by the deployed monitor service.",
-      ),
-    },
-    {
-      name: "ProxyCheck v3 Pro",
-      envs: ["PROXYCHECK_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.proxycheckConfigured),
-      note: contractNote(
-        "proxycheck",
-        "Provider presence reported by the deployed monitor service.",
-      ),
-    },
-    {
-      name: "Abstract IP Intelligence",
-      envs: ["ABSTRACT_IP_INTELLIGENCE_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.abstractIpConfigured),
-      note: contractNote(
-        "abstract_ip",
-        "Signup IP security, network, and location evidence.",
-      ),
-    },
-    {
-      name: "Abstract Email Reputation",
-      envs: ["ABSTRACT_EMAIL_REPUTATION_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.abstractEmailConfigured),
-      note: contractNote(
-        "abstract_email",
-        "Signup deliverability, catch-all, disposable, quality, and domain-risk evidence.",
-      ),
-    },
-    {
-      name: "Opportify Full Fraud Check",
-      envs: ["OPPORTIFY_API_KEY"],
-      status: reportedStatus(runtimeData?.providers.opportifyConfigured),
-      note: contractNote(
-        "opportify",
-        "Private server-side signup analysis across email, IP, username content, provider velocity, and geographic consistency.",
-      ),
-    },
-    {
-      name: "MaxMind minFraud Factors",
-      envs: ["MAXMIND_ACCOUNT_ID", "MAXMIND_LICENSE_KEY"],
-      status: reportedStatus(runtimeData?.providers.maxmindFactorsConfigured),
-      note: contractNote(
-        "maxmind",
-        "Primary server-side risk model for signup identity, IP, email, device, geography, payments, transfers, and payouts.",
-      ),
-    },
-    {
-      name: "MaxMind risk-score alerts",
-      envs: ["MAXMIND_ALERT_WEBHOOK_SECRET"],
-      status: reportedStatus(runtimeData?.providers.maxmindAlertsConfigured),
-      note: "Signed webhook intake for MaxMind score escalations and post-transaction discoveries.",
-    },
-    {
-      name: "Discord bot delivery",
-      envs: [
-        "ADMIN_GUILD_ID",
-        "ANTIFRAUD_INGEST_URL",
-        "ANTIFRAUD_INGEST_SECRET",
-      ],
-      status: reportedStatus(runtimeData?.discord.botQueueConfigured),
-      note: "Every antifraud alert — signups, rules, fiat, containment, errors, webapp outages — is queued for the Discord bot and posted to the channel assigned on Discord Routing. There are no per-destination webhook URLs any more.",
-    },
-  ];
-
+  // Overview, scoring, events, alerts and health all open on a KPI strip.
   return (
-    <div className="space-y-4">
-      <SectionHeading icon={Plug} title="Backend integrations" />
-      <p className="text-xs text-muted-foreground">
-        Presence only. Secrets are never shown on this page.
-      </p>
-
-      <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-        {integrations.map((integration) => (
-          <li
-            key={integration.name}
-            className="flex items-start gap-3 px-4 py-3"
-          >
-            <span
-              className={cn(
-                "mt-0.5 flex size-5 shrink-0 items-center justify-center rounded-md",
-                integration.status === "ready" &&
-                  "bg-emerald-500/10 text-emerald-500",
-                integration.status === "partial" &&
-                  "bg-amber-500/10 text-amber-500",
-                integration.status === "unknown" &&
-                  "bg-amber-500/10 text-amber-500",
-                integration.status === "missing" &&
-                  "bg-muted text-muted-foreground",
-              )}
-            >
-              {integration.status === "ready" ? (
-                <Check className="size-3" />
-              ) : integration.status === "partial" ||
-                integration.status === "unknown" ? (
-                <AlertTriangle className="size-3" />
-              ) : (
-                <X className="size-3" />
-              )}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-medium">{integration.name}</span>
-                {integration.envs.map((env) => (
-                  <code
-                    key={env}
-                    className="rounded-sm bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                  >
-                    {env}
-                  </code>
-                ))}
-              </span>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">
-                {integration.note}
-              </span>
-            </span>
-            <span
-              className={cn(
-                "shrink-0 text-[10px] font-semibold uppercase tracking-wide",
-                integration.status === "ready" &&
-                  "text-emerald-600 dark:text-emerald-400",
-                integration.status === "partial" &&
-                  "text-amber-600 dark:text-amber-400",
-                integration.status === "unknown" &&
-                  "text-amber-600 dark:text-amber-400",
-                integration.status === "missing" && "text-muted-foreground",
-              )}
-            >
-              {STATUS_LABEL[integration.status]}
-            </span>
-          </li>
+    <div className="space-y-6">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }, (_, index) => (
+          <Skeleton key={index} className="h-24 rounded-xl" />
         ))}
-      </ul>
+      </div>
+      <Skeleton className="h-64 rounded-xl" />
+      <Skeleton className="h-40 rounded-xl" />
     </div>
   );
 }

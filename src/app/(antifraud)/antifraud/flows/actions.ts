@@ -55,8 +55,7 @@ export async function saveAntifraudFlow(
       idempotencyKey: data.idempotencyKey,
     },
   });
-  revalidatePath("/antifraud/flows");
-  revalidatePath("/antifraud/points");
+  revalidatePath("/antifraud/settings");
   revalidatePath("/antifraud/monitor");
   return saved;
 }

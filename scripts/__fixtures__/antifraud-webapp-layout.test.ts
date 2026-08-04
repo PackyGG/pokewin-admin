@@ -38,11 +38,9 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Banned users",
     "Risk locations",
     "Sign-up checks",
-    // System group — one entry per destination an operator actually edits.
-    "Automation",
-    "Rules & scoring",
-    "Event catalog",
-    "Integrations",
+    // System group — one Settings page (every config section is a tab on it)
+    // plus the staff audit log.
+    "Settings",
     "Audit log",
   ]) {
     assert.match(
@@ -66,7 +64,9 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
   assert.doesNotMatch(sidebar, /label: "Providers"/);
-  assert.doesNotMatch(sidebar, /label: "Config"|label: "Risk engine"|label: "Settings"/);
+  // "Settings" is the System group's single entry now (every config section is
+  // a tab on it); "Config" and "Risk engine" stay retired.
+  assert.doesNotMatch(sidebar, /label: "Config"|label: "Risk engine"/);
   for (const removedItem of [
     "System health",
     "API",

@@ -8,7 +8,7 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { setAntifraudScoreWeight } from "./actions";
+import { setAntifraudScoreWeight } from "../actions";
 
 export function ScoreWeightEditor({
   weightKey,

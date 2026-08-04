@@ -92,7 +92,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
       title: "Monitor API is not configured",
       detail:
         "Neither ANTIFRAUD_MONITOR_API_URL nor ANTIFRAUD_MONITOR_API_TOKEN is set, so scoring, point flows, the event catalog and the live console all read nothing.",
-      href: "/antifraud/settings",
+      href: "/antifraud/settings?tab=integrations",
       actionLabel: "Inspect integrations",
     });
   } else if (!monitorPairComplete) {
@@ -105,7 +105,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
           ? "ANTIFRAUD_MONITOR_API_TOKEN"
           : "ANTIFRAUD_MONITOR_API_URL"
       } is missing, so every monitor-backed page renders empty.`,
-      href: "/antifraud/settings",
+      href: "/antifraud/settings?tab=integrations",
       actionLabel: "Inspect integrations",
     });
   }
@@ -117,7 +117,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
       title: "The monitor is not answering",
       detail:
         "The deployed monitor did not return its runtime configuration, so provider and transport status below cannot be trusted.",
-      href: "/antifraud/settings",
+      href: "/antifraud/settings?tab=integrations",
       actionLabel: "Inspect integrations",
     });
   }
@@ -133,7 +133,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
         severity: "critical",
         title: "Live transport is incomplete",
         detail: `The deployed monitor reports a missing ${list(deadTransport)}. The live event stream degrades or stops without it.`,
-        href: "/antifraud/settings",
+        href: "/antifraud/settings?tab=integrations",
         actionLabel: "Inspect integrations",
       });
     }
@@ -149,7 +149,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
         title: "Signed ingest is not working end to end",
         detail:
           "Committed monitor risk events reach Account Review over an HMAC-signed webhook. With either the sender or the receiver half missing, cases stop arriving in the dashboard.",
-        href: "/antifraud/settings",
+        href: "/antifraud/settings?tab=integrations",
         actionLabel: "Inspect integrations",
       });
     }
@@ -163,7 +163,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
         severity: "warning",
         title: `${missingProviders.length} signup provider${missingProviders.length === 1 ? "" : "s"} not configured`,
         detail: `${list(missingProviders)} contribute no evidence, so signup assessments score on fewer signals than the weights assume.`,
-        href: "/antifraud/settings",
+        href: "/antifraud/settings?tab=integrations",
         actionLabel: "Inspect integrations",
       });
     }
@@ -177,8 +177,8 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
         title: "Discord delivery is not configured",
         detail:
           "Every antifraud alert is queued for the Discord bot. With the queue unconfigured, no routed alert is posted anywhere.",
-        href: "/antifraud/settings?tab=discord",
-        actionLabel: "Open Discord settings",
+        href: "/antifraud/settings?tab=alerts",
+        actionLabel: "Open alert delivery",
       });
     }
   }
@@ -255,8 +255,8 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
       title: "Scoring configuration is unreadable",
       detail:
         "Risk weights and point flows could not be loaded, so this page cannot confirm which detections are active.",
-      href: "/antifraud/points",
-      actionLabel: "Open rules & scoring",
+      href: "/antifraud/settings?tab=scoring",
+      actionLabel: "Open scoring",
     });
   }
 
@@ -268,7 +268,7 @@ export function collectSystemIssues(input: SystemIssueInput): SystemIssue[] {
       severity: "warning",
       title: `${disabledFlows.length} point flow${disabledFlows.length === 1 ? " is" : "s are"} disabled`,
       detail: `${list(disabledFlows.map((rule) => rule.name))} ${disabledFlows.length === 1 ? "is" : "are"} configured but not evaluated during live monitoring.`,
-      href: "/antifraud/points?tab=flows",
+      href: "/antifraud/settings?tab=flows",
       actionLabel: "Open flow builder",
     });
   }

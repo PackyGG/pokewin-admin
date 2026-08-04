@@ -1,21 +1,39 @@
+import { Suspense } from "react";
 import { BellRing, CheckCircle2, CircleAlert, Hash } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { KpiTile, SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { DiscordConfigSection } from "../_components/discord-config-section";
 import { readDiscordConfig } from "../_lib/read-discord-config";
 import { EmptyState } from "./shared";
 
 /**
- * DELIVERY TAB — where every enabled alert lands.
+ * ALERTS TAB — where every enabled alert lands, plus the delivery contract.
  *
  * Unrouted alerts are sorted to the top: an enabled action with no channel is
  * a silent failure (it fires and lands nowhere), so it must not be buried at
  * the bottom of an alphabetical list.
+ *
+ * Assigning a channel is still the Discord Routing workspace's job (it owns the
+ * write path); this tab is the read that tells you whether you need to go
+ * there.
  */
-export async function AutomationDelivery() {
+export async function AlertsSection() {
+  return (
+    <div className="space-y-6">
+      <AlertCoverage />
+      <Suspense fallback={<Skeleton className="h-[420px] w-full rounded-xl" />}>
+        <DiscordConfigSection />
+      </Suspense>
+    </div>
+  );
+}
+
+async function AlertCoverage() {
   const config = await readDiscordConfig();
 
   if (!config) {

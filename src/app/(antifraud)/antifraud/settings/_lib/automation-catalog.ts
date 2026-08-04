@@ -53,8 +53,8 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "antifraud.signup_critical",
     ],
     controls: [
-      { label: "Edit risk points", href: "/antifraud/points" },
-      { label: "Provider status", href: "/antifraud/settings" },
+      { label: "Edit risk points", href: "/antifraud/settings?tab=scoring" },
+      { label: "Provider status", href: "/antifraud/settings?tab=integrations" },
       { label: "Review queue", href: "/antifraud/reviews" },
     ],
     mode: "mixed",
@@ -72,8 +72,8 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     ],
     discordEvents: ["antifraud.rule_matched"],
     controls: [
-      { label: "Edit point flows", href: "/antifraud/points?tab=flows" },
-      { label: "Browse event sources", href: "/antifraud/events" },
+      { label: "Edit point flows", href: "/antifraud/settings?tab=flows" },
+      { label: "Browse event sources", href: "/antifraud/settings?tab=events" },
     ],
     mode: "editable",
     icon: ListChecks,
@@ -91,7 +91,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: ["antifraud.rule_matched"],
     controls: [
       { label: "Review cases", href: "/antifraud/reviews" },
-      { label: "Edit related point flows", href: "/antifraud/points?tab=flows" },
+      { label: "Edit related point flows", href: "/antifraud/settings?tab=flows" },
     ],
     mode: "mixed",
     icon: Network,
@@ -173,7 +173,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: ["antifraud.fiat_risk", "antifraud.fiat_operations"],
     controls: [
       { label: "Open deposit queue", href: "/antifraud/fiat-deposits" },
-      { label: "Edit risk points", href: "/antifraud/points" },
+      { label: "Edit risk points", href: "/antifraud/settings?tab=scoring" },
       { label: "Refund operations", href: "/antifraud/refunds" },
     ],
     mode: "mixed",
@@ -192,7 +192,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     discordEvents: [],
     controls: [
       { label: "Inspect decision policy", href: "/antifraud/fiat-eligibility" },
-      { label: "Global Fiat review", href: "/antifraud/automation?tab=controls" },
+      { label: "Global Fiat review", href: "/antifraud/settings?tab=automation" },
       { label: "Screen access cohorts", href: "/antifraud/fiat-perks" },
     ],
     mode: "mixed",
@@ -275,7 +275,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     ],
     controls: [
       { label: "Edit error routing", href: "/antifraud/discord" },
-      { label: "Inspect integrations", href: "/antifraud/settings" },
+      { label: "Inspect integrations", href: "/antifraud/settings?tab=integrations" },
     ],
     mode: "mixed",
     icon: CircleAlert,

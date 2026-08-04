@@ -6,22 +6,19 @@ import { usePathname } from "next/navigation";
 import {
   Activity,
   BookOpen,
-  Bot,
   Banknote,
   ChevronRight,
   Fingerprint,
-  Gauge,
   LayoutDashboard,
-  ListChecks,
   MailWarning,
   MapPinned,
   Network,
-  Plug,
   RadioTower,
   RotateCcw,
   ScanSearch,
   ScrollText,
   ShieldAlert,
+  SlidersHorizontal,
   Webhook,
   type LucideIcon,
 } from "lucide-react";
@@ -148,20 +145,14 @@ const GUIDE_NAV: NavItem[] = [
 ];
 
 /**
- * System — how the fraud engine is configured, and whether it is healthy.
- *
- * This used to be two entries ("Automation & rules" + "Audit log") in front of
- * five real pages: Rules & scoring, the event catalog, integrations and the
- * Fiat switch were all reachable only by clicking a card on the Automation
- * page, so nothing in the nav said they existed. Each destination that an
- * operator edits now has its own entry, and each of those pages carries its
- * own tabs for its sections.
+ * System — one Settings page carrying every configuration section as a tab
+ * (overview, automation, scoring, point flows, events, alerts, integrations,
+ * engine health), plus the staff audit log, which is a record rather than a
+ * setting. The old per-surface routes (`/automation`, `/points`, `/events`,
+ * `/config`, `/flows`) redirect to their tab.
  */
 const SYSTEM_NAV: NavItem[] = [
-  { label: "Automation", href: "/antifraud/automation", icon: Bot },
-  { label: "Rules & scoring", href: "/antifraud/points", icon: Gauge },
-  { label: "Event catalog", href: "/antifraud/events", icon: ListChecks },
-  { label: "Integrations", href: "/antifraud/settings", icon: Plug },
+  { label: "Settings", href: "/antifraud/settings", icon: SlidersHorizontal },
   {
     label: "Audit log",
     href: "/antifraud/audit",

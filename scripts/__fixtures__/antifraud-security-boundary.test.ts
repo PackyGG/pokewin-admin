@@ -129,7 +129,9 @@ test("every antifraud Server Action file has a live server-side gate", () => {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const path = join(directory, entry.name);
       if (entry.isDirectory()) walk(path);
-      else if (entry.name === "actions.ts" || entry.name === "refund-actions.ts") {
+      // Any `*actions.ts`, not just the two canonical names: a rename must not
+      // be able to quietly drop a Server Action file out of this gate check.
+      else if (/actions\.ts$/.test(entry.name)) {
         actionFiles.push(path);
       }
     }

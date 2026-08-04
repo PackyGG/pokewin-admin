@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import type { AntifraudAnalysisRule } from "@/lib/antifraud/network-api";
-import { setAntifraudAnalysisRule } from "./actions";
+import { setAntifraudAnalysisRule } from "../actions";
 
 export function AnalysisRuleEditor({
   rule,

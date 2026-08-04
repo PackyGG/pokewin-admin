@@ -28,14 +28,14 @@ const fraudConfigPage = read(
 const fraudSidebar = read(
   "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
 );
-const automation = read(
-  "src/app/(antifraud)/antifraud/automation/page.tsx",
+const settingsPage = read(
+  "src/app/(antifraud)/antifraud/settings/page.tsx",
 );
-const automationControls = read(
-  "src/app/(antifraud)/antifraud/automation/_sections/controls.tsx",
+const settingsAutomation = read(
+  "src/app/(antifraud)/antifraud/settings/_sections/automation.tsx",
 );
 const automationCatalog = read(
-  "src/app/(antifraud)/antifraud/automation/automation-catalog.ts",
+  "src/app/(antifraud)/antifraud/settings/_lib/automation-catalog.ts",
 );
 const appHosts = read("src/lib/app-hosts.ts");
 const securityLoader = read(
@@ -87,9 +87,9 @@ test("global Fiat switch uses the backend-owned automatic-credit contract", () =
   assert.match(fiatConfigApi, /ResponseSchema\.safeParse/);
   assert.match(fraudConfigActions, /requireAntifraudManager\(/);
   assert.match(fraudConfigActions, /fiat_deposit_automatic_credit_updated/);
-  // The switch renders on the Automation control center now, so that is the
-  // path a successful toggle must revalidate.
-  assert.match(fraudConfigActions, /revalidatePath\("\/antifraud\/automation"\)/);
+  // The switch renders on the Fraud Settings page now, so that is the path a
+  // successful toggle must revalidate.
+  assert.match(fraudConfigActions, /revalidatePath\("\/antifraud\/settings"\)/);
 });
 
 test("global switch confirms the production-impacting policy change", () => {
@@ -100,25 +100,31 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
 });
 
-test("dedicated Fiat switch lives in Automation controls and stays hidden from raw Security config", () => {
-  // `/antifraud/config` is a guarded redirect into the Automation control
-  // center; the switch itself renders on that page's Controls tab.
+test("dedicated Fiat switch lives on the Settings Automation tab and stays hidden from raw Security config", () => {
+  // `/antifraud/config` is a guarded redirect into Fraud Settings; the switch
+  // itself renders on that page's Automation tab.
   assert.match(fraudConfigPage, /requireAntifraudManagerPage\(\)/);
   assert.match(
     fraudConfigPage,
-    /redirect\("\/antifraud\/automation\?tab=controls"\)/,
+    /redirect\("\/antifraud\/settings\?tab=automation"\)/,
   );
-  assert.match(automationControls, /getFiatDepositAutomaticCreditConfig\(\)/);
+  assert.match(settingsAutomation, /getFiatDepositAutomaticCreditConfig\(\)/);
   assert.match(
-    automationControls,
+    settingsAutomation,
     /initialEnabled=\{config\.fiat_deposit_automatic_credit_enabled\}/,
   );
-  // Controls is a real tab on the Automation page, so the redirect above lands
-  // somewhere that actually renders.
-  assert.match(automation, /\{ value: "controls", label: "Controls" \}/);
-  assert.match(automation, /tab === "controls" \? \(\s*<AutomationControls \/>/);
-  assert.match(fraudSidebar, /label: "Automation"/);
-  assert.match(automationCatalog, /href: "\/antifraud\/automation\?tab=controls"/);
+  // Automation is a real tab, so the redirect above lands somewhere that
+  // actually renders.
+  assert.match(settingsPage, /\{ value: "automation", label: "Automation" \}/);
+  assert.match(
+    settingsPage,
+    /tab === "automation" \? \(\s*<AutomationSection \/>/,
+  );
+  assert.match(fraudSidebar, /label: "Settings"/);
+  assert.match(
+    automationCatalog,
+    /href: "\/antifraud\/settings\?tab=automation"/,
+  );
   assert.doesNotMatch(fraudSidebar, /href: "\/antifraud\/config"/);
   assert.match(
     appHosts,

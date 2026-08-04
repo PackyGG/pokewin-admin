@@ -36,7 +36,7 @@ test("Opportify is visible as independent signup evidence", async () => {
   const [server, schema, settings, migration] = await Promise.all([
     source("services/antifraud-monitor/src/server.ts"),
     source("src/lib/antifraud/signups.ts"),
-    source("src/app/(antifraud)/antifraud/settings/page.tsx"),
+    source("src/app/(antifraud)/antifraud/settings/_sections/integrations.tsx"),
     source(
       "services/antifraud-monitor/migrations/036_opportify_signup_intelligence.sql",
     ),

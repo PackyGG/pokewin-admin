@@ -21,7 +21,7 @@ import {
 } from "@/lib/antifraud/monitor-api";
 import { cn } from "@/lib/utils";
 import { formatRelative } from "@/lib/utils/format";
-import { AUTOMATION_FLOWS } from "../automation-catalog";
+import { AUTOMATION_FLOWS } from "../_lib/automation-catalog";
 import {
   collectSystemIssues,
   type IssueSeverity,
@@ -35,7 +35,7 @@ import { readDiscordConfig } from "../_lib/read-discord-config";
  * Everything here is derived from the same reads the deeper tabs use, so the
  * numbers cannot drift from the pages an operator clicks through to.
  */
-export async function AutomationOverview() {
+export async function OverviewSection() {
   // Presence only — the values are never read into the render tree.
   const monitorApiUrlConfigured = Boolean(process.env.ANTIFRAUD_MONITOR_API_URL);
   const monitorApiTokenConfigured = Boolean(

@@ -33,7 +33,7 @@ export async function setAntifraudScoreWeight(input: unknown): Promise<void> {
       idempotencyKey: parsed.data.idempotencyKey,
     },
   });
-  revalidatePath("/antifraud/points");
+  revalidatePath("/antifraud/settings");
 }
 
 const analysisRuleSchema = z.object({
@@ -57,5 +57,5 @@ export async function setAntifraudAnalysisRule(input: unknown): Promise<void> {
     eventType: "antifraud_analysis_rule_updated",
     metadata: parsed.data,
   });
-  revalidatePath("/antifraud/points");
+  revalidatePath("/antifraud/settings");
 }

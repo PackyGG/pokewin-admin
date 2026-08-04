@@ -49,7 +49,7 @@ test("the duplicate need-review signup route is retired without touching review 
     "drizzle/admin/migrations/20260804_retire_signup_need_review_route.sql",
   );
   const catalog = read(
-    "src/app/(antifraud)/antifraud/automation/automation-catalog.ts",
+    "src/app/(antifraud)/antifraud/settings/_lib/automation-catalog.ts",
   );
 
   assert.match(migration, /channel_id = '1532248557740884039'/);
