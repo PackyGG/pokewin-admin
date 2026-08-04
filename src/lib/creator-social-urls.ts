@@ -4,15 +4,21 @@ import { and, eq } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { creator_socials } from "@/lib/db-schema/admin/schema";
 
-/** Trimmed URL fields read from `creator_socials` rows for one creator. */
+/**
+ * Trimmed URL fields read from `creator_socials` rows for one creator.
+ *
+ * The hand-typed Discord channel URL that used to live here is GONE: the
+ * creator↔Discord link now comes from the Discord creator-setup bot
+ * (`discord_creator_setups`, see `src/lib/creator-discord-links.ts`), and the
+ * `discord_channel_url` column has been dropped from the admin DB.
+ */
 export type CreatorSocialUrls = {
-  discordChannelUrl: string | null;
   rewardPageUrl: string | null;
 };
 
 /**
- * Read discord-channel + reward-page URLs for a creator. Scans all
- * `creator_socials` rows — values are stored on the discord row in practice
+ * Read the reward-page URL for a creator. Scans all `creator_socials` rows —
+ * the value is stored on the (now display-retired) discord row in practice,
  * but any non-null column wins so reads stay resilient.
  */
 export async function getCreatorSocialUrls(
@@ -20,19 +26,13 @@ export async function getCreatorSocialUrls(
 ): Promise<CreatorSocialUrls> {
   const rows = await adminDrizzle.select({
     platform: creator_socials.platform,
-    discord_channel_url: creator_socials.discord_channel_url,
     reward_page_url: creator_socials.reward_page_url,
   }).from(creator_socials).where(eq(creator_socials.target_user_id, targetUserId));
 
-  const discordRow = rows.find((r) => r.platform === "discord");
-  const discordChannelUrl =
-    discordRow?.discord_channel_url?.trim() ||
-    rows.find((r) => r.discord_channel_url?.trim())?.discord_channel_url?.trim() ||
-    null;
   const rewardPageUrl =
     rows.find((r) => r.reward_page_url?.trim())?.reward_page_url?.trim() || null;
 
-  return { discordChannelUrl, rewardPageUrl };
+  return { rewardPageUrl };
 }
 
 function normalizeUrl(raw: string, label: string): string {
@@ -52,32 +52,10 @@ function normalizeUrl(raw: string, label: string): string {
 }
 
 /**
- * Persist a Discord channel URL on the creator's discord `creator_socials` row.
- * Creates the discord row with a placeholder username when missing (reward-only
- * writes can land before the Discord ID is saved).
+ * Persist a reward-page URL. The `discord` row is the historical carrier for
+ * this value — it is no longer rendered as a social anywhere (see
+ * `isRetiredSocialPlatform`), it just holds the reward-page column.
  */
-export async function persistDiscordChannelUrl(
-  targetUserId: string,
-  channelUrl: string,
-  existingDiscordUsername?: string | null,
-): Promise<void> {
-  const normalized = normalizeUrl(channelUrl, "Discord channel link");
-
-  await adminDrizzle.insert(creator_socials).values({
-      target_user_id: targetUserId,
-      platform: "discord",
-      username: existingDiscordUsername?.trim() || "pending",
-      discord_channel_url: normalized,
-    }).onConflictDoUpdate({
-      target: [creator_socials.target_user_id, creator_socials.platform],
-      set: {
-      discord_channel_url: normalized,
-      updated_at: new Date().toISOString(),
-      },
-  });
-}
-
-/** Persist a reward-page URL (discord row carrier when present). */
 export async function persistRewardPageUrl(
   targetUserId: string,
   rewardUrl: string,
@@ -97,16 +75,6 @@ export async function persistRewardPageUrl(
       updated_at: new Date().toISOString(),
       },
   });
-}
-
-/** Clear the Discord channel URL for a creator (no-op when unset). */
-export async function clearDiscordChannelUrl(
-  targetUserId: string,
-): Promise<void> {
-  await adminDrizzle.update(creator_socials)
-    .set({ discord_channel_url: null, updated_at: new Date().toISOString() })
-    .where(and(eq(creator_socials.target_user_id, targetUserId),
-      eq(creator_socials.platform, "discord")));
 }
 
 /** Clear the reward-page URL for a creator (no-op when unset). */

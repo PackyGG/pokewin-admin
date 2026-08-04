@@ -14,7 +14,7 @@ import { LinkButton } from "./link-button";
 // — not editing — them, the same cross-group reuse the Hub dashboard does.
 import { MaskedEmail } from "../../../../../(admin)/creators/[userId]/masked-email";
 import { getCreatorHeaderSocials } from "../../../../../(admin)/creators/[userId]/_queries/header-socials";
-import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
+import { getDiscordLinkForUser } from "@/lib/creator-discord-links";
 
 import { SocialButtons } from "./social-buttons";
 
@@ -22,9 +22,10 @@ import { SocialButtons } from "./social-buttons";
  * Creator detail top banner (identity bar).
  *
  * Renders the creator's profile picture, username, creator code chip(s),
- * email with a hide/show toggle, a button per linked social, and a dedicated
- * Discord-channel button. Mirrors the owner spec for the `creators/[id]`
- * banner and matches the Hub's PageHero look.
+ * email with a hide/show toggle, a button per linked social, and — when the
+ * Discord creator-setup bot has an active link for them — a Discord chip.
+ * Mirrors the owner spec for the `creators/[id]` banner and matches the Hub's
+ * PageHero look.
  *
  * The cheap header (username / image / email / primary code) is passed in
  * from the page's critical-path `getCreatorHeader` read so the banner paints
@@ -32,8 +33,9 @@ import { SocialButtons } from "./social-buttons";
  * thin admin-DB read (`getCreatorHeaderSocials`) so they never block the
  * banner text.
  *
- * Discord channel link is read from `creator_socials.discord_channel_url`
- * (admin DB) and passed to `SocialButtons`.
+ * The Discord link comes from the BOT (`getDiscordLinkForUser` →
+ * `discord_creator_setups`, admin DB), not from a hand-typed
+ * `creator_socials` row, and streams in the same boundary as the socials.
  */
 
 export type CreatorBannerHeader = {
@@ -168,7 +170,7 @@ export function CreatorBanner({
             <MaskedEmail email={header.email} />
           )}
 
-          {/* Social buttons + Discord channel — streamed in their own
+          {/* Social buttons + the bot's Discord link — streamed in their own
               boundary off a thin admin-DB read so the banner text never
               waits on it. A failure degrades to the empty state. */}
           <Suspense
@@ -198,17 +200,23 @@ async function BannerSocials({ userId }: { userId: string }) {
   // down), but the failure is DISCRIMINATED: `ok: false` renders a muted
   // "socials unavailable" chip instead of the indistinguishable
   // "No socials linked" empty state a real empty list shows.
-  const [socialsResult, urls] = await Promise.all([
+  const [socialsResult, discordLink] = await Promise.all([
     getCreatorHeaderSocials(userId)
       .then((socials) => ({ ok: true as const, socials }))
       .catch((err: unknown) => {
         console.error("[creator-hub.creators.banner] socials read failed:", err);
         return { ok: false as const };
       }),
-    getCreatorSocialUrls(userId).catch(() => ({
-      discordChannelUrl: null,
-      rewardPageUrl: null,
-    })),
+    // Bot-owned Discord link (admin DB). Best-effort: a blip renders no
+    // Discord chip rather than taking the banner down — the same
+    // treatment the socials leg gets.
+    getDiscordLinkForUser(userId).catch((err: unknown) => {
+      console.error(
+        "[creator-hub.creators.banner] discord link read failed:",
+        err,
+      );
+      return null;
+    }),
   ]);
 
   if (!socialsResult.ok) {
@@ -221,9 +229,6 @@ async function BannerSocials({ userId }: { userId: string }) {
   }
 
   return (
-    <SocialButtons
-      socials={socialsResult.socials}
-      discordChannelUrl={urls.discordChannelUrl}
-    />
+    <SocialButtons socials={socialsResult.socials} discordLink={discordLink} />
   );
 }

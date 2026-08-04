@@ -1,3 +1,4 @@
+import type { ComponentType } from "react";
 import {
   ClipboardList,
   Instagram,
@@ -5,9 +6,9 @@ import {
   Music2,
   Twitch,
   Youtube,
-  type LucideIcon,
 } from "lucide-react";
 
+import { DiscordIcon, KickIcon } from "@/components/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import type { CreatorSocialPlatform } from "@/lib/backend-api";
@@ -52,7 +53,12 @@ export function CreatorHref(id: string): string {
  */
 export const PLATFORM_META: Record<
   CreatorSocialPlatform,
-  { icon: LucideIcon; glyphClass: string; label: string }
+  {
+    /** Widened past `LucideIcon` so the brand glyphs (Kick/Discord) fit. */
+    icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+    glyphClass: string;
+    label: string;
+  }
 > = {
   twitch: {
     icon: Twitch,
@@ -65,7 +71,7 @@ export const PLATFORM_META: Record<
     label: "YouTube",
   },
   kick: {
-    icon: Twitch,
+    icon: KickIcon,
     glyphClass: "text-emerald-600 dark:text-emerald-400",
     label: "Kick",
   },
@@ -85,7 +91,7 @@ export const PLATFORM_META: Record<
     label: "TikTok",
   },
   discord: {
-    icon: MessageCircle,
+    icon: DiscordIcon,
     glyphClass: "text-indigo-600 dark:text-indigo-400",
     label: "Discord",
   },

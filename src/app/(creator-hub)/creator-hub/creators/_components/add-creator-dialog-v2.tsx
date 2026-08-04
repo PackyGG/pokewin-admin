@@ -69,8 +69,6 @@ export function AddCreatorDialogV2() {
   const requestIdRef = useRef(0);
 
   // Profile form fields
-  const [discordId, setDiscordId] = useState("");
-  const [discordChannelUrl, setDiscordChannelUrl] = useState("");
   const [twitter, setTwitter] = useState("");
   const [kick, setKick] = useState("");
   const [rewardPageUrl, setRewardPageUrl] = useState("");
@@ -132,8 +130,6 @@ export function AddCreatorDialogV2() {
     setResults([]);
     setIsSearching(false);
     setCandidate(null);
-    setDiscordId("");
-    setDiscordChannelUrl("");
     setTwitter("");
     setKick("");
     setRewardPageUrl("");
@@ -208,21 +204,11 @@ export function AddCreatorDialogV2() {
 
   function handlePromote() {
     if (!candidate) return;
-    if (!discordId.trim()) {
-      toast.error("Discord ID is required");
-      return;
-    }
-    if (!discordChannelUrl.trim()) {
-      toast.error("Discord channel link is required");
-      return;
-    }
 
     startSubmit(async () => {
       try {
         const result = await completeCreatorOnboarding({
           userId: candidate.userId,
-          discordId: discordId.trim(),
-          discordChannelUrl: discordChannelUrl.trim(),
           twitter: twitter.trim() || undefined,
           kick: kick.trim() || undefined,
           rewardPageUrl: rewardPageUrl.trim() || "",
@@ -254,7 +240,11 @@ export function AddCreatorDialogV2() {
         if (!next) reset();
       }}
     >
-      <DialogTrigger render={<Button size="sm" />}>
+      {/* Sized to match the toolbar's other controls (search input + sort
+          select are h-9) so the whole filter row lines up. */}
+      <DialogTrigger
+        render={<Button size="sm" className="h-9 px-3 text-xs" />}
+      >
         <UserPlus className="mr-2 size-4" />
         Add Creator
       </DialogTrigger>
@@ -346,21 +336,6 @@ export function AddCreatorDialogV2() {
               </div>
 
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field
-                  label="Discord ID *"
-                  value={discordId}
-                  onChange={setDiscordId}
-                  placeholder="Discord ID or username"
-                  disabled={isSubmitting}
-                />
-                <Field
-                  label="Discord channel *"
-                  value={discordChannelUrl}
-                  onChange={setDiscordChannelUrl}
-                  placeholder="https://discord.com/channels/…"
-                  disabled={isSubmitting}
-                  className="sm:col-span-2"
-                />
                 <Field
                   label="Twitter / X"
                   value={twitter}

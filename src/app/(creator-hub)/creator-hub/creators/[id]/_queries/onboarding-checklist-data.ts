@@ -15,6 +15,7 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
 import { BackendApiError, creatorsApi } from "@/lib/backend-api";
 import { isLinkedSocialUsername } from "../../../../../(admin)/creators/_queries/socials-by-user";
 import { getCreatorSocialUrls } from "@/lib/creator-social-urls";
+import { getDiscordLinkForUser } from "@/lib/creator-discord-links";
 import { getCreatorHeader } from "@/lib/queries/creators-detail";
 import {
   isPostgresError,
@@ -34,7 +35,9 @@ import {
  *
  * Owner spec (plan §"Per-creator Onboarding Checklist"):
  *   AUTO items (derived live, never a stored checkbox):
- *     1. ≥ 2 socials set        → distinct linked platforms in creator_socials.
+ *     1. ≥ 2 socials set        → Twitter / Kick / reward-page URL in
+ *                                 creator_socials + the BOT-owned Discord
+ *                                 link (`discord_creator_setups`).
  *     2. First deal set up      → creator has ever had a fill deal (backend
  *                                 lifetime `total_deals_count`, not only an
  *                                 active/scheduled deal).
@@ -262,8 +265,14 @@ async function syncCompletedSnapshot(
 }
 
 /**
- * Count linked social slots (ADMIN DB). Owner spec: "≥ 2 of {Twitter, Kick,
- * Discord ID, Reward page}" — each handle/URL is counted once when set.
+ * Count linked social slots. Owner spec: "≥ 2 of {Twitter, Kick, Discord,
+ * Reward page}" — each one counted once when set.
+ *
+ * Twitter / Kick / reward page come from the ADMIN-DB `creator_socials` row.
+ * DISCORD IS RE-KEYED ON THE BOT LINK (`getDiscordLinkForUser` →
+ * `discord_creator_setups`): it counts when the Discord creator-setup bot has
+ * an active setup linked to this packy user, NOT when someone typed a Discord
+ * handle by hand (that field no longer exists on the creator page).
  */
 async function countSocials(targetUserId: string): Promise<number> {
   const rows = await adminDrizzle
@@ -275,12 +284,16 @@ async function countSocials(targetUserId: string): Promise<number> {
     .where(eq(creator_socials.target_user_id, targetUserId));
 
   let count = 0;
-  for (const platform of ["twitter", "kick", "discord"] as const) {
+  for (const platform of ["twitter", "kick"] as const) {
     const row = rows.find((r) => r.platform === platform);
     if (isLinkedSocialUsername(row?.username)) count++;
   }
 
-  const urls = await getCreatorSocialUrls(targetUserId).catch(() => null);
+  const [urls, discordLink] = await Promise.all([
+    getCreatorSocialUrls(targetUserId).catch(() => null),
+    getDiscordLinkForUser(targetUserId).catch(() => null),
+  ]);
+  if (discordLink) count++;
   if (urls?.rewardPageUrl?.trim()) count++;
   return count;
 }
@@ -407,12 +420,12 @@ export async function getCreatorChecklist(
       id: "two_socials",
       kind: "auto",
       label: "Link at least 2 socials",
-      hint: "Twitter, Kick, Discord ID, or reward-page URL on the Creator tab.",
+      hint: "Twitter, Kick or reward-page URL on the Creator tab, or the Discord bot link.",
       done: socialsCount >= MIN_SOCIALS,
       detail:
         socialsCount >= MIN_SOCIALS
           ? undefined
-          : `${socialsCount}/${MIN_SOCIALS} linked — add more on the Creator tab.`,
+          : `${socialsCount}/${MIN_SOCIALS} linked — add more on the Creator tab (Discord comes from the bot).`,
     },
     {
       id: "first_deal",

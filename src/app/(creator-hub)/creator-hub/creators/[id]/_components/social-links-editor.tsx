@@ -6,30 +6,37 @@ import {
   Check,
   ExternalLink,
   Loader2,
-  MessageSquare,
   Pencil,
   Save,
   Trash2,
-  Tv,
   Twitter,
   X,
-  type LucideIcon,
 } from "lucide-react";
 
+import { KickIcon } from "@/components/brand-icons";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 
 import {
-  removeCreatorDiscordChannel,
   removeCreatorRewardPage,
   removeCreatorSocial,
-  upsertCreatorDiscordChannel,
   upsertCreatorRewardPage,
   upsertCreatorSocial,
 } from "./creator-tab-actions";
 
-type EditablePlatform = "twitter" | "kick" | "discord";
+/**
+ * Editable socials for the Creator tab.
+ *
+ * DISCORD IS NOT EDITABLE HERE. The creator ↔ Discord link is owned by the
+ * Discord creator-setup bot (`discord_creator_setups`) and surfaces on the
+ * banner; the old hand-typed Discord handle + channel URL are gone.
+ */
+
+type EditablePlatform = "twitter" | "kick";
+
+/** Same call shape as a lucide icon — brand glyphs drop in unchanged. */
+type RowIcon = React.ComponentType<{ className?: string }>;
 
 type SocialValue = {
   platform: string;
@@ -39,7 +46,7 @@ type SocialValue = {
 type RowConfig = {
   platform: EditablePlatform;
   label: string;
-  icon: LucideIcon;
+  icon: RowIcon;
   iconClass: string;
   placeholder: string;
   url: ((handle: string) => string) | null;
@@ -59,41 +66,28 @@ const ROWS: RowConfig[] = [
   {
     platform: "kick",
     label: "Kick",
-    icon: Tv,
+    // Kick's own mark — never the Twitch/TV glyph.
+    icon: KickIcon,
     iconClass: "text-green-500",
     placeholder: "channel slug",
     url: (h) => `https://kick.com/${encodeURIComponent(h.replace(/^@/, ""))}`,
     hint: "Kick channel slug. Drives the Kick tab + banner button.",
-  },
-  {
-    platform: "discord",
-    label: "Discord ID",
-    icon: MessageSquare,
-    iconClass: "text-indigo-500",
-    placeholder: "Discord ID or username",
-    url: null,
-    hint: "Discord ID / username (no public profile link).",
   },
 ];
 
 export function SocialLinksEditor({
   userId,
   initialSocials,
-  initialDiscordChannelUrl = null,
   initialRewardPageUrl = null,
 }: {
   userId: string;
   initialSocials: SocialValue[];
-  initialDiscordChannelUrl?: string | null;
   initialRewardPageUrl?: string | null;
 }) {
   const initialMap: Record<string, string> = {};
   for (const s of initialSocials) initialMap[s.platform] = s.username ?? "";
 
   const [values, setValues] = useState<Record<string, string>>(initialMap);
-  const [discordChannelUrl, setDiscordChannelUrl] = useState(
-    initialDiscordChannelUrl ?? "",
-  );
   const [rewardPageUrl, setRewardPageUrl] = useState(
     initialRewardPageUrl ?? "",
   );
@@ -106,35 +100,11 @@ export function SocialLinksEditor({
           userId={userId}
           config={row}
           value={values[row.platform] ?? ""}
-          discordChannelUrl={
-            row.platform === "discord" ? discordChannelUrl : undefined
-          }
-          onDiscordChannelChange={
-            row.platform === "discord" ? setDiscordChannelUrl : undefined
-          }
           onChange={(v) =>
             setValues((prev) => ({ ...prev, [row.platform]: v }))
           }
         />
       ))}
-
-      <UrlRow
-        label="Discord channel"
-        icon={MessageSquare}
-        iconClass="text-indigo-500"
-        value={discordChannelUrl}
-        placeholder="https://discord.com/channels/…"
-        hint="Deep-link to the creator's Discord channel. Powers the banner button."
-        onSave={async (url) => {
-          await upsertCreatorDiscordChannel(userId, url);
-          setDiscordChannelUrl(url);
-        }}
-        onClear={async () => {
-          await removeCreatorDiscordChannel(userId);
-          setDiscordChannelUrl("");
-        }}
-        allowClear
-      />
 
       <UrlRow
         label="Reward page"
@@ -161,20 +131,15 @@ function SocialRow({
   userId,
   config,
   value,
-  discordChannelUrl,
-  onDiscordChannelChange,
   onChange,
 }: {
   userId: string;
   config: RowConfig;
   value: string;
-  discordChannelUrl?: string;
-  onDiscordChannelChange?: (v: string) => void;
   onChange: (next: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(value);
-  const [channelDraft, setChannelDraft] = useState(discordChannelUrl ?? "");
   const [isPending, startTransition] = useTransition();
 
   const Icon = config.icon;
@@ -184,13 +149,11 @@ function SocialRow({
 
   function beginEdit() {
     setDraft(value);
-    setChannelDraft(discordChannelUrl ?? "");
     setEditing(true);
   }
 
   function cancel() {
     setDraft(value);
-    setChannelDraft(discordChannelUrl ?? "");
     setEditing(false);
   }
 
@@ -202,18 +165,8 @@ function SocialRow({
     }
     startTransition(async () => {
       try {
-        await upsertCreatorSocial(
-          userId,
-          config.platform,
-          next,
-          config.platform === "discord" && channelDraft.trim()
-            ? { discordChannelUrl: channelDraft.trim() }
-            : undefined,
-        );
+        await upsertCreatorSocial(userId, config.platform, next);
         onChange(next);
-        if (config.platform === "discord" && onDiscordChannelChange) {
-          onDiscordChannelChange(channelDraft.trim());
-        }
         setEditing(false);
         toast.success(`${config.label} saved`);
       } catch (err) {
@@ -294,15 +247,6 @@ function SocialRow({
                 <X className="size-4" />
               </Button>
             </div>
-            {config.platform === "discord" && (
-              <Input
-                value={channelDraft}
-                onChange={(e) => setChannelDraft(e.target.value)}
-                placeholder="Discord channel link (optional here)"
-                disabled={isPending}
-                className="h-8"
-              />
-            )}
             <p className="text-[11px] text-muted-foreground">{config.hint}</p>
           </div>
         ) : (
@@ -377,7 +321,7 @@ function UrlRow({
   allowClear,
 }: {
   label: string;
-  icon: LucideIcon;
+  icon: RowIcon;
   iconClass: string;
   value: string;
   placeholder: string;

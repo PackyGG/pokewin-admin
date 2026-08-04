@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import type { ComponentType } from "react";
 import {
   Crown,
   Coins,
@@ -9,9 +10,9 @@ import {
   Instagram,
   MessageCircle,
   Music2,
-  type LucideIcon,
 } from "lucide-react";
 
+import { DiscordIcon, KickIcon } from "@/components/brand-icons";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
@@ -61,7 +62,12 @@ const DEAL_STATUS_STYLE: Record<CreatorDealStatus, string> = {
 // shouting like the real Twitch/YouTube buttons.
 const PLATFORM_META: Record<
   CreatorSocialPlatform,
-  { icon: LucideIcon; color: string; label: string }
+  {
+    /** Widened past `LucideIcon` so the brand glyphs (Kick/Discord) fit. */
+    icon: ComponentType<{ className?: string; "aria-hidden"?: boolean }>;
+    color: string;
+    label: string;
+  }
 > = {
   twitch: {
     icon: Twitch,
@@ -74,8 +80,7 @@ const PLATFORM_META: Record<
     label: "YouTube",
   },
   kick: {
-    // lucide doesn't have a Kick icon; reuse Twitch shape, different color
-    icon: Twitch,
+    icon: KickIcon,
     color: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
     label: "Kick",
   },
@@ -95,7 +100,7 @@ const PLATFORM_META: Record<
     label: "TikTok",
   },
   discord: {
-    icon: MessageCircle,
+    icon: DiscordIcon,
     color: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400",
     label: "Discord",
   },

@@ -87,9 +87,14 @@ export type CreatorMetadata = {
   affiliateCodeActive: boolean;
   // Linked socials (admin DB)
   socials: CreatorSocialRow[];
-  /** Discord server/channel deep-link (admin DB `creator_socials`). */
-  discordChannelUrl: string | null;
-  /** Creator reward-page URL (admin DB `creator_socials`). */
+  /**
+   * Creator reward-page URL (admin DB `creator_socials`).
+   *
+   * NOTE: there is deliberately no `discordChannelUrl` here anymore — the
+   * creator ↔ Discord link is owned by the Discord creator-setup bot
+   * (`getDiscordLinkForUser`) and rendered on the banner, not typed in on
+   * this tab.
+   */
   rewardPageUrl: string | null;
   // Who onboarded them (admin audit)
   onboardedBy: OnboardedBy | null;
@@ -210,8 +215,8 @@ export async function getCreatorMetadata(
         "[creator-hub.creators.metadata] social URLs read failed:",
         err,
       );
-      gaps.push("Discord / reward-page links unavailable");
-      return { discordChannelUrl: null, rewardPageUrl: null };
+      gaps.push("Reward-page link unavailable");
+      return { rewardPageUrl: null };
     }),
     // The earliest `user_made_creator` event for this target = the initial
     // onboarding. Joined to the acting admin so we can name the manager.
@@ -320,7 +325,6 @@ export async function getCreatorMetadata(
         ? new Date(s.last_fetched_at).toISOString()
         : null,
     })),
-    discordChannelUrl: socialUrls.discordChannelUrl,
     rewardPageUrl: socialUrls.rewardPageUrl,
     onboardedBy,
     gaps,

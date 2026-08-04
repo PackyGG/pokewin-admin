@@ -1,24 +1,27 @@
-import { ExternalLink, MessageSquare, type LucideIcon } from "lucide-react";
+import { ExternalLink } from "lucide-react";
+
+import { DiscordIcon, KickIcon } from "@/components/brand-icons";
+import type { CreatorDiscordLink } from "@/lib/creator-discord-links";
 import { cn } from "@/lib/utils";
 
 /**
  * Creator banner social buttons — one button per linked social account,
- * plus a dedicated Discord-channel button.
+ * plus the creator's REAL Discord link when the Discord bot has one.
  *
- * Data source (REAL, no fabrication): the `creator_socials` admin-DB rows
- * (platform + username) the existing `getCreatorHeaderSocials` query
- * returns. `creator_socials` stores a handle, NOT a stored URL, so each
- * button's href is constructed from the platform + handle via the
- * well-known public profile URL pattern for that platform. A platform we
- * don't have a URL pattern for renders a non-navigating chip (no broken
- * link) rather than guessing.
+ * Data sources (REAL, no fabrication):
+ *   • Socials: the `creator_socials` admin-DB rows (platform + username) the
+ *     existing `getCreatorHeaderSocials` query returns. `creator_socials`
+ *     stores a handle, NOT a stored URL, so each button's href is constructed
+ *     from the platform + handle via the well-known public profile URL pattern
+ *     for that platform. A platform we don't have a URL pattern for renders a
+ *     non-navigating chip (no broken link) rather than guessing.
+ *   • Discord: `getDiscordLinkForUser` — the Discord creator-setup bot's
+ *     `discord_creator_setups` row (active + linked to this packy user). This
+ *     REPLACES the old hand-typed discord handle / `discord_channel_url`,
+ *     which drifted from reality. Nothing Discord is typed by hand anymore:
+ *     no link → no Discord chip.
  *
- * The DISCORD CHANNEL button is separate from the per-social buttons: it
- * opens `creator_socials.discord_channel_url` when set, otherwise renders
- * disabled with a clear "channel link not set" state.
- *
- * Server-safe (plain links, no client state). Icons are imported directly
- * from lucide-react (not the sidebar ICONS map).
+ * Server-safe (plain links, no client state).
  */
 
 type SocialLike = {
@@ -29,9 +32,13 @@ type SocialLike = {
   subscriberCount: number | null;
 };
 
+/** Same call shape as a lucide icon — brand glyphs drop in unchanged. */
+type ChipIcon = React.ComponentType<{ className?: string }>;
+
 // Platform → label + accent + public profile URL builder. Only platforms we
 // can build a real public URL for get a builder; others render as a
-// non-navigating chip.
+// non-navigating chip. Discord is deliberately absent — it is not a
+// hand-typed social here, it comes from the bot link below.
 const PLATFORM_META: Record<
   string,
   {
@@ -39,6 +46,8 @@ const PLATFORM_META: Record<
     color: string;
     bg: string;
     border: string;
+    /** Brand glyph when we have one; falls back to the generic link icon. */
+    icon?: ChipIcon;
     /** Build the public profile URL from a handle, or null if unknown. */
     url: ((handle: string) => string) | null;
   }
@@ -55,6 +64,8 @@ const PLATFORM_META: Record<
     color: "text-green-500",
     bg: "bg-green-500/10 hover:bg-green-500/20",
     border: "border-green-500/25",
+    // Kick's own mark — the Twitch glyph must never stand in for Kick.
+    icon: KickIcon,
     url: (h) => `https://kick.com/${encodeURIComponent(h.replace(/^@/, ""))}`,
   },
   youtube: {
@@ -83,16 +94,6 @@ const PLATFORM_META: Record<
     url: (h) =>
       `https://tiktok.com/@${encodeURIComponent(h.replace(/^@/, ""))}`,
   },
-  discord: {
-    label: "Discord",
-    color: "text-indigo-500",
-    bg: "bg-indigo-500/10 hover:bg-indigo-500/20",
-    border: "border-indigo-500/25",
-    // A Discord "username"/ID isn't a navigable public profile URL — render
-    // as a non-navigating chip. The CHANNEL link (separate button below)
-    // is the navigable Discord affordance.
-    url: null,
-  },
 };
 
 function SocialButtonChip({
@@ -100,13 +101,15 @@ function SocialButtonChip({
   label,
   sub,
   href,
+  title,
   className,
   iconClassName,
 }: {
-  icon: LucideIcon;
+  icon: ChipIcon;
   label: string;
   sub?: string;
   href: string | null;
+  title?: string;
   className: string;
   iconClassName: string;
 }) {
@@ -128,7 +131,7 @@ function SocialButtonChip({
     return (
       <span
         className={cn(base, className, "cursor-default opacity-90")}
-        title={`${label} — no public link`}
+        title={title ?? `${label} — no public link`}
       >
         {inner}
       </span>
@@ -141,7 +144,7 @@ function SocialButtonChip({
       target="_blank"
       rel="noopener noreferrer"
       className={cn(base, className)}
-      title={`Open ${label}`}
+      title={title ?? `Open ${label}`}
     >
       {inner}
     </a>
@@ -150,17 +153,21 @@ function SocialButtonChip({
 
 export function SocialButtons({
   socials,
-  discordChannelUrl,
+  discordLink,
 }: {
   socials: SocialLike[];
   /**
-   * Per-creator Discord *channel* deep-link. Stored in the admin DB on
-   * creation (a later wave) — null until then, in which case the
-   * Discord-channel button renders disabled rather than guessing a URL.
+   * The creator's Discord link as reported by the Discord creator-setup bot,
+   * or null when the bot has no active linked setup for them. Never typed in
+   * by hand — when it's null we simply render no Discord chip.
    */
-  discordChannelUrl: string | null;
+  discordLink: CreatorDiscordLink | null;
 }) {
-  const connected = socials.filter((s) => s.username);
+  // A legacy hand-typed `discord` row is dead data — the bot link below is
+  // the only Discord truth, so such a row never renders a chip.
+  const connected = socials.filter(
+    (s) => s.username && s.platform !== "discord",
+  );
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -177,7 +184,7 @@ export function SocialButtons({
         return (
           <SocialButtonChip
             key={s.id}
-            icon={ExternalLink}
+            icon={meta.icon ?? ExternalLink}
             label={meta.label}
             sub={`@${handle}`}
             href={href}
@@ -187,23 +194,31 @@ export function SocialButtons({
         );
       })}
 
-      {/* Discord channel button — its own affordance, always shown. Opens
-          the creator's Discord channel link when set; disabled with a clear
-          "not set" state until the admin-DB channel-link column lands. */}
-      <SocialButtonChip
-        icon={MessageSquare}
-        label="Discord channel"
-        href={discordChannelUrl}
-        className="border-indigo-500/25 bg-indigo-500/10 hover:bg-indigo-500/20"
-        iconClassName="text-indigo-500"
-      />
-      {!discordChannelUrl && (
-        <span className="text-[11px] text-muted-foreground/70">
-          channel link not set yet
-        </span>
+      {/* Discord — ONLY from the bot link. A linked creator with a known chat
+          channel gets a real deep-link; linked-without-a-channel renders the
+          same non-navigating chip idiom the other socials use. Not linked →
+          nothing at all. */}
+      {discordLink && (
+        <SocialButtonChip
+          icon={DiscordIcon}
+          label="Discord"
+          sub={discordLink.categoryName ?? undefined}
+          href={discordLink.channelUrl}
+          title={
+            discordLink.channelUrl
+              ? `Open Discord${
+                  discordLink.categoryName
+                    ? ` — ${discordLink.categoryName}`
+                    : ""
+                }`
+              : "Discord linked — no chat channel recorded yet"
+          }
+          className="border-indigo-500/25 bg-indigo-500/10 hover:bg-indigo-500/20"
+          iconClassName="text-indigo-500"
+        />
       )}
 
-      {connected.length === 0 && (
+      {connected.length === 0 && !discordLink && (
         <span className="inline-flex items-center rounded-md border border-dashed px-2 py-1 text-[11px] text-muted-foreground">
           No socials linked
         </span>

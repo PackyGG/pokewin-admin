@@ -65,8 +65,8 @@ function parseSessionsPage(value: string | undefined): number {
  *
  * Layout (owner spec):
  *   1. Top banner (identity bar): pfp, username, creator code chip(s), email
- *      with hide/show toggle, a button per linked social, a Discord-channel
- *      button.
+ *      with hide/show toggle, a button per linked social, and the bot-owned
+ *      Discord link when one exists.
  *   2. Tab bar: Overview (default) + Creator / Sessions / Risk / Alt Accounts
  *      (all navigable via `?tab=`).
  *   3. The active tab's content.

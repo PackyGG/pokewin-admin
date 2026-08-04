@@ -9,6 +9,7 @@ import {
 } from "lucide-react";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { DiscordIcon } from "@/components/brand-icons";
 import { cn } from "@/lib/utils";
 import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 
@@ -81,8 +82,24 @@ export function RosterCard({
         {!c.isPastCreator && <DealStatusBadge status={c.dealStatus} />}
       </div>
 
-      {c.socials.length > 0 && (
+      {(c.discord != null || c.socials.length > 0) && (
         <div className="flex flex-wrap gap-1">
+          {c.discord && (
+            /**
+             * The whole card root is a <Link> (an <a>), so this chip CANNOT be
+             * an anchor — nested anchors are invalid HTML, the browser parser
+             * would close the card link early and break the card. The chip
+             * therefore states the link exists; the creator detail page owns
+             * the navigable "open Discord channel" action.
+             */
+            <span
+              className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground"
+              title={`Discord — ${c.discord.categoryName ?? "linked"}`}
+            >
+              <DiscordIcon className="size-3 text-indigo-600 dark:text-indigo-400" />
+              <span className="max-w-[90px] truncate">Discord</span>
+            </span>
+          )}
           {c.socials.map((s) => {
             const meta = PLATFORM_META[s.platform];
             const Icon = meta?.icon ?? MessageCircle;

@@ -42,7 +42,7 @@ export type ChecklistItem = {
   done: boolean;
   /**
    * For an AUTO item that is not yet done, a tiny note nudging the manager to
-   * the surface that completes it (e.g. "Set 2 of {Twitter, Kick, Discord}").
+   * the surface that completes it (e.g. "1/2 socials linked").
    * Empty for done items / where no nudge applies.
    */
   detail?: string;

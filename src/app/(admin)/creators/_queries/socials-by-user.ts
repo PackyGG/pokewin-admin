@@ -54,10 +54,22 @@ export async function getApprovedSocialsByUser(): Promise<
   return result;
 }
 
+/**
+ * `discord` is no longer a manual social. The creator↔Discord link now comes
+ * from the Discord creator-setup bot (`discord_creator_setups`, exposed by
+ * `src/lib/creator-discord-links.ts`), so hand-entered discord rows are never
+ * rendered as a social chip. Surviving `creator_socials` discord rows are
+ * kept only as the carrier for `reward_page_url`.
+ */
+export function isRetiredSocialPlatform(platform: string): boolean {
+  return platform === "discord";
+}
+
 function addSocial(
   map: Map<string, CreatorSocialSummary[]>,
   s: AdminCreatorSocial,
 ) {
+  if (isRetiredSocialPlatform(s.platform)) return;
   const entry: CreatorSocialSummary = {
     id: s.id,
     platform: s.platform,
@@ -138,6 +150,7 @@ export async function getAdminDbLinkedSocialsByUser(
     );
 
   for (const row of rows) {
+    if (isRetiredSocialPlatform(row.platform)) continue;
     if (!isLinkedSocialUsername(row.username)) continue;
     const platform = adminPlatformToChipPlatform(row.platform);
     const entry: CreatorSocialSummary = {

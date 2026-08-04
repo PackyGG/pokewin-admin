@@ -10,6 +10,10 @@ import {
 } from "../../../../(admin)/creators/_queries/code-and-wager-by-user";
 import { getRosterSocialsByUserCached } from "./roster-socials-cache";
 import { getAllCreatorsLifetimePnl } from "../../../../(admin)/creators/_queries/all-creators-lifetime-pnl";
+import {
+  getDiscordLinksByUser,
+  type CreatorDiscordLink,
+} from "@/lib/creator-discord-links";
 
 import type { RosterSortMode } from "../_lib/roster-params";
 import {
@@ -48,7 +52,7 @@ export async function listRosterExCreators(
     return { creators: [], rosterUnavailable: false };
   }
 
-  const [codeWager, socials, lifetimePnl] = await Promise.all([
+  const [codeWager, socials, lifetimePnl, discordLinks] = await Promise.all([
     getCodeAndWagerByUser(ids).catch((err) => {
       console.error(
         "[creator-hub roster] ex-creator code+wager fetch failed:",
@@ -70,6 +74,13 @@ export async function listRosterExCreators(
       );
       return null;
     }),
+    getDiscordLinksByUser(ids).catch((err) => {
+      console.error(
+        "[creator-hub roster] ex-creator discord link fetch failed:",
+        err,
+      );
+      return new Map<string, CreatorDiscordLink>();
+    }),
   ]);
 
   const pnlByUser = new Map<string, number>(
@@ -88,6 +99,7 @@ export async function listRosterExCreators(
       dealStatus: c.current_deal?.status ?? null,
       isLive: false,
       socials: socials.get(c.id) ?? [],
+      discord: discordLinks.get(c.id) ?? null,
       code: cw?.code ?? null,
       signups: cw?.signups ?? 0,
       ftds: cw?.ftds ?? 0,
