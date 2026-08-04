@@ -1005,7 +1005,7 @@ const postponeSchema = z.object({
   idempotencyKey: z.string().uuid("Invalid idempotency key"),
 });
 
-/** Hide a live case from active queues and reminders for exactly 2.5 hours. */
+/** Hide a live case from active queues and reminders for exactly 2 hours. */
 export async function postponeReview(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
   const parsed = postponeSchema.safeParse(input);
@@ -1103,7 +1103,7 @@ export async function postponeReview(input: unknown): Promise<void> {
       review_id: reviewId,
       admin_user_id: session.userId,
       kind: "postponed",
-      body: "Postponed for 2.5 hours. Active reminders are suppressed until due.",
+      body: "Postponed for 2 hours. Active reminders are suppressed until due.",
     });
   });
 

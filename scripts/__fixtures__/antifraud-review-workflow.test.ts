@@ -35,7 +35,7 @@ test("priority and waiting classification use lock, KYC, and 70+ evidence", () =
   assert.match(workflow, /user_kyc/);
 });
 
-test("review reminders run every 2 hours while postponement remains 2.5 hours", () => {
+test("review reminders and postponement both run for 2 hours", () => {
   const actions = source(
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
@@ -54,7 +54,7 @@ test("review reminders run every 2 hours while postponement remains 2.5 hours", 
   assert.match(actions, /antifraud_review_notes/);
   assert.match(actions, /onConflictDoNothing\(\)/);
   assert.match(migration, /admin_audit_review_postponed_idempotency_idx/);
-  assert.match(policy, /postponed:\s*2\.5 \* 60 \* 60 \* 1_000/);
+  assert.match(policy, /postponed:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(policy, /normal:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(policy, /urgent:\s*2 \* 60 \* 60 \* 1_000/);
   assert.match(reminders, /review\.created_at \+ interval '2 hours'/);
