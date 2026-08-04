@@ -122,23 +122,12 @@ test("migration runner serializes, rolls back failures, and records only commits
   assert.match(migrate, /SELECT pg_advisory_unlock\(\$1\)/);
 });
 
-test("legacy withdrawal and fiat scores retain explicit model identities", async () => {
-  const withdrawalMigration = await source(
-    "../migrations/015_withdrawal_risk_v2.sql",
-  );
-  const withdrawal = await source("../src/withdrawal-risk.ts");
-  const withdrawalRoutes = await source("../src/withdrawal-routes.ts");
+test("fiat scores retain an explicit model identity", async () => {
   const fiatMigration = await source(
     "../migrations/012_fiat_deposit_assessments.sql",
   );
   const fiat = await source("../src/fiat-risk.ts");
 
-  assert.match(
-    withdrawalMigration,
-    /model_version integer NOT NULL DEFAULT 1/,
-  );
-  assert.match(withdrawal, /WITHDRAWAL_RISK_MODEL_VERSION = 5/);
-  assert.match(withdrawalRoutes, /model_version=\$1/);
   assert.match(fiatMigration, /score_version text NOT NULL DEFAULT 'fiat-v1'/);
   assert.match(fiat, /score_version='fiat-v3'/);
 });

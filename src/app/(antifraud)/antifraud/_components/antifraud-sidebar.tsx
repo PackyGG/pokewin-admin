@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
-  ArrowUpFromLine,
   Banknote,
   ChevronRight,
   Fingerprint,
@@ -88,11 +87,6 @@ const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "reviews"] as const;
 
 const TRANSACTION_NAV: NavItem[] = [
   { label: "Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
-  {
-    label: "Withdrawals",
-    href: "/antifraud/withdrawals",
-    icon: ArrowUpFromLine,
-  },
   { label: "Refunds", href: "/antifraud/refunds", icon: RotateCcw },
 ];
 

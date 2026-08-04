@@ -1180,10 +1180,9 @@ test("leader liveness stalls only after its bounded timeout", () => {
 });
 
 test("runtime workers recover cleanly from provider, pool, and process failures", async () => {
-  const [monitor, network, withdrawal, ingest, db, server] = await Promise.all([
+  const [monitor, network, ingest, db, server] = await Promise.all([
     readFile(new URL("../src/monitor.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/network-risk.ts", import.meta.url), "utf8"),
-    readFile(new URL("../src/withdrawal-risk.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/ingest-delivery.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/db.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/server.ts", import.meta.url), "utf8"),
@@ -1220,18 +1219,6 @@ test("runtime workers recover cleanly from provider, pool, and process failures"
   assert.match(monitor, /INSERT INTO rule_alert_outbox/);
   assert.match(monitor, /deliverPendingRuleAlerts/);
 
-  assert.match(withdrawal, /let lockClient: PoolClient \| null = null/);
-  assert.match(withdrawal, /lockClient\?\.release\(\)/);
-  assert.match(withdrawal, /this\.syncRunning = false/);
-  assert.match(withdrawal, /await this\.syncPromise/);
-  assert.match(
-    withdrawal,
-    /COALESCE\(MAX\(score\), 0\)::int AS score[\s\S]*?FROM cases/,
-  );
-  assert.doesNotMatch(
-    withdrawal,
-    /COALESCE\(MAX\(current_score\), 0\)::int AS score[\s\S]*?FROM cases/,
-  );
   assert.match(ingest, /async start\(\): Promise<void> \{\s*void this\.tick\(\)/);
 
   assert.match(db, /source\.on\("error"/);

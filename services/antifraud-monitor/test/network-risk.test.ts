@@ -53,7 +53,6 @@ test("scan, network-case, rule, and exact-IP routes require the admin token", ()
   const routes: Array<[string, string]> = [
     ["POST", "/v1/networks/accounts/user-1/rescan"],
     ["POST", "/v1/creator-fraud/creator-1/rescan"],
-    ["POST", "/v1/withdrawals/00000000-0000-0000-0000-000000000000/review"],
     ["POST", "/v1/network-cases"],
     ["PUT", "/v1/analysis-rules/network_shared_ip"],
     ["GET", "/v1/networks/00000000-0000-0000-0000-000000000000/nodes/ip:key/reveal"],

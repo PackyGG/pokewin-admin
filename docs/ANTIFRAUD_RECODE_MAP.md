@@ -35,7 +35,7 @@ antifraud-monitor
   |-- provider enrichment: Fingerprint, ProxyCheck, Opportify
   |-- KYC enrichment: Sumsub (current working-tree integration)
   |-- signup/session/rule scoring
-  |-- fiat, withdrawal, network, creator, free-battle assessments
+  |-- fiat, network, creator, free-battle assessments
   |-- Antifraud DB: evidence, cases, assessments, cursors, outboxes
   |-- Redis: live events
   |
@@ -77,7 +77,6 @@ There are currently two related case models:
 | Account Review | Durable staff queue, priority/normal/waiting-KYC/postponed projection, modal review, assignment, notes, quick actions, status | `reviews/*`, `src/lib/antifraud/reviews.ts`, `src/lib/antifraud/review-workflow.ts` |
 | Fiat Deposits | Canonical fiat assessments, evidence, review status, KYC action | `fiat-deposits/*`, `src/lib/antifraud/fiat-deposits-api.ts` |
 | Fiat Fraud | MAIN-derived fraud/payment investigation list | `fiat-fraud/*`, `src/lib/queries/fiat-fraud.ts` |
-| Withdrawals | Withdrawal score, provenance trace, linked restricted accounts, review | `withdrawals/*`, `src/lib/antifraud/withdrawals-api.ts` |
 | KYC | Active/waiting and finished-history KYC views with sanitized Sumsub evidence | `kyc/*`, `src/lib/antifraud/kyc.ts`, `src/lib/antifraud/sumsub-review-api.ts` |
 | Whop Refunds | Owner-only, step-up protected, leased and auditable refund batches | `refunds/*`, `src/lib/queries/whop-refunds.ts` |
 | Account Networks | User-linked IP/device/account graph and rescan | `networks/*`, `src/lib/antifraud/network-api.ts` |
@@ -146,7 +145,6 @@ There are currently two related case models:
 | `network-risk.ts` | Account graph, creator-cohort fraud, async scan jobs |
 | `fiat-risk.ts` | Fiat evidence, score, verdict, assessment persistence |
 | `fiat-eligibility.ts` | Synchronous automatic checkout allow/deny decision |
-| `withdrawal-risk.ts` | Withdrawal provenance, flow checks, linked-account risk |
 | `free-battle-risk.ts` | Global sponsored/free-battle relationship detection |
 | `fiat-email-domains.ts` | Domain, Gmail-pattern, and deposit-cluster detection |
 | `fiat-withdrawal-holds.ts` | Existing automatic Fiat withdrawal-lock discovery |
@@ -181,9 +179,8 @@ There are currently two related case models:
 6. Subscribe the Redis live bus.
 7. Start signed dashboard delivery.
 8. Start the network scan worker.
-9. Start withdrawal assessment synchronization.
-10. Start the HTTP server.
-11. Retry monitor-poller startup until the source mirror is available.
+9. Start the HTTP server.
+10. Retry monitor-poller startup until the source mirror is available.
 
 ### Leader tick
 
@@ -248,18 +245,6 @@ so one failed phase does not suppress later cleanup.
 - Abstract signup email: validate deliverability, SMTP/MX, catch-all,
   disposable, username, quality, age/TLD, and address/domain risk. Catch-all
   results require KYC and lock crypto/item withdrawals through signed ingest.
-
-### Withdrawal flow
-
-1. Incrementally synchronize source withdrawal requests.
-2. Reconstruct the requested amount backwards through ledger credits.
-3. Classify funding as deposit, play return, reward, creator tip, sponsored
-   battle, voucher borrowing, or unresolved trace gap.
-4. Enrich linked accounts for locks, KYC, ban, alt, self-exclusion, ADMIN tag,
-   active Fraud case, and Account Review state.
-5. Evaluate rapid cashout, confirmation, destination reuse, attached assets,
-   account age, funding gap, and linked-risk signals.
-6. Persist a versioned assessment and review trail.
 
 ### Free/sponsored-battle flow
 
@@ -386,7 +371,7 @@ bell is manual announcements only, created from
   identifier audit.
 - Networks: `network_snapshots`, `network_nodes`, `network_node_secrets`,
   `network_edges`, `network_case_members`, `creator_fraud_assessments`.
-- Withdrawals: `withdrawal_assessments`, `withdrawal_review_events`.
+- Historical retired data: `withdrawal_assessments`, `withdrawal_review_events`.
 - Fiat: `fiat_deposit_assessments`, `fiat_deposit_review_events`,
   `fiat_eligibility_assessments`, email-domain matches.
 - Free battles: `free_battle_risk_matches`, creator cursors.
@@ -414,7 +399,7 @@ sessions, vouchers, withdrawals, rain, and reward activity.
 
 ## 9. Problems the recode must remove
 
-1. `monitor.ts`, `fiat-risk.ts`, `withdrawal-risk.ts`, `network-risk.ts`, and
+1. `monitor.ts`, `fiat-risk.ts`, `network-risk.ts`, and
    `server.ts` are composition, policy, persistence, and transport mixed into
    very large modules.
 2. There are multiple producer-specific outboxes with different retry,
@@ -564,8 +549,7 @@ Move one domain at a time behind stable interfaces:
 3. email/deposit clusters
 4. free/sponsored battles
 5. Fiat assessment and eligibility
-6. withdrawals and funding provenance
-7. networks and creator cohorts
+6. networks and creator cohorts
 
 Each cutover uses recorded inputs and compares old/new signals, scores, and
 decisions before enabling the new result.

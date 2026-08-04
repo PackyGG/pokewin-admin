@@ -13,7 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
 // ---------------------------------------------------------------------------
-// Shared primitives for the antifraud list pages (withdrawals, fiat-deposits).
+// Shared primitives for the antifraud list pages (fiat deposits and reviews).
 // Everything here is server-safe and presentational — no client hooks. The
 // two list pages used to carry byte-identical private copies of all of this;
 // keep additions generic so the remaining sibling pages (signups, networks,

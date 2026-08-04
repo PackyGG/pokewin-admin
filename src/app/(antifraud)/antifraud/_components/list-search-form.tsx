@@ -10,8 +10,8 @@ import { useHostHref } from "@/lib/use-app-host";
 import { cn } from "@/lib/utils";
 
 /**
- * Shared search box for the antifraud list pages (withdrawals, fiat deposits,
- * KYC, banned users, staff audit).
+ * Shared search box for the antifraud list pages (fiat deposits, KYC, banned
+ * users, staff audit).
  *
  * WHY THIS EXISTS — the pages previously used a bare `<form action="/antifraud/…">`
  * GET submit. That is a NATIVE document navigation, which cost two things on
@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
  *     new one arrived.
  *  2. An extra redirect hop on the dedicated host. `fraud.packydash.com` serves
  *     these routes at their clean paths, so a submit to the canonical
- *     `/antifraud/withdrawals` was 308'd back to `/withdrawals` by
+ *     `/antifraud/fiat-deposits` is 308'd back to `/fiat-deposits` by
  *     `redirectTargetForHost` before anything rendered.
  *
  * Submitting through the router instead makes it a client transition: the URL
@@ -50,7 +50,7 @@ export function ListSearchForm({
   compact = false,
   maxLength = 100,
 }: {
-  /** Canonical in-app path, e.g. `/antifraud/withdrawals`. */
+  /** Canonical in-app path, e.g. `/antifraud/fiat-deposits`. */
   action: string;
   placeholder: string;
   ariaLabel: string;

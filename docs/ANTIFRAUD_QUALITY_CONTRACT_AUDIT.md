@@ -39,7 +39,7 @@ not be released as the requested recode without resolving the divergences below.
 | Third promo on a fresh account locks | Promo redemption is observed but no third-promo rule or containment exists | Not implemented |
 | Creator tip/free sponsored battle before deposit is very high | Both default sequence rules add 40; global free-battle graph starts at 40 and contains at 80 | Diverges |
 | Creator-only funded sponsorship excluded from normal players | Sponsorship detection uses sponsorship percentage or source session and lacks an explicit creator-only funding exclusion | Unproven/diverges |
-| Unified relationship/fund graph | Exact IP/device, affiliates, creator wallets, battles, and withdrawal funding exist in separate models; no unified downstream/session-hopping graph | Partial |
+| Unified relationship/fund graph | Exact IP/device, affiliates, creator wallets, and battles exist in separate models; no unified downstream/session-hopping graph | Partial |
 | Historical data additive, idempotent, unknown never clean | Delivery and action idempotency are strong, but signup/provider evidence is overwritten and backfills can delete history | Diverges |
 | Discord exact categories/channels/team IDs/reminders | Signed routed transport exists; the exact external transport-workstream contract was not included in this worktree request | Pending external contract |
 | Webapp routes/tabs/actions/error states | Current Fraud routes and errors were inventoried; the exact UI-workstream contract was not included | Pending external contract |
@@ -81,10 +81,10 @@ not be released as the requested recode without resolving the divergences below.
 - Permanent user profiles, OAuth/credential provider evidence, later Discord links, operator IP/fingerprint blocklists, third-account 30-day containment, third-promo containment, and locked-review-only KYC are absent.
 - Risk-country rows currently add 20 points, contradicting context-only treatment for CZ/SK/SI/IN.
 - Tip and sponsored-battle rules add 40 rather than the owner’s very-high action. The free-battle flow auto-KYCs at its second-battle threshold, which is also prohibited by the new contract.
-- The relationship systems are fragmented. Account networks cover exact IP/device, creator analysis adds affiliate/wallet evidence, free battles are separate, and withdrawal funding is separate. Session hopping and downstream value movement are not unified.
+- The relationship systems are fragmented. Account networks cover exact IP/device, creator analysis adds affiliate/wallet evidence, and free battles are separate. Session hopping and downstream value movement are not unified.
 - Applied migrations store only filenames, not checksums. Editing an already-applied SQL file is silently ignored and schema drift cannot be detected by the runner.
 - Backfill migrations have no executable pre/post count, duplicate, parity, or post-commit recovery assertions. `014_signup_live_behavior_tuning.sql` deletes legacy weights, `022_split_high_risk_fiat_destination.sql` deletes delivery rows, and `028_dashboard_delivery_receipts.sql` changes historical delivery state.
-- Signup and Fiat assessments overwrite the current row. Withdrawal assessments correctly retain `model_version=1` for legacy rows and filter current reads to version 4, but the same historical model contract is absent for signup.
+- Signup and Fiat assessments overwrite the current row. The historical model contract is absent for signup.
 - Unknown historical provider payloads are handled inconsistently. Fingerprint can reuse stored signals, Opportify refetches when parsing fails, while cached ProxyCheck/Abstract parsing can reject the whole signup replay.
 - The mirror index bundle has no dedicated `(user_id, created_at)` coverage for sponsored `battle_participants`, and no expression/time indexes for affiliate-code or country signup clustering. Those reads are time bounded but may become repeated scans under signup bursts or many active sessions.
 - The migration sequence contains duplicate numeric prefixes (`002`, `003`, `014`, `018`, `022`). Full filenames keep ordering deterministic, but operator references such as “migration 014” are ambiguous.
@@ -121,7 +121,7 @@ Run these checks against Antifraud or ADMIN only. Use the MAIN mirror only for b
 
 - Re-run all counts and duplicate checks.
 - Assert untouched history counts are identical.
-- Assert legacy withdrawal rows remain model 1 and new/current rows are model 4.
+- Preserve retired withdrawal-assessment rows unchanged as historical evidence.
 - Treat missing signup model version and overwritten provider rows as a release blocker for any future historical signup rescore/backfill.
 - For delivery backfills, compare delivered, pending, and intentionally replayed counts separately.
 - For refunds, verify one item per provider payment ID and preserve `unknown` without automated retry.
@@ -152,7 +152,7 @@ Run these checks against Antifraud or ADMIN only. Use the MAIN mirror only for b
 | Audit durability | Local transaction/idempotency coverage; cross-store gaps documented | Partial |
 | Refund safeguards | Fresh step-up, retrieve-before-refund, no SDK retry, unknown quarantine | Added/existing |
 | Migration rerun | Advisory lock, per-file transaction, filename idempotency | Added |
-| Legacy versions | Withdrawal v1/v4 and Fiat v1/v2 | Added |
+| Legacy versions | Fiat v1/v2; retired withdrawal rows preserved | Added |
 | Backfill parity/counts | Production runbook prepared; not executed | Prepared only |
 | MAIN mirror bounds | Time/ID limits and existing ledger/reward indexes | Added |
 | Rollback/recovery | In-transaction rollback covered; post-commit recovery gap documented | Partial |

@@ -45,7 +45,6 @@ test("Fraud review surfaces do not expose escalation controls", async () => {
       "../../src/app/(antifraud)/antifraud/reviews/_components/case-controls.tsx",
       "../../src/app/(antifraud)/antifraud/monitor/cases/[id]/_components/decision-panel.tsx",
       "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-controls.tsx",
-      "../../src/app/(antifraud)/antifraud/withdrawals/[id]/review-controls.tsx",
       "../../src/app/(antifraud)/antifraud/flows/flow-builder.tsx",
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
   );

@@ -40,9 +40,6 @@ export function serviceRequestAuthorized(
     (method === "POST" &&
       pathname.startsWith("/v1/fiat-deposits/") &&
       pathname.endsWith("/review")) ||
-    (method === "POST" &&
-      pathname.startsWith("/v1/withdrawals/") &&
-      pathname.endsWith("/review")) ||
     (method === "GET" &&
       pathname.startsWith("/v1/kyc/applicants/") &&
       pathname.endsWith("/review")) ||

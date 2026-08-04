@@ -92,8 +92,6 @@ import {
   createFixedWindowIpLimiter,
   ticketRateLimitKey,
 } from "./transport-limits.js";
-import { registerWithdrawalRoutes } from "./withdrawal-routes.js";
-import { WithdrawalRiskService } from "./withdrawal-risk.js";
 import { SumsubClient } from "./sumsub-client.js";
 import { registerSumsubRoutes } from "./sumsub-routes.js";
 import { KycCountryReviewService } from "./kyc-country-reviews.js";
@@ -214,7 +212,6 @@ const maxmind = new MaxMindService(
   app.log,
   reportProviderAccessIssue,
 );
-const withdrawalRisk = new WithdrawalRiskService(db, app.log, maxmind);
 const fiatRisk = new FiatRiskService(db, maxmind);
 const fiatEligibilityAccess = new FiatEligibilityAccess(config);
 const enrichment = new EnrichmentService(config, reportProviderAccessIssue);
@@ -2158,7 +2155,6 @@ await registerFiatPerkRoutes(app, fiatPerks, fiatPerkAccess);
 await registerProfileRoutes(app, db);
 await registerSignupFailureRoutes(app, db);
 await registerRiskyLocationRoutes(app, db, engine.riskyLocations);
-await registerWithdrawalRoutes(app, db, withdrawalRisk);
 await registerFiatRoutes(app, db, fiatRisk);
 registerMaxMindAlertRoute(app, maxmind);
 await registerSumsubRoutes(
@@ -2222,7 +2218,6 @@ app.addHook("onClose", async () => {
   shuttingDown = true;
   dashboardOpsTick.stop();
   if (maxmindReportTimer) clearInterval(maxmindReportTimer);
-  await withdrawalRisk.stop();
   await ingestDelivery.stop();
   await engine.stop();
   await networkRisk.stop();
@@ -2281,7 +2276,6 @@ if (!isDisposableEmailListLoaded()) {
 await live.start();
 await ingestDelivery.start();
 await networkRisk.start();
-withdrawalRisk.start();
 maxmindReportTimer = setInterval(() => {
   void maxmind.drainReports().catch((error) => {
     app.log.warn({ err: error }, "MaxMind feedback outbox drain failed");

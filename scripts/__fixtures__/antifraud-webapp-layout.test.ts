@@ -27,7 +27,6 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Live events",
     "Account reviews",
     "Deposits",
-    "Withdrawals",
     "Refunds",
     "KYC reviews",
     "Discord",
@@ -77,14 +76,8 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
 });
 
-test("deposit and withdrawal reviews preserve their queues in URL-driven drawers", () => {
+test("deposit reviews preserve their queue in a URL-driven drawer", () => {
   const deposits = read("src/app/(antifraud)/antifraud/fiat-deposits/page.tsx");
-  const withdrawals = read(
-    "src/app/(antifraud)/antifraud/withdrawals/page.tsx",
-  );
-  const withdrawalDialog = read(
-    "src/app/(antifraud)/antifraud/withdrawals/review-dialog.tsx",
-  );
   const drawer = read(
     "src/app/(antifraud)/antifraud/_components/review-drawer.tsx",
   );
@@ -95,16 +88,6 @@ test("deposit and withdrawal reviews preserve their queues in URL-driven drawers
   );
   assert.match(deposits, /<QueueReviewDrawer/);
   assert.match(deposits, /<FiatReview[\s\S]*?embedded/);
-  assert.match(
-    withdrawals,
-    /review=\$\{encodeURIComponent\(withdrawal\.withdrawal_id\)\}/,
-  );
-  assert.match(withdrawals, /getWithdrawalAssessment\(withdrawalId\)/);
-  assert.doesNotMatch(withdrawalDialog, /DialogTrigger/);
-  assert.match(
-    withdrawalDialog,
-    /router\.replace\(hrefForCurrentHost\(closeHref\)/,
-  );
   assert.match(drawer, /router\.replace\(hrefForCurrentHost\(closeHref\)/);
   assert.match(drawer, /overflow-y-auto/);
 });
