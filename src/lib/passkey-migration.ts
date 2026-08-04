@@ -76,3 +76,8 @@ export const PASSKEY_SIGNIN_FAILED_HINT =
   "If this passkey was set up before the move to packydash.com it no longer " +
   "works on this domain. Sign in with your authenticator code below, then " +
   "remove and re-add the passkey from your profile.";
+
+export const PASSKEY_DIRECT_SIGNIN_FAILED_HINT =
+  "Older passkeys may not be discoverable, and passkeys created before the " +
+  "move to packydash.com no longer work on this domain. Sign in with email " +
+  "and password, then remove and re-add the passkey from your profile.";

@@ -145,8 +145,10 @@ export async function buildRegistrationOptions(args: {
       transports: c.transports as AuthenticatorTransportFuture[],
     })),
     authenticatorSelection: {
-      residentKey: "preferred",
-      userVerification: "preferred",
+      // Direct login without an email needs a discoverable credential. Requiring
+      // user verification makes newly enrolled passkeys safe as a complete login.
+      residentKey: "required",
+      userVerification: "required",
     },
   });
 }
@@ -161,9 +163,9 @@ export async function checkRegistration(args: {
     expectedChallenge: args.expectedChallenge,
     expectedOrigin: origins,
     expectedRPID: rpID,
-    // This is a SECOND factor (after password) — a roaming security key may
-    // only assert user presence, so don't hard-require user verification.
-    requireUserVerification: false,
+    // Enrollment guarantees the credential can safely be used as a complete
+    // login without a preceding password step.
+    requireUserVerification: true,
   });
 }
 
@@ -178,6 +180,15 @@ export async function buildAuthenticationOptions(args: {
       transports: c.transports as AuthenticatorTransportFuture[],
     })),
     userVerification: "preferred",
+  });
+}
+
+/** Build account-less assertion options for a discoverable passkey login. */
+export async function buildDiscoverableAuthenticationOptions(): Promise<PublicKeyCredentialRequestOptionsJSON> {
+  const { rpID } = await getRpConfig();
+  return generateAuthenticationOptions({
+    rpID,
+    userVerification: "required",
   });
 }
 
@@ -199,5 +210,27 @@ export async function checkAuthentication(args: {
       transports: args.credential.transports as AuthenticatorTransportFuture[],
     },
     requireUserVerification: false,
+  });
+}
+
+/** Verify a passkey that replaces both password and the separate 2FA step. */
+export async function checkDiscoverableAuthentication(args: {
+  response: AuthenticationResponseJSON;
+  expectedChallenge: string;
+  credential: StoredCredential;
+}): Promise<VerifiedAuthenticationResponse> {
+  const { rpID, origins } = await getRpConfig();
+  return verifyAuthenticationResponse({
+    response: args.response,
+    expectedChallenge: args.expectedChallenge,
+    expectedOrigin: origins,
+    expectedRPID: rpID,
+    credential: {
+      id: args.credential.credentialId,
+      publicKey: toArrayBufferBacked(args.credential.publicKey),
+      counter: args.credential.counter,
+      transports: args.credential.transports as AuthenticatorTransportFuture[],
+    },
+    requireUserVerification: true,
   });
 }

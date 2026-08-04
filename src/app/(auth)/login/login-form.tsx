@@ -1,14 +1,24 @@
 "use client";
 
-import { useActionState, useCallback, useEffect, useRef } from "react";
-import { login } from "./actions";
+import { useActionState, useCallback, useEffect, useRef, useState } from "react";
+import {
+  login,
+  startPasswordlessPasskeyLogin,
+  verifyPasswordlessPasskeyLogin,
+} from "./actions";
 import Image from "next/image";
+import { Fingerprint } from "lucide-react";
+import { startAuthentication } from "@simplewebauthn/browser";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { PASSKEY_DIRECT_SIGNIN_FAILED_HINT } from "@/lib/passkey-migration";
 
 export function LoginForm() {
   const [state, formAction, pending] = useActionState(login, {});
+  const [passkeyPending, setPasskeyPending] = useState(false);
+  const [passkeyError, setPasskeyError] = useState<string | null>(null);
+  const [showMigrationHint, setShowMigrationHint] = useState(false);
 
   const formRef = useRef<HTMLFormElement>(null);
   const emailRef = useRef<HTMLInputElement>(null);
@@ -73,6 +83,37 @@ export function LoginForm() {
     }
   };
 
+  async function handlePasskeyLogin() {
+    // Stop the password-manager auto-submit loop from racing this ceremony.
+    submittedRef.current = true;
+    setPasskeyError(null);
+    setShowMigrationHint(false);
+    setPasskeyPending(true);
+    try {
+      const optionsJSON = await startPasswordlessPasskeyLogin();
+      const response = await startAuthentication({ optionsJSON });
+      const result = await verifyPasswordlessPasskeyLogin(response);
+      if (result.redirectTo) {
+        window.location.assign(result.redirectTo);
+        return;
+      }
+      setPasskeyError(result.error ?? "Could not sign in with passkey.");
+      setShowMigrationHint(true);
+    } catch (err) {
+      if (err instanceof Error && err.name === "NotAllowedError") {
+        setPasskeyError(
+          "Passkey sign-in was cancelled, or your browser had no passkey for this domain.",
+        );
+      } else {
+        setPasskeyError(
+          err instanceof Error ? err.message : "Could not sign in with passkey.",
+        );
+      }
+      setShowMigrationHint(true);
+    }
+    setPasskeyPending(false);
+  }
+
   return (
     <div className="relative w-full overflow-hidden rounded-xl border border-border bg-card p-6 shadow-2xl shadow-black/40 sm:p-10">
       {/* Hairline top light-catch — a crisp cyan lifted edge. Decorative. */}
@@ -90,6 +131,34 @@ export function LoginForm() {
         </h1>
       </div>
 
+      {(state?.error || passkeyError) && (
+        <div className="mb-5 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
+          {state?.error || passkeyError}
+        </div>
+      )}
+
+      {showMigrationHint && (
+        <div className="mb-5 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs leading-relaxed text-amber-700 dark:text-amber-400">
+          {PASSKEY_DIRECT_SIGNIN_FAILED_HINT}
+        </div>
+      )}
+
+      <Button
+        type="button"
+        onClick={handlePasskeyLogin}
+        disabled={pending || passkeyPending || redirecting}
+        className="h-11 w-full text-sm font-semibold"
+      >
+        <Fingerprint className="size-4" />
+        {passkeyPending ? "Waiting for passkey..." : "Sign in with a passkey"}
+      </Button>
+
+      <div className="my-5 flex items-center gap-3 text-xs text-muted-foreground">
+        <span className="h-px flex-1 bg-border" />
+        or use email and password
+        <span className="h-px flex-1 bg-border" />
+      </div>
+
       <form
         ref={formRef}
         action={formAction}
@@ -98,12 +167,6 @@ export function LoginForm() {
         }}
         className="space-y-5"
       >
-        {state?.error && (
-          <div className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">
-            {state.error}
-          </div>
-        )}
-
         <div className="space-y-2">
           <Label htmlFor="email" className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
             Email
@@ -141,7 +204,7 @@ export function LoginForm() {
 
         <Button
           type="submit"
-          disabled={pending || redirecting}
+          disabled={pending || passkeyPending || redirecting}
           className="mt-2 h-11 w-full text-sm font-semibold"
         >
           {pending || redirecting ? "Signing in..." : "Sign in"}
