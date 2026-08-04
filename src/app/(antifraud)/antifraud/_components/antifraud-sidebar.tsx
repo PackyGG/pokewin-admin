@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   Activity,
+  BookOpen,
   Bot,
   Banknote,
   ChevronRight,
@@ -131,6 +132,14 @@ const BLACKLIST_NAV: NavItem[] = [
     label: "Risk locations",
     href: "/antifraud/risky-locations",
     icon: MapPinned,
+  },
+];
+
+const GUIDE_NAV: NavItem[] = [
+  {
+    label: "Sign-up checks",
+    href: "/antifraud/guide/sign-up",
+    icon: BookOpen,
   },
 ];
 
@@ -423,6 +432,14 @@ export function AntifraudSidebar({
           toHref={toHref}
           storageKey={`antifraud-nav:v1:${viewerId}:blacklists`}
         />
+        <NavSection
+          label="Guide"
+          items={GUIDE_NAV}
+          pathname={pathname}
+          onNavTap={handleNavTap}
+          toHref={toHref}
+          storageKey={`antifraud-nav:v1:${viewerId}:guide`}
+        />
 
         {canManage && (
           <>
@@ -460,6 +477,7 @@ export function AntifraudSidebar({
                 ...TRANSACTION_NAV,
                 ...KYC_NAV,
                 ...BLACKLIST_NAV,
+                ...GUIDE_NAV,
                 ...(canManage
                   ? [...FIAT_PERK_NAV, ...NOTIFICATION_NAV, ...SYSTEM_NAV]
                   : []),

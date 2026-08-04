@@ -15,6 +15,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Overview",
     "Transactions",
     "KYC",
+    "Guide",
     "Notifications",
     "Blacklists",
     "System",
@@ -36,6 +37,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Fingerprints",
     "Banned users",
     "Risk locations",
+    "Sign-up checks",
     "Automation & rules",
     "Audit log",
   ]) {
@@ -50,6 +52,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.match(sidebar, /group-data-\[collapsible=icon\]:block/);
   assert.doesNotMatch(sidebar, /href:\s*"\/users/);
   for (const route of [
+    "/antifraud/guide/sign-up",
     "/antifraud/ip-blacklist",
     "/antifraud/fingerprint-blacklist",
     "/antifraud/banned-users",
@@ -75,6 +78,17 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   }
   assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
+});
+
+test("Fraud guide starts with an access-controlled empty sign-up page", () => {
+  const page = read(
+    "src/app/(antifraud)/antifraud/guide/sign-up/page.tsx",
+  );
+
+  assert.match(page, /requireAntifraudPageAccess\(\)/);
+  assert.match(page, /<PageHero>/);
+  assert.match(page, />\s*Sign-up checks\s*</);
+  assert.doesNotMatch(page, /Low|Medium|High|Critical|Discord|review|score/i);
 });
 
 test("deposit reviews preserve their queue in a URL-driven drawer", () => {
