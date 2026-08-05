@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { AlertTriangle, BadgeDollarSign, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, BadgeDollarSign, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -127,17 +127,6 @@ export function GlobalFiatReviewCard({
           </CardDescription>
         </div>
       </CardHeader>
-      <CardContent className="max-w-3xl">
-        <div className="flex items-start gap-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
-          <p className="text-muted-foreground">
-            This controls the credit step only. Fraud, KYC, payment-binding,
-            dispute, refund, amount, and compliance checks remain enforced in
-            either mode.
-          </p>
-        </div>
-      </CardContent>
-
       <AlertDialog
         open={requestedEnabled !== null}
         onOpenChange={(open) => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { AlertTriangle, CreditCard, Loader2, ShieldCheck } from "lucide-react";
+import { AlertTriangle, CreditCard, Loader2 } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -110,15 +110,6 @@ export function GlobalFiatAvailabilityCard({
           </CardDescription>
         </div>
       </CardHeader>
-      <CardContent className="max-w-3xl">
-        <div className="flex items-start gap-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
-          <p className="text-muted-foreground">
-            This is the master availability gate. It does not bypass or clear any narrower restriction when enabled.
-          </p>
-        </div>
-      </CardContent>
-
       <AlertDialog
         open={requestedAllowed !== null}
         onOpenChange={(open) => {

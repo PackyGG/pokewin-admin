@@ -31,6 +31,9 @@ const fraudAccessCard = read(
 const fraudAccessActions = read(
   "src/app/(antifraud)/antifraud/config/fiat-deposit-access-control-actions.ts",
 );
+const fraudAccessControl = read(
+  "services/antifraud-monitor/src/fiat-deposit-access-control.ts",
+);
 const fraudConfigPage = read(
   "src/app/(antifraud)/antifraud/config/page.tsx",
 );
@@ -101,7 +104,8 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /onCheckedChange=\{setRequestedEnabled\}/);
   assert.match(fraudConfigCard, /Require admin approval for Fiat deposits/);
   assert.match(fraudConfigCard, /per-account auto-approval override/);
-  assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
+  assert.doesNotMatch(fraudConfigCard, /This controls the credit step only/);
+  assert.doesNotMatch(fraudAvailabilityCard, /This is the master availability gate/);
   assert.match(fraudConfigCard, /<Badge variant="outline">Unavailable<\/Badge>/);
   assert.match(fraudConfigCard, /checked=\{false\}[\s\S]*?disabled/);
   assert.match(fraudConfigCard, /max-w-3xl space-y-2/);
@@ -125,6 +129,18 @@ test("Fraud Config owns all four Fiat controls and hides raw Security config", (
   assert.match(fraudAccessCard, /fiat_deposits_enabled/);
   assert.match(fraudAccessActions, /requireAntifraudManager\(/);
   assert.match(fraudAccessActions, /fiat_deposit_access_policy_updated/);
+  assert.doesNotMatch(fraudAccessCard, /Country, KYC, fraud, payment/);
+  assert.doesNotMatch(fraudAvailabilityCard, /updateFiatAccessControl/);
+  assert.doesNotMatch(fraudAccessActions, /setGlobalFiatDeposits/);
+  assert.match(
+    fraudAccessControl,
+    /scope = 'existing_accounts'[\s\S]*?VALUES \('existing_accounts'/,
+  );
+  assert.match(
+    fraudAccessControl,
+    /scope = 'new_signups'[\s\S]*?VALUES \('new_signups'/,
+  );
+  assert.match(fraudAccessControl, /created_at < \$3/);
   assert.match(fraudAvailabilityCard, /setGlobalFiatDeposits/);
   assert.match(fraudSidebar, /label: "Config",\s*href: "\/antifraud\/config"/);
   assert.match(automationCatalog, /href: "\/antifraud\/config"/);

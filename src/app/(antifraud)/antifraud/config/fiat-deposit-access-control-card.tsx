@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { Loader2, ShieldCheck, Users } from "lucide-react";
+import { Loader2, Users } from "lucide-react";
 import { toast } from "sonner";
 
 import {
@@ -118,10 +118,6 @@ export function FiatDepositAccessControlCard({
           />
         </div>
 
-        <div className="flex items-start gap-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
-          <ShieldCheck className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
-          <p className="text-muted-foreground">Country, KYC, fraud, payment, and user-specific locks remain enforced even when controller access is on.</p>
-        </div>
       </CardContent>
 
       <AlertDialog open={requested !== null} onOpenChange={(open) => !open && !isPending && setRequested(null)}>
