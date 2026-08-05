@@ -11,7 +11,11 @@ import { SectionHeading } from "@/components/modern-panels";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatDateTime,
+  formatRelative,
+} from "@/lib/utils/format";
 import {
   getReviewDetail,
   type ReviewDetail,
@@ -154,7 +158,7 @@ function ScoreDeltaBadge({ delta }: { delta: number | null }) {
 }
 
 function CaseFacts({ detail }: { detail: ReviewDetail }) {
-  const { review, assignee } = detail;
+  const { review, assignee, financialFacts } = detail;
   const facts: { label: string; value: string; mono?: boolean; title?: string }[] =
     [
       { label: "Player id", value: review.targetUserId, mono: true },
@@ -164,6 +168,24 @@ function CaseFacts({ detail }: { detail: ReviewDetail }) {
         title: formatDateTime(review.createdAt),
       },
       { label: "Assigned to", value: assignee?.label ?? "Unassigned" },
+      {
+        label: "Fiat deposits",
+        value: financialFacts
+          ? formatCurrency(financialFacts.fiatDepositsUsd)
+          : "Unavailable",
+      },
+      {
+        label: "Crypto deposits",
+        value: financialFacts
+          ? formatCurrency(financialFacts.cryptoDepositsUsd)
+          : "Unavailable",
+      },
+      {
+        label: "Wagered money",
+        value: financialFacts
+          ? formatCurrency(financialFacts.wageredUsd)
+          : "Unavailable",
+      },
     ];
   return (
     <section className="space-y-3">

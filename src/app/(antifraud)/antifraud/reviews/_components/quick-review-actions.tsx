@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Ban, Clock3, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
@@ -24,6 +24,7 @@ import {
   runQuickReviewAccountAction,
   type QuickReviewAccountAction,
 } from "../actions";
+import { useReviewCaseDismissal } from "./review-case-dialog";
 
 const ACTIONS: Array<{
   action: QuickReviewAccountAction;
@@ -72,7 +73,21 @@ export function QuickReviewActions({
   status: string;
   compact?: boolean;
 }) {
-  if (status === "cleared" || status === "flagged") return null;
+  const dismissal = useReviewCaseDismissal();
+  const terminal = status === "cleared" || status === "flagged";
+
+  useEffect(() => {
+    if (!dismissal || terminal) return;
+    return dismissal.registerDismissHandler(() =>
+      postponeReview({
+        reviewId,
+        expectedStatus: status,
+        idempotencyKey: crypto.randomUUID(),
+      }),
+    );
+  }, [dismissal, reviewId, status, terminal]);
+
+  if (terminal) return null;
 
   return (
     <div className="flex flex-wrap items-center gap-2">
@@ -84,9 +99,15 @@ export function QuickReviewActions({
           account={targetUsername ?? targetUserId}
           status={status}
           compact={compact}
+          onActionCompleted={dismissal?.completeAction}
         />
       ))}
-      <PostponeButton reviewId={reviewId} status={status} compact={compact} />
+      <PostponeButton
+        reviewId={reviewId}
+        status={status}
+        compact={compact}
+        onActionCompleted={dismissal?.completeAction}
+      />
     </div>
   );
 }
@@ -95,10 +116,12 @@ function PostponeButton({
   reviewId,
   status,
   compact,
+  onActionCompleted,
 }: {
   reviewId: string;
   status: string;
   compact: boolean;
+  onActionCompleted?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -113,6 +136,7 @@ function PostponeButton({
           expectedStatus: status,
           idempotencyKey: idempotencyKey.current,
         });
+        onActionCompleted?.();
         toast.success("Review postponed for 2 hours");
         router.refresh();
       } catch (error) {
@@ -154,11 +178,13 @@ function QuickActionButton({
   account,
   status,
   compact,
+  onActionCompleted,
 }: (typeof ACTIONS)[number] & {
   reviewId: string;
   account: string;
   status: string;
   compact: boolean;
+  onActionCompleted?: () => void;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
@@ -178,6 +204,7 @@ function QuickActionButton({
           credential: sensitive ? credential : undefined,
         });
         setCredential("");
+        onActionCompleted?.();
         if (result.withdrawalRelease === "failed") {
           toast.warning(
             "Account approved, but one or more review locks could not be removed. Check the user profile.",

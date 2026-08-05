@@ -18,6 +18,35 @@ test("Account Reviews use the three counted operational tabs", () => {
   assert.match(page, /<ReviewCaseDialog/);
 });
 
+test("dismissing a live review postpones it unless an action completed", () => {
+  const dialog = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-case-dialog.tsx",
+  );
+  const quickActions = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
+  );
+
+  assert.match(dialog, /actionCompletedRef\.current \|\| !dismissHandler/);
+  assert.match(dialog, /void dismissHandler\(\)/);
+  assert.match(quickActions, /dismissal\.registerDismissHandler\(\(\) =>/);
+  assert.match(quickActions, /expectedStatus: status/);
+  assert.match(quickActions, /onActionCompleted\?\.\(\)/);
+});
+
+test("case facts show lifetime fiat, crypto, and wager totals", () => {
+  const reviews = source("src/lib/antifraud/reviews.ts");
+  const workspace = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-case-workspace.tsx",
+  );
+
+  assert.match(reviews, /crypto_asset IS NULL/);
+  assert.match(reviews, /crypto_asset IS NOT NULL/);
+  assert.match(reviews, /SELECT total_wagered::numeric/);
+  assert.match(workspace, /label: "Fiat deposits"/);
+  assert.match(workspace, /label: "Crypto deposits"/);
+  assert.match(workspace, /label: "Wagered money"/);
+});
+
 test("priority and waiting classification use lock, KYC, and 70+ evidence", () => {
   const workflow = source("src/lib/antifraud/review-workflow.ts");
 

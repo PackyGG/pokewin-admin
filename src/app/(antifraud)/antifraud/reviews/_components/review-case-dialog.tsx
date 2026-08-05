@@ -1,8 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { useRouter } from "next/navigation";
 import { ChevronLeft, ChevronRight } from "lucide-react";
+import { toast } from "sonner";
 
 import { HostLink } from "@/components/host-link";
 import { Button } from "@/components/ui/button";
@@ -13,6 +21,17 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { hrefForCurrentHost } from "@/lib/use-app-host";
+
+type DismissHandler = (() => Promise<void>) | null;
+
+const ReviewCaseDismissalContext = createContext<{
+  completeAction: () => void;
+  registerDismissHandler: (handler: DismissHandler) => () => void;
+} | null>(null);
+
+export function useReviewCaseDismissal() {
+  return useContext(ReviewCaseDismissalContext);
+}
 
 export function ReviewCaseDialog({
   closeHref,
@@ -35,10 +54,50 @@ export function ReviewCaseDialog({
    * dismissal animate immediately while the URL catches up behind it.
    */
   const [open, setOpen] = useState(true);
+  const closingRef = useRef(false);
+  const actionCompletedRef = useRef(false);
+  const dismissHandlerRef = useRef<DismissHandler>(null);
+
+  const completeAction = useCallback(() => {
+    actionCompletedRef.current = true;
+  }, []);
+
+  const registerDismissHandler = useCallback((handler: DismissHandler) => {
+    dismissHandlerRef.current = handler;
+    return () => {
+      if (dismissHandlerRef.current === handler) {
+        dismissHandlerRef.current = null;
+      }
+    };
+  }, []);
+  const dismissalContext = useMemo(
+    () => ({ completeAction, registerDismissHandler }),
+    [completeAction, registerDismissHandler],
+  );
 
   function close() {
+    if (closingRef.current) return;
+    closingRef.current = true;
     setOpen(false);
-    router.replace(hrefForCurrentHost(closeHref), { scroll: false });
+
+    const leaveQueueCase = () =>
+      router.replace(hrefForCurrentHost(closeHref), { scroll: false });
+    const dismissHandler = dismissHandlerRef.current;
+    if (actionCompletedRef.current || !dismissHandler) {
+      leaveQueueCase();
+      return;
+    }
+
+    void dismissHandler()
+      .then(() => toast.success("Review postponed for 2 hours"))
+      .catch((error) =>
+        toast.error(
+          error instanceof Error
+            ? error.message
+            : "The review could not be postponed",
+        ),
+      )
+      .finally(leaveQueueCase);
   }
 
   return (
@@ -85,9 +144,13 @@ export function ReviewCaseDialog({
             </div>
           </div>
         </DialogHeader>
-        <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
-          {children}
-        </div>
+        <ReviewCaseDismissalContext.Provider
+          value={dismissalContext}
+        >
+          <div className="min-h-0 flex-1 overflow-y-auto p-3 sm:p-5">
+            {children}
+          </div>
+        </ReviewCaseDismissalContext.Provider>
       </DialogContent>
     </Dialog>
   );

@@ -20,6 +20,7 @@ import { isPostgresError } from "@/lib/postgres-errors";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { getLocalDayBounds } from "@/lib/timezone/core";
 import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
+import { toNumber } from "@/lib/utils/decimal";
 import {
   loadAdminIdentities,
   type AdminIdentity,
@@ -434,6 +435,11 @@ export async function listReviewPage(
 
 export type ReviewDetail = {
   review: ReviewRow;
+  financialFacts: {
+    fiatDepositsUsd: number;
+    cryptoDepositsUsd: number;
+    wageredUsd: number;
+  } | null;
   workflow: ReviewWorkflow | null;
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
@@ -537,12 +543,51 @@ export async function getReviewDetail(
         safeQueryOrNull(
           async () => {
             const main = await getReadDrizzleDb();
-            const [account] = await main.select({
-              email: user.email,
-              country: user.country,
-              countryCode: user.country_code,
-            }).from(user).where(eq(user.id, review.target_user_id)).limit(1);
-            return account ?? null;
+            const [accounts, financialResult] = await Promise.all([
+              main.select({
+                email: user.email,
+                country: user.country,
+                countryCode: user.country_code,
+              }).from(user).where(eq(user.id, review.target_user_id)).limit(1),
+              main.execute<{
+                fiat_deposits: string | null;
+                crypto_deposits: string | null;
+                wagered: string | null;
+              }>(sql`
+                SELECT
+                  COALESCE((
+                    SELECT SUM(amount::numeric)
+                      FROM ledger_transactions
+                     WHERE user_id = ${review.target_user_id}
+                       AND type::text = 'deposit'
+                       AND status::text = 'completed'
+                       AND crypto_asset IS NULL
+                  ), 0)::text AS fiat_deposits,
+                  COALESCE((
+                    SELECT SUM(amount::numeric)
+                      FROM ledger_transactions
+                     WHERE user_id = ${review.target_user_id}
+                       AND type::text = 'deposit'
+                       AND status::text = 'completed'
+                       AND crypto_asset IS NOT NULL
+                  ), 0)::text AS crypto_deposits,
+                  COALESCE((
+                    SELECT total_wagered::numeric
+                      FROM balances
+                     WHERE user_id = ${review.target_user_id}
+                     LIMIT 1
+                  ), 0)::text AS wagered
+              `),
+            ]);
+            const financial = financialResult.rows[0];
+            return {
+              account: accounts[0] ?? null,
+              financialFacts: {
+                fiatDepositsUsd: toNumber(financial?.fiat_deposits),
+                cryptoDepositsUsd: toNumber(financial?.crypto_deposits),
+                wageredUsd: toNumber(financial?.wagered),
+              },
+            };
           },
           "antifraud.review-detail.account",
           3_000,
@@ -565,6 +610,7 @@ export async function getReviewDetail(
 
       const detail: ReviewDetail = {
         review: toRow(review),
+        financialFacts: accountResult.data?.financialFacts ?? null,
         workflow: workflows.get(reviewId) ?? null,
         assignee: review.assigned_to
           ? identities.get(review.assigned_to) ?? null
@@ -575,7 +621,7 @@ export async function getReviewDetail(
         resolver: review.resolved_by
           ? identities.get(review.resolved_by) ?? null
           : null,
-        account: accountResult.data ?? null,
+        account: accountResult.data?.account ?? null,
         notes: notes.map((note) => ({
           id: note.id,
           kind: note.kind,
