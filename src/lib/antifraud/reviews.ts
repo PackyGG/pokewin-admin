@@ -305,6 +305,29 @@ export type ReviewPage = {
   total: number;
 };
 
+/** Resolve a monitor-service case deep-link to its Account Review record. */
+export async function getReviewIdForMonitorCase(
+  monitorCaseId: string,
+): Promise<string | null> {
+  const result = await safeQueryOrNull(
+    () =>
+      adminDrizzle.execute<{ review_id: string }>(sql`
+        SELECT signal.review_id::text
+          FROM antifraud_signals signal
+         WHERE signal.review_id IS NOT NULL
+           AND (
+             signal.payload ->> 'caseId' = ${monitorCaseId}
+             OR signal.payload ->> 'monitorCaseId' = ${monitorCaseId}
+           )
+         ORDER BY signal.received_at DESC
+         LIMIT 1
+      `),
+    "antifraud.review.monitor-case-link",
+    3_000,
+  );
+  return result.data?.rows[0]?.review_id ?? null;
+}
+
 /**
  * Encode / decode the keyset cursor.
  *

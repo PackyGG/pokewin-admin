@@ -28,6 +28,7 @@ import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
 import {
   getAccountReviewTabCounts,
+  getReviewIdForMonitorCase,
   listReviewPage,
   REVIEW_PAGE_SIZE,
   type ReviewFilters,
@@ -98,9 +99,17 @@ export default async function ReviewQueuePage({
     : "reviews";
   const search = params.q?.trim() || undefined;
   const cursor = params.cursor?.trim() || undefined;
-  const selectedReviewId = z.string().uuid().safeParse(params.review).success
+  const directReviewId = z.string().uuid().safeParse(params.review).success
     ? params.review
     : undefined;
+  const monitorCaseId = z.string().uuid().safeParse(params.monitorCaseId).success
+    ? params.monitorCaseId
+    : undefined;
+  const selectedReviewId =
+    directReviewId ??
+    (monitorCaseId
+      ? (await getReviewIdForMonitorCase(monitorCaseId)) ?? undefined
+      : undefined);
 
   const filters: ReviewFilters = {
     // Reviews is the complete active queue: untouched and already-started

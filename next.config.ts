@@ -73,6 +73,18 @@ const nextConfig: NextConfig = {
   async redirects() {
     return [
       {
+        // Monitor case work now lives exclusively in the Account Review modal.
+        source: "/monitor/cases/:id",
+        destination: "/reviews?monitorCaseId=:id",
+        permanent: true,
+      },
+      {
+        // Canonical single-host/preview form of the same retired route.
+        source: "/antifraud/monitor/cases/:id",
+        destination: "/antifraud/reviews?monitorCaseId=:id",
+        permanent: true,
+      },
+      {
         source: "/raffles",
         destination: "/rewards",
         permanent: true,

@@ -69,7 +69,7 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
   assert.equal("description" in (payload.embeds[0] ?? {}), false);
   assert.equal(
     payload.embeds[0]?.url,
-    "https://fraud.packydash.com/monitor/cases/case-123",
+    "https://fraud.packydash.com/reviews?monitorCaseId=case-123",
   );
   assert.equal(
     payload.components[0]?.components[0]?.label,
@@ -77,7 +77,7 @@ test("high-risk signup alerts show a clean account and evidence summary", () => 
   );
   assert.equal(
     payload.components[0]?.components[0]?.url,
-    "https://fraud.packydash.com/monitor/cases/case-123",
+    "https://fraud.packydash.com/reviews?monitorCaseId=case-123",
   );
   assert.match(
     fields.find((field) => field.name === SIGNUP_RISK_FIELD_NAMES.username)

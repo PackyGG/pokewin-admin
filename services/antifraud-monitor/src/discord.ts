@@ -163,7 +163,11 @@ function alertUrl(baseUrl: string, caseId?: string): string {
   if (!caseId) return url.toString();
 
   const root = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${root}/cases/${encodeURIComponent(caseId)}`;
+  const appRoot = root.endsWith("/monitor")
+    ? root.slice(0, -"/monitor".length)
+    : root;
+  url.pathname = `${appRoot}/reviews`;
+  url.searchParams.set("monitorCaseId", caseId);
   return url.toString();
 }
 

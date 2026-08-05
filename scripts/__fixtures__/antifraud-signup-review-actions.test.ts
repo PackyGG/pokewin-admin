@@ -43,7 +43,6 @@ test("Fraud review surfaces do not expose escalation controls", async () => {
     [
       "../../src/lib/antifraud/constants.ts",
       "../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
-      "../../src/app/(antifraud)/antifraud/monitor/cases/[id]/_components/decision-panel.tsx",
       "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-controls.tsx",
       "../../src/app/(antifraud)/antifraud/flows/flow-builder.tsx",
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
@@ -73,6 +72,8 @@ test("Account Review exposes only approve, ban, and postpone", async () => {
   for (const action of ["fine", "ban"]) {
     assert.match(component, new RegExp(`action: "${action}"`));
   }
+  assert.doesNotMatch(component, /action: "lock_withdrawals"/);
+  assert.match(component, /<PostponeButton/);
   assert.match(component, /AlertDialog/);
   assert.match(component, /StepUpField/);
   assert.match(component, /sensitive = action === "ban"/);
@@ -80,6 +81,5 @@ test("Account Review exposes only approve, ban, and postpone", async () => {
   assert.doesNotMatch(component, /action: "lock_withdrawals"/);
   assert.match(actions, /runQuickReviewAccountAction/);
   assert.match(actions, /__can_ban_users/);
-  assert.match(actions, /__can_toggle_feature_locks/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
 });
