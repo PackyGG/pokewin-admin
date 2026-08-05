@@ -461,7 +461,7 @@ function eventLabel(event: LiveEvent): { title: string; detail: string } {
 }
 
 function caseHref(caseId: string): string {
-  return `/antifraud/monitor/cases/${caseId}`;
+  return `/antifraud/reviews?monitorCaseId=${encodeURIComponent(caseId)}`;
 }
 
 export function MonitorConsole() {

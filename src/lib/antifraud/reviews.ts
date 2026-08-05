@@ -14,10 +14,13 @@ import {
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
+import { user } from "@/lib/db-schema/main/schema";
+import { getReadDrizzleDb } from "@/lib/db";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { getLocalDayBounds } from "@/lib/timezone/core";
 import { getAdminDisplayTimeZone } from "@/lib/timezone/server";
+import { toNumber } from "@/lib/utils/decimal";
 import {
   loadAdminIdentities,
   type AdminIdentity,
@@ -25,9 +28,10 @@ import {
 import {
   OPEN_REVIEW_STATUSES,
   type ReviewStatus,
+  type ReviewSeverity,
 } from "./constants";
 import {
-  isNonActionableRewardEnrollmentTrailEntry,
+  isUsefulReviewSignalTrailEntry,
   NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS,
   withoutNonActionableRewardEnrollmentSignals,
 } from "./signal-display";
@@ -158,6 +162,12 @@ export type ReviewFilters = {
   status?: ReviewStatus | "all" | "unresolved";
   /** Operational queue tab. Defaults to high-priority work in the page. */
   queue?: ReviewQueueState;
+  /** Active postponement state. False keeps normal tabs free of postponed work. */
+  postponed?: boolean;
+  /** Restrict the queue to the selected risk bands. */
+  severities?: readonly ReviewSeverity[];
+  /** Put critical cases ahead of high cases across every page. */
+  severityFirst?: boolean;
   /** Limit to cases assigned to this admin. */
   assignedTo?: string;
   /** User ids owned by another operational queue, such as KYC. */
@@ -200,6 +210,22 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
 
   if (filters.assignedTo) conditions.push(eq(antifraud_reviews.assigned_to, filters.assignedTo));
   if (filters.queue) conditions.push(reviewQueueCondition(filters.queue));
+  if (filters.postponed === true) {
+    conditions.push(sql`EXISTS (
+      SELECT 1 FROM antifraud_review_workflow AS postponed
+      WHERE postponed.review_id = ${antifraud_reviews.id}
+        AND postponed.postponed_until > now()
+    )`);
+  } else if (filters.postponed === false) {
+    conditions.push(sql`NOT EXISTS (
+      SELECT 1 FROM antifraud_review_workflow AS postponed
+      WHERE postponed.review_id = ${antifraud_reviews.id}
+        AND postponed.postponed_until > now()
+    )`);
+  }
+  if (filters.severities?.length) {
+    conditions.push(inArray(antifraud_reviews.severity, [...filters.severities]));
+  }
 
   if (filters.excludedTargetUserIds?.length) {
     conditions.push(sql`
@@ -279,6 +305,29 @@ export type ReviewPage = {
   total: number;
 };
 
+/** Resolve a monitor-service case deep-link to its Account Review record. */
+export async function getReviewIdForMonitorCase(
+  monitorCaseId: string,
+): Promise<string | null> {
+  const result = await safeQueryOrNull(
+    () =>
+      adminDrizzle.execute<{ review_id: string }>(sql`
+        SELECT signal.review_id::text
+          FROM antifraud_signals signal
+         WHERE signal.review_id IS NOT NULL
+           AND (
+             signal.payload ->> 'caseId' = ${monitorCaseId}
+             OR signal.payload ->> 'monitorCaseId' = ${monitorCaseId}
+           )
+         ORDER BY signal.received_at DESC
+         LIMIT 1
+      `),
+    "antifraud.review.monitor-case-link",
+    3_000,
+  );
+  return result.data?.rows[0]?.review_id ?? null;
+}
+
 /**
  * Encode / decode the keyset cursor.
  *
@@ -290,27 +339,39 @@ export type ReviewPage = {
  * `antifraud_reviews_created_id_idx` ordering and is stable regardless of
  * what arrives while the analyst pages.
  */
-function encodeReviewCursor(createdAt: string, id: string): string {
-  return Buffer.from(`${createdAt}|${id}`, "utf8").toString("base64url");
+function encodeReviewCursor(
+  createdAt: string,
+  id: string,
+  severityRank?: number,
+): string {
+  const raw = severityRank == null
+    ? `${createdAt}|${id}`
+    : `${severityRank}|${createdAt}|${id}`;
+  return Buffer.from(raw, "utf8").toString("base64url");
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function decodeReviewCursor(
   cursor: string | null | undefined,
-): { createdAt: string; id: string } | null {
+): { createdAt: string; id: string; severityRank: number | null } | null {
   if (!cursor) return null;
   try {
     const raw = Buffer.from(cursor, "base64url").toString("utf8");
-    const sep = raw.lastIndexOf("|");
-    if (sep <= 0) return null;
-    const createdAt = raw.slice(0, sep);
-    const id = raw.slice(sep + 1);
+    const parts = raw.split("|");
+    if (parts.length !== 2 && parts.length !== 3) return null;
+    const [rankPart, createdAt, id] = parts.length === 3
+      ? parts
+      : [null, parts[0], parts[1]];
     // A hand-edited cursor must degrade to "first page", never to a query
     // error or an injected fragment (both values are still bound as params).
     if (!UUID_RE.test(id)) return null;
     if (Number.isNaN(new Date(createdAt).getTime())) return null;
-    return { createdAt, id };
+    const severityRank = rankPart == null ? null : Number(rankPart);
+    if (severityRank != null && (!Number.isInteger(severityRank) || severityRank < 0 || severityRank > 3)) {
+      return null;
+    }
+    return { createdAt, id, severityRank };
   } catch {
     return null;
   }
@@ -331,18 +392,36 @@ export async function listReviewPage(
   const pageSize = Math.min(Math.max(filters.limit ?? REVIEW_PAGE_SIZE, 1), 200);
   const conditions = buildReviewConditions(filters);
   const after = decodeReviewCursor(cursor);
+  const severityRank = sql<number>`CASE ${antifraud_reviews.severity}
+    WHEN 'critical' THEN 3
+    WHEN 'high' THEN 2
+    WHEN 'medium' THEN 1
+    ELSE 0
+  END`;
 
   const pageConditions = [...conditions];
   if (after) {
-    pageConditions.push(
-      sql`(${antifraud_reviews.created_at}, ${antifraud_reviews.id}) < (${after.createdAt}::timestamptz, ${after.id}::uuid)`,
-    );
+    if (filters.severityFirst && after.severityRank != null) {
+      pageConditions.push(sql`(
+        ${severityRank}, ${antifraud_reviews.created_at}, ${antifraud_reviews.id}
+      ) < (
+        ${after.severityRank}, ${after.createdAt}::timestamptz, ${after.id}::uuid
+      )`);
+    } else {
+      pageConditions.push(
+        sql`(${antifraud_reviews.created_at}, ${antifraud_reviews.id}) < (${after.createdAt}::timestamptz, ${after.id}::uuid)`,
+      );
+    }
   }
 
   const [rows, totals] = await Promise.all([
     adminDrizzle.select().from(antifraud_reviews)
       .where(pageConditions.length ? and(...pageConditions) : undefined)
-      .orderBy(desc(antifraud_reviews.created_at), desc(antifraud_reviews.id))
+      .orderBy(
+        ...(filters.severityFirst ? [desc(severityRank)] : []),
+        desc(antifraud_reviews.created_at),
+        desc(antifraud_reviews.id),
+      )
       // One extra row is the "is there another page?" probe — cheaper and
       // race-free compared with comparing the count against the offset.
       .limit(pageSize + 1),
@@ -358,17 +437,41 @@ export async function listReviewPage(
   return {
     items: await attachIdentities(pageRows),
     nextCursor:
-      hasMore && last ? encodeReviewCursor(last.created_at, last.id) : null,
+      hasMore && last
+        ? encodeReviewCursor(
+            last.created_at,
+            last.id,
+            filters.severityFirst
+              ? last.severity === "critical"
+                ? 3
+                : last.severity === "high"
+                  ? 2
+                  : last.severity === "medium"
+                    ? 1
+                    : 0
+              : undefined,
+          )
+        : null,
     total: Number(totals[0]?.total ?? 0),
   };
 }
 
 export type ReviewDetail = {
   review: ReviewRow;
+  financialFacts: {
+    fiatDepositsUsd: number;
+    cryptoDepositsUsd: number;
+    wageredUsd: number;
+  } | null;
   workflow: ReviewWorkflow | null;
   assignee: AdminIdentity | null;
   opener: AdminIdentity | null;
   resolver: AdminIdentity | null;
+  account: {
+    email: string | null;
+    country: string | null;
+    countryCode: string | null;
+  } | null;
   notes: ReviewNote[];
   /** Other signals that arrived for the same account. */
   relatedSignals: {
@@ -444,7 +547,7 @@ export async function getReviewDetail(
   // that quietly shows nothing is worse than an honest error.
   const body = await safeQueryOrNull(
     async () => {
-      const [rawNotes, signals, workflows] = await Promise.all([
+      const [rawNotes, signals, workflows, accountResult] = await Promise.all([
         adminDrizzle.select().from(antifraud_review_notes)
           .where(eq(antifraud_review_notes.review_id, reviewId))
           .orderBy(desc(antifraud_review_notes.created_at)).limit(200),
@@ -460,12 +563,64 @@ export async function getReviewDetail(
           )
           .orderBy(desc(antifraud_signals.received_at)).limit(25),
         loadReviewWorkflows([reviewId]),
+        safeQueryOrNull(
+          async () => {
+            const main = await getReadDrizzleDb();
+            const [accounts, financialResult] = await Promise.all([
+              main.select({
+                email: user.email,
+                country: user.country,
+                countryCode: user.country_code,
+              }).from(user).where(eq(user.id, review.target_user_id)).limit(1),
+              main.execute<{
+                fiat_deposits: string | null;
+                crypto_deposits: string | null;
+                wagered: string | null;
+              }>(sql`
+                SELECT
+                  COALESCE((
+                    SELECT SUM(amount::numeric)
+                      FROM ledger_transactions
+                     WHERE user_id = ${review.target_user_id}
+                       AND type::text = 'deposit'
+                       AND status::text = 'completed'
+                       AND crypto_asset IS NULL
+                  ), 0)::text AS fiat_deposits,
+                  COALESCE((
+                    SELECT SUM(amount::numeric)
+                      FROM ledger_transactions
+                     WHERE user_id = ${review.target_user_id}
+                       AND type::text = 'deposit'
+                       AND status::text = 'completed'
+                       AND crypto_asset IS NOT NULL
+                  ), 0)::text AS crypto_deposits,
+                  COALESCE((
+                    SELECT total_wagered::numeric
+                      FROM balances
+                     WHERE user_id = ${review.target_user_id}
+                     LIMIT 1
+                  ), 0)::text AS wagered
+              `),
+            ]);
+            const financial = financialResult.rows[0];
+            return {
+              account: accounts[0] ?? null,
+              financialFacts: {
+                fiatDepositsUsd: toNumber(financial?.fiat_deposits),
+                cryptoDepositsUsd: toNumber(financial?.crypto_deposits),
+                wageredUsd: toNumber(financial?.wagered),
+              },
+            };
+          },
+          "antifraud.review-detail.account",
+          3_000,
+        ),
       ]);
       const notes = rawNotes
         .filter(
           (note) =>
             note.kind !== "signal" ||
-            !isNonActionableRewardEnrollmentTrailEntry(note.body),
+            isUsefulReviewSignalTrailEntry(note.body),
         )
         .slice(0, 100);
 
@@ -478,6 +633,7 @@ export async function getReviewDetail(
 
       const detail: ReviewDetail = {
         review: toRow(review),
+        financialFacts: accountResult.data?.financialFacts ?? null,
         workflow: workflows.get(reviewId) ?? null,
         assignee: review.assigned_to
           ? identities.get(review.assigned_to) ?? null
@@ -488,6 +644,7 @@ export async function getReviewDetail(
         resolver: review.resolved_by
           ? identities.get(review.resolved_by) ?? null
           : null,
+        account: accountResult.data?.account ?? null,
         notes: notes.map((note) => ({
           id: note.id,
           kind: note.kind,
@@ -526,6 +683,7 @@ export type ReviewStats = {
   resolvedToday: number;
   flaggedTotal: number;
   mineOpen: number;
+  postponed: number;
 };
 
 export type ReviewQueueStats = {
@@ -534,6 +692,51 @@ export type ReviewQueueStats = {
   waitingKyc: number;
   postponed: number;
 };
+
+export type AccountReviewTabCounts = {
+  reviews: number;
+  inReview: number;
+  postponed: number;
+};
+
+/** Counts for the three operational tabs; low/medium never enter this view. */
+export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCounts> {
+  const empty = { reviews: 0, inReview: 0, postponed: 0 };
+  try {
+    const result = await adminDrizzle.execute<{
+      reviews: string;
+      in_review: string;
+      postponed: string;
+    }>(sql`
+      SELECT
+        COUNT(*) FILTER (
+          WHERE review.status = 'open'
+            AND NOT COALESCE(workflow.postponed_until > now(), false)
+        ) AS reviews,
+        COUNT(*) FILTER (
+          WHERE review.status IN ('in_review', 'escalated')
+            AND NOT COALESCE(workflow.postponed_until > now(), false)
+        ) AS in_review,
+        COUNT(*) FILTER (
+          WHERE review.status IN ('open', 'in_review', 'escalated')
+            AND workflow.postponed_until > now()
+        ) AS postponed
+      FROM antifraud_reviews AS review
+      LEFT JOIN antifraud_review_workflow AS workflow
+        ON workflow.review_id = review.id
+      WHERE review.severity IN ('high', 'critical')
+    `);
+    const row = result.rows[0];
+    return {
+      reviews: Number(row?.reviews ?? 0),
+      inReview: Number(row?.in_review ?? 0),
+      postponed: Number(row?.postponed ?? 0),
+    };
+  } catch (error) {
+    console.error("[antifraud] getAccountReviewTabCounts failed:", error);
+    return empty;
+  }
+}
 
 export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
   const empty = { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 };
@@ -589,6 +792,7 @@ export async function getReviewStats(
     resolvedToday: 0,
     flaggedTotal: 0,
     mineOpen: 0,
+    postponed: 0,
   };
   try {
     // "Resolved today" means the ANALYST's today. `setHours(0,0,0,0)` uses the
@@ -613,12 +817,34 @@ export async function getReviewStats(
       : sql`TRUE`;
 
     const result = await adminDrizzle.execute<{
-      open: string; in_review: string; flagged: string;
+      open: string; in_review: string; flagged: string; postponed: string;
       resolved_today: string; mine_open: string;
     }>(sql`
       SELECT
-        COUNT(*) FILTER (WHERE status = 'open') AS open,
-        COUNT(*) FILTER (WHERE status IN ('in_review', 'escalated')) AS in_review,
+        COUNT(*) FILTER (
+          WHERE status = 'open'
+            AND NOT EXISTS (
+              SELECT 1 FROM antifraud_review_workflow workflow
+              WHERE workflow.review_id = antifraud_reviews.id
+                AND workflow.postponed_until > now()
+            )
+        ) AS open,
+        COUNT(*) FILTER (
+          WHERE status IN ('in_review', 'escalated')
+            AND NOT EXISTS (
+              SELECT 1 FROM antifraud_review_workflow workflow
+              WHERE workflow.review_id = antifraud_reviews.id
+                AND workflow.postponed_until > now()
+            )
+        ) AS in_review,
+        COUNT(*) FILTER (
+          WHERE status IN ('open', 'in_review', 'escalated')
+            AND EXISTS (
+              SELECT 1 FROM antifraud_review_workflow workflow
+              WHERE workflow.review_id = antifraud_reviews.id
+                AND workflow.postponed_until > now()
+            )
+        ) AS postponed,
         COUNT(*) FILTER (WHERE status = 'flagged') AS flagged,
         COUNT(*) FILTER (WHERE resolved_at >= ${startOfToday} AND resolved_at < ${endOfToday}) AS resolved_today,
         COUNT(*) FILTER (WHERE assigned_to = ${adminUserId ?? null}::uuid AND status = ANY(${pgArrayParam([...REVIEW_QUEUE_STORAGE_STATUSES])}::text[])) AS mine_open
@@ -633,6 +859,7 @@ export async function getReviewStats(
       resolvedToday: value("resolved_today"),
       flaggedTotal: value("flagged"),
       mineOpen: value("mine_open"),
+      postponed: value("postponed"),
     };
   } catch (err) {
     if (!isMissingRelationError(err)) {

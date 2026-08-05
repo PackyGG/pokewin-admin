@@ -57,6 +57,11 @@ export function isNonActionableRewardEnrollmentTrailEntry(
   );
 }
 
+/** True when a historic signal note still carries analyst-useful evidence. */
+export function isUsefulReviewSignalTrailEntry(body: string): boolean {
+  return !isNonActionableRewardEnrollmentTrailEntry(body);
+}
+
 /**
  * Signal kinds whose raw name reads like the player did something, when the
  * underlying row is only bookkeeping.

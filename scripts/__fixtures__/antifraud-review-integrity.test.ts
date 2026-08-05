@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -37,7 +37,7 @@ test("review queue prefix search and COUNT have trigram coverage", () => {
   );
 });
 
-test("antifraud command audit mirrors are globally idempotent", () => {
+test("Account Review commands remain globally idempotent", () => {
   const migration = read(
     "drizzle/admin/migrations/20260726_antifraud_audit_idempotency.sql",
   );
@@ -45,16 +45,6 @@ test("antifraud command audit mirrors are globally idempotent", () => {
   assert.match(migration, /metadata\s*->>\s*'idempotencyKey'/i);
   assert.match(migration, /antifraud_monitor_case_decision/);
   assert.match(migration, /antifraud_review_status_changed/);
-
-  const monitorAction = read(
-    "src/app/(antifraud)/antifraud/monitor/cases/[id]/actions.ts",
-  );
-  assert.match(monitorAction, /await mirrorDecisionAudit\(/);
-  assert.doesNotMatch(
-    monitorAction,
-    /if\s*\(!result\.idempotent\)/,
-    "an upstream replay must still retry the ADMIN audit mirror",
-  );
 
   const reviewAction = read(
     "src/app/(antifraud)/antifraud/reviews/actions.ts",
@@ -66,6 +56,24 @@ test("antifraud command audit mirrors are globally idempotent", () => {
     /tx\.insert\(antifraud_review_notes\)[\s\S]*?tx\.insert\(staff_profiles\)|tx\.insert\(staff_profiles\)[\s\S]*?tx\.insert\(antifraud_review_notes\)/,
     "status note and resolver credit must stay in the review transaction",
   );
+});
+
+test("legacy monitor case pages are retired into the Account Review popup", () => {
+  const legacyRoute = path.join(
+    root,
+    "src/app/(antifraud)/antifraud/monitor/cases/[id]/page.tsx",
+  );
+  assert.equal(existsSync(legacyRoute), false);
+
+  const monitor = read(
+    "src/app/(antifraud)/antifraud/monitor/monitor-console.tsx",
+  );
+  const reviews = read("src/app/(antifraud)/antifraud/reviews/page.tsx");
+  const reviewQueries = read("src/lib/antifraud/reviews.ts");
+  assert.match(monitor, /\/antifraud\/reviews\?monitorCaseId=/);
+  assert.match(reviews, /getReviewIdForMonitorCase\(monitorCaseId\)/);
+  assert.match(reviewQueries, /payload ->> 'caseId'/);
+  assert.match(reviewQueries, /payload ->> 'monitorCaseId'/);
 });
 
 test("manual case open keeps case, trail and audit in one transaction", () => {
@@ -151,7 +159,11 @@ test("clearing a case releases the player's withdrawal locks", () => {
   ]) {
     const source = read(surface);
     assert.match(source, /withdrawalRelease === "failed"/, `${surface} must surface a failed release`);
-    assert.match(source, /unlock/i, `${surface} must tell the analyst what clearing does`);
+    assert.match(
+      source,
+      /unlock|review locks (?:will be )?removed/i,
+      `${surface} must tell the analyst what clearing does`,
+    );
   }
 });
 
