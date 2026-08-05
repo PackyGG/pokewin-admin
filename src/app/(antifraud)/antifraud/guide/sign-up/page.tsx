@@ -308,11 +308,6 @@ export default async function AntifraudSignupGuidePage() {
                     Starts at 21 points
                   </span>
                 </div>
-                <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">
-                  The monitor is a fixed observation window attached to the
-                  signup assessment. It keeps an auditable event-by-event score
-                  without rerunning the original signup decision.
-                </p>
               </div>
             </div>
             <div className="grid grid-cols-3 gap-1.5 text-center text-[10px] font-semibold tabular-nums">
