@@ -462,25 +462,6 @@ export default async function AntifraudSignupGuidePage() {
             </div>
           </div>
 
-          <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 p-4">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
-              <ShieldAlert className="size-4" />
-            </span>
-            <div>
-              <h3 className="text-sm font-semibold">
-                A live score change is evidence, not a second signup
-              </h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Moving into another score band during the window updates the
-                case score and severity, but it does not replay that band&apos;s
-                original signup alert, Account Review, or lock actions. An
-                enabled behavior-flow rule can still fire its own configured
-                action. When time expires, the monitor closes on the latest
-                score; actions already applied at signup remain for staff to
-                resolve.
-              </p>
-            </div>
-          </div>
         </div>
       </section>
     </div>

@@ -40,8 +40,10 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
   assert.match(guide, /value: "Initial -30"/);
   assert.match(guide, /value: "No restart"/);
   assert.match(guide, /clamp\(initial - 30, result, 100\)/);
-  assert.match(guide, /A live score change is evidence, not a second signup/);
-  assert.match(guide, /does not replay that band&apos;s/);
+  assert.doesNotMatch(
+    guide,
+    /A live score change is evidence, not a second signup/,
+  );
   assert.doesNotMatch(guide, /Move up immediately/);
   assert.doesNotMatch(guide, /cross a higher threshold/);
   assert.doesNotMatch(guide, /Critical containment/);
