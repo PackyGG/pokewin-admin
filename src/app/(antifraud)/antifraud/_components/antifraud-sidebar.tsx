@@ -130,14 +130,9 @@ const GUIDE_NAV: NavItem[] = [
 ];
 
 /**
- * System — one Settings page carrying every configuration section as a tab
- * (overview, automation, scoring, point flows, events, alerts, integrations,
- * engine health); Config, which owns the global Fiat automatic-credit switch on
- * its own page because it credits real player deposits; and the staff audit
- * log, which is a record rather than a setting. The retired per-surface routes
- * Discord routing is configuration too, so it lives in this group rather than
- * in a separate Notifications section. Retired per-surface routes
- * (`/automation`, `/points`, `/events`, `/flows`) redirect to their tab.
+ * System owns Fraud configuration and manager tools: Settings, Config,
+ * Discord routing, and the staff audit log. Retired per-surface routes
+ * (`/automation`, `/points`, `/events`, `/flows`) redirect to Settings tabs.
  */
 const SYSTEM_NAV: NavItem[] = [
   { label: "Settings", href: "/antifraud/settings", icon: SlidersHorizontal },

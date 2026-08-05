@@ -9,7 +9,7 @@ function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
 
-test("fraud navigation owns a manager-only Notifications Discord route", () => {
+test("fraud navigation owns a manager-only System Discord route", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -19,10 +19,11 @@ test("fraud navigation owns a manager-only Notifications Discord route", () => {
       /host:\s*`fraud\.\$\{ROOT_DOMAIN\}`[\s\S]*?segmentRoutes:\s*\[([\s\S]*?)\]/,
     )?.[1] ?? "";
 
-  assert.match(sidebar, /label="Notifications"/);
+  assert.match(sidebar, /label="System"/);
+  assert.doesNotMatch(sidebar, /label="Notifications"|NOTIFICATION_NAV/);
   assert.match(sidebar, /label:\s*"Discord routing"/);
   assert.match(sidebar, /href:\s*"\/antifraud\/discord"/);
-  assert.match(sidebar, /\{canManage && \([\s\S]*NOTIFICATION_NAV/);
+  assert.match(sidebar, /\{canManage && \([\s\S]*items=\{SYSTEM_NAV\}/);
   assert.match(antifraudHost, /"discord"/);
 });
 
