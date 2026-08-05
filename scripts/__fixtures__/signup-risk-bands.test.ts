@@ -24,16 +24,26 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
     guide,
     /locks: "Fiat deposits · Crypto withdrawals · Item withdrawals · Tips"/,
   );
-  assert.doesNotMatch(guide, /Staff are informed|Nothing else happens|No automatic restriction/);
+  assert.doesNotMatch(
+    guide,
+    /Staff are informed|Nothing else happens|No automatic restriction/,
+  );
   assert.match(guide, /title: "1\. Sign-up check"/);
   assert.match(guide, /title: "2\. Score it"/);
   assert.match(guide, /title: "3\. Monitor higher scores"/);
-  assert.match(guide, /title: "4\. Decide"/);
-  assert.match(guide, /immediately if new points cross a higher threshold/);
-  assert.match(guide, /title: "1\. Start the timer"/);
-  assert.match(guide, /title: "2\. Watch new activity"/);
-  assert.match(guide, /title: "3\. Move up immediately"/);
-  assert.match(guide, /title: "4\. Finish on the latest score"/);
+  assert.match(guide, /title: "4\. Apply the entry actions"/);
+  assert.match(guide, /title: "Open the window"/);
+  assert.match(guide, /title: "Save the baseline"/);
+  assert.match(guide, /title: "Collect fresh activity"/);
+  assert.match(guide, /title: "Evaluate behavior flows"/);
+  assert.match(guide, /title: "Close on the latest score"/);
+  assert.match(guide, /value: "Initial -30"/);
+  assert.match(guide, /value: "No restart"/);
+  assert.match(guide, /clamp\(initial - 30, result, 100\)/);
+  assert.match(guide, /A live score change is evidence, not a second signup/);
+  assert.match(guide, /does not replay that band&apos;s/);
+  assert.doesNotMatch(guide, /Move up immediately/);
+  assert.doesNotMatch(guide, /cross a higher threshold/);
   assert.doesNotMatch(guide, /Critical containment/);
 });
 
@@ -43,9 +53,15 @@ test("high and critical signup actions own their Discord routes", () => {
   );
 
   assert.match(migration, /'antifraud\.signup_high', '1534296433241493774'/);
-  assert.match(migration, /'antifraud\.signup_critical', '1534296454129254523'/);
+  assert.match(
+    migration,
+    /'antifraud\.signup_critical', '1534296454129254523'/,
+  );
   assert.match(migration, /parent_id = '1532207307683795026'/);
-  assert.match(migration, /DELETE FROM discord_notification_routes\s+WHERE event_key = 'antifraud\.signup_high_risk'/);
+  assert.match(
+    migration,
+    /DELETE FROM discord_notification_routes\s+WHERE event_key = 'antifraud\.signup_high_risk'/,
+  );
   assert.match(migration, /enabled = false/);
 });
 
