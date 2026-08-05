@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import { BadgeDollarSign, Power } from "lucide-react";
+import { BadgeDollarSign, Power, Users } from "lucide-react";
 
 import {
   PageHero,
@@ -16,8 +16,10 @@ import {
 import { hasAnyWhopFiatDepositLock } from "@/lib/fiat-jurisdiction-policy";
 import { getFiatConfig } from "@/lib/queries/fiat";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
+import { getFiatAccessControlStatus } from "@/lib/antifraud/monitor-api";
 import { GlobalFiatReviewCard } from "./fiat-auto-approval-card";
 import { GlobalFiatAvailabilityCard } from "./fiat-availability-card";
+import { FiatDepositAccessControlCard } from "./fiat-deposit-access-control-card";
 
 export const metadata = { title: "Config · Antifraud" };
 
@@ -45,8 +47,20 @@ export default async function AntifraudConfigPage() {
           <GlobalFiatCreditData />
         </Suspense>
       </section>
+
+      <section className="space-y-3">
+        <SectionHeading icon={Users} title="Per-account Fiat access" />
+        <Suspense fallback={<Skeleton className="h-72 w-full rounded-xl" />}>
+          <FiatDepositAccessControlData />
+        </Suspense>
+      </section>
     </div>
   );
+}
+
+async function FiatDepositAccessControlData() {
+  const result = await getFiatAccessControlStatus();
+  return <FiatDepositAccessControlCard initialStatus={result.data} />;
 }
 
 async function GlobalFiatAvailabilityData() {

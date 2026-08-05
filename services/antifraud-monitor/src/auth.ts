@@ -31,6 +31,8 @@ export function serviceRequestAuthorized(
     (method === "PUT" && pathname.startsWith("/v1/rules/")) ||
     (method === "PUT" && pathname.startsWith("/v1/scoring/")) ||
     (method === "PUT" && pathname.startsWith("/v1/analysis-rules/")) ||
+    (method === "PUT" &&
+      pathname.startsWith("/v1/fiat-deposit-access/config/")) ||
     (method === "POST" && pathname.includes("/decision")) ||
     (method === "POST" && pathname.includes("/rescan")) ||
     (method === "POST" &&

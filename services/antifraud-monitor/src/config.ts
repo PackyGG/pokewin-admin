@@ -36,6 +36,13 @@ const schema = z.object({
   MAXMIND_ACCOUNT_ID: z.string().regex(/^\d+$/).optional(),
   MAXMIND_LICENSE_KEY: z.string().min(16).optional(),
   MAXMIND_ALERT_WEBHOOK_SECRET: z.string().min(20).max(100).optional(),
+  FIAT_ACCESS_API_BASE_URL: z
+    .string()
+    .url()
+    .default("https://packy.gg/v1"),
+  ADMIN_API_KEY: z.string().min(1).optional(),
+  xbypasssecret: z.string().min(1).optional(),
+  XBYPASSSECRET: z.string().min(1).optional(),
   SUMSUB_ADMIN_TOKEN: z.string().min(1).optional(),
   SUMSUB_ADMIN_KEY: z.string().min(1).optional(),
   API_TOKEN: z.string().min(32),

@@ -158,6 +158,102 @@ const runtimeConfigSchema = z.object({
 
 export type AntifraudRuntimeConfig = z.infer<typeof runtimeConfigSchema>;
 
+const fiatAccessControlStatusSchema = z.object({
+  configured: z.boolean(),
+  existingAccounts: z.object({
+    enabled: z.boolean(),
+    generation: z.number().int().nonnegative(),
+    status: z.enum(["not_started", "queued", "running", "complete", "stalled"]),
+    processed: z.number().int().nonnegative(),
+    succeeded: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    lastError: z.string().nullable(),
+    cutoffAt: z.string().nullable(),
+    completedAt: z.string().nullable(),
+  }),
+  newSignups: z.object({
+    enabled: z.boolean(),
+    generation: z.number().int().nonnegative(),
+    effectiveAt: z.string().nullable(),
+    processed: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+  }),
+});
+
+export type FiatAccessControlStatus = z.infer<
+  typeof fiatAccessControlStatusSchema
+>;
+
+export async function getFiatAccessControlStatus(): Promise<{
+  configured: boolean;
+  data: FiatAccessControlStatus | null;
+  error: boolean;
+}> {
+  const { baseUrl, token } = readToken();
+  if (!baseUrl || !token) {
+    return { configured: false, data: null, error: false };
+  }
+  try {
+    const response = await fetch(`${baseUrl}/v1/fiat-deposit-access/config`, {
+      headers: { accept: "application/json", authorization: `Bearer ${token}` },
+      cache: "no-store",
+      signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+    });
+    if (!response.ok) throw new Error(`Monitor API returned ${response.status}`);
+    const payload = z
+      .object({ data: fiatAccessControlStatusSchema })
+      .parse(await response.json());
+    return { configured: true, data: payload.data, error: false };
+  } catch (error) {
+    console.error("[antifraud-monitor] Fiat access config failed:", error);
+    return { configured: true, data: null, error: true };
+  }
+}
+
+export async function updateFiatAccessControl(input: {
+  scope: "existing-accounts" | "new-signups";
+  enabled: boolean;
+  actorId: string;
+}): Promise<FiatAccessControlStatus> {
+  const baseUrl = process.env.ANTIFRAUD_MONITOR_API_URL?.replace(/\/+$/, "");
+  const token = process.env.ANTIFRAUD_MONITOR_API_ADMIN_TOKEN;
+  if (!baseUrl || !token) {
+    throw new Error("Fiat access controls are not configured.");
+  }
+  let response: Response;
+  try {
+    response = await fetch(
+      `${baseUrl}/v1/fiat-deposit-access/config/${input.scope}`,
+      {
+        method: "PUT",
+        headers: {
+          accept: "application/json",
+          "content-type": "application/json",
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ enabled: input.enabled, actorId: input.actorId }),
+        cache: "no-store",
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
+      },
+    );
+  } catch {
+    throw new Error("The monitor service did not respond. No access policy changed.");
+  }
+  if (response.status === 401 || response.status === 403) {
+    throw new Error("The monitor rejected the Fiat access credentials.");
+  }
+  if (!response.ok) {
+    throw new Error("The Fiat access policy could not be saved.");
+  }
+  const parsed = z
+    .object({ data: fiatAccessControlStatusSchema })
+    .safeParse(await response.json().catch(() => null));
+  if (!parsed.success) {
+    throw new Error("The monitor returned an invalid Fiat access status.");
+  }
+  return parsed.data.data;
+}
+
 const pollerHealthSchema = z.object({
   status: z.enum(["starting", "healthy", "degraded", "standby"]),
   running: z.boolean(),

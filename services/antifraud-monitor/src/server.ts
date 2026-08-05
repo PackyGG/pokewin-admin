@@ -66,6 +66,8 @@ import {
   registerFiatEligibilityRoutes,
 } from "./fiat-eligibility-routes.js";
 import { FiatEligibilityService } from "./fiat-eligibility.js";
+import { FiatDepositAccessClient } from "./fiat-deposit-access.js";
+import { FiatDepositAccessControl } from "./fiat-deposit-access-control.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
@@ -136,6 +138,9 @@ const SECRET_VALUES = [
   config.ANTIFRAUD_INGEST_SECRET,
   config.SUMSUB_ADMIN_TOKEN,
   config.SUMSUB_ADMIN_KEY,
+  config.ADMIN_API_KEY,
+  config.xbypasssecret,
+  config.XBYPASSSECRET,
 ].filter(
   (value): value is string =>
     typeof value === "string" && value.length >= 8,
@@ -230,6 +235,15 @@ const ingestDelivery = new IngestDelivery(
   app.log,
 );
 const dashboardOpsTick = new DashboardOpsTick(config, app.log);
+const fiatAccessControl = new FiatDepositAccessControl(
+  db,
+  new FiatDepositAccessClient(config),
+  app.log,
+  Boolean(
+    config.ADMIN_API_KEY &&
+      (config.xbypasssecret || config.XBYPASSSECRET),
+  ),
+);
 const engine = new MonitorEngine(
   config,
   db,
@@ -237,6 +251,7 @@ const engine = new MonitorEngine(
   scoreWeights,
   app.log,
   (userId) => networkRisk.enqueueAccount(userId).then(() => undefined),
+  fiatAccessControl,
 );
 let shuttingDown = false;
 let maxmindReportTimer: NodeJS.Timeout | null = null;
@@ -647,6 +662,32 @@ app.get("/v1/operations/live", async () => ({
 app.get("/v1/operations/config", async () => ({
   data: sanitizedRuntimeConfig(config, allowedOrigins.size),
 }));
+
+const fiatAccessControlBody = z.object({
+  enabled: z.boolean(),
+  actorId: z.string().trim().min(1).max(200),
+});
+
+app.get("/v1/fiat-deposit-access/config", async () => ({
+  data: await fiatAccessControl.status(),
+}));
+
+app.put("/v1/fiat-deposit-access/config/existing-accounts", async (request) => {
+  const input = fiatAccessControlBody.parse(request.body);
+  return {
+    data: await fiatAccessControl.setExistingAccounts(
+      input.enabled,
+      input.actorId,
+    ),
+  };
+});
+
+app.put("/v1/fiat-deposit-access/config/new-signups", async (request) => {
+  const input = fiatAccessControlBody.parse(request.body);
+  return {
+    data: await fiatAccessControl.setNewSignups(input.enabled, input.actorId),
+  };
+});
 
 app.get("/v1/operations/notifications", async () => ({
   data: {

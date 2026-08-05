@@ -25,6 +25,12 @@ const fraudAvailabilityCard = read(
 const fraudConfigActions = read(
   "src/app/(antifraud)/antifraud/config/fiat-auto-approval-actions.ts",
 );
+const fraudAccessCard = read(
+  "src/app/(antifraud)/antifraud/config/fiat-deposit-access-control-card.tsx",
+);
+const fraudAccessActions = read(
+  "src/app/(antifraud)/antifraud/config/fiat-deposit-access-control-actions.ts",
+);
 const fraudConfigPage = read(
   "src/app/(antifraud)/antifraud/config/page.tsx",
 );
@@ -104,7 +110,7 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.doesNotMatch(fraudAvailabilityCard, /flex flex-wrap items-start justify-between gap-4/);
 });
 
-test("Fraud Config owns both global Fiat controls and hides raw Security config", () => {
+test("Fraud Config owns all four Fiat controls and hides raw Security config", () => {
   assert.match(fraudConfigPage, /requireAntifraudManagerPage\(\)/);
   assert.match(fraudConfigPage, /getFiatDepositAutomaticCreditConfig/);
   assert.match(fraudConfigPage, /safeQueryOrNull\(/);
@@ -113,6 +119,12 @@ test("Fraud Config owns both global Fiat controls and hides raw Security config"
   assert.doesNotMatch(fraudConfigPage, /redirect\(/);
   assert.match(settingsPage, /\{ value: "automation", label: "Automation" \}/);
   assert.match(fraudConfigPage, /GlobalFiatAvailabilityCard/);
+  assert.match(fraudConfigPage, /FiatDepositAccessControlCard/);
+  assert.match(fraudAccessCard, /Fiat access for existing accounts/);
+  assert.match(fraudAccessCard, /Fiat access for new signups/);
+  assert.match(fraudAccessCard, /fiat_deposits_enabled/);
+  assert.match(fraudAccessActions, /requireAntifraudManager\(/);
+  assert.match(fraudAccessActions, /fiat_deposit_access_policy_updated/);
   assert.match(fraudAvailabilityCard, /setGlobalFiatDeposits/);
   assert.match(fraudSidebar, /label: "Config",\s*href: "\/antifraud\/config"/);
   assert.match(automationCatalog, /href: "\/antifraud\/config"/);

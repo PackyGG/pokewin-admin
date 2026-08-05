@@ -309,6 +309,26 @@ test("live transport observability requires the admin token", () => {
   );
 });
 
+test("Fiat access policy writes require the admin token", () => {
+  const config = { API_TOKEN: "read-token-1234", API_ADMIN_TOKEN: "admin-token-1234" };
+  for (const path of [
+    "/v1/fiat-deposit-access/config/existing-accounts",
+    "/v1/fiat-deposit-access/config/new-signups",
+  ]) {
+    assert.equal(serviceRequestAuthorized("PUT", path, "read-token-1234", config), false);
+    assert.equal(serviceRequestAuthorized("PUT", path, "admin-token-1234", config), true);
+  }
+  assert.equal(
+    serviceRequestAuthorized(
+      "GET",
+      "/v1/fiat-deposit-access/config",
+      "read-token-1234",
+      config,
+    ),
+    true,
+  );
+});
+
 // ---------------------------------------------------------------------------
 // Live replay: scanned + ahead-of-tip cursors
 // ---------------------------------------------------------------------------

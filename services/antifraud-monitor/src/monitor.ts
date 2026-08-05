@@ -31,6 +31,7 @@ import { FiatProblemAlerts } from "./fiat-alerts.js";
 import { FiatDepositIdentityChecks } from "./fiat-deposit-identity.js";
 import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
 import { FreshBehaviorMonitor } from "./fresh-behavior.js";
+import type { FiatDepositAccessControl } from "./fiat-deposit-access-control.js";
 import type { LiveBus } from "./live.js";
 import { processOrderedBatch } from "./ordered-ingestion.js";
 import { drainOutbox } from "./outbox.js";
@@ -396,6 +397,7 @@ export class MonitorEngine {
     private readonly scoreWeights: ScoreWeightStore,
     private readonly log: FastifyBaseLogger,
     private readonly onSignupAssessed?: (userId: string) => Promise<void>,
+    private readonly fiatAccessControl?: FiatDepositAccessControl,
   ) {
     this.discord = new DiscordAlerts(config, log);
     this.enrichment = new EnrichmentService(config, (issue) =>
@@ -571,6 +573,10 @@ export class MonitorEngine {
       const signupMetrics = await this.runPhase("signups", () =>
         this.scanSignups(),
       );
+      await this.runPhase("fiat-access-control", async () => {
+        await this.fiatAccessControl?.process();
+        return true;
+      });
       await this.runPhase("login-fingerprints", () =>
         this.scanLoginFingerprints(),
       );
