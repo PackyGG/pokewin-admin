@@ -9,7 +9,7 @@ function source(path: string): string {
   return readFileSync(join(root, path), "utf8");
 }
 
-test("the Antifraud sidebar exposes KYC reviews in its own section", () => {
+test("the Antifraud sidebar exposes KYC reviews in the Main section", () => {
   const sidebar = source(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
@@ -19,9 +19,10 @@ test("the Antifraud sidebar exposes KYC reviews in its own section", () => {
 
   assert.match(
     sidebar,
-    /const KYC_NAV[\s\S]*?label:\s*"KYC reviews",\s*href:\s*"\/antifraud\/kyc"/,
+    /const MAIN_NAV[\s\S]*?label:\s*"KYC reviews",\s*href:\s*"\/antifraud\/kyc"/,
   );
-  assert.match(sidebar, /label="KYC"[\s\S]*?items=\{KYC_NAV\}/);
+  assert.match(sidebar, /label="Main"[\s\S]*?items=\{MAIN_NAV\}/);
+  assert.doesNotMatch(sidebar, /label="KYC"/);
   assert.doesNotMatch(page, /max-w-7xl/);
   assert.doesNotMatch(loading, /max-w-7xl/);
   assert.doesNotMatch(page, /<h1[^>]*>KYC review<\/h1>/);
