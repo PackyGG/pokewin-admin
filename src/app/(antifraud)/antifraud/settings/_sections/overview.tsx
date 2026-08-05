@@ -359,7 +359,7 @@ function Pipeline() {
     },
     {
       title: "4. Notify",
-      text: "Durable event jobs route to configured Discord channels and the dashboard inbox.",
+      text: "Durable event jobs route to configured Discord channels.",
       icon: BellRing,
     },
   ];

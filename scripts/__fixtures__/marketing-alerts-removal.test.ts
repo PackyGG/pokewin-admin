@@ -79,6 +79,6 @@ test("the removal is bounded to Marketing and preserves shared notifications", (
     existsSync(
       join(root, "src/app/(antifraud)/antifraud/notifications/page.tsx"),
     ),
-    true,
+    false,
   );
 });

@@ -84,26 +84,6 @@ test("upgrader and announcement reads also recover from PostgreSQL", () => {
   assert.match(announcements, /count\(\*\)::int/);
 });
 
-test("Fraud dashboard notifications remain inside the Fraud workspace", () => {
-  const page = read(
-    "src/app/(antifraud)/antifraud/notifications/page.tsx",
-  );
-  const middleware = read("src/middleware.ts");
-
-  assert.match(page, /DashboardNotificationWorkspace/);
-  assert.match(page, /requireAntifraudManagerPage\(\)/);
-  assert.doesNotMatch(page, /system\/staff-notifications/);
-  assert.doesNotMatch(
-    middleware,
-    /appHost\?\.basePath === "\/antifraud" && pathname === "\/notifications"/,
-  );
-  assert.doesNotMatch(
-    middleware,
-    /appHost\?\.basePath === "\/antifraud" && pathname === "\/settings\/api"/,
-  );
-  assert.doesNotMatch(middleware, /new URL\("\/api", request\.url\)/);
-});
-
 test("idempotent backend reads retry bounded transient failures", () => {
   const client = read("src/lib/backend-api/client.ts");
 

@@ -1,31 +1,30 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 const read = (path: string) => readFileSync(path, "utf8");
 
-test("dashboard alert rules are opt-in, role-bound, and step-up protected", () => {
+test("Fraud dashboard inbox and its rule storage are removed", () => {
+  const sidebar = read(
+    "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
+  );
   const migration = read(
-    "drizzle/admin/migrations/20260730_antifraud_notifications_system.sql",
-  );
-  const actions = read(
-    "src/app/(antifraud)/antifraud/notifications/actions.ts",
-  );
-  const page = read(
-    "src/app/(antifraud)/antifraud/notifications/page.tsx",
+    "drizzle/admin/migrations/20260805_drop_antifraud_dashboard_inbox.sql",
   );
 
-  assert.match(migration, /antifraud_dashboard_notification_rules/);
-  assert.doesNotMatch(
+  for (const path of [
+    "src/app/(antifraud)/antifraud/notifications/page.tsx",
+    "src/app/(antifraud)/antifraud/notifications/actions.ts",
+    "src/lib/antifraud/dashboard-notification-contract.ts",
+    "src/lib/antifraud/dashboard-notification-rules.ts",
+  ]) {
+    assert.equal(existsSync(path), false, `${path} must stay removed`);
+  }
+  assert.doesNotMatch(sidebar, /Dashboard inbox|\/antifraud\/notifications/);
+  assert.match(
     migration,
-    /INSERT INTO antifraud_dashboard_notification_rules/i,
+    /DROP TABLE IF EXISTS antifraud_dashboard_notification_rules/i,
   );
-  assert.match(migration, /target_groups <@ ARRAY/);
-  assert.match(actions, /requireAntifraudManager\(\)/);
-  assert.match(actions, /require2FA\(session\.userId, input\.credential\)/);
-  assert.match(actions, /beginAntifraudAction/);
-  assert.match(actions, /finishAntifraudAction/);
-  assert.match(page, /requireAntifraudManagerPage\(\)/);
 });
 
 test("Discord management stays inside exact approved categories and live markers", () => {

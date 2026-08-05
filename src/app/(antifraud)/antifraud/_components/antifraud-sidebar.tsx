@@ -4,7 +4,6 @@ import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
-  Activity,
   BookOpen,
   Banknote,
   ChevronRight,
@@ -96,11 +95,6 @@ const KYC_NAV: NavItem[] = [
 
 const NOTIFICATION_NAV: NavItem[] = [
   { label: "Discord routing", href: "/antifraud/discord", icon: Webhook },
-  {
-    label: "Dashboard inbox",
-    href: "/antifraud/notifications",
-    icon: Activity,
-  },
 ];
 
 const BLACKLIST_NAV: NavItem[] = [

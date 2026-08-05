@@ -29,7 +29,7 @@ import { HostLink } from "@/components/host-link";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
-import { MarkAllButton } from "@/app/(antifraud)/antifraud/notifications/_components/mark-all-button";
+import { MarkAllButton } from "./_components/mark-all-button";
 import { StaffNotificationComposer } from "./staff-notification-composer";
 
 export const metadata = { title: "Staff Notifications" };

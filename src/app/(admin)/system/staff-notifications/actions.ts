@@ -101,7 +101,6 @@ export async function sendStaffNotificationAction(
   });
 
   revalidatePath("/system/staff-notifications");
-  revalidatePath("/antifraud/notifications");
 
   return { targeted: recipients.length, inboxRows };
 }

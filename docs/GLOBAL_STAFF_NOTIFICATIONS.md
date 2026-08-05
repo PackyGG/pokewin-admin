@@ -12,7 +12,7 @@ to selected active staff, a system role, or every active staff account.
 - Staff notifications are separate from packy.gg customer notifications.
 - Every staff account reads its own inbox through the shared header bell.
 - `/system/staff-notifications` is the canonical inbox and management page.
-- The old Anti-Fraud inbox redirects to the canonical page.
+- Anti-Fraud has no separate dashboard inbox or automatic inbox rules.
 - Custom sends use the existing `announcement` staff-notification kind.
 - Only the canonical composer can create staff notifications. Dashboard
   actions, assignments, reviews, fraud signals, quizzes, and rewards do not
@@ -33,7 +33,7 @@ to selected active staff, a system role, or every active staff account.
 1. Decouple the bell and broadcast recipient query from `/antifraud`.
 2. Add the canonical System page, inbox, recipient overview, and composer.
 3. Add System navigation and permission metadata.
-4. Redirect the legacy Anti-Fraud notification page.
+4. Remove the legacy Anti-Fraud notification page and rule system.
 5. Verify lint, TypeScript, production build, and the page in a browser.
 
 ## Future support
