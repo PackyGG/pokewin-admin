@@ -16,7 +16,6 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Transactions",
     "KYC",
     "Guide",
-    "Notifications",
     "Blacklists",
     "System",
   ]) {
@@ -64,6 +63,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   assert.doesNotMatch(sidebar, /\/antifraud\/(?:profiles|networks)/);
   assert.doesNotMatch(sidebar, /label="Accounts"|\/antifraud\/signups/);
   assert.doesNotMatch(sidebar, /label: "Providers"/);
+  assert.doesNotMatch(sidebar, /label="Notifications"|NOTIFICATION_NAV/);
   assert.doesNotMatch(sidebar, /Dashboard inbox|\/antifraud\/notifications/);
   // System is Settings (every config section is a tab on it), Config (the
   // global Fiat switch, its own page) and the audit log. "Risk engine" stays

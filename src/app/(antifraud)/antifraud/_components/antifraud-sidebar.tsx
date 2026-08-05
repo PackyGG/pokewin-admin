@@ -93,10 +93,6 @@ const KYC_NAV: NavItem[] = [
   { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 
-const NOTIFICATION_NAV: NavItem[] = [
-  { label: "Discord routing", href: "/antifraud/discord", icon: Webhook },
-];
-
 const BLACKLIST_NAV: NavItem[] = [
   {
     label: "Domains",
@@ -139,11 +135,14 @@ const GUIDE_NAV: NavItem[] = [
  * engine health); Config, which owns the global Fiat automatic-credit switch on
  * its own page because it credits real player deposits; and the staff audit
  * log, which is a record rather than a setting. The retired per-surface routes
+ * Discord routing is configuration too, so it lives in this group rather than
+ * in a separate Notifications section. Retired per-surface routes
  * (`/automation`, `/points`, `/events`, `/flows`) redirect to their tab.
  */
 const SYSTEM_NAV: NavItem[] = [
   { label: "Settings", href: "/antifraud/settings", icon: SlidersHorizontal },
   { label: "Config", href: "/antifraud/config", icon: Settings2 },
+  { label: "Discord routing", href: "/antifraud/discord", icon: Webhook },
   {
     label: "Audit log",
     href: "/antifraud/audit",
@@ -441,24 +440,14 @@ export function AntifraudSidebar({
         />
 
         {canManage && (
-          <>
-            <NavSection
-              label="Notifications"
-              items={NOTIFICATION_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-              storageKey={`antifraud-nav:v1:${viewerId}:notifications`}
-            />
-            <NavSection
-              label="System"
-              items={SYSTEM_NAV}
-              pathname={pathname}
-              onNavTap={handleNavTap}
-              toHref={toHref}
-              storageKey={`antifraud-nav:v1:${viewerId}:system`}
-            />
-          </>
+          <NavSection
+            label="System"
+            items={SYSTEM_NAV}
+            pathname={pathname}
+            onNavTap={handleNavTap}
+            toHref={toHref}
+            storageKey={`antifraud-nav:v1:${viewerId}:system`}
+          />
         )}
         <SidebarGroup className="hidden px-1 py-1 group-data-[collapsible=icon]:block">
           <SidebarGroupContent>
@@ -469,9 +458,7 @@ export function AntifraudSidebar({
                 ...KYC_NAV,
                 ...BLACKLIST_NAV,
                 ...GUIDE_NAV,
-                ...(canManage
-                  ? [...NOTIFICATION_NAV, ...SYSTEM_NAV]
-                  : []),
+                ...(canManage ? SYSTEM_NAV : []),
               ]}
               pathname={pathname}
               onNavTap={handleNavTap}
