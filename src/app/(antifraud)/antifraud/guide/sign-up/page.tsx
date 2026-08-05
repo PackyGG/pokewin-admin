@@ -228,26 +228,26 @@ export default async function AntifraudSignupGuidePage() {
                 </span>
               </div>
 
-              <dl className="mt-4 space-y-3 text-xs">
-                <div>
+              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
+                <div className="min-w-0">
                   <dt className="text-muted-foreground">Monitoring</dt>
                   <dd className="mt-0.5 font-semibold text-foreground">
                     {band.monitor}
                   </dd>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <dt className="text-muted-foreground">Discord</dt>
                   <dd className="mt-0.5 font-semibold text-foreground">
                     {band.notification}
                   </dd>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <dt className="text-muted-foreground">Review</dt>
                   <dd className="mt-0.5 font-semibold text-foreground">
                     {band.review}
                   </dd>
                 </div>
-                <div>
+                <div className="min-w-0">
                   <dt className="text-muted-foreground">Locks</dt>
                   <dd className="mt-0.5 font-semibold text-foreground">
                     {band.locks}
