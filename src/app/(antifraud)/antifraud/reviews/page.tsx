@@ -77,12 +77,11 @@ type SearchParams = {
   review?: string;
 };
 
-const REVIEW_TABS = ["reviews", "in_review", "postponed"] as const;
+const REVIEW_TABS = ["reviews", "postponed"] as const;
 type ReviewTab = (typeof REVIEW_TABS)[number];
 
 const REVIEW_TAB_LABELS: Record<ReviewTab, string> = {
   reviews: "Reviews",
-  in_review: "In review",
   postponed: "Postponed",
 };
 
@@ -104,12 +103,9 @@ export default async function ReviewQueuePage({
     : undefined;
 
   const filters: ReviewFilters = {
-    status:
-      tab === "in_review"
-        ? "in_review"
-        : tab === "reviews"
-          ? "open"
-          : "unresolved",
+    // Reviews is the complete active queue: untouched and already-started
+    // cases stay together. Postponement is the only separate work state.
+    status: "unresolved",
     postponed: tab === "postponed",
     severities: ["critical", "high"],
     severityFirst: true,
@@ -277,7 +273,6 @@ async function QueueList({
       page: { items: [], nextCursor: null, total: 0 },
       stats: {
         reviews: 0,
-        inReview: 0,
         postponed: 0,
       },
     },
@@ -288,7 +283,6 @@ async function QueueList({
   const reviews = page.items;
   const counts: Record<ReviewTab, number> = {
     reviews: stats.reviews,
-    in_review: stats.inReview,
     postponed: stats.postponed,
   };
 
@@ -513,10 +507,7 @@ function CaseRow({
             {tab === "reviews" && review.status === "open" ? (
               <StartReviewButton
                 reviewId={review.id}
-                href={buildHref(
-                  { review: review.id, tab: "in_review" },
-                  current,
-                )}
+                href={buildHref({ review: review.id }, current)}
                 label="Review"
                 subject={review.targetUsername ?? review.targetUserId}
               />

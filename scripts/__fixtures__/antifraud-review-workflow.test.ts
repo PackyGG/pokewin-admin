@@ -6,12 +6,19 @@ function source(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Account Reviews use the three counted operational tabs", () => {
+test("Account Reviews use only Reviews and Postponed tabs", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
+  const reviews = source("src/lib/antifraud/reviews.ts");
 
-  assert.match(page, /REVIEW_TABS = \["reviews", "in_review", "postponed"\]/);
+  assert.match(page, /REVIEW_TABS = \["reviews", "postponed"\]/);
+  assert.doesNotMatch(page, /in_review: "In review"/);
   assert.match(page, /REVIEW_TABS\.map/);
   assert.match(page, /getAccountReviewTabCounts/);
+  assert.match(
+    reviews,
+    /review\.status IN \('open', 'in_review', 'escalated'\)[\s\S]*?AS reviews/,
+  );
+  assert.doesNotMatch(reviews, /inReview: Number\(row\?\.in_review/);
   assert.match(page, /severities: \["critical", "high"\]/);
   assert.match(page, /severityFirst: true/);
   assert.match(page, /review:\s*review\.id/);

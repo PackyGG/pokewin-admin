@@ -672,28 +672,22 @@ export type ReviewQueueStats = {
 
 export type AccountReviewTabCounts = {
   reviews: number;
-  inReview: number;
   postponed: number;
 };
 
-/** Counts for the three operational tabs; low/medium never enter this view. */
+/** Counts for the two operational tabs; low/medium never enter this view. */
 export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCounts> {
-  const empty = { reviews: 0, inReview: 0, postponed: 0 };
+  const empty = { reviews: 0, postponed: 0 };
   try {
     const result = await adminDrizzle.execute<{
       reviews: string;
-      in_review: string;
       postponed: string;
     }>(sql`
       SELECT
         COUNT(*) FILTER (
-          WHERE review.status = 'open'
+          WHERE review.status IN ('open', 'in_review', 'escalated')
             AND NOT COALESCE(workflow.postponed_until > now(), false)
         ) AS reviews,
-        COUNT(*) FILTER (
-          WHERE review.status IN ('in_review', 'escalated')
-            AND NOT COALESCE(workflow.postponed_until > now(), false)
-        ) AS in_review,
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
             AND workflow.postponed_until > now()
@@ -706,7 +700,6 @@ export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCount
     const row = result.rows[0];
     return {
       reviews: Number(row?.reviews ?? 0),
-      inReview: Number(row?.in_review ?? 0),
       postponed: Number(row?.postponed ?? 0),
     };
   } catch (error) {
