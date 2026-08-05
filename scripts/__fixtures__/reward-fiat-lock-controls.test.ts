@@ -98,6 +98,10 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /Fraud, KYC, payment-binding/);
   assert.match(fraudConfigCard, /<Badge variant="outline">Unavailable<\/Badge>/);
   assert.match(fraudConfigCard, /checked=\{false\}[\s\S]*?disabled/);
+  assert.match(fraudConfigCard, /max-w-3xl space-y-2/);
+  assert.doesNotMatch(fraudConfigCard, /flex flex-wrap items-start justify-between gap-4/);
+  assert.match(fraudAvailabilityCard, /max-w-3xl space-y-2/);
+  assert.doesNotMatch(fraudAvailabilityCard, /flex flex-wrap items-start justify-between gap-4/);
 });
 
 test("Fraud Config owns both global Fiat controls and hides raw Security config", () => {

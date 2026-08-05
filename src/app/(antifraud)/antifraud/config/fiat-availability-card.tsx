@@ -82,17 +82,12 @@ export function GlobalFiatAvailabilityCard({
   return (
     <Card>
       <CardHeader>
-        <div className="flex flex-wrap items-start justify-between gap-4">
-          <div className="space-y-1">
+        <div className="max-w-3xl space-y-2">
+          <div className="flex flex-wrap items-center gap-3">
             <CardTitle className="flex items-center gap-2 text-sm font-medium">
               <CreditCard className="size-4 text-muted-foreground" />
               Global Fiat deposits
             </CardTitle>
-            <CardDescription className="max-w-2xl">
-              When disabled, card and wallet Fiat deposit methods are blocked site-wide. When enabled, users still must pass every account, country, KYC, payment, and fraud restriction.
-            </CardDescription>
-          </div>
-          <div className="flex items-center gap-2">
             <Badge
               variant="outline"
               className={
@@ -110,9 +105,12 @@ export function GlobalFiatAvailabilityCard({
               onCheckedChange={setRequestedAllowed}
             />
           </div>
+          <CardDescription>
+            When disabled, card and wallet Fiat deposit methods are blocked site-wide. When enabled, users still must pass every account, country, KYC, payment, and fraud restriction.
+          </CardDescription>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="max-w-3xl">
         <div className="flex items-start gap-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-3 text-xs">
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-blue-600 dark:text-blue-400" />
           <p className="text-muted-foreground">
