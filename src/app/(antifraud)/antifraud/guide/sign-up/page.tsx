@@ -169,6 +169,30 @@ const liveScoreFacts = [
   },
 ] as const;
 
+const reviewHandlingSteps = [
+  {
+    step: "01",
+    icon: Eye,
+    title: "Open and take ownership",
+    detail:
+      "Clicking Review starts the case and automatically assigns it to your admin account.",
+  },
+  {
+    step: "02",
+    icon: CheckCircle2,
+    title: "Take action or postpone",
+    detail:
+      "Complete a review action, or use the Postpone button when you need more time.",
+  },
+  {
+    step: "03",
+    icon: TimerReset,
+    title: "Closing also postpones",
+    detail:
+      "If no action was completed, clicking the X or outside the review postpones it and schedules a Discord reminder in 2 hours.",
+  },
+] as const;
+
 const monitoredBands = [
   {
     range: "21-49",
@@ -257,6 +281,69 @@ export default async function AntifraudSignupGuidePage() {
             </article>
           );
         })}
+      </section>
+
+      <section className="overflow-hidden rounded-xl border border-orange-500/20 bg-card">
+        <div className="border-b border-border/60 bg-orange-500/[0.04] p-5 sm:p-6">
+          <div className="flex items-start gap-3">
+            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+              <ShieldAlert className="size-5" />
+            </span>
+            <div>
+              <h2 className="text-base font-semibold">
+                How staff handles signup reviews
+              </h2>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                High and Critical signups enter Account Review. Opening one
+                means taking responsibility for its next action.
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="space-y-4 p-5 sm:p-6">
+          <div className="grid gap-3 md:grid-cols-3">
+            {reviewHandlingSteps.map((step, index) => {
+              const Icon = step.icon;
+              return (
+                <article
+                  key={step.step}
+                  className="relative rounded-lg border border-border/60 bg-muted/20 p-4"
+                >
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-400">
+                      Step {step.step}
+                    </span>
+                    <span className="flex size-8 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                      <Icon className="size-4" />
+                    </span>
+                  </div>
+                  <h3 className="mt-4 text-sm font-semibold">{step.title}</h3>
+                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
+                    {step.detail}
+                  </p>
+                  {index < reviewHandlingSteps.length - 1 && (
+                    <ArrowRight className="absolute -right-3 top-1/2 z-10 hidden size-4 -translate-y-1/2 text-muted-foreground/50 md:block" />
+                  )}
+                </article>
+              );
+            })}
+          </div>
+
+          <div className="flex items-start gap-3 rounded-lg border border-rose-500/25 bg-rose-500/5 p-4">
+            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
+              <Siren className="size-4" />
+            </span>
+            <div>
+              <h3 className="text-sm font-semibold">Critical signup locks</h3>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                Critical signups start with fiat deposits, crypto withdrawals,
+                item withdrawals, and tips locked while staff reviews the
+                account.
+              </p>
+            </div>
+          </div>
+        </div>
       </section>
 
       <section className="rounded-xl border border-border/70 bg-card p-5">

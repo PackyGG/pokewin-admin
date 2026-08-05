@@ -36,6 +36,15 @@ test("signup risk bands expose the agreed monitoring and staff actions", () => {
     guide,
     /<dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">/,
   );
+  assert.match(guide, /How staff handles signup reviews/);
+  assert.match(guide, /automatically assigns it to your admin account/);
+  assert.match(guide, /Take action or postpone/);
+  assert.match(guide, /schedules a Discord reminder in 2 hours/);
+  assert.match(guide, /Critical signup locks/);
+  assert.match(
+    guide,
+    /fiat deposits, crypto withdrawals,[\s\S]*item withdrawals, and tips locked/,
+  );
   assert.match(guide, /title: "Open the window"/);
   assert.match(guide, /title: "Save the baseline"/);
   assert.match(guide, /title: "Collect fresh activity"/);
