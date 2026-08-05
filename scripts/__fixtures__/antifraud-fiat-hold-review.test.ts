@@ -6,6 +6,7 @@ import {
   isFiatWithdrawalHoldSignal,
   isNonActionableRewardEnrollmentSignal,
   isNonActionableRewardEnrollmentTrailEntry,
+  isUsefulReviewSignalTrailEntry,
   reviewQueueEvidenceSignals,
   reviewQueueSafeguard,
   reviewSignalLabel,
@@ -39,6 +40,33 @@ test("fiat withdrawal holds are accepted as high-severity review signals", () =>
     "Fiat-triggered withdrawal hold",
   );
   assert.equal(isFiatWithdrawalHoldSignal(event.kind), true);
+});
+
+test("case trails keep scored system evidence and hide routine updates", () => {
+  assert.equal(
+    isUsefulReviewSignalTrailEntry(
+      "Opportify risk (+25 pts, case 90) — Opportify medium risk",
+    ),
+    true,
+  );
+  assert.equal(
+    isUsefulReviewSignalTrailEntry(
+      "Opportify geo evidence (0 pts, case 90) — consistent",
+    ),
+    false,
+  );
+  assert.equal(
+    isUsefulReviewSignalTrailEntry(
+      "Legacy provider evidence (unscored, case 90) — available",
+    ),
+    false,
+  );
+  assert.equal(
+    isUsefulReviewSignalTrailEntry(
+      "Trusted evidence (-5 pts, case 30) — reduced risk",
+    ),
+    true,
+  );
 });
 
 test("unmapped review signals receive a readable label", () => {

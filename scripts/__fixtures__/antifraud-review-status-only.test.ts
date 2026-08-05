@@ -5,13 +5,14 @@ import test from "node:test";
 const reviewRoot = "src/app/(antifraud)/antifraud/reviews";
 
 test("Account Review exposes the simplified high-risk workflow", async () => {
-  const [queue, detail, workspace, actions, reads] =
+  const [queue, detail, workspace, actions, reads, ingest] =
     await Promise.all([
       readFile(`${reviewRoot}/page.tsx`, "utf8"),
       readFile(`${reviewRoot}/[id]/page.tsx`, "utf8"),
       readFile(`${reviewRoot}/_components/review-case-workspace.tsx`, "utf8"),
       readFile(`${reviewRoot}/actions.ts`, "utf8"),
       readFile("src/lib/antifraud/reviews.ts", "utf8"),
+      readFile("src/app/api/antifraud/ingest/route.ts", "utf8"),
     ]);
 
   assert.doesNotMatch(actions, /updateReviewSeverity|severitySchema/);
@@ -19,6 +20,8 @@ test("Account Review exposes the simplified high-risk workflow", async () => {
   assert.match(actions, /export async function startReview/);
   assert.match(actions, /assigned_to:\s*session\.userId/);
   assert.match(reads, /filters\.severities/);
+  assert.match(reads, /isUsefulReviewSignalTrailEntry\(note\.body\)/);
+  assert.match(ingest, /isUsefulReviewSignalTrailEntry\(trailEntry\)/);
 
   assert.doesNotMatch(queue, /Assigned to me|params\.mine|assignedTo:/);
   const hero = queue.slice(

@@ -30,7 +30,7 @@ import {
   type ReviewSeverity,
 } from "./constants";
 import {
-  isNonActionableRewardEnrollmentTrailEntry,
+  isUsefulReviewSignalTrailEntry,
   NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS,
   withoutNonActionableRewardEnrollmentSignals,
 } from "./signal-display";
@@ -552,7 +552,7 @@ export async function getReviewDetail(
         .filter(
           (note) =>
             note.kind !== "signal" ||
-            !isNonActionableRewardEnrollmentTrailEntry(note.body),
+            isUsefulReviewSignalTrailEntry(note.body),
         )
         .slice(0, 100);
 

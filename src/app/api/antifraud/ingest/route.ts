@@ -25,7 +25,10 @@ import {
   applyAbstractCatchallContainment,
   type AbstractCatchallContainmentTarget,
 } from "@/lib/antifraud/abstract-catchall-containment";
-import { reviewSignalLabel } from "@/lib/antifraud/signal-display";
+import {
+  isUsefulReviewSignalTrailEntry,
+  reviewSignalLabel,
+} from "@/lib/antifraud/signal-display";
 import {
   applyFiatIdentityContainment,
   fiatIdentityContainmentTarget,
@@ -1123,11 +1126,14 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
           updated_at: new Date().toISOString(),
         })
         .where(eq(antifraud_reviews.id, live.id));
-      await tx.insert(antifraud_review_notes).values({
+      const trailEntry = signalTrailEntry(signal);
+      if (isUsefulReviewSignalTrailEntry(trailEntry)) {
+        await tx.insert(antifraud_review_notes).values({
           review_id: live.id,
           kind: "signal",
-          body: signalTrailEntry(signal),
-      });
+          body: trailEntry,
+        });
+      }
     } else {
       try {
         const [created] = await tx

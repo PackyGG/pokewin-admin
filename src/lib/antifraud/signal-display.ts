@@ -57,6 +57,14 @@ export function isNonActionableRewardEnrollmentTrailEntry(
   );
 }
 
+/** Case trails keep only system signals that actually changed the score. */
+export function isUsefulReviewSignalTrailEntry(body: string): boolean {
+  const match = body.match(/\(([+-]?\d+(?:\.\d+)?) pts(?:,|\))/i);
+  if (!match) return false;
+  const delta = Number(match[1]);
+  return Number.isFinite(delta) && delta !== 0;
+}
+
 /**
  * Signal kinds whose raw name reads like the player did something, when the
  * underlying row is only bookkeeping.
