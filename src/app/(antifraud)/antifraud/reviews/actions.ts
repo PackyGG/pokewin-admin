@@ -499,6 +499,7 @@ export async function updateReviewStatus(
       const [current] = await tx.select({
         status: antifraud_reviews.status,
         target_user_id: antifraud_reviews.target_user_id,
+        assigned_to: antifraud_reviews.assigned_to,
         opened_by: antifraud_reviews.opened_by,
         resolved_by: antifraud_reviews.resolved_by,
         updated_at: antifraud_reviews.updated_at,
@@ -583,6 +584,13 @@ export async function updateReviewStatus(
 
       const updated = await tx.update(antifraud_reviews).set({
         status,
+        // An In Review case is active staff work, so it must always name the
+        // analyst responsible for it. Preserve an existing owner; otherwise
+        // the staff member making the transition takes the case.
+        assigned_to:
+          status === "in_review"
+            ? current.assigned_to ?? session.userId
+            : current.assigned_to,
         // Symmetric: a verdict writes the conclusion, anything else erases it.
         resolution: isTerminal ? resolution : null,
         resolved_by: isTerminal ? session.userId : null,

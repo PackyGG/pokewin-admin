@@ -33,6 +33,25 @@ test("dismissing a live review postpones it unless an action completed", () => {
   assert.match(quickActions, /onActionCompleted\?\.\(\)/);
 });
 
+test("every transition into In Review keeps or assigns an analyst", () => {
+  const actions = source(
+    "src/app/(antifraud)/antifraud/reviews/actions.ts",
+  );
+  const migration = source(
+    "drizzle/admin/migrations/20260805_backfill_in_review_assignees.sql",
+  );
+
+  assert.match(actions, /assigned_to: antifraud_reviews\.assigned_to/);
+  assert.match(
+    actions,
+    /status === "in_review"[\s\S]*?current\.assigned_to \?\? session\.userId/,
+  );
+  assert.match(migration, /r\.status = 'in_review'/);
+  assert.match(migration, /r\.assigned_to IS NULL/);
+  assert.match(migration, /a\.metadata ->> 'to' = 'in_review'/);
+  assert.match(migration, /SET assigned_to = candidate\.admin_user_id/);
+});
+
 test("case facts show lifetime fiat, crypto, and wager totals", () => {
   const reviews = source("src/lib/antifraud/reviews.ts");
   const workspace = source(
