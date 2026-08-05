@@ -48,24 +48,27 @@ test("review reminder uses the compact high-risk card and review button", () => 
   assert.doesNotMatch(JSON.stringify(message), /Queue|Reason|still unresolved/);
 });
 
-test("unclaimed reminders identify who started the case", () => {
+test("automated reminders omit empty staff attribution", () => {
   const message = buildReviewReminderMessage(
     {
       reviewId: "case-123",
       targetUserId: "user-123",
       targetUsername: null,
       staffAction: "started",
-      staffUsername: "System",
+      staffUsername: null,
     },
     "correlation-123",
   );
 
   assert.equal(message.embed.fields[0]?.value, "Unknown");
+  assert.equal(message.embed.fields.length, 3);
   assert.equal(
-    message.embed.fields[3]?.name,
-    REVIEW_REMINDER_FIELD_NAMES.startedBy,
+    message.embed.fields.some(
+      (field) => field.name === REVIEW_REMINDER_FIELD_NAMES.startedBy,
+    ),
+    false,
   );
-  assert.equal(message.embed.fields[3]?.value, "System");
+  assert.doesNotMatch(JSON.stringify(message), /System/);
 });
 
 test("reminder query resolves claimed and started staff usernames", () => {

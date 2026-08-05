@@ -105,7 +105,7 @@ export async function enqueueDueReviewReminders(): Promise<{
         staffAction: row.assigned_to ? "claimed" : "started",
         staffUsername: row.assigned_to
           ? row.assigned_staff_username ?? "Unknown staff"
-          : row.opened_staff_username ?? "System",
+          : row.opened_staff_username,
       },
       correlationId,
     );

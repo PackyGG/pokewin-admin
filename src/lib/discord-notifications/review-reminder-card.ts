@@ -11,7 +11,7 @@ type ReviewReminderCardInput = {
   targetUserId: string;
   targetUsername: string | null;
   staffAction: "claimed" | "started";
-  staffUsername: string;
+  staffUsername: string | null;
 };
 
 function reviewUrl(reviewId: string): string {
@@ -64,11 +64,15 @@ export function buildReviewReminderMessage(
           value: inlineCode(input.reviewId),
           inline: true,
         },
-        {
-          name: staffField,
-          value: safeDiscordText(input.staffUsername, 100),
-          inline: true,
-        },
+        ...(input.staffUsername
+          ? [
+              {
+                name: staffField,
+                value: safeDiscordText(input.staffUsername, 100),
+                inline: true,
+              },
+            ]
+          : []),
       ],
       footer: { text: `Account review reminder | Correlation ${correlationId}` },
       timestamp: new Date().toISOString(),
