@@ -13,8 +13,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
 
   for (const section of [
     "Overview",
-    "Transactions",
-    "KYC",
+    "Main",
     "Guide",
     "Blacklists",
     "System",
@@ -85,6 +84,14 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   }
   assert.doesNotMatch(sidebar, /Fraud profile index is not available/);
   assert.doesNotMatch(sidebar, /Fraud-only banned-user index is not available/);
+  assert.match(
+    sidebar,
+    /const MAIN_NAV[\s\S]*?label: "KYC reviews"[\s\S]*?const BLACKLIST_NAV/,
+  );
+  assert.match(
+    sidebar,
+    /const SYSTEM_NAV[\s\S]*?label: "Refunds"[\s\S]*?label: "Settings"/,
+  );
 });
 
 test("Fraud guide keeps access control and documents signup risk actions", () => {

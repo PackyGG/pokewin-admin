@@ -84,12 +84,8 @@ const OVERVIEW_NAV: NavItem[] = [
 ];
 const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "reviews"] as const;
 
-const TRANSACTION_NAV: NavItem[] = [
+const MAIN_NAV: NavItem[] = [
   { label: "Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
-  { label: "Refunds", href: "/antifraud/refunds", icon: RotateCcw },
-];
-
-const KYC_NAV: NavItem[] = [
   { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 
@@ -135,6 +131,7 @@ const GUIDE_NAV: NavItem[] = [
  * (`/automation`, `/points`, `/events`, `/flows`) redirect to Settings tabs.
  */
 const SYSTEM_NAV: NavItem[] = [
+  { label: "Refunds", href: "/antifraud/refunds", icon: RotateCcw },
   { label: "Settings", href: "/antifraud/settings", icon: SlidersHorizontal },
   { label: "Config", href: "/antifraud/config", icon: Settings2 },
   { label: "Discord routing", href: "/antifraud/discord", icon: Webhook },
@@ -400,22 +397,14 @@ export function AntifraudSidebar({
           storageKey={`antifraud-nav:v1:${viewerId}:overview`}
         />
         <NavSection
-          label="Transactions"
-          items={TRANSACTION_NAV}
+          label="Main"
+          items={MAIN_NAV}
           pathname={pathname}
           onNavTap={handleNavTap}
           alertCounts={navAlertCounts}
           onAlertSeen={markNavAlertSeen}
           toHref={toHref}
           storageKey={`antifraud-nav:v1:${viewerId}:transactions`}
-        />
-        <NavSection
-          label="KYC"
-          items={KYC_NAV}
-          pathname={pathname}
-          onNavTap={handleNavTap}
-          toHref={toHref}
-          storageKey={`antifraud-nav:v1:${viewerId}:kyc`}
         />
         <NavSection
           label="Blacklists"
@@ -449,8 +438,7 @@ export function AntifraudSidebar({
             <NavMenu
               items={[
                 ...OVERVIEW_NAV,
-                ...TRANSACTION_NAV,
-                ...KYC_NAV,
+                ...MAIN_NAV,
                 ...BLACKLIST_NAV,
                 ...GUIDE_NAV,
                 ...(canManage ? SYSTEM_NAV : []),
