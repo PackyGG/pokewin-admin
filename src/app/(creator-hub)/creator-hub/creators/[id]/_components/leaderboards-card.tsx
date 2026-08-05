@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Trophy, ExternalLink, Info } from "lucide-react";
+import { Trophy, Info } from "lucide-react";
 
 import { BackendApiError } from "@/lib/backend-api/errors";
 import { SectionHeading } from "@/components/modern-panels";
@@ -46,11 +46,6 @@ import {
  */
 
 export async function LeaderboardsCard({ userId }: { userId: string }) {
-  // Stay inside the Hub: its own Leaderboards route is the manager-facing
-  // read surface. (The admin route `/creators/leaderboards` is the
-  // write/approval side and is reachable from the detail page.)
-  const manageHref = `/creator-hub/leaderboards`;
-
   // List preview + realized house cost + previous (ended) boards, fetched
   // together. All best-effort: a list failure degrades to a note; a cost
   // failure renders a visible muted "chips unavailable" note (never a silent
@@ -97,7 +92,6 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
   }
 
   const rows: LeaderboardPreviewRow[] = listResult.preview.rows;
-  const liveTotal = listResult.preview.liveTotal;
 
   let wagerFailed = false;
   // Per-board wager driven + the admin sponsored % (the house-funded share
@@ -272,16 +266,6 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
               })}
             </div>
           )}
-
-          <Link
-            href={manageHref}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            {liveTotal > rows.length
-              ? `View all ${liveTotal} live leaderboards`
-              : "Manage leaderboards"}
-            <ExternalLink className="size-3.5" />
-          </Link>
         </CardContent>
       </Card>
     </div>
