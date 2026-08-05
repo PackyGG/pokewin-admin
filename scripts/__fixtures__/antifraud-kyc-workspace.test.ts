@@ -197,7 +197,8 @@ test("account reviews keep KYC workflow sync outside the simplified queue", () =
   const workflow = source("src/lib/antifraud/review-workflow.ts");
   const ops = source("src/app/api/antifraud/ops/tick/route.ts");
 
-  assert.match(page, /REVIEW_TABS = \["reviews", "in_review", "postponed"\]/);
+  assert.match(page, /REVIEW_TABS = \["reviews", "postponed"\]/);
+  assert.doesNotMatch(page, /"in_review"/);
   assert.match(ops, /syncReviewWorkflowStates\(\)/);
   assert.doesNotMatch(page, /syncReviewWorkflowStates\(\)/);
   assert.doesNotMatch(page, /listKycRequiredUserIds/);
