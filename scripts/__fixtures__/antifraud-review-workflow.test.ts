@@ -73,6 +73,29 @@ test("case facts show lifetime fiat, crypto, and wager totals", () => {
   assert.match(workspace, /label: "Wagered money"/);
 });
 
+test("case facts show one conditional box containing every active lock", () => {
+  const reviews = source("src/lib/antifraud/reviews.ts");
+  const workspace = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/review-case-workspace.tsx",
+  );
+
+  for (const field of [
+    "locked_deposits_crypto",
+    "locked_deposits_fiat",
+    "locked_withdrawals_crypto",
+    "locked_withdrawals_items",
+    "locked_inventory_sales",
+    "locked_exchanges",
+    "locked_openings",
+    "locked_vault",
+  ]) {
+    assert.match(reviews, new RegExp(field));
+  }
+  assert.match(workspace, /activeLocks\.length > 0/);
+  assert.match(workspace, /Active locks/);
+  assert.match(workspace, /lg:col-span-3/);
+});
+
 test("priority and waiting classification use lock, KYC, and 70+ evidence", () => {
   const workflow = source("src/lib/antifraud/review-workflow.ts");
 

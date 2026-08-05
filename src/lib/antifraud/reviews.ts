@@ -14,7 +14,7 @@ import {
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { antifraud_review_notes, antifraud_reviews, antifraud_signals } from "@/lib/db-schema/admin/schema";
-import { user } from "@/lib/db-schema/main/schema";
+import { user, user_feature_locks } from "@/lib/db-schema/main/schema";
 import { getReadDrizzleDb } from "@/lib/db";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -435,6 +435,7 @@ export async function listReviewPage(
 
 export type ReviewDetail = {
   review: ReviewRow;
+  activeLocks: string[];
   financialFacts: {
     fiatDepositsUsd: number;
     cryptoDepositsUsd: number;
@@ -543,12 +544,26 @@ export async function getReviewDetail(
         safeQueryOrNull(
           async () => {
             const main = await getReadDrizzleDb();
-            const [accounts, financialResult] = await Promise.all([
+            const [accounts, lockRows, financialResult] = await Promise.all([
               main.select({
                 email: user.email,
                 country: user.country,
                 countryCode: user.country_code,
               }).from(user).where(eq(user.id, review.target_user_id)).limit(1),
+              main.select({
+                depositsCrypto: user_feature_locks.locked_deposits_crypto,
+                depositsFiat: user_feature_locks.locked_deposits_fiat,
+                withdrawalsCrypto:
+                  user_feature_locks.locked_withdrawals_crypto,
+                withdrawalsItems:
+                  user_feature_locks.locked_withdrawals_items,
+                inventorySales: user_feature_locks.locked_inventory_sales,
+                exchanges: user_feature_locks.locked_exchanges,
+                openings: user_feature_locks.locked_openings,
+                vault: user_feature_locks.locked_vault,
+              }).from(user_feature_locks).where(
+                eq(user_feature_locks.user_id, review.target_user_id),
+              ).limit(1),
               main.execute<{
                 fiat_deposits: string | null;
                 crypto_deposits: string | null;
@@ -580,8 +595,22 @@ export async function getReviewDetail(
               `),
             ]);
             const financial = financialResult.rows[0];
+            const locks = lockRows[0];
+            const listLock = (label: string, values: string[] | undefined) =>
+              values?.length ? `${label} (${values.join(", ")})` : null;
+            const activeLocks = [
+              listLock("Crypto deposits", locks?.depositsCrypto),
+              listLock("Fiat deposits", locks?.depositsFiat),
+              listLock("Crypto withdrawals", locks?.withdrawalsCrypto),
+              locks?.withdrawalsItems ? "Item withdrawals" : null,
+              locks?.inventorySales ? "Inventory sales" : null,
+              locks?.exchanges ? "Exchanges" : null,
+              locks?.openings ? "Pack openings" : null,
+              locks?.vault ? "Vault" : null,
+            ].filter((value): value is string => Boolean(value));
             return {
               account: accounts[0] ?? null,
+              activeLocks,
               financialFacts: {
                 fiatDepositsUsd: toNumber(financial?.fiat_deposits),
                 cryptoDepositsUsd: toNumber(financial?.crypto_deposits),
@@ -610,6 +639,7 @@ export async function getReviewDetail(
 
       const detail: ReviewDetail = {
         review: toRow(review),
+        activeLocks: accountResult.data?.activeLocks ?? [],
         financialFacts: accountResult.data?.financialFacts ?? null,
         workflow: workflows.get(reviewId) ?? null,
         assignee: review.assigned_to

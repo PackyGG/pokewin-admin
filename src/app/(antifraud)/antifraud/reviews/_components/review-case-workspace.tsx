@@ -158,7 +158,7 @@ function ScoreDeltaBadge({ delta }: { delta: number | null }) {
 }
 
 function CaseFacts({ detail }: { detail: ReviewDetail }) {
-  const { review, assignee, financialFacts } = detail;
+  const { review, assignee, financialFacts, activeLocks } = detail;
   const facts: { label: string; value: string; mono?: boolean; title?: string }[] =
     [
       { label: "Player id", value: review.targetUserId, mono: true },
@@ -208,6 +208,23 @@ function CaseFacts({ detail }: { detail: ReviewDetail }) {
             </p>
           </div>
         ))}
+        {activeLocks.length > 0 && (
+          <div className="rounded-lg border border-rose-500/25 bg-rose-500/5 p-3 sm:col-span-2 lg:col-span-3">
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-rose-700 dark:text-rose-300">
+              Active locks
+            </p>
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {activeLocks.map((lock) => (
+                <span
+                  key={lock}
+                  className="rounded-md border border-rose-500/25 bg-background/70 px-2 py-1 text-xs font-medium text-rose-700 dark:text-rose-300"
+                >
+                  {lock}
+                </span>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     </section>
   );
