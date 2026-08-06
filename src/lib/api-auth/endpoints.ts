@@ -148,21 +148,21 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-deal-approvals/respond",
     summary:
-      "Body { requestId, guildId, categoryId, channelId, messageId, actorDiscordUserId, interactionId, action }. Creator-only Continue, Approve, or Decline bound to the immutable proposal and Discord message.",
+      "Body { requestId, guildId, categoryId, channelId, messageId, actorDiscordUserId, interactionId, action }. Continue/Approve allow the assigned creator or a linked current site admin; Decline remains creator-only. Every action is bound to the immutable proposal and Discord message.",
     scopes: ["discord:creator:setup"],
   },
   {
     method: "POST",
     path: "/api/v1/discord/creator-deal-approvals/[requestId]/continue",
     summary:
-      "Creator-only Continue action. The request id comes from the route and the body supplies the stored Discord message context and interaction id.",
+      "Continue action for the assigned creator or a linked current site admin. The request id comes from the route and the body supplies the stored Discord message context and interaction id.",
     scopes: ["discord:creator:setup"],
   },
   {
     method: "POST",
     path: "/api/v1/discord/creator-deal-approvals/[requestId]/decision",
     summary:
-      "Creator-only Approve or Decline action, bound to the proposal's stored guild, category, chat channel, message, and creator Discord account.",
+      "Approve allows the assigned creator or a linked current site admin; Decline remains creator-only. Both are bound to the proposal's stored guild, category, chat channel, and message.",
     scopes: ["discord:creator:setup"],
   },
   {

@@ -167,7 +167,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
             {step === "rewards" &&
               "Optional. Add rewards now, or skip this step and submit only the deal."}
             {step === "confirm" &&
-              "Nothing is created yet. The creator must approve these terms in Discord."}
+              "Nothing is created yet. The creator or a linked site admin must approve these terms in Discord."}
             {step === "queued" &&
               "The creator channel will receive the deal, reward details, and current terms."}
           </DialogDescription>
@@ -210,6 +210,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
                 <>
                   <ReviewRow label="Program" value={rewardPayload.name} />
                   <ReviewRow label="Codes" value={rewardPayload.codes.join(", ")} />
+                  <ReviewRow label="Program ends" value={formatDate(dealPayload.week_end_utc, "UTC")} />
                   {rewardPayload.thresholdUsd != null && rewardPayload.rewardUsd != null && (
                     <ReviewRow label="Wager milestone" value={`${formatCurrency(rewardPayload.thresholdUsd)} wager → ${formatCurrency(rewardPayload.rewardUsd)} reward${rewardPayload.vipRewardUsd == null ? "" : ` · VIP ${formatCurrency(rewardPayload.vipRewardUsd)}`}`} />
                   )}

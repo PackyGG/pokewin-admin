@@ -13,9 +13,10 @@ import {
   creator_reward_programs,
   discord_creator_setups,
 } from "@/lib/db-schema/admin/schema";
-import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
+import { account, affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { sanitizeProgramName } from "@/lib/creator-vip/sanitize";
+import { rewardProgramsCanContinue } from "@/lib/creator-vip/continuity";
 import { getPublishedCreatorAgreementTerms } from "@/lib/creator-agreement-terms";
 import { isPostgresError } from "@/lib/postgres-errors";
 
@@ -117,6 +118,38 @@ async function validateCreatorAndCodes(creatorUserId: string, codes: string[]): 
   return normalized;
 }
 
+type CreatorDealApprovalActor =
+  | { kind: "creator"; linkedSiteUserId: null }
+  | { kind: "admin"; linkedSiteUserId: string };
+
+/**
+ * Temporary approval override for a Discord account linked to an active Packy
+ * site account with the `admin` site role. Discord guild roles are deliberately
+ * not consulted: the MAIN account link and current site role are authoritative.
+ */
+async function resolveLinkedSiteAdmin(
+  discordUserId: string,
+): Promise<Extract<CreatorDealApprovalActor, { kind: "admin" }> | null> {
+  const db = getProdReadDrizzleDb();
+  const [linked] = await db
+    .select({
+      userId: user.id,
+      role: user.role,
+      roles: user.roles,
+    })
+    .from(account)
+    .innerJoin(user, eq(user.id, account.userId))
+    .where(and(
+      eq(account.accountId, discordUserId),
+      eq(account.providerId, "discord"),
+    ))
+    .limit(1);
+  if (!linked || (linked.role !== "admin" && !(linked.roles ?? []).includes("admin"))) {
+    return null;
+  }
+  return { kind: "admin", linkedSiteUserId: linked.userId };
+}
+
 export async function createCreatorDealApprovalRequest(input: {
   creatorUserId: string;
   dealPayload: unknown;
@@ -135,7 +168,15 @@ export async function createCreatorDealApprovalRequest(input: {
   const [creator] = await mainDb.select({ id: user.id, role: user.role, roles: user.roles }).from(user).where(eq(user.id, creatorUserId)).limit(1);
   if (!creator || (creator.role !== "creator" && !(creator.roles ?? []).includes("creator"))) error(400, "creator_not_active", "That user is not an active creator.");
   const normalizedReward = rewardPayload
-    ? { ...rewardPayload, name: sanitizeProgramName(rewardPayload.name), codes: await validateCreatorAndCodes(creatorUserId, rewardPayload.codes) }
+    ? {
+        ...rewardPayload,
+        // The reward program is part of this deal and may never outlive it.
+        // Store the derived value in the immutable proposal so Discord and
+        // provisioning disclose/use the exact same boundary.
+        endsAt: dealPayload.week_end_utc,
+        name: sanitizeProgramName(rewardPayload.name),
+        codes: await validateCreatorAndCodes(creatorUserId, rewardPayload.codes),
+      }
     : null;
   if (normalizedReward && normalizedReward.name.length < 2) error(400, "invalid_reward_name", "Program name has no usable characters.");
 
@@ -337,38 +378,209 @@ function markerDeal(deal: CreatorDealResponse, requestId: string): boolean {
   return !!terms && typeof terms === "object" && (terms as Record<string, unknown>).creator_approval_request_id === requestId;
 }
 
+type ContinuityProgram = {
+  id: string;
+  name: string;
+  codes: string[] | null;
+  threshold_usd: string | null;
+  reward_usd: string | null;
+  vip_reward_usd: string | null;
+  lossback_pct: string | null;
+  min_deposit_usd: string | null;
+  max_reward_per_user_usd: string | null;
+};
+
+/**
+ * Continuing the SAME program is the only zero-reset path that does not need
+ * to migrate claim basis. It is safe only when attribution and economics are
+ * unchanged. Reusing after a threshold/rate/code change would retroactively
+ * reprice old wager or alter which code switch resets a player's run.
+ */
+function continuityTermsMatch(program: ContinuityProgram, reward: z.infer<typeof RewardPayloadSchema>): boolean {
+  return rewardProgramsCanContinue({
+    codes: program.codes,
+    thresholdUsd: program.threshold_usd,
+    rewardUsd: program.reward_usd,
+    vipRewardUsd: program.vip_reward_usd,
+    lossbackPct: program.lossback_pct,
+    minDepositUsd: program.min_deposit_usd,
+    maxRewardPerUserUsd: program.max_reward_per_user_usd,
+  }, {
+    codes: reward.codes,
+    thresholdUsd: reward.thresholdUsd,
+    rewardUsd: reward.rewardUsd,
+    vipRewardUsd: reward.vipRewardUsd,
+    lossbackPct: reward.lossbackPct,
+    minDepositUsd: reward.minDepositUsd,
+    maxRewardPerUserUsd: reward.maxRewardPerUserUsd,
+  });
+}
+
+async function continueAdjacentRewardProgram(input: {
+  request: typeof creator_deal_approval_requests.$inferSelect;
+  reward: z.infer<typeof RewardPayloadSchema>;
+  deal: z.infer<typeof DealPayloadSchema>;
+  windowStart: Date;
+  windowEnd: Date;
+}): Promise<string | null> {
+  return adminDrizzle.transaction(async (tx) => {
+    const candidates = await tx.execute<ContinuityProgram>(sql`
+      SELECT id::text, name, codes, threshold_usd::text, reward_usd::text,
+             vip_reward_usd::text, lossback_pct::text, min_deposit_usd::text,
+             max_reward_per_user_usd::text
+      FROM creator_reward_programs
+      WHERE creator_user_id = ${input.request.creator_user_id}
+        AND ends_at = ${input.deal.week_start_utc}::timestamptz
+        AND is_active = true
+        AND archived_at IS NULL
+      ORDER BY created_at DESC, id DESC
+      FOR UPDATE
+    `);
+    const prior = candidates.rows.find((candidate) => continuityTermsMatch(candidate, input.reward));
+    if (!prior) return null;
+
+    await tx.execute(sql`
+      UPDATE creator_reward_programs
+      SET name = ${sanitizeProgramName(input.reward.name)},
+          ends_at = ${input.windowEnd.toISOString()}::timestamptz,
+          updated_at = now()
+      WHERE id = ${prior.id}::uuid
+    `);
+    const existingWindow = await tx.execute<{ id: string }>(sql`
+      SELECT id::text FROM creator_reward_program_windows
+      WHERE program_id = ${prior.id}::uuid
+        AND started_at = ${input.windowStart.toISOString()}::timestamptz
+        AND ended_at = ${input.windowEnd.toISOString()}::timestamptz
+      LIMIT 1
+    `);
+    if (!existingWindow.rows[0]) {
+      await tx.insert(creator_reward_program_windows).values({
+        program_id: prior.id,
+        started_at: input.windowStart.toISOString(),
+        ended_at: input.windowEnd.toISOString(),
+      });
+    }
+    await tx.update(creator_deal_approval_requests).set({
+      reward_program_id: prior.id,
+      updated_at: new Date().toISOString(),
+    }).where(eq(creator_deal_approval_requests.id, input.request.id));
+    await tx.insert(creator_deal_approval_events).values({
+      request_id: input.request.id,
+      event_type: "reward_program_continued",
+      actor_kind: "system",
+      metadata: {
+        rewardProgramId: prior.id,
+        priorDealEndedAt: input.deal.week_start_utc,
+        nextDealEndsAt: input.windowEnd.toISOString(),
+      },
+    });
+    return prior.id;
+  });
+}
+
+function dealWindowsOverlap(
+  existing: Pick<CreatorDealResponse, "week_start_utc" | "week_end_utc">,
+  proposed: z.infer<typeof DealPayloadSchema>,
+): boolean {
+  const existingStart = new Date(existing.week_start_utc).getTime();
+  const existingEnd = new Date(existing.week_end_utc).getTime();
+  const proposedStart = new Date(proposed.week_start_utc).getTime();
+  const proposedEnd = new Date(proposed.week_end_utc).getTime();
+  if (![existingStart, existingEnd, proposedStart, proposedEnd].every(Number.isFinite)) {
+    error(409, "backend_deal_window_invalid", "An existing creator deal has an invalid time window.");
+  }
+  // Half-open windows: [start, end). An end exactly equal to the next start is
+  // valid, while every positive-duration intersection is rejected.
+  return existingStart < proposedEnd && proposedStart < existingEnd;
+}
+
+async function listAllCreatorDeals(creatorUserId: string): Promise<CreatorDealResponse[]> {
+  const deals: CreatorDealResponse[] = [];
+  const limit = 100;
+  for (let offset = 0; ;) {
+    const page = await creatorsApi.listDeals(creatorUserId, { offset, limit });
+    deals.push(...page.data);
+    if (deals.length >= page.total) return deals;
+    if (page.data.length === 0) {
+      error(409, "backend_deal_history_incomplete", "Creator deal history could not be fully verified.");
+    }
+    // Advance by what the backend actually returned; it may enforce a lower
+    // page-size ceiling than requested.
+    offset += page.data.length;
+    if (offset >= 10_000) {
+      error(409, "backend_deal_history_too_large", "Creator deal history is too large to verify safely.");
+    }
+  }
+}
+
 async function ensureBackendDeal(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string> {
   if (request.backend_deal_id) return request.backend_deal_id;
-  const listed = await creatorsApi.listDeals(request.creator_user_id, { limit: 100 });
-  const existing = listed.data.find((deal) => markerDeal(deal, request.id));
-  if (existing) return existing.id;
-  if (request.backend_create_attempted_at) {
-    error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
-  }
-  const [claimed] = await adminDrizzle.update(creator_deal_approval_requests).set({
-    backend_create_attempted_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).where(and(
-    eq(creator_deal_approval_requests.id, request.id),
-    sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-  )).returning({ id: creator_deal_approval_requests.id });
-  if (!claimed) error(409, "backend_create_in_progress", "Another worker already started backend deal creation.");
-  const payload = DealPayloadSchema.parse(request.deal_payload);
-  const created = await creatorsApi.createDeal(request.creator_user_id, {
-    ...payload,
-    terms: { creator_approval_request_id: request.id, agreement_version: request.agreement_version, agreement_checksum: request.agreement_checksum },
-  } satisfies CreateDealInput);
-  return created.id;
+  const outcome = await adminDrizzle.transaction(async (tx): Promise<
+    { ok: true; dealId: string } | { ok: false; cause: unknown }
+  > => {
+    // Serializes approval-worker attempts. The backend independently enforces
+    // this invariant under its own per-creator database lock for every caller.
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-window:${request.creator_user_id}`}, 0))`);
+    const payload = DealPayloadSchema.parse(request.deal_payload);
+    const listed = await listAllCreatorDeals(request.creator_user_id);
+    const existing = listed.find((deal) => markerDeal(deal, request.id));
+    if (existing) return { ok: true, dealId: existing.id };
+    const overlap = listed.find((deal) =>
+      (deal.status === "active" || deal.status === "scheduled")
+      && dealWindowsOverlap(deal, payload));
+    if (overlap) {
+      error(
+        409,
+        "creator_deal_window_overlap",
+        `Creator already has an ${overlap.status} deal during the proposed window.`,
+      );
+    }
+    if (request.backend_create_attempted_at) {
+      error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+    }
+    const [claimed] = await tx.update(creator_deal_approval_requests).set({
+      backend_create_attempted_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    }).where(and(
+      eq(creator_deal_approval_requests.id, request.id),
+      sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
+    )).returning({ id: creator_deal_approval_requests.id });
+    if (!claimed) error(409, "backend_create_in_progress", "Another worker already started backend deal creation.");
+    try {
+      const created = await creatorsApi.createDeal(request.creator_user_id, {
+        ...payload,
+        terms: { creator_approval_request_id: request.id, agreement_version: request.agreement_version, agreement_checksum: request.agreement_checksum },
+      } satisfies CreateDealInput);
+      return { ok: true, dealId: created.id };
+    } catch (cause) {
+      // Commit the attempted-at marker even when the remote outcome is
+      // ambiguous. A retry must reconcile by marker instead of creating twice.
+      return { ok: false, cause };
+    }
+  });
+  if (!outcome.ok) throw outcome.cause;
+  return outcome.dealId;
 }
 
 async function ensureRewardProgram(request: typeof creator_deal_approval_requests.$inferSelect, approvedAt: Date): Promise<string | null> {
   if (!request.reward_payload) return null;
+  if (request.reward_program_id) return request.reward_program_id;
   const reward = RewardPayloadSchema.parse(request.reward_payload);
   const deal = DealPayloadSchema.parse(request.deal_payload);
   const codes = await validateCreatorAndCodes(request.creator_user_id, reward.codes);
   const start = new Date(Math.max(new Date(deal.week_start_utc).getTime(), approvedAt.getTime()));
-  const end = new Date(reward.endsAt ?? deal.week_end_utc);
+  // Re-derive from the immutable deal snapshot as a fail-closed guard for
+  // proposals written before `reward_payload.endsAt` became mandatory.
+  const end = new Date(deal.week_end_utc);
   if (end <= start) error(409, "reward_window_elapsed", "The reward program would end before it can begin.");
+  const continuedProgramId = await continueAdjacentRewardProgram({
+    request,
+    reward,
+    deal,
+    windowStart: start,
+    windowEnd: end,
+  });
+  if (continuedProgramId) return continuedProgramId;
   return adminDrizzle.transaction(async (tx) => {
     const [existing] = await tx.select({ id: creator_reward_programs.id }).from(creator_reward_programs)
       .where(eq(creator_reward_programs.source_approval_request_id, request.id)).limit(1);
@@ -486,12 +698,30 @@ export async function respondToCreatorDealApproval(input: {
     const request = rows.rows[0];
     if (!request) error(404, "approval_not_found", "Deal approval request not found.");
     if (request.guild_id !== parsed.guildId || request.category_id !== parsed.categoryId || request.chat_channel_id !== parsed.channelId || request.summary_message_id !== parsed.messageId) error(403, "approval_context_forbidden", "This button is not bound to this creator deal message.");
-    if (request.creator_discord_user_id !== parsed.actorDiscordUserId) error(403, "approval_actor_forbidden", "Only the creator assigned to this channel can respond.");
+    // Resolve a possible override only after the canonical request is locked,
+    // so the site-role check is as close as possible to the decision write.
+    const linkedSiteAdmin = request.creator_discord_user_id === parsed.actorDiscordUserId
+      ? null
+      : await resolveLinkedSiteAdmin(parsed.actorDiscordUserId);
+    const actor: CreatorDealApprovalActor =
+      request.creator_discord_user_id === parsed.actorDiscordUserId
+        ? { kind: "creator", linkedSiteUserId: null }
+        : linkedSiteAdmin ?? error(
+            403,
+            "approval_actor_forbidden",
+            "Only the creator assigned to this channel or a linked site admin can respond.",
+          );
+    // Declining remains an exclusively creator-owned decision. The temporary
+    // admin override can present the terms and approve, but cannot reject a
+    // creator's proposal on their behalf.
+    if (parsed.action === "decline" && actor.kind !== "creator") {
+      error(403, "approval_actor_forbidden", "Only the creator assigned to this channel can decline.");
+    }
     const [activeSetup] = await tx.select({ id: discord_creator_setups.id }).from(discord_creator_setups).where(and(
       eq(discord_creator_setups.id, request.discord_setup_id),
       eq(discord_creator_setups.status, "active"),
       eq(discord_creator_setups.creator_user_id, request.creator_user_id),
-      eq(discord_creator_setups.creator_discord_user_id, parsed.actorDiscordUserId),
+      eq(discord_creator_setups.creator_discord_user_id, request.creator_discord_user_id),
       eq(discord_creator_setups.guild_id, parsed.guildId),
       eq(discord_creator_setups.category_id, parsed.categoryId),
       eq(discord_creator_setups.chat_channel_id, parsed.channelId),
@@ -529,7 +759,18 @@ export async function respondToCreatorDealApproval(input: {
       }
       const [updated] = await tx.update(creator_deal_approval_requests).set({ status: "awaiting_decision", continued_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .where(and(eq(creator_deal_approval_requests.id, request.id), eq(creator_deal_approval_requests.status, "awaiting_continue"))).returning();
-      await tx.insert(creator_deal_approval_events).values({ request_id: request.id, event_type: "terms_presented", actor_kind: "creator", actor_discord_user_id: parsed.actorDiscordUserId, interaction_id: parsed.interactionId, metadata: { action: parsed.action } });
+      await tx.insert(creator_deal_approval_events).values({
+        request_id: request.id,
+        event_type: "terms_presented",
+        actor_kind: actor.kind,
+        actor_discord_user_id: parsed.actorDiscordUserId,
+        interaction_id: parsed.interactionId,
+        metadata: {
+          action: parsed.action,
+          approvalActor: actor.kind,
+          ...(actor.kind === "admin" ? { linkedSiteUserId: actor.linkedSiteUserId } : {}),
+        },
+      });
       return updated;
     }
     if (request.status !== "awaiting_decision") {
@@ -542,8 +783,30 @@ export async function respondToCreatorDealApproval(input: {
       decision_interaction_id: parsed.interactionId, decision_actor_discord_user_id: parsed.actorDiscordUserId,
       approved_at: parsed.action === "approve" ? now : null, declined_at: parsed.action === "decline" ? now : null,
       updated_at: now }).where(and(eq(creator_deal_approval_requests.id, request.id), eq(creator_deal_approval_requests.status, "awaiting_decision"))).returning();
-    await tx.insert(creator_deal_approval_events).values({ request_id: request.id, event_type: parsed.action === "approve" ? "approved" : "declined", actor_kind: "creator", actor_discord_user_id: parsed.actorDiscordUserId, interaction_id: parsed.interactionId, metadata: { action: parsed.action } });
-    await tx.insert(admin_audit_events).values({ admin_user_id: null, event_type: parsed.action === "approve" ? "creator_deal_approval_approved" : "creator_deal_approval_declined", target_user_id: request.creator_user_id, metadata: { requestId: request.id, actorDiscordUserId: parsed.actorDiscordUserId, interactionId: parsed.interactionId } });
+    await tx.insert(creator_deal_approval_events).values({
+      request_id: request.id,
+      event_type: parsed.action === "approve" ? "approved" : "declined",
+      actor_kind: actor.kind,
+      actor_discord_user_id: parsed.actorDiscordUserId,
+      interaction_id: parsed.interactionId,
+      metadata: {
+        action: parsed.action,
+        approvalActor: actor.kind,
+        ...(actor.kind === "admin" ? { linkedSiteUserId: actor.linkedSiteUserId } : {}),
+      },
+    });
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: null,
+      event_type: parsed.action === "approve" ? "creator_deal_approval_approved" : "creator_deal_approval_declined",
+      target_user_id: request.creator_user_id,
+      metadata: {
+        requestId: request.id,
+        actorDiscordUserId: parsed.actorDiscordUserId,
+        interactionId: parsed.interactionId,
+        approvalActor: actor.kind,
+        ...(actor.kind === "admin" ? { linkedSiteUserId: actor.linkedSiteUserId } : {}),
+      },
+    });
     return updated;
   });
 
