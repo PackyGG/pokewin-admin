@@ -13,6 +13,7 @@ import {
 } from "./enrichment.js";
 import type { SignupProvider } from "./provider-contracts.js";
 import type { FiatEligibilityEnvironment } from "./fiat-eligibility-auth.js";
+import { domainFromEmail } from "./fiat-email-domains.js";
 import {
   FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
   queueFiatEligibilityContainment,
@@ -30,11 +31,13 @@ import {
   badIpReputation,
   behaviourSignals,
   type FiatEligibilityBehaviour,
+  type FiatEligibilityAdditionalBlocklists,
   type FiatEligibilityBlocklistMatch,
   type FiatEligibilityNetwork,
   type FiatEligibilityPolicyOutcome,
   type FiatEligibilitySignal,
 } from "./fiat-eligibility-policy.js";
+import { disposableEmailDomain } from "./scoring.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import type { Signal, Signup } from "./types.js";
 
@@ -543,6 +546,48 @@ async function loadBlocklistMatches(
   return result.rows;
 }
 
+/**
+ * Remaining fraud-enforcement lists used by checkout. The Admin lookup is
+ * deliberately direct and read-only so an operator change takes effect on the
+ * next request without waiting for a cross-database synchronization job.
+ */
+async function loadAdditionalBlocklists(
+  antifraud: Pool,
+  admin: Pool,
+  input: { userId: string; email: string | null; disposableEmailPoints: number },
+): Promise<FiatEligibilityAdditionalBlocklists> {
+  const emailDomain = input.email ? domainFromEmail(input.email) : null;
+  const disposableDomain = disposableEmailDomain(input.email);
+  const [emailRule, excludedUser] = await Promise.all([
+    emailDomain
+      ? antifraud.query<{ active: boolean }>(
+          `
+            SELECT EXISTS (
+              SELECT 1
+              FROM fiat_email_domain_blacklist
+              WHERE enabled
+                AND (expires_at IS NULL OR expires_at > now())
+                AND domain = $1
+            ) AS active
+          `,
+          [emailDomain],
+        )
+      : Promise.resolve({ rows: [{ active: false }] }),
+    admin.query<{ active: boolean }>(
+      `SELECT EXISTS (
+         SELECT 1 FROM excluded_users WHERE user_id = $1
+       ) AS active`,
+      [input.userId],
+    ),
+  ]);
+  return {
+    emailDomain: emailRule.rows[0]?.active === true ? emailDomain : null,
+    disposableEmailDomain: disposableDomain,
+    disposableEmailPoints: input.disposableEmailPoints,
+    excludedUser: excludedUser.rows[0]?.active === true,
+  };
+}
+
 function requestHash(input: FiatEligibilityRequest, requestIp: string): string {
   return createHash("sha256")
     .update([
@@ -687,6 +732,15 @@ export class FiatEligibilityService {
       providerSubject,
       weights,
     );
+    const additionalBlocklistsPromise = withDeadline(
+      loadAdditionalBlocklists(this.db.antifraud, this.db.admin, {
+        userId: input.userID,
+        email: subject.email,
+        disposableEmailPoints: weights.disposable_email,
+      }),
+      ANTIFRAUD_READ_TIMEOUT_MS,
+      "fiat_additional_blocklists_read",
+    );
     // The shared-device count needs the visitor id from the Fingerprint event,
     // so it is chained onto that one call instead of waiting for the whole fan-
     // out. Never rejects: shared-network evidence degrades to zero rather than
@@ -736,6 +790,7 @@ export class FiatEligibilityService {
       history,
       velocity,
       blocklistMatches,
+      additionalBlocklists,
     ] = await Promise.all([
       fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
@@ -747,6 +802,7 @@ export class FiatEligibilityService {
       this.loadFraudHistory(input),
       this.loadVelocity(input),
       blocklistPromise,
+      additionalBlocklistsPromise,
     ]);
 
     const identity = fingerprintEventIdentity(fingerprint.response);
@@ -770,6 +826,7 @@ export class FiatEligibilityService {
       behaviour,
       network,
       blocklistMatches,
+      additionalBlocklists,
       signupRiskScore: history.signupRiskScore,
       activeCaseSeverity: history.activeCaseSeverity,
       attempts10m: velocity.attempts10m,
@@ -787,6 +844,7 @@ export class FiatEligibilityService {
       behaviour,
       network,
       blocklistMatches,
+      additionalBlocklists,
       outcome,
     });
   }
@@ -883,6 +941,7 @@ export class FiatEligibilityService {
     behaviour: FiatEligibilityBehaviour;
     network: FiatEligibilityNetwork;
     blocklistMatches: FiatEligibilityBlocklistMatch[];
+    additionalBlocklists: FiatEligibilityAdditionalBlocklists;
     outcome: FiatEligibilityPolicyOutcome;
   }): Promise<FiatEligibilityDecision> {
     const { input, now, providers, outcome } = context;
@@ -937,6 +996,7 @@ export class FiatEligibilityService {
       behaviour: FiatEligibilityBehaviour;
       network: FiatEligibilityNetwork;
       blocklistMatches: FiatEligibilityBlocklistMatch[];
+      additionalBlocklists: FiatEligibilityAdditionalBlocklists;
       outcome: FiatEligibilityPolicyOutcome;
       byName: Map<string, EnrichmentResult>;
       expiresAt: Date;
@@ -1039,6 +1099,7 @@ export class FiatEligibilityService {
               value: match.value,
               matchedOn: match.matched_on,
             })),
+            additionalBlocklists: context.additionalBlocklists,
             providerSignals: context.providerSignals,
           }),
           context.expiresAt,
@@ -1160,6 +1221,7 @@ export const fiatEligibilityInternals = {
   automaticReview: evaluateFiatEligibility,
   loadSourceSubject,
   loadBlocklistMatches,
+  loadAdditionalBlocklists,
   behaviourSignals,
   badIpReputation,
   badDeviceReputation,

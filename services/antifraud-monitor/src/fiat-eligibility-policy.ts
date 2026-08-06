@@ -212,6 +212,16 @@ export type FiatEligibilityBlocklistMatch = {
   matched_on: "checkout" | "latest_login" | "signup";
 };
 
+export type FiatEligibilityAdditionalBlocklists = {
+  /** Stored account email matched the operator-managed Fiat domain blacklist. */
+  emailDomain: string | null;
+  /** Stored account email matched the maintained disposable-domain list. */
+  disposableEmailDomain: string | null;
+  disposableEmailPoints: number;
+  /** User id exists in the Admin DB excluded-users list. */
+  excludedUser: boolean;
+};
+
 export type FiatEligibilityPolicyInput = {
   now: Date;
   requestCreatedAt: Date;
@@ -222,6 +232,7 @@ export type FiatEligibilityPolicyInput = {
   behaviour: FiatEligibilityBehaviour;
   network: FiatEligibilityNetwork;
   blocklistMatches: readonly FiatEligibilityBlocklistMatch[];
+  additionalBlocklists: FiatEligibilityAdditionalBlocklists;
   signupRiskScore: number;
   activeCaseSeverity: string | null;
   attempts10m: number;
@@ -634,6 +645,32 @@ export function evaluateFiatEligibility(
       source: "policy",
     });
   }
+  add(input.additionalBlocklists.emailDomain !== null, {
+    key: "blocklist_email_domain_match",
+    detail:
+      "The account email domain "
+      + `${input.additionalBlocklists.emailDomain ?? "unknown"} matches the `
+      + "active operator Fiat email-domain blacklist.",
+    points: 100,
+    containing: true,
+    source: "policy",
+  });
+  add(input.additionalBlocklists.disposableEmailDomain !== null, {
+    key: "disposable_email_domain_match",
+    detail:
+      "The account uses the disposable email domain "
+      + `${input.additionalBlocklists.disposableEmailDomain ?? "unknown"}.`,
+    points: input.additionalBlocklists.disposableEmailPoints,
+    blocking: true,
+    source: "policy",
+  });
+  add(input.additionalBlocklists.excludedUser, {
+    key: "excluded_user_blocklist_match",
+    detail: "The account is present on the Admin excluded-users list.",
+    points: 100,
+    blocking: true,
+    source: "account",
+  });
 
   // ── Drift from signup, and the hard rules built on it ────────────────────
   const ipChanged = Boolean(

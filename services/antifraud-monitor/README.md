@@ -126,8 +126,9 @@ full Fingerprint Pro Plus event lookup, an independent proxycheck.io lookup, and
 a corroborating Abstract IP-intelligence lookup. Fingerprint and proxycheck are
 mandatory and fail closed; Abstract only adds points when it degrades. It
 compares the checkout with signup IP/device, account age,
-account and Fiat locks, KYC, country policy, operator IP/fingerprint
-blocklists, shared networks, signup/case history, deposit, play and reward
+account and Fiat locks, KYC, country policy, every fraud-enforcement list
+(operator IP/fingerprint/email-domain, disposable email, and Admin excluded
+users), shared networks, signup/case history, deposit, play and reward
 behaviour, previous Fiat history and recent eligibility velocity.
 
 ### Hard containment rules
@@ -142,6 +143,7 @@ A denial normally touches nothing. These rules additionally CONTAIN the account
   provider reputation, at any account age;
 - a Fiat deposit for the account was paid less than 60 seconds ago;
 - the checkout IP or device matches an active operator blocklist rule;
+- the stored account email matches an active operator Fiat domain rule;
 - Fingerprint reports the event as replayed, linked to a different account, or
   driven by a bad bot.
 
@@ -158,7 +160,9 @@ withholding the locks (`enforcement='suppressed'` on the stored row).
 
 Account state that is already correct — banned, locked, self-excluded, Fiat or
 country locked, KYC not cleared — denies without containment, as do provider
-outages and stale requests.
+outages and stale requests. Disposable account email and Admin excluded-user
+matches also deny without containment. The actual payer email remains unknown
+before checkout and is checked again after authorization.
 
 ### Behaviour trust
 
@@ -198,7 +202,9 @@ Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
 `FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL`. Allowlist entries are exact IPv4 or
 IPv6 addresses or CIDRs. The allowlist applies to the calling backend's trusted
 source IP; `ipAddress` in the JSON body is the end user's IP and is never used
-to authenticate the caller.
+to authenticate the caller. `ADMIN_DATABASE_URL` is a required read-only Admin
+DB connection used for the excluded-users checkout list. Configure its TLS with
+`ADMIN_DATABASE_SSL` and optional `ADMIN_DATABASE_CA`.
 
 Every request writes structured `fiat_eligibility.*` lifecycle logs with the
 Fastify request ID. Logs cover validation and authentication rejection, rate

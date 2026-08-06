@@ -146,6 +146,12 @@ function reviewInput(
       sharedCurrentIpUsers: 0,
     },
     blocklistMatches: [],
+    additionalBlocklists: {
+      emailDomain: null,
+      disposableEmailDomain: null,
+      disposableEmailPoints: 60,
+      excludedUser: false,
+    },
     signupRiskScore: 0,
     activeCaseSeverity: null,
     attempts10m: 0,
@@ -806,6 +812,76 @@ test("a known VPN IP raises Fiat risk without containing", () => {
   assert.equal(reviewed.signals.find((signal) => signal.key === "known_vpn_ip_match")?.points, 15);
 });
 
+test("all remaining checkout blocklists deny with the correct containment", () => {
+  const operatorEmail = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    additionalBlocklists: {
+      ...reviewInput().additionalBlocklists,
+      emailDomain: "fraud.example",
+    },
+  });
+  assert.equal(operatorEmail.decision, "deny");
+  assert.deepEqual(operatorEmail.enforcementReasons, [
+    "blocklist_email_domain_match",
+  ]);
+
+  const disposable = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    additionalBlocklists: {
+      ...reviewInput().additionalBlocklists,
+      disposableEmailDomain: "temporary.example",
+    },
+  });
+  assert.equal(disposable.decision, "deny");
+  assert.equal(disposable.enforce, false);
+  assert.ok(disposable.signals.some(
+    (signal) => signal.key === "disposable_email_domain_match",
+  ));
+
+  const excluded = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    additionalBlocklists: {
+      ...reviewInput().additionalBlocklists,
+      excludedUser: true,
+    },
+  });
+  assert.equal(excluded.decision, "deny");
+  assert.equal(excluded.enforce, false);
+  assert.ok(excluded.signals.some(
+    (signal) => signal.key === "excluded_user_blocklist_match",
+  ));
+});
+
+test("pre-Fiat reads operator email, disposable email, and excluded-user lists", async () => {
+  const queries: string[] = [];
+  const antifraud = {
+    query: async (sql: string) => {
+      queries.push(sql);
+      return { rows: [{ active: true }] };
+    },
+  };
+  const admin = {
+    query: async (sql: string) => {
+      queries.push(sql);
+      return { rows: [{ active: true }] };
+    },
+  };
+  const matches = await fiatEligibilityInternals.loadAdditionalBlocklists(
+    antifraud as never,
+    admin as never,
+    {
+      userId: "excluded-user",
+      email: "person@mailinator.com",
+      disposableEmailPoints: 60,
+    },
+  );
+  assert.equal(matches.emailDomain, "mailinator.com");
+  assert.equal(matches.disposableEmailDomain, "mailinator.com");
+  assert.equal(matches.excludedUser, true);
+  assert.ok(queries.some((sql) => sql.includes("fiat_email_domain_blacklist")));
+  assert.ok(queries.some((sql) => sql.includes("excluded_users")));
+});
+
 test("behaviour rewards self-funded play and punishes reward farming", () => {
   const farmed = fiatEligibilityInternals.automaticReview({
     ...reviewInput(),
@@ -1063,6 +1139,9 @@ test("concurrent identical requests share one automatic provider review", async 
       return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
     }
     if (text.includes("FROM identifier_blocklists")) return { rows: [] };
+    if (text.includes("FROM fiat_email_domain_blacklist")) {
+      return { rows: [{ active: false }] };
+    }
     if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
       return { rows: [storedRow] };
     }
@@ -1076,6 +1155,7 @@ test("concurrent identical requests share one automatic provider review", async 
       release: () => undefined,
     }),
   };
+  const admin = { query: async () => ({ rows: [{ active: false }] }) };
   const enrichment = {
     fingerprintCheck: async () => {
       fingerprintCalls += 1;
@@ -1106,6 +1186,7 @@ test("concurrent identical requests share one automatic provider review", async 
       source,
       fiatDevSource: null,
       antifraud,
+      admin,
     } as never,
     { get: async () => ({}) } as never,
     enrichment as never,
@@ -1177,6 +1258,9 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
       return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
     }
     if (text.includes("FROM identifier_blocklists")) return { rows: [] };
+    if (text.includes("FROM fiat_email_domain_blacklist")) {
+      return { rows: [{ active: false }] };
+    }
     if (text.includes("INSERT INTO fiat_eligibility_assessments")) {
       const values = (params ?? []) as unknown[];
       recordedAbstractStatus = values[12];
@@ -1207,6 +1291,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
       release: () => undefined,
     }),
   };
+  const admin = { query: async () => ({ rows: [{ active: false }] }) };
   const never = new Promise<never>(() => {});
   const enrichment = {
     fingerprintCheck: async () =>
@@ -1228,7 +1313,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
     abstractIpCheck: () => never,
   };
   const service = new FiatEligibilityService(
-    { source, fiatDevSource: null, antifraud } as never,
+    { source, fiatDevSource: null, antifraud, admin } as never,
     { get: async () => ({}) } as never,
     enrichment as never,
     true,
