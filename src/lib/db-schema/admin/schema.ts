@@ -1585,15 +1585,22 @@ export const antifraud_signals = pgTable("antifraud_signals", {
 	payload: jsonb(),
 	review_id: uuid(),
 	received_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	containment_outbox_status: text(),
+	containment_outbox_error: text(),
+	containment_outbox_attempts: integer().default(0).notNull(),
+	containment_applied_at: timestamp({ withTimezone: true, mode: 'string' }),
 }, (table) => [
 	uniqueIndex("antifraud_signals_external_uniq").using("btree", table.external_id.asc().nullsLast().op("text_ops")).where(sql`(external_id IS NOT NULL)`),
 	index("antifraud_signals_received_idx").using("btree", table.received_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_signals_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
+	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
 	foreignKey({
 			columns: [table.review_id],
 			foreignColumns: [antifraud_reviews.id],
 			name: "antifraud_signals_review_id_fkey"
 		}).onDelete("set null"),
+	check("antifraud_signals_containment_outbox_attempts_check", sql`containment_outbox_attempts >= 0`),
+	check("antifraud_signals_containment_outbox_status_check", sql`(containment_outbox_status IS NULL) OR (containment_outbox_status = ANY (ARRAY['pending'::text, 'applied'::text, 'skipped'::text, 'failed'::text]))`),
 ]);
 
 export const pack_creation_requests = pgTable("pack_creation_requests", {

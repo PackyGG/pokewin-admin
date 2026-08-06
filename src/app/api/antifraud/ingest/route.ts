@@ -30,9 +30,11 @@ import {
   reviewSignalLabel,
 } from "@/lib/antifraud/signal-display";
 import {
-  applyFiatIdentityContainment,
-  fiatIdentityContainmentTarget,
-} from "@/lib/antifraud/fiat-identity-containment";
+  markContainmentPending,
+  requiresContainmentOutbox,
+  runDeferredContainment,
+  type ContainmentOutboxKind,
+} from "@/lib/antifraud/containment-outbox";
 import { isPostgresError } from "@/lib/postgres-errors";
 import {
   appendAntifraudSecurityAudit,
@@ -796,156 +798,21 @@ async function containCriticalSignupAccount(
 }
 
 /**
- * Containment rules the automatic Fiat-checkout endpoint is allowed to enforce.
- * The monitor decides; this list is the dashboard's independent second opinion,
- * so a bug or a forged payload on the other side cannot invent a new reason to
- * lock an account.
+ * `fiat_eligibility_containment` and `fiat_deposit_identity_containment` are
+ * the two kinds whose containment does EXTERNAL work: a MAIN-DB write, and —
+ * for identity — a backend KYC HTTP call on top. That work must not run
+ * inside the open ADMIN ingest transaction below (an external stall would
+ * hold ADMIN row locks for however long MAIN or the backend take to
+ * respond). Their admission checks (`fiatEligibilityContainmentTarget`,
+ * `fiatIdentityContainmentTarget`) and the actual MAIN write
+ * (`applyFiatEligibilityContainment`, `applyFiatIdentityContainment`) live in
+ * `@/lib/antifraud/fiat-eligibility-containment` and
+ * `@/lib/antifraud/fiat-identity-containment`; `@/lib/antifraud/containment-outbox`
+ * ties them into the ADMIN-only-inside-tx / external-only-after-commit split,
+ * with a durable `pending` -> `applied`/`skipped`/`failed` outbox on the
+ * signal row so a crash or transient failure between commit and the external
+ * call is retried by `/api/cron/antifraud-containment-retry`, not lost.
  */
-const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
-  "new_account_checkout_ip_changed",
-  "new_account_checkout_device_changed",
-  "checkout_identity_changed_with_bad_reputation",
-  "checkout_identity_changed_from_latest_login_with_bad_reputation",
-  "repeat_fiat_within_sixty_seconds",
-  "blocklist_ip_match",
-  "blocklist_fingerprint_match",
-  "fingerprint_event_replayed",
-  "fingerprint_linked_id_mismatch",
-  "fingerprint_bad_bot",
-]);
-
-/**
- * Turn Fiat deposits off and lock withdrawals for an account the automatic
- * checkout assessment refused. Deliberately does NOT ban, does not touch
- * `is_locked`, does not kill sessions and never mutates KYC: the account keeps
- * working, its money rails do not, and staff decide the rest from the review
- * this same delivery opens.
- *
- * Both leg sets use COALESCE on `*_at` / `*_reason` so a repeat containment
- * never overwrites the first (or a human's) reason and timestamp.
- */
-async function containFiatEligibilityAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const userId = signal.userId;
-  const rawReasons = signal.payload?.reasonCodes;
-  const reasons = Array.isArray(rawReasons)
-    ? rawReasons.filter(
-        (reason): reason is string =>
-          typeof reason === "string"
-          && FIAT_ELIGIBILITY_CONTAINMENT_REASONS.has(reason),
-      )
-    : [];
-  if (
-    !userId ||
-    signal.payload?.containmentRequired !== true ||
-    signal.payload?.environment !== "prod" ||
-    signal.riskScore == null ||
-    signal.riskScore < 70 ||
-    signal.riskScore > 100 ||
-    reasons.length === 0
-  ) {
-    console.error(
-      "[antifraud-ingest] skipping invalid Fiat eligibility containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const reason = (
-    "Automatic fraud lock: Fiat checkout assessment matched "
-    + reasons.join(", ")
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id, user_id,
-      locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
-      locked_deposits_reason,
-      locked_withdrawals_crypto, locked_withdrawals_items,
-      locked_withdrawals_at, locked_withdrawals_by,
-      locked_withdrawals_reason,
-      created_at, updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()}, u.id,
-      ARRAY['all']::text[], NOW(), NULL, ${reason},
-      ARRAY['all']::text[], TRUE, NOW(), NULL, ${reason},
-      NOW(), NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_deposits_fiat = ARRAY['all']::text[],
-      locked_deposits_at = COALESCE(
-        user_feature_locks.locked_deposits_at,
-        EXCLUDED.locked_deposits_at
-      ),
-      locked_deposits_reason = COALESCE(
-        user_feature_locks.locked_deposits_reason,
-        EXCLUDED.locked_deposits_reason
-      ),
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  if (locked.rows.length === 0) {
-    console.error(
-      "[antifraud-ingest] Fiat eligibility account no longer exists, skipping containment lock",
-      { externalId: signal.id || null, userId },
-    );
-    return "skipped";
-  }
-  return "locked";
-}
-
-/**
- * Post-authorization Fiat identity drift: lock the rails AND require KYC.
- *
- * The only containment kind that touches KYC state — see
- * `@/lib/antifraud/fiat-identity-containment` for why that exception exists and
- * why it cannot leak into the other kinds. Admission checks live in that module
- * too, so a forged payload cannot reach the lock.
- */
-async function containFiatIdentityAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const target = fiatIdentityContainmentTarget(signal);
-  if (!target) {
-    console.error(
-      "[antifraud-ingest] skipping invalid Fiat identity containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const outcome = await applyFiatIdentityContainment(target);
-  if (!outcome.locked) {
-    console.error(
-      "[antifraud-ingest] Fiat identity account no longer exists, skipping containment lock",
-      { externalId: signal.id || null, userId: target.userId },
-    );
-    return "skipped";
-  }
-  if (outcome.kyc === "failed") {
-    // The lock is applied; only the KYC leg degraded. Acknowledge rather than
-    // retry — a retry would re-deliver the lock and risk a second verification
-    // cycle. The Discord alert routes an analyst to the one-click requirement.
-    console.error(
-      "[antifraud-ingest] Fiat identity containment locked but KYC was not required",
-      { externalId: signal.id || null, userId: target.userId },
-    );
-  }
-  return "locked";
-}
 
 type IngestResult = {
   outcome: "stored" | "review_opened" | "duplicate";
@@ -1007,7 +874,16 @@ function signalTrailEntry(signal: AntifraudSignalEvent): string {
  * deliveries.
  */
 async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
-  return adminDrizzle.transaction(async (tx) => {
+  // Set inside the transaction below when this signal is one of the two
+  // containment kinds whose apply step is external (MAIN-DB write, plus a
+  // backend KYC call for identity) and validates as requiring containment.
+  // `runDeferredContainment` — the actual MAIN write — only runs AFTER the
+  // transaction returns/commits, never inside it. See the comment above
+  // `IngestResult` for why.
+  let deferredContainmentKind: ContainmentOutboxKind | null = null;
+  let storedSignalId: string | null = null;
+
+  const result = await adminDrizzle.transaction(async (tx): Promise<IngestResult> => {
   const [stored] = await tx
     .insert(antifraud_signals)
     .values({
@@ -1027,6 +903,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     })
     .returning({ id: antifraud_signals.id });
   if (!stored) return { outcome: "duplicate", lockSkipped: false };
+  storedSignalId = stored.id;
 
   let lockSkipped = false;
   if (
@@ -1042,11 +919,15 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
       signal.kind === "fiat_deposit_identity_containment"
     )
   ) {
-    // Containment lock AFTER the dedupe check, inside the transaction:
+    // Containment intent AFTER the dedupe check, inside the transaction:
     //  • a duplicate delivery returned above, so a re-sent signal can never
     //    re-apply containment to an account staff already reviewed;
-    //  • a transient lock failure throws, rolling back the stored signal, so
-    //    the backend's retry re-attempts store AND lock together.
+    //  • for the six kinds below, a transient lock failure throws, rolling
+    //    back the stored signal, so the backend's retry re-attempts store AND
+    //    lock together — unchanged from before.
+    //  • the two Fiat kinds only VALIDATE here (pure, no MAIN I/O) and mark
+    //    the row `pending`; the actual MAIN write happens after this
+    //    transaction commits, via `runDeferredContainment` below.
     // Serialize distinct events for the same account so concurrent matches
     // cannot race containment state.
     await tx.execute(sql`
@@ -1054,21 +935,43 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
         hashtextextended(${"antifraud-containment:" + (signal.userId ?? "")}, 0)
       )
     `);
-    lockSkipped = signal.kind === "fiat_blacklisted_email_domain"
-      ? (await containBlacklistedEmailDomainAccount(signal)) === "skipped"
-      : signal.kind === "abstract_email_catchall"
-        ? (await containAbstractCatchallAccount(signal)) === "skipped"
-        : signal.kind === "signup_policy_recommendation"
-          ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
-        : signal.kind === "risky_free_battle_containment"
-          ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
-        : signal.kind === "fiat_eligibility_containment"
-          ? (await containFiatEligibilityAccount(signal)) === "skipped"
-        : signal.kind === "fiat_deposit_identity_containment"
-          ? (await containFiatIdentityAccount(signal)) === "skipped"
-        : signal.kind === "critical_risk_signup"
-          ? (await containCriticalSignupAccount(signal)) === "skipped"
-          : (await containBehavioralRiskAccount(signal)) === "skipped";
+    if (
+      signal.kind === "fiat_eligibility_containment" ||
+      signal.kind === "fiat_deposit_identity_containment"
+    ) {
+      const kind = signal.kind;
+      if (
+        requiresContainmentOutbox({
+          kind,
+          userId: signal.userId,
+          riskScore: signal.riskScore,
+          payload: signal.payload,
+        })
+      ) {
+        deferredContainmentKind = kind;
+        await markContainmentPending(tx, stored.id);
+        // Provisional: `lockSkipped` for these two kinds is finalized after
+        // the deferred containment attempt runs post-commit, below.
+      } else {
+        console.error(
+          `[antifraud-ingest] skipping invalid ${signal.kind} containment signal`,
+          { externalId: signal.id || null, userId: signal.userId ?? null },
+        );
+        lockSkipped = true;
+      }
+    } else {
+      lockSkipped = signal.kind === "fiat_blacklisted_email_domain"
+        ? (await containBlacklistedEmailDomainAccount(signal)) === "skipped"
+        : signal.kind === "abstract_email_catchall"
+          ? (await containAbstractCatchallAccount(signal)) === "skipped"
+          : signal.kind === "signup_policy_recommendation"
+            ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
+          : signal.kind === "risky_free_battle_containment"
+            ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
+          : signal.kind === "critical_risk_signup"
+            ? (await containCriticalSignupAccount(signal)) === "skipped"
+            : (await containBehavioralRiskAccount(signal)) === "skipped";
+    }
   }
 
   // Idempotency: the backend's own event id. A retried delivery hits the
@@ -1199,6 +1102,36 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
 
   return { outcome: opened ? "review_opened" : "stored", lockSkipped };
   });
+
+  // The ADMIN transaction has committed. Only now — never while its row
+  // locks were held — does the external containment work run: a MAIN-DB
+  // write, and for identity, a backend KYC call on top. A crash or a thrown
+  // transient error here is durably recorded on the signal row
+  // (`runDeferredContainment` never throws) and retried by
+  // `/api/cron/antifraud-containment-retry`, not lost.
+  if (result.outcome !== "duplicate" && deferredContainmentKind && storedSignalId) {
+    const outcome = await runDeferredContainment({
+      kind: deferredContainmentKind,
+      userId: signal.userId,
+      riskScore: signal.riskScore,
+      payload: signal.payload,
+      signalRowId: storedSignalId,
+    });
+    if (outcome === "skipped") {
+      console.error(
+        `[antifraud-ingest] ${deferredContainmentKind} account no longer exists, skipping containment lock`,
+        { externalId: signal.id || null, userId: signal.userId ?? null },
+      );
+    } else if (outcome === "failed") {
+      console.error(
+        `[antifraud-ingest] ${deferredContainmentKind} containment failed post-commit; recorded for retry`,
+        { externalId: signal.id || null, userId: signal.userId ?? null },
+      );
+    }
+    result.lockSkipped = outcome !== "locked";
+  }
+
+  return result;
 }
 
 /**
