@@ -1374,3 +1374,12 @@ CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_created_at
 -- the read-only monitor service intentionally carries no executable DDL.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_fingerprints_user_id_created_at
   ON public.fingerprints (user_id, created_at DESC);
+
+-- #41 the antifraud fiat-identity poller drives off authorized deposits in
+-- (paid_at, id) keyset order. Nothing currently serves that scan, so every
+-- poll pays a sequential scan plus sort over the whole intent table. Keep this
+-- with the MAIN owner-applied catalog; the read-only monitor service carries
+-- no executable DDL.
+CREATE INDEX CONCURRENTLY idx_fiat_deposit_intents_paid_at
+  ON fiat_deposit_intents (paid_at)
+  WHERE paid_at IS NOT NULL;

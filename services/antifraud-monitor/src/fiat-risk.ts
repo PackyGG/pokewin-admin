@@ -9,6 +9,12 @@ import {
   postPaymentObservationSignals,
   type FiatPostPaymentDetectionEvidence,
 } from "./fiat-observations.js";
+import {
+  LOYAL_ACCOUNT_DAYS,
+  MEANINGFUL_CRYPTO_USD,
+  SMALL_CRYPTO_DEPOSIT_USD,
+  SMALL_CRYPTO_TRUST_WEIGHT,
+} from "./fiat-eligibility-policy.js";
 
 export type FiatVerdict = "good" | "review" | "bad";
 export type FiatRiskCategory =
@@ -177,9 +183,21 @@ const REWARD_TYPES = [
   "affiliate_claim",
   "affiliate_leaderboard_prize",
 ];
-const ESTABLISHED_ACCOUNT_DAYS = 30;
-const MEANINGFUL_PRIOR_CRYPTO_USD = 25;
 const ESTABLISHED_CRYPTO_TRUST_CREDIT = -20;
+/** How long a failed MaxMind evaluation suppresses a retry. */
+const MAXMIND_FAILURE_TTL = "15 minutes";
+
+/**
+ * Lowercased `%needle%` pattern with the LIKE wildcards in the needle escaped.
+ *
+ * Staff paste raw identifiers into the search box. An unescaped `_` matches any
+ * character and an unescaped `%` matches everything, which turns a narrow
+ * lookup into a full scan and quietly returns the wrong rows. Backslash is the
+ * default LIKE escape character in PostgreSQL.
+ */
+export function likeContains(search: string): string {
+  return `%${search.toLowerCase().replaceAll(/[\\%_]/g, "\\$&")}%`;
+}
 const NON_DISCOUNTABLE_SIGNAL_KEYS = new Set([
   "payment_reconciliation_failed",
   "payment_disputed",
@@ -442,9 +460,9 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
   const hasFundingHistory =
     input.funding.priorCryptoDeposits + input.funding.priorFiatDeposits > 0;
   const hasEstablishedCryptoHistory =
-    input.account.accountAgeDays >= ESTABLISHED_ACCOUNT_DAYS &&
+    input.account.accountAgeDays >= LOYAL_ACCOUNT_DAYS &&
     input.funding.priorCryptoDeposits > 0 &&
-    input.funding.priorCryptoUsd >= MEANINGFUL_PRIOR_CRYPTO_USD;
+    input.funding.priorCryptoUsd >= MEANINGFUL_CRYPTO_USD;
   if (input.funding.priorCryptoDeposits > 0) {
     addSignal(signals, {
       key: "known_crypto_history",
@@ -452,8 +470,8 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
         ? "Established crypto funding"
         : "Known crypto funding",
       detail: hasEstablishedCryptoHistory
-        ? `${input.funding.priorCryptoDeposits} earlier settled crypto deposits totaling $${input.funding.priorCryptoUsd.toFixed(2)} were found on this ${input.account.accountAgeDays.toFixed(1)}-day-old account.`
-        : `${input.funding.priorCryptoDeposits} earlier crypto deposits totaling $${input.funding.priorCryptoUsd.toFixed(2)} were found.`,
+        ? `${input.funding.priorCryptoDeposits} earlier settled crypto deposits worth $${input.funding.priorCryptoUsd.toFixed(2)} of trust were found on this ${input.account.accountAgeDays.toFixed(1)}-day-old account, after discounting deposits below $${SMALL_CRYPTO_DEPOSIT_USD}.`
+        : `${input.funding.priorCryptoDeposits} earlier crypto deposits worth $${input.funding.priorCryptoUsd.toFixed(2)} of trust were found, after discounting deposits below $${SMALL_CRYPTO_DEPOSIT_USD}.`,
       points: hasEstablishedCryptoHistory
         ? ESTABLISHED_CRYPTO_TRUST_CREDIT
         : 0,
@@ -666,9 +684,16 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
   };
   for (const signal of signals) {
     const effectivePoints = signal.evidenceOnly ? 0 : signal.points;
-    scoreBreakdown[signal.category] = Math.min(
-      100,
-      scoreBreakdown[signal.category] + effectivePoints,
+    scoreBreakdown[signal.category] += effectivePoints;
+  }
+  // Clamp once, after every signal has landed, so the result does not depend
+  // on signal order. A category is a share of risk, never a discount handed to
+  // the other categories: the established-crypto credit persisted `behavior`
+  // as a negative number and silently subtracted from unrelated risk.
+  for (const category of Object.keys(scoreBreakdown) as FiatRiskCategory[]) {
+    scoreBreakdown[category] = Math.max(
+      0,
+      Math.min(100, scoreBreakdown[category]),
     );
   }
   const nonDiscountableRisk = signals
@@ -1022,7 +1047,18 @@ async function loadContexts(
                 OR lt.fireblocks_tx_id IS NOT NULL
               )
           ) AS prior_crypto_deposits,
-          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+          -- Weighted exactly like the eligibility gate's crypto_trust_usd:
+          -- micro-deposits are cheap to manufacture, so 25 x $1 must not buy
+          -- the same -20 fiat trust credit as one real $25 deposit.
+          COALESCE(SUM(
+            CASE
+              WHEN ABS(lt.amount::numeric)
+                < ${SMALL_CRYPTO_DEPOSIT_USD}::numeric
+                THEN ABS(lt.amount::numeric)
+                  * ${SMALL_CRYPTO_TRUST_WEIGHT}::numeric
+              ELSE ABS(lt.amount::numeric)
+            END
+          ) FILTER (
             WHERE prior_fiat.id IS NULL
               AND (
                 lt.crypto_asset IS NOT NULL
@@ -1136,15 +1172,25 @@ async function loadContexts(
               AND f.created_at <= t.created_at
           ) AS settled_7d,
           COUNT(*) FILTER (
-            WHERE f.status::text IN (
-              'refunded','partially_refunded','disputed'
-            )
+            -- settled_7d only counts authorized payments, so the refunded
+            -- share must be drawn from the same population or refundRatio can
+            -- exceed 1.0.
+            WHERE f.paid_at IS NOT NULL
+              AND f.status::text IN (
+                'refunded','partially_refunded','disputed'
+              )
               AND f.created_at >= t.created_at - interval '7 days'
               AND f.created_at <= t.created_at
           ) AS refunded_7d
         FROM fiat_deposit_intents f
         WHERE upper(f.currency)=upper(t.currency)
           AND f.requested_amount_cents=t.requested_amount_cents
+          -- Every counter above is windowed in its FILTER, but without a
+          -- WHERE bound PostgreSQL first materialises every intent ever
+          -- created at this amount+currency, once per target row. Repeat the
+          -- widest of those windows here so the scan is bounded.
+          AND f.created_at >= t.created_at - interval '7 days'
+          AND f.created_at <= t.created_at + interval '15 minutes'
       ) amounts ON TRUE
     `,
     [
@@ -1575,12 +1621,19 @@ export const FIAT_ASSESSMENT_STATUSES = [
 
 type FiatAssessmentStatus = (typeof FIAT_ASSESSMENT_STATUSES)[number];
 
-function applyMaxMindFiatRisk(
+export function applyMaxMindFiatRisk(
   scored: ReturnType<typeof scoreFiatDeposit>,
   evaluation: MaxMindEvaluation,
 ): ReturnType<typeof scoreFiatDeposit> {
   const native = evaluation.riskScore ?? 0;
-  const points = maxMindRiskPoints(native);
+  const rawPoints = maxMindRiskPoints(native);
+  // A low MaxMind score is weak absence-of-evidence and must not erode hard
+  // evidence: this runs after the blacklisted-checkout-email rule has already
+  // pinned the score at 100 and it ignores the nonDiscountableRisk floor, so
+  // the -5 credit was persisting a blocked-domain checkout as 95 while the
+  // dashboard reports 100 for the same match. Only the positive path applies
+  // to an already-bad result.
+  const points = rawPoints < 0 && scored.riskScore >= 60 ? 0 : rawPoints;
   const signal: FiatSignal = {
     key: "maxmind_factors_risk",
     label: "MaxMind minFraud Factors",
@@ -1644,6 +1697,33 @@ export class FiatRiskService {
     private readonly maxmind?: MaxMindService,
   ) {}
 
+  /**
+   * Intent ids whose MaxMind evaluation failed recently enough that retrying
+   * it on this refresh would only burn the request timeout again.
+   *
+   * Never throws: a missing negative cache costs latency, never correctness.
+   */
+  private async recentMaxMindFailures(
+    intentIds: string[],
+  ): Promise<Set<string>> {
+    if (intentIds.length === 0) return new Set();
+    try {
+      const result = await this.db.antifraud.query<{ event_key: string }>(
+        `SELECT event_key
+           FROM maxmind_evaluations
+          WHERE event_key=ANY($1::text[])
+            AND status='failed'
+            AND checked_at > now() - interval '${MAXMIND_FAILURE_TTL}'`,
+        [intentIds.map((id) => `fiat:${id}`)],
+      );
+      return new Set(
+        result.rows.map((row) => row.event_key.replace(/^fiat:/, "")),
+      );
+    } catch {
+      return new Set();
+    }
+  }
+
   async refresh(input: {
     status?: FiatAssessmentStatus;
     search?: string;
@@ -1675,7 +1755,7 @@ export class FiatRiskService {
       );
     }
     if (input.search) {
-      values.push(`%${input.search.toLowerCase()}%`);
+      values.push(likeContains(input.search));
       conditions.push(`(
         lower(fdi.id::text) LIKE $${values.length}
         OR lower(fdi.user_id) LIKE $${values.length}
@@ -1811,11 +1891,25 @@ export class FiatRiskService {
     );
 
     const maxmindByIntent = new Map<string, MaxMindEvaluation>();
+    // MaxMind's own cache read only honours status='success', so a provider
+    // outage was re-attempted on every single refresh at the full 8s timeout,
+    // in sequential chunks of five. Read the failures back as a short negative
+    // cache and skip those intents until it expires.
+    const recentlyFailed = this.maxmind
+      ? await this.recentMaxMindFailures(intents.map((intent) => intent.id))
+      : new Set<string>();
     for (let offset = 0; this.maxmind && offset < intents.length; offset += 5) {
-      const chunk = intents.slice(offset, offset + 5);
+      const chunk = intents
+        .slice(offset, offset + 5)
+        .filter((intent) => !recentlyFailed.has(intent.id));
       const evaluated = await Promise.all(chunk.map(async (intent) => {
         const provider = providers.get(intent.id) ?? EMPTY_PROVIDER;
         const occurredAt = intentTime(intent);
+        // MaxMind.evaluate() catches HTTP, parse and timeout failures itself,
+        // but its cache SELECT and its evaluation INSERT are unguarded. A
+        // database blip there used to reject out of Promise.all, reject
+        // refresh(), and 500 the whole Fiat Deposits workspace. A per-payment
+        // enrichment provider is never a hard dependency of the list.
         const result = await this.maxmind!.evaluate({
           eventKey: `fiat:${intent.id}`,
           transactionId: `fiat:${intent.id}`,
@@ -1833,10 +1927,12 @@ export class FiatRiskService {
           paymentMethod: maxMindPaymentMethod(provider.paymentMethodType),
           paymentWasAuthorized: true,
           was3dSecureSuccessful: provider.threeDsVerified,
-        });
+        }).catch(() => null);
         return [intent.id, result] as const;
       }));
-      for (const [id, result] of evaluated) maxmindByIntent.set(id, result);
+      for (const [id, result] of evaluated) {
+        if (result) maxmindByIntent.set(id, result);
+      }
     }
 
     const assessments = intents.map((intent) => {

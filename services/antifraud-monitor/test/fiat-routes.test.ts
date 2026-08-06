@@ -74,12 +74,16 @@ async function buildApp() {
     antifraud: { query },
     source: { query },
   } as unknown as Databases;
+  const refreshes: Array<Record<string, unknown>> = [];
   const service = {
-    refresh: async () => ({ ids: [intentId] }),
+    refresh: async (input: Record<string, unknown>) => {
+      refreshes.push(input);
+      return { ids: [intentId] };
+    },
   } as unknown as FiatRiskService;
   const app = Fastify();
   await registerFiatRoutes(app, db, service);
-  return { app, calls };
+  return { app, calls, refreshes };
 }
 
 test("fiat list API preserves its existing include-KYC default", async () => {
@@ -189,4 +193,61 @@ test("an explicit false value retains the include-KYC API behavior", async () =>
     call.sql.includes("fiat_deposit_assessments"),
   );
   assert.ok(assessmentQueries.every((call) => !call.sql.includes(kycPredicate)));
+});
+
+test("the list is never capped to the just-refreshed ids", async () => {
+  const { app, calls } = await buildApp();
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/fiat-deposits?limit=10",
+    headers: { "x-antifraud-excluded-users": "[]" },
+  });
+  await app.close();
+
+  assert.equal(response.statusCode, 200);
+  // `view` carries a default, so the old narrowing guard was never false and
+  // the branch never ran. Reviving it would cap every unfiltered list at the
+  // newest 100 rows and hand back an empty page 2, so it is gone for good.
+  assert.ok(
+    calls.every((call) => !call.sql.includes("deposit_intent_id=ANY(")),
+  );
+});
+
+test("only page one pays for a re-score of the newest intents", async () => {
+  const first = await buildApp();
+  await first.app.inject({
+    method: "GET",
+    url: "/v1/fiat-deposits?limit=10",
+    headers: { "x-antifraud-excluded-users": "[]" },
+  });
+  await first.app.close();
+  assert.equal(first.refreshes.length, 1);
+
+  const deeper = await buildApp();
+  await deeper.app.inject({
+    method: "GET",
+    url: "/v1/fiat-deposits?limit=10&page=7",
+    headers: { "x-antifraud-excluded-users": "[]" },
+  });
+  await deeper.app.close();
+  // refresh() always pulls ORDER BY created_at DESC LIMIT 100 and ignores the
+  // page, so paging deeper only re-scored the same newest 100 rows.
+  assert.equal(deeper.refreshes.length, 0);
+});
+
+test("search wildcards a human can paste are escaped before LIKE", async () => {
+  const { app, calls } = await buildApp();
+  await app.inject({
+    method: "GET",
+    url: "/v1/fiat-deposits?limit=10&search=%5F",
+    headers: { "x-antifraud-excluded-users": "[]" },
+  });
+  await app.close();
+
+  const listQuery = calls.find((call) =>
+    call.sql.includes("ORDER BY occurred_at DESC"),
+  );
+  // An unescaped `_` matches any character, turning a narrow staff lookup into
+  // a full scan that also returns the wrong rows.
+  assert.ok(listQuery?.values.includes(String.raw`%\_%`));
 });

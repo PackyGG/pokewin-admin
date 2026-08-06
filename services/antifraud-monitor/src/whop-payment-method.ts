@@ -97,10 +97,15 @@ export function whopPaymentMethodInfo(
     type ??= normalizeWhopPaymentMethod(findValue(source, METHOD_KEYS));
     cardBrand ??= findValue(source, CARD_BRAND_KEYS)?.toLowerCase() ?? null;
     cardLast4 ??= findValue(source, CARD_LAST4_KEYS);
+    // `data.user.id` stays the preferred shape for a raw Whop webhook, but the
+    // search must fall back to the whole source like the other three fields do.
+    // Restricting it to `source.data` meant a bare `provider_metadata` yielded
+    // null hashes, and cross-account payment-identity reuse silently never
+    // fired.
     const data = object(object(source).data);
     customerId ??= scalarString(object(data.user).id)
-      ?? findValue(data, CUSTOMER_ID_KEYS);
-    paymentMethodId ??= findValue(data, PAYMENT_METHOD_ID_KEYS);
+      ?? findValue(source, CUSTOMER_ID_KEYS);
+    paymentMethodId ??= findValue(source, PAYMENT_METHOD_ID_KEYS);
   }
   return {
     type,

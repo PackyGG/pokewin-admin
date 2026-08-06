@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildFiatDiscordPayload,
   fetchFailedPaymentWebhooks,
+  fetchFiatProblems,
   fetchHighRiskFiatProblems,
   FiatProblemAlerts,
   fiatAlertDestinations,
@@ -527,4 +528,76 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   assert.equal(riskCalls[0]?.values[2], 50);
   assert.match(riskCalls[0]?.text ?? "", /verdict = 'bad'/);
+});
+
+test("high-risk fiat alerts wait out the assessment settlement lag", async () => {
+  const calls: Array<{ text: string; values: unknown[] }> = [];
+  const pool = {
+    query: async (text: string, values: unknown[]) => {
+      calls.push({ text, values });
+      return { rows: [] };
+    },
+  };
+  await fetchHighRiskFiatProblems(
+    pool as never,
+    {
+      occurredAt: new Date("2026-07-28T12:00:00.000Z"),
+      sourceId: "intent-2:high_risk",
+    },
+    50,
+  );
+  // assessed_at is now() inside the refresh transaction, i.e. the transaction
+  // START time. A slow transaction commits rows stamped before a faster one
+  // that already advanced the cursor, so without a lag those canonical
+  // verdict='bad' deposits are never fetched again and never alert.
+  assert.match(
+    calls[0]?.text ?? "",
+    /fda\.assessed_at <= now\(\) - interval '5 seconds'/,
+  );
+});
+
+test("locked-account alerts ignore checkouts that were never attempted", async () => {
+  const calls: Array<{ text: string; values: unknown[] }> = [];
+  const pool = {
+    query: async (text: string, values: unknown[]) => {
+      calls.push({ text, values });
+      return { rows: [] };
+    },
+  };
+  await fetchFiatProblems(
+    pool as never,
+    {
+      occurredAt: new Date("2026-07-28T12:00:00.000Z"),
+      sourceId: "intent-1:failed",
+    },
+    25,
+  );
+  assert.match(
+    calls[0]?.text ?? "",
+    /fdi\.status NOT IN \('created', 'canceled'\)/,
+  );
+});
+
+test("blacklist alert copy does not promise a KYC requirement", () => {
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    source_kind: "payment_webhook",
+    source_id: "event-9:blacklisted_email_domain:stolas.org",
+    problem_code: "blacklisted_email_domain",
+    user_id: "user-9",
+    username: "user9",
+    details: {
+      checkout_email: "person@stolas.org",
+      email_domain: "stolas.org",
+      risk_score: 100,
+      status: "withdrawals_locked",
+    },
+    occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  });
+  // The email-domain containment path locks crypto and item withdrawals only.
+  // Nothing in it ever sets a KYC requirement.
+  assert.match(
+    payload.embeds[0]?.description ?? "",
+    /Crypto and item withdrawals are locked\./,
+  );
+  assert.doesNotMatch(payload.embeds[0]?.description ?? "", /KYC/);
 });

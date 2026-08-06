@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Databases } from "./db.js";
 import {
   FIAT_ASSESSMENT_STATUSES,
+  likeContains,
   type FiatRiskService,
 } from "./fiat-risk.js";
 import {
@@ -93,26 +94,31 @@ export async function registerFiatRoutes(
   app.get("/v1/fiat-deposits", async (request) => {
     const query = querySchema.parse(request.query);
     const excluded = excludedUserIds(request.headers);
-    const usesAssessmentFilter = Boolean(
-      query.verdict || query.reviewStatus || query.view,
-    );
     const excludeKycRequired =
       query.excludeKycRequired && !query.search;
-    const refreshed = await service.refresh({
-      status: query.status,
-      search: query.search,
-      excludedUserIds: excluded,
-      limit: 100,
-    });
+    // The refresh re-scores the newest 100 intents and ignores `page`, so
+    // paging deeper only re-scored the same newest 100 — the same MaxMind and
+    // mirror work, on every page view, for rows the reader is not looking at.
+    // The list itself always reads the stored assessments, so a deeper page is
+    // served correctly without it.
+    if (query.page === 1) {
+      await service.refresh({
+        status: query.status,
+        search: query.search,
+        excludedUserIds: excluded,
+        limit: 100,
+      });
+    }
     const ignored = [
       ...new Set([...excluded, ...(await cachedCreatorUserIds(db.source))]),
     ];
     const conditions: string[] = [];
     const values: unknown[] = [];
-    if (!usesAssessmentFilter) {
-      values.push(refreshed.ids);
-      conditions.push(`deposit_intent_id=ANY($${values.length}::uuid[])`);
-    }
+    // Deliberate: there is no "just-refreshed ids" narrowing branch. `view`
+    // carries a default, so the old guard was never false and the branch never
+    // ran; reviving it now would cap every unfiltered list at the newest 100
+    // rows and hand back an empty page 2. The stored assessment table is the
+    // list's source of truth — the refresh only keeps the newest rows scored.
     if (query.status) {
       values.push(query.status);
       conditions.push(`status=$${values.length}`);
@@ -146,10 +152,12 @@ export async function registerFiatRoutes(
       );
     }
     if (query.search) {
-      values.push(`%${query.search.toLowerCase()}%`);
+      values.push(likeContains(query.search));
       const generalSearchPosition = values.length;
       values.push(
-        `%${normalizeWhopPaymentMethod(query.search) ?? query.search.toLowerCase()}%`,
+        likeContains(
+          normalizeWhopPaymentMethod(query.search) ?? query.search,
+        ),
       );
       const paymentMethodSearchPosition = values.length;
       conditions.push(`(

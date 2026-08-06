@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -287,4 +288,89 @@ test("emailDomain normalizes and rejects malformed addresses", () => {
   assert.equal(emailDomain("@example.com"), null);
   assert.equal(emailDomain("not-an-email"), null);
   assert.equal(emailDomain(null), null);
+});
+
+test("a missing card brand on either side is not a card change", () => {
+  // Brand and last4 come from two independent recursive key searches over
+  // possibly different webhook events, so one side can carry a last4 with no
+  // brand. Reading that absence as a second card contained the account: KYC
+  // plus deposit and withdrawal locks, on the same physical card.
+  const baselineMissingBrand = evaluateFiatDepositIdentity({
+    baseline: baseline({ cardBrand: null }),
+    observation: observation({ cardBrand: "visa", priorCleanDeposits: 0 }),
+  });
+  assert.equal(baselineMissingBrand.verdict, "clear");
+  assert.deepEqual(baselineMissingBrand.reasonCodes, []);
+
+  const observationMissingBrand = evaluateFiatDepositIdentity({
+    baseline: baseline({ cardBrand: "visa" }),
+    observation: observation({ cardBrand: null, priorCleanDeposits: 0 }),
+  });
+  assert.equal(observationMissingBrand.verdict, "clear");
+  assert.deepEqual(observationMissingBrand.reasonCodes, []);
+
+  const bothMissing = evaluateFiatDepositIdentity({
+    baseline: baseline({ cardBrand: null }),
+    observation: observation({ cardBrand: null, priorCleanDeposits: 0 }),
+  });
+  assert.equal(bothMissing.verdict, "clear");
+
+  // A genuinely different last4 still contains, brand or no brand.
+  const differentNumber = evaluateFiatDepositIdentity({
+    baseline: baseline({ cardBrand: null }),
+    observation: observation({ cardLast4: "1881", priorCleanDeposits: 0 }),
+  });
+  assert.equal(differentNumber.verdict, "contain");
+  assert.deepEqual(differentNumber.reasonCodes, ["checkout_card_changed"]);
+});
+
+async function pollerSource(): Promise<string> {
+  return await readFile(
+    new URL("../src/fiat-deposit-identity.ts", import.meta.url),
+    "utf8",
+  );
+}
+
+test("the deposit cursor cannot re-read or skip on a sub-millisecond tail", async () => {
+  const source = await pollerSource();
+  // node-postgres hands Dates back at millisecond precision, so the cursor is
+  // always ms-truncated. Truncating only the parameter side left the newest
+  // deposit permanently greater than the cursor; truncating only the predicate
+  // would skip peers sharing that millisecond. Predicate and ORDER BY use the
+  // same truncated key.
+  assert.match(
+    source,
+    /date_trunc\('milliseconds', fdi\.paid_at \$\{UTC\}\),\s+fdi\.id\s+\) > \(/,
+  );
+  assert.match(
+    source,
+    /ORDER BY date_trunc\('milliseconds', fdi\.paid_at \$\{UTC\}\), fdi\.id/,
+  );
+  // uuid compared as uuid, not text, so a plain index stays usable. The seed
+  // cursor is an empty string, which is not a uuid.
+  assert.doesNotMatch(source, /ORDER BY \(fdi\.paid_at \$\{UTC\}\), fdi\.id::text/);
+  assert.match(source, /COALESCE\(NULLIF\(\$2, ''\)::uuid, \$\{NIL_UUID\}\)/);
+});
+
+test("a failed identity evaluation leaves a durable record, not just a log line", async () => {
+  const source = await pollerSource();
+  // The cursor advances past a throwing deposit either way, so without an
+  // outbox row the deposit is silently never contained and nothing says so.
+  assert.match(
+    source,
+    /catch \(error\) \{[\s\S]*this\.log\.error\([\s\S]*queueEvaluationFailure\(intent, error\)/,
+  );
+  assert.match(source, /:fiat_identity_error/);
+  assert.match(
+    source,
+    /queueEvaluationFailure[\s\S]*INSERT INTO fiat_problem_alert_outbox/,
+  );
+});
+
+test("card brand and last4 are only paired from one event", async () => {
+  const source = await pollerSource();
+  assert.match(
+    source,
+    /pairedCard =\s+\(primary\.cardBrand && primary\.cardLast4 \? primary : undefined\)/,
+  );
 });

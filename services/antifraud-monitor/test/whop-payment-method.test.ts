@@ -121,3 +121,37 @@ test("fiat activity carries Whop method evidence into scoring", async () => {
   assert.match(source, /'fiat_card_brand', whop\.card_brand/);
   assert.match(source, /'fiat_card_last4', whop\.card_last4/);
 });
+
+test("payment identities are found outside a data envelope too", () => {
+  // provider_metadata is stored flat, without Whop's `data` wrapper. Searching
+  // only under `source.data` yielded null hashes there, so cross-account
+  // payment-identity reuse silently never fired for those rows.
+  const flat = whopPaymentMethodInfo({
+    payment_method_type: "card",
+    customer_id: "cus_flat_1",
+    payment_method_id: "pm_flat_1",
+  });
+  assert.match(flat.customerIdHash ?? "", /^[a-f0-9]{64}$/);
+  assert.match(flat.paymentMethodIdHash ?? "", /^[a-f0-9]{64}$/);
+
+  // The same identities inside a Whop envelope must hash identically, so a
+  // webhook row and a provider_metadata row still match each other.
+  const wrapped = whopPaymentMethodInfo({
+    data: {
+      payment_method_type: "card",
+      customer_id: "cus_flat_1",
+      payment_method_id: "pm_flat_1",
+    },
+  });
+  assert.equal(wrapped.customerIdHash, flat.customerIdHash);
+  assert.equal(wrapped.paymentMethodIdHash, flat.paymentMethodIdHash);
+
+  // data.user.id still wins over a recursive customer_id match.
+  const preferred = whopPaymentMethodInfo({
+    data: { user: { id: "user_whop_1" }, customer_id: "cus_other" },
+  });
+  assert.equal(
+    preferred.customerIdHash,
+    whopPaymentMethodInfo({ customer_id: "user_whop_1" }).customerIdHash,
+  );
+});

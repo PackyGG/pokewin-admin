@@ -4,12 +4,15 @@ import test from "node:test";
 
 import {
   applyBlacklistedCheckoutEmail,
+  applyMaxMindFiatRisk,
   FiatRiskService,
+  likeContains,
   parseWhopEvidence,
   scoreFiatDeposit,
   type FiatScoreInput,
 } from "../src/fiat-risk.js";
 import type { Databases } from "../src/db.js";
+import type { MaxMindEvaluation } from "../src/maxmind.js";
 
 const safeInput: FiatScoreInput = {
   status: "completed",
@@ -297,4 +300,119 @@ test("assessment refresh loads settled and paid-unreconciled fiat", async () => 
     source,
     /FIAT_ASSESSMENT_STATUSES[\s\S]{0,200}"checkout_ready"/,
   );
+});
+
+const cleanMaxMind: MaxMindEvaluation = {
+  status: "success",
+  minfraudId: "11111111-1111-1111-1111-111111111111",
+  riskScore: 1,
+  ipRisk: 0.5,
+  disposition: null,
+  signals: [],
+  response: null,
+  errorCode: null,
+};
+
+test("the MaxMind low-risk credit cannot erode an already-bad verdict", () => {
+  const blocked = applyBlacklistedCheckoutEmail(scoreFiatDeposit(safeInput), {
+    deposit_intent_id: "deposit-1",
+    checkout_email: "buyer@blocked.example",
+    domain: "blocked.example",
+    match_type: "blacklisted_domain",
+    lock_delivered_at: new Date("2026-07-29T12:00:00.000Z"),
+  });
+  assert.equal(blocked.riskScore, 100);
+
+  // A low MaxMind score is weak absence-of-evidence. Before the fix the -5
+  // credit persisted this blocked-domain checkout as 95 while the dashboard
+  // reported 100 for the same match.
+  const enriched = applyMaxMindFiatRisk(blocked, cleanMaxMind);
+  assert.equal(enriched.riskScore, 100);
+  assert.equal(enriched.verdict, "bad");
+
+  // The positive path is untouched.
+  const raised = applyMaxMindFiatRisk(scoreFiatDeposit(safeInput), {
+    ...cleanMaxMind,
+    riskScore: 90,
+  });
+  assert.ok(raised.riskScore >= 72);
+  assert.equal(raised.verdict, "bad");
+
+  // And a low score still discounts a result that is not already hard.
+  const discounted = applyMaxMindFiatRisk(
+    scoreFiatDeposit({
+      ...safeInput,
+      provider: { ...safeInput.provider, disputeCount: 0 },
+    }),
+    cleanMaxMind,
+  );
+  assert.ok(discounted.riskScore < 60);
+});
+
+test("no score category is ever persisted below zero", () => {
+  // The established-crypto trust credit is negative and lands in `funding`.
+  // Left unclamped it persisted a negative category and quietly subtracted
+  // from unrelated risk.
+  const result = scoreFiatDeposit({
+    ...safeInput,
+    account: { ...safeInput.account, accountAgeDays: 400 },
+    funding: {
+      ...safeInput.funding,
+      priorCryptoDeposits: 5,
+      priorCryptoUsd: 500,
+    },
+  });
+  for (const [category, value] of Object.entries(result.scoreBreakdown)) {
+    assert.ok(value >= 0, `${category} went negative: ${value}`);
+    assert.ok(value <= 100, `${category} exceeded 100: ${value}`);
+  }
+});
+
+test("LIKE search patterns escape the wildcards a human can paste", () => {
+  assert.equal(likeContains("abc"), "%abc%");
+  assert.equal(likeContains("_"), String.raw`%\_%`);
+  assert.equal(likeContains("100%"), String.raw`%100\%%`);
+  assert.equal(likeContains(String.raw`a\b`), String.raw`%a\\b%`);
+  assert.equal(likeContains("MiXeD"), "%mixed%");
+});
+
+test("the fiat trust credit uses the same weighted crypto sum as the gate", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-risk.ts", import.meta.url),
+    "utf8",
+  );
+  // 25 x $1 crypto deposits must not buy the same -20 credit as one real $25
+  // deposit: the eligibility gate already discounts small deposits and the
+  // fiat scorer has to agree, or a prepared mule walks from review to good.
+  assert.match(
+    source,
+    /SMALL_CRYPTO_DEPOSIT_USD\}::numeric[\s\S]*SMALL_CRYPTO_TRUST_WEIGHT\}::numeric[\s\S]*AS prior_crypto_usd/,
+  );
+  assert.doesNotMatch(source, /const MEANINGFUL_PRIOR_CRYPTO_USD/);
+  assert.doesNotMatch(source, /const ESTABLISHED_ACCOUNT_DAYS/);
+});
+
+test("the exact-amount lateral is bounded and the refund ratio cannot exceed one", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-risk.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    source,
+    /f\.requested_amount_cents=t\.requested_amount_cents[\s\S]*f\.created_at >= t\.created_at - interval '7 days'[\s\S]*f\.created_at <= t\.created_at \+ interval '15 minutes'[\s\S]*\) amounts ON TRUE/,
+  );
+  assert.match(
+    source,
+    /WHERE f\.paid_at IS NOT NULL\s*\n\s*AND f\.status::text IN \(\s*\n\s*'refunded','partially_refunded','disputed'/,
+  );
+});
+
+test("a MaxMind enrichment failure never rejects the workspace refresh", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-risk.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /\}\)\.catch\(\(\) => null\);/);
+  assert.match(source, /if \(result\) maxmindByIntent\.set\(id, result\);/);
+  assert.match(source, /status='failed'\s*\n\s*AND checked_at > now\(\) - interval/);
 });

@@ -382,10 +382,10 @@ export function buildFiatDiscordPayload(
         : "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
       : problem.problem_code === "blacklisted_email_domain"
       ? patternMatch
-        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked and KYC is required."
+        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked."
         : problem.source_kind === "signup"
-        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
-        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked and KYC is required."
+        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
+        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
       : problem.problem_code === "fiat_identity_drift"
       ? details.verdict === "contain"
         ? details.enforcement === "contained"
@@ -476,6 +476,7 @@ export async function fetchFiatProblems(
         JOIN user_feature_locks ufl ON ufl.user_id = fdi.user_id
         LEFT JOIN "user" u ON u.id = fdi.user_id
         WHERE cardinality(ufl.locked_deposits_fiat) > 0
+          AND fdi.status NOT IN ('created', 'canceled')
           AND (
             ufl.locked_deposits_at IS NULL
             OR ufl.locked_deposits_at <= fdi.created_at
@@ -653,6 +654,7 @@ export async function fetchHighRiskFiatProblems(
         fda.assessed_at AS occurred_at
       FROM fiat_deposit_assessments fda
       WHERE fda.verdict = 'bad'
+        AND fda.assessed_at <= now() - interval '5 seconds'
         AND (
           fda.assessed_at,
           fda.deposit_intent_id::text || ':high_risk'

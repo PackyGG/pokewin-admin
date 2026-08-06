@@ -7,6 +7,14 @@ import type { Databases } from "./db.js";
 import { drainOutbox } from "./outbox.js";
 import type { Signup } from "./types.js";
 
+/**
+ * `payment_webhook_events.received_at` and the `fiat_deposit_intents`
+ * timestamps are `timestamp without time zone` in the source schema while
+ * every cursor in `source_cursors` is `timestamptz`. Pin the naive columns to
+ * UTC explicitly — an implicit cast would silently shift by the session
+ * timezone, both in the comparison and in the value handed back to Node.
+ */
+const UTC = "AT TIME ZONE 'UTC'";
 const STREAM = "fiat_email_domains";
 const GMAIL_PATTERN_STREAM = "fiat_gmail_dot_patterns";
 const DEPOSIT_CLUSTER_STREAM = "fiat_suspicious_deposit_clusters_v2";
@@ -18,6 +26,11 @@ const REFUND_CLUSTER_WINDOW_DAYS = 7;
 const REFUND_CLUSTER_MIN_MEMBERS = 5;
 const REFUND_CLUSTER_MIN_ACCOUNTS = 3;
 const REFUND_CLUSTER_MIN_RATIO = 0.5;
+/**
+ * Past this many failed lock-confirmation attempts the containment almost
+ * certainly never landed, so the log line escalates from warn to error.
+ */
+const LOCK_CONFIRMATION_ALARM_ATTEMPTS = 10;
 
 export type CheckoutEmailEvent = {
   source_event_id: string;
@@ -216,18 +229,19 @@ export async function fetchCheckoutEmailEvents(
             NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
             NULLIF(pwe.payload #>> '{data,payment,payment_method_type}', '')
           ) AS payment_method_type,
-          pwe.received_at AS occurred_at
+          (pwe.received_at ${UTC}) AS occurred_at
         FROM payment_webhook_events pwe
         WHERE pwe.provider = 'whop'
           AND pwe.event_type = 'payment.created'
           AND NULLIF(btrim(pwe.payload #>> '{data,user,email}'), '') IS NOT NULL
-          AND (pwe.received_at, pwe.id::text) > ($1::timestamptz, $2::text)
+          AND ((pwe.received_at ${UTC}), pwe.id::text)
+            > ($1::timestamptz, $2::text)
           AND (
             $4::text IS NULL
             OR lower(split_part(pwe.payload #>> '{data,user,email}', '@', 2))
               = $4::text
           )
-        ORDER BY pwe.received_at, pwe.id::text
+        ORDER BY (pwe.received_at ${UTC}), pwe.id::text
         LIMIT $3
       )
       SELECT
@@ -280,7 +294,7 @@ export async function fetchSuspiciousGmailEvents(
             NULLIF(pwe.payload #>> '{data,payment_method_type}', ''),
             NULLIF(pwe.payload #>> '{data,payment,payment_method_type}', '')
           ) AS payment_method_type,
-          pwe.received_at AS occurred_at
+          (pwe.received_at ${UTC}) AS occurred_at
         FROM payment_webhook_events pwe
         WHERE pwe.provider = 'whop'
           AND pwe.event_type = 'payment.created'
@@ -300,8 +314,9 @@ export async function fetchSuspiciousGmailEvents(
               pwe.payload #>> '{data,user,email}', '@', 1
             )) ~ '^[a-z]{10,}\\.[a-z]{1,3}[0-9]{2,4}\\.[0-9]{3,4}(\\+[^@]*)?$'
           )
-          AND (pwe.received_at, pwe.id::text) > ($1::timestamptz, $2::text)
-        ORDER BY pwe.received_at, pwe.id::text
+          AND ((pwe.received_at ${UTC}), pwe.id::text)
+            > ($1::timestamptz, $2::text)
+        ORDER BY (pwe.received_at ${UTC}), pwe.id::text
         LIMIT $3
       )
       SELECT
@@ -420,7 +435,7 @@ export async function fetchSuspiciousDepositClusterCandidates(
           lower(NULLIF(pwe.payload #>> '{data,id}', ''))
             AS payment_identity,
           fdi.requested_amount_cents,
-          pwe.received_at AS occurred_at
+          (pwe.received_at ${UTC}) AS occurred_at
         FROM payment_webhook_events pwe
         JOIN fiat_deposit_intents fdi
           ON fdi.id::text = NULLIF(
@@ -448,9 +463,9 @@ export async function fetchSuspiciousDepositClusterCandidates(
           AND length(replace(split_part(
             pwe.payload #>> '{data,user,email}', '@', 1
           ), '.', '')) >= 12
-          AND (pwe.received_at, pwe.id::text) >
+          AND ((pwe.received_at ${UTC}), pwe.id::text) >
             ($1::timestamptz, $2::text)
-        ORDER BY pwe.received_at, pwe.id::text
+        ORDER BY (pwe.received_at ${UTC}), pwe.id::text
         LIMIT $3
       ),
       bounds AS (
@@ -479,7 +494,7 @@ export async function fetchSuspiciousDepositClusterCandidates(
           lower(NULLIF(pwe.payload #>> '{data,id}', ''))
             AS payment_identity,
           fdi.requested_amount_cents,
-          pwe.received_at AS occurred_at
+          (pwe.received_at ${UTC}) AS occurred_at
         FROM payment_webhook_events pwe
         JOIN fiat_deposit_intents fdi
           ON fdi.id::text = NULLIF(
@@ -490,7 +505,7 @@ export async function fetchSuspiciousDepositClusterCandidates(
         WHERE b.from_at IS NOT NULL
           AND pwe.provider = 'whop'
           AND pwe.event_type = 'payment.created'
-          AND pwe.received_at BETWEEN b.from_at AND b.through_at
+          AND (pwe.received_at ${UTC}) BETWEEN b.from_at AND b.through_at
           AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
           AND NULLIF(pwe.payload #>> '{data,user,id}', '') IS NOT NULL
           AND fdi.user_id IS NOT NULL
@@ -663,8 +678,8 @@ export async function fetchRefundedAmountClusterCandidates(
           )) AS payment_identity,
           fdi.requested_amount_cents,
           fdi.status::text AS status,
-          fdi.created_at AS occurred_at,
-          fdi.updated_at
+          (fdi.created_at ${UTC}) AS occurred_at,
+          (fdi.updated_at ${UTC}) AS updated_at
         FROM fiat_deposit_intents fdi
         JOIN "user" u ON u.id = fdi.user_id
         LEFT JOIN LATERAL (
@@ -690,9 +705,9 @@ export async function fetchRefundedAmountClusterCandidates(
         WHERE fdi.status::text IN ('refunded', 'partially_refunded')
           AND fdi.requested_amount_cents > 0
           AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
-          AND (fdi.updated_at, fdi.id::text) >
+          AND ((fdi.updated_at ${UTC}), fdi.id::text) >
             ($1::timestamptz, $2::text)
-        ORDER BY fdi.updated_at, fdi.id::text
+        ORDER BY (fdi.updated_at ${UTC}), fdi.id::text
         LIMIT $3
       )
       SELECT
@@ -736,8 +751,8 @@ export async function fetchRefundedAmountClusterCandidates(
             )),
             'requested_amount_cents', peer.requested_amount_cents,
             'status', peer.status::text,
-            'occurred_at', peer.created_at,
-            'updated_at', peer.updated_at
+            'occurred_at', (peer.created_at ${UTC}),
+            'updated_at', (peer.updated_at ${UTC})
           ) ORDER BY peer.created_at, peer.id::text) FILTER (
             WHERE peer.status::text IN ('refunded', 'partially_refunded')
           ), '[]'::jsonb) AS refunded_members
@@ -768,7 +783,7 @@ export async function fetchRefundedAmountClusterCandidates(
           AND peer.status::text IN (
             'completed', 'refunded', 'partially_refunded', 'disputed'
           )
-          AND peer.created_at BETWEEN
+          AND (peer.created_at ${UTC}) BETWEEN
             n.occurred_at - interval '3 days 12 hours'
             AND n.occurred_at + interval '3 days 12 hours'
       ) stats
@@ -1037,7 +1052,10 @@ export class FiatEmailDomainGuard {
         `
           UPDATE source_cursors
           SET
-            occurred_at = COALESCE($2, GREATEST(occurred_at, now())),
+            occurred_at = COALESCE(
+              $2,
+              GREATEST(occurred_at, now() - interval '5 seconds')
+            ),
             source_id = COALESCE($3, ''),
             updated_at = now()
           WHERE stream = $1
@@ -1208,7 +1226,10 @@ export class FiatEmailDomainGuard {
         `
           UPDATE source_cursors
           SET
-            occurred_at = COALESCE($2, GREATEST(occurred_at, now())),
+            occurred_at = COALESCE(
+              $2,
+              GREATEST(occurred_at, now() - interval '5 seconds')
+            ),
             source_id = COALESCE($3, ''),
             updated_at = now()
           WHERE stream = $1
@@ -1755,14 +1776,23 @@ export class FiatEmailDomainGuard {
       },
       onRecorded: (match, outcome) => {
         if (!outcome.delivered) {
-          this.log.warn(
-          {
+          const details = {
             sourceEventId: match.source_event_id,
             domain: match.domain,
-              retrySeconds: outcome.retrySeconds,
-          },
-          "Blacklisted email-domain match is waiting for withdrawal-lock confirmation",
-          );
+            attempt: outcome.attempt,
+            retrySeconds: outcome.retrySeconds,
+          };
+          if (outcome.attempt > LOCK_CONFIRMATION_ALARM_ATTEMPTS) {
+            this.log.error(
+              details,
+              "Blacklisted email-domain match still has no withdrawal lock after repeated attempts — the containment may never have landed",
+            );
+          } else {
+            this.log.warn(
+              details,
+              "Blacklisted email-domain match is waiting for withdrawal-lock confirmation",
+            );
+          }
         }
       },
     });
@@ -1782,15 +1812,20 @@ export class FiatEmailDomainGuard {
           AND jsonb_array_length(
             alert.details -> 'cluster_source_event_ids'
           ) >= 3
-          AND NOT EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements_text(
-              alert.details -> 'cluster_source_event_ids'
-            ) AS member(source_event_id)
-            LEFT JOIN fiat_email_domain_matches AS matched
-              ON matched.source_event_id = member.source_event_id
-            WHERE matched.source_event_id IS NULL
-              OR matched.lock_delivered_at IS NULL
+          AND (
+            NOT EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements_text(
+                alert.details -> 'cluster_source_event_ids'
+              ) AS member(source_event_id)
+              LEFT JOIN fiat_email_domain_matches AS matched
+                ON matched.source_event_id = member.source_event_id
+              WHERE matched.source_event_id IS NULL
+                OR matched.lock_delivered_at IS NULL
+            )
+            -- Escape hatch: one member whose withdrawal lock never lands
+            -- must not mute the whole campaign alert forever.
+            OR alert.occurred_at < now() - interval '30 minutes'
           )
       `,
     );

@@ -138,15 +138,22 @@ export type FiatIdentityOutcome = {
   signals: FiatIdentitySignal[];
 };
 
-/** Card comparison is brand + last4: a different brand is a different card. */
+/**
+ * Card comparison is brand + last4: a *known* different brand is a different
+ * card. Brand and last4 are discovered independently from webhook payloads, so
+ * one side can carry a last4 with no brand at all. Treating that absence as a
+ * mismatch turned the same physical card into a card change — and a card change
+ * on an account with fewer than three clean deposits contains: KYC plus deposit
+ * and withdrawal locks. A missing brand is missing evidence, not evidence of a
+ * second card, so it does not contradict a matching last4.
+ */
 function sameCard(
   left: Pick<FiatIdentityBaseline, "cardBrand" | "cardLast4">,
   right: Pick<FiatIdentityBaseline, "cardBrand" | "cardLast4">,
 ): boolean {
-  return (
-    left.cardLast4 === right.cardLast4
-    && (left.cardBrand ?? null) === (right.cardBrand ?? null)
-  );
+  if (left.cardLast4 !== right.cardLast4) return false;
+  if (left.cardBrand === null || right.cardBrand === null) return true;
+  return left.cardBrand === right.cardBrand;
 }
 
 function normalizedEmail(value: string | null): string | null {

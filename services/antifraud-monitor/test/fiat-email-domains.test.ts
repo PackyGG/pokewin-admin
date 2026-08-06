@@ -179,7 +179,7 @@ test("deposit-cluster polling is bounded and conjunctive", async () => {
   assert.doesNotMatch(calls[0]?.sql ?? "", /card_last4 ~/);
   assert.match(calls[0]?.sql ?? "", /fdi\.user_id/);
   assert.match(calls[0]?.sql ?? "", /gmail\.com/);
-  assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
+  assert.match(calls[0]?.sql ?? "", /\(\(pwe\.received_at AT TIME ZONE 'UTC'\), pwe\.id::text\)\s*>/);
   assert.match(calls[0]?.sql ?? "", /LIMIT \$3/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "cluster-row-1", 75]);
 });
@@ -240,7 +240,7 @@ test("refunded amount polling follows refund updates and measures all settled pa
     50,
   );
   assert.match(calls[0]?.sql ?? "", /fdi\.status::text IN \('refunded', 'partially_refunded'\)/);
-  assert.match(calls[0]?.sql ?? "", /\(fdi\.updated_at, fdi\.id::text\) >/);
+  assert.match(calls[0]?.sql ?? "", /\(\(fdi\.updated_at AT TIME ZONE 'UTC'\), fdi\.id::text\)\s*>/);
   assert.match(calls[0]?.sql ?? "", /COUNT\(\*\)::int AS total_payment_count/);
   assert.match(calls[0]?.sql ?? "", /interval '3 days 12 hours'/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "intent-1", 50]);
@@ -286,7 +286,7 @@ test("Gmail pattern backfill includes heavy fragments and coded numeric suffixes
     calls[0]?.sql ?? "",
     /\^\[a-z\]\{10,\}\\\.\[a-z\].*\\\.\[0-9\].*\\\+/,
   );
-  assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
+  assert.match(calls[0]?.sql ?? "", /\(\(pwe\.received_at AT TIME ZONE 'UTC'\), pwe\.id::text\)\s*>/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "gmail-row-1", 50]);
 });
 
@@ -313,7 +313,7 @@ test("checkout email polling uses Whop payment.created metadata and a tuple curs
   assert.match(calls[0]?.sql ?? "", /data,metadata,internal_user_id/);
   assert.match(calls[0]?.sql ?? "", /data,metadata,deposit_intent_id/);
   assert.match(calls[0]?.sql ?? "", /payment_method_type/);
-  assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
+  assert.match(calls[0]?.sql ?? "", /\(\(pwe\.received_at AT TIME ZONE 'UTC'\), pwe\.id::text\)\s*>/);
   assert.deepEqual(calls[0]?.values, [
     occurredAt,
     "event-row-1",
@@ -598,5 +598,40 @@ test("a clustered checkout uses explicit cluster evidence", () => {
   assert.match(
     result.flowChecks[0]?.evidence.join(" ") ?? "",
     /same amount, distinct accounts and payment identities/,
+  );
+});
+
+test("email-domain cursors never jump past rows that arrive stamped in the past", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-email-domains.ts", import.meta.url),
+    "utf8",
+  );
+  // payment_webhook_events.received_at is producer-set and read through the
+  // replication mirror, so a row can become visible already timestamped in the
+  // past. An empty poll that parks the cursor on now() leaves it behind the
+  // cursor forever, and these two streams are the containment path.
+  assert.equal(
+    source.match(/GREATEST\(occurred_at, now\(\) - interval '5 seconds'\)/g)
+      ?.length,
+    3,
+  );
+  assert.doesNotMatch(source, /GREATEST\(occurred_at, now\(\)\)/);
+});
+
+test("a cluster alert cannot be muted forever by one unlockable member", async () => {
+  const source = await readFile(
+    new URL("../src/fiat-email-domains.ts", import.meta.url),
+    "utf8",
+  );
+  // The all-confirmed release stays the fast path; the age escape stops one
+  // member whose lock never lands from holding the campaign alert at infinity.
+  assert.match(
+    source,
+    /NOT EXISTS \([\s\S]*lock_delivered_at IS NULL[\s\S]*\)[\s\S]*OR alert\.occurred_at < now\(\) - interval '30 minutes'/,
+  );
+  assert.match(source, /LOCK_CONFIRMATION_ALARM_ATTEMPTS = 10/);
+  assert.match(
+    source,
+    /outcome\.attempt > LOCK_CONFIRMATION_ALARM_ATTEMPTS[\s\S]*this\.log\.error/,
   );
 });

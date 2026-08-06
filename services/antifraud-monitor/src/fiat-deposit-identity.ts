@@ -38,6 +38,12 @@ import { severity } from "./scoring.js";
 const CURSOR_STREAM = "fiat-deposit-identity";
 const BATCH_SIZE = 25;
 const UTC = "AT TIME ZONE 'UTC'";
+/**
+ * Seed value for the cursor's id half. `ensureCursor` seeds `source_id` with
+ * an empty string, which is not a valid uuid, so it maps to the nil uuid —
+ * which sorts before every real id and therefore excludes nothing.
+ */
+const NIL_UUID = "'00000000-0000-0000-0000-000000000000'::uuid";
 
 export const FIAT_DEPOSIT_IDENTITY_CONTAINMENT_EVENT =
   "fiat_deposit_identity_containment";
@@ -138,6 +144,10 @@ export class FiatDepositIdentityChecks {
             { err: error, intentId: intent.intent_id },
             "fiat deposit identity check failed",
           );
+          // A log line is not a durable record. Queue a Discord alert so the
+          // skipped deposit is visible and can be replayed deliberately —
+          // otherwise the cursor moves past it and nothing ever says so.
+          await this.queueEvaluationFailure(intent, error);
         }
         await this.advanceCursor(intent);
       }
@@ -212,12 +222,23 @@ export class FiatDepositIdentityChecks {
         FROM fiat_deposit_intents fdi
         JOIN "user" u ON u.id = fdi.user_id
         WHERE fdi.paid_at IS NOT NULL
-          AND ((fdi.paid_at ${UTC}), fdi.id::text) >
-            (date_trunc('milliseconds', $1::timestamptz), $2::text)
+          -- Sargable pre-filter for a future index on paid_at. date_trunc only
+          -- rounds down, so it can never exclude a row the tuple predicate
+          -- below would have accepted.
+          AND fdi.paid_at >= (
+            date_trunc('milliseconds', $1::timestamptz) ${UTC}
+          )
+          AND (
+            date_trunc('milliseconds', fdi.paid_at ${UTC}),
+            fdi.id
+          ) > (
+            date_trunc('milliseconds', $1::timestamptz),
+            COALESCE(NULLIF($2, '')::uuid, ${NIL_UUID})
+          )
           AND (fdi.paid_at ${UTC}) <= now()
           AND COALESCE(u.role::text, '') <> 'creator'
           AND 'creator' <> ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))
-        ORDER BY (fdi.paid_at ${UTC}), fdi.id::text
+        ORDER BY date_trunc('milliseconds', fdi.paid_at ${UTC}), fdi.id
         LIMIT $3
       `,
       [cursor.occurredAt, cursor.sourceId, BATCH_SIZE],
@@ -285,13 +306,27 @@ export class FiatDepositIdentityChecks {
       );
       const primary = parsed[primaryIndex === -1 ? 0 : primaryIndex];
       if (!primary) continue;
+      // Brand and last4 are two independent key searches. Filling them from
+      // different events can describe a card combination that never appeared
+      // on a single payment, which then reads as a card change downstream.
+      // Prefer the first event that carries both; only fall back to the
+      // per-field search when no single event does.
+      const pairedCard =
+        (primary.cardBrand && primary.cardLast4 ? primary : undefined)
+        ?? parsed.find(
+          (candidate) => candidate.cardBrand && candidate.cardLast4,
+        );
       output.set(intentId, {
-        cardBrand: primary.cardBrand
-          ?? parsed.find((candidate) => candidate.cardBrand)?.cardBrand
-          ?? null,
-        cardLast4: primary.cardLast4
-          ?? parsed.find((candidate) => candidate.cardLast4)?.cardLast4
-          ?? null,
+        cardBrand: pairedCard
+          ? pairedCard.cardBrand ?? null
+          : primary.cardBrand
+            ?? parsed.find((candidate) => candidate.cardBrand)?.cardBrand
+            ?? null,
+        cardLast4: pairedCard
+          ? pairedCard.cardLast4 ?? null
+          : primary.cardLast4
+            ?? parsed.find((candidate) => candidate.cardLast4)?.cardLast4
+            ?? null,
         checkoutEmail: primary.checkoutEmail
           ?? parsed.find((candidate) => candidate.checkoutEmail)?.checkoutEmail
           ?? null,
@@ -326,7 +361,7 @@ export class FiatDepositIdentityChecks {
         FROM fiat_deposit_intents fdi
         WHERE fdi.user_id = $1
           AND fdi.paid_at IS NOT NULL
-        ORDER BY (fdi.paid_at ${UTC}), fdi.id::text
+        ORDER BY (fdi.paid_at ${UTC}), fdi.id
         LIMIT 1
       `,
       [intent.user_id],
@@ -835,5 +870,53 @@ export class FiatDepositIdentityChecks {
         intent.paid_at,
       ],
     );
+  }
+
+  /**
+   * Durable record for a deposit whose evaluation threw.
+   *
+   * The cursor advances past it either way, so without this the deposit is
+   * silently never contained. Mirrors {@link queueAlert}'s outbox shape with a
+   * distinct source_id so it cannot collide with a real drift alert.
+   */
+  private async queueEvaluationFailure(
+    intent: AuthorizedIntentRow,
+    error: unknown,
+  ): Promise<void> {
+    try {
+      await this.db.antifraud.query(
+        `
+          INSERT INTO fiat_problem_alert_outbox (
+            source_kind, source_id, problem_code, user_id, username,
+            details, occurred_at
+          ) VALUES ('deposit_intent',$1,$2,$3,$4,$5::jsonb,$6)
+          ON CONFLICT (source_kind, source_id) DO NOTHING
+        `,
+        [
+          `${intent.intent_id}:fiat_identity_error`,
+          FIAT_IDENTITY_PROBLEM_CODE,
+          intent.user_id,
+          intent.username,
+          JSON.stringify({
+            intent_id: intent.intent_id,
+            verdict: "error",
+            enforcement: "skipped",
+            reason_codes: [],
+            watch_codes: [],
+            failure_reason:
+              error instanceof Error ? error.message : String(error),
+            summary:
+              "The identity check threw and this deposit was skipped. "
+              + "Replay the fiat_deposit_identity stream to re-evaluate it.",
+          }),
+          intent.paid_at,
+        ],
+      );
+    } catch (queueError) {
+      this.log.error(
+        { err: queueError, intentId: intent.intent_id },
+        "failed to queue the fiat identity evaluation-failure alert",
+      );
+    }
   }
 }
