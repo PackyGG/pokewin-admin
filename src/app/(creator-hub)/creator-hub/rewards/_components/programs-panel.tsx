@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Archive, Crown, Plus, Search } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -12,8 +12,16 @@ import type { CreatorRewardProgramWithStats } from "@/lib/creator-vip/types";
 import { HubEmptyState } from "../../_components/hub-notice";
 import { ProgramFormDialog } from "./program-form-dialog";
 import { ProgramRow } from "./program-row";
+import { QueuePager } from "./queue-pager";
 
 type StatusFilter = "all" | "live" | "paused";
+
+/**
+ * Programs per page. Smaller than the claim queue's 20: a program row is a tall
+ * card (avatar, code badges, two lines of terms, stats, controls), so twenty of
+ * them is a scroll rather than a page.
+ */
+const PAGE_SIZE = 10;
 
 const STATUS_LABELS: Record<StatusFilter, string> = {
   all: "All",
@@ -32,6 +40,7 @@ export function ProgramsPanel({
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [showArchived, setShowArchived] = useState(false);
+  const [page, setPage] = useState(1);
 
   const archivedCount = programs.filter((p) => p.archivedAt != null).length;
 
@@ -60,7 +69,22 @@ export function ProgramsPanel({
     });
   }, [programs, query, status, showArchived]);
 
+  // A narrowed set almost never has the page the operator was on, and landing
+  // on an empty page after typing reads as "no results". Same rule the claim
+  // queue follows.
+  useEffect(() => {
+    setPage(1);
+  }, [query, status, showArchived]);
+
   const filtered = query.trim() !== "" || status !== "all";
+
+  // Clamp against the current count, so a page that emptied out (a program was
+  // archived while the operator sat on the last page) falls back instead of
+  // rendering nothing.
+  const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
+  const currentPage = Math.min(Math.max(page, 1), pageCount);
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageRows = visible.slice(start, start + PAGE_SIZE);
 
   function clearFilters() {
     setQuery("");
@@ -184,13 +208,22 @@ export function ProgramsPanel({
             />
           ) : (
             <div className="space-y-2">
-              {visible.map((p) => (
+              {pageRows.map((p) => (
                 <ProgramRow
                   key={p.id}
                   program={p}
                   creatorHrefBase={creatorHrefBase}
                 />
               ))}
+              <QueuePager
+                page={currentPage}
+                pageCount={pageCount}
+                first={visible.length === 0 ? 0 : start + 1}
+                last={Math.min(start + PAGE_SIZE, visible.length)}
+                total={visible.length}
+                noun="programs"
+                onPageChange={setPage}
+              />
             </div>
           )}
         </>

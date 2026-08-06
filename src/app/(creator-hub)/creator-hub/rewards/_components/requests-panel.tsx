@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { BadgeCheck, Inbox, Search, ShieldQuestion } from "lucide-react";
+import { BadgeCheck, Check, Inbox, Search, ShieldQuestion } from "lucide-react";
+import type { RowSelectionState } from "@tanstack/react-table";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,17 +14,17 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { SectionHeading } from "@/components/modern-panels";
+import { formatCurrency } from "@/lib/utils/format";
 import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 
 import { HubEmptyState } from "../../_components/hub-notice";
-import { ClaimRow } from "./claim-row";
-import { WebhookTestButton } from "./claim-decision-dialogs";
-import { QueuePager } from "./queue-pager";
+import { ClaimsQueue } from "./claims-queue";
+import {
+  BulkApproveDialog,
+  WebhookTestButton,
+} from "./claim-decision-dialogs";
 
 const ALL_PROGRAMS = "__all__";
-
-/** Claims per page. Enough to work a queue without scrolling for a minute. */
-const PAGE_SIZE = 20;
 
 export function RequestsPanel({
   claims,
@@ -36,8 +37,8 @@ export function RequestsPanel({
 }) {
   const [query, setQuery] = useState("");
   const [programId, setProgramId] = useState<string>(ALL_PROGRAMS);
-  const [pendingPage, setPendingPage] = useState(1);
-  const [reviewedPage, setReviewedPage] = useState(1);
+  const [selection, setSelection] = useState<RowSelectionState>({});
+  const [bulkOpen, setBulkOpen] = useState(false);
 
   /** Distinct programs present in the loaded page, so the filter can't offer
       an option that would match nothing. */
@@ -63,19 +64,31 @@ export function RequestsPanel({
     });
   }, [claims, query, programId]);
 
-  // A narrowed set almost never has the page the operator was on, and landing
-  // on an empty page after typing reads as "no results".
+  // Narrowing drops rows out of view, and a selection the operator can no
+  // longer see is exactly the way a bulk payment goes somewhere unintended.
+  // The pager resets itself (`autoResetPageIndex`); the selection must not
+  // outlive the set it was made in.
   useEffect(() => {
-    setPendingPage(1);
-    setReviewedPage(1);
+    setSelection({});
   }, [query, programId]);
 
   const filtered = query.trim() !== "" || programId !== ALL_PROGRAMS;
-  const pending = matching.filter((c) => c.status === "pending");
-  const reviewed = matching.filter((c) => c.status !== "pending");
+  const pending = useMemo(
+    () => matching.filter((c) => c.status === "pending"),
+    [matching],
+  );
+  const reviewed = useMemo(
+    () => matching.filter((c) => c.status !== "pending"),
+    [matching],
+  );
 
-  const pendingSlice = sliceFor(pending, pendingPage);
-  const reviewedSlice = sliceFor(reviewed, reviewedPage);
+  // Only currently-visible pending rows can be acted on — a stale id would
+  // otherwise survive a revalidation that decided the claim elsewhere.
+  const selected = useMemo(
+    () => pending.filter((c) => selection[c.id]),
+    [pending, selection],
+  );
+  const selectedTotal = selected.reduce((sum, c) => sum + c.amountUsd, 0);
 
   function clearFilters() {
     setQuery("");
@@ -146,6 +159,34 @@ export function RequestsPanel({
 
       <div className="space-y-3">
         <SectionHeading icon={Inbox} title="Awaiting review" />
+
+        {/* Bulk bar — only present when something is selected, so the queue
+            reads unchanged in the normal single-decision case. The total is
+            House-POV rose: every dollar here leaves the house. */}
+        {selected.length > 0 && (
+          <div className="flex flex-wrap items-center gap-3 rounded-md border bg-muted/40 px-3 py-2">
+            <span className="text-sm">
+              {selected.length} selected ·{" "}
+              <strong className="tabular-nums text-rose-600 dark:text-rose-400">
+                {formatCurrency(selectedTotal)}
+              </strong>
+            </span>
+            <div className="ml-auto flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="ghost"
+                onClick={() => setSelection({})}
+              >
+                Clear
+              </Button>
+              <Button size="sm" onClick={() => setBulkOpen(true)}>
+                <Check className="size-3.5" />
+                Approve selected
+              </Button>
+            </div>
+          </div>
+        )}
+
         {pending.length === 0 ? (
           <HubEmptyState
             icon={BadgeCheck}
@@ -153,41 +194,24 @@ export function RequestsPanel({
             sub={emptySub}
           />
         ) : (
-          <>
-            <div className="space-y-2">
-              {pendingSlice.rows.map((c) => (
-                <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
-              ))}
-            </div>
-            <QueuePager
-              page={pendingSlice.page}
-              pageCount={pendingSlice.pageCount}
-              first={pendingSlice.first}
-              last={pendingSlice.last}
-              total={pending.length}
-              noun="pending claims"
-              onPageChange={setPendingPage}
-            />
-          </>
+          <ClaimsQueue
+            claims={pending}
+            userHrefBase={userHrefBase}
+            noun="pending claims"
+            selectable
+            rowSelection={selection}
+            onRowSelectionChange={setSelection}
+          />
         )}
       </div>
 
       {reviewed.length > 0 && (
         <div className="space-y-3">
           <SectionHeading icon={ShieldQuestion} title="Reviewed" />
-          <div className="space-y-2">
-            {reviewedSlice.rows.map((c) => (
-              <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
-            ))}
-          </div>
-          <QueuePager
-            page={reviewedSlice.page}
-            pageCount={reviewedSlice.pageCount}
-            first={reviewedSlice.first}
-            last={reviewedSlice.last}
-            total={reviewed.length}
+          <ClaimsQueue
+            claims={reviewed}
+            userHrefBase={userHrefBase}
             noun="reviewed claims"
-            onPageChange={setReviewedPage}
           />
         </div>
       )}
@@ -210,20 +234,22 @@ export function RequestsPanel({
         </p>
         <WebhookTestButton />
       </div>
+
+      <BulkApproveDialog
+        claims={selected}
+        // Stays open on a partial pass even after the paid rows leave the
+        // selection — the dialog holds its own frozen batch, and closing it
+        // would hide which claims failed and why.
+        open={bulkOpen}
+        onOpenChange={setBulkOpen}
+        onApproved={(ids) =>
+          setSelection((prev) => {
+            const next = { ...prev };
+            for (const id of ids) delete next[id];
+            return next;
+          })
+        }
+      />
     </div>
   );
-}
-
-/** Clamp the page against the current row count and slice it. */
-function sliceFor(rows: CreatorRewardClaimRow[], requested: number) {
-  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
-  const page = Math.min(Math.max(requested, 1), pageCount);
-  const start = (page - 1) * PAGE_SIZE;
-  return {
-    rows: rows.slice(start, start + PAGE_SIZE),
-    page,
-    pageCount,
-    first: rows.length === 0 ? 0 : start + 1,
-    last: Math.min(start + PAGE_SIZE, rows.length),
-  };
 }

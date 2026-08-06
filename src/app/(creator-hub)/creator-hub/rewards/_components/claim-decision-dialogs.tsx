@@ -1,8 +1,8 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
+import { useEffect, useId, useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Send } from "lucide-react";
+import { Check, CircleAlert, Clock, Send } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -22,6 +22,7 @@ import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 import { HubNotice } from "../../_components/hub-notice";
 import {
   approveCreatorRewardClaim,
+  bulkApproveCreatorRewardClaims,
   reinstateCreatorRewardClaim,
   rejectCreatorRewardClaim,
   resendClaimDecisionNotice,
@@ -237,6 +238,228 @@ export function ApproveDialog({
           <Button onClick={submit} disabled={isPending || totp.trim().length === 0}>
             {isPending ? "Paying…" : "Approve and pay"}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Per-claim state inside a bulk pass. `waiting` = never attempted yet. */
+type BulkClaimState =
+  | { kind: "waiting" }
+  | { kind: "ok" }
+  | { kind: "failed"; error: string };
+
+/**
+ * Approve a selection of pending claims.
+ *
+ * ── WHY THIS SOMETIMES ASKS TWICE ─────────────────────────────────────────
+ * `require2FA` is single-use: a TOTP code claims its step, a passkey proof
+ * burns its nonce. One code therefore authorises exactly ONE payment, and the
+ * server refuses to pretend otherwise (see `bulkApproveCreatorRewardClaims`).
+ * The one reusable credential is the admin/owner passkey GRACE window, and the
+ * shared `StepUpField` already emits it — so verifying with a passkey clears
+ * the whole selection in a single pass, while a typed code steps through them
+ * one at a time. The dialog says which mode it is in before anything is paid.
+ *
+ * Nothing is ever swallowed: every claim shows paid, failed with the server's
+ * exact words, or still waiting. A claim that was never attempted is untouched.
+ */
+export function BulkApproveDialog({
+  claims,
+  open,
+  onOpenChange,
+  onApproved,
+}: {
+  /** The selected PENDING claims, in queue order. */
+  claims: CreatorRewardClaimRow[];
+  open: boolean;
+  onOpenChange: (v: boolean) => void;
+  /** Ids that are now paid, so the caller can drop them from its selection. */
+  onApproved: (claimIds: string[]) => void;
+}) {
+  const [totp, setTotp] = useState("");
+  const [states, setStates] = useState<Record<string, BulkClaimState>>({});
+  // Frozen at open. The list has to keep showing what happened to every claim
+  // in the batch, including the ones already paid — and those leave the live
+  // `claims` prop the moment approval revalidates the queue.
+  const [batch, setBatch] = useState<CreatorRewardClaimRow[]>([]);
+  const [isPending, startTransition] = useTransition();
+
+  // Reopening after a partial pass must not show the previous run's verdicts
+  // against a different selection.
+  useEffect(() => {
+    if (!open) return;
+    setStates({});
+    setTotp("");
+    setBatch(claims);
+    // Deliberately keyed on `open` alone — a mid-pass change to the live
+    // selection must not swap the batch under a running approval.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open]);
+
+  const pendingIds = useMemo(
+    () => batch.filter((c) => (states[c.id]?.kind ?? "waiting") === "waiting").map((c) => c.id),
+    [batch, states],
+  );
+  const paidCount = Object.values(states).filter((s) => s.kind === "ok").length;
+  const failedCount = Object.values(states).filter((s) => s.kind === "failed").length;
+  const started = paidCount + failedCount > 0;
+
+  const remainingTotal = useMemo(
+    () =>
+      batch
+        .filter((c) => pendingIds.includes(c.id))
+        .reduce((sum, c) => sum + c.amountUsd, 0),
+    [batch, pendingIds],
+  );
+
+  function submit() {
+    const credential = totp.trim();
+    if (credential.length === 0 || pendingIds.length === 0) return;
+    startTransition(async () => {
+      const res = await bulkApproveCreatorRewardClaims({
+        claimIds: pendingIds,
+        totpCode: credential,
+      });
+      if (!res.success) {
+        toast.error(res.error);
+        return;
+      }
+
+      const next: Record<string, BulkClaimState> = {};
+      for (const r of res.data.results) {
+        next[r.claimId] = r.ok
+          ? { kind: "ok" }
+          : { kind: "failed", error: r.error ?? "Approval failed" };
+      }
+      setStates((prev) => ({ ...prev, ...next }));
+      onApproved(res.data.results.filter((r) => r.ok).map((r) => r.claimId));
+
+      // Clear the field so `StepUpField` re-arms: with an active passkey grace
+      // it silently re-fills itself, otherwise it asks for a fresh code — which
+      // is exactly the difference the server enforces.
+      setTotp("");
+
+      const okNow = res.data.results.filter((r) => r.ok).length;
+      const failedNow = res.data.results.length - okNow;
+      if (res.data.remaining.length === 0 && failedNow === 0) {
+        toast.success(
+          `Approved ${okNow} claim${okNow === 1 ? "" : "s"}`,
+        );
+        onOpenChange(false);
+        return;
+      }
+      if (failedNow > 0) {
+        toast.error(
+          `${failedNow} claim${failedNow === 1 ? "" : "s"} couldn't be approved — see the list.`,
+        );
+      }
+    });
+  }
+
+  const allDone = pendingIds.length === 0;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-lg">
+        <DialogHeader>
+          <DialogTitle>
+            Approve {batch.length} claim{batch.length === 1 ? "" : "s"}
+          </DialogTitle>
+          <DialogDescription>
+            Pays{" "}
+            <strong className="text-rose-600 dark:text-rose-400">
+              {formatCurrency(remainingTotal)}
+            </strong>{" "}
+            across {pendingIds.length} remaining claim
+            {pendingIds.length === 1 ? "" : "s"}, one at a time, through the same
+            audited path as a single approval.
+          </DialogDescription>
+        </DialogHeader>
+
+        {/* Said BEFORE anything is paid, because it changes how many times the
+            operator will be asked. */}
+        {!allDone && (
+          <HubNotice tone="muted">
+            A 2FA code authorises exactly one payment. Verify with a passkey to
+            clear the whole selection in one go; with a typed code this approves
+            one claim per code.
+          </HubNotice>
+        )}
+
+        <div className="max-h-64 space-y-1 overflow-y-auto rounded-md border p-2">
+          {batch.map((c) => {
+            const state = states[c.id] ?? { kind: "waiting" };
+            return (
+              <div
+                key={c.id}
+                className="flex items-start justify-between gap-3 rounded px-1.5 py-1 text-xs"
+              >
+                <span className="min-w-0 flex-1 truncate">
+                  {c.username ?? c.userId}
+                  <span className="text-muted-foreground"> · {c.programName}</span>
+                </span>
+                <span className="shrink-0 tabular-nums text-rose-600 dark:text-rose-400">
+                  {formatCurrency(c.amountUsd)}
+                </span>
+                <span className="flex w-40 shrink-0 items-start gap-1">
+                  {state.kind === "ok" ? (
+                    // Deliberately NOT emerald: it sits inches from a rose
+                    // payout figure, and emerald on this screen means "money
+                    // the house took". This marks progress, not a gain.
+                    <span className="flex items-center gap-1 font-medium text-foreground">
+                      <Check className="size-3.5 shrink-0" aria-hidden />
+                      Paid
+                    </span>
+                  ) : state.kind === "failed" ? (
+                    <span className="flex items-start gap-1 text-rose-600 dark:text-rose-400">
+                      <CircleAlert className="mt-px size-3.5 shrink-0" aria-hidden />
+                      <span className="break-words">{state.error}</span>
+                    </span>
+                  ) : (
+                    <span className="flex items-center gap-1 text-muted-foreground">
+                      <Clock className="size-3.5 shrink-0" aria-hidden />
+                      Waiting
+                    </span>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {started && (
+          <p className="text-xs text-muted-foreground">
+            {paidCount} paid · {failedCount} failed · {pendingIds.length} still
+            waiting. Anything still waiting has not been touched.
+          </p>
+        )}
+
+        {!allDone && (
+          <StepUpField value={totp} onChange={setTotp} disabled={isPending} />
+        )}
+
+        <DialogFooter>
+          <Button
+            variant="outline"
+            onClick={() => onOpenChange(false)}
+            disabled={isPending}
+          >
+            {allDone ? "Close" : started ? "Stop here" : "Cancel"}
+          </Button>
+          {!allDone && (
+            <Button
+              onClick={submit}
+              disabled={isPending || totp.trim().length === 0}
+            >
+              {isPending
+                ? "Paying…"
+                : started
+                  ? `Continue (${pendingIds.length} left)`
+                  : `Approve and pay ${pendingIds.length}`}
+            </Button>
+          )}
         </DialogFooter>
       </DialogContent>
     </Dialog>

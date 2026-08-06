@@ -43,18 +43,28 @@ test("Creator Rewards lives only in the Marketing workspace", () => {
     "planCreatorRewardProgramRemoval",
     "removeCreatorRewardProgram",
     "restoreCreatorRewardProgram",
+    // Bulk approval (2026-08-06). It pays real money N times, so it carries the
+    // same two gates AND delegates every payment to the single-claim action.
+    "bulkApproveCreatorRewardClaims",
   ]) {
     assert.match(actions, new RegExp(`export async function ${action}\\b`));
   }
   assert.equal(
     actions.match(/await requireAdmin\(\)/g)?.length,
-    14,
+    15,
     "every mutation/search action must retain its admin gate",
   );
   assert.equal(
     actions.match(/await requirePageAccess\("\/creator-rewards"\)/g)?.length,
-    14,
+    15,
     "every mutation/search action must retain its page permission gate",
+  );
+  // The bulk path must never grow its own balance write — it exists only to
+  // sequence the audited single-claim action.
+  assert.equal(
+    actions.match(/await adjustBalance\(/g)?.length,
+    1,
+    "approval must go through exactly one adjustBalance call site",
   );
   assert.match(actions, /revalidatePath\("\/creator-hub\/rewards"\)/);
   assert.doesNotMatch(actions, /revalidatePath\("\/creator-rewards"\)/);

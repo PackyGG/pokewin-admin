@@ -26,6 +26,7 @@ import { getPrimaryDrizzleDb, getProdReadDrizzleDb } from "@/lib/db";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { requireAdmin, requirePageAccess } from "@/lib/dal";
+import { PASSKEY_GRACE_CREDENTIAL } from "@/lib/passkey-grace-shared";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 import { computeProgramOffers } from "@/lib/creator-vip/compute";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
@@ -1258,6 +1259,137 @@ export async function approveCreatorRewardClaim(input: {
 
   revalidateCreatorRewards();
   return { success: true };
+}
+
+/** One claim's outcome inside a bulk approval pass. */
+export type BulkApproveClaimResult = {
+  claimId: string;
+  ok: boolean;
+  /** Verbatim from the single-claim action — never summarised or swallowed. */
+  error?: string;
+};
+
+export type BulkApproveOutcome = {
+  /** Every claim this pass actually ATTEMPTED, in order, with its outcome. */
+  results: BulkApproveClaimResult[];
+  /**
+   * Selected claims this pass never touched, because the credential was spent.
+   * They are completely untouched — no reservation, no ledger row — and the
+   * caller re-submits them with a fresh credential.
+   */
+  remaining: string[];
+  /** Whether the submitted credential could legitimately authorise more than one payment. */
+  credentialReusable: boolean;
+};
+
+/**
+ * Heuristic: did this failure spend/invalidate the credential rather than the
+ * claim? PURELY a UX stop — it decides whether to keep firing calls that are
+ * already doomed, never whether a payment is allowed. Every claim it declines
+ * to attempt is reported as `remaining` and left byte-for-byte untouched.
+ */
+function looksLikeCredentialFailure(error: string): boolean {
+  const e = error.toLowerCase();
+  return (
+    e.includes("2fa") ||
+    e.includes("passkey") ||
+    e.includes("verification") ||
+    e.includes("already used")
+  );
+}
+
+/**
+ * Approve several pending claims with ONE submitted credential.
+ *
+ * ── WHY THIS CANNOT JUST LOOP N TIMES ─────────────────────────────────────
+ * `require2FA` is single-use in BOTH of its normal modes. A TOTP code claims
+ * its 30-second step in `admin_users.totp_last_step` and a replay is refused;
+ * a passkey step-up proof burns its `jti` into `admin_stepup_used`. So one code
+ * authorises exactly one `adjustBalance`, and pretending otherwise would mean
+ * weakening a control that exists to stop double-submit money races.
+ *
+ * The ONE credential that is legitimately reusable is the admin/owner passkey
+ * GRACE window (`PASSKEY_GRACE_CREDENTIAL`, a signed ten-minute HttpOnly
+ * cookie) — an existing, deliberate mechanism, re-checked against the DB and
+ * the cookie on every single call. When the operator holds one, the whole
+ * selection goes through in one pass. When they typed a code instead, exactly
+ * ONE claim is approved and the rest come back as `remaining` for a fresh
+ * credential. No silent re-prompting, no weakened gate.
+ *
+ * ── SAFETY ────────────────────────────────────────────────────────────────
+ * There is no bulk DB write here. Each claim goes through the unchanged
+ * `approveCreatorRewardClaim` — same gates, same `adjustBalance`, same
+ * per-claim reservation and idempotency — sequentially, never concurrently
+ * (concurrent calls would contend on the same credential and the same balance
+ * row). A failure anywhere is recorded and the pass continues; claims never
+ * attempted stay pending.
+ */
+export async function bulkApproveCreatorRewardClaims(input: {
+  claimIds: string[];
+  totpCode: string;
+}): Promise<ActionResult<BulkApproveOutcome>> {
+  await requirePageAccess("/creator-rewards");
+  await requireAdmin();
+
+  const parsed = z
+    .object({
+      // Bounded: a serverless request has to finish, and each element costs a
+      // full MAIN-DB balance transaction.
+      claimIds: z.array(z.string().uuid()).min(1).max(50),
+      totpCode: z.string().trim().min(6).max(2048),
+    })
+    .safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+
+  const claimIds = [...new Set(parsed.data.claimIds)];
+  const credential = parsed.data.totpCode;
+  // The marker alone proves nothing — `require2FA` still verifies the signed
+  // cookie AND re-reads the admin row on every call. This only decides how many
+  // calls are worth making.
+  const credentialReusable = credential === PASSKEY_GRACE_CREDENTIAL;
+
+  const results: BulkApproveClaimResult[] = [];
+  let remaining: string[] = [];
+
+  for (let i = 0; i < claimIds.length; i++) {
+    const claimId = claimIds[i];
+    let outcome: ActionResult;
+    try {
+      outcome = await approveCreatorRewardClaim({ claimId, totpCode: credential });
+    } catch (err) {
+      // `approveCreatorRewardClaim` rethrows when `adjustBalance` throws and no
+      // ledger row appeared — the claim is released and untouched. Contained
+      // here so one bad row can't abort the rest of the batch as a 500.
+      outcome = {
+        success: false,
+        error: err instanceof Error ? err.message : "Approval failed",
+      };
+    }
+
+    results.push(
+      outcome.success
+        ? { claimId, ok: true }
+        : { claimId, ok: false, error: outcome.error },
+    );
+
+    const credentialSpent =
+      !credentialReusable ||
+      (!outcome.success && looksLikeCredentialFailure(outcome.error));
+    if (credentialSpent && i + 1 < claimIds.length) {
+      remaining = claimIds.slice(i + 1);
+      break;
+    }
+  }
+
+  return {
+    success: true,
+    data: { results, remaining, credentialReusable },
+  };
 }
 
 /**
