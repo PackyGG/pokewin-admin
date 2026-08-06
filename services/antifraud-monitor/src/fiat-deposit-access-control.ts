@@ -24,6 +24,27 @@ type OperationRow = {
   attempts: number;
 };
 
+/**
+ * Refusal raised when a *live* existing-account rollout (queued or running)
+ * blocks a new one. Carries `statusCode` so the Fastify error handler in
+ * `server.ts` maps it to a 4xx `request_rejected` instead of logging an
+ * "Unhandled request error" and returning an opaque 500 — the dashboard turns
+ * that status into a real operator message.
+ *
+ * A `stalled` rollout deliberately does NOT raise this: a single permanently
+ * failing user must never be able to freeze fiat policy forever. Superseding
+ * retires the stalled rollout and its outstanding operations.
+ */
+export class FiatAccessRolloutInProgressError extends Error {
+  readonly code = "fiat_deposit_access_rollout_in_progress";
+  readonly statusCode = 409;
+
+  constructor() {
+    super("fiat_deposit_access_rollout_in_progress");
+    this.name = "FiatAccessRolloutInProgressError";
+  }
+}
+
 export type FiatAccessControlStatus = {
   configured: boolean;
   existingAccounts: {
@@ -155,15 +176,21 @@ export class FiatDepositAccessControl {
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
         ["fiat-access:existing-accounts"],
       );
+      // Only a LIVE rollout blocks a new one. `stalled` is not live: it only
+      // means at least one operation is in retry backoff, and `drainOperations`
+      // retries with no attempt ceiling and no terminal state — so a single
+      // user the backend permanently rejects would otherwise wedge every future
+      // existing-account policy change forever, with no cancel path anywhere.
+      // A stalled rollout is instead retired by the supersede statements below.
       const active = await client.query<{ policy_id: string }>(
         `SELECT policy_id
            FROM fiat_deposit_access_rollouts
-          WHERE status IN ('queued', 'running', 'stalled')
+          WHERE status IN ('queued', 'running')
           LIMIT 1
           FOR UPDATE`,
       );
       if (active.rows.length > 0) {
-        throw new Error("fiat_deposit_access_rollout_in_progress");
+        throw new FiatAccessRolloutInProgressError();
       }
       const generation = await client.query<{ next: string }>(
         `SELECT COALESCE(MAX(generation), 0) + 1 AS next
@@ -177,11 +204,20 @@ export class FiatDepositAccessControl {
          RETURNING id`,
         [generation.rows[0]!.next, enabled, actorId],
       );
+      // Retire every non-terminal rollout. Only `setExistingAccounts` ever
+      // inserts a rollout row, so this is already scoped to existing accounts.
+      // `refreshRollout` short-circuits on 'superseded', so a retired rollout
+      // can never flip itself back to 'stalled'/'running'.
       await client.query(
         `UPDATE fiat_deposit_access_rollouts
             SET status = 'superseded', updated_at = now()
           WHERE status IN ('queued', 'running', 'stalled')`,
       );
+      // Retire the outstanding work of those rollouts so `drainOperations`
+      // (which claims on status alone) stops retrying the obsolete desired
+      // value. Rows in 'processing' are left alone here — they are mid-flight
+      // against the backend; the stale-processing sweep in `process()` retires
+      // them once their policy's rollout is superseded.
       await client.query(
         `UPDATE fiat_deposit_access_operations
             SET status = 'superseded', updated_at = now()
@@ -245,12 +281,26 @@ export class FiatDepositAccessControl {
 
   async process(): Promise<void> {
     if (!this.configured) return;
+    // Recover operations stranded in 'processing' by a crash. An operation
+    // whose policy was superseded while it was mid-flight must NOT come back
+    // as 'failed' — `drainOperations` would re-claim it and keep pushing an
+    // obsolete desired value at the backend forever, and every tick would
+    // re-aggregate the retired rollout. Retire it instead. New-signup
+    // operations have no rollout row at all, so they always take the
+    // 'failed' (retry) branch.
     await this.db.antifraud.query(`
-      UPDATE fiat_deposit_access_operations
-      SET status = 'failed', last_error = 'interrupted_before_confirmation',
+      UPDATE fiat_deposit_access_operations o
+      SET status = CASE
+            WHEN EXISTS (
+              SELECT 1 FROM fiat_deposit_access_rollouts r
+              WHERE r.policy_id = o.policy_id AND r.status = 'superseded'
+            ) THEN 'superseded'
+            ELSE 'failed'
+          END,
+          last_error = 'interrupted_before_confirmation',
           next_attempt_at = now(), updated_at = now()
-      WHERE status = 'processing'
-        AND updated_at < now() - interval '2 minutes'
+      WHERE o.status = 'processing'
+        AND o.updated_at < now() - interval '2 minutes'
     `);
     await this.enqueueExistingAccounts();
     await this.enqueueNewSignups();

@@ -242,6 +242,16 @@ export async function updateFiatAccessControl(input: {
   if (response.status === 401 || response.status === 403) {
     throw new Error("The monitor rejected the Fiat access credentials.");
   }
+  // The monitor refuses a new existing-account rollout while one is still
+  // queued or running (FiatAccessRolloutInProgressError -> 409). Without this
+  // branch that legitimate refusal reached the operator as the same opaque
+  // "could not be saved" as a real outage. The wording matches the
+  // `actionErrorMessage` operator allowlist so it survives to the toast.
+  if (response.status === 409) {
+    throw new Error(
+      "A Fiat access rollout is still queued or running. Wait for it to finish, then refresh and try again.",
+    );
+  }
   if (!response.ok) {
     throw new Error("The Fiat access policy could not be saved.");
   }

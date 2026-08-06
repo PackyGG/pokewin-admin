@@ -29,6 +29,14 @@ export function FiatDepositAccessControlCard({
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [requested, setRequested] = useState<{ scope: Scope; enabled: boolean } | null>(null);
+  // Staged position of the existing-accounts switch while no policy has ever
+  // been written (generation 0). In that state the monitor reports a fabricated
+  // `enabled: false` default rather than an observed backend value, so binding
+  // the switch to it would leave `enabled: true` as the only value an operator
+  // could ever submit — the switch could only ever grant fiat access, never
+  // revoke it. Staging locally lets the operator settle on either direction
+  // before confirming. Once generation > 0 this is ignored entirely.
+  const [pendingExisting, setPendingExisting] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   if (!status || !status.configured) {
@@ -51,6 +59,9 @@ export function FiatDepositAccessControlCard({
         return;
       }
       setStatus(result.data);
+      if (requested.scope === "existing-accounts") {
+        setPendingExisting(requested.enabled);
+      }
       setRequested(null);
       toast.success(
         requested.scope === "existing-accounts"
@@ -62,9 +73,16 @@ export function FiatDepositAccessControlCard({
 
   const existing = status.existingAccounts;
   const signup = status.newSignups;
-  const existingRolloutActive = ["queued", "running", "stalled"].includes(
-    existing.status,
-  );
+  // Only a live rollout locks the switch. A `stalled` rollout just means at
+  // least one user is in retry backoff, and the monitor retries with no attempt
+  // ceiling — treating that as "active" let one permanently failing user wedge
+  // existing-account fiat policy forever. The monitor now supersedes a stalled
+  // rollout instead of refusing (see FiatAccessRolloutInProgressError).
+  const existingRolloutActive = ["queued", "running"].includes(existing.status);
+  const existingStalled = existing.status === "stalled";
+  // Before the first policy exists there is no observed backend state to show,
+  // so the switch reflects the value that is staged for confirmation.
+  const existingUnconfigured = existing.generation === 0;
   return (
     <Card>
       <CardHeader>
@@ -90,13 +108,25 @@ export function FiatDepositAccessControlCard({
               {existing.generation > 0 && ` ${existing.succeeded.toLocaleString()} confirmed`}
               {existing.failed > 0 && ` · ${existing.failed.toLocaleString()} retrying`}.
               {existingRolloutActive && " Wait for this rollout to finish before changing it again."}
+              {existingUnconfigured &&
+                " No rollout has ever been applied, so this switch shows the value you are about to apply — not a value read from the backend."}
             </p>
+            {existingStalled && (
+              <p className="text-xs text-muted-foreground">
+                This rollout is retrying at least one account and will not finish on its own.
+                Confirming a new value supersedes it and cancels the outstanding retries.
+                {existing.lastError ? ` Last error: ${existing.lastError}` : ""}
+              </p>
+            )}
           </div>
           <Switch
             aria-label="Fiat access for existing accounts"
-            checked={existing.enabled}
+            checked={existingUnconfigured ? pendingExisting : existing.enabled}
             disabled={isPending || existingRolloutActive}
-            onCheckedChange={(enabled) => setRequested({ scope: "existing-accounts", enabled })}
+            onCheckedChange={(enabled) => {
+              if (existingUnconfigured) setPendingExisting(enabled);
+              setRequested({ scope: "existing-accounts", enabled });
+            }}
           />
         </div>
 
@@ -136,7 +166,17 @@ export function FiatDepositAccessControlCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {requested?.scope === "existing-accounts"
-                ? "This starts a durable bulk rollout through the backend per-user endpoint. Progress and retries remain visible here."
+                ? `Every account registered before confirmation will be written to fiat_deposits_enabled = ${
+                    requested.enabled ? "true" : "false"
+                  }, which ${
+                    requested.enabled
+                      ? "GRANTS fiat deposit access to the entire existing account base"
+                      : "REVOKES fiat deposit access from the entire existing account base"
+                  }. This is a durable per-user rollout through the backend: it cannot be undone by cancelling, only by running the opposite rollout afterwards.${
+                    existingStalled
+                      ? " It also supersedes the current stalled rollout and cancels its outstanding retries."
+                      : ""
+                  } Progress and retries remain visible here.`
                 : `Accounts created after confirmation will automatically receive fiat_deposits_enabled = ${requested?.enabled ? "true" : "false"}.`}
             </AlertDialogDescription>
           </AlertDialogHeader>
