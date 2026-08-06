@@ -167,47 +167,162 @@ function serialize(row: RuleRow) {
   };
 }
 
-async function backfillMatches(
+// The backfill used to be one unbounded `INSERT … SELECT` over the whole
+// `signup_identity_snapshots` table, issued AFTER the rule had already
+// committed. The antifraud pool sets `statement_timeout=15000` (`db.ts`), so a
+// broad rule aborted with SQLSTATE 57014 and the route answered 500 for a rule
+// that was already live — and the historical sweep silently never ran.
+//
+// 5_000 snapshot rows per statement: a primary-key-ordered window of that size
+// is a few milliseconds of index scan, and even the pathological case where
+// every row matches is one bulk insert of 5_000 narrow rows against a single
+// unique index — comfortably inside the 15s statement budget with an order of
+// magnitude to spare. Smaller chunks would only add round trips against the
+// wall-clock budget below.
+export const BACKFILL_CHUNK_ROWS = 5_000;
+// The dashboard aborts the POST after 8s (`identifier-blocklists-api.ts`), and
+// the reply still has to run `listRules`. Stop sweeping at 4s and report the
+// sweep as incomplete rather than letting the operator's request time out.
+export const BACKFILL_BUDGET_MS = 4_000;
+
+// IP rules match with `<<=`, which no btree index can serve, so the keyset
+// cursor has to bound the SNAPSHOT scan: take a fixed window of snapshot rows
+// by primary key, then test containment inside that window.
+const IP_BACKFILL_CHUNK_SQL = `
+  WITH scanned AS (
+    SELECT s.user_id, s.signup_ip, s.source_created_at
+    FROM signup_identity_snapshots s
+    WHERE ($2::text IS NULL OR s.user_id > $2::text)
+    ORDER BY s.user_id
+    LIMIT $3::int
+  ),
+  matched AS (
+    SELECT b.id AS blocklist_id, s.user_id, s.signup_ip, s.source_created_at
+    FROM scanned s
+    JOIN identifier_blocklists b ON b.id=$1
+    WHERE s.signup_ip IS NOT NULL AND s.signup_ip <<= b.ip_network
+  ),
+  inserted AS (
+    INSERT INTO identifier_blocklist_matches (
+      blocklist_id, user_id, source_ref, match_context, resulting_action,
+      evidence, matched_at
+    )
+    SELECT
+      m.blocklist_id, m.user_id, 'identity-snapshot:' || m.user_id,
+      'historical_backfill', 'review_only',
+      jsonb_build_object('signupIp',host(m.signup_ip)),
+      m.source_created_at
+    FROM matched m
+    ON CONFLICT (blocklist_id,user_id,source_ref) DO NOTHING
+    RETURNING 1 AS inserted_row
+  )
+  SELECT
+    (SELECT count(*) FROM scanned)::int AS scanned,
+    (SELECT count(*) FROM matched)::int AS matched,
+    (SELECT count(*) FROM inserted)::int AS inserted,
+    (SELECT max(user_id) FROM scanned) AS next_cursor
+`;
+
+// Fingerprint rules match on equality, which `signup_identity_snapshot_
+// fingerprint_idx` serves directly, so the window is taken over the MATCHED
+// set. Walking the whole snapshot keyspace here would turn an instant indexed
+// lookup into thousands of round trips.
+const FINGERPRINT_BACKFILL_CHUNK_SQL = `
+  WITH scanned AS (
+    SELECT
+      b.id AS blocklist_id, s.user_id, s.fingerprint_visitor_id,
+      s.source_created_at
+    FROM identifier_blocklists b
+    JOIN signup_identity_snapshots s
+      ON s.fingerprint_visitor_id=b.fingerprint_id
+    WHERE b.id=$1 AND ($2::text IS NULL OR s.user_id > $2::text)
+    ORDER BY s.user_id
+    LIMIT $3::int
+  ),
+  inserted AS (
+    INSERT INTO identifier_blocklist_matches (
+      blocklist_id, user_id, source_ref, match_context, resulting_action,
+      evidence, matched_at
+    )
+    SELECT
+      s.blocklist_id, s.user_id, 'identity-snapshot:' || s.user_id,
+      'historical_backfill', 'review_only',
+      jsonb_build_object('fingerprintVisitorId',s.fingerprint_visitor_id),
+      s.source_created_at
+    FROM scanned s
+    ON CONFLICT (blocklist_id,user_id,source_ref) DO NOTHING
+    RETURNING 1 AS inserted_row
+  )
+  SELECT
+    (SELECT count(*) FROM scanned)::int AS scanned,
+    (SELECT count(*) FROM scanned)::int AS matched,
+    (SELECT count(*) FROM inserted)::int AS inserted,
+    (SELECT max(user_id) FROM scanned) AS next_cursor
+`;
+
+type BackfillChunkRow = {
+  scanned: number;
+  matched: number;
+  inserted: number;
+  next_cursor: string | null;
+};
+
+export type BackfillOutcome = {
+  scanned: number;
+  matched: number;
+  inserted: number;
+  chunks: number;
+  completed: boolean;
+  error: string | null;
+};
+
+export async function backfillMatches(
   db: Databases,
   ruleId: string,
   kind: IdentifierBlocklistKind,
-): Promise<void> {
-  await db.antifraud.query(
-    kind === "ip"
-      ? `
-          INSERT INTO identifier_blocklist_matches (
-            blocklist_id, user_id, source_ref, match_context, resulting_action,
-            evidence, matched_at
-          )
-          SELECT
-            b.id, s.user_id, 'identity-snapshot:' || s.user_id,
-            'historical_backfill', 'review_only',
-            jsonb_build_object('signupIp',host(s.signup_ip)),
-            s.source_created_at
-          FROM identifier_blocklists b
-          JOIN signup_identity_snapshots s
-            ON s.signup_ip IS NOT NULL AND s.signup_ip <<= b.ip_network
-          WHERE b.id=$1
-          ON CONFLICT (blocklist_id,user_id,source_ref) DO NOTHING
-        `
-      : `
-          INSERT INTO identifier_blocklist_matches (
-            blocklist_id, user_id, source_ref, match_context, resulting_action,
-            evidence, matched_at
-          )
-          SELECT
-            b.id, s.user_id, 'identity-snapshot:' || s.user_id,
-            'historical_backfill', 'review_only',
-            jsonb_build_object('fingerprintVisitorId',s.fingerprint_visitor_id),
-            s.source_created_at
-          FROM identifier_blocklists b
-          JOIN signup_identity_snapshots s
-            ON s.fingerprint_visitor_id=b.fingerprint_id
-          WHERE b.id=$1
-          ON CONFLICT (blocklist_id,user_id,source_ref) DO NOTHING
-        `,
-    [ruleId],
-  );
+): Promise<BackfillOutcome> {
+  const chunkSql = kind === "ip"
+    ? IP_BACKFILL_CHUNK_SQL
+    : FINGERPRINT_BACKFILL_CHUNK_SQL;
+  const outcome: BackfillOutcome = {
+    scanned: 0,
+    matched: 0,
+    inserted: 0,
+    chunks: 0,
+    completed: false,
+    error: null,
+  };
+  const deadline = Date.now() + BACKFILL_BUDGET_MS;
+  let cursor: string | null = null;
+  try {
+    for (;;) {
+      const rows: BackfillChunkRow[] = (
+        await db.antifraud.query<BackfillChunkRow>(
+          chunkSql,
+          [ruleId, cursor, BACKFILL_CHUNK_ROWS],
+        )
+      ).rows;
+      const chunk: BackfillChunkRow | undefined = rows[0];
+      // The outer SELECT is aggregate-only, so a missing row means the driver
+      // gave us nothing to trust — stop rather than loop forever.
+      if (!chunk) break;
+      outcome.chunks += 1;
+      outcome.scanned += chunk.scanned;
+      outcome.matched += chunk.matched;
+      outcome.inserted += chunk.inserted;
+      if (chunk.scanned < BACKFILL_CHUNK_ROWS || chunk.next_cursor === null) {
+        outcome.completed = true;
+        break;
+      }
+      cursor = chunk.next_cursor;
+      // Every window is strictly past the previous cursor, so the loop always
+      // terminates; the budget only decides whether it finishes this request.
+      if (Date.now() >= deadline) break;
+    }
+  } catch (error) {
+    outcome.error = error instanceof Error ? error.message : String(error);
+  }
+  return outcome;
 }
 
 export async function registerIdentifierBlocklistRoutes(
@@ -347,11 +462,37 @@ export async function registerIdentifierBlocklistRoutes(
     if (!ruleId) return reply.code(500).send({ error: "rule_missing" });
     // Backfill is independently idempotent. Re-run it for idempotent retries so
     // a transient failure after rule creation cannot strand historical matches.
-    await backfillMatches(db, ruleId, kind);
+    // The rule is COMMITTED above: the sweep runs afterwards on purpose, and it
+    // must never turn a live rule into a 500. Failures and partial sweeps are
+    // reported, never thrown.
+    const backfill = await backfillMatches(db, ruleId, kind);
+    if (backfill.error) {
+      request.log.error(
+        { blocklistId: ruleId, kind, backfill },
+        "blocklist historical backfill failed; rule is live, sweep incomplete",
+      );
+    } else if (!backfill.completed) {
+      request.log.warn(
+        { blocklistId: ruleId, kind, backfill },
+        "blocklist historical backfill hit its budget; rule is live, sweep incomplete",
+      );
+    }
     const row = (await listRules(db, kind, ruleId))[0];
     if (!row) return reply.code(500).send({ error: "rule_missing" });
     return reply.code(idempotent ? 200 : 201).send({
       data: { ...serialize(row), idempotent },
+      // Sibling of `data`, never inside it: the dashboard parses the rule with
+      // a zod object that strips unknown keys, so this is additive for existing
+      // clients and available to any operator surface that wants to say "live,
+      // historical sweep incomplete".
+      backfill: {
+        scanned: backfill.scanned,
+        matched: backfill.matched,
+        inserted: backfill.inserted,
+        chunks: backfill.chunks,
+        completed: backfill.completed && backfill.error === null,
+        failed: backfill.error !== null,
+      },
     });
   });
 
