@@ -75,11 +75,14 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /deal\.status === "scheduled"/);
   assert.match(service, /total_withdraw_cap_usd/);
   assert.match(service, /max_sponsorship_per_stream_usd/);
-  assert.match(service, /creator_deals\.leaderboard_prize_pool/);
-  assert.match(service, /creator_deals\.leaderboard_our_share/);
+  assert.match(service, /affiliateLeaderboardsApi\.list/);
+  assert.match(service, /creator_user_id: creatorUserId/);
+  assert.match(service, /status: "approved"/);
+  assert.match(service, /time_status === "active"/);
+  assert.match(service, /admin_leaderboard_sponsorship/);
+  assert.match(service, /sponsored_percentage/);
   assert.match(service, /leaderboardPrizePoolUsd/);
   assert.match(service, /leaderboardPackySharePercent/);
-  assert.match(service, /eq\(creator_deals\.status, "active"\)/);
   assert.match(rewards, /getCreatorSetupRewards/);
   assert.match(rewards, /rejectWrongGuild/);
   assert.match(service, /creator_reward_programs/);

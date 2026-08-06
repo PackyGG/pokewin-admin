@@ -5,7 +5,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import {
   admin_audit_events,
-  creator_deals,
+  admin_leaderboard_sponsorship,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
@@ -14,6 +14,7 @@ import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import { isDiscordBotSuperuser } from "@/lib/discord-bot-superusers";
 import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
 
@@ -554,37 +555,59 @@ type CreatorLeaderboardTerms = Pick<
 async function getCreatorLeaderboardTerms(
   creatorUserId: string,
 ): Promise<CreatorLeaderboardTerms> {
-  const [legacyDeal] = await adminDrizzle
+  const { leaderboards } = await affiliateLeaderboardsApi.list({
+    status: "approved",
+    creator_user_id: creatorUserId,
+    limit: 50,
+    offset: 0,
+  });
+  const liveLeaderboards = leaderboards.filter(
+    (leaderboard) => leaderboard.time_status !== "ended",
+  );
+  const leaderboard =
+    liveLeaderboards.find(
+      (candidate) => candidate.time_status === "active",
+    ) ??
+    liveLeaderboards
+      .filter((candidate) => candidate.time_status === "upcoming")
+      .sort((a, b) => a.start_date.localeCompare(b.start_date))[0] ??
+    null;
+
+  if (!leaderboard) {
+    return {
+      leaderboardPrizePoolUsd: null,
+      leaderboardPackySharePercent: null,
+    };
+  }
+
+  const [sponsorship] = await adminDrizzle
     .select({
-      prizePool: creator_deals.leaderboard_prize_pool,
-      packyShare: creator_deals.leaderboard_our_share,
+      sponsoredPercentage:
+        admin_leaderboard_sponsorship.sponsored_percentage,
     })
-    .from(creator_deals)
+    .from(admin_leaderboard_sponsorship)
     .where(
-      and(
-        eq(creator_deals.target_user_id, creatorUserId),
-        eq(creator_deals.status, "active"),
-        sql`${creator_deals.start_date} <= NOW()`,
-        sql`(${creator_deals.end_date} IS NULL OR ${creator_deals.end_date} > NOW())`,
+      eq(
+        admin_leaderboard_sponsorship.leaderboard_id,
+        leaderboard.id,
       ),
     )
-    .orderBy(desc(creator_deals.created_at))
     .limit(1);
 
-  const prizePool = legacyDeal?.prizePool;
-  const packyShare = legacyDeal?.packyShare;
-  const prizePoolNumber = prizePool == null ? null : toNumber(prizePool);
-  const packyShareFraction = packyShare == null ? null : toNumber(packyShare);
+  const prizePoolNumber = toNumber(leaderboard.total_prize_usd);
+  const packySharePercent = sponsorship
+    ? toNumber(sponsorship.sponsoredPercentage)
+    : 100;
   return {
     leaderboardPrizePoolUsd:
-      prizePoolNumber !== null && prizePoolNumber >= 0
+      Number.isFinite(prizePoolNumber) && prizePoolNumber >= 0
         ? money(prizePoolNumber)
         : null,
     leaderboardPackySharePercent:
-      packyShareFraction !== null &&
-      packyShareFraction >= 0 &&
-      packyShareFraction <= 1
-        ? Math.round(packyShareFraction * 10_000) / 100
+      Number.isFinite(packySharePercent) &&
+      packySharePercent >= 0 &&
+      packySharePercent <= 100
+        ? Math.round(packySharePercent * 100) / 100
         : null,
   };
 }
