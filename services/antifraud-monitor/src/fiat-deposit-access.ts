@@ -40,8 +40,8 @@ export class FiatDepositAccessClient {
     const response = await this.request(this.endpoint(userId), {
       method: "PUT",
       headers: {
-        "x-admin-api-key": adminKey,
-        xbypasssecret: bypassSecret,
+        "x-api-key": adminKey,
+        "x-bypass-secret": bypassSecret,
         accept: "application/json",
         "content-type": "application/json",
       },

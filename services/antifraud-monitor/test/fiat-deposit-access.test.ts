@@ -28,14 +28,17 @@ test("per-user Fiat access uses and confirms the backend controller contract", a
   );
   assert.equal(requestInit?.method, "PUT");
   assert.deepEqual(JSON.parse(String(requestInit?.body)), { enabled: true });
+  const headers = requestInit?.headers as Record<string, string>;
   assert.equal(
-    (requestInit?.headers as Record<string, string>)["x-admin-api-key"],
+    headers["x-api-key"],
     "admin-key",
   );
   assert.equal(
-    (requestInit?.headers as Record<string, string>).xbypasssecret,
+    headers["x-bypass-secret"],
     "bypass-secret",
   );
+  assert.equal(headers["x-admin-api-key"], undefined);
+  assert.equal(headers.xbypasssecret, undefined);
 });
 
 test("per-user Fiat access rejects an unconfirmed backend value", async () => {
