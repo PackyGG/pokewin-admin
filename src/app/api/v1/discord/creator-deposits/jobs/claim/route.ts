@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
 import { claimCreatorDepositJobs } from "@/lib/discord-creator-deposits";
+import { claimCreatorRewardClaimJobs } from "@/lib/discord-creator-reward-claims";
 import { claimCreatorSignupJobs } from "@/lib/discord-creator-signups";
 import { CREATOR_SETUP_GUILD_ID } from "@/lib/discord-creator-setups";
 
@@ -25,10 +26,11 @@ export const POST = withApiKey(
         parsed.error.issues[0]?.message ?? "Invalid creator deposit claim.",
       );
     }
-    const [jobs, signupJobs] = await Promise.all([
+    const [jobs, signupJobs, rewardClaimJobs] = await Promise.all([
       claimCreatorDepositJobs(parsed.data),
       claimCreatorSignupJobs(parsed.data),
+      claimCreatorRewardClaimJobs(parsed.data),
     ]);
-    return { jobs, signupJobs };
+    return { jobs, signupJobs, rewardClaimJobs };
   },
 );

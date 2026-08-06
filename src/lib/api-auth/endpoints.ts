@@ -231,7 +231,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-deposits/jobs/claim",
     summary:
-      "Body { guildId, workerId, limit }. Discovers creator-attributed deposits and sign-ups and leases bounded batches of durable Discord delivery jobs.",
+      "Body { guildId, workerId, limit }. Discovers creator-attributed deposits and sign-ups, leases bounded batches of durable Discord delivery jobs, and also leases any pending approved-reward-claim jobs.",
     scopes: ["discord:creator:setup"],
   },
   {
@@ -246,6 +246,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     path: "/api/v1/discord/creator-signups/jobs/[id]/ack",
     summary:
       "Body { leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Acknowledges a creator signup notification or returns it to bounded retry handling.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-reward-claims/jobs/[id]/ack",
+    summary:
+      "Body { guildId, leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Acknowledges an approved creator reward claim (FTD lossback, wager milestone, ...) log notification as delivered or returns it to bounded retry handling.",
     scopes: ["discord:creator:setup"],
   },
   {

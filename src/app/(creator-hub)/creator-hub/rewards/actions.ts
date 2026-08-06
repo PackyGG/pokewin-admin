@@ -39,6 +39,7 @@ import {
   testBotWebhook,
   type ClaimDecisionEvent,
 } from "@/lib/creator-vip/bot-webhook";
+import { enqueueCreatorRewardClaimNotification } from "@/lib/discord-creator-reward-claims";
 import {
   CREATOR_REWARD_TYPES,
   type CreatorRewardType,
@@ -1254,6 +1255,25 @@ export async function approveCreatorRewardClaim(input: {
       discordUserId: claim.discord_user_id,
       amountUsd,
       rewardName: claim.program.name,
+    }),
+  );
+
+  // Log the approved claim (FTD lossback, wager milestone, ...) into the
+  // creator's Discord logs channel, next to their sign-up/deposit activity.
+  // Fire only on approval, never on request — a no-op if the creator has no
+  // active setup, and idempotent per claim id.
+  after(() =>
+    enqueueCreatorRewardClaimNotification({
+      claimId: claim.id,
+      creatorUserId: claim.program.creator_user_id,
+      referredUserId: claim.user_id,
+      leg: claim.leg,
+      programName: claim.program.name,
+      amountUsd,
+      units: claim.units,
+      occurredAt: new Date().toISOString(),
+    }).catch((err) => {
+      console.error("[creator-rewards] reward claim log enqueue failed:", err);
     }),
   );
 
