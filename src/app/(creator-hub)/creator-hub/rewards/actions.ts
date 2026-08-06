@@ -909,16 +909,18 @@ async function notifyBotOfDecision(params: {
   amountUsd: number;
   rewardName: string;
   reason?: string | null;
-}): Promise<void> {
+  force?: boolean;
+}): Promise<Awaited<ReturnType<typeof sendClaimDecision>> | null> {
   try {
     // A claim raised by an admin on someone's behalf has no Discord id — there
     // is no one to DM, and that is not an error worth flagging.
-    if (!params.discordUserId) return;
-    if (!isBotWebhookConfigured()) return;
+    if (!params.discordUserId) return null;
+    if (!isBotWebhookConfigured()) return null;
 
     const event: ClaimDecisionEvent = {
       id: claimEventId(params.claimId, params.decision),
       type: params.decision === "approved" ? "claim.approved" : "claim.rejected",
+      ...(params.force ? { force: true } : {}),
       data: {
         claimId: params.claimId,
         discordUserId: params.discordUserId,
@@ -950,8 +952,14 @@ async function notifyBotOfDecision(params: {
       )
       .where(eq(creator_reward_claims.id, params.claimId))
       .catch(() => {});
+    return result;
   } catch (err) {
     console.error("[creator-rewards] bot notification failed:", err);
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Delivery failed",
+      retriable: false,
+    };
   }
 }
 
@@ -1589,18 +1597,10 @@ export type CreatorSearchResult = {
  * request cannot back off for ten minutes), so a bot that was down longer than
  * that leaves a claim decided-but-unannounced. This is the recovery path.
  *
- * Safe to press repeatedly: the event id is derived from the claim and the
- * decision, so the bot dedupes it. A second press after a successful delivery
- * returns `200 duplicate` and sends no second DM.
- *
- * ── KNOWN LIMIT: THIS CANNOT RECOVER A CLOSED-DMs FAILURE ─────────────────
- * The bot keeps the event id after a PERMANENT delivery failure (the player has
- * DMs closed, or the account is gone) rather than releasing it the way it does
- * for transient ones. A resend for that claim therefore comes back
- * `200 duplicate`, which this path reads as delivered — the operator is told it
- * worked and the player still hears nothing. Only a transient failure (bot
- * down, secret rotated) is actually recoverable here. Fixing it needs a bot
- * change: honour a `force` flag on the event and drop the cached id.
+ * This is an explicit staff retry, so it sets `force: true`. A current bot
+ * drops the cached event id and attempts the DM again. An older bot safely
+ * ignores the additive flag; if it answers `duplicate`, that is surfaced as a
+ * failure because no delivery was attempted.
  */
 export async function resendClaimDecisionNotice(input: {
   claimId: string;
@@ -1632,25 +1632,21 @@ export async function resendClaimDecisionNotice(input: {
     };
   }
 
-  await notifyBotOfDecision({
+  const result = await notifyBotOfDecision({
     claimId: claim.id,
     decision: claim.status === "approved" ? "approved" : "rejected",
     discordUserId: claim.discord_user_id,
     amountUsd: Number(claim.amount_usd),
     rewardName: claim.program.name,
     reason: claim.review_note,
+    force: true,
   });
 
-  const after_ = (
-    await adminDrizzle
-      .select({
-        bot_notified_at: creator_reward_claims.bot_notified_at,
-        bot_notify_error: creator_reward_claims.bot_notify_error,
-      })
-      .from(creator_reward_claims)
-      .where(eq(creator_reward_claims.id, claim.id))
-      .limit(1)
-  )[0];
+  const delivered = result?.ok === true;
+  const deliveryError =
+    result && !result.ok
+      ? result.error
+      : "Delivery failed — try again shortly.";
 
   // Audited because it is an admin-triggered, player-facing send that also
   // mutates the claim's delivery state — without this, a DM the player disputes
@@ -1664,17 +1660,17 @@ export async function resendClaimDecisionNotice(input: {
       program_id: claim.program_id,
       decision: claim.status,
       discord_user_id: claim.discord_user_id,
-      delivered: Boolean(after_?.bot_notified_at),
-      error: after_?.bot_notify_error ?? null,
+      delivered,
+      error: delivered ? null : deliveryError,
     },
   });
 
   revalidateCreatorRewards();
-  return after_?.bot_notified_at
+  return delivered
     ? { success: true }
     : {
         success: false,
-        error: after_?.bot_notify_error ?? "Delivery failed — try again shortly.",
+        error: deliveryError,
       };
 }
 

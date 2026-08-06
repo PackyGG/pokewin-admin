@@ -37,6 +37,8 @@ export type ClaimDecisionEvent = {
   /** Stable per decision, reused on every retry — this is the dedupe key. */
   id: string;
   type: "claim.approved" | "claim.rejected";
+  /** Staff-only resend override. Automatic decision delivery leaves this absent. */
+  force?: boolean;
   data: {
     claimId: string;
     discordUserId: string;
@@ -53,8 +55,14 @@ export type ClaimDecisionEvent = {
 };
 
 export type WebhookResult =
-  | { ok: true; status: number; duplicate: boolean }
-  | { ok: false; error: string; retriable: boolean };
+  | { ok: true; status: number }
+  | {
+      ok: false;
+      error: string;
+      retriable: boolean;
+      status?: number;
+      duplicate?: boolean;
+    };
 
 /**
  * Resolve the webhook URL and secret, accepting the bot's own alias names.
@@ -214,15 +222,25 @@ export async function sendClaimDecision(
       });
 
       if (res.ok) {
-        // 200 with ignored:"duplicate" means an earlier attempt already got
-        // through — a success, not a failure.
+        // Read the acknowledgement before deciding whether work was accepted.
         const body = (await res.json().catch(() => ({}))) as {
           ignored?: string;
         };
+        // A duplicate proves only that the bot retained the event id. It does
+        // not prove the earlier queued DM reached Discord, so callers must not
+        // stamp the claim as notified from this response.
+        if (body?.ignored === "duplicate") {
+          return {
+            ok: false,
+            status: res.status,
+            error: "The bot ignored this event as a duplicate and did not attempt delivery.",
+            retriable: false,
+            duplicate: true,
+          };
+        }
         return {
           ok: true,
           status: res.status,
-          duplicate: body?.ignored === "duplicate",
         };
       }
 
