@@ -132,6 +132,41 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-deal-approvals/jobs/claim",
+    summary:
+      "Body { guildId, workerId, limit }. Leases creator deal proposals for durable delivery to each proposal's stored private creator chat channel.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deal-approvals/jobs/[id]/ack",
+    summary:
+      "Body { leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Records proposal-message delivery or schedules a bounded retry.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deal-approvals/respond",
+    summary:
+      "Body { requestId, guildId, categoryId, channelId, messageId, actorDiscordUserId, interactionId, action }. Creator-only Continue, Approve, or Decline bound to the immutable proposal and Discord message.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deal-approvals/[requestId]/continue",
+    summary:
+      "Creator-only Continue action. The request id comes from the route and the body supplies the stored Discord message context and interaction id.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-deal-approvals/[requestId]/decision",
+    summary:
+      "Creator-only Approve or Decline action, bound to the proposal's stored guild, category, chat channel, message, and creator Discord account.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/vips/link-preview",
     summary:
       "Body { guildId, channelId, memberDiscordUserId, userId, actorDiscordUserId }. VIPs-only read that returns the Packy username and VIP-tag preview before a staff member confirms a channel link.",

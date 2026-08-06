@@ -1,5 +1,5 @@
 import { relations } from "drizzle-orm/relations";
-import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, pack_build_draft_revisions, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, admin_whop_refund_batches, admin_whop_refund_items, discord_notification_guilds, discord_notification_channel_settings, discord_notification_channel_jobs } from "./schema";
+import { admin_users, admin_giveaway_actions, admin_roles, admin_sessions, admin_notes, admin_audit_events, admin_gift_card_actions, admin_voucher_actions, expenses, recurring_expenses, admin_shifts, admin_shift_assignments, salary_employees, salary_payouts, excluded_users, employee_workspaces, employee_board_placements, employee_managers, employee_manager_workspaces, salary_payments, admin_user_tags, admin_excluded_user_balance_v2, roadmap_items, roadmap_detail_fields, roadmap_links, roadmap_linear_links, admin_passkeys, admin_withdrawal_unlocks, creator_reward_programs, creator_reward_program_windows, creator_reward_claims, chat_raffle_rounds, chat_raffle_prizes, chat_raffle_entries, chat_raffle_adjustments, staff_profiles, staff_point_events, staff_notifications, staff_notification_channels, staff_notification_prefs, staff_quizzes, staff_quiz_questions, staff_quiz_options, staff_quiz_attempts, staff_quiz_answers, antifraud_reviews, antifraud_review_notes, creator_reward_offer_windows, antifraud_signals, pack_creation_requests, pack_build_draft_revisions, discord_notification_events, discord_notification_channels, discord_notification_routes, discord_notification_jobs, admin_whop_refund_batches, admin_whop_refund_items, discord_notification_guilds, discord_notification_channel_settings, discord_notification_channel_jobs, discord_creator_setups, creator_agreement_documents, creator_agreement_lines, creator_deal_approval_requests, creator_deal_approval_events } from "./schema";
 
 export const admin_giveaway_actionsRelations = relations(admin_giveaway_actions, ({one}) => ({
 	admin_user: one(admin_users, {
@@ -257,6 +257,37 @@ export const creator_reward_programsRelations = relations(creator_reward_program
 	creator_reward_program_windows: many(creator_reward_program_windows),
 	creator_reward_claims: many(creator_reward_claims),
 	creator_reward_offer_windows: many(creator_reward_offer_windows),
+}));
+
+export const creator_agreement_documentsRelations = relations(creator_agreement_documents, ({many}) => ({
+	lines: many(creator_agreement_lines),
+	approval_requests: many(creator_deal_approval_requests),
+}));
+
+export const creator_agreement_linesRelations = relations(creator_agreement_lines, ({one}) => ({
+	document: one(creator_agreement_documents, {
+		fields: [creator_agreement_lines.document_id],
+		references: [creator_agreement_documents.id],
+	}),
+}));
+
+export const creator_deal_approval_requestsRelations = relations(creator_deal_approval_requests, ({one, many}) => ({
+	setup: one(discord_creator_setups, {
+		fields: [creator_deal_approval_requests.discord_setup_id],
+		references: [discord_creator_setups.id],
+	}),
+	agreement: one(creator_agreement_documents, {
+		fields: [creator_deal_approval_requests.agreement_document_id],
+		references: [creator_agreement_documents.id],
+	}),
+	events: many(creator_deal_approval_events),
+}));
+
+export const creator_deal_approval_eventsRelations = relations(creator_deal_approval_events, ({one}) => ({
+	request: one(creator_deal_approval_requests, {
+		fields: [creator_deal_approval_events.request_id],
+		references: [creator_deal_approval_requests.id],
+	}),
 }));
 
 export const creator_reward_claimsRelations = relations(creator_reward_claims, ({one}) => ({

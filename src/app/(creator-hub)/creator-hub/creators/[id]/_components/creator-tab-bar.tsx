@@ -4,6 +4,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useTransition } from "react";
 import {
   BarChart3,
+  Crown,
   IdCard,
   ShieldAlert,
   TrendingUp,
@@ -53,6 +54,7 @@ const NAV_TABS = [
   "creator",
   "sessions",
   "risk",
+  "rewards",
   "alts",
 ] as const;
 
@@ -69,6 +71,7 @@ const TABS: CreatorTab[] = [
   { key: "creator", label: "Creator", icon: IdCard },
   { key: "sessions", label: "Sessions", icon: BarChart3 },
   { key: "risk", label: "Risk", icon: ShieldAlert },
+  { key: "rewards", label: "Rewards", icon: Crown },
   { key: "alts", label: "Alt Accounts", icon: Users },
 ];
 

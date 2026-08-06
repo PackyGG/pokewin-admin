@@ -6,6 +6,7 @@ import {
   Crown,
   Gift,
   LayoutDashboard,
+  ScrollText,
   Megaphone,
   Users,
   Trophy,
@@ -80,6 +81,7 @@ const HUB_NAV_GROUPS: HubNavGroup[] = [
     label: "Overview",
     items: [
       { label: "Dashboard", href: "/creator-hub", icon: LayoutDashboard },
+      { label: "Terms", href: "/creator-hub/tos", icon: ScrollText },
     ],
   },
   {

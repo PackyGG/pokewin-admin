@@ -17,6 +17,7 @@ import { SessionsTab } from "./_components/sessions-tab";
 import { RiskTab } from "./_components/risk-tab";
 import { CreatorTabSkeleton } from "./_components/creator-tab-skeleton";
 import { AltAccountsTab } from "./_components/alt-accounts-tab";
+import { CreatorRewardsTab } from "./_components/rewards-tab";
 
 export const metadata = { title: "Creator · Creator Hub" };
 
@@ -34,6 +35,7 @@ const NAV_TABS = [
   "creator",
   "sessions",
   "risk",
+  "rewards",
   "alts",
 ] as const;
 type NavTab = (typeof NAV_TABS)[number];
@@ -156,6 +158,12 @@ export default async function CreatorHubCreatorDetailPage({
         )}
         {tab === "sessions" && <SessionsTab userId={id} page={sessionsPage} />}
         {tab === "risk" && <RiskTab userId={id} />}
+        {tab === "rewards" && (
+          <CreatorRewardsTab
+            userId={id}
+            canViewProtectedActors={canViewProtectedAuditActivity(session)}
+          />
+        )}
         {tab === "alts" && <AltAccountsTab userId={id} />}
       </Suspense>
     </div>

@@ -241,6 +241,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "leaderboards",
       "tips-sponsors",
       "rewards",
+      "tos",
       "socials-review",
       "profitability",
       "profitable-algo",

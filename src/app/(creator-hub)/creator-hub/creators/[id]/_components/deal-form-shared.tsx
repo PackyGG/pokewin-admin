@@ -4,7 +4,7 @@ import { z } from "zod";
 
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
+import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 
@@ -21,10 +21,13 @@ import type { CreatorDealResponse } from "@/lib/backend-api";
 export type DealFormState = {
   week_start_utc: string;
   week_end_utc: string;
+  duration_preset: "7" | "14" | "21" | "28" | "custom";
+  duration_days: string;
   fills_allowed: string;
   per_fill_amount_usd: string;
   conversion_rate_pct: string;
   total_withdraw_cap_usd: string;
+  withdraw_cap_mode: "" | "limited" | "unlimited";
   cooldown_minutes: string;
   max_tip_per_stream_usd: string;
   max_tip_per_user_usd: string;
@@ -38,6 +41,12 @@ export const dealFormSchema = z
   .object({
     week_start_utc: z.string().min(1, "Week start is required"),
     week_end_utc: z.string().min(1, "Week end is required"),
+    duration_preset: z.enum(["7", "14", "21", "28", "custom"]),
+    duration_days: z.coerce
+      .number()
+      .int("Duration must be a whole number of days")
+      .positive("Duration must be at least one day")
+      .max(3650, "Duration cannot exceed 3650 days"),
     fills_allowed: z.coerce
       .number()
       .int("Fills allowed must be a whole number")
@@ -50,6 +59,7 @@ export const dealFormSchema = z
       .min(0, "Conversion rate must be at least 0%")
       .max(100, "Conversion rate must be at most 100%"),
     total_withdraw_cap_usd: z.string(),
+    withdraw_cap_mode: z.enum(["", "limited", "unlimited"]),
     cooldown_minutes: z.coerce
       .number()
       .int("Cooldown must be a whole number")
@@ -95,13 +105,40 @@ export const dealFormSchema = z
     }
 
     const capTrim = data.total_withdraw_cap_usd.trim();
-    if (capTrim !== "") {
+    if (data.withdraw_cap_mode === "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter a withdrawal cap or choose No limit",
+        path: ["withdraw_cap_mode"],
+      });
+    }
+    if (/^\d{4}-\d{2}-\d{2}$/.test(data.week_start_utc)) {
+      const expectedEnd = endDateForDuration(
+        data.week_start_utc,
+        data.duration_days,
+      );
+      if (expectedEnd && weekEnd !== expectedEnd) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "Deal end must match the selected duration",
+          path: ["duration_days"],
+        });
+      }
+    }
+    if (data.withdraw_cap_mode === "limited" && capTrim === "") {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Enter the withdrawal cap amount",
+        path: ["total_withdraw_cap_usd"],
+      });
+    }
+    if (data.withdraw_cap_mode === "limited" && capTrim !== "") {
       const cap = Number(capTrim);
       if (!Number.isFinite(cap) || cap < 0) {
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message:
-            "Total withdraw cap must be 0 or greater (or empty for no cap)",
+            "Total withdraw cap must be 0 or greater",
           path: ["total_withdraw_cap_usd"],
         });
       }
@@ -122,10 +159,26 @@ export type DealFormParsed = z.infer<typeof dealFormSchema>;
 /** `datetime-local` value (UTC semantics) → ISO string, or null if invalid. */
 export function parseUtcInput(value: string): string | null {
   if (!value) return null;
-  const withSeconds = value.length === 16 ? `${value}:00` : value;
-  const iso = `${withSeconds}Z`;
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const isLocalDateTime = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d{1,3})?)?$/.test(value);
+  const normalized = isDateOnly ? `${value}T00:00:00` : value;
+  const withSeconds = normalized.length === 16 ? `${normalized}:00` : normalized;
+  const iso = isDateOnly || isLocalDateTime ? `${withSeconds}Z` : withSeconds;
   const parsed = new Date(iso);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+/** A date input value rendered in UTC, never the browser's local timezone. */
+export function toUtcDateInputValue(value: Date | string): string {
+  const d = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
+}
+
+/** Inclusive start plus N complete UTC days; the returned end is exclusive. */
+export function endDateForDuration(startDate: string, days: number): string {
+  const start = parseUtcInput(startDate);
+  if (!start || !Number.isInteger(days) || days < 1) return "";
+  return new Date(new Date(start).getTime() + days * 86_400_000).toISOString();
 }
 
 /** Date/ISO → the UTC-rendered `datetime-local` input value. */
@@ -136,15 +189,15 @@ export function toUtcLocalInputValue(value: Date | string): string {
   return `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}T${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}`;
 }
 
-function nowPlusSevenDaysUtc(): { start: Date; end: Date } {
+function todayPlusSevenDaysUtc(): { start: Date; end: Date } {
   const now = new Date();
   const start = new Date(
     Date.UTC(
       now.getUTCFullYear(),
       now.getUTCMonth(),
       now.getUTCDate(),
-      now.getUTCHours(),
-      now.getUTCMinutes(),
+      0,
+      0,
     ),
   );
   const end = new Date(start.getTime() + 7 * 86400_000);
@@ -153,15 +206,18 @@ function nowPlusSevenDaysUtc(): { start: Date; end: Date } {
 
 /** New-deal defaults: now → +7d, house-standard terms. */
 export function buildCreateDefaults(): DealFormState {
-  const { start, end } = nowPlusSevenDaysUtc();
+  const { start, end } = todayPlusSevenDaysUtc();
   return {
-    week_start_utc: toUtcLocalInputValue(start),
-    week_end_utc: toUtcLocalInputValue(end),
+    week_start_utc: toUtcDateInputValue(start),
+    week_end_utc: end.toISOString(),
+    duration_preset: "7",
+    duration_days: "7",
     fills_allowed: "7",
     per_fill_amount_usd: "100",
     conversion_rate_pct: "50",
     total_withdraw_cap_usd: "",
-    cooldown_minutes: "240",
+    withdraw_cap_mode: "",
+    cooldown_minutes: "300",
     max_tip_per_stream_usd: "100",
     max_tip_per_user_usd: "20",
     max_sponsored_battle_usd: "50",
@@ -173,13 +229,27 @@ export function buildCreateDefaults(): DealFormState {
 
 /** Edit-deal defaults: pre-filled from the live deal terms. */
 export function buildDefaultsFromDeal(deal: CreatorDealResponse): DealFormState {
+  const durationDays = Math.max(
+    1,
+    Math.round(
+      (new Date(deal.week_end_utc).getTime() -
+        new Date(deal.week_start_utc).getTime()) /
+        86_400_000,
+    ),
+  );
   return {
     week_start_utc: toUtcLocalInputValue(deal.week_start_utc),
     week_end_utc: toUtcLocalInputValue(deal.week_end_utc),
+    duration_preset: [7, 14, 21, 28].includes(durationDays)
+      ? (String(durationDays) as "7" | "14" | "21" | "28")
+      : "custom",
+    duration_days: String(durationDays),
     fills_allowed: String(deal.fills_allowed),
     per_fill_amount_usd: deal.per_fill_amount_usd,
     conversion_rate_pct: String(deal.conversion_rate_bps / 100),
     total_withdraw_cap_usd: deal.total_withdraw_cap_usd ?? "",
+    withdraw_cap_mode:
+      deal.total_withdraw_cap_usd == null ? "unlimited" : "limited",
     cooldown_minutes: String(deal.cooldown_minutes),
     max_tip_per_stream_usd: deal.max_tip_per_stream_usd,
     max_tip_per_user_usd: deal.max_tip_per_user_usd,
@@ -210,7 +280,10 @@ export type DealPayload = {
  * Parsed form → server-action payload (create + update share the shape).
  * Returns null with no side effects when either date fails to re-parse.
  */
-export function toDealPayload(parsed: DealFormParsed): DealPayload | null {
+export function toDealPayload(
+  parsed: DealFormParsed,
+  options: { forceLeaderboardsOff?: boolean } = {},
+): DealPayload | null {
   const weekStart = parseUtcInput(parsed.week_start_utc);
   const weekEnd = parseUtcInput(parsed.week_end_utc);
   if (!weekStart || !weekEnd) return null;
@@ -222,14 +295,19 @@ export function toDealPayload(parsed: DealFormParsed): DealPayload | null {
     fills_allowed: parsed.fills_allowed,
     per_fill_amount_usd: parsed.per_fill_amount_usd,
     conversion_rate_bps: Math.round(parsed.conversion_rate_pct * 100),
-    total_withdraw_cap_usd: capTrim === "" ? null : Number(capTrim),
+    total_withdraw_cap_usd:
+      parsed.withdraw_cap_mode === "unlimited" ? null : Number(capTrim),
     cooldown_minutes: parsed.cooldown_minutes,
     max_tip_per_stream_usd: parsed.max_tip_per_stream_usd,
     max_tip_per_user_usd: parsed.max_tip_per_user_usd,
     max_sponsored_battle_usd: parsed.max_sponsored_battle_usd,
     max_sponsorship_per_stream_usd: parsed.max_sponsorship_per_stream_usd,
-    allow_site_leaderboards: parsed.allow_site_leaderboards,
-    allow_code_leaderboards: parsed.allow_code_leaderboards,
+    allow_site_leaderboards: options.forceLeaderboardsOff
+      ? false
+      : parsed.allow_site_leaderboards,
+    allow_code_leaderboards: options.forceLeaderboardsOff
+      ? false
+      : parsed.allow_code_leaderboards,
   };
 }
 
@@ -287,34 +365,6 @@ export function DealFormField({
   );
 }
 
-export function DealToggleRow({
-  label,
-  description,
-  checked,
-  onCheckedChange,
-  disabled,
-}: {
-  label: string;
-  description: string;
-  checked: boolean;
-  onCheckedChange: (checked: boolean) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 rounded-md border px-3 py-2.5">
-      <div className="space-y-0.5">
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-xs text-muted-foreground">{description}</p>
-      </div>
-      <Switch
-        checked={checked}
-        onCheckedChange={onCheckedChange}
-        disabled={disabled}
-      />
-    </div>
-  );
-}
-
 // ── Shared field grid ────────────────────────────────────────────────
 
 /**
@@ -327,6 +377,7 @@ export function DealFormFields({
   update,
   pending,
   idPrefix,
+  mode = "edit",
 }: {
   form: DealFormState;
   update: <K extends keyof DealFormState>(
@@ -335,23 +386,44 @@ export function DealFormFields({
   ) => void;
   pending: boolean;
   idPrefix: string;
+  mode?: "create" | "edit";
 }) {
   const id = (name: string) => `${idPrefix}_${name}`;
+  function setCreateDuration(
+    days: number,
+    preset: DealFormState["duration_preset"],
+  ) {
+    update("duration_preset", preset);
+    update("duration_days", String(days));
+    update("week_end_utc", endDateForDuration(form.week_start_utc, days));
+  }
   return (
     <>
-      <DealFormSection title="Week window (UTC)">
-        <div className="grid gap-3 sm:grid-cols-2">
+      <DealFormSection title="Deal window (UTC)">
+        <div className="space-y-3">
           <DealFormField label="Starts" htmlFor={id("week_start")}>
             <Input
               id={id("week_start")}
-              type="datetime-local"
+              type={mode === "create" ? "date" : "datetime-local"}
               value={form.week_start_utc}
-              onChange={(e) => update("week_start_utc", e.target.value)}
+              onChange={(e) => {
+                update("week_start_utc", e.target.value);
+                if (mode === "create") {
+                  update(
+                    "week_end_utc",
+                    endDateForDuration(
+                      e.target.value,
+                      Number(form.duration_days),
+                    ),
+                  );
+                }
+              }}
               required
               disabled={pending}
             />
           </DealFormField>
-          <DealFormField label="Ends" htmlFor={id("week_end")}>
+          {mode === "edit" ? (
+            <DealFormField label="Ends" htmlFor={id("week_end")}>
             <Input
               id={id("week_end")}
               type="datetime-local"
@@ -360,7 +432,75 @@ export function DealFormFields({
               required
               disabled={pending}
             />
-          </DealFormField>
+            </DealFormField>
+          ) : (
+            <DealFormField label="Length" htmlFor={id("duration_days")}>
+              <div
+                className="flex flex-wrap gap-2"
+                role="group"
+                aria-label="Deal length"
+              >
+                {[7, 14, 21, 28].map((days) => (
+                  <Button
+                    key={days}
+                    type="button"
+                    size="sm"
+                    variant={
+                      form.duration_preset === String(days)
+                        ? "default"
+                        : "outline"
+                    }
+                    onClick={() =>
+                      setCreateDuration(
+                        days,
+                        String(days) as DealFormState["duration_preset"],
+                      )
+                    }
+                    disabled={pending}
+                  >
+                    {days / 7} {days === 7 ? "week" : "weeks"}
+                  </Button>
+                ))}
+                <Button
+                  type="button"
+                  size="sm"
+                  variant={
+                    form.duration_preset === "custom" ? "default" : "outline"
+                  }
+                  onClick={() => update("duration_preset", "custom")}
+                  disabled={pending}
+                >
+                  Custom
+                </Button>
+              </div>
+              {form.duration_preset === "custom" && (
+                <Input
+                  id={id("duration_days")}
+                  className="mt-2"
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={form.duration_days}
+                  onChange={(e) => {
+                    update("duration_days", e.target.value);
+                    update(
+                      "week_end_utc",
+                      endDateForDuration(
+                        form.week_start_utc,
+                        Number(e.target.value),
+                      ),
+                    );
+                  }}
+                  required
+                  disabled={pending}
+                />
+              )}
+              <p className="mt-1 text-[11px] text-muted-foreground">
+                Starts at 00:00 UTC and ends after {form.duration_days || "—"}
+                full days.
+              </p>
+            </DealFormField>
+          )}
         </div>
       </DealFormSection>
 
@@ -443,20 +583,39 @@ export function DealFormFields({
 
       <DealFormSection
         title="Total withdraw cap"
-        description="Lifetime ceiling on USD paid out across this deal. Leave empty for uncapped."
+        description="Choose a lifetime USD ceiling or explicitly select No limit."
       >
-        <DealFormField label="Cap" htmlFor={id("cap")} suffix="USD">
-          <Input
-            id={id("cap")}
-            type="number"
-            min={0}
-            step="0.01"
-            placeholder="Uncapped"
-            value={form.total_withdraw_cap_usd}
-            onChange={(e) => update("total_withdraw_cap_usd", e.target.value)}
+        <div className="grid gap-2 sm:grid-cols-[1fr_auto]">
+          <DealFormField label="Cap" htmlFor={id("cap")} suffix="USD">
+            <Input
+              id={id("cap")}
+              type="number"
+              min={0}
+              step="0.01"
+              placeholder="Enter cap"
+              value={form.total_withdraw_cap_usd}
+              onChange={(e) => {
+                update("total_withdraw_cap_usd", e.target.value);
+                update("withdraw_cap_mode", "limited");
+              }}
+              disabled={pending || form.withdraw_cap_mode === "unlimited"}
+            />
+          </DealFormField>
+          <Button
+            type="button"
+            variant={
+              form.withdraw_cap_mode === "unlimited" ? "default" : "outline"
+            }
+            className="self-end"
+            onClick={() => {
+              update("withdraw_cap_mode", "unlimited");
+              update("total_withdraw_cap_usd", "");
+            }}
             disabled={pending}
-          />
-        </DealFormField>
+          >
+            No limit
+          </Button>
+        </div>
       </DealFormSection>
 
       <Separator />
@@ -541,26 +700,6 @@ export function DealFormFields({
         </div>
       </DealFormSection>
 
-      <Separator />
-
-      <DealFormSection title="Leaderboards">
-        <div className="space-y-3">
-          <DealToggleRow
-            label="Include in packy.gg official races"
-            description="Keep OFF — paid-deal activity should not compete with organic users on the official race."
-            checked={form.allow_site_leaderboards}
-            onCheckedChange={(v) => update("allow_site_leaderboards", v)}
-            disabled={pending}
-          />
-          <DealToggleRow
-            label="Creator-run leaderboards"
-            description="Lets this creator create and run their own leaderboards for their community."
-            checked={form.allow_code_leaderboards}
-            onCheckedChange={(v) => update("allow_code_leaderboards", v)}
-            disabled={pending}
-          />
-        </div>
-      </DealFormSection>
     </>
   );
 }

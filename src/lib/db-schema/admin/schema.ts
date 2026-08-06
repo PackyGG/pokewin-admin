@@ -1093,12 +1093,14 @@ export const creator_reward_programs = pgTable("creator_reward_programs", {
 	min_deposit_usd: numeric({ precision: 20, scale:  2 }),
 	archived_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	archived_by: uuid(),
+	source_approval_request_id: uuid(),
 }, (table) => [
 	index("creator_reward_programs_creator_idx").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops")),
 	index("creator_reward_programs_is_active_idx").using("btree", table.is_active.asc().nullsLast().op("bool_ops")),
 	index("creator_reward_programs_live_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(archived_at IS NULL)`),
 	check("creator_reward_programs_archived_not_active", sql`(archived_at IS NULL) OR (is_active = false)`),
 	check("creator_reward_programs_end_after_start", sql`(ends_at IS NULL) OR (ends_at > accrual_start_at)`),
+	uniqueIndex("creator_reward_programs_source_approval_unique").using("btree", table.source_approval_request_id.asc().nullsLast().op("uuid_ops")).where(sql`(source_approval_request_id IS NOT NULL)`),
 ]);
 
 export const creator_reward_program_windows = pgTable("creator_reward_program_windows", {
@@ -1766,6 +1768,100 @@ export const discord_creator_setups = pgTable("discord_creator_setups", {
 	check("discord_creator_setups_link_interaction_id_check", sql`(link_interaction_id IS NULL) OR (link_interaction_id ~ '^[0-9]{15,21}$'::text)`),
 	check("discord_creator_setups_link_shape_check", sql`((creator_user_id IS NULL) AND (linked_by_discord_user_id IS NULL) AND (link_interaction_id IS NULL) AND (linked_at IS NULL)) OR ((status = 'active'::text) AND (creator_user_id IS NOT NULL) AND (linked_by_discord_user_id IS NOT NULL) AND (link_interaction_id IS NOT NULL) AND (linked_at IS NOT NULL))`),
 	check("discord_creator_setups_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text])`),
+]);
+
+export const creator_agreement_documents = pgTable("creator_agreement_documents", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	version: integer().notNull(),
+	checksum: text().notNull(),
+	created_by: uuid(),
+	published_by: uuid(),
+	published_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("creator_agreement_documents_version_key").on(table.version),
+	index("creator_agreement_documents_published_idx").on(table.published_at.desc(), table.version.desc()),
+	foreignKey({ columns: [table.created_by], foreignColumns: [admin_users.id], name: "creator_agreement_documents_created_by_fkey" }).onDelete("set null"),
+	foreignKey({ columns: [table.published_by], foreignColumns: [admin_users.id], name: "creator_agreement_documents_published_by_fkey" }).onDelete("set null"),
+	check("creator_agreement_documents_version_check", sql`version > 0`),
+	check("creator_agreement_documents_checksum_check", sql`checksum ~ '^[a-f0-9]{64}$'::text`),
+]);
+
+export const creator_agreement_lines = pgTable("creator_agreement_lines", {
+	document_id: uuid().notNull(),
+	line_number: integer().notNull(),
+	text: text().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.document_id, table.line_number] }),
+	foreignKey({ columns: [table.document_id], foreignColumns: [creator_agreement_documents.id], name: "creator_agreement_lines_document_id_fkey" }).onDelete("restrict"),
+	check("creator_agreement_lines_number_check", sql`line_number > 0`),
+	check("creator_agreement_lines_text_check", sql`length(btrim(text)) BETWEEN 1 AND 1000`),
+]);
+
+export const creator_deal_approval_requests = pgTable("creator_deal_approval_requests", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	creator_user_id: text().notNull(),
+	discord_setup_id: uuid().notNull(),
+	creator_discord_user_id: text().notNull(),
+	guild_id: text().notNull(),
+	category_id: text().notNull(),
+	chat_channel_id: text().notNull(),
+	deal_payload: jsonb().notNull(),
+	reward_payload: jsonb(),
+	agreement_document_id: uuid().notNull(),
+	agreement_version: integer().notNull(),
+	agreement_lines: jsonb().notNull(),
+	agreement_checksum: text().notNull(),
+	status: text().default('pending_delivery').notNull(),
+	submitted_by: uuid().notNull(),
+	summary_message_id: text(),
+	delivery_attempt_count: integer().default(0).notNull(),
+	delivery_max_attempts: integer().default(10).notNull(),
+	delivery_available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	delivery_lease_token: uuid(),
+	delivery_lease_owner: text(),
+	delivery_leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	decision_interaction_id: text(),
+	decision_actor_discord_user_id: text(),
+	continued_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	approved_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	declined_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	backend_deal_id: text(),
+	backend_create_attempted_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	reward_program_id: uuid(),
+	provisioning_attempt_count: integer().default(0).notNull(),
+	provisioning_lease_token: uuid(),
+	provisioning_leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	last_error_step: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	foreignKey({ columns: [table.discord_setup_id], foreignColumns: [discord_creator_setups.id], name: "creator_deal_approval_requests_setup_fkey" }).onDelete("restrict"),
+	foreignKey({ columns: [table.agreement_document_id], foreignColumns: [creator_agreement_documents.id], name: "creator_deal_approval_requests_agreement_fkey" }).onDelete("restrict"),
+	foreignKey({ columns: [table.submitted_by], foreignColumns: [admin_users.id], name: "creator_deal_approval_requests_submitted_by_fkey" }).onDelete("restrict"),
+	uniqueIndex("creator_deal_approval_one_unresolved_creator").on(table.creator_user_id).where(sql`status IN ('pending_delivery','awaiting_continue','awaiting_decision','approved_provisioning','provisioning_failed','delivery_failed')`),
+	index("creator_deal_approval_creator_history_idx").on(table.creator_user_id, table.created_at.desc(), table.id.desc()),
+	index("creator_deal_approval_delivery_claim_idx").on(table.guild_id, table.delivery_available_at, table.created_at).where(sql`status = 'pending_delivery'`),
+]);
+
+export const creator_deal_approval_events = pgTable("creator_deal_approval_events", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	request_id: uuid().notNull(),
+	event_type: text().notNull(),
+	actor_kind: text().notNull(),
+	actor_admin_user_id: uuid(),
+	actor_discord_user_id: text(),
+	interaction_id: text(),
+	metadata: jsonb(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({ columns: [table.request_id], foreignColumns: [creator_deal_approval_requests.id], name: "creator_deal_approval_events_request_fkey" }).onDelete("restrict"),
+	foreignKey({ columns: [table.actor_admin_user_id], foreignColumns: [admin_users.id], name: "creator_deal_approval_events_admin_actor_fkey" }).onDelete("set null"),
+	index("creator_deal_approval_events_request_idx").on(table.request_id, table.created_at, table.id),
+	uniqueIndex("creator_deal_approval_events_interaction_unique").on(table.interaction_id).where(sql`interaction_id IS NOT NULL`),
 ]);
 
 export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
