@@ -18,10 +18,6 @@ const transactionQuery = readFileSync(
   "src/lib/queries/users-transactions.ts",
   "utf8",
 );
-const transactionCache = readFileSync(
-  "src/lib/queries/users-detail-cache.ts",
-  "utf8",
-);
 const userPage = readFileSync(
   "src/app/(admin)/users/[id]/page.tsx",
   "utf8",
@@ -71,7 +67,10 @@ test("Gaming shows one settled outcome row per Keno game", () => {
   assert.match(transactionQuery, /kg\.created_at >= tx\.created_at - INTERVAL '1 day'/);
   assert.match(transactionQuery, /kg\.bet_ledger_tx_id = tx\.id/);
   assert.match(transactionQuery, /kg\.payout_ledger_tx_id = tx\.id/);
-  assert.match(transactionCache, /users-detail-gaming-tx-v6/);
+  assert.match(
+    userPage,
+    /getUserTransactions\(id, 1, 10, \{ types: GAMING_TYPES \}\)/,
+  );
   assert.doesNotMatch(transactions, /label: "User won"/);
   assert.doesNotMatch(transactions, /label: "User lost"/);
   assert.doesNotMatch(transactions, /gamingOutcomeRowClass/);

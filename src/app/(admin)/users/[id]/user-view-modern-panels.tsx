@@ -318,13 +318,11 @@ export function ModernBalancePanel({
   // re-fetch. useTransition wraps the call so the icon can show a
   // pending spinner without blocking the rest of the UI.
   //
-  // CACHE-BUST FIRST: the balance reads are unstable_cache'd (25s, tagged
-  // both "users-detail" AND `users-detail-${userId}`), and the route segment
-  // itself is also cached. A bare router.refresh() would replay both. We
-  // invalidate the per-user tag AND the route segment server-side first, so
-  // router.refresh() re-queries Postgres LIVE — the click is always fresh.
-  // Per-user (not global) so a refresh on user A doesn't nuke unrelated
-  // users' warmed entries.
+  // CACHE-BUST FIRST: the surrounding user-detail aggregate remains cached,
+  // but page.tsx overlays this box with a narrow, uncached primary-DB read.
+  // Invalidating the per-user tag keeps the rest of the profile coherent;
+  // router.refresh() then obtains authoritative balance values even while the
+  // read mirror is catching up.
   const router = useRouter();
   const [refreshing, startRefresh] = useTransition();
   const handleRefresh = () => {

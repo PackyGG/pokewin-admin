@@ -66,14 +66,6 @@ function userDetailTags(userId: string): string[] {
 
 const REVALIDATE_SECONDS = 25;
 
-// The Gaming transaction feed gets a SHORTER TTL than the detail/balances
-// aggregate: it's the feed an operator watches update during an
-// investigation, so it should be the freshest of the cached per-user reads.
-// The underlying query is now index-served (sub-ms — idx_ledger_tx_user_created_at),
-// so this cache exists only to skip the repeated enrichment fan-out, not for
-// raw speed; 15s keeps it well inside the 60s AutoRefresh tick.
-const GAMING_TX_REVALIDATE_SECONDS = 15;
-
 // The Finances / Overview feed (Deposits & Withdrawals) is cached too, but it
 // carries owner-gated admin_balance_adjustment rows, so its cache key includes
 // the resolved viewer-owner flag (see getUserFinancialTransactionsCached). A
@@ -160,89 +152,6 @@ export async function getUserPnlBreakdownCached(
   return cachedUserPnlBreakdown(userId);
 }
 
-
-
-/**
- * Cross-request cache for the Gaming tab's FIRST-PAGE transaction read —
- * the heaviest per-user feed on /users/[id].
- *
- * Why this is safe to cache with a VIEWER-AGNOSTIC key
- * ────────────────────────────────────────────────────
- * `getUserTransactions` runs an EXPENSIVE fan-out per page: the base
- * `ledger_transactions` listing PLUS battle / pack / inventory / voucher /
- * upgrader enrichment lookups. For the Gaming type set
- * (pack_opening / battle_bet / battle_sponsorship / battle_refund /
- * upgrader_bet / upgrader_payout) the result is VIEWER-INDEPENDENT: none of
- * those types is `admin_balance_adjustment`, so the owner-only adjustment-
- * visibility gate inside `getUserTransactions` cannot change a single row.
- * That makes a viewer-agnostic cache key (userId + page + perPage + types)
- * correct here. The Finances feed needs an EXTRA key dimension instead (the
- * resolved owner flag) because its type set includes admin_balance_adjustment
- * — see getUserFinancialTransactionsCached below.
- *
- * Cache-safety of the cookie-scoped reads (same as the detail caches above):
- * the callback runs OUTSIDE the request's dynamic scope, so both the MAIN
- * client resolver (which falls back to prod) and `getUserTransactions`'
- * `verifySession()` (caught → fail-closed non-owner, a no-op for gaming
- * types) behave deterministically. We therefore cache ONLY on prod and run
- * the query directly for a dev-toggled admin.
- *
- * This memoizes the whole fan-out for `GAMING_TX_REVALIDATE_SECONDS` (15s), so the 60s
- * AutoRefresh tick, the segment "Try again" retry, and a revisit within the
- * window all resolve from the warmed entry instead of re-paying the scan —
- * bridging the gap until the recommended `(user_id, created_at DESC)` index
- * (prisma/recommended-indexes.sql #19) is applied. Pagination / filtering /
- * load-more still go through the uncached `fetchUserTransactions` action, so
- * only the streamed first page is cached. The `users-detail` tag means an
- * admin balance wipe revalidates it alongside the detail aggregate.
- */
-// Keypart bumped across deploys to FORCE-DISCARD stale cached entries when the
-// underlying `getUserTransactions` output shape/values change — same
-// force-invalidate-on-code-change pattern as cachedUserPnlBreakdown above. The
-// Vercel data cache persists `unstable_cache` entries ACROSS deployments under
-// the same key, so a value-changing fix needs a fresh namespace; otherwise the
-// pre-fix entry keeps getting served (stale-while-revalidate) until something
-// else evicts it — exactly the bug that hid commit a87aae37 from live.
-//   • v1 → v2: commit a87aae37 (2026-06-27) — `battleWinningsByGsid` now folds
-//     in the paired `battle_excess_to_voucher` voucher leg (Voucher == Card),
-//     so a winning battle bet's `battleWinnings` jumped from the cards-only
-//     value to cards+voucher (e.g. $144 → $327.03). Pre-fix v1 entries kept
-//     rendering the wrong P&L (e.g. +$9.69 emerald instead of −$173.34 rose);
-//     bump so the fixed code path's values replace any stale v1 entries
-//     immediately instead of stale-while-revalidate.
-function cachedUserGamingTransactions(
-  userId: string,
-  page: number,
-  perPage: number,
-  types: string[],
-) {
-  return unstable_cache(
-    () => getUserTransactions(userId, page, perPage, { types }),
-    // v6 clears the affected Overview/Gaming preview namespace after 57P05
-    // mirror termination blocked its cache revalidation in production.
-    ["users-detail-gaming-tx-v6", userId, String(page), String(perPage), types.join(",")],
-    { revalidate: GAMING_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
-  )();
-}
-
-/**
- * Cached Gaming first-page transactions on prod; direct (uncached) on a
- * dev-toggled admin so they see live dev data — see the doc above and the
- * module-level DB-env note.
- */
-export async function getUserGamingTransactionsCached(
-  userId: string,
-  page: number,
-  perPage: number,
-  types: string[],
-): Promise<Awaited<ReturnType<typeof getUserTransactions>>> {
-  const env = await readDbEnv();
-  if (env !== "prod") {
-    return getUserTransactions(userId, page, perPage, { types });
-  }
-  return cachedUserGamingTransactions(userId, page, perPage, types);
-}
-
 /**
  * Cross-request cache for the Finances / Overview feed's FIRST-PAGE read
  * (the Deposits & Withdrawals tab + the Overview financial preview).
@@ -261,7 +170,7 @@ export async function getUserGamingTransactionsCached(
  * adjustment row, and the owner's entry always includes them. Without the gate
  * needing a live session read, the fan-out is now cacheable.
  *
- * Same prod-only rule and `users-detail` revalidation tag as the gaming cache.
+ * Same prod-only rule and `users-detail` revalidation tag as the detail cache.
  */
 function cachedUserFinancialTransactions(
   userId: string,
