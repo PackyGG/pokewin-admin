@@ -127,6 +127,11 @@ const GUIDE_NAV: NavItem[] = [
     href: "/antifraud/guide/sign-up",
     icon: BookOpen,
   },
+  {
+    label: "Fiat Pre-Payment Check",
+    href: "/antifraud/guide/fiat-pre-payment",
+    icon: BookOpen,
+  },
 ];
 
 const ADMIN_NAV: NavItem[] = [
