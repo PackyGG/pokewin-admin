@@ -5,7 +5,10 @@ import { sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
 import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
@@ -495,40 +498,38 @@ async function recoverRefundedAccountsForBatch(
     try {
       const row = await recoverRefundedUser(db, target, batchId, adminUserId);
       recovered.push(row);
-      try {
-        await createAdminAuditEvent({
-          adminUserId,
-          eventType: "whop_refund_account_recovered",
-          targetUserId: row.userId,
-          metadata: {
-            batch_id: batchId,
-            newly_banned: row.newlyBanned,
-            refunded_credit_usd: row.refundedCreditUsd,
-            recovered_balance_usd: row.recoveredBalanceUsd,
-            recovered_inventory_usd: row.recoveredInventoryUsd,
-            recovered_voucher_usd: row.recoveredVoucherUsd,
-            recovered_total_usd: row.recoveredTotalUsd,
-            remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
-          },
-        });
-      } catch {
-        auditFailures += 1;
-      }
+      // The ban / balance adjustment / voucher-inventory deletion above has
+      // already committed on MAIN — this audit write must not be allowed to
+      // silently vanish, so it goes through the durable retry+fallback path
+      // instead of a bare try/catch-and-count.
+      const auditOutcome = await createAdminAuditEventDurable({
+        adminUserId,
+        eventType: "whop_refund_account_recovered",
+        targetUserId: row.userId,
+        metadata: {
+          batch_id: batchId,
+          newly_banned: row.newlyBanned,
+          refunded_credit_usd: row.refundedCreditUsd,
+          recovered_balance_usd: row.recoveredBalanceUsd,
+          recovered_inventory_usd: row.recoveredInventoryUsd,
+          recovered_voucher_usd: row.recoveredVoucherUsd,
+          recovered_total_usd: row.recoveredTotalUsd,
+          remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
+        },
+      });
+      if (auditOutcome.status === "lost") auditFailures += 1;
     } catch {
       failedUserIds.push(target.userId);
-      try {
-        await createAdminAuditEvent({
-          adminUserId,
-          eventType: "whop_refund_account_recovery_failed",
-          targetUserId: target.userId,
-          metadata: {
-            batch_id: batchId,
-            error_code: "recovery_transaction_failed",
-          },
-        });
-      } catch {
-        auditFailures += 1;
-      }
+      const auditOutcome = await createAdminAuditEventDurable({
+        adminUserId,
+        eventType: "whop_refund_account_recovery_failed",
+        targetUserId: target.userId,
+        metadata: {
+          batch_id: batchId,
+          error_code: "recovery_transaction_failed",
+        },
+      });
+      if (auditOutcome.status === "lost") auditFailures += 1;
     }
   }
 
@@ -561,24 +562,21 @@ async function recoverRefundedAccountsForBatch(
     ),
   };
 
-  try {
-    await createAdminAuditEvent({
-      adminUserId,
-      eventType: "whop_refund_accounts_recovered",
-      metadata: {
-        ...result,
-        failed_user_ids: failedUserIds,
-        users: recovered.map((row) => ({
-          user_id: row.userId,
-          refunded_credit_usd: row.refundedCreditUsd,
-          recovered_usd: row.recoveredTotalUsd,
-          remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
-        })),
-      },
-    });
-  } catch {
-    result.auditFailures += 1;
-  }
+  const summaryOutcome = await createAdminAuditEventDurable({
+    adminUserId,
+    eventType: "whop_refund_accounts_recovered",
+    metadata: {
+      ...result,
+      failed_user_ids: failedUserIds,
+      users: recovered.map((row) => ({
+        user_id: row.userId,
+        refunded_credit_usd: row.refundedCreditUsd,
+        recovered_usd: row.recoveredTotalUsd,
+        remaining_unrecovered_usd: row.remainingUnrecoveredUsd,
+      })),
+    },
+  });
+  if (summaryOutcome.status === "lost") result.auditFailures += 1;
   return result;
 }
 
@@ -740,20 +738,17 @@ async function finalizeBatch(
       batchId,
       adminUserId,
     );
-    try {
-      await createAdminAuditEvent({
-        adminUserId,
-        eventType: "whop_refund_batch_completed",
-        metadata: {
-          batchId,
-          status: completed.status,
-          paymentCount: completed.requested_count,
-          recoveryFailedAccounts: recovery.failedAccounts,
-        },
-      });
-    } catch {
-      recovery.auditFailures += 1;
-    }
+    const completedOutcome = await createAdminAuditEventDurable({
+      adminUserId,
+      eventType: "whop_refund_batch_completed",
+      metadata: {
+        batchId,
+        status: completed.status,
+        paymentCount: completed.requested_count,
+        recoveryFailedAccounts: recovery.failedAccounts,
+      },
+    });
+    if (completedOutcome.status === "lost") recovery.auditFailures += 1;
     return recovery;
   }
   return null;

@@ -214,6 +214,22 @@ export const admin_audit_events = pgTable("admin_audit_events", {
 		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
+export const admin_audit_write_failures = pgTable("admin_audit_write_failures", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	admin_user_id: uuid(),
+	event_type: text().notNull(),
+	target_user_id: text(),
+	ip: text(),
+	metadata: jsonb(),
+	error_message: text(),
+	attempt_count: integer().default(0).notNull(),
+	resolved_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("admin_audit_write_failures_unresolved_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(resolved_at IS NULL)`),
+	check("admin_audit_write_failures_attempt_count_check", sql`attempt_count >= 0`),
+]);
+
 export const admin_gift_card_actions = pgTable("admin_gift_card_actions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	gift_card_id: uuid().notNull(),

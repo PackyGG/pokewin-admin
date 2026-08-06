@@ -169,6 +169,38 @@ test("account recovery is atomic per user and continues after a failure", () => 
   assert.match(refundsPanel, /account recoveries need a retry/);
 });
 
+test("recovery audit events use the durable retry+fallback path, not a bare try/catch counter", () => {
+  assert.match(
+    actions,
+    /import \{\s*createAdminAuditEvent,\s*createAdminAuditEventDurable,\s*\} from "@\/lib\/admin-audit"/,
+  );
+  assert.match(
+    actions,
+    /const auditOutcome = await createAdminAuditEventDurable\(\{\s*adminUserId,\s*eventType: "whop_refund_account_recovered"/,
+  );
+  assert.match(
+    actions,
+    /const auditOutcome = await createAdminAuditEventDurable\(\{\s*adminUserId,\s*eventType: "whop_refund_account_recovery_failed"/,
+  );
+  assert.match(
+    actions,
+    /const summaryOutcome = await createAdminAuditEventDurable\(\{\s*adminUserId,\s*eventType: "whop_refund_accounts_recovered"/,
+  );
+  assert.match(
+    actions,
+    /const completedOutcome = await createAdminAuditEventDurable\(\{\s*adminUserId,\s*eventType: "whop_refund_batch_completed"/,
+  );
+  assert.match(actions, /if \(auditOutcome\.status === "lost"\) auditFailures \+= 1;/);
+  assert.match(
+    actions,
+    /if \(summaryOutcome\.status === "lost"\) result\.auditFailures \+= 1;/,
+  );
+  assert.match(
+    actions,
+    /if \(completedOutcome\.status === "lost"\) recovery\.auditFailures \+= 1;/,
+  );
+});
+
 test("completed-batch recovery is manager-only, step-up gated, and visible", () => {
   const recovery = actions.indexOf(
     "export async function recoverRefundedBatch",
