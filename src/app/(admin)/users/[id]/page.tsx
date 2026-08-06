@@ -11,7 +11,6 @@ import {
 import {
   getUserDetailCached,
   getUserPnlBreakdownCached,
-  getUserGamingTransactionsCached,
   getUserFinancialTransactionsCached,
   resolveUserIdCritical,
 } from "@/lib/queries/users-detail-cache";
@@ -49,6 +48,7 @@ import {
   KpiStripSkeleton,
   TabBarSkeleton,
 } from "@/components/loading-skeletons";
+import { readFreshUserBalances } from "./fresh-balances";
 
 export const metadata = { title: "User Detail" };
 
@@ -415,18 +415,10 @@ async function UserDetailBody({
 
   const gamingTxPromise = wantsGamingTx
     ? safeQuery(
-        // Gaming tab defaults to 25 rows; the Overview tab's compact gaming
-        // preview keeps the smaller 10-row page. Prod-only cached (15s,
-        // viewer-independent — gaming types carry no owner-gated adjustment
-        // rows) so the 60s AutoRefresh tick + retries + revisits skip the
-        // heavy ledger+enrichment fan-out. See getUserGamingTransactionsCached.
-        () =>
-          getUserGamingTransactionsCached(
-            id,
-            1,
-            initialTab === "gaming" ? 25 : 10,
-            GAMING_TYPES,
-          ),
+        // Keep the first page intentionally small and uncached. Operators use
+        // this feed during live investigations, so every refresh must read the
+        // latest rows instead of replaying a warmed snapshot.
+        () => getUserTransactions(id, 1, 10, { types: GAMING_TYPES }),
         EMPTY_TX_PAGE,
         "users.detail.gamingTx",
         USER_DETAIL_QUERY_TIMEOUT_MS,
@@ -606,6 +598,7 @@ async function UserDetailBody({
   // parallel + fail-closed false).
   const [
     detailResult,
+    freshBalancesResult,
     creatorHistoryResult,
     mothaCanEditResult,
     viewerIsOwnerResult,
@@ -614,11 +607,19 @@ async function UserDetailBody({
     // getUserDetail is THE heavy aggregate (~19 Main-DB round-trips + the
     // canonical calculateUserPnl helper). Timeout-bounded and
     // null-on-failure → the body renders a visible full-band error (the
-    // header already painted). Cached cross-request (60s) so the
+    // header already painted). Cached cross-request (25s) so the
     // AutoRefresh tick + retry resolve from the warmed entry.
     safeQueryOrNull(
       () => getUserDetailCached(id),
       "users.detail.detail",
+      USER_DETAIL_QUERY_TIMEOUT_MS,
+    ),
+    // Narrow, uncached consistency read against MAIN's primary. If it fails,
+    // the page falls back to the cached aggregate instead of losing the user
+    // detail surface.
+    safeQueryOrNull(
+      () => readFreshUserBalances(id),
+      "users.detail.freshBalances",
       USER_DETAIL_QUERY_TIMEOUT_MS,
     ),
     // Creator history already self-degrades inside the query (its own
@@ -729,6 +730,10 @@ async function UserDetailBody({
 
   const detailWithSession = {
     ...data,
+    balances:
+      data.balances && freshBalancesResult.data
+        ? { ...data.balances, ...freshBalancesResult.data }
+        : data.balances,
     sessionRole,
     capabilities,
     wasCreator,

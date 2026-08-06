@@ -106,7 +106,7 @@ test("mirror session recovery release discards outage-era cache namespaces", () 
   assert.match(deposits, /transactions-deposits-list-v3/);
   assert.match(userDetail, /users-detail-aggregate-v4/);
   assert.match(userDetail, /users-detail-pnl-v7/);
-  assert.match(userDetail, /users-detail-gaming-tx-v6/);
+  assert.doesNotMatch(userDetail, /function cachedUserGamingTransactions/);
   assert.match(userDetail, /users-detail-financial-tx-v3/);
 });
 

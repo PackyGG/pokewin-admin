@@ -56,8 +56,8 @@ import type { KenoGameDetails } from "./user-tabs-types";
  * a /users/[id] write. `revalidatePath` alone does NOT drop unstable_cache
  * entries (it only invalidates the Next.js route segment / RSC response),
  * so without this helper a mutation leaves the cached `getUserDetailCached`
- * / `getUserPnlBreakdownCached` / gaming-tx / financial-tx / xp / reward-
- * pack-open entries serving stale numbers until their TTL expires (15–60s).
+ * / `getUserPnlBreakdownCached` / financial-tx / xp / reward-
+ * pack-open entries serving stale numbers until their TTL expires (25–60s).
  *
  * Every per-user cache in `users-detail-cache.ts` / `users-xp-purchases.ts`
  * / `users-reward-pack-opens.ts` carries the `users-detail-${userId}` tag,
