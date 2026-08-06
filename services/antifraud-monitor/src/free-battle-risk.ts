@@ -14,8 +14,33 @@ const SOURCE_BATCH_SIZE = 250;
 const DELIVERY_BATCH_SIZE = 8;
 const SOURCE_SETTLEMENT_DELAY_SECONDS = 30;
 const RISK_CREATOR_CACHE_MS = 30_000;
+const BATTLE_OWNER_LOOKUP_BATCH_SIZE = 500;
+/**
+ * Evidence is still collected across the full INITIAL_LOOKBACK_DAYS window, but automated
+ * containment (crypto-withdrawal + item-shipping locks) only fires while the relationship is
+ * still live. Without this, a creator who is flagged for the first time today would have a
+ * 30-day-old cohort retroactively contained in a single tick.
+ */
+export const CONTAINMENT_RECENCY_DAYS = 7;
 const FRAUD_KYC_REASON =
   /(fraud|scam|fiat deposit risk review|blacklist|suspicious|sumsub.*red)/i;
+
+/**
+ * One shared definition of a "free/sponsored battle join", kept byte-for-byte in step with
+ * fresh-behavior.ts's qualifying predicate: the battle was sponsored at all, the join was
+ * seeded from another session, or the participant never paid a `battle_bet`. A partially
+ * sponsored battle where the participant paid the remainder qualifies for both detectors.
+ */
+const FREE_OR_SPONSORED_BATTLE_SQL = `
+            battle.sponsorship_percentage > 0
+            OR bp.source_session_id IS NOT NULL
+            OR NOT EXISTS (
+              SELECT 1
+              FROM ledger_transactions AS bet
+              WHERE bet.user_id = bp.user_id
+                AND bet.game_session_id = bp.game_session_id
+                AND bet.type::text = 'battle_bet'
+            )`;
 
 export type CreatorRiskKind =
   | "kyc_rejected"
@@ -86,7 +111,34 @@ type EligibleContainment = {
   battle_count: number;
   creator_count: number;
   occurred_at: Date;
+  last_occurred_at: Date | string | null;
 };
+
+/**
+ * Automated containment is gated on the relationship still being live. Evidence rows are still
+ * written for the whole lookback window -- only the locking side is recency-bound, so a newly
+ * flagged creator can never retroactively contain a historical cohort in one tick.
+ */
+export function containmentRecencyEligible(
+  lastOccurredAt: Date | string | null | undefined,
+  now: Date = new Date(),
+): boolean {
+  if (lastOccurredAt === null || lastOccurredAt === undefined) return false;
+  const at = lastOccurredAt instanceof Date
+    ? lastOccurredAt
+    : new Date(lastOccurredAt);
+  const at_ms = at.getTime();
+  if (!Number.isFinite(at_ms)) return false;
+  return at_ms >= now.getTime() - CONTAINMENT_RECENCY_DAYS * 86_400_000;
+}
+
+function chunk<T>(values: readonly T[], size: number): T[][] {
+  const batches: T[][] = [];
+  for (let index = 0; index < values.length; index += size) {
+    batches.push(values.slice(index, index + size));
+  }
+  return batches;
+}
 
 export function classifyCreatorRisk(
   candidate: CreatorSourceState,
@@ -266,10 +318,18 @@ export class FreeBattleRiskMonitor {
           kyc.kyc_required_reason AS creator_kyc_reason
         FROM "user" AS creator
         LEFT JOIN user_kyc AS kyc ON kyc.user_id = creator.id
-        WHERE creator.is_suspected_alt = true
-          OR kyc.kyc_required = true
-          OR kyc.status::text = 'rejected'
-          OR kyc.admin_decision::text = 'rejected'
+        WHERE (
+            creator.is_suspected_alt = true
+            OR kyc.kyc_required = true
+            OR kyc.status::text = 'rejected'
+            OR kyc.admin_decision::text = 'rejected'
+          )
+          -- Only accounts that actually own a battle can be a *battle creator*. Without this
+          -- every flagged account became a cursor row, and process() runs one MAIN query per
+          -- cursor per tick -- thousands of sequential reads returning nothing.
+          AND EXISTS (
+            SELECT 1 FROM battles AS b WHERE b.user_id = creator.id
+          )
       `,
     );
     const antifraud = await this.creatorAntifraudStates();
@@ -281,20 +341,27 @@ export class FreeBattleRiskMonitor {
       );
       if (risk) creators.set(row.creator_user_id, risk);
     }
+    // Additive evidence only: a creator whose account/device/IP network already contains a
+    // confirmed high-risk account (network-risk.ts's cluster graph) now also qualifies, on top
+    // of -- never instead of -- the direct KYC/suspected-alt/Antifraud-score checks above.
+    const clustered = await listActiveNetworkClusterHighRiskMembers(this.db);
+    // Both additive sources come from the Antifraud DB and carry no battle-ownership
+    // information, so they get the same ownership filter as the source query above -- one
+    // bounded batched MAIN lookup instead of a per-cursor scan on every tick.
+    const owners = await this.battleOwners([
+      ...[...antifraud.keys()].filter((userId) => !creators.has(userId)),
+      ...[...clustered].filter((userId) => !creators.has(userId)),
+    ]);
     for (const [userId, score] of antifraud) {
-      if (creators.has(userId)) continue;
+      if (creators.has(userId) || !owners.has(userId)) continue;
       creators.set(userId, {
         kind: "antifraud_flagged",
         detail: `The battle creator has an active Antifraud score of ${score}.`,
         points: 40,
       });
     }
-    // Additive evidence only: a creator whose account/device/IP network already contains a
-    // confirmed high-risk account (network-risk.ts's cluster graph) now also qualifies, on top
-    // of -- never instead of -- the direct KYC/suspected-alt/Antifraud-score checks above.
-    const clustered = await listActiveNetworkClusterHighRiskMembers(this.db);
     for (const userId of clustered) {
-      if (creators.has(userId)) continue;
+      if (creators.has(userId) || !owners.has(userId)) continue;
       creators.set(userId, {
         kind: "network_cluster",
         detail:
@@ -305,6 +372,33 @@ export class FreeBattleRiskMonitor {
     }
     this.riskCache = { at: now, creators };
     return creators;
+  }
+
+  /**
+   * Which of the given accounts actually own at least one battle. Batched and index-backed
+   * (`battles (user_id, status, created_at DESC)`), so the whole additive set costs a couple
+   * of bounded MAIN reads per refresh rather than one read per candidate per tick.
+   */
+  private async battleOwners(
+    userIds: readonly string[],
+  ): Promise<Set<string>> {
+    const unique = [...new Set(userIds.filter((id) => Boolean(id)))];
+    const owners = new Set<string>();
+    if (unique.length === 0) return owners;
+    for (const batch of chunk(unique, BATTLE_OWNER_LOOKUP_BATCH_SIZE)) {
+      const result = await this.db.source.query<{ user_id: string }>(
+        `
+          SELECT DISTINCT b.user_id
+          FROM battles AS b
+          WHERE b.user_id = ANY($1::text[])
+        `,
+        [batch],
+      );
+      for (const row of result.rows) {
+        if (row.user_id) owners.add(row.user_id);
+      }
+    }
+    return owners;
   }
 
   private async syncCreatorCursors(
@@ -377,12 +471,7 @@ export class FreeBattleRiskMonitor {
           date_trunc('milliseconds', bp.created_at) AT TIME ZONE 'UTC'
             AS occurred_at,
           battle.sponsorship_percentage,
-          NOT EXISTS (
-            SELECT 1
-            FROM ledger_transactions AS ledger
-            WHERE ledger.type::text = 'battle_bet'
-              AND ledger.game_session_id = bp.game_session_id
-              AND ledger.user_id = bp.user_id
+          (${FREE_OR_SPONSORED_BATTLE_SQL}
           ) AS is_free_battle
         FROM battles AS battle
         JOIN battle_participants AS bp ON bp.battle_id = battle.id
@@ -518,6 +607,7 @@ export class FreeBattleRiskMonitor {
       battle_count: number;
       creator_count: number;
       previous_battle_count: number;
+      last_occurred_at: Date | string | null;
     }>(
       `
         SELECT
@@ -526,7 +616,8 @@ export class FreeBattleRiskMonitor {
           COUNT(DISTINCT creator_user_id)::int AS creator_count,
           COUNT(DISTINCT battle_id) FILTER (
             WHERE participant_id <> $2::uuid
-          )::int AS previous_battle_count
+          )::int AS previous_battle_count,
+          MAX(occurred_at) AS last_occurred_at
         FROM free_battle_risk_matches
         WHERE participant_user_id = $1
       `,
@@ -555,6 +646,7 @@ export class FreeBattleRiskMonitor {
         battle_count: number(evidence.battle_count),
         creator_count: number(evidence.creator_count),
         occurred_at: candidate.occurred_at,
+        last_occurred_at: evidence.last_occurred_at ?? candidate.occurred_at,
       }, caseId);
     }
 
@@ -668,13 +760,29 @@ export class FreeBattleRiskMonitor {
     caseId: string,
   ): Promise<void> {
     if (evidence.battle_count < 2) return;
+    // Containment recency gate. Evidence rows keep the full INITIAL_LOOKBACK_DAYS window, but
+    // the locking side requires the relationship to still be live: at least one qualifying
+    // match inside CONTAINMENT_RECENCY_DAYS. A creator flagged for the first time today can no
+    // longer retroactively contain a 30-day-old cohort in a single tick.
+    if (!containmentRecencyEligible(evidence.last_occurred_at)) {
+      this.log.info(
+        {
+          userId: evidence.participant_user_id,
+          lastOccurredAt: evidence.last_occurred_at,
+          recencyDays: CONTAINMENT_RECENCY_DAYS,
+        },
+        "Free-battle containment held back: evidence is outside the recency window",
+      );
+      return;
+    }
     const score = relationshipScoreForBattleCount(evidence.battle_count);
     const detail =
       `${evidence.match_count} free/sponsored joins across ` +
       `${evidence.battle_count} battles link this account to ` +
       `${evidence.creator_count} flagged fraud creator` +
       `${evidence.creator_count === 1 ? "" : "s"}. ` +
-      "Automatic KYC and withdrawal locks are required.";
+      "Automatic crypto-withdrawal and item-shipping locks are required; " +
+      "KYC stays a staff decision.";
     await client.query(
       `
         INSERT INTO risk_events (
@@ -715,7 +823,8 @@ export class FreeBattleRiskMonitor {
           COUNT(*)::int AS match_count,
           COUNT(DISTINCT match.battle_id)::int AS battle_count,
           COUNT(DISTINCT match.creator_user_id)::int AS creator_count,
-          MAX(match.occurred_at) AS occurred_at
+          MAX(match.occurred_at) AS occurred_at,
+          MAX(match.occurred_at) AS last_occurred_at
         FROM free_battle_risk_matches AS match
         WHERE NOT EXISTS (
           SELECT 1
@@ -726,9 +835,13 @@ export class FreeBattleRiskMonitor {
         )
         GROUP BY match.participant_user_id
         HAVING COUNT(DISTINCT match.battle_id) >= 2
+          -- Same containment recency gate as insertContainmentEvent, applied at the DB so
+          -- historical-only cohorts are not re-derived on every single tick.
+          AND MAX(match.occurred_at) >= now() - ($1::text || ' days')::interval
         ORDER BY MAX(match.occurred_at)
         LIMIT 50
       `,
+      [CONTAINMENT_RECENCY_DAYS],
     );
     for (const evidence of eligible.rows) {
       const client = await this.db.antifraud.connect();

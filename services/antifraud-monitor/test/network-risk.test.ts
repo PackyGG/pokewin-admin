@@ -98,7 +98,12 @@ test("network storage isolates exact values and supports one live network case",
   );
   assert.doesNotMatch(graphRoute, /network_node_secrets|exact_value/);
   assert.match(graphRoute, /AND source_key=ANY\(\$2::text\[\]\)/);
-  assert.doesNotMatch(graphRoute, /target_key=ANY/);
+  // Both endpoints must be inside the returned node set. At large page sizes the account page
+  // consumed the whole node budget and no connector nodes came back, while the edge query
+  // still filtered on source_key alone -- so the graph shipped edges pointing at nodes the
+  // client never received.
+  assert.match(graphRoute, /AND target_key=ANY\(\$2::text\[\]\)/);
+  assert.match(graphRoute, /\.max\(1_000\)/);
   assert.doesNotMatch(routes, /websocket:\s*true|EventSource/);
 });
 
@@ -194,11 +199,74 @@ test("targeted cluster lookup is bounded, indexed, and returns only flagged memb
   assert.match(queryText, /suspectedAlt/);
   assert.match(queryText, /signup_assessments/);
   assert.match(queryText, /peak_score, 0\) >= \$3/);
+  // The "latest snapshot per network_key" CTE is recency-bounded exactly like the active-scan
+  // variant. Unbounded it scanned every snapshot ever taken, and -- because network_key is a
+  // hash of the sorted member ids -- a superseded cluster kept a "latest" row forever, so an
+  // account stayed flagged on a cluster that no longer exists with no way for a rescan to
+  // clear it.
+  assert.match(queryText, /scanned_at >= now\(\) - \(\$4::text \|\| ' days'\)::interval/);
   assert.deepEqual(queryValues, [
     ["participant-1", "participant-2"],
     NETWORK_HIGH_RISK_SIGNUP_SCORE,
     NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+    30,
   ]);
+});
+
+test("creator network metrics use the same recency-bounded latest-snapshot CTE", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+  const metrics = source.slice(source.indexOf("private async creatorNetworkMetrics("));
+  assert.match(
+    metrics,
+    /scanned_at >= now\(\) - \(\$2::text \|\| ' days'\)::interval/,
+  );
+  assert.match(metrics, /\[userIds, CLUSTER_SCAN_LOOKBACK_DAYS\]/);
+});
+
+test("stale network scan jobs are recovered a bounded number of times", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+  const recovery = source.slice(
+    source.indexOf("private async recoverStaleJobs("),
+    source.indexOf("private async claimJob("),
+  );
+  // A job that reliably kills its worker must stop re-leasing and blocking the queue head.
+  assert.match(recovery, /recovery_count=COALESCE\(recovery_count, 0\) \+ 1/);
+  assert.match(recovery, /COALESCE\(recovery_count, 0\) < \$1::int/);
+  assert.match(recovery, /COALESCE\(recovery_count, 0\) >= \$1::int/);
+  assert.match(recovery, /SET status='failed'/);
+
+  const migration = await readFile(
+    new URL(
+      "../migrations/067_network_scan_job_recovery_bound.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /ADD COLUMN IF NOT EXISTS recovery_count integer NOT NULL DEFAULT 0/,
+  );
+});
+
+test("creator IP-chain grouping normalizes addresses the same way the graph builder does", async () => {
+  const source = await readFile(
+    new URL("../src/network-risk.ts", import.meta.url),
+    "utf8",
+  );
+  const assessment = source.slice(
+    source.indexOf("const ipMembers = new Map<string, SourceAccount[]>();"),
+    source.indexOf("const sharedIpGroups"),
+  );
+  // Grouping on the raw string split one shared chain into sub-threshold groups whenever the
+  // same address arrived with different whitespace/formatting.
+  assert.match(assessment, /const signupIp = validIp\(account\.signup_ip\)/);
+  assert.doesNotMatch(assessment, /ipMembers\.get\(account\.signup_ip\)/);
 });
 
 test("targeted cluster lookup with no matches leaves the result empty (unaffected accounts stay unaffected)", async () => {

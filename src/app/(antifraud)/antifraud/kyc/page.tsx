@@ -496,7 +496,7 @@ function AccountCard({
             <InfoRow
               label="Country evidence saved"
               value={
-                account.countryReview
+                account.countryReview?.checkedAt
                   ? formatDateTime(new Date(account.countryReview.checkedAt))
                   : "—"
               }

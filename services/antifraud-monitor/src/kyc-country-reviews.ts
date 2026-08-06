@@ -3,6 +3,7 @@ import type pg from "pg";
 
 import {
   SumsubClient,
+  SumsubRequestError,
   type SumsubApplicantReview,
 } from "./sumsub-client.js";
 
@@ -22,7 +23,25 @@ export type KycCountryReview = {
   reviewStatus: string | null;
   reviewAnswer: string | null;
   providerReviewedAt: string | null;
-  checkedAt: string;
+  /**
+   * When the row was last confirmed against the provider. `null` means the account was never
+   * refreshed in this request and nothing is stored -- "not refreshed", never "clean".
+   */
+  checkedAt: string | null;
+  /** True when the payload is not a fresh provider read (skipped by the cap, or a failure). */
+  stale?: boolean;
+  /** Why the payload is stale, when a provider call actually failed. */
+  lastError?: string | null;
+};
+
+export type KycCountryReviewRefresh = {
+  data: KycCountryReview[];
+  /**
+   * True when at least one requested account did not get a provider refresh because the
+   * per-request cap was reached. The caller can retry the remainder instead of silently
+   * treating a short list as the whole answer.
+   */
+  truncated: boolean;
 };
 
 type StoredRow = {
@@ -60,7 +79,10 @@ function iso(value: Date | string | null): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function fromRow(row: StoredRow): KycCountryReview {
+function fromRow(
+  row: StoredRow,
+  stale?: { lastError: string | null },
+): KycCountryReview {
   return {
     userId: row.user_id,
     applicantId: row.applicant_id,
@@ -71,7 +93,33 @@ function fromRow(row: StoredRow): KycCountryReview {
     reviewStatus: row.review_status,
     reviewAnswer: row.review_answer,
     providerReviewedAt: iso(row.provider_reviewed_at),
-    checkedAt: iso(row.checked_at) ?? new Date(0).toISOString(),
+    checkedAt: iso(row.checked_at),
+    ...(stale ? { stale: true, lastError: stale.lastError } : {}),
+  };
+}
+
+/**
+ * A row that was requested but never refreshed and has nothing stored. Returned instead of
+ * being dropped so the caller can tell "we did not refresh this" apart from "this account has
+ * no country evidence at all".
+ */
+function placeholder(
+  input: KycCountryReviewInput,
+  lastError: string | null,
+): KycCountryReview {
+  return {
+    userId: input.userId,
+    applicantId: input.applicantId,
+    accountCountry: normalizeCountry(input.accountCountry),
+    verifiedCountry: null,
+    documentCountries: [],
+    countryMatch: "unknown",
+    reviewStatus: null,
+    reviewAnswer: null,
+    providerReviewedAt: null,
+    checkedAt: null,
+    stale: true,
+    lastError,
   };
 }
 
@@ -132,8 +180,8 @@ export class KycCountryReviewService {
 
   async refresh(
     inputs: KycCountryReviewInput[],
-  ): Promise<KycCountryReview[]> {
-    if (inputs.length === 0) return [];
+  ): Promise<KycCountryReviewRefresh> {
+    if (inputs.length === 0) return { data: [], truncated: false };
     const userIds = inputs.map((input) => input.userId);
     const applicantIds = inputs.map((input) => input.applicantId);
     const stored = await this.pool.query<StoredRow>(
@@ -155,10 +203,11 @@ export class KycCountryReviewService {
     );
     let nextIndex = 0;
     let providerRefreshes = 0;
+    let truncated = false;
 
     const refreshOne = async (
       input: KycCountryReviewInput,
-    ): Promise<KycCountryReview | null> => {
+    ): Promise<KycCountryReview> => {
       const key = `${input.userId}:${input.applicantId}`;
       const existing = saved.get(key);
       const existingCheckedAt = existing
@@ -173,7 +222,12 @@ export class KycCountryReviewService {
         return fromRow(existing);
       }
       if (providerRefreshes >= MAX_PROVIDER_REFRESHES) {
-        return existing ? fromRow(existing) : null;
+        truncated = true;
+        // Never drop the row: a skipped account is "not refreshed", and stored data returned
+        // past the cap must not read as a fresh confirmation either.
+        return existing
+          ? fromRow(existing, { lastError: null })
+          : placeholder(input, null);
       }
       providerRefreshes += 1;
 
@@ -216,8 +270,24 @@ export class KycCountryReviewService {
           await this.onResultReady?.(assessment);
         }
         return assessment;
-      } catch {
-        return existing ? fromRow(existing) : null;
+      } catch (error) {
+        // A provider failure must never read as clean. Log it with the applicant id and hand
+        // the caller an explicitly stale payload rather than silently aged-out "fresh" data.
+        const lastError = error instanceof SumsubRequestError
+          ? `sumsub_${error.status}`
+          : error instanceof Error
+            ? error.message.slice(0, 200)
+            : "unknown_error";
+        console.error("[kyc-country-review] provider refresh failed", {
+          applicantId: input.applicantId,
+          providerStatus:
+            error instanceof SumsubRequestError ? error.status : null,
+          lastError,
+          hasStoredEvidence: Boolean(existing),
+        });
+        return existing
+          ? fromRow(existing, { lastError })
+          : placeholder(input, lastError);
       }
     };
 
@@ -234,8 +304,11 @@ export class KycCountryReviewService {
       ),
     );
 
-    return results.filter(
-      (review): review is KycCountryReview => review !== null,
-    );
+    return {
+      data: results.filter(
+        (review): review is KycCountryReview => review !== null,
+      ),
+      truncated,
+    };
   }
 }

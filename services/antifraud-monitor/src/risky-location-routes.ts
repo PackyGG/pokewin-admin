@@ -133,7 +133,13 @@ async function findLocations(
           WHERE p.outcome='review_required'
         )::int AS review_count
       FROM risky_locations r
-      LEFT JOIN subjects s ON s.country_code=r.country_code
+      -- Bounded to the widest window the UI displays. Unbounded, this joined every subject
+      -- ever recorded for the country -- and antifraud_profiles on top of that -- on every
+      -- GET /v1/risky-locations plus twice more per mutation. affected_users is therefore
+      -- "distinct accounts seen from this country in the last 30 days", not lifetime.
+      LEFT JOIN subjects s
+        ON s.country_code=r.country_code
+        AND s.source_created_at >= now()-interval '30 days'
       LEFT JOIN antifraud_profiles p ON p.user_id=s.user_id
       WHERE ($1::text IS NULL OR r.country_code = $1)
       GROUP BY r.country_code

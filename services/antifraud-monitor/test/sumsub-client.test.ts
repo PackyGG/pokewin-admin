@@ -251,8 +251,8 @@ test("country check refresh is admin-only and returns saved sanitized evidence",
   const fixture = clientFixture();
   const app = Fastify();
   await registerSumsubRoutes(app, fixture.client, {
-    refresh: async (accounts) =>
-      accounts.map((account) => ({
+    refresh: async (accounts) => ({
+      data: accounts.map((account) => ({
         userId: account.userId,
         applicantId: account.applicantId,
         accountCountry: "CZ",
@@ -264,6 +264,8 @@ test("country check refresh is admin-only and returns saved sanitized evidence",
         providerReviewedAt: "2026-07-29T19:15:48.000Z",
         checkedAt: fixedNow.toISOString(),
       })),
+      truncated: false,
+    }),
   });
   const response = await app.inject({
     method: "POST",
@@ -309,7 +311,8 @@ test("country mismatch evidence is persisted in the Antifraud database", async (
     },
   ]);
 
-  assert.equal(reviews[0]?.countryMatch, "mismatch");
+  assert.equal(reviews.data[0]?.countryMatch, "mismatch");
+  assert.equal(reviews.truncated, false);
   assert.equal(writes.length, 1);
   assert.match(writes[0]!.text, /INSERT INTO kyc_country_reviews/);
   assert.deepEqual(writes[0]!.values.slice(0, 6), [

@@ -11,6 +11,12 @@ const SOURCE_BATCH_SIZE = 1_000;
 const WORKER_INTERVAL_MS = 30_000;
 const JOB_LEASE_MS = 3 * 60_000;
 const JOB_HEARTBEAT_MS = 30_000;
+/**
+ * How many times a job may be recovered from an expired lease before it is failed outright.
+ * Without a bound, a job that reliably kills its worker re-leases forever and blocks the head
+ * of the queue.
+ */
+const MAX_JOB_RECOVERIES = 3;
 const RECONCILIATION_INTERVAL_MS = 15 * 60_000;
 const CREATOR_RECONCILIATION_INTERVAL_MS = 24 * 60 * 60_000;
 
@@ -213,8 +219,13 @@ export async function findNetworkClusterHighRiskMembers(
     const result = await db.antifraud.query<{ user_id: string }>(
       `
         WITH latest AS (
+          -- Same recency bound as listActiveNetworkClusterHighRiskMembers: without it this
+          -- scans every snapshot ever taken, and because network_key is a hash of the sorted
+          -- member ids, a superseded cluster keeps a "latest" row forever and no rescan can
+          -- ever clear the flag it produced.
           SELECT DISTINCT ON (network_key) id
           FROM network_snapshots
+          WHERE scanned_at >= now() - ($4::text || ' days')::interval
           ORDER BY network_key, scanned_at DESC
         ),
         target_snapshots AS (
@@ -229,7 +240,12 @@ export async function findNetworkClusterHighRiskMembers(
         WHERE cm.user_id = ANY($1::text[])
           AND cm.snapshot_id IN (SELECT snapshot_id FROM high_risk_snapshots)
       `,
-      [batch, NETWORK_HIGH_RISK_SIGNUP_SCORE, NETWORK_HIGH_RISK_CASE_PEAK_SCORE],
+      [
+        batch,
+        NETWORK_HIGH_RISK_SIGNUP_SCORE,
+        NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+        CLUSTER_SCAN_LOOKBACK_DAYS,
+      ],
     );
     for (const row of result.rows) flagged.add(row.user_id);
   }
@@ -455,7 +471,36 @@ export class NetworkRiskService {
     }
   }
 
+  /**
+   * Recovers jobs whose worker died mid-lease. The recovery counter is what keeps a job that
+   * reliably kills its worker from re-leasing forever and blocking the queue head: past
+   * MAX_JOB_RECOVERIES the job is failed instead of re-queued, exactly like the bounded
+   * attempt counters on the delivery outboxes.
+   */
   private async recoverStaleJobs(): Promise<void> {
+    const exhausted = await this.db.antifraud.query<{ id: string }>(
+      `
+        UPDATE network_scan_jobs
+        SET status='failed',
+            completed_at=now(),
+            lease_owner=NULL,
+            lease_expires_at=NULL,
+            heartbeat_at=NULL,
+            error_text='Abandoned after ' || $1::int
+              || ' stale worker leases; the job repeatedly killed its worker'
+        WHERE status='running'
+          AND lease_expires_at < now()
+          AND COALESCE(recovery_count, 0) >= $1::int
+        RETURNING id
+      `,
+      [MAX_JOB_RECOVERIES],
+    );
+    for (const row of exhausted.rows) {
+      this.log.error(
+        { jobId: row.id, recoveries: MAX_JOB_RECOVERIES },
+        "Antifraud network scan job abandoned after repeated stale leases",
+      );
+    }
     await this.db.antifraud.query(
       `
         UPDATE network_scan_jobs
@@ -464,10 +509,13 @@ export class NetworkRiskService {
             lease_owner=NULL,
             lease_expires_at=NULL,
             heartbeat_at=NULL,
+            recovery_count=COALESCE(recovery_count, 0) + 1,
             error_text='Recovered after stale worker lease'
         WHERE status='running'
           AND lease_expires_at < now()
+          AND COALESCE(recovery_count, 0) < $1::int
       `,
+      [MAX_JOB_RECOVERIES],
     );
   }
 
@@ -1195,10 +1243,13 @@ export class NetworkRiskService {
     const hourlyCounts = new Map<string, number>();
     let disposable = 0;
     for (const account of accounts.values()) {
-      if (account.signup_ip) {
-        const members = ipMembers.get(account.signup_ip) ?? [];
+      // Same normalization buildGraph uses, so one shared IP chain does not split into
+      // sub-threshold groups on whitespace/format variants of the same address.
+      const signupIp = validIp(account.signup_ip);
+      if (signupIp) {
+        const members = ipMembers.get(signupIp) ?? [];
         members.push(account);
-        ipMembers.set(account.signup_ip, members);
+        ipMembers.set(signupIp, members);
       }
       if (account.country_code) {
         const country = account.country_code.toUpperCase();
@@ -1407,8 +1458,12 @@ export class NetworkRiskService {
     }>(
       `
         WITH latest AS (
+          -- Recency-bounded for the same reason as findNetworkClusterHighRiskMembers: an
+          -- unbounded "latest per network_key" keeps superseded clusters alive forever and
+          -- turns this into a full scan of network_snapshots.
           SELECT DISTINCT ON (network_key) id, network_key
           FROM network_snapshots
+          WHERE scanned_at >= now() - ($2::text || ' days')::interval
           ORDER BY network_key, scanned_at DESC
         ),
         matching AS (
@@ -1430,7 +1485,7 @@ export class NetworkRiskService {
         JOIN network_snapshots ns ON ns.id=m.id
         JOIN network_nodes n ON n.snapshot_id=m.id
       `,
-      [userIds],
+      [userIds, CLUSTER_SCAN_LOOKBACK_DAYS],
     );
     return {
       connectedAccounts: result.rows[0]?.connected_accounts ?? 0,

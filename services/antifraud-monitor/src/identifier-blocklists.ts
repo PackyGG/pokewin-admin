@@ -6,6 +6,10 @@ import type { Signal, Signup } from "./types.js";
 export type IdentifierBlocklistKind = "ip" | "fingerprint";
 export type IdentifierBlocklistEffect = "block" | "known_vpn";
 
+/** Narrowest CIDR an operator may enter: /8 for IPv4, /32 for IPv6. */
+export const MIN_IPV4_PREFIX_BITS = 8;
+export const MIN_IPV6_PREFIX_BITS = 32;
+
 export function validateIdentifierInput(
   kind: IdentifierBlocklistKind,
   value: string,
@@ -26,7 +30,11 @@ export function validateIdentifierInput(
   if (matchMode === "exact") return prefix === undefined;
   if (prefix === undefined || !/^\d{1,3}$/.test(prefix)) return false;
   const bits = Number(prefix);
-  return bits >= 0 && bits <= (family === 4 ? 32 : 128);
+  // A near-zero prefix is a self-inflicted mass lock: `0.0.0.0/0` matches every signup, and a
+  // `block` rule scores 100 points under hard policy -- a withdrawal lock plus staff review for
+  // the entire player base. Floors are the widest range an operator could plausibly mean.
+  const minimumBits = family === 4 ? MIN_IPV4_PREFIX_BITS : MIN_IPV6_PREFIX_BITS;
+  return bits >= minimumBits && bits <= (family === 4 ? 32 : 128);
 }
 
 export async function captureIdentifierBlocklistMatches(

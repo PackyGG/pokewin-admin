@@ -66,6 +66,8 @@ export async function registerSumsubRoutes(
       return reply.code(503).send({ error: "sumsub_not_configured" });
     }
     const accounts: KycCountryReviewInput[] = parsed.data.accounts;
-    return { data: await countryReviews.refresh(accounts) };
+    // `{ data, truncated }` -- `truncated` tells the caller the per-request provider cap was
+    // reached, so a short answer is never mistaken for the complete one.
+    return await countryReviews.refresh(accounts);
   });
 }

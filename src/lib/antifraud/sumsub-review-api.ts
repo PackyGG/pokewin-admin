@@ -50,11 +50,17 @@ const countryReviewSchema = z.object({
   reviewStatus: z.string().nullable(),
   reviewAnswer: z.string().nullable(),
   providerReviewedAt: z.string().nullable(),
-  checkedAt: z.string(),
+  // `null` means the monitor never refreshed this account in the request (the per-request
+  // provider cap was hit) and has nothing stored — "not refreshed", never "clean".
+  checkedAt: z.string().nullable(),
+  stale: z.boolean().optional(),
+  lastError: z.string().nullable().optional(),
 });
 
 const countryReviewResponseSchema = z.object({
   data: z.array(countryReviewSchema),
+  // True when the monitor's per-request provider cap truncated the refresh.
+  truncated: z.boolean().optional(),
 });
 
 export type KycCountryReview = z.infer<typeof countryReviewSchema>;

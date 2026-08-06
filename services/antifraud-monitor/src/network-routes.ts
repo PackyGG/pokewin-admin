@@ -65,8 +65,10 @@ export async function registerNetworkRoutes(
 
   app.get("/v1/networks/:snapshotId/graph", async (request, reply) => {
     const { snapshotId } = z.object({ snapshotId: uuid }).parse(request.params);
+    // Capped below the outer LIMIT 2000 so the account page can never consume the whole node
+    // budget and leave zero room for the connector (ip/device/wallet) nodes its edges point at.
     const query = pageSchema.extend({
-      limit: z.coerce.number().int().min(1).max(2_000).default(500),
+      limit: z.coerce.number().int().min(1).max(1_000).default(500),
     }).parse(request.query);
     const offset = (query.page - 1) * query.limit;
     const snapshot = await db.antifraud.query(
@@ -111,6 +113,9 @@ export async function registerNetworkRoutes(
             FROM network_edges
             WHERE snapshot_id=$1
               AND source_key=ANY($2::text[])
+              -- Both endpoints must be in the returned node set, otherwise the graph carries
+              -- edges pointing at nodes the client never received.
+              AND target_key=ANY($2::text[])
             LIMIT 20_000
           `,
           [snapshotId, nodeKeys],

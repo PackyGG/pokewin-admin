@@ -17,8 +17,12 @@ export async function registerProfileRoutes(
   app: FastifyInstance,
   db: Databases,
 ): Promise<void> {
-  app.get("/v1/profiles", async (request) => {
-    const query = listQuerySchema.parse(request.query);
+  app.get("/v1/profiles", async (request, reply) => {
+    const parsed = listQuerySchema.safeParse(request.query);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    const query = parsed.data;
     const search = query.search ? `${query.search.toLowerCase()}%` : null;
     const offset = (query.page - 1) * query.limit;
     const [profiles, count] = await Promise.all([
