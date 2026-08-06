@@ -88,6 +88,7 @@ function fiatDepositFixture(
     hasPassword: null,
     battleWinnings: null,
     battleOutcomePending: null,
+    battlePreviewWinnings: null,
     upgraderResult: null,
     upgraderWinnings: null,
     upgraderTargetMultiplier: null,

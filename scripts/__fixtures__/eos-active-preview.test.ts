@@ -73,3 +73,23 @@ test("live EOS preview is owner-gated and reads only active committed truth", ()
   assert.doesNotMatch(query, /server_seed(?!_hash)/);
   assert.doesNotMatch(query, /PEPPER|decrypt/i);
 });
+
+test("user Gaming rows reuse the committed creator payout preview", () => {
+  const query = readFileSync(
+    "src/lib/queries/users-transactions.ts",
+    "utf8",
+  );
+  const table = readFileSync(
+    "src/app/(admin)/users/[id]/user-tabs-transactions.tsx",
+    "utf8",
+  );
+
+  assert.match(query, /viewerCanSeeBattlePreview = isOwner\(await verifySession\(\)\)/);
+  assert.match(query, /outcome\.creatorUserId === canonicalUserId/);
+  assert.match(query, /outcome\.eosBlockHash !== null/);
+  assert.match(query, /outcome\.winningTeamSize > 0/);
+  assert.match(query, /calculateCreatorBattleOutcome\(/);
+  assert.match(query, /winning_participant\.team_number = battles\.winner_team/);
+  assert.match(table, /profit=\{t\.amount - t\.battlePreviewWinnings\}/);
+  assert.match(table, /won=\{t\.battlePreviewWinnings\}/);
+});

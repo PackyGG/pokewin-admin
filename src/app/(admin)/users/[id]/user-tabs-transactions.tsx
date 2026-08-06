@@ -944,6 +944,17 @@ export const CategoryTransactionsTable = React.memo(
                         // team_number), surfaced as gameResult. null = the
                         // battle hasn't resolved yet.
                         if (t.gameResult === null) {
+                          // EOS commits the payout before the public animation
+                          // finishes. Render that creator preview exactly like
+                          // the settled result, without a separate live state.
+                          if (t.battlePreviewWinnings != null) {
+                            return (
+                              <MergedPnlCell
+                                profit={t.amount - t.battlePreviewWinnings}
+                                won={t.battlePreviewWinnings}
+                              />
+                            );
+                          }
                           // Battle not settled. While PENDING we can still
                           // show the win/loss DIRECTION (winner_team vs the
                           // user's team) even though the exact dollar amount

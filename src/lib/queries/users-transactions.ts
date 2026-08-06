@@ -18,6 +18,8 @@ import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustment
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { verifySession } from "@/lib/dal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { calculateCreatorBattleOutcome } from "@/lib/eos/creator-outcome";
+import { isOwner } from "@/lib/owners";
 import type {
   Transaction,
   PaginatedTransactions,
@@ -131,6 +133,7 @@ type GameSessionRow = {
   battle_participants: {
     battle_id: string;
     team_number: number;
+    borrow_percentage: number;
   } | null;
   provably_fair_results: Array<{
     battle_id: string | null;
@@ -252,6 +255,7 @@ async function fetchLedgerRowsByIds(
       bet_amount: string;
       battle_id: string | null;
       team_number: number | null;
+      borrow_percentage: number | null;
       provably_fair_results: GameSessionRow["provably_fair_results"];
     }>(sql`
       SELECT gs.id,
@@ -261,10 +265,11 @@ async function fetchLedgerRowsByIds(
              gs.bet_amount::text AS bet_amount,
              bp.battle_id,
              bp.team_number,
+             bp.borrow_percentage,
              COALESCE(pf.results, '[]'::jsonb) AS provably_fair_results
       FROM game_sessions gs
       LEFT JOIN LATERAL (
-        SELECT p.battle_id, p.team_number
+        SELECT p.battle_id, p.team_number, p.borrow_percentage
         FROM battle_participants p
         WHERE p.game_session_id = gs.id
         LIMIT 1
@@ -296,7 +301,11 @@ async function fetchLedgerRowsByIds(
         bet_amount: row.bet_amount,
         battle_participants:
           row.battle_id && row.team_number !== null
-            ? { battle_id: row.battle_id, team_number: row.team_number }
+            ? {
+                battle_id: row.battle_id,
+                team_number: row.team_number,
+                borrow_percentage: row.borrow_percentage ?? 0,
+              }
             : null,
         provably_fair_results: row.provably_fair_results,
       });
@@ -365,6 +374,7 @@ function mapFinancialLedgerRow(t: LedgerRow, instantRakebackIds?: Set<string>) {
     hasPassword: null,
     battleWinnings: null,
     battleOutcomePending: null,
+    battlePreviewWinnings: null,
     upgraderResult: null,
     upgraderWinnings: null,
     upgraderTargetMultiplier: null,
@@ -769,6 +779,7 @@ function buildDoubleDownRow(d: SyntheticDdRow): Transaction {
     hasPassword: null,
     battleWinnings: null,
     battleOutcomePending: null,
+    battlePreviewWinnings: null,
     upgraderResult: null,
     upgraderWinnings: null,
     upgraderTargetMultiplier: null,
@@ -968,6 +979,17 @@ export async function getUserTransactions(
     return getUserFinancialTransactionsLight(db, filter, page, perPage);
   }
 
+  // Exact EOS outcomes reveal money before the public battle animation ends.
+  // Keep that early-money signal owner-only at the server query boundary.
+  // This deliberately uses the canonical owner flag, not the broader
+  // adjustment-visibility capability stored in `viewerIsOwner` above.
+  let viewerCanSeeBattlePreview = false;
+  try {
+    viewerCanSeeBattlePreview = isOwner(await verifySession());
+  } catch {
+    viewerCanSeeBattlePreview = false;
+  }
+
   // ── Decoupled DOUBLE-DOWN source (PROPER system) ──────────────────────
   // Post-battle double-down rounds are surfaced as first-class rows inside
   // this gaming feed. A LOST round writes NO ledger row (the winnings are
@@ -1069,7 +1091,14 @@ export async function getUserTransactions(
   const battleSponsorshipMap = new Map<string, number>();
   const battleOutcomeMap = new Map<
     string,
-    { winnerTeam: number | null; status: string }
+    {
+      winnerTeam: number | null;
+      status: string;
+      creatorUserId: string;
+      eosBlockHash: string | null;
+      totalUnpacked: number | null;
+      winningTeamSize: number;
+    }
   >();
   // battle id → has-password flag. BOOLEAN ONLY — never the plaintext.
   // The plaintext is fetched on demand via revealBattlePassword (which
@@ -1091,6 +1120,10 @@ export async function getUserTransactions(
         winner_team: number | null;
         status: string;
         password: string | null;
+        creator_user_id: string;
+        eos_block_hash: string | null;
+        total_unpacked: string | null;
+        winning_team_size: number | string;
       }>(sql`
         SELECT id,
                mode::text AS mode,
@@ -1098,7 +1131,16 @@ export async function getUserTransactions(
                sponsorship_percentage,
                winner_team,
                status::text AS status,
-               password
+               password,
+               user_id AS creator_user_id,
+               eos_block_hash,
+               total_unpacked::text,
+               (
+                 SELECT COUNT(*)::int
+                 FROM battle_participants winning_participant
+                 WHERE winning_participant.battle_id = battles.id
+                   AND winning_participant.team_number = battles.winner_team
+               ) AS winning_team_size
         FROM battles
         WHERE id = ANY(${pgArrayParam([...battleIdsToFetch])}::uuid[])
       `);
@@ -1110,6 +1152,11 @@ export async function getUserTransactions(
         battleOutcomeMap.set(b.id, {
           winnerTeam: b.winner_team,
           status: b.status,
+          creatorUserId: b.creator_user_id,
+          eosBlockHash: b.eos_block_hash,
+          totalUnpacked:
+            b.total_unpacked === null ? null : toNumber(b.total_unpacked),
+          winningTeamSize: Number(b.winning_team_size),
         });
         battleHasPasswordMap.set(
           b.id,
@@ -1567,11 +1614,14 @@ export async function getUserTransactions(
       // Win/loss DIRECTION for a PENDING battle_bet (battle status
       // animating / in_progress) — derived from battles.winner_team vs the
       // user's team_number, the IDENTICAL comparison the settled
-      // battleResult uses. Only the direction is surfaced; the exact dollar
-      // AMOUNT is intentionally NOT derivable while pending and stays
-      // hidden ("resolving"). Null when not pending, or when winner_team is
+      // battleResult uses. The owner-only creator path also carries the exact
+      // committed payout; all other pending rows retain direction only.
+      // Null when not pending, or when winner_team is
       // not yet materialized (in_progress can be null) → no fabricated side.
       let battleOutcomePending: "win" | "loss" | null = null;
+      // Exact pre-run creator payout after the EOS outcome is committed.
+      // Null means unavailable or owner-hidden; 0 is a committed loss.
+      let battlePreviewWinnings: number | null = null;
       if (t.type === "battle_bet") {
         const outcome = battleId ? battleOutcomeMap.get(battleId) : null;
         const userTeam = gs?.battle_participants?.team_number ?? null;
@@ -1595,6 +1645,22 @@ export async function getUserTransactions(
         if (isPending && outcome.winnerTeam != null && userTeam != null) {
           battleOutcomePending =
             userTeam === outcome.winnerTeam ? "win" : "loss";
+          const isCreator = outcome.creatorUserId === canonicalUserId;
+          const outcomeCommitted =
+            outcome.eosBlockHash !== null &&
+            outcome.totalUnpacked !== null &&
+            outcome.winningTeamSize > 0;
+          if (viewerCanSeeBattlePreview && isCreator && outcomeCommitted) {
+            battlePreviewWinnings = calculateCreatorBattleOutcome({
+              creatorWon: userTeam === outcome.winnerTeam,
+              creatorPaidStake: toNumber(gs?.bet_amount ?? 0),
+              creatorBorrowPercentage:
+                gs?.battle_participants?.borrow_percentage ?? 0,
+              sponsorshipAmountPaid: 0,
+              totalUnpacked: outcome.totalUnpacked,
+              winningTeamSize: outcome.winningTeamSize,
+            }).payoutAmount;
+          }
         }
       }
 
@@ -1731,6 +1797,7 @@ export async function getUserTransactions(
         hasPassword,
         battleWinnings,
         battleOutcomePending,
+        battlePreviewWinnings,
         upgraderResult,
         upgraderWinnings,
         upgraderTargetMultiplier,

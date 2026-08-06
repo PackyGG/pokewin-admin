@@ -548,7 +548,9 @@ export function TransactionDetailModal({
               </Badge>
             )}
             <span className="text-xs text-muted-foreground">
-              · exact amount resolving
+              {t.battlePreviewWinnings != null
+                ? `· ${formatCurrency(t.battlePreviewWinnings)} won`
+                : "· exact amount resolving"}
             </span>
           </div>
         ),

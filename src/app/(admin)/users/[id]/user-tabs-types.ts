@@ -444,15 +444,20 @@ export type Transaction = {
   /**
    * Win/loss DIRECTION for a PENDING battle_bet row (battle status
    * animating / in_progress), derived from battles.winner_team vs the
-   * user's battle_participants.team_number. The exact dollar AMOUNT is
-   * intentionally NOT derivable while pending and stays hidden — only the
-   * direction is shown.
+   * user's battle_participants.team_number. The owner-only creator preview
+   * carries its exact committed amount separately; other rows show direction.
    *   - "win"  → user's team == winner_team (house loss → rose)
    *   - "loss" → user's team != winner_team (house gain → emerald)
    *   - null   → not a pending battle_bet, OR winner_team not yet
    *              materialized (in_progress can be null) → "resolving"
    */
   battleOutcomePending: "win" | "loss" | null;
+  /**
+   * Owner-only exact creator payout preview for a pending battle after the
+   * EOS outcome has been committed. Uses the verification tool's settlement
+   * math. 0 means the creator lost; null means unavailable or hidden.
+   */
+  battlePreviewWinnings: number | null;
   /**
    * Upgrader-only outcome derived from the presence of a matching
    * upgrader_payout row sharing this row's game_session_id.
