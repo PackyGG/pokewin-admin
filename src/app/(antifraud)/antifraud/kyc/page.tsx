@@ -19,7 +19,10 @@ import { canManageAntifraud } from "@/lib/antifraud/access";
 import {
   getKycDashboard,
   isKycFilter,
+  KYC_ACCOUNT_LIMIT,
+  loadKycCountryReviews,
   type KycAccount,
+  type KycDashboardStats,
   type KycFilter,
 } from "@/lib/antifraud/kyc";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
@@ -155,7 +158,13 @@ async function KycDashboardContent({
     );
   }
 
-  const { stats } = result.data;
+  const { accounts, stats } = result.data;
+  // Started here, awaited inside <AccountList>'s nested boundary: the KPI strip
+  // and every row paint from our own DB while the monitor round-trip is still
+  // in flight. `loadKycCountryReviews` cannot reject (see its doc comment), so
+  // this floating promise is safe to hold until the boundary picks it up.
+  const accountsWithCountryEvidence = loadKycCountryReviews(accounts);
+
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 xl:grid-cols-4">
@@ -190,9 +199,11 @@ async function KycDashboardContent({
       </div>
 
       <AccountList
-        accounts={result.data.accounts}
+        accounts={accounts}
+        accountsWithCountryEvidence={accountsWithCountryEvidence}
         canManage={canManage}
         filter={status}
+        stats={stats}
       />
     </div>
   );
@@ -200,13 +211,25 @@ async function KycDashboardContent({
 
 function AccountList({
   accounts,
+  accountsWithCountryEvidence,
   canManage,
   filter,
+  stats,
 }: {
   accounts: KycAccount[];
+  accountsWithCountryEvidence: Promise<KycAccount[]>;
   canManage: boolean;
   filter: KycFilter;
+  stats: KycDashboardStats;
 }) {
+  // The list has no pagination: at the cap, rows exist that this view never
+  // shows. Say so, rather than letting "200" read as a complete answer under a
+  // KPI counting every open decision. `awaitingReview` counts open decisions
+  // across the workspace, so it is only a meaningful denominator on the views
+  // that show open work — never on finished history.
+  const truncated = accounts.length >= KYC_ACCOUNT_LIMIT;
+  const openTotal = filter === "history" ? null : stats.awaitingReview;
+
   return (
     <section className="space-y-3">
       <SectionHeading
@@ -215,11 +238,20 @@ function AccountList({
           <>
             {FILTER_TITLES[filter]}
             <span className="text-xs font-normal text-muted-foreground">
-              ({accounts.length} shown · {FILTER_LABELS[filter]})
+              (Showing {accounts.length}
+              {openTotal === null ? "" : ` of ${openTotal} open decisions`} ·{" "}
+              {FILTER_LABELS[filter]})
             </span>
           </>
         }
       />
+
+      {truncated && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          This view is capped at {KYC_ACCOUNT_LIMIT} rows — older matches are
+          not listed. Narrow the search or switch views to reach them.
+        </p>
+      )}
 
       {accounts.length === 0 ? (
         <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
@@ -237,18 +269,50 @@ function AccountList({
           </p>
         </div>
       ) : (
-        <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-          {accounts.map((account) => (
-            <AccountCard
-              key={account.userId}
-              account={account}
-              canManage={canManage}
-            />
-          ))}
-        </div>
+        // Rows paint immediately from our own DB (country evidence still
+        // null); the resolved copy — identical rows, identical order, only
+        // `countryReview` filled — swaps in when the monitor answers.
+        <Suspense
+          fallback={<AccountRows accounts={accounts} canManage={canManage} />}
+        >
+          <AccountRowsWithCountryEvidence
+            accounts={accountsWithCountryEvidence}
+            canManage={canManage}
+          />
+        </Suspense>
       )}
     </section>
   );
+}
+
+function AccountRows({
+  accounts,
+  canManage,
+}: {
+  accounts: KycAccount[];
+  canManage: boolean;
+}) {
+  return (
+    <div className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
+      {accounts.map((account) => (
+        <AccountCard
+          key={account.userId}
+          account={account}
+          canManage={canManage}
+        />
+      ))}
+    </div>
+  );
+}
+
+async function AccountRowsWithCountryEvidence({
+  accounts,
+  canManage,
+}: {
+  accounts: Promise<KycAccount[]>;
+  canManage: boolean;
+}) {
+  return <AccountRows accounts={await accounts} canManage={canManage} />;
 }
 
 function AccountCard({

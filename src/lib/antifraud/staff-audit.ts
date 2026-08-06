@@ -337,7 +337,7 @@ export type AntifraudAuditPage = {
   activeStaff: number;
   /** Staff actions in the last 24 hours (unfiltered scope). */
   last24h: number;
-  /** Staff who have ever acted in the scope — feeds the actor filter. */
+  /** Staff who acted in the scope in the last 30 days — feeds the actor chips. */
   actors: { id: string; username: string }[];
 };
 
@@ -388,29 +388,37 @@ export async function listAntifraudStaffAudit(
 
   const where = and(...conditions)!;
 
-  const [rows, total, summary, actors] = await Promise.all([
-    adminDrizzle
-      .select({
-        id: admin_audit_events.id,
-        event_type: admin_audit_events.event_type,
-        target_user_id: admin_audit_events.target_user_id,
-        metadata: admin_audit_events.metadata,
-        created_at: admin_audit_events.created_at,
-        actor_username: admin_users.username,
-        actor_role: admin_users.role,
-      })
-      .from(admin_audit_events)
-      .leftJoin(
-        admin_users,
-        eq(admin_users.id, admin_audit_events.admin_user_id),
-      )
-      .where(where)
-      .orderBy(
-        desc(admin_audit_events.created_at),
-        desc(admin_audit_events.id),
-      )
-      .limit(PER_PAGE)
-      .offset((page - 1) * PER_PAGE),
+  // The page's own rows come first so the MAIN-DB username hydration can ride
+  // alongside the remaining ADMIN reads instead of waiting for all of them.
+  // It genuinely depends on `rows` (it needs their target ids), so it cannot
+  // move INTO the wave — but chaining it off the row promise turns what was a
+  // serial round-trip after the wave into one that overlaps the wave's tail.
+  const rowsPromise = adminDrizzle
+    .select({
+      id: admin_audit_events.id,
+      event_type: admin_audit_events.event_type,
+      target_user_id: admin_audit_events.target_user_id,
+      metadata: admin_audit_events.metadata,
+      created_at: admin_audit_events.created_at,
+      actor_username: admin_users.username,
+      actor_role: admin_users.role,
+    })
+    .from(admin_audit_events)
+    .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
+    .where(where)
+    .orderBy(desc(admin_audit_events.created_at), desc(admin_audit_events.id))
+    .limit(PER_PAGE)
+    .offset((page - 1) * PER_PAGE);
+
+  const targetUsernamesPromise = rowsPromise.then((pageRows) =>
+    hydrateTargetUsernames([
+      ...new Set(pageRows.map((row) => row.target_user_id).filter(Boolean)),
+    ] as string[]),
+  );
+
+  const [rows, targetUsernames, total, summary, actors] = await Promise.all([
+    rowsPromise,
+    targetUsernamesPromise,
     adminDrizzle
       .select({ value: count() })
       .from(admin_audit_events)
@@ -431,6 +439,12 @@ export async function listAntifraudStaffAudit(
           AND ${admin_audit_events.created_at} >= now() - interval '30 days'
       `)
       .then((result) => result.rows[0] ?? null),
+    // Actor chips, bounded to the SAME 30-day window the summary aggregate
+    // above already uses. `LIMIT 100` applies AFTER the DISTINCT + sort, so it
+    // bounded the output, never the work: without a date predicate this walked
+    // every antifraud audit row ever written on every page load. Filtering by
+    // an actor who has gone quiet for 30 days still works — `?actor=<uuid>` is
+    // read straight from the URL and never validated against this list.
     adminDrizzle
       .execute<{ id: string; username: string }>(sql`
         SELECT DISTINCT
@@ -441,15 +455,12 @@ export async function listAntifraudStaffAudit(
           ON ${admin_users.id} = ${admin_audit_events.admin_user_id}
         WHERE ${scopePredicate()}
           AND ${actorVisible}
+          AND ${admin_audit_events.created_at} >= now() - interval '30 days'
         ORDER BY ${admin_users.username} ASC
         LIMIT 100
       `)
       .then((result) => result.rows),
   ]);
-
-  const targetUsernames = await hydrateTargetUsernames(
-    [...new Set(rows.map((row) => row.target_user_id).filter(Boolean))] as string[],
-  );
 
   return {
     rows: rows.map((row) => {
@@ -487,6 +498,20 @@ export async function listAntifraudStaffAudit(
  * Search term → main-DB user ids. A raw id passes straight through; anything
  * else resolves through a bounded username/email lookup. A slow or
  * unavailable main DB degrades to "no match" instead of hanging the page.
+ *
+ * PREFIX, not substring — deliberately. This lookup used to run
+ * `username ILIKE '%term%' OR email ILIKE '%term%'`. MAIN carries only
+ * `lower(col) text_pattern_ops` PREFIX indexes (`idx_user_lower_username_prefix`,
+ * `idx_user_lower_email_prefix`) and pg_trgm is NOT installed on that database
+ * (`prisma/recommended-indexes.sql`), so a leading wildcard is unindexable: the
+ * planner seq-scanned the largest table on MAIN on every audit search, over the
+ * `max:3` pool. `src/lib/queries/users-detail.ts` documents that exact pattern
+ * as EXPLAIN-proven to seq-scan and names it a crash source on /users.
+ *
+ * The form below is the one /users already ships (`src/lib/queries/users-list.ts`):
+ * lowercase and escape in JS, compare `LOWER(col) LIKE 'term%'`, which the
+ * planner serves from those functional indexes. Prefix-only search is also
+ * already the house choice for the review queue (`antifraud/reviews.ts`).
  */
 async function resolveTargetIds(search: string): Promise<string[]> {
   const ids = new Set<string>();
@@ -495,14 +520,17 @@ async function resolveTargetIds(search: string): Promise<string[]> {
   if (/^[0-9a-zA-Z_-]{16,}$/.test(search)) ids.add(search);
   try {
     const db = await getReadDrizzleDb();
-    const escaped = search.replace(/[\\%_]/g, "\\$&");
+    // Lowercase first (the SQL side compares LOWER(col)), then escape `\`, `%`
+    // and `_` so a pasted wildcard matches literally instead of widening the
+    // prefix back into a scan.
+    const prefix = `${search.toLowerCase().replace(/[\\%_]/g, "\\$&")}%`;
     const result = await withTimeout(
       () =>
         db.execute<{ id: string }>(sql`
           SELECT id
           FROM "user"
-          WHERE username ILIKE ${`%${escaped}%`} ESCAPE '\'
-             OR email ILIKE ${`%${escaped}%`} ESCAPE '\'
+          WHERE LOWER(username) LIKE ${prefix} ESCAPE '\\'
+             OR LOWER(email) LIKE ${prefix} ESCAPE '\\'
           LIMIT 50
         `),
       MAIN_DB_TIMEOUT_MS,

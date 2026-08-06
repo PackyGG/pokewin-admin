@@ -280,10 +280,13 @@ export async function listReviews(
 async function attachIdentities(
   rows: (typeof antifraud_reviews.$inferSelect)[],
 ): Promise<ReviewListItem[]> {
-  const identities = await loadAdminIdentities(
-    rows.flatMap((r) => [r.assigned_to, r.opened_by]),
-  );
-  const workflows = await loadReviewWorkflows(rows.map((row) => row.id));
+  // Independent reads — the workflow lookup does not need the identities.
+  // Awaiting them in sequence put a second full round-trip on the hottest
+  // path in the workspace (every queue page and every case dialog).
+  const [identities, workflows] = await Promise.all([
+    loadAdminIdentities(rows.flatMap((r) => [r.assigned_to, r.opened_by])),
+    loadReviewWorkflows(rows.map((row) => row.id)),
+  ]);
   return rows.map((row) => ({
     ...toRow(row),
     assignee: row.assigned_to ? identities.get(row.assigned_to) ?? null : null,
@@ -305,7 +308,20 @@ export type ReviewPage = {
   total: number;
 };
 
-/** Resolve a monitor-service case deep-link to its Account Review record. */
+/**
+ * Resolve a monitor-service case deep-link to its Account Review record.
+ *
+ * Index-backed since `drizzle/admin/migrations/20260806_antifraud_signals_monitor_case_idx.sql`:
+ * two partial expression indexes on `payload ->> 'caseId'` /
+ * `payload ->> 'monitorCaseId'`, both predicated on `review_id IS NOT NULL`
+ * (which this query also asserts). Without them an unknown case id walked the
+ * whole `antifraud_signals` table — there is no date bound here on purpose,
+ * because a deep-link to an old case must still resolve.
+ *
+ * MUST NOT be awaited in the reviews page body: it is a dialog lookup, and
+ * awaiting it above `PageHero` held the entire shell behind it. The page runs
+ * it inside the dialog's own Suspense boundary.
+ */
 export async function getReviewIdForMonitorCase(
   monitorCaseId: string,
 ): Promise<string | null> {

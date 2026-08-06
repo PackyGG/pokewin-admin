@@ -105,11 +105,20 @@ export default async function ReviewQueuePage({
   const monitorCaseId = z.string().uuid().safeParse(params.monitorCaseId).success
     ? params.monitorCaseId
     : undefined;
-  const selectedReviewId =
-    directReviewId ??
-    (monitorCaseId
-      ? (await getReviewIdForMonitorCase(monitorCaseId)) ?? undefined
-      : undefined);
+  // Identity of the open dialog AS IT APPEARS IN THE URL — a direct review id,
+  // or the monitor case id whose review is still being resolved. It keys the
+  // dialog boundary; the review id itself may not be known yet.
+  const selectedReviewId = directReviewId ?? monitorCaseId;
+  // Started, NOT awaited. Resolving a monitor deep-link is a JSONB probe on
+  // `antifraud_signals`; awaiting it here — above PageHero and outside every
+  // Suspense boundary — held the whole shell hostage to a lookup that only
+  // ever feeds the dialog. It now resolves inside the dialog's own boundary.
+  // `getReviewIdForMonitorCase` wraps itself in `safeQueryOrNull`, so this
+  // promise cannot reject.
+  const monitorReviewId =
+    !directReviewId && monitorCaseId
+      ? getReviewIdForMonitorCase(monitorCaseId)
+      : null;
 
   const filters: ReviewFilters = {
     // Reviews is the complete active queue: untouched and already-started
@@ -159,17 +168,47 @@ export default async function ReviewQueuePage({
             </ReviewCaseDialog>
           }
         >
-          <ReviewDialogFromQueue
-            reviewId={selectedReviewId}
-            queueData={queueData}
-            current={current}
-            viewerId={session.userId}
-            canManage={canManageAntifraud(session)}
-          />
+          {directReviewId ? (
+            <ReviewDialogFromQueue
+              reviewId={directReviewId}
+              queueData={queueData}
+              current={current}
+              viewerId={session.userId}
+              canManage={canManageAntifraud(session)}
+            />
+          ) : (
+            <ReviewDialogFromMonitorCase
+              reviewId={monitorReviewId}
+              queueData={queueData}
+              current={current}
+              viewerId={session.userId}
+              canManage={canManageAntifraud(session)}
+            />
+          )}
         </Suspense>
       )}
     </div>
   );
+}
+
+/**
+ * Deep-link arm: the monitor case id is resolved HERE instead of in the page
+ * body, so the hero and the queue paint while the lookup runs. A link that
+ * resolves to nothing renders nothing — exactly as before.
+ */
+async function ReviewDialogFromMonitorCase({
+  reviewId,
+  ...rest
+}: {
+  reviewId: Promise<string | null> | null;
+  queueData: Promise<ReviewQueueData>;
+  current: SearchParams;
+  viewerId: string;
+  canManage: boolean;
+}) {
+  const resolved = await reviewId;
+  if (!resolved) return null;
+  return <ReviewDialogFromQueue reviewId={resolved} {...rest} />;
 }
 
 // ─── Filters ──────────────────────────────────────────────────────────

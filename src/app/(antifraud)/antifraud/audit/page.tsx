@@ -1,5 +1,10 @@
 import { Suspense } from "react";
-import { CalendarClock, ScrollText, UserRoundCog } from "lucide-react";
+import {
+  CalendarClock,
+  ScrollText,
+  ShieldX,
+  UserRoundCog,
+} from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
 import { KpiStripSkeleton } from "@/components/loading-skeletons";
@@ -14,6 +19,7 @@ import {
   type AntifraudAuditRow,
   type AntifraudAuditTone,
 } from "@/lib/antifraud/staff-audit";
+import { safeQueryOrNull } from "@/lib/errors/safe-query";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
 import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
 import { cn } from "@/lib/utils";
@@ -42,6 +48,9 @@ export const metadata = { title: "Audit Log · Antifraud" };
 const CATEGORIES = Object.keys(
   ANTIFRAUD_AUDIT_CATEGORY_LABELS,
 ) as AntifraudAuditCategory[];
+
+/** Same bound every sibling antifraud route puts on its own page read. */
+const QUERY_TIMEOUT_MS = 10_000;
 
 type SearchParams = {
   page?: string;
@@ -127,14 +136,36 @@ async function Content({
   state: FilterState;
   canViewProtectedActors: boolean;
 }) {
-  const data = await listAntifraudStaffAudit({
-    page: state.page,
-    category: state.category,
-    event: state.event,
-    actorId: state.actor,
-    search: state.search,
-    canViewProtectedActors,
-  });
+  // Bounded like every sibling antifraud route: this read spans the ADMIN DB
+  // and a MAIN-DB hydration, and an unwrapped await here hung the whole
+  // segment until the platform killed the request instead of degrading.
+  const { data } = await safeQueryOrNull(
+    () =>
+      listAntifraudStaffAudit({
+        page: state.page,
+        category: state.category,
+        event: state.event,
+        actorId: state.actor,
+        search: state.search,
+        canViewProtectedActors,
+      }),
+    "antifraud.staff-audit",
+    QUERY_TIMEOUT_MS,
+  );
+
+  if (!data) {
+    return (
+      <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
+        <ShieldX className="mx-auto mb-3 size-6 text-muted-foreground" />
+        <p className="text-sm font-semibold">
+          The audit log could not be loaded
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          Nothing was changed. Refresh to retry, or narrow the filters.
+        </p>
+      </div>
+    );
+  }
 
   return (
     <>

@@ -83,8 +83,6 @@ export type KycDashboardStats = {
   rejected: number;
   cleared: number;
   withApplicant: number;
-  webhookEvents: number;
-  processedWebhookEvents: number;
   usedLevels: string[];
 };
 
@@ -111,6 +109,13 @@ export type KycDashboardFilters = {
   search?: string;
   limit?: number;
 };
+
+/**
+ * Rows the workspace lists per view. There is no pagination behind it, so the
+ * page MUST say when a view is standing on this cap — a silent 200 under a KPI
+ * reading "340 open decisions" reads as "these are all of them".
+ */
+export const KYC_ACCOUNT_LIMIT = 200;
 
 /**
  * Keep the cross-database boundary explicit: load the currently required user
@@ -272,7 +277,7 @@ async function listKycAccounts(
     .innerJoin(user, eq(user.id, user_kyc.user_id))
     .where(conditions.length ? and(...conditions) : undefined)
     .orderBy(desc(user_kyc.updated_at))
-    .limit(Math.min(Math.max(filters.limit ?? 200, 1), 300));
+    .limit(Math.min(Math.max(filters.limit ?? KYC_ACCOUNT_LIMIT, 1), 300));
 
   const identities = await loadAdminIdentities(
     rows.flatMap((row) => [row.kycRequiredBy, row.adminReviewedBy]),
@@ -296,6 +301,17 @@ async function listKycAccounts(
   }));
 }
 
+/**
+ * One bounded aggregate over `user_kyc` — nothing else.
+ *
+ * NO webhook `COUNT(*)` subqueries belong here. Two used to hang off this
+ * aggregate (`sumsub_webhook_events` total, and the same filtered on
+ * `processed_at IS NOT NULL`). Both were unbounded scans of an append-only
+ * webhook table with no covering index, both re-ran on every /antifraud/kyc
+ * render — every tab switch, every filter, every search — and NOTHING on the
+ * page rendered either number. If a webhook health figure is ever wanted, it
+ * belongs on its own bounded, index-backed read, not bolted onto this one.
+ */
 async function loadKycStats(): Promise<KycDashboardStats> {
   const db = await getReadDrizzleDb();
   const result = await db.execute<{
@@ -307,8 +323,6 @@ async function loadKycStats(): Promise<KycDashboardStats> {
     rejected: string;
     cleared: string;
     with_applicant: string;
-    webhook_events: string;
-    processed_webhook_events: string;
     used_levels: string[] | null;
   }>(sql`
     SELECT
@@ -328,13 +342,6 @@ async function loadKycStats(): Promise<KycDashboardStats> {
         WHERE NOT kyc_required AND admin_decision = 'safe'
       ) AS cleared,
       COUNT(applicant_id) AS with_applicant,
-      COALESCE((
-        SELECT COUNT(*) FROM sumsub_webhook_events
-      ), 0) AS webhook_events,
-      COALESCE((
-        SELECT COUNT(*) FROM sumsub_webhook_events
-        WHERE processed_at IS NOT NULL
-      ), 0) AS processed_webhook_events,
       ARRAY_AGG(DISTINCT level_name ORDER BY level_name)
         FILTER (WHERE level_name IS NOT NULL) AS used_levels
     FROM user_kyc
@@ -352,8 +359,6 @@ async function loadKycStats(): Promise<KycDashboardStats> {
     rejected: number(row?.rejected),
     cleared: number(row?.cleared),
     withApplicant: number(row?.with_applicant),
-    webhookEvents: number(row?.webhook_events),
-    processedWebhookEvents: number(row?.processed_webhook_events),
     usedLevels: row?.used_levels ?? [],
   };
 }
@@ -382,6 +387,17 @@ async function listSumsubEvents(): Promise<SumsubEventSummary[]> {
   }));
 }
 
+/**
+ * Everything the workspace needs from OUR OWN databases — and nothing that
+ * leaves the process.
+ *
+ * The Sumsub country-evidence refresh deliberately does NOT run here. It used
+ * to be awaited right after this `Promise.all`, so a single out-of-process POST
+ * (up to 100 applicants, `AbortSignal.timeout(8_000)`) held back the table, the
+ * KPI strip and every action control — for a per-row badge. It now lives in
+ * {@link loadKycCountryReviews}, behind its own Suspense boundary on the page.
+ * Accounts come back with `countryReview: null`; the badges fill in after.
+ */
 export async function getKycDashboard(
   filters: KycDashboardFilters = {},
 ): Promise<KycDashboard> {
@@ -391,6 +407,21 @@ export async function getKycDashboard(
     loadKycStats(),
     listSumsubEvents(),
   ]);
+  return { accounts, stats, events, config: integrationConfig(env) };
+}
+
+/**
+ * Second pass over an ALREADY-RENDERED page of accounts: ask the antifraud
+ * monitor for saved Sumsub country evidence and hang it on the matching rows.
+ *
+ * Same rows, same order, same filters — this only fills `countryReview`, which
+ * {@link getKycDashboard} leaves null. `refreshKycCountryReviews` swallows its
+ * own transport failures and resolves to `[]`, so a dead or slow monitor
+ * degrades to "no country evidence" instead of taking the page with it.
+ */
+export async function loadKycCountryReviews(
+  accounts: readonly KycAccount[],
+): Promise<KycAccount[]> {
   const countryReviews = await refreshKycCountryReviews(
     accounts
       .filter(
@@ -405,22 +436,19 @@ export async function getKycDashboard(
         accountCountry: account.countryCode?.trim() || null,
       })),
   );
+  if (countryReviews.length === 0) return [...accounts];
+
   const reviewsByApplicant = new Map(
     countryReviews.map((review) => [
       `${review.userId}:${review.applicantId}`,
       review,
     ]),
   );
-  return {
-    accounts: accounts.map((account) => ({
-      ...account,
-      countryReview: account.applicantId
-        ? reviewsByApplicant.get(`${account.userId}:${account.applicantId}`) ??
-          null
-        : null,
-    })),
-    stats,
-    events,
-    config: integrationConfig(env),
-  };
+  return accounts.map((account) => ({
+    ...account,
+    countryReview: account.applicantId
+      ? reviewsByApplicant.get(`${account.userId}:${account.applicantId}`) ??
+        null
+      : null,
+  }));
 }
