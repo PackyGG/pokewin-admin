@@ -9,18 +9,18 @@ you finish something, delete its in-flight entry. If the file is over the cap, t
 entries; do not archive-and-grow. Pre-2026-08-05 history lives in `AGENT_HANDOFF_ARCHIVE.md`
 (read-on-demand only, never at session start).
 
+**Cursor speed:** a compact board is fine. Cursor slows when alwaysApply rules force-load huge
+files every turn — never require reading this file before every tool call.
+
 ---
 
 ## 🟡 In flight
 
-_Nothing tracked. Add an entry only while work is actually open; delete it when it lands._
+_(empty)_
 
 ## 🚦 File locks (concurrent agents)
 
-The owner runs parallel Codex/Claude sessions that push to `main`. Before touching a shared file,
-check here; add a line while you hold it; delete the line when you push.
-
-_No locks held._
+_(empty)_
 
 ## 🔴 Blocked (needs owner)
 
@@ -30,29 +30,27 @@ _No locks held._
 | Bulk delete `/gift-cards` + `/vouchers` | Both tables live in **MAIN DB** — writes forbidden | Allow MAIN write · gift-cards admin-cancel only · drop the feature |
 | Packy.gg PFP update on Add Creator | MAIN write, no backend endpoint | ADMIN-only preview until an endpoint exists |
 
+## 🟠 Residual from Aug 5–6 Claude audit
+
+All code residuals from that review are fixed on `fix/audit-residuals` (containment outbox for all 8 kinds, KYC tip-lock hard-fail, promo `usdAmountSchema`, HISTORICAL banners on stale audit docs). After merge/push, treat git as source of truth.
+
+Ops note: local checkouts often dirty + behind `origin/main` after parallel sessions — prefer `origin/main`.
+
 ---
 
 ## ⚠️ Gotchas that still bite
 
-- **Dev-server port collision across worktrees** — parallel worktrees all default to `:3000`; the
-  first to bind wins, and later runs silently hit the *other* worktree's stale code. Use a unique
-  `PORT=` and confirm the listener's path is yours. Start dev servers via the Bash tool with
-  `run_in_background: true` (a `&`-detached `npm run dev` dies on Windows when the call returns).
-- **Stale local game DB** — live admin pages throw locally. "Broken locally" ≠ "broken in prod".
-- **React #130** — every nav `icon` string must exist in the `ICONS` map in
-  `src/components/app-sidebar.tsx`, or the sidebar crashes at runtime.
-- **PowerShell writes UTF-8 with BOM**, which breaks `.sql` files for Postgres. Write SQL via Bash.
-- **Stale `.next`** can make `tsc` fail on deleted routes — delete it before re-gating.
-- **No function props Server → Client** (RSC boundary). Only `npm run build` catches this, not `tsc`.
-- **Fresh checkout / worktree** — run `npm install`, never `npm ci` (the committed lockfile diverges).
-- **Admin schema first, deploy second** — a read selecting a column that does not exist yet fails the
-  *whole* query, taking the page down for the entire window between deploy and migration.
-- **App Router `_`-prefixed segments are private** — a temp `/api/_probe/route.ts` silently 404s.
-- **Fire-and-forget `void fn()` post-response work does not flush in `next dev`** — a missing log line
-  locally is not evidence the hook is broken.
-- **Backend-owned config cards** (wager requirements, multiplier/leaderboard/shard wager weights,
-  crypto fees, telegram notifications) write via `backendApi`, not MAIN. They render an
-  "awaiting backend deploy" state until the matching backend branch ships — that is not a bug.
+- **Dev-server port collision across worktrees** — use a unique `PORT=`; confirm the listener path.
+- **Stale local game DB** — "Broken locally" ≠ "broken in prod".
+- **React #130** — every nav `icon` string must exist in `app-sidebar.tsx` `ICONS`.
+- **PowerShell UTF-8 BOM** breaks `.sql` — write SQL via Bash.
+- **Stale `.next`** can fail `tsc` on deleted routes — delete before re-gating.
+- **No function props Server → Client** — only `npm run build` catches this.
+- **Fresh checkout / worktree** — `npm install`, never `npm ci`.
+- **Admin schema first, deploy second** — missing column fails the whole query window.
+- **App Router `_`-prefixed segments are private** — temp `/api/_probe` silently 404s.
+- **Fire-and-forget `void fn()`** may not flush in `next dev`.
+- **Backend-owned config cards** write via `backendApi`; "awaiting backend deploy" is not a bug.
 
 ---
 
@@ -61,6 +59,7 @@ _No locks held._
 | Need | File |
 |---|---|
 | Work rules (binding) | `CLAUDE.md` |
-| Architecture + domain knowledge | `ONBOARDING.md` |
-| Query / caching / streaming mechanics | `docs/BACKEND_QUERY_SYSTEM.md` |
+| Architecture + domain | `ONBOARDING.md` |
+| Query / caching / streaming | `docs/BACKEND_QUERY_SYSTEM.md` |
+| Fraud contracts (current) | `docs/ANTIFRAUD_CONTRACTS.md` · `.cursor/rules/antifraud.mdc` |
 | Pre-2026-08-05 history | `AGENT_HANDOFF_ARCHIVE.md` |

@@ -32,7 +32,7 @@ test("global behavior scan is tuple-bounded and preserves provenance", async () 
 });
 
 test("behavior policy is additive, capped, and uses signed containment", async () => {
-  const [migration, monitor, ingest] = await Promise.all([
+  const [migration, monitor, ingest, behavioral] = await Promise.all([
     readFile(
       new URL(
         "../migrations/041_fresh_account_behavior_policy.sql",
@@ -48,15 +48,23 @@ test("behavior policy is additive, capped, and uses signed containment", async (
       ),
       "utf8",
     ),
+    readFile(
+      new URL(
+        "../../../src/lib/antifraud/behavioral-withdrawal-containment.ts",
+        import.meta.url,
+      ),
+      "utf8",
+    ),
   ]);
   assert.doesNotMatch(migration, /\bDROP\s+(?:TABLE|COLUMN)\b/i);
   assert.match(migration, /fresh-third-promo-redemption/);
   assert.match(migration, /fresh-minimum-withdrawal-runup/);
   assert.match(monitor, /LEAST\(100,GREATEST/);
   assert.match(monitor, /session\.initial_score - 30/);
-  assert.match(ingest, /BEHAVIORAL_CONTAINMENT_REASONS/);
-  assert.match(ingest, /locked_withdrawals_items = TRUE/);
-  assert.doesNotMatch(ingest, /behavioral[\s\S]{0,500}kyc_required/i);
+  assert.match(behavioral, /BEHAVIORAL_CONTAINMENT_REASONS/);
+  assert.match(behavioral, /locked_withdrawals_items = TRUE/);
+  assert.doesNotMatch(behavioral, /behavioral[\s\S]{0,500}kyc_required/i);
+  assert.match(ingest, /isContainmentOutboxKind/);
 });
 
 test("network-cluster membership is an additive score input, not a new containment path", async () => {

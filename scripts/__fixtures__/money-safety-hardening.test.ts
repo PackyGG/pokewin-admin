@@ -125,6 +125,7 @@ test("voucher and promo-code creation are 2FA-gated and cap-checked", () => {
   }
   // Money parsed as a cents-exact USD amount, not a bare float.
   assert.match(vouchers, /usdAmountSchema\(\{ positive: true \}\)/);
+  assert.match(promo, /usdAmountSchema\(\{ positive: true \}\)/);
 });
 
 test("the client dialogs collect the second factor they now have to send", () => {

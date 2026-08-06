@@ -1,13 +1,19 @@
 # Antifraud quality and contract audit
 
-Date: 2026-07-30
+> **HISTORICAL as of 2026-07-30 — not current source of truth.**
+> Do not treat the divergence table below as open work. Prefer live code + `git log`,
+> `.cursor/rules/antifraud.mdc`, and `docs/ANTIFRAUD_CONTRACTS.md`. Gaps listed here that
+> closed on Aug 5–6 `main` must not be re-opened from this doc alone.
+
+Date: 2026-07-30 (snapshot)
 Scope: repository code and migrations at `2f194f21`
 Safety boundary: no MAIN writes, production queries, migrations, infrastructure changes, push, or deployment
 
-## Authoritative owner contract result
+## Authoritative owner contract result (historical snapshot)
 
-The owner contract is the target. The current branch is not conformant and must
-not be released as the requested recode without resolving the divergences below.
+At the time of this audit the owner contract was the target and the then-current branch
+was not conformant. **That snapshot is stale.** Use current code and
+`docs/ANTIFRAUD_CONTRACTS.md` for what ships today.
 
 | Owner requirement | Current branch | Result |
 |---|---|---|

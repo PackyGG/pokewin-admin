@@ -19,6 +19,7 @@ import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { fail, ok, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
+import { usdAmountSchema } from "@/lib/utils/money";
 import {
   getPromoCodeClaims,
   getDeletablePromoCodeIds,
@@ -28,11 +29,11 @@ import {
 
 const createPromoCodeSchema = z.object({
   code: z.string().trim().min(1, "Code is required").max(64, "Code is too long"),
-  value: z
-    .number()
-    .finite()
-    .nonnegative("Value cannot be negative")
-    .max(10_000_000),
+  // Match vouchers: Decimal(20,2) money — reject sub-cent floats before MAIN write.
+  value: usdAmountSchema({ positive: true }).refine(
+    (n) => n <= 10_000_000,
+    "Value is too large",
+  ),
   region: z.enum(["NA", "EU"]),
   minimumLevel: z.number().int().nonnegative().max(1_000),
   minimumWagerAmount: z.number().finite().nonnegative().max(10_000_000),

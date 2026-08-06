@@ -8,12 +8,6 @@ import {
   antifraud_signals,
 } from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
-import { getProdPrimaryDrizzleDb } from "@/lib/db";
-import {
-  getUserFeatureLocks,
-  updateUserRewardLocks,
-  type RewardLockCategory,
-} from "@/lib/backend-api/feature-locks";
 import {
   parseAntifraudEvent,
   SEVERITY_RANK,
@@ -21,15 +15,11 @@ import {
   type AntifraudSignalEvent,
 } from "@/lib/antifraud/ws";
 import {
-  abstractCatchallContainmentTarget,
-  applyAbstractCatchallContainment,
-  type AbstractCatchallContainmentTarget,
-} from "@/lib/antifraud/abstract-catchall-containment";
-import {
   isUsefulReviewSignalTrailEntry,
   reviewSignalLabel,
 } from "@/lib/antifraud/signal-display";
 import {
+  isContainmentOutboxKind,
   markContainmentPending,
   requiresContainmentOutbox,
   runDeferredContainment,
@@ -65,19 +55,22 @@ import {
  *   • Unset secret = the endpoint is CLOSED (503), not open. A missing
  *     credential must never mean "accept anything".
  *
- * Normally writes only the ADMIN DB. The dedicated
- * `fiat_blacklisted_email_domain`, `abstract_email_catchall`,
+ * Normally writes only the ADMIN DB. The eight containment kinds
+ * (`fiat_blacklisted_email_domain`, `abstract_email_catchall`,
  * `signup_policy_recommendation`, `risky_free_battle_containment`,
  * `behavioral_withdrawal_containment`, `critical_risk_signup`,
- * `fiat_eligibility_containment` and
- * `fiat_deposit_identity_containment`
- * signals are also application-authorized containment commands: after
- * signature and payload validation, a first-time (non-duplicate) delivery
- * applies deterministic MAIN containment before acknowledgement. Active
- * blocked domains and Abstract-confirmed catch-all domains ban; suspicious
- * clusters and free-battle hard signals lock withdrawals only; a refused Fiat
- * checkout turns Fiat deposits off and locks withdrawals; a critical signup
- * also locks tips.
+ * `fiat_eligibility_containment`, `fiat_deposit_identity_containment`) are
+ * application-authorized containment commands: after signature and payload
+ * validation, a first-time (non-duplicate) delivery validates admission
+ * inside the ADMIN transaction (pure, no MAIN I/O), marks the signal row
+ * `pending` on the containment outbox, and runs MAIN / backend apply work
+ * strictly AFTER that transaction commits via `runDeferredContainment`
+ * (`@/lib/antifraud/containment-outbox`). Active blocked domains and
+ * Abstract-confirmed catch-all domains ban; suspicious clusters and
+ * free-battle hard signals lock withdrawals only; a refused Fiat checkout
+ * turns Fiat deposits off and locks withdrawals; a critical signup also
+ * locks tips. Crashes between commit and apply are retried by
+ * `/api/cron/antifraud-containment-retry`.
  *
  * KYC: automated signals do NOT mutate KYC state, with exactly one owner-
  * approved exception — `fiat_deposit_identity_containment` also requires KYC,
@@ -295,523 +288,17 @@ export async function POST(request: Request): Promise<Response> {
   );
 }
 
-function blacklistDomainFromSignal(
-  signal: AntifraudSignalEvent,
-): string | null {
-  const value = signal.payload?.emailDomain;
-  if (typeof value !== "string") return null;
-  const domain = value.trim().toLowerCase();
-  return /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/.test(domain) &&
-    domain.includes(".")
-    ? domain
-    : null;
-}
-
 /**
- * Apply deterministic MAIN containment for one
- * `fiat_blacklisted_email_domain` signal. Active blocked domains ban.
- * Gmail dot-fragment and coordinated cluster signals lock withdrawals only.
- * Automated signals never mutate KYC state.
- *
- * Returns `"skipped"` for PERMANENT conditions (malformed containment fields,
- * account deleted since the signal was produced) instead of throwing: a throw
- * here becomes a 500 `storage_failed`, and the backend would retry the same
- * poison-pill delivery forever, blocking every other signal batched with it.
- * Only genuinely transient errors (DB down, etc.) are allowed to propagate
- * into the 500-retry path.
- */
-async function containBlacklistedEmailDomainAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"banned" | "locked" | "skipped"> {
-  const userId = signal.userId;
-  const domain = blacklistDomainFromSignal(signal);
-  if (!userId || !domain || signal.riskScore !== 100) {
-    console.error(
-      "[antifraud-ingest] skipping invalid blacklisted email-domain containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const db = getProdPrimaryDrizzleDb();
-  const source =
-    signal.payload?.matchSource === "signup" ? "signup" : "Whop checkout";
-  const patternMatch =
-    signal.payload?.emailRiskType === "gmail_dot_fragmentation";
-  const clusterMatch =
-    signal.payload?.emailRiskType === "suspicious_deposit_cluster";
-  const blockedDomainMatch =
-    signal.payload?.emailRiskType === "blacklisted_domain";
-  const reason =
-    (clusterMatch
-      ? `Automatic fraud lock: ${source} belonged to a suspicious coordinated deposit cluster (${domain})`
-      : patternMatch
-      ? `Automatic fraud lock: ${source} used a suspicious dot-fragmented Gmail address (${domain})`
-      : `Automatic fraud ban: ${source} used active blocked email domain ${domain}`)
-      .slice(0, 500);
-  const contained = await db.transaction(async (tx) => {
-    const locked = await tx.execute<{ user_id: string }>(sql`
-      INSERT INTO user_feature_locks (
-        id,
-        user_id,
-        locked_withdrawals_crypto,
-        locked_withdrawals_items,
-        locked_withdrawals_at,
-        locked_withdrawals_by,
-        locked_withdrawals_reason,
-        created_at,
-        updated_at
-      )
-      SELECT
-        ${crypto.randomUUID()},
-        u.id,
-        ARRAY['all']::text[],
-        TRUE,
-        NOW(),
-        NULL,
-        ${reason},
-        NOW(),
-        NOW()
-      FROM "user" u
-      WHERE u.id = ${userId}
-      ON CONFLICT (user_id) DO UPDATE SET
-        locked_withdrawals_crypto = ARRAY['all']::text[],
-        locked_withdrawals_items = TRUE,
-        locked_withdrawals_at = COALESCE(
-          user_feature_locks.locked_withdrawals_at,
-          EXCLUDED.locked_withdrawals_at
-        ),
-        locked_withdrawals_reason = COALESCE(
-          user_feature_locks.locked_withdrawals_reason,
-          EXCLUDED.locked_withdrawals_reason
-        ),
-        updated_at = NOW()
-      RETURNING user_id
-    `);
-    if (locked.rows.length === 0 || !blockedDomainMatch) {
-      return locked.rows.length > 0;
-    }
-
-    await tx.execute(sql`
-      UPDATE "user"
-      SET
-        is_banned = TRUE,
-        banned_reason = CASE
-          WHEN is_banned THEN COALESCE(banned_reason, ${reason})
-          ELSE ${reason}
-        END,
-        banned_at = CASE
-          WHEN is_banned THEN COALESCE(banned_at, NOW())
-          ELSE NOW()
-        END,
-        banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
-        updated_at = NOW()
-      WHERE id = ${userId}
-    `);
-    await tx.execute(sql`DELETE FROM session WHERE "userId" = ${userId}`);
-    return true;
-  });
-  if (!contained) {
-    console.error(
-      "[antifraud-ingest] blacklisted email-domain account no longer exists, skipping containment lock",
-      { externalId: signal.id || null, userId },
-    );
-    return "skipped";
-  }
-
-  return blockedDomainMatch ? "banned" : "locked";
-}
-
-async function containAbstractCatchallAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"banned" | "skipped"> {
-  if (!abstractCatchallContainmentTarget(signal)) {
-    console.error(
-      "[antifraud-ingest] skipping invalid Abstract catch-all containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-  return applyAbstractCatchallContainment(signal, {
-    banAccount: async (
-      target: AbstractCatchallContainmentTarget,
-    ): Promise<boolean> => {
-      const db = getProdPrimaryDrizzleDb();
-      return db.transaction(async (tx) => {
-        const banned = await tx.execute<{ id: string }>(sql`
-          UPDATE "user"
-          SET
-            is_banned = TRUE,
-            banned_reason = CASE
-              WHEN is_banned THEN COALESCE(banned_reason, ${target.reason})
-              ELSE ${target.reason}
-            END,
-            banned_at = CASE
-              WHEN is_banned THEN COALESCE(banned_at, NOW())
-              ELSE NOW()
-            END,
-            banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
-            updated_at = NOW()
-          WHERE id = ${target.userId}
-          RETURNING id
-        `);
-        if (banned.rows.length === 0) {
-          console.error(
-            "[antifraud-ingest] Abstract catch-all account no longer exists, skipping containment",
-            { externalId: signal.id || null, userId: target.userId },
-          );
-          return false;
-        }
-        await tx.execute(
-          sql`DELETE FROM session WHERE "userId" = ${target.userId}`,
-        );
-        return true;
-      });
-    },
-  });
-}
-
-function containmentCount(value: unknown): number | null {
-  return typeof value === "number" &&
-    Number.isInteger(value) &&
-    value >= 0 &&
-    value <= 10_000
-    ? value
-    : null;
-}
-
-/**
- * Lock withdrawals after at least two distinct free/sponsored battles connect
- * a participant to one or more fraud-flagged creators. Automated containment
- * never mutates KYC state.
- */
-async function containRiskyFreeBattleAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const userId = signal.userId;
-  const matchCount = containmentCount(signal.payload?.matchCount);
-  const battleCount = containmentCount(
-    signal.payload?.qualifyingBattleCount,
-  );
-  const creatorCount = containmentCount(
-    signal.payload?.distinctFlaggedCreators,
-  );
-  if (
-    !userId ||
-    signal.riskScore == null ||
-    signal.riskScore < 80 ||
-    signal.payload?.containmentRequired !== true ||
-    matchCount == null ||
-    matchCount < 2 ||
-    battleCount == null ||
-    battleCount < 2 ||
-    creatorCount == null ||
-    creatorCount < 1
-  ) {
-    console.error(
-      "[antifraud-ingest] skipping invalid free-battle containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const reason = (
-    `Automatic fraud lock: joined ${battleCount} free/sponsored battles ` +
-    `created by ${creatorCount} flagged fraud account` +
-    `${creatorCount === 1 ? "" : "s"}`
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id,
-      user_id,
-      locked_withdrawals_crypto,
-      locked_withdrawals_items,
-      locked_withdrawals_at,
-      locked_withdrawals_by,
-      locked_withdrawals_reason,
-      created_at,
-      updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()},
-      u.id,
-      ARRAY['all']::text[],
-      TRUE,
-      NOW(),
-      NULL,
-      ${reason},
-      NOW(),
-      NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  if (locked.rows.length === 0) {
-    console.error(
-      "[antifraud-ingest] free-battle account no longer exists, skipping containment lock",
-      { externalId: signal.id || null, userId },
-    );
-    return "skipped";
-  }
-
-  return "locked";
-}
-
-async function containIdentifierBlocklistAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const policies = signal.payload?.policyMatches;
-  const matched = Array.isArray(policies)
-    && policies.some((policy) =>
-      policy === "blocklist.ip" || policy === "blocklist.fingerprint"
-    );
-  if (!signal.userId || signal.riskScore !== 100 || !matched) {
-    console.error(
-      "[antifraud-ingest] skipping invalid identifier-blocklist containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const reason = (
-    "Automatic fraud lock: signup matched an active operator-managed " +
-    "IP or fingerprint blocklist rule"
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id, user_id, locked_withdrawals_crypto, locked_withdrawals_items,
-      locked_withdrawals_at, locked_withdrawals_by,
-      locked_withdrawals_reason, created_at, updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()}, u.id, ARRAY['all']::text[], TRUE, NOW(), NULL,
-      ${reason}, NOW(), NOW()
-    FROM "user" u
-    WHERE u.id = ${signal.userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  return locked.rows.length > 0 ? "locked" : "skipped";
-}
-
-const BEHAVIORAL_CONTAINMENT_REASONS = new Set([
-  "cluster.fingerprint_third_account",
-  "cluster.exact_ip_third_account",
-  "promotion.third_redemption",
-  "network.tor",
-  "device.confirmed_vm",
-  "fingerprint.replayed",
-  "fingerprint.identity_mismatch",
-  "fingerprint.automation",
-  "funds.restricted_downstream_active_use",
-  "fresh-third-promo-redemption",
-  "fresh_creator_tip",
-  "fresh_sponsored_battle",
-  "score_priority_policy",
-  "maxmind_score_alert",
-]);
-
-async function containBehavioralRiskAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const userId = signal.userId;
-  const reasonCode =
-    typeof signal.payload?.reasonCode === "string"
-      ? signal.payload.reasonCode
-      : null;
-  if (
-    !userId ||
-    signal.riskScore == null ||
-    signal.riskScore < 70 ||
-    signal.riskScore > 100 ||
-    signal.payload?.containmentRequired !== true ||
-    !reasonCode ||
-    !BEHAVIORAL_CONTAINMENT_REASONS.has(reasonCode)
-  ) {
-    console.error(
-      "[antifraud-ingest] skipping invalid behavioral containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const reason = (
-    `Automatic fraud lock: behavioral policy ${reasonCode} ` +
-    `matched at risk ${signal.riskScore}/100`
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id, user_id, locked_withdrawals_crypto, locked_withdrawals_items,
-      locked_withdrawals_at, locked_withdrawals_by,
-      locked_withdrawals_reason, created_at, updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()}, u.id, ARRAY['all']::text[], TRUE,
-      NOW(), NULL, ${reason}, NOW(), NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  return locked.rows.length > 0 ? "locked" : "skipped";
-}
-
-const CRITICAL_SIGNUP_ACTIONS = [
-  "lock_fiat_deposits",
-  "lock_withdrawals",
-  "lock_tips",
-] as const;
-
-async function containCriticalSignupAccount(
-  signal: AntifraudSignalEvent,
-): Promise<"locked" | "skipped"> {
-  const userId = signal.userId;
-  const rawActions = Array.isArray(signal.payload?.actions)
-    ? signal.payload.actions
-    : [];
-  const validActions = new Set(
-    rawActions.filter((action): action is string => typeof action === "string"),
-  );
-  if (
-    !userId ||
-    signal.riskScore == null ||
-    signal.riskScore < 70 ||
-    signal.riskScore > 100 ||
-    signal.payload?.riskBand !== "critical" ||
-    signal.payload?.reasonCode !== "critical_signup_score" ||
-    signal.payload?.containmentRequired !== true ||
-    validActions.size !== CRITICAL_SIGNUP_ACTIONS.length ||
-    !CRITICAL_SIGNUP_ACTIONS.every((action) => validActions.has(action))
-  ) {
-    console.error(
-      "[antifraud-ingest] skipping invalid critical-signup containment signal",
-      { externalId: signal.id || null, userId: signal.userId ?? null },
-    );
-    return "skipped";
-  }
-
-  const reason = (
-    `Automatic fraud lock: critical signup scored ${signal.riskScore}/100`
-  ).slice(0, 500);
-  const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
-    INSERT INTO user_feature_locks (
-      id, user_id,
-      locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
-      locked_deposits_reason,
-      locked_withdrawals_crypto, locked_withdrawals_items,
-      locked_withdrawals_at, locked_withdrawals_by,
-      locked_withdrawals_reason,
-      created_at, updated_at
-    )
-    SELECT
-      ${crypto.randomUUID()}, u.id,
-      ARRAY['all']::text[], NOW(), NULL, ${reason},
-      ARRAY['all']::text[], TRUE, NOW(), NULL, ${reason},
-      NOW(), NOW()
-    FROM "user" u
-    WHERE u.id = ${userId}
-    ON CONFLICT (user_id) DO UPDATE SET
-      locked_deposits_fiat = ARRAY['all']::text[],
-      locked_deposits_at = COALESCE(
-        user_feature_locks.locked_deposits_at,
-        EXCLUDED.locked_deposits_at
-      ),
-      locked_deposits_reason = COALESCE(
-        user_feature_locks.locked_deposits_reason,
-        EXCLUDED.locked_deposits_reason
-      ),
-      locked_withdrawals_crypto = ARRAY['all']::text[],
-      locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(
-        user_feature_locks.locked_withdrawals_at,
-        EXCLUDED.locked_withdrawals_at
-      ),
-      locked_withdrawals_reason = COALESCE(
-        user_feature_locks.locked_withdrawals_reason,
-        EXCLUDED.locked_withdrawals_reason
-      ),
-      updated_at = NOW()
-    RETURNING user_id
-  `);
-  if (locked.rows.length === 0) return "skipped";
-
-  const current = await getUserFeatureLocks(userId);
-  if (!current.available_reward_categories.includes("tips")) {
-    throw new Error("Backend does not expose the tips reward lock");
-  }
-  if (!current.locked_reward_categories.includes("tips")) {
-    const nextLocks = Array.from(
-      new Set<RewardLockCategory>([
-        ...current.locked_reward_categories,
-        "tips",
-      ]),
-    );
-    const updated = await updateUserRewardLocks(
-      userId,
-      nextLocks,
-      undefined,
-      reason,
-    );
-    if (!updated.locked_reward_categories.includes("tips")) {
-      throw new Error("Backend did not confirm the tips reward lock");
-    }
-  }
-  return "locked";
-}
-
-/**
- * `fiat_eligibility_containment` and `fiat_deposit_identity_containment` are
- * the two kinds whose containment does EXTERNAL work: a MAIN-DB write, and —
- * for identity — a backend KYC HTTP call on top. That work must not run
- * inside the open ADMIN ingest transaction below (an external stall would
- * hold ADMIN row locks for however long MAIN or the backend take to
- * respond). Their admission checks (`fiatEligibilityContainmentTarget`,
- * `fiatIdentityContainmentTarget`) and the actual MAIN write
- * (`applyFiatEligibilityContainment`, `applyFiatIdentityContainment`) live in
- * `@/lib/antifraud/fiat-eligibility-containment` and
- * `@/lib/antifraud/fiat-identity-containment`; `@/lib/antifraud/containment-outbox`
- * ties them into the ADMIN-only-inside-tx / external-only-after-commit split,
- * with a durable `pending` -> `applied`/`skipped`/`failed` outbox on the
- * signal row so a crash or transient failure between commit and the external
- * call is retried by `/api/cron/antifraud-containment-retry`, not lost.
+ * All eight containment kinds do EXTERNAL work (MAIN-DB write, and sometimes
+ * a backend HTTP call). That work must not run inside the open ADMIN ingest
+ * transaction below — an external stall would hold ADMIN row locks for
+ * however long MAIN or the backend take to respond. Pure admission checks
+ * (`*ContainmentTarget`) and MAIN apply helpers live under
+ * `@/lib/antifraud/*-containment`; `@/lib/antifraud/containment-outbox` ties
+ * them into the ADMIN-only-inside-tx / external-only-after-commit split, with
+ * a durable `pending` -> `applied`/`skipped`/`failed` outbox on the signal
+ * row so a crash or transient failure between commit and the external call is
+ * retried by `/api/cron/antifraud-containment-retry`, not lost.
  */
 
 type IngestResult = {
@@ -874,12 +361,12 @@ function signalTrailEntry(signal: AntifraudSignalEvent): string {
  * deliveries.
  */
 async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
-  // Set inside the transaction below when this signal is one of the two
+  // Set inside the transaction below when this signal is one of the eight
   // containment kinds whose apply step is external (MAIN-DB write, plus a
-  // backend KYC call for identity) and validates as requiring containment.
-  // `runDeferredContainment` — the actual MAIN write — only runs AFTER the
-  // transaction returns/commits, never inside it. See the comment above
-  // `IngestResult` for why.
+  // backend call for identity KYC / critical-signup tips) and validates as
+  // requiring containment. `runDeferredContainment` — the actual MAIN /
+  // backend work — only runs AFTER the transaction returns/commits, never
+  // inside it. See the comment above `IngestResult` for why.
   let deferredContainmentKind: ContainmentOutboxKind | null = null;
   let storedSignalId: string | null = null;
 
@@ -908,26 +395,14 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
   let lockSkipped = false;
   if (
     signal.payload?.reviewOnly !== true &&
-    (
-      signal.kind === "fiat_blacklisted_email_domain" ||
-      signal.kind === "abstract_email_catchall" ||
-      signal.kind === "signup_policy_recommendation" ||
-      signal.kind === "risky_free_battle_containment" ||
-      signal.kind === "behavioral_withdrawal_containment" ||
-      signal.kind === "critical_risk_signup" ||
-      signal.kind === "fiat_eligibility_containment" ||
-      signal.kind === "fiat_deposit_identity_containment"
-    )
+    isContainmentOutboxKind(signal.kind)
   ) {
     // Containment intent AFTER the dedupe check, inside the transaction:
     //  • a duplicate delivery returned above, so a re-sent signal can never
     //    re-apply containment to an account staff already reviewed;
-    //  • for the six kinds below, a transient lock failure throws, rolling
-    //    back the stored signal, so the backend's retry re-attempts store AND
-    //    lock together — unchanged from before.
-    //  • the two Fiat kinds only VALIDATE here (pure, no MAIN I/O) and mark
-    //    the row `pending`; the actual MAIN write happens after this
-    //    transaction commits, via `runDeferredContainment` below.
+    //  • all eight kinds only VALIDATE here (pure, no MAIN I/O) and mark
+    //    the row `pending`; the actual MAIN / backend work happens after
+    //    this transaction commits, via `runDeferredContainment` below.
     // Serialize distinct events for the same account so concurrent matches
     // cannot race containment state.
     await tx.execute(sql`
@@ -935,42 +410,25 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
         hashtextextended(${"antifraud-containment:" + (signal.userId ?? "")}, 0)
       )
     `);
+    const kind = signal.kind;
     if (
-      signal.kind === "fiat_eligibility_containment" ||
-      signal.kind === "fiat_deposit_identity_containment"
+      requiresContainmentOutbox({
+        kind,
+        userId: signal.userId,
+        riskScore: signal.riskScore,
+        payload: signal.payload,
+      })
     ) {
-      const kind = signal.kind;
-      if (
-        requiresContainmentOutbox({
-          kind,
-          userId: signal.userId,
-          riskScore: signal.riskScore,
-          payload: signal.payload,
-        })
-      ) {
-        deferredContainmentKind = kind;
-        await markContainmentPending(tx, stored.id);
-        // Provisional: `lockSkipped` for these two kinds is finalized after
-        // the deferred containment attempt runs post-commit, below.
-      } else {
-        console.error(
-          `[antifraud-ingest] skipping invalid ${signal.kind} containment signal`,
-          { externalId: signal.id || null, userId: signal.userId ?? null },
-        );
-        lockSkipped = true;
-      }
+      deferredContainmentKind = kind;
+      await markContainmentPending(tx, stored.id);
+      // Provisional: `lockSkipped` is finalized after the deferred
+      // containment attempt runs post-commit, below.
     } else {
-      lockSkipped = signal.kind === "fiat_blacklisted_email_domain"
-        ? (await containBlacklistedEmailDomainAccount(signal)) === "skipped"
-        : signal.kind === "abstract_email_catchall"
-          ? (await containAbstractCatchallAccount(signal)) === "skipped"
-          : signal.kind === "signup_policy_recommendation"
-            ? (await containIdentifierBlocklistAccount(signal)) === "skipped"
-          : signal.kind === "risky_free_battle_containment"
-            ? (await containRiskyFreeBattleAccount(signal)) === "skipped"
-          : signal.kind === "critical_risk_signup"
-            ? (await containCriticalSignupAccount(signal)) === "skipped"
-            : (await containBehavioralRiskAccount(signal)) === "skipped";
+      console.error(
+        `[antifraud-ingest] skipping invalid ${signal.kind} containment signal`,
+        { externalId: signal.id || null, userId: signal.userId ?? null },
+      );
+      lockSkipped = true;
     }
   }
 

@@ -1,11 +1,16 @@
 # Antifraud system map and recode blueprint
 
-Status: current-source map, prepared 2026-07-30.
+> **HISTORICAL as of 2026-07-30 — not current source of truth.**
+> Prefer live code + `git log`, `.cursor/rules/antifraud.mdc`, and
+> `docs/ANTIFRAUD_CONTRACTS.md`. Do not drive new work from this blueprint alone;
+> large parts of the Jul-30 gap list closed on Aug 5–6 `main`.
 
-This document maps the fraud system owned by `PackyGG/pokewin-admin`. It covers
-the Fraud webapp, the repository-contained `antifraud-monitor`, the dashboard
-ingest and Discord delivery APIs, and the contracts used by the external bot
-and game backend.
+Status: historical map, prepared 2026-07-30 (superseded for day-to-day agent use).
+
+This document mapped the fraud system owned by `PackyGG/pokewin-admin` as of that
+date. It covers the Fraud webapp, the repository-contained `antifraud-monitor`,
+the dashboard ingest and Discord delivery APIs, and contracts used by the
+external bot and game backend — **as they stood then**.
 
 The separate bot and game-backend repositories are not implementation scope.
 Their exact HTTP contracts are included so their changes can be handed off

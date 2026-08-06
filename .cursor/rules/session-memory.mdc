@@ -1,28 +1,36 @@
 ---
-description: FORCED cross-session memory — read on start, write before done
+description: Compact session board — load on demand only; never force-read handoff
 alwaysApply: true
 ---
 
-# FORCED Session Memory (non-negotiable)
+# Session memory (keep Cursor fast)
 
-Full protocol: **`SESSION_MEMORY.md`**. You MUST follow it. Chat does not survive session switches.
+Chat does not survive session switches. **Do not** force-read `AGENT_HANDOFF.md`,
+`ONBOARDING.md`, or other large docs at session start or before every tool call.
 
-## FORCED on session start — before any tool call
+## Cursor speed (owner rule)
 
-Read in order: `AGENT_HANDOFF.md` → `ONBOARDING.md` → `AGENTS.md` → active `.claude/plans/*.md` if relevant.
+- A compact on-demand board (`AGENT_HANDOFF.md` ≤ 200 lines) is fine.
+- Cursor slows when **alwaysApply** rules force-load huge files every turn.
+- Prefer: **git history** + open the board only when in-flight / blocked / locks matter.
+- Keep `AGENT_HANDOFF.md` as a **board**, never a changelog.
 
-## FORCED before saying DONE or ending a substantive turn
+Full protocol: `SESSION_MEMORY.md`. `CLAUDE.md` already loads automatically.
 
-1. **Update `AGENT_HANDOFF.md`** — HEAD sha, shipped, in-flight, open/next, blocked, gotchas
-2. **Promote durable facts** to `ONBOARDING.md` or the active plan file
-3. **Never** leave task state only in chat
+## When to open docs
 
-**You are NOT allowed to mark a task complete without updating the repo docs.** Exception: pure Q&A with zero new facts and zero code changes.
+| Need | Open |
+|---|---|
+| In-flight / blocked / file locks | `AGENT_HANDOFF.md` |
+| Domain math / non-obvious contracts | `ONBOARDING.md` |
+| Fraud / Fiat / KYC | `docs/ANTIFRAUD_CONTRACTS.md` + `.cursor/rules/antifraud.mdc` |
+
+## Before DONE (substantive work only)
+
+1. Update `AGENT_HANDOFF.md` only for open in-flight, blocked, or locks — delete entries when work lands.
+2. Promote durable facts to `ONBOARDING.md` or `CLAUDE.md` (binding rules).
+3. Never leave task state only in chat. Skip for pure Q&A with zero new facts / zero code changes.
 
 ## Sub-agents
 
-Every `Agent` / workflow prompt MUST include the §4 contract from `SESSION_MEMORY.md` and require handoff updates before reporting done.
-
-## Self-check (mandatory)
-
-Before your final message on substantive work: "Would a brand-new session reading only repo docs know what to do next?" If no → write docs first.
+Brief with board semantics (in-flight / locks / blocked). Do not require reading the full handoff before tools.

@@ -114,19 +114,30 @@ export async function requireAccountKyc(
           : "Deposits and withdrawals could not be locked. KYC was not required.",
     };
   }
-  let tipsLocked = true;
+  // Tips are part of the same Require-KYC containment package as deposits
+  // and withdrawals. Soft-failing here used to let the action report success
+  // while tip rails stayed open — hard-fail before KYC so staff never see a
+  // false "locked" outcome.
   try {
     const currentLocks = await getUserFeatureLocks(userId);
     if (!currentLocks.locked_reward_categories.includes("tips")) {
-      await updateUserRewardLocks(
+      const updated = await updateUserRewardLocks(
         userId,
         [...currentLocks.locked_reward_categories, "tips"],
         actorMainUserId ?? undefined,
       );
+      if (!updated.locked_reward_categories.includes("tips")) {
+        throw new Error("Backend did not confirm the tips reward lock");
+      }
     }
   } catch (error) {
-    tipsLocked = false;
-    console.error("[antifraud-kyc] failed to lock tips alongside KYC:", error);
+    return {
+      success: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : "Tips could not be locked. KYC was not required.",
+    };
   }
 
   let data: UserKycStatus;
@@ -156,7 +167,7 @@ export async function requireAccountKyc(
         verificationCycle: data.verificationCycle,
         idempotencyKey: parsed.data.idempotencyKey,
         depositsWithdrawalsLocked: true,
-        tipsLocked,
+        tipsLocked: true,
       },
     });
     if (outcome.status === "lost") {

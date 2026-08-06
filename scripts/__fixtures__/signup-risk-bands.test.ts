@@ -105,13 +105,17 @@ test("the duplicate need-review signup route is retired without touching review 
 
 test("critical signup containment requires and applies all three locks", () => {
   const ingest = read("src/app/api/antifraud/ingest/route.ts");
+  const containment = read(
+    "src/lib/antifraud/critical-signup-containment.ts",
+  );
 
-  assert.match(ingest, /signal\.kind === "critical_risk_signup"/);
-  assert.match(ingest, /"lock_fiat_deposits"/);
-  assert.match(ingest, /"lock_withdrawals"/);
-  assert.match(ingest, /"lock_tips"/);
-  assert.match(ingest, /locked_deposits_fiat = ARRAY\['all'\]::text\[\]/);
-  assert.match(ingest, /locked_withdrawals_crypto = ARRAY\['all'\]::text\[\]/);
-  assert.match(ingest, /locked_withdrawals_items = TRUE/);
-  assert.match(ingest, /updateUserRewardLocks/);
+  assert.match(ingest, /isContainmentOutboxKind\(signal\.kind\)/);
+  assert.match(ingest, /critical_risk_signup/);
+  assert.match(containment, /"lock_fiat_deposits"/);
+  assert.match(containment, /"lock_withdrawals"/);
+  assert.match(containment, /"lock_tips"/);
+  assert.match(containment, /locked_deposits_fiat = ARRAY\['all'\]::text\[\]/);
+  assert.match(containment, /locked_withdrawals_crypto = ARRAY\['all'\]::text\[\]/);
+  assert.match(containment, /locked_withdrawals_items = TRUE/);
+  assert.match(containment, /updateUserRewardLocks/);
 });

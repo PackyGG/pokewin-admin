@@ -43,6 +43,9 @@ test("blacklisted domains ban while patterns and clusters lock without automatic
     "services/antifraud-monitor/src/fiat-email-domains.ts",
   );
   const ingest = read("src/app/api/antifraud/ingest/route.ts");
+  const containment = read(
+    "src/lib/antifraud/email-domain-containment.ts",
+  );
   const client = read(
     "src/app/(antifraud)/antifraud/email-blacklist/email-blacklist-client.tsx",
   );
@@ -65,18 +68,19 @@ test("blacklisted domains ban while patterns and clusters lock without automatic
   assert.match(monitor, /\{ reviewOnly: true \}/);
   assert.match(monitor, /Staff review is required; no automatic account action was taken/);
   assert.doesNotMatch(monitor, /UPDATE user_feature_locks/);
-  assert.match(ingest, /getProdPrimaryDrizzleDb/);
-  assert.match(ingest, /ARRAY\['all'\]::text\[\]/);
-  assert.match(ingest, /locked_withdrawals_items = TRUE/);
-  assert.match(ingest, /signal\.riskScore !== 100/);
-  assert.match(ingest, /suspicious dot-fragmented Gmail address/);
-  assert.match(ingest, /suspicious coordinated deposit cluster/);
-  assert.match(ingest, /emailRiskType === "blacklisted_domain"/);
-  assert.match(ingest, /is_banned = TRUE/);
-  assert.match(ingest, /DELETE FROM session/);
-  assert.match(ingest, /blockedDomainMatch \? "banned" : "locked"/);
+  assert.match(containment, /getProdPrimaryDrizzleDb/);
+  assert.match(containment, /ARRAY\['all'\]::text\[\]/);
+  assert.match(containment, /locked_withdrawals_items = TRUE/);
+  assert.match(containment, /signal\.riskScore !== 100/);
+  assert.match(containment, /suspicious dot-fragmented Gmail address/);
+  assert.match(containment, /suspicious coordinated deposit cluster/);
+  assert.match(containment, /emailRiskType === "blacklisted_domain"/);
+  assert.match(containment, /is_banned = TRUE/);
+  assert.match(containment, /DELETE FROM session/);
+  assert.match(containment, /target\.ban \? "banned" : "locked"/);
   assert.match(ingest, /signal\.payload\?\.reviewOnly !== true/);
   assert.doesNotMatch(ingest, /requireUserKyc|getUserKyc/);
+  assert.doesNotMatch(containment, /requireUserKyc|getUserKyc/);
   assert.match(ingest, /pg_advisory_xact_lock/);
   assert.match(ingest, /antifraud-containment:/);
   assert.match(

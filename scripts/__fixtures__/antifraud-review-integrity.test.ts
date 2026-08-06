@@ -217,8 +217,13 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
   );
   assert.match(
     body,
-    /if \(!stored\) return[\s\S]*?containBlacklistedEmailDomainAccount\(signal\)/,
-    "containment lock must run AFTER the dedupe check so re-sent duplicates never re-lock",
+    /if \(!stored\) return[\s\S]*?requiresContainmentOutbox\(/,
+    "containment admission must run AFTER the dedupe check so re-sent duplicates never re-lock",
+  );
+  assert.match(
+    body,
+    /if \(!stored\) return[\s\S]*?markContainmentPending\(tx, stored\.id\)/,
+    "outbox pending mark must run AFTER the dedupe check",
   );
   assert.match(body, /tx[\s\S]*?update\(antifraud_reviews\)/);
   assert.match(body, /tx[\s\S]*?insert\(antifraud_review_notes\)/);
@@ -226,15 +231,13 @@ test("signed signal ingestion reserves id and mutates its case atomically", () =
 });
 
 test("free-battle containment requires two battles and locks withdrawals without automatic KYC", () => {
-  const source = read("src/app/api/antifraud/ingest/route.ts");
-  const containmentStart = source.indexOf(
-    "async function containRiskyFreeBattleAccount",
+  const containment = read(
+    "src/lib/antifraud/risky-free-battle-containment.ts",
   );
-  const containmentEnd = source.indexOf("type IngestResult", containmentStart);
-  const containment = source.slice(containmentStart, containmentEnd);
-  const ingestStart = source.indexOf("async function ingestOne");
-  const ingestEnd = source.indexOf("/**\n * Health probe", ingestStart);
-  const ingest = source.slice(ingestStart, ingestEnd);
+  const ingest = read("src/app/api/antifraud/ingest/route.ts");
+  const ingestStart = ingest.indexOf("async function ingestOne");
+  const ingestEnd = ingest.indexOf("/**\n * Health probe", ingestStart);
+  const ingestBody = ingest.slice(ingestStart, ingestEnd);
 
   assert.match(containment, /qualifyingBattleCount/);
   assert.match(containment, /matchCount < 2/);
@@ -245,39 +248,35 @@ test("free-battle containment requires two battles and locks withdrawals without
   assert.match(containment, /locked_withdrawals_items = TRUE/);
   assert.doesNotMatch(containment, /requireUserKyc|getUserKyc/);
   assert.match(
-    ingest,
-    /if \(!stored\) return[\s\S]*?containRiskyFreeBattleAccount\(signal\)/,
+    ingestBody,
+    /if \(!stored\) return[\s\S]*?isContainmentOutboxKind\(signal\.kind\)/,
     "containment must run only after the signed event id is reserved",
+  );
+  assert.match(
+    read("src/lib/antifraud/containment-outbox.ts"),
+    /"risky_free_battle_containment"/,
   );
 });
 
 test("Abstract catch-all signup containment bans on signed provider evidence without KYC", () => {
-  const source = read("src/app/api/antifraud/ingest/route.ts");
   const helper = read(
     "src/lib/antifraud/abstract-catchall-containment.ts",
   );
-  const containmentStart = source.indexOf(
-    "async function containAbstractCatchallAccount",
-  );
-  const containmentEnd = source.indexOf(
-    "function containmentCount",
-    containmentStart,
-  );
-  const containment = source.slice(containmentStart, containmentEnd);
-  const ingestStart = source.indexOf("async function ingestOne");
-  const ingestEnd = source.indexOf("/**\n * Health probe", ingestStart);
-  const ingest = source.slice(ingestStart, ingestEnd);
+  const ingest = read("src/app/api/antifraud/ingest/route.ts");
+  const ingestStart = ingest.indexOf("async function ingestOne");
+  const ingestEnd = ingest.indexOf("/**\n * Health probe", ingestStart);
+  const ingestBody = ingest.slice(ingestStart, ingestEnd);
 
   assert.match(helper, /containmentRequired !== true/);
   assert.match(helper, /provider !== "abstract_email"/);
-  assert.match(containment, /UPDATE "user"/);
-  assert.match(containment, /is_banned = TRUE/);
-  assert.match(containment, /WHEN is_banned THEN banned_by ELSE NULL/);
-  assert.match(containment, /DELETE FROM session/);
-  assert.doesNotMatch(containment, /is_locked = TRUE|requireUserKyc|getUserKyc/);
+  assert.match(helper, /UPDATE "user"/);
+  assert.match(helper, /is_banned = TRUE/);
+  assert.match(helper, /WHEN is_banned THEN banned_by ELSE NULL/);
+  assert.match(helper, /DELETE FROM session/);
+  assert.doesNotMatch(helper, /is_locked = TRUE|requireUserKyc|getUserKyc/);
   assert.match(
-    ingest,
-    /if \(!stored\) return[\s\S]*?containAbstractCatchallAccount\(signal\)/,
+    ingestBody,
+    /if \(!stored\) return[\s\S]*?isContainmentOutboxKind\(signal\.kind\)/,
     "catch-all containment must run only after the signed event id is reserved",
   );
 });

@@ -69,14 +69,23 @@ test("permanent versioned signup profiles and provider evidence are present", as
 
 test("automatic containment bans confirmed catch-all accounts without forcing KYC", async () => {
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
+  const catchall = await source(
+    "../../../src/lib/antifraud/abstract-catchall-containment.ts",
+  );
 
   // The route itself still never calls the KYC API. The single owner-approved
   // automated requirement (2026-07-30, post-authorization Fiat identity drift)
   // is isolated in its own module — see the test below.
   assert.doesNotMatch(ingest, /await requireUserKyc\(/);
-  assert.match(ingest, /abstract_email_catchall[\s\S]*?is_banned = TRUE/);
-  assert.match(ingest, /DELETE FROM session/);
-  assert.match(ingest, /locked_withdrawals_items = TRUE/);
+  assert.match(catchall, /is_banned = TRUE/);
+  assert.match(catchall, /DELETE FROM session/);
+  assert.match(ingest, /isContainmentOutboxKind/);
+  assert.match(
+    await source(
+      "../../../src/lib/antifraud/behavioral-withdrawal-containment.ts",
+    ),
+    /locked_withdrawals_items = TRUE/,
+  );
 });
 
 test("only Fiat identity drift may require KYC automatically", async () => {
@@ -139,6 +148,9 @@ test("operator IP and fingerprint blocklists are durable and enforced at signup"
   const matcher = await source("../src/identifier-blocklists.ts");
   const routes = await source("../src/identifier-blocklist-routes.ts");
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
+  const blocklist = await source(
+    "../../../src/lib/antifraud/identifier-blocklist-containment.ts",
+  );
 
   assert.match(migrations, /CREATE TABLE IF NOT EXISTS identifier_blocklists/i);
   assert.match(migrations, /kind IN \('ip','fingerprint'\)/i);
@@ -152,11 +164,12 @@ test("operator IP and fingerprint blocklists are durable and enforced at signup"
   assert.match(matcher, /points: 15/);
   assert.match(matcher, /active_fingerprint_blocklist/);
   assert.match(matcher, /lock_review/);
-  assert.match(ingest, /containIdentifierBlocklistAccount/);
-  assert.match(ingest, /blocklist\.ip/);
-  assert.match(ingest, /blocklist\.fingerprint/);
-  assert.match(ingest, /locked_withdrawals_items = TRUE/);
-  assert.doesNotMatch(ingest, /containIdentifierBlocklistAccount[\s\S]{0,2000}kyc/i);
+  assert.match(blocklist, /identifierBlocklistContainmentTarget/);
+  assert.match(blocklist, /blocklist\.ip/);
+  assert.match(blocklist, /blocklist\.fingerprint/);
+  assert.match(blocklist, /locked_withdrawals_items = TRUE/);
+  assert.doesNotMatch(blocklist, /requireUserKyc|getUserKyc/i);
+  assert.match(ingest, /isContainmentOutboxKind/);
   assert.match(server, /registerIdentifierBlocklistRoutes/);
 });
 
@@ -185,6 +198,9 @@ test("country context is bounded below monitoring and hard policies have signed 
   );
   const weights = await source("../src/score-catalog.ts");
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
+  const behavioral = await source(
+    "../../../src/lib/antifraud/behavioral-withdrawal-containment.ts",
+  );
 
   assert.match(behaviorMigration, /'risky_location', 15/);
   assert.match(weights, /risky_location: 15/);
@@ -198,8 +214,8 @@ test("country context is bounded below monitoring and hard policies have signed 
   ]) {
     assert.match(weights, new RegExp(`${key}: \\d+`));
   }
-  assert.match(ingest, /fingerprint\.automation/);
-  assert.match(ingest, /fingerprint\.replayed/);
+  assert.match(behavioral, /fingerprint\.automation/);
+  assert.match(behavioral, /fingerprint\.replayed/);
 });
 
 test("fresh-account promo, tip, and sponsorship actions are explicit", async () => {

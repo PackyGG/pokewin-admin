@@ -14,6 +14,8 @@ alwaysApply: false
 
 Deep contracts: `docs/ANTIFRAUD_CONTRACTS.md` — open only when the task needs them. Do not dump that doc into chat.
 
+**Stale:** `docs/ANTIFRAUD_QUALITY_CONTRACT_AUDIT.md` and `docs/ANTIFRAUD_RECODE_MAP.md` are HISTORICAL (2026-07-30). Prefer this rule + `ANTIFRAUD_CONTRACTS.md` + code/git — do not re-open closed gaps from those audits.
+
 ## Runtime
 
 | Piece | Where | Deploy |

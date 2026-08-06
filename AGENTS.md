@@ -58,9 +58,14 @@ or any other repository.
 
 ## 🧠 Session Memory protocol
 
-**Read on session start:** `AGENT_HANDOFF.md` (live state — compact as of 2026-07-12, full history in `AGENT_HANDOFF_ARCHIVE.md`) → `ONBOARDING.md` (architecture + domain) → `CLAUDE.md` (rules, this file just points to it). Active plan under `.claude/plans/` only if the task touches it.
+**Nothing mandatory on session start** beyond what Cursor already injects (`CLAUDE.md` /
+always-applied lean rules). Do **not** open `AGENT_HANDOFF.md`, `ONBOARDING.md`, or large docs
+before every tool call — that is what makes Cursor slower over time.
 
-**Before DONE on a substantive task:** update `AGENT_HANDOFF.md` (current state, shipped, in-flight, open, blocked, gotchas) — **keep it compact**, replace/prune content rather than appending a permanent narrative log (that's what made it balloon to 270KB before the 2026-07-12 cleanup). Promote durable facts to `ONBOARDING.md`. Skip only for a pure question with zero code change and zero new facts.
+- Open `AGENT_HANDOFF.md` only when in-flight / blocked / file locks matter (board ≤ 200 lines).
+- Prefer git history for what shipped; keep the handoff a **board**, never a changelog.
+- Before DONE on substantive work: update the board for open/blocked/locks only; promote durable
+  facts to `ONBOARDING.md`. Skip pure Q&A with zero new facts / zero code changes.
 
 Full protocol: `SESSION_MEMORY.md`.
 
