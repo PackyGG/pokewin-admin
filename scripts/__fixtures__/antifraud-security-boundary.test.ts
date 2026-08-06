@@ -93,10 +93,7 @@ test("new KYC requirements are restricted to currently locked accounts", () => {
     /cardinality\(locked_withdrawals_crypto\), 0\) > 0/,
   );
   assert.match(kycActions, /isLockedAccountEligibleForKyc\(userId\)/);
-  assert.match(
-    fiatActions,
-    /isLockedAccountEligibleForKyc\(parsed\.data\.userId\)/,
-  );
+  assert.doesNotMatch(fiatActions, /requireUserKyc|backend-api\/kyc/);
 });
 
 test("historical blacklist matches open review without automatic containment", () => {

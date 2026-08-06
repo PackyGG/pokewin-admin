@@ -13,7 +13,11 @@ const actions = read(
 const controls = read(
   "src/app/(antifraud)/antifraud/fiat-deposits/review-decision.tsx",
 );
-const api = read("src/lib/backend-api/fiat-deposit-review.ts");
+const workflow = read("src/lib/antifraud/fiat-credit-review.ts");
+const adminPage = read("src/app/(antifraud)/antifraud/admin/deposits/page.tsx");
+const adminActions = read("src/app/(antifraud)/antifraud/admin/deposits/actions.ts");
+const adminControls = read("src/app/(antifraud)/antifraud/admin/deposits/declined-deposit-decision.tsx");
+const retiredDetail = read("src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx");
 const middleware = read("src/middleware.ts");
 const withdrawals = read("src/app/(admin)/withdrawals/page.tsx");
 const nav = read("src/lib/nav-config.ts");
@@ -22,8 +26,11 @@ const sidebar = read(
 );
 const legacyPage = read("src/app/(admin)/transactions/deposits/page.tsx");
 
-test("Deposits is a Fiat-only credit review queue", () => {
-  assert.match(page, /getFiatDepositReviewQueue/);
+test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
+  assert.match(page, /listFiatAssessments/);
+  assert.match(page, /status: "review"/);
+  assert.match(page, /getFiatCreditReviewStates/);
+  assert.doesNotMatch(page, /QUEUE_STATUSES|Review status filters|refund_pending/);
   assert.doesNotMatch(page, /GlobalFiatReviewCard/);
   assert.doesNotMatch(page, /getFiatDepositAutomaticCreditConfig/);
   assert.doesNotMatch(page, /title="Fiat Deposit Reviews"/);
@@ -37,38 +44,53 @@ test("Deposits is a Fiat-only credit review queue", () => {
   assert.match(sidebar, /label: "Deposit reviews"/);
   assert.doesNotMatch(nav, /id: "nav\.deposits"/);
   assert.match(legacyPage, /redirect\("\/antifraud\/fiat-deposits"\)/);
-  assert.match(page, /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/);
+  assert.doesNotMatch(page, /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/);
+  assert.match(retiredDetail, /redirect\("\/antifraud\/fiat-deposits"\)/);
 });
 
-test("review API mirrors the authoritative backend contract", () => {
-  for (const status of [
-    "review",
-    "approval_processing",
-    "refund_pending",
-    "refund_failed",
-  ]) {
-    assert.match(api, new RegExp(`"${status}"`));
-  }
-  assert.match(api, /getFiatDepositReviewQueue/);
-  assert.match(api, /\/admin\/fiat-deposits"/);
-  assert.match(api, /\/admin\/fiat-deposits\/\$\{encodeURIComponent\(input\.intentId\)\}\/decision/);
-  assert.match(api, /decision: "approve" \| "reject"/);
-  assert.match(api, /"x-admin-user-id": input\.adminUserId/);
-  assert.match(api, /safeParse\(response\)/);
+test("review decisions do not use the customer backend", () => {
+  assert.doesNotMatch(actions, /backend-api/);
+  assert.doesNotMatch(actions, /decideFiatDepositReview/);
+  assert.match(actions, /getFiatAssessment/);
+  assert.match(actions, /whopAdminClient/);
+  assert.match(actions, /creditReviewedFiatDeposit/);
+  assert.match(workflow, /UPDATE fiat_deposit_intents/);
+  assert.match(workflow, /coin_deposit_grant/);
 });
 
-test("money-moving decisions are admin, 2FA, reason, and audit protected", () => {
-  assert.match(actions, /requireAntifraudManager\(/);
+test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit", () => {
+  assert.match(actions, /requireAntifraudAccess\(\)/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.stepUpCredential\)/);
   assert.match(actions, /reason: z\.string\(\)\.trim\(\)\.min\(3\)\.max\(500\)/);
+  assert.match(actions, /idempotencyKey: z\.string\(\)\.uuid\(\)/);
   assert.match(actions, /createAdminAuditEvent/);
   assert.match(actions, /fiat_deposit_credit_approved/);
-  assert.match(actions, /fiat_deposit_credit_rejected/);
+  assert.match(actions, /fiat_deposit_declined_for_admin_review/);
+  assert.match(actions, /futureAutoApprovalChanged: false/);
+  assert.match(workflow, /locked_deposits_fiat = ARRAY\['all'\]/);
+  assert.match(workflow, /locked_withdrawals_crypto = ARRAY\['all'\]/);
+  assert.match(workflow, /locked_withdrawals_items = TRUE/);
+  assert.doesNotMatch(workflow, /locked_deposits_crypto/);
   assert.match(actions, /revalidatePath\("\/antifraud\/fiat-deposits"\)/);
   assert.match(controls, /Approve balance credit/);
-  assert.match(controls, /Reject and refund/);
+  assert.match(controls, /Decline and lock account/);
+  assert.match(controls, /Future Fiat deposits will still require their own review/);
+  assert.doesNotMatch(controls, /Reject and refund|Retry refund/);
   assert.match(controls, /StepUpField/);
-  assert.match(controls, /status === "refund_failed"/);
+});
+
+test("Admin Deposits is manager-only and supports independent refund and ban decisions", () => {
+  assert.match(adminPage, /requireAntifraudManagerPage\(\)/);
+  assert.match(adminPage, /getDeclinedFiatCreditReviews/);
+  assert.match(adminActions, /requireAntifraudManager\(/);
+  assert.match(adminActions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
+  assert.match(adminActions, /whopAdminClient/);
+  assert.match(adminActions, /blockKnownUserIdentifiers/);
+  assert.match(adminActions, /safeWhopError/);
+  assert.match(adminControls, /Refund only/);
+  assert.match(adminControls, /Ban only/);
+  assert.match(adminControls, /Refund \+ ban/);
+  assert.match(adminControls, /Ban-only keeps the payment without crediting or refunding it/);
 });
 
 test("withdrawals remain available outside the Fiat review page", () => {

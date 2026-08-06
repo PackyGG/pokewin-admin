@@ -246,6 +246,7 @@ function config(admin = false): { baseUrl: string; token: string } | null {
 
 export async function listFiatAssessments(input: {
   page: number;
+  limit?: number;
   view?: "normal" | "fraud" | "refunded";
   status?: string;
   verdict?: FiatVerdict;
@@ -265,7 +266,7 @@ export async function listFiatAssessments(input: {
   }
   const params = new URLSearchParams({
     page: String(input.page),
-    limit: "20",
+    limit: String(Math.min(Math.max(input.limit ?? 20, 1), 100)),
   });
   if (input.status) params.set("status", input.status);
   if (input.view) params.set("view", input.view);

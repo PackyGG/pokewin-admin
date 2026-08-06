@@ -38,13 +38,6 @@ const refundsPanel = readFileSync(
   ),
   "utf8",
 );
-const fiatDetail = readFileSync(
-  new URL(
-    "../../src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-workspace.tsx",
-    import.meta.url,
-  ),
-  "utf8",
-);
 const fiatList = readFileSync(
   new URL(
     "../../src/app/(antifraud)/antifraud/fiat-deposits/credit-review-page.tsx",
@@ -54,6 +47,20 @@ const fiatList = readFileSync(
 );
 const fiatApi = readFileSync(
   new URL("../../src/lib/antifraud/fiat-deposits-api.ts", import.meta.url),
+  "utf8",
+);
+const declinedDepositsPage = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/admin/deposits/page.tsx",
+    import.meta.url,
+  ),
+  "utf8",
+);
+const declinedDepositActions = readFileSync(
+  new URL(
+    "../../src/app/(antifraud)/antifraud/admin/deposits/actions.ts",
+    import.meta.url,
+  ),
   "utf8",
 );
 const transactionsPage = readFileSync(
@@ -211,36 +218,22 @@ test("paid-but-uncredited Whop payments use the successful payment ID for refund
   assert.match(refundsPanel, /no completed ledger[\s\S]*successful Whop/);
 });
 
-test("the Fiat review links managers into the exact guarded refund", () => {
+test("the Admin Fiat review owns the exact guarded refund", () => {
   assert.match(fiatApi, /provider_payment_id: z\.string\(\)\.nullable\(\)/);
-  assert.match(fiatDetail, /canRefund=\{canManageAntifraud\(session\)\}/);
-  assert.match(fiatDetail, /unreconciled[\s\S]*item\.provider_payment_id/);
-  assert.match(
-    fiatDetail,
-    /\/antifraud\/refunds\?payment=\$\{encodeURIComponent\(item\.provider_payment_id\)\}/,
-  );
-  assert.match(refundPage, /\^pay_\[A-Za-z0-9\]\+\$/);
-  assert.match(
-    refundsPanel,
-    /requestedPaymentAvailable[\s\S]*mode: "payments"/,
-  );
-  assert.match(fiatList, /refund_failed/);
-  assert.match(refundPage, /params\.scope === "paid_unreconciled"/);
-  assert.match(refundPage, /candidate\.status === "paid_unreconciled"/);
-  assert.match(
-    refundsPanel,
-    /reconciliationOnly[\s\S]*mode: "payments"[\s\S]*providerPaymentId/,
-  );
-  assert.match(refundsPanel, /Refund all reconciliation failures/);
+  assert.doesNotMatch(fiatList, /refund_failed/);
+  assert.match(declinedDepositsPage, /getDeclinedFiatCreditReviews/);
+  assert.match(declinedDepositActions, /provider_payment_id/);
+  assert.match(declinedDepositActions, /whopAdminClient/);
+  assert.match(declinedDepositActions, /safeWhopError/);
 });
 
-test("Fiat review surfaces retain the durable refund outcome", () => {
+test("declined Fiat review surfaces retain the durable refund outcome", () => {
   assert.match(queries, /export async function getWhopRefundStates/);
   assert.match(queries, /FROM admin_whop_refund_items/);
-  assert.match(fiatList, /Refund pending/);
-  assert.match(fiatList, /Refund failed/);
-  assert.match(fiatDetail, /getWhopRefundStates/);
-  assert.match(fiatDetail, /Refunded/);
+  assert.match(declinedDepositsPage, /item\.refundStatus/);
+  assert.match(declinedDepositActions, /refund_status/);
+  assert.match(declinedDepositActions, /"unknown"/);
+  assert.match(declinedDepositsPage, /item\.refundStatus/);
 });
 
 test("recent refund batches retain every account and payment detail", () => {

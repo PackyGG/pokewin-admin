@@ -16,6 +16,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Main",
     "Guide",
     "Blacklists",
+    "Admin",
     "System",
   ]) {
     assert.match(sidebar, new RegExp(`label="${section}"`));
@@ -26,6 +27,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Live events",
     "Account reviews",
     "Deposit reviews",
+    "Deposits",
     "Refunds",
     "KYC reviews",
     "Discord routing",
@@ -112,21 +114,20 @@ test("Fraud guide keeps access control and documents signup risk actions", () =>
   assert.doesNotMatch(page, /Critical containment/);
 });
 
-test("deposit credit reviews link to the existing Fraud evidence workspace", () => {
+test("deposit credit reviews keep staff on the active decision queue", () => {
   const deposits = read(
     "src/app/(antifraud)/antifraud/fiat-deposits/credit-review-page.tsx",
   );
-  const detail = read(
-    "src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-workspace.tsx",
+  const retiredDetail = read(
+    "src/app/(antifraud)/antifraud/fiat-deposits/[id]/page.tsx",
   );
 
-  assert.match(
+  assert.doesNotMatch(
     deposits,
     /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/,
   );
-  assert.match(deposits, /Risk evidence/);
-  assert.match(detail, /Money trail/);
-  assert.match(detail, /Whop risk signals/);
+  assert.doesNotMatch(deposits, /Risk evidence/);
+  assert.match(retiredDetail, /redirect\("\/antifraud\/fiat-deposits"\)/);
 });
 
 test("unrequested profile and connection indexes stay out of Fraud", () => {

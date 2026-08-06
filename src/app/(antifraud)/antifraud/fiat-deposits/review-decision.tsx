@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { CheckCircle2, Loader2, RotateCcw, XCircle } from "lucide-react";
+import { CheckCircle2, Loader2, XCircle } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -25,23 +25,19 @@ export function FiatDepositReviewDecision({
   intentId,
   displayName,
   amount,
-  status,
 }: {
   intentId: string;
   displayName: string;
   amount: string;
-  status: string;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
-  const [decision, setDecision] = useState<"approve" | "reject">("approve");
+  const [decision, setDecision] = useState<"approve" | "decline">("approve");
   const [reason, setReason] = useState("");
   const [stepUpCredential, setStepUpCredential] = useState("");
   const [isPending, startTransition] = useTransition();
-  const canApprove = status === "review";
-  const canReject = status === "review" || status === "refund_failed";
 
-  const launch = (nextDecision: "approve" | "reject") => {
+  const launch = (nextDecision: "approve" | "decline") => {
     setDecision(nextDecision);
     setReason("");
     setStepUpCredential("");
@@ -55,6 +51,7 @@ export function FiatDepositReviewDecision({
         decision,
         reason,
         stepUpCredential,
+        idempotencyKey: crypto.randomUUID(),
       });
       if (!result.success) {
         toast.error(result.error);
@@ -63,7 +60,7 @@ export function FiatDepositReviewDecision({
       toast.success(
         decision === "approve"
           ? `${amount} approved for ${displayName}`
-          : `Refund started for ${displayName}`,
+          : `${displayName}'s deposit was declined and money movement was locked`,
       );
       setOpen(false);
       setStepUpCredential("");
@@ -71,45 +68,25 @@ export function FiatDepositReviewDecision({
     });
   };
 
-  if (!canApprove && !canReject) {
-    return (
-      <span className="text-xs text-muted-foreground">
-        Decision processing
-      </span>
-    );
-  }
-
   return (
     <AlertDialog open={open} onOpenChange={(next) => !isPending && setOpen(next)}>
       <div className="flex flex-wrap gap-2">
-        {canApprove && (
-          <AlertDialogTrigger
-            render={
-              <Button
-                size="sm"
-                className="bg-emerald-600 text-white hover:bg-emerald-700"
-                onClick={() => launch("approve")}
-              />
-            }
-          >
-            <CheckCircle2 className="size-4" />
-            Approve credit
-          </AlertDialogTrigger>
-        )}
-        {canReject && (
-          <Button
-            size="sm"
-            variant="destructive"
-            onClick={() => launch("reject")}
-          >
-            {status === "refund_failed" ? (
-              <RotateCcw className="size-4" />
-            ) : (
-              <XCircle className="size-4" />
-            )}
-            {status === "refund_failed" ? "Retry refund" : "Reject & refund"}
-          </Button>
-        )}
+        <AlertDialogTrigger
+          render={
+            <Button
+              size="sm"
+              className="bg-emerald-600 text-white hover:bg-emerald-700"
+              onClick={() => launch("approve")}
+            />
+          }
+        >
+          <CheckCircle2 className="size-4" />
+          Approve
+        </AlertDialogTrigger>
+        <Button size="sm" variant="destructive" onClick={() => launch("decline")}>
+          <XCircle className="size-4" />
+          Decline
+        </Button>
       </div>
 
       <AlertDialogContent>
@@ -117,12 +94,12 @@ export function FiatDepositReviewDecision({
           <AlertDialogTitle>
             {decision === "approve"
               ? `Approve ${amount} Fiat credit?`
-              : `Reject and refund ${amount}?`}
+              : `Decline ${amount} Fiat credit?`}
           </AlertDialogTitle>
           <AlertDialogDescription>
             {decision === "approve"
-              ? `This credits ${displayName}'s balance. The backend prevents duplicate approval if another admin acts first.`
-              : `This does not credit ${displayName}. It asks Whop to refund the authorized payment instead.`}
+              ? `This credits only this deposit for ${displayName}. Future Fiat deposits will still require their own review.`
+              : `This does not refund the payment. It locks Fiat deposits and all withdrawals, then sends the deposit to Admin for a refund and/or ban decision.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="space-y-2">
@@ -135,7 +112,7 @@ export function FiatDepositReviewDecision({
             placeholder={
               decision === "approve"
                 ? "Why is this payment safe to credit?"
-                : "Why should this payment be rejected?"
+                : "Why should this payment be declined?"
             }
             disabled={isPending}
           />
@@ -150,7 +127,7 @@ export function FiatDepositReviewDecision({
         <AlertDialogFooter>
           <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
           <Button
-            variant={decision === "reject" ? "destructive" : "default"}
+            variant={decision === "decline" ? "destructive" : "default"}
             onClick={submit}
             disabled={
               isPending ||
@@ -163,7 +140,7 @@ export function FiatDepositReviewDecision({
               ? "Submitting..."
               : decision === "approve"
                 ? "Approve balance credit"
-                : "Reject and refund"}
+                : "Decline and lock account"}
           </Button>
         </AlertDialogFooter>
       </AlertDialogContent>

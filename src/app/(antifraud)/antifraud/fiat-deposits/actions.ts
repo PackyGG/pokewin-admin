@@ -1,214 +1,38 @@
 "use server";
 
-import { revalidatePath, revalidateTag } from "next/cache";
+import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { getFiatAssessment } from "@/lib/antifraud/fiat-deposits-api";
 import {
-  getFiatAssessment,
-  updateFiatReview,
-} from "@/lib/antifraud/fiat-deposits-api";
-import { BackendApiError } from "@/lib/backend-api/errors";
-import {
-  decideFiatDepositReview,
-  getFiatDepositReview,
-} from "@/lib/backend-api/fiat-deposit-review";
-import { getUserKyc, requireUserKyc } from "@/lib/backend-api/kyc";
-import { isLockedAccountEligibleForKyc } from "@/lib/antifraud/kyc-eligibility";
-import { userDetailTag } from "@/lib/queries/users-detail-cache";
-import {
-  requireAntifraudAccess,
-  requireAntifraudManager,
-} from "@/lib/require-antifraud-access";
+  assessmentSnapshot,
+  creditReviewedFiatDeposit,
+  lockFiatAndWithdrawals,
+} from "@/lib/antifraud/fiat-credit-review";
+import { adminDrizzle } from "@/lib/admin-db";
+import { sql } from "drizzle-orm";
+import { whopAdminClient } from "@/lib/whop-admin";
+import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
+import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
-
-const schema = z
-  .object({
-    depositIntentId: z.string().uuid(),
-    action: z.enum(["start_review", "clear", "recommend_hold"]),
-    note: z.string().trim().max(1_000),
-    expectedStatus: z.enum([
-      "unreviewed",
-      "in_review",
-      "cleared",
-      "hold_recommended",
-    ]),
-    idempotencyKey: z.string().uuid(),
-  })
-  .superRefine((value, context) => {
-    if (value.action !== "start_review" && value.note.length < 4) {
-      context.addIssue({
-        code: "custom",
-        path: ["note"],
-        message: "Write what you concluded before recording this decision.",
-      });
-    }
-  });
-
-const requireKycSchema = z.object({
-  depositIntentId: z.string().uuid(),
-  userId: z.string().trim().min(1).max(128),
-  credential: z.string().trim().min(1).max(4_096),
-  idempotencyKey: z.string().uuid(),
-});
 
 const creditDecisionSchema = z.object({
   intentId: z.string().uuid(),
-  decision: z.enum(["approve", "reject"]),
+  decision: z.enum(["approve", "decline"]),
   reason: z.string().trim().min(3).max(500),
   stepUpCredential: z.string().trim().min(1).max(4_096),
+  idempotencyKey: z.string().uuid(),
 });
 
 export type FiatDepositDecisionResult =
   | { success: true; status: string }
   | { success: false; error: string };
 
-type RequireFiatKycResult =
-  | {
-      success: true;
-      alreadyRequired: boolean;
-      readbackConfirmed: boolean;
-      verificationCycle: number;
-    }
-  | { success: false; error: string };
-
-function friendlyKycError(error: unknown): string {
-  if (error instanceof BackendApiError) {
-    if (error.isNotFound) return "Account was not found by the backend.";
-    if (error.isConflict) {
-      return "KYC changed since this page loaded. Refresh and try again.";
-    }
-    return error.message;
-  }
-  return "The backend KYC service could not be reached.";
-}
-
-export async function setFiatReviewState(input: unknown): Promise<void> {
-  const session = await requireAntifraudAccess();
-  const parsed = schema.safeParse(input);
-  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  await updateFiatReview({
-    ...parsed.data,
-    actorId: session.userId,
-    actorUsername: session.username ?? undefined,
-    note: parsed.data.note || undefined,
-  });
-  await createAdminAuditEvent({
-    adminUserId: session.userId,
-    eventType: "antifraud_fiat_deposit_reviewed",
-    metadata: parsed.data,
-  });
-  revalidatePath("/antifraud/fiat-deposits");
-  revalidatePath(`/antifraud/fiat-deposits/${parsed.data.depositIntentId}`);
-}
-
-export async function requireFiatDepositKyc(
-  input: unknown,
-): Promise<RequireFiatKycResult> {
-  const session = await requireAntifraudManager(
-    "Only owners and admins can require KYC.",
-  );
-  const parsed = requireKycSchema.safeParse(input);
-  if (!parsed.success) {
-    return { success: false, error: parsed.error.issues[0].message };
-  }
-  await require2FA(session.userId, parsed.data.credential);
-
-  const assessment = await getFiatAssessment(parsed.data.depositIntentId);
-  if (
-    !assessment.configured ||
-    assessment.error ||
-    assessment.notFound ||
-    !assessment.data ||
-    assessment.data.assessment.user_id !== parsed.data.userId
-  ) {
-    return {
-      success: false,
-      error: "This Fiat deposit no longer matches that account. Refresh and try again.",
-    };
-  }
-
-  try {
-    const current = await getUserKyc(parsed.data.userId);
-    if (current.kycRequired) {
-      return {
-        success: true,
-        alreadyRequired: true,
-        readbackConfirmed: true,
-        verificationCycle: current.verificationCycle,
-      };
-    }
-  } catch (error) {
-    return { success: false, error: friendlyKycError(error) };
-  }
-  if (!(await isLockedAccountEligibleForKyc(parsed.data.userId))) {
-    return {
-      success: false,
-      error:
-        "KYC can be required only while both balance and item withdrawals are locked.",
-    };
-  }
-
-  const reason = `Fiat deposit risk review: ${parsed.data.depositIntentId}`;
-  let verificationCycle: number;
-  try {
-    const result = await requireUserKyc({
-      userId: parsed.data.userId,
-      adminId: session.userId,
-      reason,
-    });
-    verificationCycle = result.verificationCycle;
-  } catch (error) {
-    return { success: false, error: friendlyKycError(error) };
-  }
-
-  let readbackConfirmed = false;
-  try {
-    const confirmed = await getUserKyc(parsed.data.userId);
-    readbackConfirmed =
-      confirmed.kycRequired &&
-      confirmed.verificationCycle === verificationCycle;
-  } catch (error) {
-    console.error("[antifraud-fiat] KYC readback failed:", error);
-  }
-
-  try {
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      eventType: "user_kyc_required",
-      targetUserId: parsed.data.userId,
-      metadata: {
-        source: "antifraud_fiat_deposits",
-        depositIntentId: parsed.data.depositIntentId,
-        reason,
-        verificationCycle,
-        idempotencyKey: parsed.data.idempotencyKey,
-      },
-    });
-  } catch (error) {
-    console.error("[antifraud-fiat] secondary KYC audit failed:", error);
-  }
-
-  revalidatePath("/antifraud/fiat-deposits");
-  revalidatePath(
-    `/antifraud/fiat-deposits/${parsed.data.depositIntentId}`,
-  );
-  revalidatePath("/antifraud/kyc");
-  revalidateTag(userDetailTag(parsed.data.userId));
-  return {
-    success: true,
-    alreadyRequired: false,
-    readbackConfirmed,
-    verificationCycle,
-  };
-}
-
 export async function decideFiatDepositAction(
   input: unknown,
 ): Promise<FiatDepositDecisionResult> {
-  const session = await requireAntifraudManager(
-    "Only owners and admins can approve or reject Fiat deposit credits.",
-  );
+  const session = await requireAntifraudAccess();
   const parsed = creditDecisionSchema.safeParse(input);
   if (!parsed.success) {
     return {
@@ -219,44 +43,170 @@ export async function decideFiatDepositAction(
 
   try {
     await require2FA(session.userId, parsed.data.stepUpCredential);
-    const before = await getFiatDepositReview(parsed.data.intentId);
-    const updated = await decideFiatDepositReview({
-      intentId: parsed.data.intentId,
-      decision: parsed.data.decision,
-      reason: parsed.data.reason,
-      adminUserId: session.userId,
+    const assessmentResult = await getFiatAssessment(parsed.data.intentId);
+    const assessment = assessmentResult.data?.assessment;
+    if (
+      !assessmentResult.configured ||
+      assessmentResult.error ||
+      assessmentResult.notFound ||
+      !assessment ||
+      assessment.status !== "review"
+    ) {
+      return {
+        success: false,
+        error: "This Fiat deposit is no longer active in the Antifraud review queue.",
+      };
+    }
+    const snapshot = assessmentSnapshot(assessment);
+    if (snapshot.provider !== "whop") {
+      return { success: false, error: "Only Whop Fiat deposits can be reviewed here." };
+    }
+
+    const claimed = await adminDrizzle.transaction(async (tx) => {
+      await tx.execute(sql`
+        SELECT pg_advisory_xact_lock(
+          hashtextextended(${`fiat-credit-review:${snapshot.depositIntentId}`}, 0)
+        )
+      `);
+      const existing = (await tx.execute<{
+        status: string;
+        staff_decision: string | null;
+        decision_idempotency_key: string | null;
+      }>(sql`
+        SELECT status, staff_decision, decision_idempotency_key::text
+        FROM admin_fiat_credit_reviews
+        WHERE deposit_intent_id = ${snapshot.depositIntentId}::uuid
+        FOR UPDATE
+      `)).rows[0];
+      if (existing?.decision_idempotency_key === parsed.data.idempotencyKey) {
+        return { replay: true, status: existing.status };
+      }
+      const retryable =
+        (parsed.data.decision === "approve" && existing?.status === "approval_failed" && existing.staff_decision === "approve") ||
+        (parsed.data.decision === "decline" && existing?.status === "containment_failed" && existing.staff_decision === "decline");
+      if (existing && !retryable) {
+        throw new Error("Another staff member already decided this deposit.");
+      }
+      const nextStatus = parsed.data.decision === "approve" ? "approving" : "containing";
+      if (existing) {
+        await tx.execute(sql`
+          UPDATE admin_fiat_credit_reviews
+          SET status = ${nextStatus}, decision_reason = ${parsed.data.reason},
+              decided_by = ${session.userId}::uuid,
+              decision_idempotency_key = ${parsed.data.idempotencyKey}::uuid,
+              decided_at = NOW(), last_error = NULL, updated_at = NOW(), version = version + 1
+          WHERE deposit_intent_id = ${snapshot.depositIntentId}::uuid
+        `);
+      } else {
+        await tx.execute(sql`
+          INSERT INTO admin_fiat_credit_reviews (
+            deposit_intent_id, user_id, provider, provider_payment_id,
+            currency, amount_cents, customer_total_cents, status,
+            staff_decision, decision_reason, decided_by,
+            decision_idempotency_key, decided_at
+          ) VALUES (
+            ${snapshot.depositIntentId}::uuid, ${snapshot.userId}, ${snapshot.provider},
+            ${snapshot.providerPaymentId}, ${snapshot.currency}, ${snapshot.amountCents},
+            ${snapshot.customerTotalCents}, ${nextStatus}, ${parsed.data.decision},
+            ${parsed.data.reason}, ${session.userId}::uuid,
+            ${parsed.data.idempotencyKey}::uuid, NOW()
+          )
+        `);
+      }
+      return { replay: false, status: nextStatus };
     });
+    if (claimed.replay) return { success: true, status: claimed.status };
+
+    if (parsed.data.decision === "approve") {
+      const payment = await whopAdminClient().payments.retrieve(snapshot.providerPaymentId);
+      const expectedCompany = process.env.WHOP_COMPANY_ID?.trim();
+      if (expectedCompany && payment.company?.id !== expectedCompany) {
+        throw new Error("The Whop payment belongs to another company.");
+      }
+      if (payment.status !== "paid" || payment.substatus !== "succeeded") {
+        throw new Error("The Whop payment is no longer successful.");
+      }
+      if (
+        payment.dispute_alerted_at ||
+        (payment.disputes?.length ?? 0) > 0 ||
+        (payment.refunded_amount ?? 0) > 0
+      ) {
+        throw new Error("Refunded or disputed Whop payments cannot be approved.");
+      }
+      if (
+        payment.metadata?.deposit_intent_id &&
+        payment.metadata.deposit_intent_id !== snapshot.depositIntentId
+      ) {
+        throw new Error("The Whop payment does not match this deposit intent.");
+      }
+      await creditReviewedFiatDeposit({
+        ...snapshot,
+        providerStatus: payment.substatus,
+        reviewedBy: session.userId,
+        reason: parsed.data.reason,
+      });
+      await adminDrizzle.execute(sql`
+        UPDATE admin_fiat_credit_reviews
+        SET status = 'approved', contained_at = NULL, last_error = NULL,
+            updated_at = NOW(), version = version + 1
+        WHERE deposit_intent_id = ${snapshot.depositIntentId}::uuid
+          AND status = 'approving'
+      `);
+    } else {
+      const actorMainUserId = await resolveAdminMainUserId(session.userId);
+      await lockFiatAndWithdrawals({
+        userId: snapshot.userId,
+        actorMainUserId,
+        reason: `Declined Fiat deposit ${snapshot.depositIntentId}: ${parsed.data.reason}`.slice(0, 500),
+      });
+      await adminDrizzle.execute(sql`
+        UPDATE admin_fiat_credit_reviews
+        SET status = 'declined', contained_at = NOW(), containment_error = NULL,
+            updated_at = NOW(), version = version + 1
+        WHERE deposit_intent_id = ${snapshot.depositIntentId}::uuid
+          AND status = 'containing'
+      `);
+    }
 
     try {
       await createAdminAuditEvent({
         adminUserId: session.userId,
-        targetUserId: before.user_id,
+        targetUserId: snapshot.userId,
         eventType:
           parsed.data.decision === "approve"
             ? "fiat_deposit_credit_approved"
-            : "fiat_deposit_credit_rejected",
+            : "fiat_deposit_declined_for_admin_review",
         metadata: {
-          intentId: before.id,
-          providerPaymentId: before.provider_payment_id,
-          previousStatus: before.status,
-          status: updated.status,
+          intentId: snapshot.depositIntentId,
+          providerPaymentId: snapshot.providerPaymentId,
+          previousStatus: assessment.status,
+          status: parsed.data.decision === "approve" ? "approved" : "declined",
           decision: parsed.data.decision,
           reason: parsed.data.reason,
-          creditedAmountCents: before.credited_amount_cents,
-          currency: before.currency,
+          creditedAmountCents: snapshot.amountCents,
+          currency: snapshot.currency,
+          futureAutoApprovalChanged: false,
+          ...(parsed.data.decision === "decline"
+            ? { fiatDepositsLocked: true, cryptoWithdrawalsLocked: true, itemWithdrawalsLocked: true }
+            : {}),
+          idempotencyKey: parsed.data.idempotencyKey,
         },
       });
     } catch (auditError) {
       console.error("[fiat-deposit-review] secondary admin audit failed", {
         auditError,
-        intentId: before.id,
+        intentId: snapshot.depositIntentId,
         adminUserId: session.userId,
       });
     }
 
     revalidatePath("/antifraud/fiat-deposits");
-    revalidatePath(`/transactions/card-payments/${before.id}`);
-    return { success: true, status: updated.status };
+    revalidatePath("/antifraud/admin/deposits");
+    revalidatePath(`/transactions/card-payments/${snapshot.depositIntentId}`);
+    return {
+      success: true,
+      status: parsed.data.decision === "approve" ? "approved" : "declined",
+    };
   } catch (error) {
     console.error("[fiat-deposit-review] decision failed", {
       error,
@@ -264,6 +214,18 @@ export async function decideFiatDepositAction(
       decision: parsed.data.decision,
       adminUserId: session.userId,
     });
+    const failedStatus = parsed.data.decision === "approve"
+      ? "approval_failed"
+      : "containment_failed";
+    await adminDrizzle.execute(sql`
+      UPDATE admin_fiat_credit_reviews
+      SET status = ${failedStatus},
+          containment_error = CASE WHEN ${parsed.data.decision} = 'decline' THEN ${error instanceof Error ? error.message : "Containment failed"} ELSE containment_error END,
+          last_error = ${error instanceof Error ? error.message : "Decision failed"},
+          updated_at = NOW(), version = version + 1
+      WHERE deposit_intent_id = ${parsed.data.intentId}::uuid
+        AND status IN ('approving', 'containing')
+    `).catch(() => undefined);
     return {
       success: false,
       error:

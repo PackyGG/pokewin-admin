@@ -129,6 +129,10 @@ const GUIDE_NAV: NavItem[] = [
   },
 ];
 
+const ADMIN_NAV: NavItem[] = [
+  { label: "Deposits", href: "/antifraud/admin/deposits", icon: Banknote },
+];
+
 /**
  * System owns Fraud configuration and manager tools: Settings, Config,
  * Discord routing, and the staff audit log. Retired per-surface routes
@@ -429,6 +433,16 @@ export function AntifraudSidebar({
 
         {canManage && (
           <NavSection
+            label="Admin"
+            items={ADMIN_NAV}
+            pathname={pathname}
+            onNavTap={handleNavTap}
+            toHref={toHref}
+            storageKey={`antifraud-nav:v1:${viewerId}:admin`}
+          />
+        )}
+        {canManage && (
+          <NavSection
             label="System"
             items={SYSTEM_NAV}
             pathname={pathname}
@@ -445,6 +459,7 @@ export function AntifraudSidebar({
                 ...MAIN_NAV,
                 ...BLACKLIST_NAV,
                 ...GUIDE_NAV,
+                ...(canManage ? ADMIN_NAV : []),
                 ...(canManage ? SYSTEM_NAV : []),
               ]}
               pathname={pathname}

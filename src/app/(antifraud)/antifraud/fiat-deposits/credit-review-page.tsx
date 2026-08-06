@@ -17,46 +17,18 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { canManageAntifraud } from "@/lib/antifraud/access";
 import {
-  FiatDepositReviewStatusSchema,
-  getFiatDepositReviewQueue,
-  type FiatDepositReviewItem,
-  type FiatDepositReviewStatus,
-} from "@/lib/backend-api/fiat-deposit-review";
+  listFiatAssessments,
+  type FiatAssessment,
+} from "@/lib/antifraud/fiat-deposits-api";
+import { getFiatCreditReviewStates } from "@/lib/antifraud/fiat-credit-review";
 import { getFiatDepositReviewUsers } from "@/lib/queries/fiat-deposit-review-users";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { parsePage, parsePerPage } from "@/lib/utils/pagination";
-import { cn } from "@/lib/utils";
 import { FiatDepositReviewDecision } from "./review-decision";
 
 export const metadata = { title: "Fiat Deposit Reviews" };
-
-const QUEUE_STATUSES = [
-  "review",
-  "approval_processing",
-  "refund_pending",
-  "refund_failed",
-] as const satisfies readonly FiatDepositReviewStatus[];
-
-const STATUS_LABELS: Record<(typeof QUEUE_STATUSES)[number], string> = {
-  review: "Needs review",
-  approval_processing: "Approving",
-  refund_pending: "Refund pending",
-  refund_failed: "Refund failed",
-};
-
-const STATUS_CLASSES: Record<(typeof QUEUE_STATUSES)[number], string> = {
-  review:
-    "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
-  approval_processing:
-    "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-300",
-  refund_pending:
-    "border-violet-500/30 bg-violet-500/15 text-violet-700 dark:text-violet-300",
-  refund_failed:
-    "border-red-500/30 bg-red-500/15 text-red-700 dark:text-red-300",
-};
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
@@ -64,42 +36,51 @@ function firstValue(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-function queueStatus(value: string | undefined): FiatDepositReviewStatus | undefined {
-  const parsed = FiatDepositReviewStatusSchema.safeParse(value);
-  return parsed.success && QUEUE_STATUSES.includes(
-    parsed.data as (typeof QUEUE_STATUSES)[number],
-  )
-    ? parsed.data
-    : undefined;
-}
-
-function filterHref(
-  status: FiatDepositReviewStatus | undefined,
-  perPage: number,
-): string {
-  const params = new URLSearchParams();
-  if (status) params.set("status", status);
-  if (perPage !== 20) params.set("perPage", String(perPage));
-  const query = params.toString();
-  return query
-    ? `/antifraud/fiat-deposits?${query}`
-    : "/antifraud/fiat-deposits";
-}
-
 function money(cents: number): string {
   return formatCurrency(cents / 100);
 }
 
-function statusBadge(status: FiatDepositReviewStatus) {
-  if (!QUEUE_STATUSES.includes(status as (typeof QUEUE_STATUSES)[number])) {
-    return <Badge variant="outline">{status.replaceAll("_", " ")}</Badge>;
-  }
-  const queueStatus = status as (typeof QUEUE_STATUSES)[number];
+function statusBadge() {
   return (
-    <Badge variant="outline" className={STATUS_CLASSES[queueStatus]}>
-      {STATUS_LABELS[queueStatus]}
+    <Badge variant="outline" className="border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300">
+      Needs decision
     </Badge>
   );
+}
+
+type ReviewItem = {
+  id: string;
+  user_id: string;
+  status: "review";
+  currency: string;
+  requested_amount_cents: number;
+  credited_amount_cents: number;
+  actual_customer_total_cents: number | null;
+  provider_checkout_id: string | null;
+  provider_payment_id: string | null;
+  failure_reason: string | null;
+  review_requested_at: string | null;
+  paid_at: string | null;
+  created_at: string;
+};
+
+function toReviewItem(item: FiatAssessment): ReviewItem {
+  return {
+    id: item.deposit_intent_id,
+    user_id: item.user_id,
+    status: "review",
+    currency: item.currency,
+    requested_amount_cents: Math.round(item.requested_amount_usd * 100),
+    credited_amount_cents: Math.round(item.credited_amount_usd * 100),
+    actual_customer_total_cents:
+      item.customer_total_usd == null ? null : Math.round(item.customer_total_usd * 100),
+    provider_checkout_id: null,
+    provider_payment_id: item.provider_payment_id,
+    failure_reason: null,
+    review_requested_at: item.occurred_at,
+    paid_at: item.occurred_at,
+    created_at: item.occurred_at,
+  };
 }
 
 export default async function FiatDepositReviewsPage({
@@ -107,30 +88,62 @@ export default async function FiatDepositReviewsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  const session = await requireAntifraudPageAccess();
+  await requireAntifraudPageAccess();
   const raw = await searchParams;
   const page = parsePage(firstValue(raw.page));
   const perPage = Math.min(parsePerPage(firstValue(raw.perPage)), 100);
-  const status = queueStatus(firstValue(raw.status));
   const offset = (page - 1) * perPage;
 
-  const queueResult = await getFiatDepositReviewQueue({
-    status,
-    limit: perPage,
-    offset,
+  const queueResult = await listFiatAssessments({
+    page: 1,
+    limit: 100,
+    status: "review",
   }).then(
     (value) => ({ status: "fulfilled" as const, value }),
     (reason: unknown) => ({ status: "rejected" as const, reason }),
   );
-  const queue =
-    queueResult.status === "fulfilled"
-      ? queueResult.value
-      : { items: [], total: 0, limit: perPage, offset };
+  const firstAssessments =
+    queueResult.status === "fulfilled" && !queueResult.value.error
+      ? queueResult.value.data
+      : [];
+  const remainingPages =
+    queueResult.status === "fulfilled" && !queueResult.value.error
+      ? Math.min(Math.max((queueResult.value.pagination?.pages ?? 1) - 1, 0), 9)
+      : 0;
+  const additionalResults = await Promise.all(
+    Array.from({ length: remainingPages }, (_, index) =>
+      listFiatAssessments({ page: index + 2, limit: 100, status: "review" }),
+    ),
+  );
+  const sourceFailed =
+    queueResult.status === "rejected" ||
+    (queueResult.status === "fulfilled" && queueResult.value.error) ||
+    additionalResults.some((result) => result.error);
+  const assessments = sourceFailed
+    ? []
+    : [firstAssessments, ...additionalResults.map((result) => result.data)].flat();
+  const stateResult = await getFiatCreditReviewStates(
+    assessments.map((item) => item.deposit_intent_id),
+  ).then(
+    (value) => ({ ok: true as const, value }),
+    () => ({ ok: false as const, value: new Map() }),
+  );
+  const queueFailed = sourceFailed || !stateResult.ok;
+  const states = stateResult.value;
+  const activeItems = assessments
+    .filter((item) => {
+      const state = states.get(item.deposit_intent_id);
+      return !state || state === "approval_failed" || state === "containment_failed";
+    })
+    .map(toReviewItem);
+  const queue = {
+    items: queueFailed ? [] : activeItems.slice(offset, offset + perPage),
+    total: queueFailed ? 0 : activeItems.length,
+  };
   const users = await getFiatDepositReviewUsers(
     queue.items.map((item) => item.user_id),
   ).catch(() => new Map());
   const totalPages = Math.ceil(queue.total / perPage);
-  const canDecide = canManageAntifraud(session);
 
   return (
     <div className="space-y-3">
@@ -140,33 +153,17 @@ export default async function FiatDepositReviewsPage({
           </span>
         </div>
 
-        <div className="flex flex-wrap gap-2" aria-label="Review status filters">
-          <FilterLink
-            active={!status}
-            href={filterHref(undefined, perPage)}
-            label="All active"
-          />
-          {QUEUE_STATUSES.map((itemStatus) => (
-            <FilterLink
-              key={itemStatus}
-              active={status === itemStatus}
-              href={filterHref(itemStatus, perPage)}
-              label={STATUS_LABELS[itemStatus]}
-            />
-          ))}
-        </div>
-
-        {queueResult.status === "rejected" && (
+        {queueFailed && (
           <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
             <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            The backend review queue could not be loaded. No deposit decisions
-            are available until the authoritative service responds.
+            The Antifraud review queue could not be loaded safely. No deposit
+            decisions are available until both decision stores respond.
           </div>
         )}
 
         <div className="space-y-3 lg:hidden">
           {queue.items.length === 0 ? (
-            <QueueEmpty failed={queueResult.status === "rejected"} />
+            <QueueEmpty failed={queueFailed} />
           ) : (
             queue.items.map((item) => {
               const user = users.get(item.user_id);
@@ -185,20 +182,17 @@ export default async function FiatDepositReviewsPage({
                           {item.id}
                         </CardDescription>
                       </div>
-                      {statusBadge(item.status)}
+                      {statusBadge()}
                     </div>
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <ReviewFacts item={item} countryCode={user?.countryCode ?? null} />
                     <ReviewLinks item={item} />
-                    {canDecide && (
-                      <FiatDepositReviewDecision
-                        intentId={item.id}
-                        displayName={displayName}
-                        amount={money(item.credited_amount_cents)}
-                        status={item.status}
-                      />
-                    )}
+                    <FiatDepositReviewDecision
+                      intentId={item.id}
+                      displayName={displayName}
+                      amount={money(item.credited_amount_cents)}
+                    />
                   </CardContent>
                 </Card>
               );
@@ -222,7 +216,7 @@ export default async function FiatDepositReviewsPage({
               {queue.items.length === 0 ? (
                 <TableRow className="hover:bg-transparent">
                   <TableCell colSpan={6} className="p-0">
-                    <QueueEmpty failed={queueResult.status === "rejected"} />
+                    <QueueEmpty failed={queueFailed} />
                   </TableCell>
                 </TableRow>
               ) : (
@@ -262,7 +256,7 @@ export default async function FiatDepositReviewsPage({
                       </TableCell>
                       <TableCell>
                         <div className="space-y-1">
-                          {statusBadge(item.status)}
+                          {statusBadge()}
                           {item.failure_reason && (
                             <p className="max-w-52 text-[10px] text-red-600 dark:text-red-400">
                               {item.failure_reason}
@@ -274,18 +268,11 @@ export default async function FiatDepositReviewsPage({
                         {formatRelative(item.review_requested_at ?? item.paid_at ?? item.created_at)}
                       </TableCell>
                       <TableCell>
-                        {canDecide ? (
-                          <FiatDepositReviewDecision
-                            intentId={item.id}
-                            displayName={displayName}
-                            amount={money(item.credited_amount_cents)}
-                            status={item.status}
-                          />
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            Read only
-                          </span>
-                        )}
+                        <FiatDepositReviewDecision
+                          intentId={item.id}
+                          displayName={displayName}
+                          amount={money(item.credited_amount_cents)}
+                        />
                       </TableCell>
                     </TableRow>
                   );
@@ -300,35 +287,9 @@ export default async function FiatDepositReviewsPage({
           totalPages={totalPages}
           total={queue.total}
           perPage={perPage}
-          degraded={queueResult.status === "rejected"}
+          degraded={queueFailed}
         />
     </div>
-  );
-}
-
-function FilterLink({
-  active,
-  href,
-  label,
-}: {
-  active: boolean;
-  href: string;
-  label: string;
-}) {
-  return (
-    <HostLink
-      href={href}
-      replace
-      scroll={false}
-      className={cn(
-        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-        active
-          ? "border-foreground/20 bg-foreground text-background"
-          : "bg-background text-muted-foreground hover:text-foreground",
-      )}
-    >
-      {label}
-    </HostLink>
   );
 }
 
@@ -336,7 +297,7 @@ function ReviewFacts({
   item,
   countryCode,
 }: {
-  item: FiatDepositReviewItem;
+  item: ReviewItem;
   countryCode: string | null;
 }) {
   return (
@@ -368,7 +329,7 @@ function ReviewFacts({
   );
 }
 
-function ReviewLinks({ item }: { item: FiatDepositReviewItem }) {
+function ReviewLinks({ item }: { item: ReviewItem }) {
   return (
     <div className="space-y-1 text-xs">
       <HostLink
@@ -376,12 +337,6 @@ function ReviewLinks({ item }: { item: FiatDepositReviewItem }) {
         className="flex items-center gap-1 font-medium hover:underline"
       >
         Payment details <ExternalLink className="size-3" />
-      </HostLink>
-      <HostLink
-        href={`/antifraud/fiat-deposits/${encodeURIComponent(item.id)}`}
-        className="flex items-center gap-1 text-muted-foreground hover:text-foreground hover:underline"
-      >
-        Risk evidence <ExternalLink className="size-3" />
       </HostLink>
       <p
         className="max-w-48 truncate font-mono text-[10px] text-muted-foreground"
