@@ -25,6 +25,28 @@ test("Account Reviews use only Reviews and Postponed tabs", () => {
   assert.match(page, /<ReviewCaseDialog/);
 });
 
+test("opening a review navigates immediately and does not wait on queue data", () => {
+  const button = source(
+    "src/app/(antifraud)/antifraud/reviews/_components/start-review-button.tsx",
+  );
+  const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
+
+  const navigation = button.indexOf("router.push(href");
+  const claimWait = button.indexOf("await startReview");
+  assert.ok(navigation >= 0, "navigation must start immediately");
+  assert.ok(claimWait > navigation, "navigation must not wait for the claim");
+  assert.match(button, /router\.prefetch\(href\)/);
+
+  const queueBoundary = page.indexOf('<Suspense key={filterKey}');
+  const dialogBoundary = page.indexOf('key={selectedReviewId}');
+  assert.ok(queueBoundary >= 0 && dialogBoundary > queueBoundary);
+  assert.match(page, /queueData={queueData}/);
+  assert.match(
+    page,
+    /fallback=\{[\s\S]*?<ReviewCaseDialog closeHref=\{closeHref\}>[\s\S]*?<CaseDialogSkeleton \/>/,
+  );
+});
+
 test("dismissing a live review postpones it unless an action completed", () => {
   const dialog = source(
     "src/app/(antifraud)/antifraud/reviews/_components/review-case-dialog.tsx",

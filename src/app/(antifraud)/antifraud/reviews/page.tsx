@@ -123,6 +123,9 @@ export default async function ReviewQueuePage({
   };
 
   const filterKey = `${tab}-${search ?? ""}-${cursor ?? "first"}`;
+  const current = { tab, q: search, cursor };
+  const queueData = loadReviewQueueData(filters, cursor);
+  const closeHref = buildHref({ review: undefined }, current);
   return (
     <div className="space-y-6">
       <PageHero>
@@ -131,9 +134,8 @@ export default async function ReviewQueuePage({
 
       <Suspense key={filterKey} fallback={<QueueSkeleton />}>
         <QueueList
-          filters={filters}
-          cursor={cursor}
-          current={{ tab, q: search, cursor }}
+          queueData={queueData}
+          current={current}
           tab={tab}
           search={search}
           openCaseProps={{
@@ -145,11 +147,27 @@ export default async function ReviewQueuePage({
             },
             autoOpen: params.open === "1",
           }}
-          selectedReviewId={selectedReviewId}
-          viewerId={session.userId}
-          canManage={canManageAntifraud(session)}
         />
       </Suspense>
+
+      {selectedReviewId && (
+        <Suspense
+          key={selectedReviewId}
+          fallback={
+            <ReviewCaseDialog closeHref={closeHref}>
+              <CaseDialogSkeleton />
+            </ReviewCaseDialog>
+          }
+        >
+          <ReviewDialogFromQueue
+            reviewId={selectedReviewId}
+            queueData={queueData}
+            current={current}
+            viewerId={session.userId}
+            canManage={canManageAntifraud(session)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }
@@ -249,28 +267,8 @@ function FilterBar({
 
 // ─── List ─────────────────────────────────────────────────────────────
 
-async function QueueList({
-  filters,
-  cursor,
-  current,
-  tab,
-  search,
-  openCaseProps,
-  selectedReviewId,
-  viewerId,
-  canManage,
-}: {
-  filters: ReviewFilters;
-  cursor?: string;
-  current: SearchParams;
-  tab: ReviewTab;
-  search?: string;
-  openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
-  selectedReviewId?: string;
-  viewerId: string;
-  canManage: boolean;
-}) {
-  const { data, error } = await safeQuery(
+function loadReviewQueueData(filters: ReviewFilters, cursor?: string) {
+  return safeQuery(
     async () => {
       const [page, stats] = await Promise.all([
         listReviewPage(filters, cursor),
@@ -288,6 +286,24 @@ async function QueueList({
     "antifraud.review-queue",
     QUERY_TIMEOUT_MS,
   );
+}
+
+type ReviewQueueData = Awaited<ReturnType<typeof loadReviewQueueData>>;
+
+async function QueueList({
+  queueData,
+  current,
+  tab,
+  search,
+  openCaseProps,
+}: {
+  queueData: Promise<ReviewQueueData>;
+  current: SearchParams;
+  tab: ReviewTab;
+  search?: string;
+  openCaseProps: React.ComponentProps<typeof OpenCaseDialog>;
+}) {
+  const { data, error } = await queueData;
   const { page, stats } = data;
   const reviews = page.items;
   const counts: Record<ReviewTab, number> = {
@@ -347,12 +363,12 @@ async function QueueList({
         </ul>
       )}
 
-      {!error && (cursor || page.nextCursor) && (
+      {!error && (current.cursor || page.nextCursor) && (
         <nav
           aria-label="Review queue pages"
           className="flex flex-wrap items-center justify-between gap-2"
         >
-          {cursor ? (
+          {current.cursor ? (
             <Button
               size="sm"
               variant="outline"
@@ -377,16 +393,6 @@ async function QueueList({
             </Button>
           )}
         </nav>
-      )}
-
-      {selectedReviewId && (
-        <ReviewDialogFromQueue
-          reviewId={selectedReviewId}
-          reviews={reviews}
-          current={current}
-          viewerId={viewerId}
-          canManage={canManage}
-        />
       )}
     </div>
   );
@@ -538,19 +544,21 @@ function CaseRow({
   );
 }
 
-function ReviewDialogFromQueue({
+async function ReviewDialogFromQueue({
   reviewId,
-  reviews,
+  queueData,
   current,
   viewerId,
   canManage,
 }: {
   reviewId: string;
-  reviews: ReviewListItem[];
+  queueData: Promise<ReviewQueueData>;
   current: SearchParams;
   viewerId: string;
   canManage: boolean;
 }) {
+  const { data } = await queueData;
+  const reviews = data.page.items;
   const index = reviews.findIndex((review) => review.id === reviewId);
   const previous = index > 0 ? reviews[index - 1] : undefined;
   const next = index >= 0 ? reviews[index + 1] : undefined;

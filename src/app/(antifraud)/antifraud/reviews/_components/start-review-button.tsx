@@ -29,7 +29,14 @@ export function StartReviewButton({
       className="h-9 min-w-28 px-3 text-sm"
       disabled={isPending}
       aria-label={`${label} for ${subject}`}
+      onFocus={() => router.prefetch(href)}
+      onPointerEnter={() => router.prefetch(href)}
       onClick={() => {
+        // Opening the workspace must not wait for the claim transaction,
+        // its audit note, and cache revalidation. Both requests can safely
+        // run together because startReview remains guarded and idempotent.
+        router.push(href, { scroll: false });
+
         startTransition(async () => {
           try {
             idempotencyKey.current ??= crypto.randomUUID();
@@ -38,7 +45,7 @@ export function StartReviewButton({
               expectedStatus: "open",
               idempotencyKey: idempotencyKey.current,
             });
-            router.push(href, { scroll: false });
+            router.refresh();
           } catch (error) {
             toast.error(
               error instanceof Error ? error.message : "Review could not be opened",
