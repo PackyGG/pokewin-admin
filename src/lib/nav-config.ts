@@ -531,6 +531,22 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    // Early battle outcomes expose results before the player animation ends.
+    // The route and query both enforce requireOwner; this allowlist is only
+    // the matching cosmetic sidebar gate (all DB-flagged owners bypass it).
+    id: "nav.system.eos-verification",
+    group: "System",
+    label: "Live EOS Preview",
+    href: "/system/eos-verification",
+    pageKey: "/system/eos-verification",
+    icon: "Hash",
+    description: "Active battle outcomes and creator payout preview",
+    keywords: ["eos", "battle", "outcome", "creator", "payout", "profit"],
+    usernameAllowlist: ["motha"],
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     // Excluded Users — sidebar-only, explicit username allowlist. Not in ADMIN_PAGES
     // as the security boundary (page + actions enforce requireExcludedUsersAccess);
     // listed in ADMIN_PAGES only so the key
