@@ -220,9 +220,12 @@ test("fresh-account promo, tip, and sponsorship actions are explicit", async () 
   assert.match(monitor, /expected_creator_activity|isCreator/);
 });
 
-test("KYC can only be requested from an eligible locked-account review", async () => {
+test("Account Review can request KYC on a case without changing its verdict", async () => {
   const kycActions = await source(
     "../../../src/app/(antifraud)/antifraud/kyc/actions.ts",
+  );
+  const reviewActions = await source(
+    "../../../src/app/(antifraud)/antifraud/reviews/actions.ts",
   );
   const quickActions = await source(
     "../../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
@@ -234,5 +237,11 @@ test("KYC can only be requested from an eligible locked-account review", async (
   assert.match(kycActions, /isLockedAccountEligibleForKyc/);
   assert.match(eligibility, /locked_withdrawals_items = TRUE/);
   assert.match(eligibility, /cardinality\(locked_withdrawals_crypto\)/);
-  assert.doesNotMatch(quickActions, /require_kyc|Require KYC/);
+  // Positive contract: Account Review now delegates to the canonical
+  // requireAccountKyc action instead of leaving KYC unreachable from the
+  // case-review workflow. Status-untouched behavior is covered by the
+  // dedicated fixture test in scripts/__fixtures__/antifraud-signup-review-actions.test.ts.
+  assert.match(reviewActions, /requireReviewKyc/);
+  assert.match(reviewActions, /requireAccountKyc/);
+  assert.match(quickActions, /Require KYC/);
 });
