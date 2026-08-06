@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
   isPostgresError,
   postgresErrorMessages,
@@ -57,6 +58,43 @@ export async function getAdminSetting(key: string): Promise<string | null> {
     return result.rows[0]?.value ?? null;
   } catch (err) {
     if (isMissingTableError(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Batched sibling of {@link getAdminSetting}: reads many keys in ONE round trip.
+ *
+ * The admin pool is intentionally tiny on Vercel (`max: 2`), so N single-row
+ * `getAdminSetting()` calls inside a `Promise.all` do not actually run in
+ * parallel — they queue behind each other AND starve the page's own reads of a
+ * connection. Use this whenever a caller needs more than one key at a time.
+ *
+ * Degradation matches `getAdminSetting()` exactly: a missing `admin_settings`
+ * table yields an EMPTY map (every key reads as unset) rather than throwing, so
+ * a pre-migration DB behaves as if nothing were configured. Keys with a NULL
+ * value are likewise omitted, which is what a `null` return meant before.
+ * Every other error is rethrown so fail-closed callers still see the failure.
+ */
+export async function getAdminSettings(
+  keys: readonly string[],
+): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (keys.length === 0) return out;
+  try {
+    const result = await adminDrizzle.execute<{
+      key: string;
+      value: string | null;
+    }>(sql`
+      SELECT key, value FROM admin_settings
+      WHERE key = ANY(${pgArrayParam([...keys])}::text[])
+    `);
+    for (const row of result.rows) {
+      if (typeof row.value === "string") out.set(row.key, row.value);
+    }
+    return out;
+  } catch (err) {
+    if (isMissingTableError(err)) return out;
     throw err;
   }
 }

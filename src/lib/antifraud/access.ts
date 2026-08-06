@@ -5,7 +5,7 @@ import {
   type AdminRole,
 } from "@/lib/admin-roles";
 import type { SessionPayload } from "@/lib/session";
-import { getAdminSetting, setAdminSetting } from "@/lib/admin-settings";
+import { getAdminSettings, setAdminSetting } from "@/lib/admin-settings";
 import { isOwner } from "@/lib/owners";
 
 /**
@@ -66,29 +66,54 @@ function parseBool(value: string | null): boolean {
   return value === "true";
 }
 
+// Declared here (rather than in the allow/deny section below) so the shared
+// batched reader can name every key it fetches before its first use.
+export const ANTIFRAUD_USER_ALLOWLIST_KEY = "antifraud_user_allowlist";
+export const ANTIFRAUD_USER_DENYLIST_KEY = "antifraud_user_denylist";
+
+/** Every `admin_settings` key the Antifraud gate consults, in one list. */
+const ANTIFRAUD_GATE_SETTING_KEYS: readonly string[] = [
+  ...ANTIFRAUD_TOGGLE_ROLES.map(antifraudToggleKey),
+  ANTIFRAUD_USER_ALLOWLIST_KEY,
+  ANTIFRAUD_USER_DENYLIST_KEY,
+];
+
+/**
+ * ONE `admin_settings` round trip for the whole gate.
+ *
+ * The gate needs 5 keys (3 role toggles + allowlist + denylist). Read
+ * individually those are 5 single-row SELECTs against a `max: 2` admin pool,
+ * so they serialize into ~3 waves and starve the page's own Suspense reads of
+ * a connection. Batched, the gate costs one query per request.
+ *
+ * Degradation is unchanged: {@link getAdminSettings} maps a missing
+ * `admin_settings` table to an EMPTY map, so a pre-migration DB reads as "no
+ * key set" — every toggle OFF and both override lists empty (fail-closed),
+ * exactly like the old per-key reads. Any other DB error still rejects, and
+ * the fail-closed wrappers in `require-antifraud-access.ts` turn that into a
+ * denial. `React.cache`-wrapped: the gate runs up to 3× per request (portal
+ * button, layout gate, page gate) and collapses onto this single read.
+ *
+ * Server-side only (touches Admin DB); never call from a Client Component.
+ */
+const loadAntifraudGateSettings = cache(
+  async (): Promise<Map<string, string>> =>
+    getAdminSettings(ANTIFRAUD_GATE_SETTING_KEYS),
+);
+
 /**
  * Load the per-role Antifraud access toggles from the ADMIN DB.
- *
- * Reads through {@link getAdminSetting}, which already degrades a missing
- * `admin_settings` table to `null` — so a pre-migration DB yields all toggles
- * OFF (fail-closed) rather than throwing. Server-side only (touches Admin DB);
- * never call from a Client Component.
- *
- * `React.cache`-wrapped: the trio is read up to 3× per request (portal button,
- * layout gate, page gate) — the request-scoped memo collapses those onto ONE
- * ADMIN read each.
+ * A role is enabled only when its key is explicitly the string `"true"`.
  */
 export const getAntifraudAccessSettings = cache(
   async (): Promise<AntifraudAccessSettings> => {
-    const entries = await Promise.all(
-      ANTIFRAUD_TOGGLE_ROLES.map(
-        async (role): Promise<[AntifraudToggleRole, boolean]> => [
-          role,
-          parseBool(await getAdminSetting(antifraudToggleKey(role))),
-        ],
-      ),
-    );
-    return Object.fromEntries(entries) as AntifraudAccessSettings;
+    const values = await loadAntifraudGateSettings();
+    return Object.fromEntries(
+      ANTIFRAUD_TOGGLE_ROLES.map((role) => [
+        role,
+        parseBool(values.get(antifraudToggleKey(role)) ?? null),
+      ]),
+    ) as AntifraudAccessSettings;
   },
 );
 
@@ -106,9 +131,8 @@ export async function setAntifraudAccessSetting(
 }
 
 // ─── Per-username allow / deny lists (owner-managed) ─────────────────────
-
-export const ANTIFRAUD_USER_ALLOWLIST_KEY = "antifraud_user_allowlist";
-export const ANTIFRAUD_USER_DENYLIST_KEY = "antifraud_user_denylist";
+// `ANTIFRAUD_USER_ALLOWLIST_KEY` / `ANTIFRAUD_USER_DENYLIST_KEY` are declared
+// near the top of this file so the shared batched reader can list them.
 
 /** Resolved per-username allow/deny lists, lowercased + de-duped. */
 export type AntifraudUserAccess = {
@@ -145,17 +169,19 @@ function serializeUsernameList(list: readonly string[]): string {
 /**
  * Load the per-username Antifraud access overrides from the ADMIN DB.
  * Resilient: a missing `admin_settings` table degrades to empty lists (the
- * role-based default still applies). Server-side only.
+ * role-based default still applies). Shares the single batched gate read with
+ * {@link getAntifraudAccessSettings}. Server-side only.
  */
 export const getAntifraudUserAccess = cache(
   async (): Promise<AntifraudUserAccess> => {
-    const [allowRaw, denyRaw] = await Promise.all([
-      getAdminSetting(ANTIFRAUD_USER_ALLOWLIST_KEY),
-      getAdminSetting(ANTIFRAUD_USER_DENYLIST_KEY),
-    ]);
+    const values = await loadAntifraudGateSettings();
     return {
-      allowlist: parseUsernameList(allowRaw),
-      denylist: parseUsernameList(denyRaw),
+      allowlist: parseUsernameList(
+        values.get(ANTIFRAUD_USER_ALLOWLIST_KEY) ?? null,
+      ),
+      denylist: parseUsernameList(
+        values.get(ANTIFRAUD_USER_DENYLIST_KEY) ?? null,
+      ),
     };
   },
 );

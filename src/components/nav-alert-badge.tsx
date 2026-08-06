@@ -19,6 +19,14 @@ const EMPTY_COUNTS: NavAlertCounts = {
   signups: 0,
 };
 const POLL_MS = 60_000;
+/**
+ * The mount-time poll used to fire synchronously, racing the page's own
+ * Suspense reads for the same handful of database connections while the shell
+ * was still painting. Badges are ambient information — yielding until the
+ * browser is idle (or this deadline, whichever comes first) costs nothing and
+ * keeps the first render's connections for the content.
+ */
+const FIRST_POLL_DELAY_MS = 2_000;
 const STORAGE_VERSION = "v2";
 
 function storageKey(viewerId: string, key: NavAlertKey): string {
@@ -154,6 +162,40 @@ export function useNavAlertBadges({
     }
 
     let timer: ReturnType<typeof setInterval> | null = null;
+    let firstPollTimeout: ReturnType<typeof setTimeout> | null = null;
+    let firstPollIdle: number | null = null;
+
+    const cancelFirstPoll = () => {
+      if (firstPollTimeout !== null) {
+        clearTimeout(firstPollTimeout);
+        firstPollTimeout = null;
+      }
+      if (firstPollIdle !== null) {
+        if (typeof window.cancelIdleCallback === "function") {
+          window.cancelIdleCallback(firstPollIdle);
+        }
+        firstPollIdle = null;
+      }
+    };
+    // Deferred, never skipped: `requestIdleCallback`'s timeout guarantees it
+    // runs even on a busy main thread, and browsers without it fall back to a
+    // plain timer.
+    const scheduleFirstPoll = () => {
+      cancelFirstPoll();
+      const run = () => {
+        firstPollTimeout = null;
+        firstPollIdle = null;
+        void refresh();
+      };
+      if (typeof window.requestIdleCallback === "function") {
+        firstPollIdle = window.requestIdleCallback(run, {
+          timeout: FIRST_POLL_DELAY_MS,
+        });
+      } else {
+        firstPollTimeout = setTimeout(run, FIRST_POLL_DELAY_MS);
+      }
+    };
+
     const arm = () => {
       if (!timer) timer = setInterval(() => void refresh(), POLL_MS);
     };
@@ -164,9 +206,12 @@ export function useNavAlertBadges({
     };
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
+        // Returning to the tab is an explicit signal — refresh right away.
+        cancelFirstPoll();
         void refresh();
         arm();
       } else {
+        cancelFirstPoll();
         disarm();
       }
     };
@@ -184,13 +229,14 @@ export function useNavAlertBadges({
     };
 
     if (document.visibilityState === "visible") {
-      void refresh();
+      scheduleFirstPoll();
       arm();
     }
     document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("storage", onStorage);
     return () => {
       requestSequenceRef.current += 1;
+      cancelFirstPoll();
       disarm();
       document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("storage", onStorage);

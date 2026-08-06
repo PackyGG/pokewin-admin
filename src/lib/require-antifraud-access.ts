@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
+import { after } from "next/server";
 
 import { verifySession, getUserPermissions, sessionRoles } from "@/lib/dal";
 import { getDefaultRouteForRoles } from "@/lib/admin-roles";
@@ -113,33 +114,57 @@ async function isAntifraudAllowed(
   );
 }
 
-/** Page-level gate — redirects non-eligible viewers to their landing route. */
+/**
+ * Allowed-view audit trail for a page render.
+ *
+ * These are ALLOW records, not a deny decision — nothing downstream branches on
+ * them, so they must not sit on the critical path. Awaiting them delayed first
+ * byte on EVERY antifraud page by a full `INSERT` (two, sequentially, whenever
+ * the request carried search keys). They now run in `after()`, once the
+ * response has been handed off, and the two appends go out together rather than
+ * one after the other.
+ *
+ * The DENIED path deliberately stays awaited — see `auditDeniedAccess`.
+ *
+ * Header values are captured on the request path and passed in, so the
+ * deferred work never depends on request-scoped storage still being live.
+ * `React.cache`-wrapped so layout gate + page gate schedule the write once.
+ */
 const auditAllowedPage = cache(
   async (session: SessionPayload, username: string): Promise<void> => {
     const requestHeaders = await headers();
     const path = requestHeaders.get("x-antifraud-path") ?? "/antifraud";
-    await appendAntifraudSecurityAudit({
+    const searchKeys = requestHeaders.get("x-antifraud-search-keys");
+    const actor = {
       actorAdminUserId: session.userId,
       actorUsername: username,
       actorRoles: sessionRoles(session),
       sessionRef: `${session.userId}:${session.iat ?? 0}`,
-      eventKind: "view",
-      action: `antifraud.view:${path}`,
-      outcome: "allowed",
+    } as const;
+
+    after(async () => {
+      try {
+        await Promise.all([
+          appendAntifraudSecurityAudit({
+            ...actor,
+            eventKind: "view",
+            action: `antifraud.view:${path}`,
+            outcome: "allowed",
+          }),
+          searchKeys
+            ? appendAntifraudSecurityAudit({
+                ...actor,
+                eventKind: "search",
+                action: `antifraud.search:${path}`,
+                outcome: "allowed",
+                metadata: { parameterKeys: searchKeys.split(",") },
+              })
+            : Promise.resolve(),
+        ]);
+      } catch {
+        console.error("[antifraud-security] allowed-view audit unavailable");
+      }
     });
-    const searchKeys = requestHeaders.get("x-antifraud-search-keys");
-    if (searchKeys) {
-      await appendAntifraudSecurityAudit({
-        actorAdminUserId: session.userId,
-        actorUsername: username,
-        actorRoles: sessionRoles(session),
-        sessionRef: `${session.userId}:${session.iat ?? 0}`,
-        eventKind: "search",
-        action: `antifraud.search:${path}`,
-        outcome: "allowed",
-        metadata: { parameterKeys: searchKeys.split(",") },
-      });
-    }
   },
 );
 
@@ -171,6 +196,10 @@ export async function requireAntifraudPageAccess(): Promise<SessionPayload> {
     const allowedPages = await getUserPermissions(session.userId);
     redirect(getDefaultRouteForRoles(sessionRoles(session), allowedPages));
   }
+  // Awaits only the (already request-cached) header read; the audit INSERTs
+  // themselves are scheduled into `after()` and no longer block first byte.
+  // The await is kept deliberately: `after()` must be registered while the
+  // request scope is still live, which a floating promise cannot guarantee.
   await auditAllowedPage(session, username!);
   return session;
 }

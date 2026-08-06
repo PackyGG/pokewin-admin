@@ -12,7 +12,7 @@ import {
   queryRows,
   sql,
 } from "@/lib/queries/insights-rewards/_drizzle-query";
-import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudReadAccess } from "@/lib/require-antifraud-access";
 
 const requestSchema = z
   .object({
@@ -104,7 +104,17 @@ export async function fetchNavAlertCounts(
   const parsed = requestSchema.parse(input);
 
   if (parsed.scope === "antifraud") {
-    await requireAntifraudAccess();
+    // Read gate, not the action gate. `requireAntifraudReadAccess` runs the
+    // IDENTICAL authorization — same `resolveLiveSession` (live `is_active` +
+    // username re-read), same `isAntifraudAllowed`, same denied audit, same
+    // throw — and only omits the two things the action gate layers on top: the
+    // same-origin `Origin` check and `beginAntifraudAction`'s advisory-locked
+    // rate-limit transaction plus its audit INSERT. This poll changes no state
+    // and returns two integers, so paying ~8 admin-DB operations per minute per
+    // open tab (which also contend for the `max: 2` admin pool against the
+    // page's own reads) bought nothing. Same reasoning as the read-only stream
+    // routes documented on `requireAntifraudReadAccess`.
+    await requireAntifraudReadAccess();
   } else {
     if (parsed.reviews || parsed.signups) {
       throw new Error("Antifraud badge counts require Antifraud access.");
