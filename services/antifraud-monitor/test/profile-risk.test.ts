@@ -306,8 +306,134 @@ test("only deterministic approved email rules recommend an automatic ban", () =>
     oauthSignup: false,
     hasFingerprint: true,
   });
-  assert.ok(tor.recommendedActions.includes("lock_withdrawals"));
   assert.ok(!tor.recommendedActions.includes("ban"));
+  // Evidence policy: recorded and reviewed, but no longer auto-locking.
+  assert.deepEqual(tor.policyMatches, ["network.tor"]);
+  assert.equal(tor.score, 65);
+  assert.equal(tor.outcome, "review_required");
+  assert.ok(!tor.recommendedActions.includes("lock_withdrawals"));
+  assert.ok(tor.recommendedActions.includes("review"));
+});
+
+test("evidence policies keep the catalog weight instead of pinning to 100", () => {
+  // A Tor exit node or a confirmed VM at signup used to deterministically
+  // score 100 and auto-lock withdrawals, even though the scoring catalog rates
+  // them 65 and 25. Both stay recorded as policy matches and still force a
+  // review, but containment is reserved for deterministic evidence.
+  const vm = assessProfile({
+    signals: normalizeSignupSignals(
+      [{
+        key: "fingerprint_virtual_machine",
+        title: "Virtual machine",
+        detail: "Confirmed",
+        points: 25,
+      }],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  assert.deepEqual(vm.policyMatches, ["device.confirmed_vm"]);
+  assert.equal(vm.score, 25);
+  assert.equal(vm.severity, "medium");
+  assert.ok(!vm.recommendedActions.includes("lock_withdrawals"));
+  assert.ok(!vm.recommendedActions.includes("notify_priority"));
+
+  const bot = assessProfile({
+    signals: normalizeSignupSignals(
+      [{ key: "fingerprint_bad_bot", title: "Bot", detail: "Detected", points: 80 }],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  // 80 points clears the 70 band on its own merit, so the strong actions
+  // still fire — they are just no longer forced by the policy match.
+  assert.deepEqual(bot.policyMatches, ["fingerprint.automation"]);
+  assert.equal(bot.score, 80);
+  assert.ok(bot.recommendedActions.includes("lock_withdrawals"));
+
+  // Containment policies are untouched: still pinned to 100 and still locking.
+  const blocked = assessProfile({
+    signals: normalizeSignupSignals(
+      [{ key: "active_ip_blocklist", title: "Blocked IP", detail: "Active", points: 10 }],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  assert.deepEqual(blocked.policyMatches, ["blocklist.ip"]);
+  assert.equal(blocked.score, 100);
+  assert.ok(blocked.recommendedActions.includes("lock_withdrawals"));
+  assert.ok(blocked.recommendedActions.includes("notify_priority"));
+});
+
+test("risky location keeps its points when a real VPN signal is present", () => {
+  // "risky_location_moni-tor" contains the substring "tor", so an unbounded
+  // fact-family regex filed it under anonymous_network and let the stronger
+  // VPN signal suppress it to zero — in exactly the population being scored.
+  const assessment = assessProfile({
+    signals: normalizeSignupSignals(
+      [
+        {
+          key: "risky_location_monitor",
+          title: "Risky signup location",
+          detail: "CZ",
+          points: 15,
+        },
+        { key: "fingerprint_vpn", title: "VPN", detail: "Detected", points: 30 },
+      ],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  const risky = assessment.signals.find(
+    (signal) => signal.key === "risky_location_monitor",
+  );
+  assert.equal(risky?.suppressedReason, undefined);
+  assert.equal(risky?.effectivePoints, 15);
+  assert.equal(assessment.score, 45);
+});
+
+test("creator funding keys are categorised by funding, not by the 'tor' in 'creator'", () => {
+  const assessment = assessProfile({
+    signals: normalizeSignupSignals(
+      [
+        { key: "ledger_creator_tip", title: "Tip", detail: "Received", points: 20 },
+        {
+          key: "creator_sponsored_funding",
+          title: "Sponsor",
+          detail: "Received",
+          points: 20,
+        },
+      ],
+      now,
+    ),
+    providers,
+    assessedAt: now,
+    isCreator: false,
+    oauthSignup: false,
+    hasFingerprint: true,
+  });
+  for (const signal of assessment.signals) {
+    assert.equal(signal.category, "funding");
+    assert.equal(signal.suppressedReason, undefined);
+  }
+  assert.equal(assessment.explanation.categoryTotals.funding, 40);
+  assert.equal(assessment.explanation.categoryTotals.network, 0);
 });
 
 test("session hopping requires a bounded multi-dimensional jump", () => {

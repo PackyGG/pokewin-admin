@@ -104,7 +104,10 @@ async function listRules(
       LEFT JOIN identifier_blocklist_matches m ON m.blocklist_id=b.id
       LEFT JOIN LATERAL (
         SELECT
-          true AS detected,
+          -- Aggregate-only SELECT with no GROUP BY always returns exactly one
+          -- row, so a literal true reported "VPN/proxy detected" on every IP
+          -- rule even when no provider_checks row matched. Count the matches.
+          count(*) > 0 AS detected,
           array_agg(DISTINCT CASE
             WHEN pc.provider='proxycheck' THEN 'proxycheck.io'
             WHEN pc.provider='abstract_ip' THEN 'Abstract API'

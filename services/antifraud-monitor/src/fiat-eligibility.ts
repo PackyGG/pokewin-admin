@@ -10,6 +10,7 @@ import {
   fingerprintEventIdentity,
   providerContractMetadata,
   type EnrichmentResult,
+  type FingerprintEventIdentity,
 } from "./enrichment.js";
 import type { SignupProvider } from "./provider-contracts.js";
 import type { FiatEligibilityEnvironment } from "./fiat-eligibility-auth.js";
@@ -251,6 +252,20 @@ function boundedCorroboration(
     }),
     signals: [],
   }));
+}
+
+/**
+ * The Fingerprint identity that binds the checkout event to the requesting
+ * user. `EnrichmentResult.response` is the SANITIZED evidence body, which
+ * strips `visitorId` / `linkedId` / `ip` at every depth — deriving identity
+ * from it always yields nulls, which used to deny every checkout with a
+ * fabricated `fingerprint_linked_id_missing` / `fingerprint_ip_mismatch`.
+ * Prefer the in-memory `identity` the provider call carries from the raw
+ * event; the response fallback keeps callers that supply their own result
+ * shape (tests, replayed evidence) working.
+ */
+function checkoutIdentity(result: EnrichmentResult): FingerprintEventIdentity {
+  return result.identity ?? fingerprintEventIdentity(result.response);
 }
 
 function usd(value: string | number | null | undefined): number {
@@ -929,8 +944,7 @@ export class FiatEligibilityService {
           loadNetworkEvidence(source, {
             userId: input.userID,
             requestIp,
-            checkoutVisitorId: fingerprintEventIdentity(result.response)
-              .visitorId,
+            checkoutVisitorId: checkoutIdentity(result).visitorId,
           }),
           SOURCE_READ_TIMEOUT_MS,
           "fiat_network_read",
@@ -941,11 +955,11 @@ export class FiatEligibilityService {
       () => ({ sharedCheckoutVisitorUsers: 0, sharedCurrentIpUsers: 0 }),
     );
     const blocklistPromise = fingerprintPromise.then((result) => {
-      const checkoutIdentity = fingerprintEventIdentity(result.response);
+      const identity = checkoutIdentity(result);
       return withDeadline(
         loadBlocklistMatches(this.db.antifraud, {
           requestIp,
-          checkoutVisitorId: checkoutIdentity.visitorId,
+          checkoutVisitorId: identity.visitorId,
           latestLoginIp: subject.latest_login_ip
             ? canonicalIp(subject.latest_login_ip) ?? null
             : null,
@@ -965,8 +979,7 @@ export class FiatEligibilityService {
           environment: input.env,
           userId: input.userID,
           requestIp,
-          checkoutVisitorId: fingerprintEventIdentity(result.response)
-            .visitorId,
+          checkoutVisitorId: checkoutIdentity(result).visitorId,
           amountCents: input.amountCents,
           currency: input.currency,
         }),
@@ -1001,7 +1014,7 @@ export class FiatEligibilityService {
       observationsPromise,
     ]);
 
-    const identity = fingerprintEventIdentity(fingerprint.response);
+    const identity = checkoutIdentity(fingerprint);
     const providers = [fingerprint, proxycheck, abstractIp];
     const behaviour = behaviourFrom(subject, now);
     const policyOutcome = evaluateFiatEligibility({

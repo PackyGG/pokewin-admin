@@ -7,6 +7,7 @@ import {
 } from "@fingerprintjs/fingerprintjs-pro-server-api";
 
 import type { Config } from "./config.js";
+import { maxMindRiskPoints } from "./maxmind.js";
 import {
   defaultScoreWeights,
   scorePoints,
@@ -94,6 +95,20 @@ function stringValue(value: unknown): string | undefined {
 function numberValue(value: unknown): number | undefined {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+/**
+ * Like `numberValue`, but distinguishes "the provider did not supply this
+ * field" from the number zero. `Number(null)` and `Number("")` are both `0`,
+ * which silently turned an absent MaxMind risk score into a 0.00-risk success
+ * and an absent ProxyCheck confidence into a 0-point detection. Use this
+ * wherever a provider field's ABSENCE has to be handled differently from a
+ * genuine zero; `numberValue` keeps its coercing behavior for its ~20 other
+ * call sites.
+ */
+function suppliedNumber(value: unknown): number | undefined {
+  if (value === null || value === undefined || value === "") return undefined;
+  return numberValue(value);
 }
 
 export function canonicalIp(value: unknown): string | undefined {
@@ -193,6 +208,20 @@ export type EnrichmentResult = {
   provenance: ProviderProvenance;
   failureKind?: ProviderFailureKind;
   response?: JsonObject;
+  /**
+   * IN-MEMORY ONLY — never persisted.
+   *
+   * `response` is the allowlisted, sanitized evidence body that goes to the
+   * database, and it deliberately strips `ip` / `linkedId` / `visitorId` at
+   * every depth. Policy evaluation still needs those raw values to bind the
+   * Fingerprint event to the requesting user, so `fingerprintCheck` carries
+   * them here, read straight off the raw event before sanitization.
+   *
+   * Every persistence boundary (`saveProviderCheck` in monitor.ts,
+   * `persistProviderEvidence` in profile-store.ts) writes named fields only
+   * and must keep doing so — do not serialise an `EnrichmentResult` wholesale.
+   */
+  identity?: FingerprintEventIdentity;
   errorCode?: string;
   signals: Signal[];
 };
@@ -1041,7 +1070,11 @@ export function parseProxycheckResponse(
       || detections.operator_type
       || "",
   ).toLowerCase();
-  const confidence = numberValue(detections.confidence);
+  // An explicit `null`/`""` confidence must NOT coerce to 0: that dropped a
+  // live proxy/Tor detection to the `< 85` branch and scored it 0 points while
+  // the signal still rendered as a detection. Absent confidence keeps its
+  // documented meaning below — full points.
+  const confidence = suppliedNumber(detections.confidence);
   const allAttackEntries = Object.entries(attackHistory)
     .map(([key, value]) => [key, numberValue(value) ?? 0] as const)
     .filter(([, value]) => value > 0)
@@ -1614,6 +1647,10 @@ export class EnrichmentService {
           nativeConfidence,
         }),
         response: sanitizeFingerprintResponse(raw),
+        // Read from the RAW event: the sanitized response above has already
+        // dropped visitorId/linkedId/ip, so deriving identity from it would
+        // always yield nulls. Not persisted — see EnrichmentResult.identity.
+        identity: fingerprintEventIdentity(raw),
         signals: parsed.signals,
       };
     } catch (error) {
@@ -1964,22 +2001,18 @@ export class EnrichmentService {
       const raw = object(JSON.parse(text));
       const accessIssue = maxmindAccessIssue(raw);
       if (accessIssue) this.reportAccessIssue(accessIssue);
-      const riskScore = numberValue(raw.risk_score);
+      // `numberValue` coerces, so an explicit null/"" risk_score would become 0
+      // and be persisted as a successful "0.00 risk" assessment that AWARDS
+      // -5 trust points. A missing score is an invalid response — fail closed,
+      // exactly as MaxMindService.evaluate() does.
+      const riskScore = suppliedNumber(raw.risk_score);
       const id = stringValue(raw.id);
       if (riskScore === undefined || riskScore < 0 || riskScore > 100 || !id) {
         throw new Error("invalid_response");
       }
-      const points = riskScore >= 85
-        ? 55
-        : riskScore >= 70
-          ? 40
-          : riskScore >= 50
-            ? 25
-            : riskScore >= 25
-              ? 10
-              : riskScore < 5
-                ? -5
-                : 0;
+      // Single source of truth shared with maxmind.ts; the inline copy that
+      // used to live here is what let the two implementations diverge.
+      const points = maxMindRiskPoints(riskScore);
       const reasons = Array.isArray(raw.risk_score_reasons)
         ? raw.risk_score_reasons.slice(0, 25)
         : [];

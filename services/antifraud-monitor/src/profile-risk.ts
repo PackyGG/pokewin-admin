@@ -87,7 +87,12 @@ const CATEGORY_CAPS: Record<RiskCategory, number> = {
   account: 100,
 };
 
-const HARD_POLICIES: Record<string, string> = {
+/**
+ * Deterministic evidence that an operator rule, a cluster, or a forged/replayed
+ * identity was hit. These still pin the score to 100 and drive withdrawal
+ * containment: the underlying fact is binary, not a weighted judgement.
+ */
+const CONTAINMENT_POLICIES: Record<string, string> = {
   abstract_email_catchall: "email.catchall",
   active_email_domain_blocklist: "blocklist.email_domain",
   active_ip_blocklist: "blocklist.ip",
@@ -95,14 +100,34 @@ const HARD_POLICIES: Record<string, string> = {
   fingerprint_third_account_30d: "cluster.fingerprint_third_account",
   exact_ip_third_account_30d: "cluster.exact_ip_third_account",
   fresh_account_third_promo_redemption: "promotion.third_redemption",
+  fingerprint_event_replayed: "fingerprint.replayed",
+  fingerprint_linked_id_mismatch: "fingerprint.identity_mismatch",
+  restricted_downstream_funds_active_use: "funds.restricted_downstream_active_use",
+};
+
+/**
+ * Privacy-tool and automation evidence. It is recorded as a policy match and
+ * still forces `review_required`, but it no longer pins the score to 100 or
+ * auto-locks withdrawals — the scoring catalog rates these 25 (confirmed VM),
+ * 65 (Tor) and 80 (bad bot), and a Tor exit node or a VM at signup is a large
+ * false-positive surface among privacy-tool users. The catalog weight now
+ * actually governs the score, so tuning a weight to 0 disables the effect.
+ */
+const EVIDENCE_POLICIES: Record<string, string> = {
   fingerprint_tor: "network.tor",
   abstract_ip_tor: "network.tor",
   fingerprint_virtual_machine: "device.confirmed_vm",
-  fingerprint_event_replayed: "fingerprint.replayed",
-  fingerprint_linked_id_mismatch: "fingerprint.identity_mismatch",
   fingerprint_bad_bot: "fingerprint.automation",
-  restricted_downstream_funds_active_use: "funds.restricted_downstream_active_use",
 };
+
+const HARD_POLICIES: Record<string, string> = {
+  ...CONTAINMENT_POLICIES,
+  ...EVIDENCE_POLICIES,
+};
+
+const CONTAINMENT_POLICY_NAMES: ReadonlySet<string> = new Set(
+  Object.values(CONTAINMENT_POLICIES),
+);
 
 const CREATOR_EXEMPTIBLE = new Set([
   "affiliate_cluster",
@@ -111,15 +136,37 @@ const CREATOR_EXEMPTIBLE = new Set([
   "ledger_creator_tip",
 ]);
 
+/**
+ * Signal keys are snake_case, so every token here is matched on `_` boundaries.
+ * A bare substring test silently mis-filed signals: `/ip/` matched the "tip" in
+ * `ledger_creator_tip` and `/tor/` matched the "creator" in
+ * `creator_sponsored_*`, pushing funding signals into the network category.
+ * Never rename a signal key to work around this — stored
+ * `profile_assessment_signals` rows reference the existing keys.
+ */
 export function categoryForSignal(key: string): RiskCategory {
-  if (/fingerprint|email|username|alt_flag/.test(key)) return "identity";
-  if (/ip|ipv6|proxy|vpn|tor|country|device|network|session_hop/.test(key)) {
+  if (/(^|_)(fingerprint|email|username|alt_flag)(_|$)/.test(key)) {
+    return "identity";
+  }
+  if (
+    /(^|_)(ip|ipv6|proxy|proxycheck|vpn|tor|country|device|network|session_hop(ping)?)(_|$)/
+      .test(key)
+  ) {
     return "network";
   }
-  if (/fund|deposit|withdraw|creator_tip|sponsor/.test(key)) return "funding";
-  if (/relationship|affiliate|shared_account/.test(key)) return "relationship";
-  if (/provider|abstract|maxmind/.test(key)) return "provider";
-  if (/lock|kyc|ban|restricted/.test(key)) return "account";
+  if (
+    /(^|_)(fund|funds|funded|funding|deposit|refund|refunded|withdraw|withdrawing|withdrawal|creator_tip|sponsor|sponsored|sponsorship)(_|$)/
+      .test(key)
+  ) {
+    return "funding";
+  }
+  if (/(^|_)(relationship|affiliate|shared_account)(_|$)/.test(key)) {
+    return "relationship";
+  }
+  if (/(^|_)(provider|abstract|maxmind)(_|$)/.test(key)) return "provider";
+  if (/(^|_)(lock|locked|kyc|ban|banned|restricted)(_|$)/.test(key)) {
+    return "account";
+  }
   return "behavior";
 }
 
@@ -136,13 +183,27 @@ export function normalizeSignupSignals(
   }));
 }
 
+/**
+ * Duplicate-fact families are matched on `_` token boundaries for the same
+ * reason as `categoryForSignal`. The unbounded version matched the "tor" inside
+ * "monitor", "creator", "history" and "emulator", so `risky_location_monitor`,
+ * `ledger_creator_tip`, `signup_risk_history` and `fingerprint_mobile_emulator`
+ * all joined `anonymous_network` — where a real VPN/proxy/Tor signal then
+ * suppressed them to zero, i.e. exactly the population they exist to score.
+ */
 function factFamily(key: string): string | null {
-  if (/vpn|proxy|tor|anonymous|datacenter|hosting/.test(key)) {
+  if (
+    /(^|_)(vpn|proxy|proxycheck|tor|anonymous|datacenter|hosting)(_|$)/.test(key)
+  ) {
     return "anonymous_network";
   }
-  if (/country_mismatch|country_hop/.test(key)) return "geographic_mismatch";
-  if (/disposable_email/.test(key)) return "disposable_email";
-  if (/bad_bot|automation|anti.?detect/.test(key)) return "automation";
+  if (/(^|_)country_(mismatch|hop)(_|$)/.test(key)) {
+    return "geographic_mismatch";
+  }
+  if (/(^|_)disposable_email(_|$)/.test(key)) return "disposable_email";
+  if (/(^|_)(bad_bot|automation|anti.?detect)(_|$)/.test(key)) {
+    return "automation";
+  }
   return null;
 }
 
@@ -278,9 +339,15 @@ export function assessProfile(input: {
         .map((signal) => signal.hardPolicy!),
     ),
   ].sort();
+  // Only deterministic containment evidence pins the score. Evidence policies
+  // (Tor, confirmed VM, automation) stay in `policyMatches` for the stored
+  // record but let their catalog weight decide the score.
+  const containmentMatches = policyMatches.filter((policy) =>
+    CONTAINMENT_POLICY_NAMES.has(policy),
+  );
   const cappedScoreBase = positivePoints + trustCredit;
   const score =
-    policyMatches.length > 0
+    containmentMatches.length > 0
       ? 100
       : Math.max(0, Math.min(100, Math.round(cappedScoreBase)));
   let remainingDisplayedRisk = Math.max(0, score - Math.max(-30, trustCredit));
@@ -338,18 +405,18 @@ export function assessProfile(input: {
   const deterministicBan = policyMatches.some((policy) =>
     policy === "email.catchall" || policy === "blocklist.email_domain",
   );
-  const priorityLock = policyMatches.some((policy) =>
+  // Containment policies only. `network.tor`, `device.confirmed_vm` and
+  // `fingerprint.automation` deliberately no longer auto-lock withdrawals;
+  // they reach the same actions only if their catalog weight scores >= 70.
+  const priorityLock = containmentMatches.some((policy) =>
     [
       "blocklist.ip",
       "blocklist.fingerprint",
       "cluster.fingerprint_third_account",
       "cluster.exact_ip_third_account",
       "promotion.third_redemption",
-      "network.tor",
-      "device.confirmed_vm",
       "fingerprint.replayed",
       "fingerprint.identity_mismatch",
-      "fingerprint.automation",
       "funds.restricted_downstream_active_use",
     ].includes(policy),
   );
