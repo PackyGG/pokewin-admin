@@ -22,6 +22,7 @@ import type {
   RefundBatchSummary,
   RefundCandidate,
 } from "@/lib/queries/whop-refunds";
+import { SectionHeading } from "@/components/modern-panels";
 import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
@@ -278,10 +279,10 @@ export function RefundsPanel({
       <div className="rounded-xl border border-destructive/25 bg-destructive/5 p-3 sm:p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="max-w-3xl space-y-1">
-            <h2 className="flex items-center gap-2 text-sm font-semibold">
-              <AlertTriangle className="size-4 text-destructive" />
-              Whop refunds for banned or fraud-confirmed accounts
-            </h2>
+            <SectionHeading
+              icon={AlertTriangle}
+              title="Whop refunds for banned or fraud-confirmed accounts"
+            />
             <p className="text-sm text-muted-foreground">
               Every payment is checked live with Whop before its full refund.
               This includes successful payments whose balance-credit
@@ -333,7 +334,7 @@ export function RefundsPanel({
       </div>
 
       {requestedPaymentId && !requestedCandidate && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm sm:p-4">
+        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-700 dark:text-amber-300">
           Payment <span className="font-mono">{requestedPaymentId}</span> is not
           currently refundable here. The account must first meet the active
           banned/fraud refund policy.
@@ -511,10 +512,12 @@ export function RefundsPanel({
 
       {recentBatches.length > 0 && (
         <section className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <h2 className="text-sm font-semibold">Recent refund batches</h2>
-            {canExecute &&
-              recentBatches.some((batch) => batch.succeeded > 0) && (
+          <SectionHeading
+            icon={RotateCcw}
+            title="Recent refund batches"
+            action={
+              canExecute &&
+              recentBatches.some((batch) => batch.succeeded > 0) ? (
                 <Button
                   size="sm"
                   variant="destructive"
@@ -527,8 +530,9 @@ export function RefundsPanel({
                   <ShieldBan className="size-4" />
                   Ban &amp; recover all successful refunds
                 </Button>
-              )}
-          </div>
+              ) : undefined
+            }
+          />
           <div className="space-y-2">
             {recentBatches.map((batch) => (
               <div

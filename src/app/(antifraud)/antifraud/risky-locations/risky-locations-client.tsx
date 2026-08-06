@@ -11,6 +11,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
+import { SectionHeading } from "@/components/modern-panels";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,6 +64,14 @@ export function RiskyLocationsClient({
   const [locations, setLocations] = useState(initialLocations);
   const [countryCode, setCountryCode] = useState("");
   const [countryOpen, setCountryOpen] = useState(false);
+  // Confirmation state for the two audited mutations. Replaces the native
+  // window.confirm calls — identical wording, identical arguments.
+  const [pendingCountry, setPendingCountry] = useState<string | null>(null);
+  const [pendingSave, setPendingSave] = useState<{
+    location: RiskyLocation;
+    enabled: boolean;
+    weight: number;
+  } | null>(null);
   const [isPending, startTransition] = useTransition();
   const [draftWeights, setDraftWeights] = useState<Record<string, number>>(
     Object.fromEntries(
@@ -75,13 +95,13 @@ export function RiskyLocationsClient({
       toast.error("Choose a country.");
       return;
     }
-    if (
-      !window.confirm(
-        `Add ${countryNames.get(countryCode) ?? countryCode} as a risk location? This change will be audited.`,
-      )
-    ) {
-      return;
-    }
+    setPendingCountry(countryCode);
+  }
+
+  function confirmAddLocation() {
+    const countryCode = pendingCountry;
+    if (!countryCode) return;
+    setPendingCountry(null);
     startTransition(async () => {
       try {
         const saved = await addRiskyLocation({
@@ -117,13 +137,14 @@ export function RiskyLocationsClient({
   function saveLocation(location: RiskyLocation, enabled = location.enabled) {
     const selectedWeight =
       draftWeights[location.countryCode] ?? location.riskWeight;
-    if (
-      !window.confirm(
-        `${enabled ? "Save" : "Disable"} ${countryNames.get(location.countryCode) ?? location.countryCode}? This change will be audited.`,
-      )
-    ) {
-      return;
-    }
+    setPendingSave({ location, enabled, weight: selectedWeight });
+  }
+
+  function confirmSaveLocation() {
+    const request = pendingSave;
+    if (!request) return;
+    const { location, enabled, weight: selectedWeight } = request;
+    setPendingSave(null);
     startTransition(async () => {
       try {
         const saved = await setRiskyLocation({
@@ -164,10 +185,7 @@ export function RiskyLocationsClient({
         className="h-fit space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4"
       >
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <MapPinPlus className="size-4 text-cyan-500" />
-            Add risky location
-          </h2>
+          <SectionHeading icon={MapPinPlus} title="Add risky location" />
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             New accounts from this country enter the live monitor for{" "}
             {MONITOR_DURATION_MINUTES} minutes even when they have no other risk
@@ -241,7 +259,7 @@ export function RiskyLocationsClient({
         </p>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 className="size-4 motion-safe:animate-spin" />
           ) : (
             <MapPinPlus className="size-4" />
           )}
@@ -250,22 +268,22 @@ export function RiskyLocationsClient({
       </form>
 
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <ShieldCheck className="size-4 text-cyan-500" />
-            Location monitor rules
-          </h2>
-          <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
-            {locations.length} {locations.length === 1 ? "rule" : "rules"}
-          </span>
+        <div className="border-b border-border/60 px-4 py-3">
+          <SectionHeading
+            icon={ShieldCheck}
+            title="Location monitor rules"
+            action={
+              <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+                {locations.length} {locations.length === 1 ? "rule" : "rules"}
+              </span>
+            }
+          />
         </div>
         {locations.length === 0 ? (
-          <div className="px-4 py-14 text-center">
-            <MapPinPlus className="mx-auto mb-3 size-6 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              No risky locations are configured.
-            </p>
-          </div>
+          <EmptyState
+            icon={MapPinPlus}
+            title="No risky locations are configured."
+          />
         ) : (
           <div className="divide-y divide-border/60">
             {locations
@@ -349,6 +367,63 @@ export function RiskyLocationsClient({
           </div>
         )}
       </section>
+
+      <AlertDialog
+        open={pendingCountry !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setPendingCountry(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {`Add ${countryNames.get(pendingCountry ?? "") ?? pendingCountry ?? ""} as a risk location?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This change will be audited.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmAddLocation}
+              disabled={isPending || !pendingCountry}
+            >
+              Add location
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={pendingSave !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setPendingSave(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingSave
+                ? `${pendingSave.enabled ? "Save" : "Disable"} ${countryNames.get(pendingSave.location.countryCode) ?? pendingSave.location.countryCode}?`
+                : ""}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              This change will be audited.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant={pendingSave?.enabled ? "default" : "destructive"}
+              onClick={confirmSaveLocation}
+              disabled={isPending || !pendingSave}
+            >
+              {pendingSave?.enabled ? "Save" : "Disable"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

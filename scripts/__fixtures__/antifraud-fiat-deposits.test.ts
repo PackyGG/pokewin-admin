@@ -44,7 +44,6 @@ test.skip("legacy mixed-rail deposit investigation list was replaced by credit r
   assert.match(page, /cardLast4/);
   assert.match(page, /label="Fees"/);
   assert.match(page, /score_breakdown/);
-  assert.match(page, /TransactionRailTabs/);
   assert.match(page, /method: "crypto"/);
   assert.match(page, /Fraud tagged/);
   assert.match(page, /whopPaymentMethodLabel/);

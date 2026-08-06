@@ -3,7 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Ban, Loader2, RotateCcw, UsersRound } from "lucide-react";
 
+import { EmptyState } from "@/components/empty-state";
 import { HostLink } from "@/components/host-link";
+import { SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatRelative } from "@/lib/utils/format";
@@ -89,22 +91,22 @@ export function BannedUsersList({
 
   return (
     <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-      <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-        <h2 className="flex items-center gap-2 text-sm font-semibold">
-          <Ban className="size-4 text-rose-500" />
-          Banned accounts
-        </h2>
-        <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
-          {users.length} of {total}
-        </span>
+      <div className="border-b border-border/60 px-4 py-3">
+        <SectionHeading
+          icon={Ban}
+          title="Banned accounts"
+          action={
+            <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+              {users.length} of {total}
+            </span>
+          }
+        />
       </div>
       {users.length === 0 ? (
-        <div className="px-4 py-14 text-center">
-          <UsersRound className="mx-auto mb-3 size-6 text-muted-foreground" />
-          <p className="text-sm text-muted-foreground">
-            No banned accounts match this search.
-          </p>
-        </div>
+        <EmptyState
+          icon={UsersRound}
+          title="No banned accounts match this search."
+        />
       ) : (
         <div className="divide-y divide-border/60">
           {users.map((user) => (

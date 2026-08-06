@@ -5,6 +5,18 @@ import { useRouter } from "next/navigation";
 import { Ban, Loader2, MailWarning, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
+import { EmptyState } from "@/components/empty-state";
+import { SectionHeading } from "@/components/modern-panels";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -24,6 +36,13 @@ export function EmailBlacklistClient({
   const router = useRouter();
   const [rules, setRules] = useState(initialRules);
   const [domain, setDomain] = useState("");
+  // Confirmation state for the two destructive flows. Replaces the native
+  // window.confirm/window.prompt pair — same wording, same validation.
+  const [pendingDomain, setPendingDomain] = useState<string | null>(null);
+  const [toggleTarget, setToggleTarget] = useState<FiatEmailDomainRule | null>(
+    null,
+  );
+  const [toggleReason, setToggleReason] = useState("");
   const [isPending, startTransition] = useTransition();
   const isCheckingHistory = rules.some(
     (rule) => rule.enabled && !rule.backfillComplete,
@@ -42,13 +61,13 @@ export function EmailBlacklistClient({
       toast.error("Enter an email domain.");
       return;
     }
-    if (
-      !window.confirm(
-        "Add this domain to the Fraud blacklist? Existing matches will not be mass-locked.",
-      )
-    ) {
-      return;
-    }
+    setPendingDomain(submittedDomain);
+  }
+
+  function confirmAddDomain() {
+    const submittedDomain = pendingDomain;
+    if (!submittedDomain) return;
+    setPendingDomain(null);
     startTransition(async () => {
       try {
         const saved = await addFiatEmailDomain({
@@ -72,21 +91,17 @@ export function EmailBlacklistClient({
   }
 
   function toggleRule(rule: FiatEmailDomainRule) {
-    const updateReason = window.prompt(
-      rule.enabled
-        ? "Why are you disabling this rule?"
-        : "Why are you reactivating this rule?",
-    );
+    setToggleReason("");
+    setToggleTarget(rule);
+  }
+
+  function confirmToggleRule() {
+    const rule = toggleTarget;
+    const updateReason = toggleReason;
+    if (!rule) return;
     if (!updateReason || updateReason.trim().length < 4) return;
-    if (
-      !window.confirm(
-        rule.enabled
-          ? `Disable @${rule.domain}?`
-          : `Reactivate @${rule.domain}?`,
-      )
-    ) {
-      return;
-    }
+    setToggleTarget(null);
+    setToggleReason("");
     startTransition(async () => {
       try {
         const saved = await setFiatEmailDomainState({
@@ -123,10 +138,7 @@ export function EmailBlacklistClient({
         className="h-fit space-y-4 rounded-xl border border-border/60 bg-card p-3 sm:p-4"
       >
         <div>
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <MailWarning className="size-4 text-rose-500" />
-            Add blocked domain
-          </h2>
+          <SectionHeading icon={MailWarning} title="Add blocked domain" />
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
             Exact domain matches from new signups and Whop checkout emails
             are automatically banned and sent to staff review. Existing
@@ -147,7 +159,7 @@ export function EmailBlacklistClient({
         </div>
         <Button type="submit" className="w-full" disabled={isPending}>
           {isPending ? (
-            <Loader2 className="size-4 animate-spin" />
+            <Loader2 className="size-4 motion-safe:animate-spin" />
           ) : (
             <Ban className="size-4" />
           )}
@@ -156,22 +168,22 @@ export function EmailBlacklistClient({
       </form>
 
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
-          <h2 className="flex items-center gap-2 text-sm font-semibold">
-            <ShieldCheck className="size-4 text-cyan-500" />
-            Email domain rules
-          </h2>
-          <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
-            {rules.length} {rules.length === 1 ? "rule" : "rules"}
-          </span>
+        <div className="border-b border-border/60 px-4 py-3">
+          <SectionHeading
+            icon={ShieldCheck}
+            title="Email domain rules"
+            action={
+              <span className="text-[10px] font-semibold uppercase tracking-wide tabular-nums text-muted-foreground">
+                {rules.length} {rules.length === 1 ? "rule" : "rules"}
+              </span>
+            }
+          />
         </div>
         {rules.length === 0 ? (
-          <div className="px-4 py-14 text-center">
-            <MailWarning className="mx-auto mb-3 size-6 text-muted-foreground" />
-            <p className="text-sm text-muted-foreground">
-              No email domains are blacklisted.
-            </p>
-          </div>
+          <EmptyState
+            icon={MailWarning}
+            title="No email domains are blacklisted."
+          />
         ) : (
           <div className="divide-y divide-border/60">
             {rules.map((rule) => (
@@ -226,6 +238,84 @@ export function EmailBlacklistClient({
           </div>
         )}
       </section>
+
+      <AlertDialog
+        open={pendingDomain !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) setPendingDomain(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Add this domain to the Fraud blacklist?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              Existing matches will not be mass-locked.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <p className="break-all font-mono text-sm font-semibold">
+            @{pendingDomain ?? ""}
+          </p>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmAddDomain}
+              disabled={isPending || !pendingDomain}
+            >
+              Block domain
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={toggleTarget !== null}
+        onOpenChange={(open) => {
+          if (!open && !isPending) {
+            setToggleTarget(null);
+            setToggleReason("");
+          }
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {toggleTarget?.enabled
+                ? `Disable @${toggleTarget.domain}?`
+                : `Reactivate @${toggleTarget?.domain ?? ""}?`}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The reason is recorded in the Antifraud audit.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <div className="space-y-2">
+            <Label htmlFor="email-domain-toggle-reason">
+              {toggleTarget?.enabled
+                ? "Why are you disabling this rule?"
+                : "Why are you reactivating this rule?"}
+            </Label>
+            <Input
+              id="email-domain-toggle-reason"
+              value={toggleReason}
+              onChange={(event) => setToggleReason(event.target.value)}
+              maxLength={500}
+              autoComplete="off"
+              disabled={isPending}
+            />
+          </div>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant={toggleTarget?.enabled ? "default" : "destructive"}
+              onClick={confirmToggleRule}
+              disabled={isPending || toggleReason.trim().length < 4}
+            >
+              {toggleTarget?.enabled ? "Disable" : "Reactivate"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

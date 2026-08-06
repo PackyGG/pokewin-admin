@@ -1,27 +1,29 @@
-import type { ReactNode } from "react";
 import { RadioTower } from "lucide-react";
 
+import { EmptyState as SharedEmptyState } from "@/components/empty-state";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 
 /** Shared atoms for the Automation control-center tabs. */
 
-export function EmptyState({ text }: { text: ReactNode }) {
+/**
+ * Thin wrappers over the canonical `@/components/empty-state` primitive so the
+ * Automation tabs render the same empty state as the rest of the admin. The
+ * dashed container is kept — it is what visually separates an empty section
+ * from the solid `bg-card` panels around it.
+ */
+export function EmptyState({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-12 text-center text-sm text-muted-foreground">
-      {text}
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40">
+      <SharedEmptyState title={text} />
     </div>
   );
 }
 
 export function Unavailable({ text }: { text: string }) {
   return (
-    <div className="rounded-xl border border-dashed border-border/70 bg-card/40 px-4 py-14 text-center">
-      <RadioTower
-        className="mx-auto mb-3 size-6 text-muted-foreground"
-        aria-hidden
-      />
-      <p className="text-sm text-muted-foreground">{text}</p>
+    <div className="rounded-xl border border-dashed border-border/70 bg-card/40">
+      <SharedEmptyState icon={RadioTower} title={text} />
     </div>
   );
 }

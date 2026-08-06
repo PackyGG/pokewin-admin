@@ -18,7 +18,18 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 
+import { SectionHeading } from "@/components/modern-panels";
 import { StepUpField } from "@/components/step-up-field";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -92,6 +103,10 @@ export function DiscordRoutingWorkspace({
   const [credential, setCredential] = useState("");
   const [pendingMutation, setPendingMutation] =
     useState<PendingMutation | null>(null);
+  // Confirmation state for the destructive channel removal. Replaces the
+  // native window.confirm — identical wording, identical arguments.
+  const [pendingRemoveChannel, setPendingRemoveChannel] =
+    useState<DiscordNotificationChannel | null>(null);
   const approvedCategoryIds = useMemo(
     () => new Set<string>(APPROVED_DISCORD_CATEGORY_IDS),
     [],
@@ -229,7 +244,7 @@ export function DiscordRoutingWorkspace({
 
   if (!initialConfig) {
     return (
-      <div className="rounded-xl border border-amber-500/25 bg-amber-500/5 p-6">
+      <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-6">
         <div className="flex items-start gap-3">
           <AlertTriangle className="mt-0.5 size-5 shrink-0 text-amber-500" />
           <div>
@@ -406,13 +421,13 @@ export function DiscordRoutingWorkspace({
   }
 
   function removeChannel(channel: DiscordNotificationChannel) {
-    if (
-      !window.confirm(
-        `Remove #${channel.name} and all of its event assignments?`,
-      )
-    ) {
-      return;
-    }
+    setPendingRemoveChannel(channel);
+  }
+
+  function confirmRemoveChannel() {
+    const channel = pendingRemoveChannel;
+    if (!channel) return;
+    setPendingRemoveChannel(null);
     runMutation(
       (approval) =>
         replaceChannelRoutesAction({
@@ -468,7 +483,7 @@ export function DiscordRoutingWorkspace({
           disabled={pending}
           onClick={() => startTransition(() => router.refresh())}
         >
-          <RefreshCw className={cn(pending && "animate-spin")} />
+          <RefreshCw className={cn(pending && "motion-safe:animate-spin")} />
           Refresh
         </Button>
       </div>
@@ -476,13 +491,14 @@ export function DiscordRoutingWorkspace({
       <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
         <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:p-4">
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <Send className="size-4 text-cyan-500" />
-              <h2 className="font-semibold">Active channels</h2>
-              <Badge variant="secondary" className="tabular-nums">
-                {activeChannels.length}
-              </Badge>
-            </div>
+            <SectionHeading
+              icon={Send}
+              title={
+                // Kept on one line so the guardrail contract that asserts the
+                // literal `>Active channels<` in this source still matches.
+                <>Active channels<Badge variant="secondary" className="tabular-nums">{activeChannels.length}</Badge></>
+              }
+            />
             <p className="mt-1 text-xs text-muted-foreground">
               Grouped by Discord category, with the events each channel
               receives.
@@ -749,6 +765,36 @@ export function DiscordRoutingWorkspace({
           if (mutation) execute(mutation, approval);
         }}
       />
+
+      <AlertDialog
+        open={pendingRemoveChannel !== null}
+        onOpenChange={(open) => {
+          if (!open && !pending) setPendingRemoveChannel(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {pendingRemoveChannel
+                ? `Remove #${pendingRemoveChannel.name} and all of its event assignments?`
+                : ""}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              The channel stops receiving every antifraud event it is routed to.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              onClick={confirmRemoveChannel}
+              disabled={pending || !pendingRemoveChannel}
+            >
+              Remove channel
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

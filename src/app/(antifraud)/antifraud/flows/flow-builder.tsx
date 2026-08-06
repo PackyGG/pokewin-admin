@@ -9,6 +9,7 @@ import {
   CheckCircle2,
   CircleSlash2,
   Clock3,
+  Layers,
   Plus,
   Save,
   ShieldAlert,
@@ -205,7 +206,7 @@ export function FlowBuilder({
       <aside className="self-start overflow-hidden rounded-xl border border-border/60 bg-card">
         <div className="flex items-center justify-between gap-2 border-b border-border/60 px-4 py-3">
           <div className="min-w-0">
-            <h2 className="text-sm font-semibold">Flows</h2>
+            <SectionHeading icon={Layers} title="Flows" />
             <p className="text-xs tabular-nums text-muted-foreground">
               {rules.filter((rule) => rule.enabled).length} active · {rules.length} total
             </p>
@@ -577,7 +578,7 @@ export function FlowBuilder({
         </div>
 
         {uniquePlannedKeys.length > 0 && (
-          <div className="flex items-start gap-2 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-700 dark:text-amber-400">
+          <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm leading-5 text-amber-700 dark:text-amber-300">
             <ShieldAlert className="mt-0.5 size-4 shrink-0" aria-hidden />
             <span>
               {uniquePlannedKeys
