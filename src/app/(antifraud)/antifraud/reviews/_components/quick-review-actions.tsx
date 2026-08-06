@@ -138,7 +138,7 @@ function PostponeButton({
         });
         onActionCompleted?.();
         toast.success("Review postponed for 2 hours");
-        router.refresh();
+        if (!onActionCompleted) router.refresh();
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "The action failed",
@@ -220,7 +220,7 @@ function QuickActionButton({
               : success,
           );
         }
-        router.refresh();
+        if (!onActionCompleted) router.refresh();
       } catch (error) {
         toast.error(
           error instanceof Error ? error.message : "The action failed",

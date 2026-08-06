@@ -58,9 +58,18 @@ export function ReviewCaseDialog({
   const actionCompletedRef = useRef(false);
   const dismissHandlerRef = useRef<DismissHandler>(null);
 
+  const leaveQueueCase = useCallback(
+    () => router.replace(hrefForCurrentHost(closeHref), { scroll: false }),
+    [closeHref, router],
+  );
+
   const completeAction = useCallback(() => {
     actionCompletedRef.current = true;
-  }, []);
+    if (closingRef.current) return;
+    closingRef.current = true;
+    setOpen(false);
+    leaveQueueCase();
+  }, [leaveQueueCase]);
 
   const registerDismissHandler = useCallback((handler: DismissHandler) => {
     dismissHandlerRef.current = handler;
@@ -80,8 +89,6 @@ export function ReviewCaseDialog({
     closingRef.current = true;
     setOpen(false);
 
-    const leaveQueueCase = () =>
-      router.replace(hrefForCurrentHost(closeHref), { scroll: false });
     const dismissHandler = dismissHandlerRef.current;
     if (actionCompletedRef.current || !dismissHandler) {
       leaveQueueCase();
