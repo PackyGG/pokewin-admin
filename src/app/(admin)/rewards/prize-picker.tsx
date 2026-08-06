@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ChevronsUpDown, type LucideIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,8 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { formatCurrency } from "@/lib/utils/format";
 import { searchItems, type SearchItem } from "./prize-search-actions";
 
+const DEBOUNCE_MS = 250;
+
 export function PrizePicker({
   type,
   value,
@@ -39,17 +41,42 @@ export function PrizePicker({
   const [minPrice, setMinPrice] = useState("");
   const [maxPrice, setMaxPrice] = useState("");
   const [items, setItems] = useState<SearchItem[]>([]);
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
+  const [, startTransition] = useTransition();
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestIdRef = useRef(0);
+
+  // Debounced + out-of-order-guarded, mirroring `CreatorLinkPicker`. This one
+  // re-fired on every `minPrice`/`maxPrice` digit as well as every search
+  // keystroke, so a single typed price range queued several leading-wildcard
+  // scans whose responses could land out of order. No min-length gate: an
+  // empty query is a meaningful "browse" request for this picker.
   useEffect(() => {
     if (!open) return;
-    startTransition(async () => {
-      const results = await searchItems(query, type, {
-        minPrice: minPrice ? parseFloat(minPrice) : undefined,
-        maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    setIsPending(true);
+    const reqId = ++requestIdRef.current;
+    debounceRef.current = setTimeout(() => {
+      startTransition(async () => {
+        try {
+          const results = await searchItems(query, type, {
+            minPrice: minPrice ? parseFloat(minPrice) : undefined,
+            maxPrice: maxPrice ? parseFloat(maxPrice) : undefined,
+          });
+          if (reqId === requestIdRef.current) setItems(results);
+        } catch {
+          if (reqId === requestIdRef.current) setItems([]);
+        } finally {
+          if (reqId === requestIdRef.current) setIsPending(false);
+        }
       });
-      setItems(results);
-    });
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [open, query, type, minPrice, maxPrice]);
 
   return (

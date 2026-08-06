@@ -140,8 +140,17 @@ export function TransactionDetailModal({
     ) {
       setGameSession(null);
       setSessionError(false);
+      // Must clear here too: the guarded `.finally` of a superseded request no
+      // longer runs, so switching from a session-bearing row to one without a
+      // session would otherwise strand `loadingSession` at true forever.
+      setLoadingSession(false);
       return;
     }
+    // Cancel guard — same shape as the Keno effect below. Without it, clicking
+    // row A then row B could let A's slower response resolve LAST and paint A's
+    // game session, seed and nonce under B's header. Silent wrong data on the
+    // exact surface used to adjudicate fairness disputes.
+    let active = true;
     setLoadingSession(true);
     setGameSession(null);
     setSessionError(false);
@@ -149,9 +158,19 @@ export function TransactionDetailModal({
     // Pass the URL's userId through so the server can verify ownership
     // before returning provably_fair_results (server-seed leak guard).
     getGameSessionDetails(transaction.gameSessionId, userId)
-      .then((data) => setGameSession(data))
-      .catch(() => setSessionError(true))
-      .finally(() => setLoadingSession(false));
+      .then((data) => {
+        if (active) setGameSession(data);
+      })
+      .catch(() => {
+        if (active) setSessionError(true);
+      })
+      .finally(() => {
+        if (active) setLoadingSession(false);
+      });
+
+    return () => {
+      active = false;
+    };
   }, [
     transaction?.id,
     transaction?.gameSessionId,

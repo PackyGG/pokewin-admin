@@ -20,23 +20,32 @@ export function LinkMainUserCard({ detail }: { detail: AdminUserDetail }) {
   const [isSearching, setIsSearching] = useState(false);
   const [isPending, startTransition] = useTransition();
   const debounceRef = useRef<ReturnType<typeof setTimeout>>(null);
+  // Out-of-order-response guard. Clearing the debounce timer does NOT cancel a
+  // request that already went out, so without this "ka" could resolve after
+  // "kartos" and leave the wrong candidates on screen — and linking the wrong
+  // main-site user to an admin account is not a recoverable mistake.
+  const requestIdRef = useRef(0);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    // Bumped on every run so any in-flight request is invalidated, including
+    // on the below-minimum branch and on unmount.
+    const reqId = ++requestIdRef.current;
     // Keep in sync with the server-side minimum in searchMainSiteUsers.
     if (query.trim().length < 3) {
       setResults([]);
+      setIsSearching(false);
       return;
     }
     setIsSearching(true);
     debounceRef.current = setTimeout(async () => {
       try {
         const users = await searchMainSiteUsers(query);
-        setResults(users);
+        if (reqId === requestIdRef.current) setResults(users);
       } catch {
-        toast.error("Search failed");
+        if (reqId === requestIdRef.current) toast.error("Search failed");
       } finally {
-        setIsSearching(false);
+        if (reqId === requestIdRef.current) setIsSearching(false);
       }
     }, 300);
     return () => {

@@ -34,10 +34,10 @@ function formatRemaining(ms: number, mode: LeaderboardCountdownMode): string {
   return `${m}m`;
 }
 
-function tickIntervalMs(ms: number, mode: LeaderboardCountdownMode): number {
-  if (mode !== "starts_in" && mode !== "ends_in") return 30_000;
-  return ms < 3600_000 ? 1000 : 30_000;
-}
+/** Under an hour `formatRemaining` shows seconds, so the clock must tick 1Hz. */
+const FAST_TICK_BELOW_MS = 3600_000;
+const FAST_TICK_MS = 1000;
+const SLOW_TICK_MS = 30_000;
 
 /**
  * Live countdown for a single affiliate leaderboard on the admin detail page.
@@ -57,15 +57,23 @@ export function LeaderboardDetailCountdown({
   const target = new Date(edgeIso).getTime();
   const [remaining, setRemaining] = useState(initialMs);
 
+  // Which cadence bucket we're in — a BOOLEAN, deliberately, so the effect
+  // re-runs exactly once (when the board crosses the hour) instead of on every
+  // tick. The interval used to be computed once at mount, so a board opened
+  // with >1h left kept ticking every 30s after dropping under the hour, while
+  // `formatRemaining` had already switched to `Xm SSs` — the seconds field
+  // jumped by 30 and read as broken.
+  const fastTick = remaining < FAST_TICK_BELOW_MS;
+
   useEffect(() => {
     if (mode !== "starts_in" && mode !== "ends_in") return;
     if (!Number.isFinite(target)) return;
 
     const sync = () => setRemaining(target - Date.now());
     sync();
-    const id = setInterval(sync, tickIntervalMs(target - Date.now(), mode));
+    const id = setInterval(sync, fastTick ? FAST_TICK_MS : SLOW_TICK_MS);
     return () => clearInterval(id);
-  }, [mode, target]);
+  }, [mode, target, fastTick]);
 
   const label =
     mode === "starts_in"

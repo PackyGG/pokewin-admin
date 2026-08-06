@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ChevronsUpDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +22,8 @@ import {
   formatDropChancePercent,
   formatExpectedOpenings,
 } from "./challenge-card-math";
+
+const DEBOUNCE_MS = 250;
 
 /**
  * Pack/card search-and-select used by the create-challenge form to resolve a
@@ -50,14 +52,39 @@ export function ItemPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<SearchItem[]>([]);
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
+  const [, startTransition] = useTransition();
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestIdRef = useRef(0);
+
+  // Debounced + out-of-order-guarded, mirroring `CreatorLinkPicker`. Each
+  // keystroke used to fire its own leading-wildcard `ILIKE` scan over
+  // packs/cards on MAIN, and a slow early response could land last and leave
+  // results for a stale query on screen. No min-length gate here: an empty
+  // query is a meaningful "browse the first 20" request for this picker.
   useEffect(() => {
     if (!open) return;
-    startTransition(async () => {
-      const results = await searchItems(query, type, { packId });
-      setItems(results);
-    });
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    setIsPending(true);
+    const reqId = ++requestIdRef.current;
+    debounceRef.current = setTimeout(() => {
+      startTransition(async () => {
+        try {
+          const results = await searchItems(query, type, { packId });
+          if (reqId === requestIdRef.current) setItems(results);
+        } catch {
+          if (reqId === requestIdRef.current) setItems([]);
+        } finally {
+          if (reqId === requestIdRef.current) setIsPending(false);
+        }
+      });
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [open, query, type, packId]);
 
   return (

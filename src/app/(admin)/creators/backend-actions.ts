@@ -234,6 +234,11 @@ export async function updateCreatorDeal(
     // Same stale-cache class as createCreatorDeal — the hub deal card's
     // unstable_cache entry must not serve pre-update terms for its TTL.
     revalidateTag("creator-deal");
+    // The cap/used-cap maps behind the /creators list column and the
+    // /creator-hub/creators roster are keyed on `userId:dealId`, which an
+    // update does NOT change — without this they serve the pre-update cap for
+    // the full 300s TTL. `revalidatePath` does not evict `unstable_cache`.
+    revalidateTag("creators-deal-cap");
     return deal;
   } catch (err) {
     throw toActionError(err);
@@ -268,6 +273,9 @@ export async function terminateCreatorDeal(
     // Same stale-cache class as createCreatorDeal — a terminated deal must
     // not keep rendering "active" on the hub deal card for the TTL.
     revalidateTag("creator-deal");
+    // Termination reuses the same dealId, so the cap-map cache key is
+    // unchanged and would keep serving the terminated deal's cap.
+    revalidateTag("creators-deal-cap");
     return deal;
   } catch (err) {
     throw toActionError(err);

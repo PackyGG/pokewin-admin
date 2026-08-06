@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { ChevronsUpDown, UserSearch } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -20,6 +20,10 @@ import {
   searchNotificationUsers,
   type NotificationUserOption,
 } from "./direct-actions";
+
+const DEBOUNCE_MS = 250;
+/** Keep in sync with the server-side floor in `searchNotificationUsers`. */
+const MIN_QUERY_LENGTH = 2;
 
 /**
  * Recipient search — same shape as the announcement composer's Pack/Promo
@@ -42,13 +46,48 @@ export function NotificationUserPicker({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [items, setItems] = useState<NotificationUserOption[]>([]);
-  const [isPending, startTransition] = useTransition();
+  const [isPending, setIsPending] = useState(false);
+  const [, startTransition] = useTransition();
 
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const requestIdRef = useRef(0);
+
+  // Debounced + out-of-order-guarded search, mirroring `CreatorLinkPicker`.
+  // Un-debounced this fired one leading-wildcard scan of MAIN's `user` table
+  // per keystroke, and a slower early response could overwrite the results of
+  // a newer query. Bumping `requestIdRef` on every effect run also invalidates
+  // any in-flight request, so a superseded response can never clear the
+  // pending flag or paint stale rows.
   useEffect(() => {
     if (!open) return;
-    startTransition(async () => {
-      setItems(await searchNotificationUsers(query));
-    });
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+
+    const reqId = ++requestIdRef.current;
+    const q = query.trim();
+    // The server returns [] below 2 characters — don't pay for the round trip.
+    if (q.length < MIN_QUERY_LENGTH) {
+      setItems([]);
+      setIsPending(false);
+      return;
+    }
+
+    setIsPending(true);
+    debounceRef.current = setTimeout(() => {
+      startTransition(async () => {
+        try {
+          const found = await searchNotificationUsers(q);
+          if (reqId === requestIdRef.current) setItems(found);
+        } catch {
+          if (reqId === requestIdRef.current) setItems([]);
+        } finally {
+          if (reqId === requestIdRef.current) setIsPending(false);
+        }
+      });
+    }, DEBOUNCE_MS);
+
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
   }, [open, query]);
 
   return (
