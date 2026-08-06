@@ -73,11 +73,7 @@ test("step-up replay storage failures fail closed", () => {
   );
 });
 
-test("new KYC requirements are restricted to currently locked accounts", () => {
-  const eligibility = readFileSync(
-    "src/lib/antifraud/kyc-eligibility.ts",
-    "utf8",
-  );
+test("new KYC requirements lock deposits, withdrawals and tips themselves, behind owner/admin + fresh 2FA", () => {
   const kycActions = readFileSync(
     "src/app/(antifraud)/antifraud/kyc/actions.ts",
     "utf8",
@@ -87,12 +83,10 @@ test("new KYC requirements are restricted to currently locked accounts", () => {
     "utf8",
   );
 
-  assert.match(eligibility, /locked_withdrawals_items = TRUE/);
-  assert.match(
-    eligibility,
-    /cardinality\(locked_withdrawals_crypto\), 0\) > 0/,
-  );
-  assert.match(kycActions, /isLockedAccountEligibleForKyc\(userId\)/);
+  assert.match(kycActions, /requireAntifraudManager\(/);
+  assert.match(kycActions, /require2FA\(/);
+  assert.match(kycActions, /lockFiatAndWithdrawals\(/);
+  assert.match(kycActions, /updateUserRewardLocks\(/);
   assert.doesNotMatch(fiatActions, /requireUserKyc|backend-api\/kyc/);
 });
 

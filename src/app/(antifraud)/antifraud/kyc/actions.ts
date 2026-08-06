@@ -14,7 +14,12 @@ import {
 } from "@/lib/backend-api/kyc";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
-import { isLockedAccountEligibleForKyc } from "@/lib/antifraud/kyc-eligibility";
+import { lockFiatAndWithdrawals } from "@/lib/antifraud/fiat-credit-review";
+import {
+  getUserFeatureLocks,
+  updateUserRewardLocks,
+} from "@/lib/backend-api/feature-locks";
+import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
@@ -86,12 +91,42 @@ export async function requireAccountKyc(
       error: "Enter one exact player ID, username, display name, or email.",
     };
   }
-  if (!(await isLockedAccountEligibleForKyc(userId))) {
+
+  // Order matters: lock first, KYC second — same sequence the automated Fiat
+  // identity containment path uses (see fiat-identity-containment.ts). The
+  // lock is what actually stops money leaving, so it must not wait on the
+  // backend's KYC API, and it must be in place before we ask the player to
+  // verify. This used to instead REFUSE unless the account was already
+  // locked by some other path; now requiring KYC locks the account itself.
+  const actorMainUserId = await resolveAdminMainUserId(session.userId);
+  try {
+    await lockFiatAndWithdrawals({
+      userId,
+      actorMainUserId,
+      reason: parsed.data.reason,
+    });
+  } catch (error) {
     return {
       success: false,
       error:
-        "KYC can be required only while both balance and item withdrawals are locked.",
+        error instanceof Error
+          ? error.message
+          : "Deposits and withdrawals could not be locked. KYC was not required.",
     };
+  }
+  let tipsLocked = true;
+  try {
+    const currentLocks = await getUserFeatureLocks(userId);
+    if (!currentLocks.locked_reward_categories.includes("tips")) {
+      await updateUserRewardLocks(
+        userId,
+        [...currentLocks.locked_reward_categories, "tips"],
+        actorMainUserId ?? undefined,
+      );
+    }
+  } catch (error) {
+    tipsLocked = false;
+    console.error("[antifraud-kyc] failed to lock tips alongside KYC:", error);
   }
 
   let data: UserKycStatus;
@@ -118,6 +153,8 @@ export async function requireAccountKyc(
         levelName: parsed.data.levelName || null,
         verificationCycle: data.verificationCycle,
         idempotencyKey: parsed.data.idempotencyKey,
+        depositsWithdrawalsLocked: true,
+        tipsLocked,
       },
     });
   } catch (error) {

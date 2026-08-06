@@ -230,13 +230,13 @@ test("Account Review can request KYC on a case without changing its verdict", as
   const quickActions = await source(
     "../../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
   );
-  const eligibility = await source(
-    "../../../src/lib/antifraud/kyc-eligibility.ts",
-  );
 
-  assert.match(kycActions, /isLockedAccountEligibleForKyc/);
-  assert.match(eligibility, /locked_withdrawals_items = TRUE/);
-  assert.match(eligibility, /cardinality\(locked_withdrawals_crypto\)/);
+  // The canonical requireAccountKyc now locks the account itself (deposits,
+  // withdrawals, tips) instead of refusing unless it was already locked by
+  // some other path — see fiat-identity-containment.ts for why lock-first
+  // matters.
+  assert.match(kycActions, /lockFiatAndWithdrawals\(/);
+  assert.match(kycActions, /updateUserRewardLocks\(/);
   // Positive contract: Account Review now delegates to the canonical
   // requireAccountKyc action instead of leaving KYC unreachable from the
   // case-review workflow. Status-untouched behavior is covered by the

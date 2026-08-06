@@ -22,10 +22,12 @@ import {
   type FiatAssessment,
 } from "@/lib/antifraud/fiat-deposits-api";
 import { getFiatCreditReviewStates } from "@/lib/antifraud/fiat-credit-review";
+import { canManageAntifraud } from "@/lib/antifraud/access";
 import { getFiatDepositReviewUsers } from "@/lib/queries/fiat-deposit-review-users";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { parsePage, parsePerPage } from "@/lib/utils/pagination";
+import { RequireKycAction } from "./require-kyc-action";
 import { FiatDepositReviewDecision } from "./review-decision";
 
 export const metadata = { title: "Fiat Deposit Reviews" };
@@ -121,7 +123,8 @@ export default async function FiatDepositReviewsPage({
 }: {
   searchParams: Promise<SearchParams>;
 }) {
-  await requireAntifraudPageAccess();
+  const session = await requireAntifraudPageAccess();
+  const canManageKyc = canManageAntifraud(session);
   const raw = await searchParams;
   const page = parsePage(firstValue(raw.page));
   const perPage = Math.min(parsePerPage(firstValue(raw.perPage)), 100);
@@ -180,11 +183,19 @@ export default async function FiatDepositReviewsPage({
                   <CardContent className="space-y-3">
                     <ReviewFacts item={item} countryCode={user?.countryCode ?? null} />
                     <ReviewLinks item={item} />
-                    <FiatDepositReviewDecision
-                      intentId={item.id}
-                      displayName={displayName}
-                      amount={money(item.credited_amount_cents)}
-                    />
+                    <div className="flex flex-wrap gap-2">
+                      <FiatDepositReviewDecision
+                        intentId={item.id}
+                        displayName={displayName}
+                        amount={money(item.credited_amount_cents)}
+                      />
+                      {canManageKyc && (
+                        <RequireKycAction
+                          userId={item.user_id}
+                          displayName={displayName}
+                        />
+                      )}
+                    </div>
                   </CardContent>
                 </Card>
               );
@@ -260,11 +271,19 @@ export default async function FiatDepositReviewsPage({
                         {formatRelative(item.review_requested_at ?? item.paid_at ?? item.created_at)}
                       </TableCell>
                       <TableCell>
-                        <FiatDepositReviewDecision
-                          intentId={item.id}
-                          displayName={displayName}
-                          amount={money(item.credited_amount_cents)}
-                        />
+                        <div className="flex flex-wrap gap-2">
+                          <FiatDepositReviewDecision
+                            intentId={item.id}
+                            displayName={displayName}
+                            amount={money(item.credited_amount_cents)}
+                          />
+                          {canManageKyc && (
+                            <RequireKycAction
+                              userId={item.user_id}
+                              displayName={displayName}
+                            />
+                          )}
+                        </div>
                       </TableCell>
                     </TableRow>
                   );

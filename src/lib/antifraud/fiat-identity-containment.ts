@@ -27,9 +27,9 @@ import { logError } from "@/lib/errors/logger";
  *     wait on a third-party API.
  *   • `requireUserKyc` re-locks withdrawals itself, so a lock-then-require
  *     sequence converges on the same state either way.
- *   • The panel's own manual KYC action refuses unless withdrawals are already
- *     locked (`isLockedAccountEligibleForKyc`). Locking first keeps the
- *     automated path consistent with the human one.
+ *   • The panel's own manual KYC action (`requireAccountKyc`) now locks the
+ *     account itself in the same order, so this automated path and the human
+ *     one converge on identical behavior instead of merely being consistent.
  */
 
 /**

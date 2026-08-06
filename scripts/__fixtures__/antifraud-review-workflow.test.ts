@@ -161,13 +161,12 @@ test("review reminders and postponement run after 2 hours", () => {
   assert.doesNotMatch(reminders, /48\s*\*\s*60\s*\*\s*60/);
 });
 
-test("KYC eligibility remains server-side after review actions are simplified", () => {
-  const eligibility = source("src/lib/antifraud/kyc-eligibility.ts");
+test("requiring KYC stays server-side and locks the account itself after review actions are simplified", () => {
   const actions = source("src/app/(antifraud)/antifraud/kyc/actions.ts");
 
-  assert.match(eligibility, /locked_withdrawals_items = TRUE/);
-  assert.match(eligibility, /cardinality\(locked_withdrawals_crypto\), 0\) > 0/);
-  assert.match(actions, /isLockedAccountEligibleForKyc\(userId\)/);
+  assert.match(actions, /requireAntifraudManager\(/);
+  assert.match(actions, /lockFiatAndWithdrawals\(/);
+  assert.match(actions, /requireUserKyc\(/);
 });
 
 test("IP and fingerprint cluster detection never requests KYC automatically", () => {
