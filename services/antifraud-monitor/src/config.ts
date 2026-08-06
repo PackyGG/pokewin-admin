@@ -112,6 +112,18 @@ const schema = z.object({
   LIVE_MAX_CONNECTIONS: z.coerce.number().int().min(1).max(10_000).optional(),
   LIVE_SESSION_MAX_AGE_MINUTES: z.coerce.number().int().min(1).max(1_440).optional(),
   POLL_INTERVAL_MS: z.coerce.number().int().min(500).max(60_000).default(1_000),
+  // The activity scan issues one heavy source query per active monitor
+  // session, so it must not run at the 1s signup cadence: at ~100 active
+  // sessions that is ~100 six-branch UNION queries per second against a small
+  // source pool, which pushes the tick past POLL_INTERVAL_MS and silently
+  // degrades the poller. Sessions live for MONITOR_DURATION_SECONDS, so a 5s
+  // cadence still samples every session dozens of times before it completes.
+  POLL_ACTIVITY_INTERVAL_MS: z.coerce
+    .number()
+    .int()
+    .min(1_000)
+    .max(60_000)
+    .default(5_000),
   POLL_SIGNUP_BATCH_SIZE: z.coerce.number().int().min(10).max(1_000).default(100),
   POLL_MAX_SIGNUP_BATCHES: z.coerce.number().int().min(1).max(20).default(5),
   POLL_ACTIVITY_BATCH_SIZE: z.coerce.number().int().min(100).max(10_000).default(2_000),

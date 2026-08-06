@@ -55,13 +55,16 @@ type IngestResponse = {
   duplicates?: unknown;
 };
 
-export type IngestDeliverySnapshot = {
-  running: boolean;
-  consecutiveFailures: number;
-  lastAttemptAt: string | null;
-  lastSuccessAt: string | null;
-  lastDeliveredCount: number;
-};
+// Containment signals that are gated purely on `dashboard_delivered_at`.
+// `fiat_blacklisted_email_domain` is deliberately absent: it is gated on the
+// blacklist match row instead and is read by its own query below.
+const DASHBOARD_CONTAINMENT_EVENT_TYPES: ReadonlySet<string> = new Set([
+  "abstract_email_catchall",
+  "behavioral_withdrawal_containment",
+  "critical_risk_signup",
+  "fiat_deposit_identity_containment",
+  "fiat_eligibility_containment",
+]);
 
 function objectPayload(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
@@ -122,11 +125,20 @@ export function deliveryBackoffMs(consecutiveFailures: number): number {
   );
 }
 
+function byRecordedOrder(left: RiskEventRow, right: RiskEventRow): number {
+  const delta = left.recorded_at.getTime() - right.recorded_at.getTime();
+  return delta !== 0 ? delta : left.id.localeCompare(right.id);
+}
+
 export class IngestDelivery {
   private timer: NodeJS.Timeout | null = null;
+  private stopped = false;
   private running = false;
   private consecutiveFailures = 0;
   private nextAttemptAt = 0;
+  // Delivery telemetry. `snapshot()` and `IngestDeliverySnapshot` were removed
+  // because nothing repo-wide ever read them; the counters stay so wiring an
+  // operations route later needs an accessor and nothing else.
   private lastAttemptAt: string | null = null;
   private lastSuccessAt: string | null = null;
   private lastDeliveredCount = 0;
@@ -138,6 +150,8 @@ export class IngestDelivery {
     private readonly send: typeof fetch = fetch,
   ) {}
 
+  // `stop()` is terminal — the process owns exactly one IngestDelivery and
+  // never restarts it — so `stopped` is only ever set, never cleared here.
   async start(): Promise<void> {
     void this.tick();
     this.timer = setInterval(() => void this.tick(), DELIVERY_INTERVAL_MS);
@@ -145,22 +159,16 @@ export class IngestDelivery {
   }
 
   async stop(): Promise<void> {
+    // Set before the timer is cleared: a `setImmediate` continuation queued by
+    // a full batch must not open a fresh connection on a pool that shutdown is
+    // already ending, which surfaced as a delivery error on every clean deploy.
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     const deadline = Date.now() + DELIVERY_TIMEOUT_MS;
     while (this.running && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
-  }
-
-  snapshot(): IngestDeliverySnapshot {
-    return {
-      running: this.running,
-      consecutiveFailures: this.consecutiveFailures,
-      lastAttemptAt: this.lastAttemptAt,
-      lastSuccessAt: this.lastSuccessAt,
-      lastDeliveredCount: this.lastDeliveredCount,
-    };
   }
 
   async flushOnce(): Promise<number> {
@@ -174,7 +182,44 @@ export class IngestDelivery {
       leader = lock.rows[0]?.acquired === true;
       if (!leader) return 0;
 
-      const containment = await client.query<RiskEventRow>(
+      // Split deliberately into two indexable reads instead of one six-branch
+      // disjunction over a post-join column. The old shape referenced
+      // `match.lock_delivered_at` inside the OR, so the whole predicate had to
+      // be evaluated after a join whose ON clause concatenated a literal onto a
+      // column — no index could serve it and the planner could not BitmapOr the
+      // partial indexes that already exist. Both halves below drive off a
+      // partial index and are merged in JS, preserving the original
+      // "containment first, then general stream" ordering.
+      const dashboardContainment = await client.query<RiskEventRow>(
+        `
+          SELECT
+            re.id, re.case_id, re.session_id, re.user_id, s.username,
+            re.event_type, re.source, re.source_ref, re.score_delta,
+            re.score_after, re.title, re.detail, re.payload,
+            re.occurred_at, re.recorded_at
+          FROM risk_events re
+          JOIN subjects s ON s.user_id = re.user_id
+          WHERE re.dashboard_delivered_at IS NULL
+            AND (
+              re.event_type = 'abstract_email_catchall'
+              OR re.event_type = 'behavioral_withdrawal_containment'
+              OR re.event_type = 'critical_risk_signup'
+              OR re.event_type = 'fiat_deposit_identity_containment'
+              OR re.event_type = 'fiat_eligibility_containment'
+            )
+          ORDER BY re.recorded_at, re.id
+          LIMIT $1
+        `,
+        [BATCH_SIZE],
+      );
+
+      // The blacklist half keeps the original LEFT JOIN and its exact ON
+      // predicate — an event whose match row is missing entirely still has to
+      // be delivered, which an inner join would silently drop. The added
+      // `source_event_id` equality is what makes the join an index probe on the
+      // unique key; the concatenation predicate stays as an exact-semantics
+      // filter on top of it.
+      const blacklistContainment = await client.query<RiskEventRow>(
         `
           SELECT
             re.id, re.case_id, re.session_id, re.user_id, s.username,
@@ -184,43 +229,37 @@ export class IngestDelivery {
           FROM risk_events re
           JOIN subjects s ON s.user_id = re.user_id
           LEFT JOIN fiat_email_domain_matches match ON
-            re.source_ref = 'blacklisted-signup:' || match.source_event_id
-            OR re.source_ref =
-              'blacklisted-checkout:' || match.source_event_id
-          WHERE (
-              re.event_type = 'fiat_blacklisted_email_domain'
-              AND match.lock_delivered_at IS NULL
+            match.source_event_id = split_part(re.source_ref, ':', 2)
+            AND (
+              re.source_ref = 'blacklisted-signup:' || match.source_event_id
+              OR re.source_ref =
+                'blacklisted-checkout:' || match.source_event_id
             )
-            OR (
-              re.event_type = 'abstract_email_catchall'
-              AND re.dashboard_delivered_at IS NULL
-            )
-            OR (
-              re.event_type = 'behavioral_withdrawal_containment'
-              AND re.dashboard_delivered_at IS NULL
-            )
-            OR (
-              re.event_type = 'critical_risk_signup'
-              AND re.dashboard_delivered_at IS NULL
-            )
-            OR (
-              re.event_type = 'fiat_deposit_identity_containment'
-              AND re.dashboard_delivered_at IS NULL
-            )
-            OR (
-              re.event_type = 'fiat_eligibility_containment'
-              AND re.dashboard_delivered_at IS NULL
-            )
+          WHERE re.event_type = 'fiat_blacklisted_email_domain'
+            AND match.lock_delivered_at IS NULL
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,
         [BATCH_SIZE],
       );
-      if (containment.rows.length > 0) {
-        await this.deliverEvents(containment.rows);
-        await this.confirmDashboardEvents(client, containment.rows);
-        await this.confirmContainmentEvents(client, containment.rows);
-        return containment.rows.length;
+
+      // The two reads are disjoint on `event_type` in SQL; re-asserting it in
+      // JS keeps the merge correct no matter which half a row came back from.
+      const containmentRows = [
+        ...dashboardContainment.rows.filter((event) =>
+          DASHBOARD_CONTAINMENT_EVENT_TYPES.has(event.event_type),
+        ),
+        ...blacklistContainment.rows.filter(
+          (event) => event.event_type === "fiat_blacklisted_email_domain",
+        ),
+      ]
+        .sort(byRecordedOrder)
+        .slice(0, BATCH_SIZE);
+      if (containmentRows.length > 0) {
+        await this.deliverEvents(containmentRows);
+        await this.confirmDashboardEvents(client, containmentRows);
+        await this.confirmContainmentEvents(client, containmentRows);
+        return containmentRows.length;
       }
 
       const events = await client.query<RiskEventRow>(
@@ -368,7 +407,7 @@ export class IngestDelivery {
   }
 
   private async tick(): Promise<void> {
-    if (this.running || Date.now() < this.nextAttemptAt) return;
+    if (this.stopped || this.running || Date.now() < this.nextAttemptAt) return;
     this.running = true;
     this.lastAttemptAt = new Date().toISOString();
     try {
@@ -377,7 +416,7 @@ export class IngestDelivery {
       this.lastSuccessAt = new Date().toISOString();
       this.consecutiveFailures = 0;
       this.nextAttemptAt = 0;
-      if (delivered === BATCH_SIZE) {
+      if (delivered === BATCH_SIZE && !this.stopped) {
         setImmediate(() => void this.tick());
       }
     } catch (error) {

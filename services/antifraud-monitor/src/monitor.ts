@@ -374,12 +374,37 @@ const FAILED_SIGNUP_REPLAY_BATCH_SIZE = 20;
 const FAILED_SIGNUP_REPLAY_DELAY_SECONDS = 60;
 const FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS = 5;
 const CONTEXT_RISK_COUNTRIES = new Set(["CZ", "SK", "SI", "IN"]);
+/**
+ * Hard cap on the per-session event history fed to `sequenceMatches`, which is
+ * O(events^2) and used to run over an unbounded `SELECT ... WHERE session_id`.
+ * A monitor session lives for MONITOR_DURATION_SECONDS (default 300s, max
+ * 3600s), so this cap is far above any realistic session.
+ *
+ * Read in ASCENDING order on purpose. Pruning by the widest rule window was
+ * considered and rejected: every shipped sequence rule except
+ * `fresh-third-promo-redemption` carries
+ * `exclude_before = ["fiat_deposit","crypto_deposit"]`, and `sequenceMatches`
+ * treats the first `exclude_before` event as a permanent veto over the whole
+ * history, with no window applied to it. Dropping an older deposit would turn
+ * a correctly vetoed session into a false `manual_review` / `lock_withdrawals`
+ * verdict, so a time prune is not behaviour-preserving in either direction.
+ */
+const RULE_EVENT_SCAN_LIMIT = 2_000;
 
 export class MonitorEngine {
   private running = false;
+  private stopped = false;
   private tickFailureRecorded = false;
   private timer: NodeJS.Timeout | null = null;
+  private lastActivityScanAt = 0;
+  private lastActivitiesProcessed = 0;
   private rulesCache: { at: number; rules: SequenceRule[] } | null = null;
+  /**
+   * `is_creator` is immutable for the lifetime of a monitor session but was
+   * re-read from `signup_identity_snapshots` on every accepted event batch.
+   * Cached alongside `rulesCache` and cleared by the same invalidation.
+   */
+  private creatorCache = new Map<string, boolean>();
   private readonly enrichment: EnrichmentService;
   private readonly discord: DiscordAlerts;
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
@@ -417,13 +442,18 @@ export class MonitorEngine {
   }
 
   async start(): Promise<void> {
+    // A SIGTERM landing anywhere inside this method must not end with a fresh
+    // interval installed on a pool that shutdown is already closing.
+    if (this.stopped) return;
     await this.ensureCursor();
     await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
     await this.fiatDepositIdentity.ensureCursor();
     await this.freeBattleRisk.ensureCursor();
     await this.freshBehavior.ensureCursor();
+    if (this.stopped) return;
     await this.tick();
+    if (this.stopped) return;
     this.timer = setInterval(
       () => void this.tick(),
       this.config.POLL_INTERVAL_MS,
@@ -432,7 +462,9 @@ export class MonitorEngine {
   }
 
   async stop(): Promise<void> {
+    this.stopped = true;
     if (this.timer) clearInterval(this.timer);
+    this.timer = null;
     const deadline = Date.now() + this.watchdogBudgetMs();
     while (this.running && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -450,6 +482,7 @@ export class MonitorEngine {
 
   invalidateRules(): void {
     this.rulesCache = null;
+    this.creatorCache.clear();
   }
 
   private watchdogBudgetMs(): number {
@@ -609,9 +642,22 @@ export class MonitorEngine {
       await this.runPhase("fresh-behavior", () =>
         this.freshBehavior.process(),
       );
-      const activitiesProcessed = await this.runPhase("activity", () =>
-        this.scanActiveSessions(),
-      );
+      // The activity scan issues one heavy source query per active session, so
+      // it runs on its own, slower cadence instead of the 1s signup cadence.
+      // The phase keeps its position in the tick order — only its frequency
+      // changes — and a skipped phase reports the previous count so the health
+      // accounting in `tickSucceeded` is unchanged.
+      const activityDue =
+        Date.now() - this.lastActivityScanAt
+          >= this.config.POLL_ACTIVITY_INTERVAL_MS;
+      const activitiesProcessed = activityDue
+        ? await this.runPhase("activity", async () => {
+            this.lastActivityScanAt = Date.now();
+            const processed = await this.scanActiveSessions();
+            this.lastActivitiesProcessed = processed;
+            return processed;
+          })
+        : this.lastActivitiesProcessed;
       const completed = await this.runPhase("completion", async () => {
         await this.completeExpiredSessions();
         return true;
@@ -903,7 +949,18 @@ export class MonitorEngine {
       client.release();
     }
 
-    await this.onSignupAssessed?.(login.user_id);
+    // Best-effort side channel, exactly like the signup path: the transaction
+    // above already advanced the cursor, so a rejecting network-risk queue must
+    // not abort the batch loop and inflate the consecutive-failure streak that
+    // `/ready` gates on.
+    try {
+      await this.onSignupAssessed?.(login.user_id);
+    } catch (error) {
+      this.log.warn(
+        { err: this.safeError(error), userId: login.user_id },
+        "Login fingerprint committed but its account-network scan could not be queued",
+      );
+    }
   }
 
   private async replayFailedSignups(): Promise<number> {
@@ -2456,15 +2513,48 @@ export class MonitorEngine {
       [caseId, sessionId, signup.id, `${signup.id}:account_signed_up`, signup.created_at],
     );
 
+    // A typical signup carries 10-25 signals. One round-trip per signal held
+    // the open transaction for 10-25 sequential waits; the running total is
+    // already computed in JS, so the whole set goes in as one multi-row insert
+    // with identical values, ordering, and conflict handling.
+    const eventTypes: string[] = [];
+    const scoreDeltas: number[] = [];
+    const scoresAfter: number[] = [];
+    const titles: string[] = [];
+    const details: Array<string | null> = [];
+    const payloads: string[] = [];
+    // Deterministic ref so the partial dedupe index covers signup events too:
+    // a replayed batch or a second replica cannot double count them.
+    const sourceRefs: string[] = [];
     let runningScore = 0;
     for (const signal of signals) {
       runningScore = clampRiskScore(runningScore + signal.points);
+      eventTypes.push(signal.key);
+      scoreDeltas.push(signal.points);
+      scoresAfter.push(runningScore);
+      titles.push(signal.title);
+      details.push(signal.detail);
+      payloads.push(JSON.stringify(signal.payload ?? {}));
+      sourceRefs.push(`${signup.id}:${signal.key}`);
+    }
+    if (eventTypes.length > 0) {
       await client.query(
           `
             INSERT INTO risk_events (
               case_id, session_id, user_id, event_type, source, source_ref,
               score_delta, score_after, title, detail, payload, occurred_at
-            ) VALUES ($1,$2,$3,$4,'signup',$11,$5,$6,$7,$8,$9,$10)
+            )
+            SELECT
+              $1::uuid, $2::uuid, $3::text, signal.event_type, 'signup',
+              signal.source_ref, signal.score_delta, signal.score_after,
+              signal.title, signal.detail, signal.payload, $4::timestamptz
+            FROM unnest(
+              $5::text[], $6::text[], $7::int[], $8::int[],
+              $9::text[], $10::text[], $11::jsonb[]
+            ) AS signal(
+              event_type, source_ref, score_delta, score_after,
+              title, detail, payload
+            )
             ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
             DO NOTHING
           `,
@@ -2472,17 +2562,14 @@ export class MonitorEngine {
             caseId,
             sessionId,
             signup.id,
-            signal.key,
-            signal.points,
-            runningScore,
-            signal.title,
-            signal.detail,
-            signal.payload ?? {},
             signup.created_at,
-            // Deterministic ref so the partial dedupe index covers signup
-            // events too: a replayed batch or a second replica cannot double
-            // count them.
-            `${signup.id}:${signal.key}`,
+            eventTypes,
+            sourceRefs,
+            scoreDeltas,
+            scoresAfter,
+            titles,
+            details,
+            payloads,
           ],
       );
     }
@@ -2712,6 +2799,9 @@ export class MonitorEngine {
     const now = Date.now();
     const cached = this.rulesCache;
     if (cached && now - cached.at < RULES_CACHE_TTL_MS) return cached.rules;
+    // Same TTL flushes the creator lookups, so that map cannot accumulate one
+    // entry per user ever monitored for the lifetime of the process.
+    this.creatorCache.clear();
 
     const result = await this.db.antifraud.query<SequenceRule>(
       `
@@ -2733,18 +2823,32 @@ export class MonitorEngine {
     return result.rows;
   }
 
-  private async evaluateRules(session: RuleSession): Promise<void> {
-    const rules = await this.sequenceRules();
+  private async isCreatorAccount(userId: string): Promise<boolean> {
+    const cached = this.creatorCache.get(userId);
+    if (cached !== undefined) return cached;
     const creator = await this.db.antifraud.query<{ is_creator: boolean }>(
       `
         SELECT COALESCE(is_creator, false) AS is_creator
         FROM signup_identity_snapshots
         WHERE user_id = $1
       `,
-      [session.user_id],
+      [userId],
     );
     const isCreator = creator.rows[0]?.is_creator === true;
+    this.creatorCache.set(userId, isCreator);
+    return isCreator;
+  }
 
+  private async evaluateRules(session: RuleSession): Promise<void> {
+    const rules = await this.sequenceRules();
+    const isCreator = await this.isCreatorAccount(session.user_id);
+
+    // Bounded so a pathological session cannot re-read an unbounded history
+    // into an O(n^2) matcher on every committed batch. The oldest events are
+    // kept deliberately: `sequenceMatches` scans forward from index 0 and
+    // returns false at the FIRST `exclude_before` event, so the leading slice
+    // is what decides the verdict. A time-based prune was rejected — see the
+    // note on the constant.
     const events = await this.db.antifraud.query<{
       event_type: string;
       occurred_at: Date;
@@ -2753,7 +2857,8 @@ export class MonitorEngine {
         SELECT event_type, occurred_at
         FROM risk_events
         WHERE session_id = $1
-        ORDER BY occurred_at
+        ORDER BY occurred_at, recorded_at, id
+        LIMIT ${RULE_EVENT_SCAN_LIMIT}
       `,
       [session.id],
     );
