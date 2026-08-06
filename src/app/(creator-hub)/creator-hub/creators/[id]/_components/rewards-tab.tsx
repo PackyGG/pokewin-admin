@@ -149,11 +149,12 @@ export async function CreatorRewardsTab({
                     {request.lastErrorStep ?? "Error"} · {request.lastErrorCode ?? "unknown"}: {request.lastErrorMessage}
                   </div>
                 )}
-                {request.status === "delivery_failed" && (
+                {["delivery_failed", "awaiting_continue", "awaiting_decision"].includes(request.status) && (
                   <CreatorApprovalRetryButton
                     creatorUserId={userId}
                     requestId={request.id}
                     step="delivery"
+                    resend={request.status !== "delivery_failed"}
                   />
                 )}
                 {request.status === "provisioning_failed" && (

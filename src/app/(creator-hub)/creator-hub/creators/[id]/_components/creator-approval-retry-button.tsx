@@ -13,10 +13,12 @@ export function CreatorApprovalRetryButton({
   creatorUserId,
   requestId,
   step,
+  resend = false,
 }: {
   creatorUserId: string;
   requestId: string;
   step: "delivery" | "provisioning";
+  resend?: boolean;
 }) {
   const [pending, startTransition] = useTransition();
 
@@ -39,7 +41,9 @@ export function CreatorApprovalRetryButton({
           }
           toast.success(
             step === "delivery"
-              ? "Discord delivery requeued"
+              ? resend
+                ? "Discord message queued for resend"
+                : "Discord delivery requeued"
               : result.status === "approved"
                 ? "Deal provisioning completed"
                 : "Provisioning retry saved its latest state",
@@ -51,7 +55,9 @@ export function CreatorApprovalRetryButton({
       {pending
         ? "Retrying…"
         : step === "delivery"
-          ? "Retry Discord delivery"
+          ? resend
+            ? "Resend Discord message"
+            : "Retry Discord delivery"
           : "Retry creation"}
     </Button>
   );

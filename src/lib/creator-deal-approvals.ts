@@ -343,7 +343,7 @@ export async function acknowledgeCreatorDealApprovalJob(input: {
   });
 }
 
-/** Explicit operator recovery for a proposal whose bounded Discord retries died. */
+/** Explicit operator recovery/resend for a proposal that has not been decided. */
 export async function retryCreatorDealApprovalDelivery(input: {
   requestId: string;
   actorAdminUserId: string;
@@ -351,8 +351,18 @@ export async function retryCreatorDealApprovalDelivery(input: {
   const requestId = Uuid.parse(input.requestId);
   const actorAdminUserId = Uuid.parse(input.actorAdminUserId);
   return adminDrizzle.transaction(async (tx) => {
+    const rows = await tx.execute<{ status: string }>(sql`
+      SELECT status FROM creator_deal_approval_requests
+      WHERE id = ${requestId}::uuid
+      FOR UPDATE
+    `);
+    const previousStatus = rows.rows[0]?.status;
+    if (!previousStatus || !["delivery_failed", "awaiting_continue", "awaiting_decision"].includes(previousStatus)) {
+      error(409, "delivery_not_retryable", "Only an undecided proposal can be resent.");
+    }
     const [request] = await tx.update(creator_deal_approval_requests).set({
       status: "pending_delivery",
+      summary_message_id: null,
       delivery_attempt_count: 0,
       delivery_available_at: new Date().toISOString(),
       delivery_lease_token: null,
@@ -361,14 +371,26 @@ export async function retryCreatorDealApprovalDelivery(input: {
       last_error_step: null,
       last_error_code: null,
       last_error_message: null,
+      continued_at: null,
       updated_at: new Date().toISOString(),
     }).where(and(
       eq(creator_deal_approval_requests.id, requestId),
-      eq(creator_deal_approval_requests.status, "delivery_failed"),
+      eq(creator_deal_approval_requests.status, previousStatus),
     )).returning({ creatorUserId: creator_deal_approval_requests.creator_user_id });
-    if (!request) error(409, "delivery_not_retryable", "Only a failed proposal delivery can be retried.");
-    await tx.insert(creator_deal_approval_events).values({ request_id: requestId, event_type: "summary_delivery_requeued", actor_kind: "admin", actor_admin_user_id: actorAdminUserId });
-    await tx.insert(admin_audit_events).values({ admin_user_id: actorAdminUserId, event_type: "creator_deal_approval_delivery_requeued", target_user_id: request.creatorUserId, metadata: { requestId } });
+    if (!request) error(409, "delivery_not_retryable", "The proposal changed before it could be resent.");
+    await tx.insert(creator_deal_approval_events).values({
+      request_id: requestId,
+      event_type: "summary_delivery_requeued",
+      actor_kind: "admin",
+      actor_admin_user_id: actorAdminUserId,
+      metadata: { previousStatus, reason: previousStatus === "delivery_failed" ? "delivery_retry" : "message_resend" },
+    });
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: actorAdminUserId,
+      event_type: "creator_deal_approval_delivery_requeued",
+      target_user_id: request.creatorUserId,
+      metadata: { requestId, previousStatus },
+    });
     return { status: "pending_delivery" as const };
   });
 }

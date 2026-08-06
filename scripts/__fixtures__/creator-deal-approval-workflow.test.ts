@@ -41,6 +41,8 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(workflow, /delivery_lease_token = gen_random_uuid/);
   assert.match(workflow, /summary_delivery_failed/);
   assert.match(workflow, /export async function retryCreatorDealApprovalDelivery/);
+  assert.match(workflow, /\["delivery_failed", "awaiting_continue", "awaiting_decision"\]\.includes\(previousStatus\)/);
+  assert.match(workflow, /summary_message_id: null/);
   assert.match(workflow, /summary_delivery_requeued/);
   assert.match(workflow, /resolveLinkedSiteAdmin\(parsed\.actorDiscordUserId\)/);
   assert.match(workflow, /eq\(account\.providerId, "discord"\)/);
