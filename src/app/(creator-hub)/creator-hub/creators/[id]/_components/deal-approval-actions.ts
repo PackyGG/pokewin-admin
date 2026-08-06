@@ -18,6 +18,23 @@ export type CreatorRewardApprovalPayload = {
   lossbackPct: number | null;
   minDepositUsd: number | null;
   maxRewardPerUserUsd: number | null;
+  /** Only sent by the standalone rewards dialog; a bundled program always
+   *  inherits the deal window server-side. */
+  startsAt?: string | null;
+  endsAt?: string | null;
+};
+
+export type CreatorLeaderboardApprovalPayload = {
+  title: string;
+  prizeTiers: Array<{ position: number; prizeAmountUsd: number }>;
+  siteBonusUsd: number;
+  /** House share of the prize pool, 0-100. Cost accounting only. */
+  sponsoredPct: number;
+  /** Sent for shape completeness only — the server always overwrites both the
+   *  codes and the window from the creator and the request. */
+  codes: string[];
+  startsAt: string;
+  endsAt: string;
 };
 
 export async function loadCreatorCodesForApproval(
@@ -33,16 +50,24 @@ export async function loadCreatorCodesForApproval(
   );
 }
 
+/**
+ * Queue a creator approval request for Discord. The kind is inferred
+ * server-side from which payloads are present: a deal (optionally bundling a
+ * reward program and/or a leaderboard), or exactly one standalone leaderboard
+ * or reward program — the standalone kinds skip the terms step entirely.
+ */
 export async function submitCreatorDealApproval(input: {
   creatorUserId: string;
-  dealPayload: DealPayload;
+  dealPayload: DealPayload | null;
   rewardPayload: CreatorRewardApprovalPayload | null;
+  leaderboardPayload?: CreatorLeaderboardApprovalPayload | null;
 }): Promise<
   | {
       success: true;
       requestId: string;
       status: string;
       deliveryQueued: boolean;
+      kind: "deal" | "leaderboard_only" | "rewards_only";
     }
   | { success: false; error: string }
 > {

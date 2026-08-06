@@ -49,16 +49,14 @@ export function PreviousDealsButton({
 
 /**
  * In-card actions for the LIVE deal (active, or scheduled and not yet
- * started — same set the admin deals table allows). Terminate is destructive
- * and keeps its typed confirmation inside the dialog.
+ * started — same set the admin deals table allows). Terminate is destructive,
+ * and opening its dialog plus clicking through is the confirmation.
  */
 export function DealCardActions({
   userId,
-  username,
   deal,
 }: {
   userId: string;
-  username: string | null;
   deal: CreatorDealResponse;
 }) {
   const [openDialog, setOpenDialog] = useState<"edit" | "terminate" | null>(
@@ -95,7 +93,6 @@ export function DealCardActions({
       <TerminateDealDialog
         userId={userId}
         dealId={deal.id}
-        username={username}
         open={openDialog === "terminate"}
         onOpenChange={(next) => setOpenDialog(next ? "terminate" : null)}
       />

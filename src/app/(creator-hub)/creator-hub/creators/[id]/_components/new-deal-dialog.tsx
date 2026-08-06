@@ -21,6 +21,7 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 import {
   loadCreatorCodesForApproval,
   submitCreatorDealApproval,
+  type CreatorLeaderboardApprovalPayload,
   type CreatorRewardApprovalPayload,
 } from "./deal-approval-actions";
 import {
@@ -30,6 +31,12 @@ import {
   type CreatorRewardDraft,
 } from "./creator-reward-draft-fields";
 import {
+  buildLeaderboardDraft,
+  CreatorLeaderboardDraftFields,
+  parseLeaderboardDraft,
+  type CreatorLeaderboardDraft,
+} from "./creator-leaderboard-draft-fields";
+import {
   buildCreateDefaults,
   dealFormSchema,
   DealFormFields,
@@ -38,7 +45,7 @@ import {
   type DealPayload,
 } from "./deal-form-shared";
 
-type Step = "deal" | "rewards" | "confirm" | "queued";
+type Step = "deal" | "rewards" | "leaderboard" | "confirm" | "queued";
 
 export function NewDealDialog({ userId }: { userId: string }) {
   const initialDeal = useMemo(() => buildCreateDefaults(), []);
@@ -52,6 +59,10 @@ export function NewDealDialog({ userId }: { userId: string }) {
   );
   const [rewardPayload, setRewardPayload] =
     useState<CreatorRewardApprovalPayload | null>(null);
+  const [leaderboardDraft, setLeaderboardDraft] =
+    useState<CreatorLeaderboardDraft>(() => buildLeaderboardDraft([]));
+  const [leaderboardPayload, setLeaderboardPayload] =
+    useState<CreatorLeaderboardApprovalPayload | null>(null);
   const [queued, setQueued] = useState<{
     requestId: string;
     status: string;
@@ -67,6 +78,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
         if (cancelled) return;
         setAvailableCodes(codes);
         setRewardDraft(buildRewardDraft(codes));
+        setLeaderboardDraft(buildLeaderboardDraft(codes));
       })
       .catch(() => {
         if (!cancelled) toast.error("Could not load this creator's codes");
@@ -84,6 +96,8 @@ export function NewDealDialog({ userId }: { userId: string }) {
     setAvailableCodes([]);
     setRewardDraft(buildRewardDraft([]));
     setRewardPayload(null);
+    setLeaderboardDraft(buildLeaderboardDraft([]));
+    setLeaderboardPayload(null);
     setQueued(null);
   }
 
@@ -122,6 +136,16 @@ export function NewDealDialog({ userId }: { userId: string }) {
       return;
     }
     setRewardPayload(parsed.payload);
+    setStep("leaderboard");
+  }
+
+  function continueFromLeaderboard() {
+    const parsed = parseLeaderboardDraft(leaderboardDraft);
+    if ("error" in parsed) {
+      toast.error(parsed.error);
+      return;
+    }
+    setLeaderboardPayload(parsed.payload);
     setStep("confirm");
   }
 
@@ -132,6 +156,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
         creatorUserId: userId,
         dealPayload,
         rewardPayload,
+        leaderboardPayload,
       });
       if (!result.success) {
         toast.error(result.error);
@@ -158,6 +183,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
             </span>
             {step === "deal" && "New creator deal"}
             {step === "rewards" && "Creator reward program"}
+            {step === "leaderboard" && "Affiliate leaderboard"}
             {step === "confirm" && "Confirm approval request"}
             {step === "queued" && "Sent for creator approval"}
           </DialogTitle>
@@ -166,6 +192,8 @@ export function NewDealDialog({ userId }: { userId: string }) {
               "Select the start date and deal length."}
             {step === "rewards" &&
               "Optional. Add rewards now, or skip this step and submit only the deal."}
+            {step === "leaderboard" &&
+              "Optional. Site-funded, runs the deal window on all of this creator's codes."}
             {step === "confirm" &&
               "Nothing is created yet. The creator or a linked site admin must approve these terms in Discord."}
             {step === "queued" &&
@@ -185,10 +213,17 @@ export function NewDealDialog({ userId }: { userId: string }) {
 
         {step === "rewards" && (
           <CreatorRewardDraftFields
-            creatorLabel={userId}
             availableCodes={availableCodes}
             draft={rewardDraft}
             onChange={setRewardDraft}
+            disabled={pending}
+          />
+        )}
+
+        {step === "leaderboard" && (
+          <CreatorLeaderboardDraftFields
+            draft={leaderboardDraft}
+            onChange={setLeaderboardDraft}
             disabled={pending}
           />
         )}
@@ -223,6 +258,20 @@ export function NewDealDialog({ userId }: { userId: string }) {
                 <p className="text-sm text-muted-foreground">Skipped — no reward program will be created.</p>
               )}
             </ReviewSection>
+            <ReviewSection title="Leaderboard">
+              {leaderboardPayload ? (
+                <>
+                  <ReviewRow label="Title" value={leaderboardPayload.title} />
+                  <ReviewRow label="Codes" value={leaderboardPayload.codes.join(", ")} />
+                  <ReviewRow label="Runs" value={`${formatDate(dealPayload.week_start_utc, "UTC")} → ${formatDate(dealPayload.week_end_utc, "UTC")}`} />
+                  <ReviewRow label="Prize pool" value={`${formatCurrency(leaderboardPayload.siteBonusUsd)} site-funded`} />
+                  <ReviewRow label="Prize tiers" value={`${leaderboardPayload.prizeTiers.length} places · ${formatCurrency(leaderboardPayload.prizeTiers.reduce((total, tier) => total + tier.prizeAmountUsd, 0))} allocated`} />
+                  <ReviewRow label="House share" value={`${leaderboardPayload.sponsoredPct}%`} />
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Skipped — no leaderboard will be created.</p>
+              )}
+            </ReviewSection>
           </div>
         )}
 
@@ -253,13 +302,20 @@ export function NewDealDialog({ userId }: { userId: string }) {
           {step === "rewards" && (
             <>
               <Button type="button" variant="outline" onClick={() => setStep("deal")} disabled={pending}>Back</Button>
-              <Button type="button" variant="ghost" onClick={() => { setRewardPayload(null); setStep("confirm"); }} disabled={pending}>Skip rewards</Button>
+              <Button type="button" variant="ghost" onClick={() => { setRewardPayload(null); setStep("leaderboard"); }} disabled={pending}>Skip rewards</Button>
               <Button type="button" onClick={continueFromRewards} disabled={pending || availableCodes.length === 0}>Next</Button>
+            </>
+          )}
+          {step === "leaderboard" && (
+            <>
+              <Button type="button" variant="outline" onClick={() => setStep("rewards")} disabled={pending}>Back</Button>
+              <Button type="button" variant="ghost" onClick={() => { setLeaderboardPayload(null); setStep("confirm"); }} disabled={pending}>Skip leaderboard</Button>
+              <Button type="button" onClick={continueFromLeaderboard} disabled={pending || availableCodes.length === 0}>Next</Button>
             </>
           )}
           {step === "confirm" && (
             <>
-              <Button type="button" variant="outline" onClick={() => setStep("rewards")} disabled={pending}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep("leaderboard")} disabled={pending}>Back</Button>
               <Button type="button" onClick={submit} disabled={pending}>
                 {pending && <Spinner size={14} />}
                 {pending ? "Queueing…" : "Send to Discord"}

@@ -7,6 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 
 import type { CreatorRewardApprovalPayload } from "./deal-approval-actions";
+import { parseUtcInput } from "./deal-form-shared";
 
 export type CreatorRewardDraft = {
   name: string;
@@ -19,6 +20,10 @@ export type CreatorRewardDraft = {
   lossbackPct: string;
   minDeposit: string;
   cap: string;
+  /** Only used by the standalone dialog; a bundled program inherits the deal
+   *  window and leaves both empty. */
+  startsAt: string;
+  endsAt: string;
 };
 
 export function buildRewardDraft(codes: string[]): CreatorRewardDraft {
@@ -33,11 +38,14 @@ export function buildRewardDraft(codes: string[]): CreatorRewardDraft {
     lossbackPct: "5",
     minDeposit: "50",
     cap: "",
+    startsAt: "",
+    endsAt: "",
   };
 }
 
 export function parseRewardDraft(
   draft: CreatorRewardDraft,
+  options: { requireWindow?: boolean } = {},
 ): { payload: CreatorRewardApprovalPayload } | { error: string } {
   if (draft.name.trim().length < 2) return { error: "Enter a program name" };
   if (draft.codes.length === 0) return { error: "Pick at least one creator code" };
@@ -83,6 +91,21 @@ export function parseRewardDraft(
     return { error: "Lifetime cap must be positive or left empty" };
   }
 
+  let startsAt: string | null = null;
+  let endsAt: string | null = null;
+  if (options.requireWindow) {
+    startsAt = parseUtcInput(draft.startsAt);
+    endsAt = parseUtcInput(draft.endsAt);
+    if (!startsAt) return { error: "Enter a valid start date" };
+    if (!endsAt) return { error: "Enter a valid end date" };
+    if (new Date(endsAt) <= new Date(startsAt)) {
+      return { error: "End must be after the start" };
+    }
+    if (new Date(endsAt) <= new Date()) {
+      return { error: "End must be in the future" };
+    }
+  }
+
   return {
     payload: {
       name: draft.name.trim(),
@@ -93,22 +116,25 @@ export function parseRewardDraft(
       lossbackPct: draft.lossbackOn ? lossbackPct : null,
       minDepositUsd: draft.lossbackOn ? minDeposit : null,
       maxRewardPerUserUsd: cap,
+      startsAt,
+      endsAt,
     },
   };
 }
 
 export function CreatorRewardDraftFields({
-  creatorLabel,
   availableCodes,
   draft,
   onChange,
   disabled,
+  showWindow = false,
 }: {
-  creatorLabel: string;
   availableCodes: string[];
   draft: CreatorRewardDraft;
   onChange: (next: CreatorRewardDraft) => void;
   disabled: boolean;
+  /** Standalone dialog only — a bundled program inherits the deal window. */
+  showWindow?: boolean;
 }) {
   const set = <K extends keyof CreatorRewardDraft>(
     key: K,
@@ -117,13 +143,6 @@ export function CreatorRewardDraftFields({
 
   return (
     <div className="space-y-4">
-      <div className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
-        <span className="font-medium">{creatorLabel}</span>
-        <span className="block text-[11px] text-muted-foreground">
-          Fixed to the creator receiving this deal.
-        </span>
-      </div>
-
       <div className="space-y-1.5">
         <Label htmlFor="approval_reward_name">Program name</Label>
         <Input
@@ -224,6 +243,31 @@ export function CreatorRewardDraftFields({
         onChange={(value) => set("cap", value)}
         disabled={disabled}
       />
+
+      {showWindow && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div className="space-y-1.5">
+            <Label htmlFor="approval_reward_start">Starts (UTC)</Label>
+            <Input
+              id="approval_reward_start"
+              type="datetime-local"
+              value={draft.startsAt}
+              onChange={(event) => set("startsAt", event.target.value)}
+              disabled={disabled}
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="approval_reward_end">Ends (UTC)</Label>
+            <Input
+              id="approval_reward_end"
+              type="datetime-local"
+              value={draft.endsAt}
+              onChange={(event) => set("endsAt", event.target.value)}
+              disabled={disabled}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

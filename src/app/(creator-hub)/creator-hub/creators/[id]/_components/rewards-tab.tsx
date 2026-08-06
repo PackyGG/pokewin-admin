@@ -7,6 +7,7 @@ import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 
 import { getCreatorRewardsDetail } from "../_queries/creator-rewards-data";
 import { CreatorApprovalRetryButton } from "./creator-approval-retry-button";
+import { NewRewardsProgramDialog } from "./new-rewards-program-dialog";
 
 export async function CreatorRewardsTab({
   userId,
@@ -39,9 +40,12 @@ export async function CreatorRewardsTab({
   return (
     <div className="space-y-5">
       <section className="space-y-3">
-        <div className="flex items-center gap-2">
-          <Crown className="size-4 text-pink-500" />
-          <h2 className="font-semibold">Reward programs</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Crown className="size-4 text-pink-500" />
+            <h2 className="font-semibold">Reward programs</h2>
+          </div>
+          <NewRewardsProgramDialog userId={userId} />
         </div>
         {data.programs.length === 0 ? (
           <EmptyCard text="No creator reward program has been created for this creator." />

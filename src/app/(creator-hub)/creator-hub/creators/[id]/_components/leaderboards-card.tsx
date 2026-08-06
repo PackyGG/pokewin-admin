@@ -19,6 +19,7 @@ import {
   type LeaderboardPreviewRow,
 } from "../_queries/leaderboards-preview";
 import { CreateLeaderboardDialog } from "./create-leaderboard-dialog";
+import { NewLeaderboardApprovalDialog } from "./new-leaderboard-approval-dialog";
 import { PreviousLeaderboardsDialog } from "./previous-leaderboards-dialog";
 import { HubNotice } from "../../../_components/hub-notice";
 import {
@@ -76,7 +77,12 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
         <SectionHeading
           icon={Trophy}
           title="Affiliate Leaderboards"
-          action={<CreateLeaderboardDialog userId={userId} />}
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <NewLeaderboardApprovalDialog userId={userId} />
+              <CreateLeaderboardDialog userId={userId} />
+            </div>
+          }
         />
         <Card size="sm" className="flex-1">
           <CardContent className="flex flex-1 items-center justify-center py-6">
@@ -166,6 +172,7 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
             {previousItems.length > 0 && (
               <PreviousLeaderboardsDialog rows={previousItems} />
             )}
+            <NewLeaderboardApprovalDialog userId={userId} />
             <CreateLeaderboardDialog userId={userId} />
           </div>
         }

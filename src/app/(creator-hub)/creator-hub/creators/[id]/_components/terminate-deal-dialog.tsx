@@ -25,9 +25,6 @@ import { terminateCreatorDeal } from "../../../../../(admin)/creators/backend-ac
 type Props = {
   userId: string;
   dealId: string;
-  /** Creator username — accepted as the typed confirmation (besides
-   *  "TERMINATE"); null when the header lookup degraded. */
-  username: string | null;
   /** Controlled — opened from the deal overflow menu (no own trigger). */
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -37,22 +34,19 @@ type Props = {
  * Creator Hub — "Terminate deal" confirmation dialog.
  *
  * Ends the creator's CURRENT ACTIVE deal via the existing
- * `terminateCreatorDeal` server action. Destructive → guarded behind a
- * TYPED confirmation (the creator's username, or the literal "TERMINATE"),
- * with an optional reason (audited) and an opt-in toggle to also force-end
- * a live stream session tied to the deal. Controlled by the deal actions
- * overflow menu.
+ * `terminateCreatorDeal` server action. Opening this dialog and clicking the
+ * destructive button IS the confirmation — there is deliberately no typed
+ * challenge. An optional reason is audited, and a toggle can also force-end a
+ * live stream session tied to the deal. Controlled by the deal actions row.
  */
 export function TerminateDealDialog({
   userId,
   dealId,
-  username,
   open,
   onOpenChange,
 }: Props) {
   const router = useRouter();
   const [reason, setReason] = useState("");
-  const [confirmText, setConfirmText] = useState("");
   const [forceEnd, setForceEnd] = useState(false);
   const [pending, startTransition] = useTransition();
 
@@ -60,17 +54,9 @@ export function TerminateDealDialog({
   useEffect(() => {
     if (open) {
       setReason("");
-      setConfirmText("");
       setForceEnd(false);
     }
   }, [open]);
-
-  const typed = confirmText.trim();
-  const confirmed =
-    typed === "TERMINATE" ||
-    (username != null &&
-      username.length > 0 &&
-      typed.toLowerCase() === username.toLowerCase());
 
   function handleOpenChange(next: boolean) {
     if (pending) return;
@@ -78,7 +64,6 @@ export function TerminateDealDialog({
   }
 
   function handleConfirm() {
-    if (!confirmed) return;
     startTransition(async () => {
       try {
         await terminateCreatorDeal(userId, dealId, {
@@ -139,25 +124,6 @@ export function TerminateDealDialog({
             />
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="terminate-confirm">
-              Type{" "}
-              {username ? (
-                <>
-                  <span className="font-mono">{username}</span> or{" "}
-                </>
-              ) : null}
-              <span className="font-mono">TERMINATE</span> to confirm
-            </Label>
-            <Input
-              id="terminate-confirm"
-              value={confirmText}
-              onChange={(e) => setConfirmText(e.target.value)}
-              placeholder={username ?? "TERMINATE"}
-              autoComplete="off"
-              disabled={pending}
-            />
-          </div>
         </div>
 
         <DialogFooter>
@@ -168,7 +134,7 @@ export function TerminateDealDialog({
             type="button"
             variant="destructive"
             onClick={handleConfirm}
-            disabled={pending || !confirmed}
+            disabled={pending}
             className="gap-1.5"
           >
             {pending ? <Spinner size={14} /> : <Ban className="size-4" />}

@@ -48,13 +48,9 @@ import { LeaderboardsCard } from "./leaderboards-card";
  */
 export function OverviewTab({
   userId,
-  username = null,
   activityPeriod,
 }: {
   userId: string;
-  /** Creator username (from the page header) — threaded to the deal card's
-   *  terminate confirmation; null when the header lookup degraded. */
-  username?: string | null;
   activityPeriod: CreatorActivityPeriod;
 }) {
   // KPI strip aggregate — kicked off once for the top strip only.
@@ -85,7 +81,7 @@ export function OverviewTab({
           the two boxes the same height whatever their content length. */}
       <div className="grid gap-4 lg:grid-cols-2">
         <Suspense fallback={<HalfCardSkeleton />}>
-          <DealCard userId={userId} username={username} />
+          <DealCard userId={userId} />
         </Suspense>
         <Suspense fallback={<HalfCardSkeleton />}>
           <LeaderboardsCard userId={userId} />

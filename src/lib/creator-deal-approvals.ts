@@ -5,8 +5,10 @@ import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { creatorsApi, type CreateDealInput, type CreatorDealResponse } from "@/lib/backend-api";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import {
   admin_audit_events,
+  admin_leaderboard_sponsorship,
   creator_deal_approval_events,
   creator_deal_approval_requests,
   creator_reward_program_windows,
@@ -68,6 +70,9 @@ const RewardPayloadSchema = z.object({
   lossbackPct: PositiveCents(100).nullable(),
   minDepositUsd: PositiveCents(1_000_000).nullable(),
   maxRewardPerUserUsd: PositiveCents(1_000_000).nullable(),
+  // Both are derived server-side from the request window: for a deal request
+  // from the deal, for a standalone rewards request from its own inputs.
+  startsAt: z.string().datetime({ offset: true }).nullable().optional(),
   endsAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).superRefine((reward, ctx) => {
   const wager = reward.thresholdUsd != null || reward.rewardUsd != null || reward.vipRewardUsd != null;
@@ -80,6 +85,41 @@ const RewardPayloadSchema = z.object({
   if (lossback && (reward.lossbackPct == null || reward.minDepositUsd == null)) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Lossback percent and minimum deposit are both required." });
   if (reward.lossbackPct != null && reward.lossbackPct >= 100) ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Lossback percent must be below 100%." });
 });
+
+/**
+ * A site-funded affiliate leaderboard bundled into an approval request.
+ *
+ * `codes`, `startsAt` and `endsAt` are always re-derived server-side — the
+ * codes from the creator's current affiliate codes, the window from the deal
+ * (bundled) or from the request's own window (standalone). Whatever the client
+ * sends for those three is treated as untrusted and overwritten.
+ */
+const LeaderboardPayloadSchema = z.object({
+  title: z.string().trim().min(2).max(100),
+  prizeTiers: z.array(z.object({
+    position: z.number().int().positive().max(10_000),
+    prizeAmountUsd: PositiveCents(1_000_000),
+  })).min(5, "At least 5 prize tiers are required.").max(200),
+  siteBonusUsd: PositiveCents(10_000_000),
+  sponsoredPct: z.number().finite().min(0).max(100),
+  codes: z.array(z.string().trim().min(1).max(32)).min(1).max(25),
+  startsAt: z.string().datetime({ offset: true }),
+  endsAt: z.string().datetime({ offset: true }),
+}).superRefine((board, ctx) => {
+  const positions = new Set(board.prizeTiers.map((tier) => tier.position));
+  if (positions.size !== board.prizeTiers.length) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["prizeTiers"], message: "Prize positions must be unique." });
+  }
+  const tierSum = board.prizeTiers.reduce((total, tier) => total + tier.prizeAmountUsd, 0);
+  if (tierSum > board.siteBonusUsd + 1e-6) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["prizeTiers"], message: "Prize tiers cannot exceed the total prize pool." });
+  }
+  if (new Date(board.endsAt).getTime() <= new Date(board.startsAt).getTime()) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["endsAt"], message: "Leaderboard end must be after its start." });
+  }
+});
+
+export type CreatorApprovalRequestKind = "deal" | "leaderboard_only" | "rewards_only";
 
 export type CreatorDealApprovalStatus =
   | "pending_delivery" | "awaiting_continue" | "awaiting_decision"
@@ -118,6 +158,22 @@ async function validateCreatorAndCodes(creatorUserId: string, codes: string[]): 
   return normalized;
 }
 
+/**
+ * Every affiliate code the creator currently owns. Leaderboards always run on
+ * the creator's full code set, so there is no client-supplied selection to
+ * trust — this read is the only source.
+ */
+async function loadAllCreatorCodes(creatorUserId: string): Promise<string[]> {
+  const db = getProdReadDrizzleDb();
+  const rows = await db
+    .select({ code: affiliate_codes.code })
+    .from(affiliate_codes)
+    .where(eq(affiliate_codes.user_id, creatorUserId));
+  const codes = [...new Set(rows.map((row) => row.code.trim().toUpperCase()))].filter(Boolean);
+  if (codes.length === 0) error(400, "creator_codes_missing", "This creator has no affiliate codes, so a leaderboard cannot be created.");
+  return codes;
+}
+
 type CreatorDealApprovalActor =
   | { kind: "creator"; linkedSiteUserId: null }
   | { kind: "admin"; linkedSiteUserId: string };
@@ -152,33 +208,80 @@ async function resolveLinkedSiteAdmin(
 
 export async function createCreatorDealApprovalRequest(input: {
   creatorUserId: string;
-  dealPayload: unknown;
+  dealPayload?: unknown | null;
   rewardPayload?: unknown | null;
+  leaderboardPayload?: unknown | null;
   submittedByAdminUserId: string;
-}): Promise<{ requestId: string; status: CreatorDealApprovalStatus; deliveryQueued: boolean }> {
+}): Promise<{ requestId: string; status: CreatorDealApprovalStatus; deliveryQueued: boolean; kind: CreatorApprovalRequestKind }> {
   const creatorUserId = UserId.parse(input.creatorUserId);
   const submittedBy = Uuid.parse(input.submittedByAdminUserId);
-  const dealPayload = DealPayloadSchema.parse(input.dealPayload);
+  const rawDeal = input.dealPayload ?? null;
   const rawReward = input.rewardPayload ?? null;
+  const rawLeaderboard = input.leaderboardPayload ?? null;
+
+  // The kind is inferred, never taken from the client. A non-deal request must
+  // carry exactly one payload — the same invariant the table CHECK enforces.
+  const kind: CreatorApprovalRequestKind =
+    rawDeal != null
+      ? "deal"
+      : rawLeaderboard != null && rawReward == null
+        ? "leaderboard_only"
+        : rawReward != null && rawLeaderboard == null
+          ? "rewards_only"
+          : error(400, "invalid_request_payload", "Submit a deal, or exactly one standalone leaderboard or reward program.");
+
+  const dealPayload = rawDeal == null ? null : DealPayloadSchema.parse(rawDeal);
   const rewardPayload = rawReward == null ? null : RewardPayloadSchema.parse(rawReward);
+  const leaderboardPayload = rawLeaderboard == null ? null : LeaderboardPayloadSchema.parse(rawLeaderboard);
   const agreement = await getPublishedCreatorAgreementTerms();
   if (!agreement) error(409, "agreement_missing", "Publish creator agreement terms before submitting a deal.");
 
   const mainDb = getProdReadDrizzleDb();
   const [creator] = await mainDb.select({ id: user.id, role: user.role, roles: user.roles }).from(user).where(eq(user.id, creatorUserId)).limit(1);
   if (!creator || (creator.role !== "creator" && !(creator.roles ?? []).includes("creator"))) error(400, "creator_not_active", "That user is not an active creator.");
+
+  // The canonical window every downstream step reads. A deal owns the window
+  // it declares; a standalone request owns the window on its own payload.
+  const windowStartIso = dealPayload
+    ? dealPayload.week_start_utc
+    : leaderboardPayload
+      ? leaderboardPayload.startsAt
+      : rewardPayload?.startsAt ?? error(400, "reward_window_missing", "Enter a start date for this reward program.");
+  const windowEndIso = dealPayload
+    ? dealPayload.week_end_utc
+    : leaderboardPayload
+      ? leaderboardPayload.endsAt
+      : rewardPayload?.endsAt ?? error(400, "reward_window_missing", "Enter an end date for this reward program.");
+  if (new Date(windowEndIso).getTime() <= new Date(windowStartIso).getTime()) {
+    error(400, "invalid_window", "The end of this request must be after its start.");
+  }
+  if (new Date(windowEndIso).getTime() <= Date.now()) {
+    error(400, "window_elapsed", "This request would end before it could be approved.");
+  }
+
   const normalizedReward = rewardPayload
     ? {
         ...rewardPayload,
         // The reward program is part of this deal and may never outlive it.
         // Store the derived value in the immutable proposal so Discord and
         // provisioning disclose/use the exact same boundary.
-        endsAt: dealPayload.week_end_utc,
+        startsAt: dealPayload ? dealPayload.week_start_utc : windowStartIso,
+        endsAt: dealPayload ? dealPayload.week_end_utc : windowEndIso,
         name: sanitizeProgramName(rewardPayload.name),
         codes: await validateCreatorAndCodes(creatorUserId, rewardPayload.codes),
       }
     : null;
   if (normalizedReward && normalizedReward.name.length < 2) error(400, "invalid_reward_name", "Program name has no usable characters.");
+  // A leaderboard always runs on the creator's full current code set and on
+  // the request's own window — client values for both are discarded.
+  const normalizedLeaderboard = leaderboardPayload
+    ? {
+        ...leaderboardPayload,
+        codes: await loadAllCreatorCodes(creatorUserId),
+        startsAt: windowStartIso,
+        endsAt: windowEndIso,
+      }
+    : null;
 
   const [setup] = await adminDrizzle.select().from(discord_creator_setups).where(and(
     eq(discord_creator_setups.creator_user_id, creatorUserId),
@@ -190,13 +293,14 @@ export async function createCreatorDealApprovalRequest(input: {
 
   try {
     return await adminDrizzle.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-approval:${creatorUserId}`}, 0))`);
+      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-approval:${kind}:${creatorUserId}`}, 0))`);
       const expired = await tx.execute<{ id: string }>(sql`
         UPDATE creator_deal_approval_requests
         SET status = 'expired', updated_at = now()
         WHERE creator_user_id = ${creatorUserId}
+          AND request_kind = ${kind}
           AND status IN ('pending_delivery','awaiting_continue','awaiting_decision','delivery_failed')
-          AND (deal_payload ->> 'week_end_utc')::timestamptz <= now()
+          AND window_end_at <= now()
         RETURNING id::text
       `);
       if (expired.rows.length > 0) {
@@ -209,11 +313,17 @@ export async function createCreatorDealApprovalRequest(input: {
       }
       const [existing] = await tx.select().from(creator_deal_approval_requests).where(and(
         eq(creator_deal_approval_requests.creator_user_id, creatorUserId),
+        eq(creator_deal_approval_requests.request_kind, kind),
         sql`${creator_deal_approval_requests.status} IN ('pending_delivery','awaiting_continue','awaiting_decision','approved_provisioning','provisioning_failed','delivery_failed')`,
       )).limit(1);
       if (existing) {
-        if (jsonEqual(existing.deal_payload, dealPayload) && jsonEqual(existing.reward_payload, normalizedReward) && existing.agreement_checksum === agreement.checksum) {
-          return { requestId: existing.id, status: existing.status as CreatorDealApprovalStatus, deliveryQueued: existing.status === "pending_delivery" };
+        if (
+          jsonEqual(existing.deal_payload, dealPayload)
+          && jsonEqual(existing.reward_payload, normalizedReward)
+          && jsonEqual(existing.leaderboard_payload, normalizedLeaderboard)
+          && existing.agreement_checksum === agreement.checksum
+        ) {
+          return { requestId: existing.id, status: existing.status as CreatorDealApprovalStatus, deliveryQueued: existing.status === "pending_delivery", kind };
         }
         error(409, "approval_in_progress", "This creator already has an unresolved deal approval.");
       }
@@ -224,8 +334,12 @@ export async function createCreatorDealApprovalRequest(input: {
         guild_id: setup.guild_id,
         category_id: categoryId,
         chat_channel_id: chatChannelId,
+        request_kind: kind,
+        window_start_at: windowStartIso,
+        window_end_at: windowEndIso,
         deal_payload: dealPayload,
         reward_payload: normalizedReward,
+        leaderboard_payload: normalizedLeaderboard,
         agreement_document_id: agreement.id,
         agreement_version: agreement.version,
         agreement_lines: agreement.lines,
@@ -234,8 +348,8 @@ export async function createCreatorDealApprovalRequest(input: {
       };
       const [created] = await tx.insert(creator_deal_approval_requests).values(requestValues).returning({ id: creator_deal_approval_requests.id, status: creator_deal_approval_requests.status });
       await tx.insert(creator_deal_approval_events).values({ request_id: created.id, event_type: "submitted", actor_kind: "admin", actor_admin_user_id: submittedBy });
-      await tx.insert(admin_audit_events).values({ admin_user_id: submittedBy, event_type: "creator_deal_approval_submitted", target_user_id: creatorUserId, metadata: { requestId: created.id, agreementVersion: agreement.version, agreementChecksum: agreement.checksum, hasRewardProgram: normalizedReward != null } });
-      return { requestId: created.id, status: created.status as CreatorDealApprovalStatus, deliveryQueued: true };
+      await tx.insert(admin_audit_events).values({ admin_user_id: submittedBy, event_type: "creator_deal_approval_submitted", target_user_id: creatorUserId, metadata: { requestId: created.id, requestKind: kind, agreementVersion: agreement.version, agreementChecksum: agreement.checksum, hasRewardProgram: normalizedReward != null, hasLeaderboard: normalizedLeaderboard != null } });
+      return { requestId: created.id, status: created.status as CreatorDealApprovalStatus, deliveryQueued: true, kind };
     });
   } catch (cause) {
     if (cause instanceof CreatorDealApprovalError) throw cause;
@@ -247,7 +361,11 @@ export async function createCreatorDealApprovalRequest(input: {
 export type CreatorDealApprovalDeliveryJob = {
   id: string; requestId: string; leaseToken: string; guildId: string; categoryId: string;
   channelId: string; creatorDiscordUserId: string; creator: { userId: string; username: string | null };
-  deal: unknown; rewards: unknown | null; terms: { version: number; lines: string[] }; attempt: number;
+  /** Tells the bot what to render and whether a terms step exists at all. */
+  kind: CreatorApprovalRequestKind;
+  deal: unknown | null; rewards: unknown | null; leaderboard: unknown | null;
+  /** Always sent, but only meaningful for `kind === "deal"`. */
+  terms: { version: number; lines: string[] }; attempt: number;
   previousMessageId: string | null;
 };
 
@@ -257,7 +375,9 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
   const limit = z.number().int().min(1).max(25).parse(input.limit);
   const result = await adminDrizzle.execute<{
     id: string; lease_token: string; guild_id: string; category_id: string; chat_channel_id: string;
-    creator_discord_user_id: string; creator_user_id: string; deal_payload: unknown; reward_payload: unknown | null;
+    creator_discord_user_id: string; creator_user_id: string; request_kind: CreatorApprovalRequestKind;
+    deal_payload: unknown | null; reward_payload: unknown | null; leaderboard_payload: unknown | null;
+    window_start_at: string; window_end_at: string;
     agreement_version: number; agreement_lines: unknown; delivery_attempt_count: number; summary_message_id: string | null;
   }>(sql`
     WITH exhausted AS (
@@ -283,17 +403,27 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
     FROM candidates WHERE request.id = candidates.id
     RETURNING request.id::text, request.delivery_lease_token::text AS lease_token, request.guild_id,
       request.category_id, request.chat_channel_id, request.creator_discord_user_id, request.creator_user_id,
-      request.deal_payload, request.reward_payload, request.agreement_version, request.agreement_lines,
+      request.request_kind, request.deal_payload, request.reward_payload, request.leaderboard_payload,
+      request.window_start_at, request.window_end_at, request.agreement_version, request.agreement_lines,
       request.delivery_attempt_count, request.summary_message_id
   `);
   return result.rows.map((row) => {
-    const deal = DealPayloadSchema.parse(row.deal_payload);
+    const deal = row.deal_payload == null ? null : DealPayloadSchema.parse(row.deal_payload);
     const rewards = row.reward_payload == null ? null : RewardPayloadSchema.parse(row.reward_payload);
+    const leaderboard = row.leaderboard_payload == null ? null : LeaderboardPayloadSchema.parse(row.leaderboard_payload);
     return { id: row.id, requestId: row.id, leaseToken: row.lease_token, guildId: row.guild_id,
       categoryId: row.category_id, channelId: row.chat_channel_id, creatorDiscordUserId: row.creator_discord_user_id,
       creator: { userId: row.creator_user_id, username: null },
-      deal: { ...deal, conversionRatePercent: deal.conversion_rate_bps / 100 },
-      rewards: rewards ? { ...rewards, accrualStartAt: deal.week_start_utc, endsAt: deal.week_end_utc } : null,
+      kind: row.request_kind,
+      deal: deal ? { ...deal, conversionRatePercent: deal.conversion_rate_bps / 100 } : null,
+      rewards: rewards
+        ? deal
+          ? { ...rewards, accrualStartAt: deal.week_start_utc, endsAt: deal.week_end_utc }
+          // `execute` bypasses the column's string mode, so normalize the
+          // timestamptz the driver hands back before it reaches the bot.
+          : { ...rewards, accrualStartAt: new Date(row.window_start_at).toISOString(), endsAt: new Date(row.window_end_at).toISOString() }
+        : null,
+      leaderboard,
       terms: { version: row.agreement_version, lines: z.array(z.string()).parse(row.agreement_lines) },
       attempt: row.delivery_attempt_count, previousMessageId: row.summary_message_id };
   });
@@ -302,26 +432,33 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
 export async function acknowledgeCreatorDealApprovalJob(input: {
   id: string; guildId: string; leaseToken: string; status: "delivered" | "failed";
   discordMessageId?: string; errorCode?: string; errorMessage?: string;
-}): Promise<{ status: "awaiting_continue" | "pending_delivery" | "delivery_failed" }> {
+}): Promise<{ status: "awaiting_continue" | "awaiting_decision" | "pending_delivery" | "delivery_failed" }> {
   const id = Uuid.parse(input.id); const guildId = DiscordId.parse(input.guildId); const lease = Uuid.parse(input.leaseToken);
   if (input.status === "delivered") {
     const messageId = DiscordId.parse(input.discordMessageId);
     const result = await adminDrizzle.transaction(async (tx) => {
-      const updated = await tx.execute<{ id: string }>(sql`
-        UPDATE creator_deal_approval_requests SET status = 'awaiting_continue', summary_message_id = ${messageId},
+      // Only a deal proposal has terms to present, so only a deal parks in
+      // `awaiting_continue`. A standalone leaderboard or reward program lands
+      // straight on Approve/Decline.
+      const updated = await tx.execute<{ status: "awaiting_continue" | "awaiting_decision" }>(sql`
+        UPDATE creator_deal_approval_requests
+        SET status = CASE WHEN request_kind = 'deal' THEN 'awaiting_continue' ELSE 'awaiting_decision' END,
+          summary_message_id = ${messageId},
           delivery_lease_token = NULL, delivery_lease_owner = NULL, delivery_leased_until = NULL,
           last_error_step = NULL, last_error_code = NULL, last_error_message = NULL, updated_at = now()
         WHERE id = ${id}::uuid AND guild_id = ${guildId} AND delivery_lease_token = ${lease}::uuid
-          AND status = 'pending_delivery' RETURNING id::text
+          AND status = 'pending_delivery' RETURNING status
       `);
       if (!updated.rows[0]) {
         const [already] = await tx.select({ status: creator_deal_approval_requests.status, summaryMessageId: creator_deal_approval_requests.summary_message_id })
           .from(creator_deal_approval_requests).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.guild_id, guildId))).limit(1);
-        if (already?.status === "awaiting_continue" && already.summaryMessageId === messageId) return { status: "awaiting_continue" as const };
+        if ((already?.status === "awaiting_continue" || already?.status === "awaiting_decision") && already.summaryMessageId === messageId) {
+          return { status: already.status as "awaiting_continue" | "awaiting_decision" };
+        }
         error(409, "delivery_lease_lost", "Delivery lease is no longer active.");
       }
-      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "summary_delivered", actor_kind: "bot", metadata: { discordMessageId: messageId } });
-      return { status: "awaiting_continue" as const };
+      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "summary_delivered", actor_kind: "bot", metadata: { discordMessageId: messageId, status: updated.rows[0].status } });
+      return { status: updated.rows[0].status };
     });
     return result;
   }
@@ -441,7 +578,10 @@ function continuityTermsMatch(program: ContinuityProgram, reward: z.infer<typeof
 async function continueAdjacentRewardProgram(input: {
   request: typeof creator_deal_approval_requests.$inferSelect;
   reward: z.infer<typeof RewardPayloadSchema>;
-  deal: z.infer<typeof DealPayloadSchema>;
+  /** The request's declared window start — a prior program that ended exactly
+   *  here is the only continuation candidate. Not the same as `windowStart`,
+   *  which is clamped forward to the approval time. */
+  priorEndsAt: string;
   windowStart: Date;
   windowEnd: Date;
 }): Promise<string | null> {
@@ -452,7 +592,7 @@ async function continueAdjacentRewardProgram(input: {
              max_reward_per_user_usd::text
       FROM creator_reward_programs
       WHERE creator_user_id = ${input.request.creator_user_id}
-        AND ends_at = ${input.deal.week_start_utc}::timestamptz
+        AND ends_at = ${input.priorEndsAt}::timestamptz
         AND is_active = true
         AND archived_at IS NULL
       ORDER BY created_at DESC, id DESC
@@ -492,7 +632,7 @@ async function continueAdjacentRewardProgram(input: {
       actor_kind: "system",
       metadata: {
         rewardProgramId: prior.id,
-        priorDealEndedAt: input.deal.week_start_utc,
+        priorDealEndedAt: input.priorEndsAt,
         nextDealEndsAt: input.windowEnd.toISOString(),
       },
     });
@@ -588,17 +728,18 @@ async function ensureRewardProgram(request: typeof creator_deal_approval_request
   if (!request.reward_payload) return null;
   if (request.reward_program_id) return request.reward_program_id;
   const reward = RewardPayloadSchema.parse(request.reward_payload);
-  const deal = DealPayloadSchema.parse(request.deal_payload);
   const codes = await validateCreatorAndCodes(request.creator_user_id, reward.codes);
-  const start = new Date(Math.max(new Date(deal.week_start_utc).getTime(), approvedAt.getTime()));
-  // Re-derive from the immutable deal snapshot as a fail-closed guard for
-  // proposals written before `reward_payload.endsAt` became mandatory.
-  const end = new Date(deal.week_end_utc);
+  const windowStartIso = new Date(request.window_start_at).toISOString();
+  const start = new Date(Math.max(new Date(request.window_start_at).getTime(), approvedAt.getTime()));
+  // Re-derive from the request's canonical window as a fail-closed guard for
+  // proposals written before `reward_payload.endsAt` became mandatory, and so
+  // a deal-less rewards request works with no deal snapshot at all.
+  const end = new Date(request.window_end_at);
   if (end <= start) error(409, "reward_window_elapsed", "The reward program would end before it can begin.");
   const continuedProgramId = await continueAdjacentRewardProgram({
     request,
     reward,
-    deal,
+    priorEndsAt: windowStartIso,
     windowStart: start,
     windowEnd: end,
   });
@@ -621,6 +762,65 @@ async function ensureRewardProgram(request: typeof creator_deal_approval_request
     await tx.insert(creator_reward_program_windows).values({ program_id: program.id, started_at: start.toISOString(), ended_at: end.toISOString() });
     return program.id;
   });
+}
+
+/**
+ * Create the approved leaderboard on MAIN and bind its id to the request.
+ *
+ * IDEMPOTENCY IS NARROWER HERE THAN FOR DEALS. A backend deal carries our
+ * `creator_approval_request_id` in its terms, so a retry can re-list deals and
+ * recognise its own earlier write. Affiliate leaderboards have no such marker
+ * field and no clean way to re-identify one, so the only anchor is
+ * `request.leaderboard_id`, written after the remote create returns. A crash in
+ * that gap can double-create a board on a later retry. That is accepted and not
+ * worked around: leaderboards are site-funded, so a duplicate costs no creator
+ * balance and an operator can cancel the extra board.
+ */
+async function ensureLeaderboard(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string | null> {
+  if (!request.leaderboard_payload) return null;
+  if (request.leaderboard_id) return request.leaderboard_id;
+  const board = LeaderboardPayloadSchema.parse(request.leaderboard_payload);
+  const codes = await validateCreatorAndCodes(request.creator_user_id, board.codes);
+  const created = await affiliateLeaderboardsApi.create({
+    creator_user_id: request.creator_user_id,
+    co_creator_user_ids: [],
+    title: board.title,
+    affiliate_codes: codes,
+    site_bonus_usd: board.siteBonusUsd,
+    start_date: board.startsAt,
+    end_date: board.endsAt,
+    prize_tiers: board.prizeTiers.map((tier) => ({ position: tier.position, prize_amount_usd: tier.prizeAmountUsd })),
+  }, request.submitted_by);
+  await adminDrizzle.transaction(async (tx) => {
+    await tx.update(creator_deal_approval_requests).set({
+      leaderboard_id: created.id,
+      updated_at: new Date().toISOString(),
+    }).where(eq(creator_deal_approval_requests.id, request.id));
+    // The house share is our own cost-accounting annotation, not a backend
+    // field — mirrors `setLeaderboardSponsorship`, which needs an interactive
+    // admin session this worker does not have.
+    if (board.sponsoredPct !== 100) {
+      await tx.insert(admin_leaderboard_sponsorship).values({
+        leaderboard_id: created.id,
+        sponsored_percentage: String(board.sponsoredPct),
+        set_by_admin_id: request.submitted_by,
+      }).onConflictDoUpdate({
+        target: admin_leaderboard_sponsorship.leaderboard_id,
+        set: {
+          sponsored_percentage: String(board.sponsoredPct),
+          set_by_admin_id: request.submitted_by,
+          updated_at: new Date().toISOString(),
+        },
+      });
+    }
+    await tx.insert(creator_deal_approval_events).values({
+      request_id: request.id,
+      event_type: "leaderboard_provisioned",
+      actor_kind: "system",
+      metadata: { leaderboardId: created.id, sponsoredPct: board.sponsoredPct, siteBonusUsd: board.siteBonusUsd },
+    });
+  });
+  return created.id;
 }
 
 export async function provisionApprovedCreatorDealRequest(
@@ -658,21 +858,30 @@ export async function provisionApprovedCreatorDealRequest(
       });
     }
     const approvedAt = request.approved_at ? new Date(request.approved_at) : new Date();
-    const deal = DealPayloadSchema.parse(request.deal_payload);
-    if (new Date(deal.week_end_utc) <= approvedAt) error(409, "deal_window_elapsed", "The approved deal has already ended.");
-    const backendDealId = await ensureBackendDeal(request);
-    await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
-    const rewardProgramId = await ensureRewardProgram({ ...request, backend_deal_id: backendDealId }, approvedAt);
+    const kind = request.request_kind as CreatorApprovalRequestKind;
+    if (new Date(request.window_end_at) <= approvedAt) error(409, "deal_window_elapsed", "The approved request has already ended.");
+    // Every kind provisions only what it actually carries. A deal request may
+    // bundle any combination of the three; the standalone kinds carry exactly
+    // one, which the table CHECK guarantees.
+    let backendDealId: string | null = request.backend_deal_id;
+    if (kind === "deal") {
+      backendDealId = await ensureBackendDeal(request);
+      await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
+    }
+    const withDeal = { ...request, backend_deal_id: backendDealId };
+    const rewardProgramId = kind === "leaderboard_only" ? null : await ensureRewardProgram(withDeal, approvedAt);
+    const leaderboardId = kind === "rewards_only" ? null : await ensureLeaderboard(withDeal);
     await adminDrizzle.transaction(async (tx) => {
       const completed = await tx.execute<{ creator_user_id: string }>(sql`
         UPDATE creator_deal_approval_requests SET status = 'completed', backend_deal_id = ${backendDealId}, reward_program_id = ${rewardProgramId}::uuid,
+          leaderboard_id = ${leaderboardId}::uuid,
           provisioning_lease_token = NULL, provisioning_leased_until = NULL, last_error_step = NULL,
           last_error_code = NULL, last_error_message = NULL, completed_at = now(), updated_at = now()
         WHERE id = ${id}::uuid AND provisioning_lease_token = ${token}::uuid RETURNING creator_user_id
       `);
       if (!completed.rows[0]) error(409, "provisioning_lease_lost", "Provisioning lease expired.");
-      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { backendDealId, rewardProgramId } });
-      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, backendDealId, rewardProgramId } });
+      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
+      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
     });
     return { status: "approved", requestId: id };
   } catch (cause) {
@@ -680,7 +889,12 @@ export async function provisionApprovedCreatorDealRequest(
     await adminDrizzle.transaction(async (tx) => {
       const failed = await tx.execute<{ last_error_step: string }>(sql`
         UPDATE creator_deal_approval_requests SET status = 'provisioning_failed', provisioning_lease_token = NULL,
-          provisioning_leased_until = NULL, last_error_step = CASE WHEN backend_deal_id IS NULL THEN 'backend_deal' ELSE 'reward_program' END,
+          provisioning_leased_until = NULL, last_error_step = CASE
+            WHEN request_kind = 'leaderboard_only' THEN 'leaderboard'
+            WHEN request_kind = 'rewards_only' THEN 'reward_program'
+            WHEN backend_deal_id IS NULL THEN 'backend_deal'
+            WHEN reward_payload IS NOT NULL AND reward_program_id IS NULL THEN 'reward_program'
+            ELSE 'leaderboard' END,
           last_error_code = ${cause instanceof CreatorDealApprovalError ? cause.code : "provisioning_error"},
           last_error_message = ${message.slice(0, 500)}, updated_at = now()
         WHERE id = ${id}::uuid AND provisioning_lease_token = ${token}::uuid RETURNING last_error_step
@@ -754,9 +968,10 @@ export async function respondToCreatorDealApproval(input: {
       .from(creator_deal_approval_events).where(eq(creator_deal_approval_events.interaction_id, parsed.interactionId)).limit(1);
     if (prior[0]) return request;
 
-    const dealWindow = DealPayloadSchema.parse(request.deal_payload);
+    // Canonical for every kind — a standalone leaderboard or reward request
+    // has no deal snapshot to read a window from.
     if (
-      new Date(dealWindow.week_end_utc).getTime() <= Date.now()
+      new Date(request.window_end_at).getTime() <= Date.now()
       && ["pending_delivery", "awaiting_continue", "awaiting_decision", "delivery_failed"].includes(request.status)
     ) {
       const [expired] = await tx.update(creator_deal_approval_requests).set({
@@ -837,6 +1052,9 @@ export async function respondToCreatorDealApproval(input: {
     if (transition.status === "completed") return { status: "approved", requestId: parsed.requestId };
     if (transition.status === "declined") return { status: "declined", requestId: parsed.requestId };
     if (transition.status === "provisioning_failed") return { status: "failed", requestId: parsed.requestId };
+    // Only a deal has terms to present. A stray continue on a standalone
+    // leaderboard/rewards request is tolerated as a no-op, never as consent.
+    if (transition.request_kind !== "deal") return { status: "awaiting_decision", requestId: parsed.requestId };
     return { status: "awaiting_decision", requestId: parsed.requestId, terms: { version: transition.agreement_version, lines: z.array(z.string()).parse(transition.agreement_lines), checksum: transition.agreement_checksum } };
   }
   if (parsed.action === "decline" || transition.status === "declined") return { status: "declined", requestId: parsed.requestId };

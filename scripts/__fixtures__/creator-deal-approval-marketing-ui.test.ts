@@ -10,13 +10,18 @@ test("new creator deal is a three-step approval request, never an immediate crea
   const action = read(`${detail}/_components/deal-approval-actions.ts`);
   const fields = read(`${detail}/_components/deal-form-shared.tsx`);
 
-  assert.match(dialog, /"deal" \| "rewards" \| "confirm" \| "queued"/);
+  assert.match(dialog, /"deal" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
   assert.match(dialog, /Skip rewards/);
+  assert.match(dialog, /Skip leaderboard/);
+  assert.match(dialog, /leaderboardPayload/);
   assert.match(dialog, /submitCreatorDealApproval/);
   assert.match(dialog, /formatDate\(dealPayload\.week_start_utc, "UTC"\)/);
   assert.doesNotMatch(dialog, /formatDateTime\(dealPayload\.week_start_utc/);
   assert.match(dialog, /label="Program ends" value=\{formatDate\(dealPayload\.week_end_utc, "UTC"\)\}/);
   assert.doesNotMatch(dialog, /createCreatorDeal\(|createCreatorRewardProgram\(/);
+  // The creator is obvious from the page — no identity box inside the wizard.
+  assert.doesNotMatch(dialog, /creatorLabel/);
+  assert.doesNotMatch(read(`${detail}/_components/creator-reward-draft-fields.tsx`), /creatorLabel/);
   assert.match(action, /createCreatorDealApprovalRequest/);
   assert.doesNotMatch(action, /createCreatorDeal\(|createCreatorRewardProgram\(/);
 

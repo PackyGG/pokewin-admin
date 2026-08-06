@@ -5,8 +5,9 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator deal approval is durable, identity-bound, and recoverable", async () => {
-  const [migration, workflow, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
+  const [migration, leaderboardMigration, workflow, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
     read("drizzle/admin/migrations/20260806_creator_deal_approval_workflow.sql"),
+    read("drizzle/admin/migrations/20260806_creator_deal_approval_leaderboard.sql"),
     read("src/lib/creator-deal-approvals.ts"),
     read("src/lib/creator-agreement-terms.ts"),
     read("src/app/api/v1/discord/creator-deal-approvals/jobs/claim/route.ts"),
@@ -45,6 +46,7 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(workflow, /previousMessageId: row\.summary_message_id/);
   assert.match(workflow, /endsAt: deal\.week_end_utc/);
   assert.match(workflow, /summary_delivery_requeued/);
+  assert.match(workflow, /endsAt: dealPayload \? dealPayload\.week_end_utc : windowEndIso/);
   assert.match(workflow, /resolveLinkedSiteAdmin\(parsed\.actorDiscordUserId\)/);
   assert.match(workflow, /eq\(account\.providerId, "discord"\)/);
   assert.match(workflow, /linked\.role !== "admin"/);
@@ -71,19 +73,45 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
     "the per-creator lock and overlap read must happen before create",
   );
   assert.match(workflow, /source_approval_request_id: request\.id/);
-  assert.match(workflow, /Math\.max\(new Date\(deal\.week_start_utc\)\.getTime\(\), approvedAt\.getTime\(\)\)/);
+  assert.match(workflow, /Math\.max\(new Date\(request\.window_start_at\)\.getTime\(\), approvedAt\.getTime\(\)\)/);
   assert.match(workflow, /status = 'provisioning_failed'/);
   assert.match(workflow, /status = 'completed'/);
   assert.match(workflow, /conversionRatePercent/);
   assert.match(workflow, /accrualStartAt/);
-  assert.match(workflow, /endsAt: dealPayload\.week_end_utc/);
-  assert.match(workflow, /const end = new Date\(deal\.week_end_utc\)/);
+  assert.match(workflow, /const end = new Date\(request\.window_end_at\)/);
   assert.doesNotMatch(workflow, /new Date\(reward\.endsAt \?\?/);
   assert.match(workflow, /continueAdjacentRewardProgram/);
-  assert.match(workflow, /ends_at = \$\{input\.deal\.week_start_utc\}::timestamptz/);
+  assert.match(workflow, /ends_at = \$\{input\.priorEndsAt\}::timestamptz/);
   assert.match(workflow, /rewardProgramsCanContinue/);
   assert.match(workflow, /event_type: "reward_program_continued"/);
   assert.match(workflow, /reward_program_id: prior\.id/);
+
+  // Standalone leaderboard / rewards approvals: one payload each, no deal,
+  // no terms step, and a leaderboard that is only ever provisioned once the
+  // creator approves.
+  assert.match(leaderboardMigration, /request_kind TEXT NOT NULL DEFAULT 'deal'/);
+  assert.match(leaderboardMigration, /leaderboard_payload JSONB/);
+  assert.match(leaderboardMigration, /leaderboard_id UUID/);
+  assert.match(leaderboardMigration, /creator_deal_approval_kind_payload_check/);
+  assert.match(leaderboardMigration, /ALTER COLUMN deal_payload DROP NOT NULL/);
+  assert.match(leaderboardMigration, /window_start_at TIMESTAMPTZ\(6\)/);
+  assert.match(leaderboardMigration, /window_end_at TIMESTAMPTZ\(6\)/);
+  assert.match(leaderboardMigration, /deal_payload ->> 'week_start_utc'/);
+  assert.match(leaderboardMigration, /\(creator_user_id, request_kind\)/);
+  assert.match(workflow, /const LeaderboardPayloadSchema/);
+  assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "leaderboard_only" \| "rewards_only"/);
+  assert.match(workflow, /async function ensureLeaderboard/);
+  assert.match(workflow, /affiliateLeaderboardsApi\.create/);
+  assert.match(workflow, /if \(request\.leaderboard_id\) return request\.leaderboard_id/);
+  assert.match(workflow, /codes: await loadAllCreatorCodes\(creatorUserId\)/);
+  assert.match(workflow, /startsAt: windowStartIso/);
+  assert.match(workflow, /WHEN request_kind = 'deal' THEN 'awaiting_continue' ELSE 'awaiting_decision' END/);
+  assert.match(workflow, /kind === "leaderboard_only" \? null : await ensureRewardProgram/);
+  assert.match(workflow, /kind === "rewards_only" \? null : await ensureLeaderboard/);
+  assert.match(workflow, /new Date\(request\.window_end_at\)\.getTime\(\) <= Date\.now\(\)/);
+  assert.match(workflow, /transition\.request_kind !== "deal"/);
+  // Never re-derive the deal window from a payload that may not exist.
+  assert.doesNotMatch(workflow, /DealPayloadSchema\.parse\(request\.deal_payload\)\.week_end_utc/);
 
   for (const route of [claim, ack, respond, continueRoute, decisionRoute]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);

@@ -59,12 +59,8 @@ function DealTerm({
 
 export async function DealCard({
   userId,
-  username = null,
 }: {
   userId: string;
-  /** Creator username (from the page header) — used by the terminate
-   *  dialog's typed confirmation; null when the header degraded. */
-  username?: string | null;
 }) {
   const heading = (
     <SectionHeading
@@ -245,11 +241,7 @@ export async function DealCard({
                 Affiliate Leaderboards card, and four inline buttons up there
                 wrapped badly. */}
             <div className="ml-auto flex items-center gap-1.5">
-              <DealCardActions
-                userId={userId}
-                username={username}
-                deal={activeDeal}
-              />
+              <DealCardActions userId={userId} deal={activeDeal} />
             </div>
           </div>
         </CardContent>

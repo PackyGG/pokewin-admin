@@ -146,7 +146,6 @@ export default async function CreatorHubCreatorDetailPage({
         {tab === "overview" && (
           <OverviewTab
             userId={id}
-            username={header?.username ?? null}
             activityPeriod={parseCreatorActivityPeriod(sp.activityPeriod)}
           />
         )}
