@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, or, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
@@ -240,6 +240,8 @@ export type CreatorSetupRewards = {
     } | null;
     maxRewardPerUserUsd: number | null;
     accrualStartAt: string;
+    /** ISO-8601 UTC scheduled stop; null means no scheduled end. */
+    endsAt: string | null;
   }>;
 };
 
@@ -690,12 +692,17 @@ export async function getCreatorSetupRewards(input: {
       minDepositUsd: creator_reward_programs.min_deposit_usd,
       maxRewardPerUserUsd: creator_reward_programs.max_reward_per_user_usd,
       accrualStartAt: creator_reward_programs.accrual_start_at,
+      endsAt: creator_reward_programs.ends_at,
     })
     .from(creator_reward_programs)
     .where(
       and(
         eq(creator_reward_programs.creator_user_id, setup.creator_user_id),
         eq(creator_reward_programs.is_active, true),
+        or(
+          isNull(creator_reward_programs.ends_at),
+          gt(creator_reward_programs.ends_at, sql`now()`),
+        ),
       ),
     )
     .orderBy(desc(creator_reward_programs.created_at));
@@ -735,6 +742,7 @@ export async function getCreatorSetupRewards(input: {
           ? null
           : money(program.maxRewardPerUserUsd),
       accrualStartAt: new Date(program.accrualStartAt).toISOString(),
+      endsAt: program.endsAt ? new Date(program.endsAt).toISOString() : null,
     })),
   };
 }

@@ -87,6 +87,16 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(rewards, /rejectWrongGuild/);
   assert.match(service, /creator_reward_programs/);
   assert.match(service, /creator_reward_programs\.is_active, true/);
+  assert.match(service, /endsAt: creator_reward_programs\.ends_at/);
+  assert.match(service, /isNull\(creator_reward_programs\.ends_at\)/);
+  assert.match(
+    service,
+    /gt\(creator_reward_programs\.ends_at, sql`now\(\)`\)/,
+  );
+  assert.match(
+    service,
+    /endsAt: program\.endsAt \? new Date\(program\.endsAt\)\.toISOString\(\) : null/,
+  );
   assert.match(service, /thresholdUsd/);
   assert.match(service, /vipRewardUsd/);
   assert.match(service, /lossbackPct/);
