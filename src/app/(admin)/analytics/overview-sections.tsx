@@ -115,7 +115,9 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
               GGR · this period
             </p>
-            <p className="text-lg font-semibold tabular-nums text-emerald-500">
+            <p
+              className={`text-lg font-semibold tabular-nums ${houseTone(data.ggr)}`}
+            >
               {formatCurrency(data.ggr)}
             </p>
             <p className="text-[11px] text-muted-foreground">
@@ -126,7 +128,9 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
               NGR · this period
             </p>
-            <p className="text-lg font-semibold tabular-nums text-emerald-500">
+            <p
+              className={`text-lg font-semibold tabular-nums ${houseTone(data.ngr)}`}
+            >
               {formatCurrency(data.ngr)}
             </p>
             <p className="text-[11px] text-muted-foreground">

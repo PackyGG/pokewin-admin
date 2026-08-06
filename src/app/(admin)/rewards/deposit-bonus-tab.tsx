@@ -46,7 +46,7 @@ export function DepositBonusTab({
 
   return (
     <div className="space-y-6">
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
+      <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
         {DB_SUBTABS.map((t) => (
           <Link
             key={t.value}
@@ -178,12 +178,13 @@ async function TrackerBody() {
             icon={Coins}
             accent="rose"
           />
+          {/* House-POV: a deposit is money into the house → emerald. */}
           <KpiTile
             label="Deposits (since live)"
             value={formatCurrency(since.deposits)}
             sub={`${formatNumber(since.depositors)} depositors`}
             icon={Wallet}
-            accent="blue"
+            accent="emerald"
           />
           <KpiTile
             label="New effective rate"

@@ -22,6 +22,7 @@ import {
   formatRelative,
 } from "@/lib/utils/format";
 import { formatSignupProvider } from "@/lib/utils/signup-provider";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import { EmptyState } from "@/components/empty-state";
 import { toggleFeatureLock } from "./actions";
 import { createNote, deleteNote } from "./note-actions";
@@ -132,9 +133,9 @@ export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
             balances.vouchersValue;
           const cls =
             platformPnl > 0
-              ? "text-emerald-400"
+              ? "text-emerald-600 dark:text-emerald-400"
               : platformPnl < 0
-                ? "text-rose-400"
+                ? "text-rose-600 dark:text-rose-400"
                 : "text-foreground";
           return (
             <div className="flex items-center justify-between border-t pt-2">
@@ -210,7 +211,7 @@ export const PnlCard = React.memo(function PnlCard({
           <div className="flex items-baseline gap-3">
             <span className="text-sm text-muted-foreground">P&L</span>
             <span
-              className={`text-2xl font-bold tabular-nums ${platformPnl >= 0 ? "text-emerald-400" : "text-rose-400"}`}
+              className={`text-2xl font-bold tabular-nums ${houseAmountTextClass(platformPnl)}`}
             >
               {platformPnl >= 0 ? "+" : ""}
               {formatCurrency(platformPnl)}

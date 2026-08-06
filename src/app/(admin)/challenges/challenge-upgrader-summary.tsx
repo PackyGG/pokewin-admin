@@ -96,10 +96,11 @@ export function ChallengeUpgraderSummaryPanel({
             value={formatUpgraderMultiplier(summary.mult)}
             accent="purple"
           />
+          {/* House-POV: a bet is a WAGER — money into the house → emerald. */}
           <MetricTile
             label="Min bet"
             value={formatCurrency(summary.bet)}
-            accent="rose"
+            accent="emerald"
           />
           <MetricTile
             label="Expected attempts"

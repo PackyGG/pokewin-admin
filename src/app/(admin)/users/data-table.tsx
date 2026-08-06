@@ -140,13 +140,13 @@ function BulkDeleteDialog({
     <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setTotpCode(""); }}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle className="text-rose-400">
+          <DialogTitle className="text-rose-600 dark:text-rose-400">
             Delete {ids.length} user{ids.length !== 1 ? "s" : ""} permanently
           </DialogTitle>
         </DialogHeader>
         <div className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            This will <span className="font-semibold text-rose-400">permanently delete</span> the
+            This will <span className="font-semibold text-rose-600 dark:text-rose-400">permanently delete</span> the
             following users and all their data. This cannot be undone.
           </p>
           <div className="max-h-[200px] overflow-y-auto rounded-md border bg-muted/30 p-2">
@@ -275,8 +275,8 @@ function UserMobileCard({
           <div
             className={cn(
               "text-[10px] tabular-nums",
-              pnlIsUserProfit && "text-rose-400",
-              pnlIsUserLoss && "text-emerald-400",
+              pnlIsUserProfit && "text-rose-600 dark:text-rose-400",
+              pnlIsUserLoss && "text-emerald-600 dark:text-emerald-400",
               !pnlIsUserProfit && !pnlIsUserLoss && "text-muted-foreground",
             )}
           >

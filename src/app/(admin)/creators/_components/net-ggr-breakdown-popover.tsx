@@ -3,6 +3,7 @@
 import { Info } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import { formatCurrency } from "@/lib/utils/format";
 import {
   Popover,
@@ -133,7 +134,7 @@ export function NetGgrBreakdownPopover({
             <span
               className={cn(
                 "font-bold tabular-nums",
-                ggrIsProfit ? "text-emerald-400" : "text-rose-400",
+                houseAmountTextClass(ggr),
               )}
             >
               {ggrIsProfit ? "+" : "−"}
@@ -167,7 +168,7 @@ function BreakdownSection({
   rows: { label: string; total: number }[];
   tone: "wager" | "payout";
 }) {
-  const totalColor = tone === "payout" ? "text-rose-400" : "text-foreground";
+  const totalColor = tone === "payout" ? "text-rose-600 dark:text-rose-400" : "text-foreground";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -195,7 +196,7 @@ function BreakdownSection({
               <span
                 className={cn(
                   "shrink-0 tabular-nums",
-                  tone === "payout" ? "text-rose-400/90" : "text-foreground/80",
+                  tone === "payout" ? "text-rose-600/90 dark:text-rose-400/90" : "text-foreground/80",
                 )}
               >
                 {formatCurrency(r.total)}

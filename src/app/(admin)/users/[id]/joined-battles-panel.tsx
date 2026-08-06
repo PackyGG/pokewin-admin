@@ -7,14 +7,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { InlineError } from "@/components/entity-surface/inline-error";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import {
   getUserJoinedSponsoredBattles,
   type JoinedBattleRow,
 } from "./actions";
 
+// House-POV (CLAUDE.md §7): `result` is the USER's outcome, so the polarity is
+// inverted relative to the house. A user WIN is money we paid out → rose; a
+// user LOSS is money we kept → emerald. Same convention as the explicit note in
+// `transaction-detail-modal.tsx`.
 const RESULT_STYLES: Record<JoinedBattleRow["result"], string> = {
-  win: "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
-  lose: "border-rose-500/30 bg-rose-500/15 text-rose-700 dark:text-rose-300",
+  win: "border-rose-500/30 bg-rose-500/15 text-rose-700 dark:text-rose-300",
+  lose: "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   pending:
     "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300",
 };
@@ -142,7 +147,17 @@ export function JoinedBattlesPanel({ userId }: { userId: string }) {
                     </Link>
                   </p>
                 </div>
-                <span className="shrink-0 font-semibold tabular-nums text-emerald-600 dark:text-emerald-400">
+                {/* `winnings` is what the USER took out of a free/sponsored
+                    battle — 100% house payout with no offsetting wager (the
+                    query filters to battles with no `battle_bet` row). House
+                    down → rose. */}
+                <span
+                  className={`shrink-0 font-semibold tabular-nums ${
+                    b.winnings > 0
+                      ? houseAmountTextClass(-b.winnings)
+                      : "text-muted-foreground"
+                  }`}
+                >
                   {b.winnings > 0 ? formatCurrency(b.winnings) : "—"}
                 </span>
               </div>

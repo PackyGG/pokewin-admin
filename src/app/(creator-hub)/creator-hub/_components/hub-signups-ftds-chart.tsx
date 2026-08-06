@@ -14,20 +14,21 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatNumber } from "@/lib/utils/format";
+import { CHART_COLORS } from "@/lib/constants";
 import { type HubSignupsFtdsChartRow } from "../_queries/hub-types";
 
-// Two emerald shades — same pair as the main dashboard's merged
-// Signups+FTDs chart (src/app/(admin)/dashboard/charts.tsx), so the funnel
-// reads identically across surfaces: tall emerald-500 signup bar next to a
-// short emerald-300 FTD bar.
+// Same pair as the main dashboard's merged Signups+FTDs chart
+// (src/app/(admin)/dashboard/charts.tsx), so the funnel reads identically
+// across surfaces. House-POV: a sign-up moves no money (`ledgerDirection`
+// classifies `signup` as neutral) → blue; an FTD is a real deposit → emerald.
 const config = {
   signups: {
     label: "Sign-ups",
-    color: "#10b981", // emerald-500
+    color: CHART_COLORS.blue,
   },
   ftds: {
     label: "FTDs",
-    color: "#6ee7b7", // emerald-300
+    color: CHART_COLORS.emerald,
   },
 } satisfies ChartConfig;
 

@@ -72,3 +72,40 @@ export const USER_STATUS_COLORS: Record<string, string> = {
  * disagree about what "suspicious" means.
  */
 export const IP_CLUSTER_SUSPICIOUS_MAX = 4;
+
+/**
+ * ─── CHART_COLORS ─────────────────────────────────────────────────────────
+ *
+ * The literal hexes every Recharts surface in the app was re-declaring by
+ * hand (`const EMERALD = "#10b981"`, `PNL_UP`, `ROSE`, `BLUE`, `rgb(16 185
+ * 129)`, …) — ~30 copies across nine chart files. Recharts needs a concrete
+ * color string, so these cannot be the `--chart-*` CSS variables the rest of
+ * the app uses; centralizing the literals is the next best thing and stops
+ * "the same emerald" from drifting into two shades.
+ *
+ * Values are the Tailwind 500-step hexes, byte-identical to the copies they
+ * replace — importing this is a zero-visual-diff change.
+ *
+ * House-POV (CLAUDE.md §7) semantics for the money hues:
+ *   emerald → house gained (wager, deposits, GGR/NGR/P&L positive)
+ *   rose    → house paid out (payouts, reward cost, P&L negative)
+ *   blue    → neutral, non-money event (signups, counts, gross lines)
+ * `cyan` / `amber` / `purple` are neutral series hues for telling two
+ * non-money lines apart in one chart — they carry no money meaning.
+ */
+export const CHART_COLORS = {
+  /** emerald-500 — house gained. */
+  emerald: "#10b981",
+  /** emerald-300 — a lighter emerald for a second house-gain series. */
+  emeraldLight: "#6ee7b7",
+  /** rose-500 — house paid out. */
+  rose: "#f43f5e",
+  /** blue-500 — neutral / non-money. */
+  blue: "#3b82f6",
+  /** cyan-500 — neutral series hue. */
+  cyan: "#06b6d4",
+  /** amber-500 — neutral series hue. */
+  amber: "#f59e0b",
+  /** purple-500 — neutral series hue. */
+  purple: "#a855f7",
+} as const;

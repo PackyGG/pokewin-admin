@@ -95,9 +95,13 @@ const revenueConfig = {
   ngr: { label: "NGR", color: "var(--color-chart-2)" },
 } satisfies ChartConfig;
 
+// Both legs are WAGER — house income. `--chart-4` is pure red in both Grailed
+// themes (globals.css), so battle wager read as a loss beside the pack-wager
+// leg of the same quantity. Moved to `--chart-5`, which stays distinct from
+// pack wager's `--chart-3` in every theme without the loss connotation.
 const wagersConfig = {
   packWager: { label: "Pack Wagers", color: "var(--color-chart-3)" },
-  battleWager: { label: "Battle Wagers", color: "var(--color-chart-4)" },
+  battleWager: { label: "Battle Wagers", color: "var(--color-chart-5)" },
 } satisfies ChartConfig;
 
 const usersConfig = {

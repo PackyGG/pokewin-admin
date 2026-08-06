@@ -20,6 +20,7 @@ import {
 import { AnimatedNumber } from "@/components/animated-number";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import { TodayNetHoldingsHoldersChip } from "./today-net-holdings-holders";
 import { GgrBreakdownPopover } from "./revenue-stat-card";
 import type { GgrBreakdown } from "@/lib/queries/dashboard";
@@ -133,15 +134,15 @@ export function TodayPnlStatCard({
         <div className="flex shrink-0 items-center gap-1.5">
           <RawCashPnlBadge pnl={rawCashPnl} />
           {isProfit ? (
-            <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+            <TrendingUp className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
           ) : (
-            <TrendingDown className="size-4 shrink-0 text-rose-400" />
+            <TrendingDown className="size-4 shrink-0 text-rose-600 dark:text-rose-400" />
           )}
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
         <div className="text-stat-value truncate">
-          <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+          <span className={houseAmountTextClass(pnl)}>
             {isProfit ? "+" : "−"}
             <AnimatedNumber value={Math.abs(pnl)} format="currency" />
           </span>
@@ -231,13 +232,13 @@ function TodayGgrSection({ ggr }: { ggr: TodayGgrPayload }) {
           />
         </p>
         {isProfit ? (
-          <TrendingUp className="size-4 shrink-0 text-emerald-400" />
+          <TrendingUp className="size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
         ) : (
-          <TrendingDown className="size-4 shrink-0 text-rose-400" />
+          <TrendingDown className="size-4 shrink-0 text-rose-600 dark:text-rose-400" />
         )}
       </div>
       <div className="truncate text-lg font-bold tabular-nums sm:text-xl">
-        <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+        <span className={houseAmountTextClass(ggr.value)}>
           {isProfit ? "+" : "−"}
           <AnimatedNumber value={Math.abs(ggr.value)} format="currency" />
         </span>
@@ -483,7 +484,7 @@ function TodayPnlInfoPopover({
             <span
               className={cn(
                 "font-bold tabular-nums",
-                isProfit ? "text-emerald-400" : "text-rose-400",
+                houseAmountTextClass(isProfit ? 1 : -1),
               )}
             >
               {isProfit ? "+" : "−"}

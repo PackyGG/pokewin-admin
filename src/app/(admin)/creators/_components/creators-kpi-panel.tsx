@@ -3,6 +3,7 @@ import { type LucideIcon } from "lucide-react";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import {
   AnimatedNumber,
   type AnimatedNumberFormat,
@@ -41,12 +42,12 @@ import {
 // accent lives ONLY on the header icon + the hero value number. Restricted to
 // the accents the /creators strip uses.
 const ICON_TINT = {
-  cyan: "text-cyan-400",
-  purple: "text-purple-400",
-  emerald: "text-emerald-400",
-  pink: "text-pink-400",
-  blue: "text-blue-400",
-  rose: "text-rose-400",
+  cyan: "text-cyan-600 dark:text-cyan-400",
+  purple: "text-purple-600 dark:text-purple-400",
+  emerald: "text-emerald-600 dark:text-emerald-400",
+  pink: "text-pink-600 dark:text-pink-400",
+  blue: "text-blue-600 dark:text-blue-400",
+  rose: "text-rose-600 dark:text-rose-400",
 } as const;
 
 export type CreatorsPanelTint = keyof typeof ICON_TINT;
@@ -110,7 +111,7 @@ export function CreatorsSignedHero({ value }: { value: number | null }) {
   const isProfit = value >= 0;
   return (
     <div className="text-stat-value truncate">
-      <span className={isProfit ? "text-emerald-400" : "text-rose-400"}>
+      <span className={houseAmountTextClass(value)}>
         {isProfit ? "+" : "−"}
         <AnimatedNumber value={Math.abs(value)} format="currency" />
       </span>

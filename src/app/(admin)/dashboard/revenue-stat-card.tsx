@@ -5,6 +5,7 @@ import Link from "next/link";
 import { ChevronDown, Info, Loader2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
+import { houseAmountTextClass } from "@/lib/house-pov";
 import {
   Popover,
   PopoverContent,
@@ -166,7 +167,7 @@ export function GgrBreakdownPopover({
             <span
               className={cn(
                 "font-bold tabular-nums text-sm",
-                headlineIsProfit ? "text-emerald-400" : "text-rose-400",
+                houseAmountTextClass(headlineGgr),
               )}
             >
               {headlineIsProfit ? "+" : "−"}
@@ -234,7 +235,7 @@ export function GgrBreakdownPopover({
             <span
               className={cn(
                 "font-bold tabular-nums",
-                ggrIsProfit ? "text-emerald-400" : "text-rose-400",
+                houseAmountTextClass(breakdown.ggr),
               )}
             >
               {ggrIsProfit ? "+" : "−"}
@@ -260,13 +261,13 @@ export function GgrBreakdownPopover({
           </div>
           <div className="flex items-center justify-between rounded px-1 py-0.5 text-[11px]">
             <span className="text-muted-foreground">Deposits</span>
-            <span className="tabular-nums text-emerald-400/90">
+            <span className="tabular-nums text-emerald-600/90 dark:text-emerald-400/90">
               +{formatCurrency(deposits)}
             </span>
           </div>
           <div className="flex items-center justify-between rounded px-1 py-0.5 text-[11px]">
             <span className="text-muted-foreground">Withdrawals</span>
-            <span className="tabular-nums text-rose-400/90">
+            <span className="tabular-nums text-rose-600/90 dark:text-rose-400/90">
               −{formatCurrency(withdrawals)}
             </span>
           </div>
@@ -277,7 +278,7 @@ export function GgrBreakdownPopover({
             <span
               className={cn(
                 "font-bold tabular-nums",
-                cashIsProfit ? "text-emerald-400" : "text-rose-400",
+                houseAmountTextClass(cashGgr),
               )}
             >
               {cashIsProfit ? "+" : "−"}
@@ -314,7 +315,7 @@ export function GgrBreakdownPopover({
           {contribState.open && (
             <div className="mt-1.5">
               {contribState.error ? (
-                <p className="px-1.5 py-2 text-[10px] text-rose-400">
+                <p className="px-1.5 py-2 text-[10px] text-rose-600 dark:text-rose-400">
                   {contribState.error}
                 </p>
               ) : contribState.rows && contribState.rows.length > 0 ? (
@@ -356,7 +357,7 @@ function BreakdownSection({
   tone: "wager" | "payout";
 }) {
   const totalColor =
-    tone === "payout" ? "text-rose-400" : "text-foreground";
+    tone === "payout" ? "text-rose-600 dark:text-rose-400" : "text-foreground";
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between text-[10px] uppercase tracking-wider text-muted-foreground">
@@ -391,7 +392,7 @@ function BreakdownSection({
                 className={cn(
                   "shrink-0 tabular-nums",
                   tone === "payout"
-                    ? "text-rose-400/90"
+                    ? "text-rose-600/90 dark:text-rose-400/90"
                     : "text-foreground/80",
                 )}
               >
@@ -448,9 +449,9 @@ function ContributorList({ rows }: { rows: GgrTopContributorRow[] }) {
                   className={cn(
                     "min-w-[64px] text-right font-semibold",
                     isHouseProfit
-                      ? "text-emerald-400"
+                      ? "text-emerald-600 dark:text-emerald-400"
                       : isHouseLoss
-                        ? "text-rose-400"
+                        ? "text-rose-600 dark:text-rose-400"
                         : "text-muted-foreground/60",
                   )}
                 >

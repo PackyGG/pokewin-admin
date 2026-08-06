@@ -24,6 +24,7 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart";
 import { formatCompactUsd, formatCurrency } from "@/lib/utils/format";
+import { CHART_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
 
 const wagerConfig = {
@@ -31,9 +32,13 @@ const wagerConfig = {
     label: "Packs",
     color: "var(--color-chart-2)",
   },
+  // `--chart-4` is pure red in both Grailed themes (globals.css), which made
+  // battle wager — house income, same quantity as the pack leg beside it —
+  // read as a loss. `--chart-3` stays distinct from packs (chart-2) and
+  // upgrader (chart-5) in every theme without the loss connotation.
   battles: {
     label: "Battles",
-    color: "var(--color-chart-4)",
+    color: "var(--color-chart-3)",
   },
   upgrader: {
     label: "Upgrader",
@@ -48,11 +53,11 @@ const wagerConfig = {
 const wagerAttributionConfig = {
   organic: {
     label: "Organic",
-    color: "#06b6d4",
+    color: CHART_COLORS.cyan,
   },
   creatorCoded: {
     label: "Creator-coded",
-    color: "#f59e0b",
+    color: CHART_COLORS.amber,
   },
 } satisfies ChartConfig;
 
@@ -63,36 +68,36 @@ const depositsConfig = {
   },
 } satisfies ChartConfig;
 
-// Merged Signups+FTDs chart — two emerald shades so both series read as
-// House-POV growth (signups + first-time deposits are neutral/growth events,
-// never user-POV red/green). Grouped (not stacked) because FTDs are a STRICT
-// subset of signups: every FTD is also a signup on the same day or later, and
-// stacking would visually double-count. Grouped pairs make the conversion
-// gap obvious at a glance.
+// Merged Signups+FTDs chart. House-POV: a SIGNUP moves no money — the
+// canonical `ledgerDirection` map classifies `signup` as neutral — so it is
+// blue, not emerald. An FTD is a real deposit (house gained) and keeps
+// emerald. Grouped (not stacked) because FTDs are a STRICT subset of signups:
+// every FTD is also a signup on the same day or later, and stacking would
+// visually double-count. Grouped pairs make the conversion gap obvious.
 const signupsConfig = {
   signups: {
     label: "Signups",
-    color: "#10b981", // emerald-500
+    color: CHART_COLORS.blue,
   },
   ftds: {
     label: "FTDs",
-    color: "#6ee7b7", // emerald-300
+    color: CHART_COLORS.emerald,
   },
 } satisfies ChartConfig;
 
-// Active Depositors uses a hex (cyan-500) so it stays visually distinct
-// from the Signups & FTDs chart (both emerald shades) in the same row.
+// Active Depositors — a count, not money, so it takes a neutral series hue
+// that stays distinct from the Signups & FTDs chart beside it.
 const activeDepositorsConfig = {
   count: {
     label: "Depositors",
-    color: "#06b6d4",
+    color: CHART_COLORS.cyan,
   },
 } satisfies ChartConfig;
 
 // Cash P&L bars are colored per-day by sign (House-POV): house up =
 // emerald, house down = rose.
-const PNL_UP = "#10b981"; // emerald-500 — house in profit that day
-const PNL_DOWN = "#f43f5e"; // rose-500 — house down that day
+const PNL_UP = CHART_COLORS.emerald;
+const PNL_DOWN = CHART_COLORS.rose;
 
 /**
  * Custom tooltip for the stacked Wagers chart — renders Packs + Battles

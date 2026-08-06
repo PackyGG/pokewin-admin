@@ -25,13 +25,13 @@ import type { KpiWindowPayload } from "./kpi-window-data";
 // layered noise the flat pilot drops. The box's identity hue now survives
 // ONLY on its icon glyph (below), never the box background.
 const ICON_TINT = {
-  cyan: "text-cyan-400",
-  purple: "text-purple-400",
-  emerald: "text-emerald-400",
-  pink: "text-pink-400",
-  blue: "text-blue-400",
-  amber: "text-amber-400",
-  rose: "text-rose-400",
+  cyan: "text-cyan-600 dark:text-cyan-400",
+  purple: "text-purple-600 dark:text-purple-400",
+  emerald: "text-emerald-600 dark:text-emerald-400",
+  pink: "text-pink-600 dark:text-pink-400",
+  blue: "text-blue-600 dark:text-blue-400",
+  amber: "text-amber-600 dark:text-amber-400",
+  rose: "text-rose-600 dark:text-rose-400",
 } as const;
 
 type PanelTint = keyof typeof ICON_TINT;
