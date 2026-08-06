@@ -1,3 +1,4 @@
+import { cache, Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { ChevronLeft, ChevronRight, Inbox} from "lucide-react";
@@ -7,10 +8,12 @@ import { FadeIn } from "@/components/fade-in";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
+import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 import { creatorsApi, type CreatorSocialStatus } from "@/lib/backend-api";
 
 import { SocialsQueueTabs } from "./tabs";
 import { SocialReviewActions } from "./review-actions";
+import { SocialsQueueCardSkeleton } from "./queue-skeleton";
 
 export const metadata = { title: "Creator Socials" };
 
@@ -30,6 +33,61 @@ const PLATFORM_LABEL: Record<string, string> = {
   discord: "Discord",
 };
 
+const PAGE_LIMIT = 50;
+
+type SocialsPayload = {
+  items: Awaited<ReturnType<typeof creatorsApi.listSocials>>["items"];
+  total: number;
+  loadError: { title: string; detail: string } | null;
+};
+
+/**
+ * The one backend read this page makes, wrapped so it can never block first
+ * paint or hang the route:
+ *
+ *   - `safeQuery(..., REWARD_QUERY_TIMEOUT_MS)` bounds it — before, a hung
+ *     backend hung the whole page body with no timeout at all.
+ *   - `cache()` dedupes it per request, so the hero's "Total in queue" tile
+ *     and the list body (two separate Suspense boundaries) share ONE HTTP
+ *     call — exactly the single call the page made before.
+ *
+ * The original try/catch semantics are preserved: any failure degrades to an
+ * empty list plus the same friendly `loadError` box (with the missing-table
+ * special case) instead of crashing the admin layout.
+ */
+const loadSocials = cache(
+  async (status: CreatorSocialStatus, offset: number): Promise<SocialsPayload> => {
+    const { data, error } = await safeQuery(
+      () => creatorsApi.listSocials({ status, limit: PAGE_LIMIT, offset }),
+      { items: [], total: 0 } as Awaited<
+        ReturnType<typeof creatorsApi.listSocials>
+      >,
+      "creators.socials",
+      REWARD_QUERY_TIMEOUT_MS,
+    );
+
+    if (!error) return { items: data.items, total: data.total, loadError: null };
+
+    // Likely a "feature not deployed" state — table missing, route 404,
+    // backend env unreachable. Surface a friendly box instead of crashing
+    // the whole admin layout.
+    const isMissingTable =
+      /relation .* does not exist|creator_socials/i.test(error);
+    return {
+      items: [],
+      total: 0,
+      loadError: {
+        title: isMissingTable
+          ? "Creator Socials feature not yet enabled"
+          : "Could not load social submissions",
+        detail: isMissingTable
+          ? "The creator_socials migration has not been applied on this environment yet. Run the migration to enable this page."
+          : error,
+      },
+    };
+  },
+);
+
 export default async function CreatorSocialsPage({
   searchParams,
 }: {
@@ -42,49 +100,62 @@ export default async function CreatorSocialsPage({
     params.status === "approved" || params.status === "rejected"
       ? params.status
       : "pending";
-  const limit = 50;
   const offset = Math.max(0, Number(params.offset ?? "0")) || 0;
-
-  let items: Awaited<ReturnType<typeof creatorsApi.listSocials>>["items"] = [];
-  let total = 0;
-  let loadError: { title: string; detail: string } | null = null;
-
-  try {
-    const result = await creatorsApi.listSocials({ status, limit, offset });
-    items = result.items;
-    total = result.total;
-  } catch (err) {
-    const detail = err instanceof Error ? err.message : String(err);
-    // Likely a "feature not deployed" state — table missing, route 404,
-    // backend env unreachable. Surface a friendly box instead of crashing
-    // the whole admin layout.
-    const isMissingTable =
-      /relation .* does not exist|creator_socials/i.test(detail);
-    loadError = {
-      title: isMissingTable
-        ? "Creator Socials feature not yet enabled"
-        : "Could not load social submissions",
-      detail: isMissingTable
-        ? "The creator_socials migration has not been applied on this environment yet. Run the migration to enable this page."
-        : detail,
-    };
-    console.error("[creators/socials] listSocials failed:", err);
-  }
 
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity
           action={
-            <KpiTile
-              label="Total in queue"
-              value={status === "pending" ? String(total) : "—"}
-              icon={Inbox}
-            />
+            <Suspense
+              key={`kpi|${status}|${offset}`}
+              fallback={<KpiTile label="Total in queue" value="—" icon={Inbox} />}
+            >
+              <QueueTotalTile status={status} offset={offset} />
+            </Suspense>
           }
         />
       </PageHero>
 
+      <Suspense
+        key={`${status}|${offset}`}
+        fallback={<SocialsQueueCardSkeleton rows={8} />}
+      >
+        <SocialsQueueBody status={status} offset={offset} />
+      </Suspense>
+    </div>
+  );
+}
+
+/** Hero KPI — same value as before, streamed instead of blocking the shell. */
+async function QueueTotalTile({
+  status,
+  offset,
+}: {
+  status: CreatorSocialStatus;
+  offset: number;
+}) {
+  const { total } = await loadSocials(status, offset);
+  return (
+    <KpiTile
+      label="Total in queue"
+      value={status === "pending" ? String(total) : "—"}
+      icon={Inbox}
+    />
+  );
+}
+
+async function SocialsQueueBody({
+  status,
+  offset,
+}: {
+  status: CreatorSocialStatus;
+  offset: number;
+}) {
+  const { items, total, loadError } = await loadSocials(status, offset);
+  const limit = PAGE_LIMIT;
+
+  return (
       <FadeIn>
         <Card size="sm" className="p-4">
           <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
@@ -206,7 +277,6 @@ export default async function CreatorSocialsPage({
           )}
         </Card>
       </FadeIn>
-    </div>
   );
 }
 

@@ -1,13 +1,14 @@
 "use server";
 
 import { pgArrayParam } from "@/lib/drizzle-array-param";
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { sql } from "drizzle-orm";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { SETS_CACHE_TAG } from "@/lib/queries/sets";
 
 // Hard cap on a single bulk-move so an accidental "select all" of a giant
 // page can't lock up the row-level locks for minutes. 500 lines up with
@@ -189,6 +190,12 @@ export async function createSetForCards(input: {
         },
       });
 
+      // `revalidatePath` alone does NOT evict `unstable_cache` entries — the
+      // sets catalog reads (`getSetsList` / `getSeriesList` / `getSetsStats`
+      // and now `getSets`) are all tagged, so a set created from the bulk-move
+      // dialog must evict the tag too or the new set is missing from every
+      // picker for up to 5 minutes. Mirrors sets/actions.ts.
+      revalidateTag(SETS_CACHE_TAG);
       revalidatePath("/cards");
       revalidatePath("/sets");
       return { id: set.id, name: set.name };

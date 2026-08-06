@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import {
@@ -9,6 +10,7 @@ import {
 import { requireAdmin } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   PageHero,
   PageHeroIdentity,
@@ -33,10 +35,10 @@ export default async function RoleDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  const [data, holders] = await Promise.all([
-    getRoleEditorData(id),
-    getRoleHolders(id),
-  ]);
+  // Only the editor payload is awaited — it drives the notFound() guard and
+  // every KPI. The holder list feeds one section at the bottom of the page, so
+  // it streams behind its own <Suspense> instead of holding up the hero.
+  const data = await getRoleEditorData(id);
   if (!data) notFound();
 
   // capabilities holds both page routes and `__can_*` action flags.
@@ -107,47 +109,75 @@ export default async function RoleDetailPage({
       {/* ── Assigned admins (RoleV2 P1) ── who currently holds this role.
           Built-in: effective-role holders; custom: role_id links. Each links to
           the admin's profile, where the "Role preset" select assigns/unassigns
-          a custom role. */}
-      <FadeIn>
-        <div className="space-y-3">
-          <SectionHeading
-            icon={Users}
-            title="Assigned admins"
-            action={
-              <Badge variant="outline" className="text-xs">
-                {data.holderCount} total
-              </Badge>
-            }
-          />
-          {holders.length === 0 ? (
-            <p className="rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
-              {data.isSystem
-                ? "No admin currently holds this role."
-                : "No admin is assigned this role yet. Assign it from an admin’s profile (the “Role preset” select)."}
-            </p>
-          ) : (
+          a custom role. Streamed: nothing above it depends on the holder list
+          (the "Holders" KPI reads `data.holderCount`), so it must not sit in
+          the page-body await. */}
+      <div className="space-y-3">
+        <SectionHeading
+          icon={Users}
+          title="Assigned admins"
+          action={
+            <Badge variant="outline" className="text-xs">
+              {data.holderCount} total
+            </Badge>
+          }
+        />
+        <Suspense
+          fallback={
             <div className="flex flex-wrap gap-2">
-              {holders.map((h) => (
-                <Link
-                  key={h.id}
-                  href={`/admin-users/${h.id}`}
-                  className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
-                >
-                  <span
-                    className={
-                      h.isActive
-                        ? "size-1.5 rounded-full bg-emerald-500"
-                        : "size-1.5 rounded-full bg-muted-foreground/40"
-                    }
-                    aria-hidden
-                  />
-                  {h.username}
-                </Link>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-28 rounded-md" />
               ))}
             </div>
-          )}
-        </div>
-      </FadeIn>
+          }
+        >
+          <RoleHoldersList roleId={id} isSystem={data.isSystem} />
+        </Suspense>
+      </div>
     </div>
+  );
+}
+
+async function RoleHoldersList({
+  roleId,
+  isSystem,
+}: {
+  roleId: string;
+  isSystem: boolean;
+}) {
+  const holders = await getRoleHolders(roleId);
+
+  if (holders.length === 0) {
+    return (
+      <p className="rounded-md border border-dashed bg-muted/20 p-4 text-sm text-muted-foreground">
+        {isSystem
+          ? "No admin currently holds this role."
+          : "No admin is assigned this role yet. Assign it from an admin’s profile (the “Role preset” select)."}
+      </p>
+    );
+  }
+
+  return (
+    <FadeIn>
+      <div className="flex flex-wrap gap-2">
+        {holders.map((h) => (
+          <Link
+            key={h.id}
+            href={`/admin-users/${h.id}`}
+            className="inline-flex items-center gap-1.5 rounded-md border border-input bg-background px-2.5 py-1.5 text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground"
+          >
+            <span
+              className={
+                h.isActive
+                  ? "size-1.5 rounded-full bg-emerald-500"
+                  : "size-1.5 rounded-full bg-muted-foreground/40"
+              }
+              aria-hidden
+            />
+            {h.username}
+          </Link>
+        ))}
+      </div>
+    </FadeIn>
   );
 }

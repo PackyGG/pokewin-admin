@@ -13,6 +13,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   TableSkeleton,
   PaginationSkeleton,
+  KpiStripSkeleton,
 } from "@/components/loading-skeletons";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -40,73 +41,27 @@ export default async function VouchersPage({
   const params = await searchParams;
   const tab = params.tab || "unclaimed";
 
-  // Stats + creator filter options are tab-independent: one query each,
-  // awaited up-front so the KPI strip + the toolbar's Created-By filter
-  // render immediately and don't re-fetch on every tab/filter flip. The
-  // voucher LIST itself is fetched inside a keyed <Suspense> below so a
-  // tab/filter change shows a table skeleton instead of blocking the
-  // whole page on the previous content.
-  // Each is safeQuery-wrapped so a failing query degrades only its own
+  // Stats + creator filter options are tab-independent, so they never re-fetch
+  // on a tab/filter flip — but neither may block the hero either. Both moved
+  // into the child that consumes them, behind their own <Suspense>:
+  //   • `getVouchersListStats()` is a `COUNT(*) FILTER` / `SUM` over the WHOLE
+  //     vouchers table with no predicate — a full scan on every cache miss —
+  //     and it only feeds the KPI strip.
+  //   • `getVoucherCreators()` only feeds the toolbar's Created-By filter, so
+  //     it now runs inside the toolbar's already-existing <Suspense>.
+  // Each stays safeQuery-wrapped so a failing query degrades only its own
   // section — the KPI strip collapses to a TileErrorFallback and the
   // Created-By filter falls back to the System-only option — instead of
   // crashing the whole page to the route error boundary (mirrors /cards).
-  const [{ data: creators }, { data: stats }] = await Promise.all([
-    safeQuery(
-      () => getVoucherCreators(),
-      [] as Awaited<ReturnType<typeof getVoucherCreators>>,
-      "vouchers.creators",
-    ),
-    safeQuery(() => getVouchersListStats(), null, "vouchers.stats"),
-  ]);
-
-  const createdByOptions = [
-    { label: "System", value: "system" },
-    ...creators.map((c) => ({ label: c.username, value: c.id })),
-  ];
-
   return (
     <div className="space-y-6">
       <PageHero>
         <PageHeroIdentity />
       </PageHero>
 
-      {/* Stats are global + tab-independent: both unclaimed and claimed
-          counts/totals always render. Vouchers are unspent credits the
-          house owes users, so the unclaimed value is the active
-          liability and reads rose per CLAUDE.md house-POV. */}
-      {stats ? (
-        <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-          <KpiTile
-            label="Unclaimed Total"
-            value={String(stats.unclaimedCount)}
-            icon={Clock}
-            accent="amber"
-          />
-          <KpiTile
-            label="Unclaimed Value"
-            value={formatCurrency(stats.unclaimedTotalValue)}
-            icon={Coins}
-            accent="rose"
-          />
-          <KpiTile
-            label="Claimed Total"
-            value={String(stats.claimedCount)}
-            icon={CheckCircle2}
-            accent="purple"
-          />
-          <KpiTile
-            label="Claimed Value"
-            value={formatCurrency(stats.claimedTotalValue)}
-            icon={Ticket}
-            accent="blue"
-          />
-        </div>
-      ) : (
-        <TileErrorFallback
-          label="Voucher stats"
-          hint="The aggregate stats query failed. The voucher list below is unaffected — refresh to retry."
-        />
-      )}
+      <Suspense fallback={<KpiStripSkeleton count={4} />}>
+        <VoucherStatsAsync />
+      </Suspense>
 
       <div className="space-y-3">
         <SectionHeading icon={Ticket} title="Voucher List" />
@@ -139,18 +94,7 @@ export default async function VouchersPage({
 
         <div className="space-y-4">
           <Suspense fallback={<Skeleton className="h-10 w-full" />}>
-            <DataTableToolbar
-              searchPlaceholder="Search by username or email..."
-              filters={[
-                {
-                  name: "Created By",
-                  paramKey: "createdBy",
-                  options: createdByOptions,
-                },
-              ]}
-            >
-              <ValueRangeFilter />
-            </DataTableToolbar>
+            <VouchersToolbarAsync />
           </Suspense>
 
           {/* Keyed on every query input so a tab/search/filter/page change
@@ -170,6 +114,87 @@ export default async function VouchersPage({
         </div>
       </div>
     </div>
+  );
+}
+
+/**
+ * KPI strip. Stats are global + tab-independent: both unclaimed and claimed
+ * counts/totals always render. Vouchers are unspent credits the house owes
+ * users, so the unclaimed value is the active liability and reads rose per
+ * CLAUDE.md house-POV.
+ */
+async function VoucherStatsAsync() {
+  const { data: stats } = await safeQuery(
+    () => getVouchersListStats(),
+    null,
+    "vouchers.stats",
+  );
+
+  if (!stats) {
+    return (
+      <TileErrorFallback
+        label="Voucher stats"
+        hint="The aggregate stats query failed. The voucher list below is unaffected — refresh to retry."
+      />
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+      <KpiTile
+        label="Unclaimed Total"
+        value={String(stats.unclaimedCount)}
+        icon={Clock}
+        accent="amber"
+      />
+      <KpiTile
+        label="Unclaimed Value"
+        value={formatCurrency(stats.unclaimedTotalValue)}
+        icon={Coins}
+        accent="rose"
+      />
+      <KpiTile
+        label="Claimed Total"
+        value={String(stats.claimedCount)}
+        icon={CheckCircle2}
+        accent="purple"
+      />
+      <KpiTile
+        label="Claimed Value"
+        value={formatCurrency(stats.claimedTotalValue)}
+        icon={Ticket}
+        accent="blue"
+      />
+    </div>
+  );
+}
+
+/** Toolbar — the Created-By options are the only read it needs. */
+async function VouchersToolbarAsync() {
+  const { data: creators } = await safeQuery(
+    () => getVoucherCreators(),
+    [] as Awaited<ReturnType<typeof getVoucherCreators>>,
+    "vouchers.creators",
+  );
+
+  const createdByOptions = [
+    { label: "System", value: "system" },
+    ...creators.map((c) => ({ label: c.username, value: c.id })),
+  ];
+
+  return (
+    <DataTableToolbar
+      searchPlaceholder="Search by username or email..."
+      filters={[
+        {
+          name: "Created By",
+          paramKey: "createdBy",
+          options: createdByOptions,
+        },
+      ]}
+    >
+      <ValueRangeFilter />
+    </DataTableToolbar>
   );
 }
 

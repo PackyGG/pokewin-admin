@@ -1,6 +1,13 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useTransition } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useTransition,
+} from "react";
 import { useRouter } from "next/navigation";
 import {
   Pencil,
@@ -32,6 +39,7 @@ import {
 } from "@/components/ui/select";
 import { cn } from "@/lib/utils";
 import { updateCard } from "../actions";
+import { loadCardSets } from "../load-actions";
 import { uploadImageClient } from "@/lib/upload-image-client";
 import { toastActionError } from "@/lib/utils/action-error";
 import { isOnePieceSetName } from "../_constants/onepiece";
@@ -216,11 +224,47 @@ export function EditCardButton({
   sets,
 }: {
   card: CardData;
+  /**
+   * Optional pre-supplied set list. /cards/[id] no longer passes one — it
+   * fetched the whole `sets` table on every page paint just to fill this
+   * closed dialog's picker (CLAUDE.md: no read for a hidden component). The
+   * dialog now loads the list itself the first time it OPENS. The prop is
+   * kept so any caller that already holds the list can skip that round-trip.
+   */
   sets?: { id: string; name: string }[];
 }) {
   const [open, setOpen] = useState(false);
   const [isPending, startTransition] = useTransition();
   const router = useRouter();
+
+  // On-open set list — mirrors the bulk-move dialog's deferred load
+  // (cards/load-actions.ts). Fetched once per mount, only after the dialog is
+  // actually opened; a failure leaves `loadedSets` null, which is exactly the
+  // "no list" state this component already tolerates.
+  const [loadedSets, setLoadedSets] = useState<
+    { id: string; name: string }[] | null
+  >(null);
+  const setsRequested = useRef(false);
+
+  useEffect(() => {
+    if (!open || sets || setsRequested.current) return;
+    setsRequested.current = true;
+    let cancelled = false;
+    loadCardSets()
+      .then((rows) => {
+        if (!cancelled) setLoadedSets(rows);
+      })
+      .catch(() => {
+        // Keep the dialog usable with just the card's own set — the picker
+        // still shows the current value and the form still saves.
+        setsRequested.current = false;
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, sets]);
+
+  const setOptions = sets ?? loadedSets ?? undefined;
 
   const [name, setName] = useState(card.name);
   const [price, setPrice] = useState(String(card.priceUsd));
@@ -253,9 +297,9 @@ export function EditCardButton({
   const setItems = useMemo<Record<string, string>>(() => {
     const map: Record<string, string> = {};
     if (card.setId && card.setName) map[card.setId] = card.setName;
-    for (const s of sets ?? []) map[s.id] = s.name;
+    for (const s of setOptions ?? []) map[s.id] = s.name;
     return map;
-  }, [card.setId, card.setName, sets]);
+  }, [card.setId, card.setName, setOptions]);
 
   const imageCleared = imagePreview === null && imageFile === null;
 
@@ -426,7 +470,7 @@ export function EditCardButton({
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="">None</SelectItem>
-                    {(sets ?? []).map((s) => (
+                    {(setOptions ?? []).map((s) => (
                       <SelectItem key={s.id} value={s.id}>
                         {s.name}
                       </SelectItem>

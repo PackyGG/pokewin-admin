@@ -14,7 +14,7 @@ import {
   Clock,
 } from "lucide-react";
 import { BackButton } from "@/components/back-button";
-import { getCardDetail, getSets } from "@/lib/queries/cards";
+import { getCardDetail } from "@/lib/queries/cards";
 import { requirePageAccess } from "@/lib/dal";
 import { isUuid } from "@/lib/utils/ids";
 import { Badge } from "@/components/ui/badge";
@@ -61,22 +61,24 @@ export default async function CardDetailPage({
   const { id } = await params;
   // Shape-check UUID before any DB call — see src/lib/utils/ids.ts.
   if (!isUuid(id)) notFound();
-  // Both fetches wrapped in safeQuery so a runtime DB fault (connection blip,
-  // or a stale column on the live cards/sets table the worktree schema
-  // is ahead of) degrades in place instead of rejecting the page-body
-  // Promise.all and bubbling to the (admin) route error boundary — the
-  // documented white-screen. A genuine 404 (detail query OK, row absent) still
-  // falls through to notFound() below. The sets list only feeds the edit
-  // dialog's set picker, so an empty fallback ([]) is harmless — EditCardButton
-  // tolerates it.
-  const [{ data, error: detailError }, { data: sets }] = await Promise.all([
-    safeQuery(() => getCardDetail(id), null, "cards.detail"),
-    safeQuery(
-      () => getSets(),
-      [] as Awaited<ReturnType<typeof getSets>>,
-      "cards.detail.sets",
-    ),
-  ]);
+  // The detail fetch is wrapped in safeQuery so a runtime DB fault (connection
+  // blip, or a stale column on the live cards table the worktree schema is
+  // ahead of) degrades in place instead of bubbling to the (admin) route error
+  // boundary — the documented white-screen. A genuine 404 (detail query OK,
+  // row absent) still falls through to notFound() below.
+  //
+  // The `sets` list is NOT fetched here any more: its only consumer is the
+  // CLOSED edit dialog's set picker, so eager-loading it put a hidden
+  // component's read on the critical path (CLAUDE.md "no heavy query before a
+  // dialog opens"). EditCardButton now loads it in its own on-open server
+  // action, mirroring the bulk-move dialog (cards/load-actions.ts). It already
+  // tolerates an absent list — `setItems` is seeded with the card's OWN set so
+  // the trigger shows the set NAME (not a UUID) before the list arrives.
+  const { data, error: detailError } = await safeQuery(
+    () => getCardDetail(id),
+    null,
+    "cards.detail",
+  );
 
   // Detail query threw → degrade in place (keep the back button + retry
   // usable) rather than crash the whole route. Never notFound() on an error —
@@ -117,7 +119,7 @@ export default async function CardDetailPage({
           back={<BackButton />}
           action={
             <div className="flex flex-wrap gap-1.5 sm:gap-2">
-              <EditCardButton card={data} sets={sets} />
+              <EditCardButton card={data} />
               <DeleteCardButton cardId={data.id} cardName={data.name} packCount={data.packs.length} packNames={data.packs.map((p: { name: string }) => p.name)} />
             </div>
           }

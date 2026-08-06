@@ -5,6 +5,7 @@ import {
   getMoveDialogData,
   getCardInspector,
   getCardIdsForFilter,
+  getSets,
   type MoveDialogData,
   type CardInspector,
 } from "@/lib/queries/cards";
@@ -34,6 +35,18 @@ const MAX_SELECT_ALL = 500;
 export async function loadMoveDialogData(): Promise<MoveDialogData> {
   await requirePageAccess("/cards");
   return getMoveDialogData();
+}
+
+/**
+ * Set list for the card EDIT dialog's set picker. Same deferral rationale as
+ * `loadMoveDialogData`: /cards/[id] used to fetch this in its page-body
+ * `Promise.all` even though the only consumer is a dialog that is closed on
+ * every paint. Cached read (`getSets` is tagged on the sets catalog), so an
+ * open → close → open cycle costs no DB round-trip.
+ */
+export async function loadCardSets(): Promise<{ id: string; name: string }[]> {
+  await requirePageAccess("/cards");
+  return getSets();
 }
 
 export async function loadCardInspector(

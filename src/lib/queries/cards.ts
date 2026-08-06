@@ -4,6 +4,7 @@ import { readDrizzleForEnv, getReadDrizzleDb } from "@/lib/db";
 import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { toNumber } from "@/lib/utils/decimal";
 import { safeQueryOrNull } from "@/lib/errors/safe-query";
+import { SETS_CACHE_TAG } from "@/lib/queries/sets";
 import type { PaginatedResult } from "@/lib/types";
 
 export type CardListItem = {
@@ -458,12 +459,38 @@ export async function getCardDetail(id: string) {
   };
 }
 
-export async function getSets() {
-  const db = await getReadDrizzleDb();
+async function computeSets(env: DbEnv): Promise<{ id: string; name: string }[]> {
+  const db = readDrizzleForEnv(env);
   const result = await db.execute<{ id: string; name: string }>(sql`
     SELECT id, name FROM sets ORDER BY name ASC
   `);
   return result.rows;
+}
+
+/**
+ * The thin `(id, name)` set list behind the /cards tabs, the card create/edit
+ * set pickers and the pack/upgrader builders. It was the only UNCACHED MAIN
+ * read left on the /cards critical path — every list paint, page flip, sort
+ * and search re-ran it even though `sets` changes only when an operator
+ * creates/edits/deletes one.
+ *
+ * Cached the same way as `getSeriesList` (queries/sets.ts): `env` is resolved
+ * HERE, in the request scope, because `getReadDrizzleDb()` reads the dev-DB
+ * cookie and `cookies()` is illegal inside `unstable_cache` — threading it in
+ * also keeps a dev-DB-toggled admin's entries from colliding with prod.
+ * Tagged with {@link SETS_CACHE_TAG} so every set mutation
+ * (sets/actions.ts create/update/seed/absorb/delete AND the /cards bulk-move
+ * dialog's `createSetForCards`) evicts it — `revalidatePath` alone does NOT
+ * evict `unstable_cache` entries.
+ */
+const cachedSets = unstable_cache(computeSets, ["cards-sets-v1"], {
+  revalidate: 300,
+  tags: [SETS_CACHE_TAG],
+});
+
+export async function getSets(): Promise<{ id: string; name: string }[]> {
+  const env = await readDbEnv();
+  return cachedSets(env);
 }
 
 export type SetForMoveDialog = {

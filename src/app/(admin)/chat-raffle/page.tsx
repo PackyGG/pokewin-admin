@@ -102,20 +102,23 @@ export default async function ChatRafflePage() {
 // ─── Active round ───────────────────────────────────────────────────
 
 async function ActiveRoundSection() {
-  const roundResult = await safeQuery(
-    () => getActiveChatRaffleRound(),
-    null,
-    "chat-raffle.active-round",
-    ROUNDS_TIMEOUT_MS,
-  );
+  // Independent reads → one wave. (The two below them genuinely chain on
+  // `round.id` and stay serial.)
+  const [roundResult, defaultScoring] = await Promise.all([
+    safeQuery(
+      () => getActiveChatRaffleRound(),
+      null,
+      "chat-raffle.active-round",
+      ROUNDS_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () => getDefaultScoringForNewRound(),
+      DEFAULT_CHAT_RAFFLE_SCORING,
+      "chat-raffle.default-scoring",
+      ROUNDS_TIMEOUT_MS,
+    ),
+  ]);
   const round = roundResult.data;
-
-  const defaultScoring = await safeQuery(
-    () => getDefaultScoringForNewRound(),
-    DEFAULT_CHAT_RAFFLE_SCORING,
-    "chat-raffle.default-scoring",
-    ROUNDS_TIMEOUT_MS,
-  );
 
   if (!round) {
     return (

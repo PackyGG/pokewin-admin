@@ -105,26 +105,33 @@ export default async function NotificationsPage({
   const page = Number(params.page) || 1;
   const tab = parseNotificationTab(params.tab);
 
-  // Read-only viewers (page access without the manage capability) see the
-  // list but no create/revoke controls — same dual-gate shape as /security.
-  const canManage = await requireCapability(
-    session,
-    "__can_manage_announcements",
-    "manage announcements",
-  )
-    .then(() => true)
-    .catch(() => false);
-
-  // Per-user sends are a separate capability: they write one row per
-  // recipient with per-user content, a different blast radius from one
-  // broadcast row.
-  const canSendDirect = await requireCapability(
-    session,
-    "__can_send_user_notifications",
-    "send user notifications",
-  )
-    .then(() => true)
-    .catch(() => false);
+  // Two independent capability probes. `requireCapability` is NOT cache()d and
+  // costs up to 2 admin-DB reads each, so awaiting them one after the other
+  // meant up to 4 serial round-trips before the shell could render for a
+  // non-admin viewer. They don't depend on each other → one wave.
+  //
+  //   canManage    — read-only viewers (page access without the manage
+  //                  capability) see the list but no create/revoke controls,
+  //                  the same dual-gate shape as /security.
+  //   canSendDirect— per-user sends are a separate capability: they write one
+  //                  row per recipient with per-user content, a different
+  //                  blast radius from one broadcast row.
+  const [canManage, canSendDirect] = await Promise.all([
+    requireCapability(
+      session,
+      "__can_manage_announcements",
+      "manage announcements",
+    )
+      .then(() => true)
+      .catch(() => false),
+    requireCapability(
+      session,
+      "__can_send_user_notifications",
+      "send user notifications",
+    )
+      .then(() => true)
+      .catch(() => false),
+  ]);
 
   return (
     <div className="space-y-6">

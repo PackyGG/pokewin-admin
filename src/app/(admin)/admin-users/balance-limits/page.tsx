@@ -6,7 +6,11 @@ import { requirePageAccess } from "@/lib/dal";
 import { adminDrizzle } from "@/lib/admin-db";
 import { PageHero, PageHeroIdentity, KpiTile } from "@/components/modern-panels";
 import { FadeIn } from "@/components/fade-in";
-import { TableSkeleton } from "@/components/loading-skeletons";
+import {
+  TableSkeleton,
+  KpiStripSkeleton,
+} from "@/components/loading-skeletons";
+import { safeQuery } from "@/lib/errors/safe-query";
 import { BalanceLimitsOverview } from "./balance-limits-overview";
 import type { limit_period_type } from "@/lib/balance-limits";
 
@@ -75,32 +79,80 @@ export default async function BalanceLimitsOverviewPage() {
     redirect("/admin-users");
   }
 
+  // Shell-first: nothing is awaited in the page body any more. The limits read
+  // (two LEFT JOINs, previously unbounded and un-timeout'd) plus everything
+  // derived from it now stream behind one boundary whose fallback matches this
+  // route's loading.tsx exactly.
+  return (
+    <div className="space-y-6">
+      <PageHero>
+        <PageHeroIdentity backHref="/admin-users" />
+      </PageHero>
+
+      <Suspense
+        fallback={
+          <>
+            <KpiStripSkeleton count={4} />
+            <TableSkeleton rows={6} columns={7} />
+          </>
+        }
+      >
+        <BalanceLimitsBody />
+      </Suspense>
+    </div>
+  );
+}
+
+/** Hard ceiling on the cap listing. One row per period per admin, so a real
+ *  team never approaches this — it only stops a runaway/duplicated table from
+ *  streaming an unbounded result set into the page. */
+const MAX_LIMIT_ROWS = 500;
+
+async function BalanceLimitsBody() {
   // Pull every cap row, then enrich with the admin user it belongs to.
   // Two separate queries because admin_balance_limits has no FK back
   // to admin_users — joining client-side keeps the schema simple and
   // the data volumes here are tiny (one row per period per admin).
-  const limits = (await adminDrizzle.execute<{
-    id: string;
-    admin_user_id: string;
-    admin_username: string;
-    admin_email: string;
-    admin_role: string;
-    period_type: limit_period_type;
-    max_amount: string;
-    set_by_username: string | null;
-    updated_at: Date | string;
-  }>(sql`
-    SELECT l.id::text, l.admin_user_id,
-           COALESCE(target.username, 'Unknown') AS admin_username,
-           COALESCE(target.email, '') AS admin_email,
-           COALESCE(target.role::text, 'unknown') AS admin_role,
-           l.period_type::text AS period_type, l.max_amount::text AS max_amount,
-           setter.username AS set_by_username, l.updated_at
-    FROM admin_balance_limits l
-    LEFT JOIN admin_users target ON target.id::text = l.admin_user_id
-    LEFT JOIN admin_users setter ON setter.id::text = l.updated_by
-    ORDER BY l.admin_user_id ASC, l.period_type ASC
-  `)).rows;
+  // safeQuery-wrapped so an admin-DB blip degrades to an empty overview
+  // instead of white-screening the route.
+  const { data: limits } = await safeQuery(
+    async () =>
+      (await adminDrizzle.execute<{
+        id: string;
+        admin_user_id: string;
+        admin_username: string;
+        admin_email: string;
+        admin_role: string;
+        period_type: limit_period_type;
+        max_amount: string;
+        set_by_username: string | null;
+        updated_at: Date | string;
+      }>(sql`
+        SELECT l.id::text, l.admin_user_id,
+               COALESCE(target.username, 'Unknown') AS admin_username,
+               COALESCE(target.email, '') AS admin_email,
+               COALESCE(target.role::text, 'unknown') AS admin_role,
+               l.period_type::text AS period_type, l.max_amount::text AS max_amount,
+               setter.username AS set_by_username, l.updated_at
+        FROM admin_balance_limits l
+        LEFT JOIN admin_users target ON target.id::text = l.admin_user_id
+        LEFT JOIN admin_users setter ON setter.id::text = l.updated_by
+        ORDER BY l.admin_user_id ASC, l.period_type ASC
+        LIMIT ${MAX_LIMIT_ROWS}
+      `)).rows,
+    [] as {
+      id: string;
+      admin_user_id: string;
+      admin_username: string;
+      admin_email: string;
+      admin_role: string;
+      period_type: limit_period_type;
+      max_amount: string;
+      set_by_username: string | null;
+      updated_at: Date | string;
+    }[],
+    "adminUsers.balanceLimitsOverview",
+  );
 
   const rows = limits.map((l) => ({
     id: l.id,
@@ -128,11 +180,7 @@ export default async function BalanceLimitsOverviewPage() {
     .reduce((sum, r) => sum + r.maxAmount, 0);
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity backHref="/admin-users" />
-      </PageHero>
-
+    <>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
         <KpiTile
           label="Admins With Caps"
@@ -168,6 +216,6 @@ export default async function BalanceLimitsOverviewPage() {
           <BalanceLimitsTableSection rows={rows} />
         </Suspense>
       </FadeIn>
-    </div>
+    </>
   );
 }

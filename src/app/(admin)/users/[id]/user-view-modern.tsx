@@ -28,6 +28,7 @@ import {
   useTransition,
 } from "react";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { usePathname, useRouter } from "next/navigation";
 import {
   Swords,
@@ -82,10 +83,9 @@ import {
   AccountTab,
   KycTab,
 } from "./user-view-modern-tabs";
-import { AuditTab } from "./user-tabs-audit";
 import type { UserAdminAuditFeed } from "@/lib/queries/users-admin-audit";
 import { FadeIn } from "@/components/fade-in";
-import { DURATION } from "@/components/ux";
+import { DURATION, SkeletonTable } from "@/components/ux";
 import {
   ChangeRoleDialog,
   ResetRoleToUserButton,
@@ -93,6 +93,34 @@ import {
 import { UserAdminActions } from "./user-tabs-moderation";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
+
+// ---------------------------------------------------------------------------
+// Deferred tab chunk. The Audit tab pulls the whole admin-audit vocabulary
+// (`admin-users/[id]/audit-events-table` — label/color maps + the
+// `EventDetails` renderer) plus its own table/select primitives, yet the tab
+// only mounts when `?tab=audit` is active. `user-tabs-audit` is imported
+// NOWHERE else, so code-splitting it here genuinely removes that chunk from
+// the /users/[id] critical bundle for every other tab. SSR is left ON so the
+// server-rendered markup is byte-identical to before — only the client chunk
+// is fetched lazily. Mirrors the `transaction-detail-modal` split in
+// user-tabs-transactions.tsx.
+//
+// NOTE (intentionally NOT split): `ChangeRoleDialog` / `ResetRoleToUserButton`
+// live in `./user-tabs-dialogs`, which is already a static dependency of both
+// `./user-view-modern-panels` (re-exported below) and
+// `./user-view-modern-tabs`. Lazy-loading them from here would add a loading
+// state without removing a single byte from the bundle.
+// ---------------------------------------------------------------------------
+const AuditTab = dynamic(
+  () => import("./user-tabs-audit").then((m) => m.AuditTab),
+  {
+    loading: () => (
+      <div className="space-y-4">
+        <SkeletonTable rows={8} columns={5} leadingAvatar={false} />
+      </div>
+    ),
+  },
+);
 
 // ---------------------------------------------------------------------------
 // Re-exports — preserve the public surface so call sites that previously
