@@ -10,6 +10,9 @@ const overviewPath = "src/app/(antifraud)/antifraud/page.tsx";
 const overviewPanelsPath =
   "src/app/(antifraud)/antifraud/_components/overview-panels.tsx";
 const monitorRoutePath = "src/app/api/antifraud/monitor/route.ts";
+// The snapshot BODY moved out of the route handler so /antifraud/monitor can
+// server-render its first paint from the exact same object the route serves.
+const monitorSnapshotPath = "src/lib/antifraud/monitor-snapshot.ts";
 const accessGatePath = "src/lib/require-antifraud-access.ts";
 const monitorParserPath =
   "src/app/(antifraud)/antifraud/_components/monitor-stream.ts";
@@ -167,10 +170,10 @@ test("player gaming activity is shown only in the live monitor", async () => {
 });
 
 test("live events preserve the typed envelope and degrade snapshot legs independently", async () => {
-  const [client, parser, route] = await Promise.all([
+  const [client, parser, snapshot] = await Promise.all([
     readFile(monitorClientPaths[0], "utf8"),
     readFile(monitorParserPath, "utf8"),
-    readFile(monitorRoutePath, "utf8"),
+    readFile(monitorSnapshotPath, "utf8"),
   ]);
 
   assert.match(client, /parseMonitorFrame\(raw\)/);
@@ -178,9 +181,9 @@ test("live events preserve the typed envelope and degrade snapshot legs independ
   assert.match(parser, /frame\.schemaVersion !== 1/);
   assert.match(parser, /correlationId/);
   assert.match(parser, /id: frame\.id/);
-  assert.match(route, /Promise\.allSettled/);
-  assert.match(route, /recentSessions/);
-  assert.match(route, /liveMetrics/);
+  assert.match(snapshot, /Promise\.allSettled/);
+  assert.match(snapshot, /recentSessions/);
+  assert.match(snapshot, /liveMetrics/);
   assert.match(client, /WebSocket status/);
   assert.match(client, /24h signups/);
   assert.match(client, /24h locked/);
@@ -192,11 +195,11 @@ test("live events preserve the typed envelope and degrade snapshot legs independ
 });
 
 test("monitor case snapshot and rendered limits stay aligned", async () => {
-  const [route, client] = await Promise.all([
-    readFile("src/app/api/antifraud/monitor/route.ts", "utf8"),
+  const [snapshot, client] = await Promise.all([
+    readFile(monitorSnapshotPath, "utf8"),
     readFile(monitorClientPaths[0], "utf8"),
   ]);
-  assert.match(route, /\/v1\/cases\?limit=40/);
+  assert.match(snapshot, /\/v1\/cases\?limit=40/);
   assert.match(client, /const MAX_CASES = 40/);
   assert.match(client, /cases\.slice\(0, MAX_CASES\)/);
 });

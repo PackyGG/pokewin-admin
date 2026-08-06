@@ -83,6 +83,17 @@ type MainOverviewRow = {
   fraudulent_fiat_cents_24h: string;
 };
 
+/**
+ * Narrow 24-hour leg of {@link MainOverviewRow}. Same four columns, same
+ * meaning — only the surrounding scan is bounded.
+ */
+type MainLive24hRow = {
+  signups_24h: string;
+  locks_24h: string;
+  legitimate_fiat_cents_24h: string;
+  fraudulent_fiat_cents_24h: string;
+};
+
 type MainDayRow = {
   bucket: string;
   legitimate_fiat_cents: string;
@@ -778,7 +789,195 @@ export async function getAntifraudOverviewData(): Promise<AntifraudOverviewData>
   };
 }
 
-export async function getAntifraudLiveMirrorMetrics(): Promise<AntifraudLiveMirrorMetrics> {
-  const data = await getAntifraudOverviewData();
-  return data.live;
+/**
+ * The four 24-hour counters, and nothing else.
+ *
+ * The live monitor console needs exactly these numbers on first paint. It used
+ * to get them by running the whole dashboard computation and throwing away
+ * everything but `.live` — four admin-DB queries plus three heavy MAIN-mirror
+ * queries, including an unbounded `payment_webhook_events` scan and a 30-day
+ * per-day CTE. Outside prod nothing is cached, so that ran in full on every
+ * snapshot request; in prod the 60s revalidation still put a console load
+ * behind the heaviest chain in the sub-app.
+ *
+ * A clean extraction from `computeAntifraudOverviewData` is not possible: its
+ * lifetime and 24h columns are one statement over one `classified_paid` CTE,
+ * and the 24h figures are `FILTER` clauses on that same aggregate. So this is
+ * a deliberately separate, narrow statement. It reproduces the original
+ * semantics exactly — same CTE chain, same `DISTINCT ON` winner selection,
+ * same fraud predicate, same `FILTER` expressions — with two bounds added:
+ *
+ *   - `provider_paid` is filtered to the 24h window AFTER the `DISTINCT ON`
+ *     picks a payment's newest webhook, so the winning row is the same row the
+ *     lifetime query would have picked.
+ *   - `succeeded_events` is bounded by `received_at` (7 days of slack against
+ *     a 24h `paid_at` window; the 30-day chart query uses the same technique
+ *     with 2 days of slack) so the LATERAL intent join and the sort run over a
+ *     week of webhooks instead of every payment ever recorded.
+ */
+async function computeAntifraudLive24hMetrics(
+  env: DbEnv,
+): Promise<AntifraudLiveMirrorMetrics> {
+  const flaggedAccounts = await adminDrizzle
+    .selectDistinct({ userId: antifraud_reviews.target_user_id })
+    .from(antifraud_reviews)
+    .where(eq(antifraud_reviews.status, "flagged"));
+  const fraudPredicate = fraudulentAccountSql(
+    flaggedAccounts.map((account) => account.userId),
+  );
+  const db = readDrizzleForEnv(env);
+
+  const result = await db.execute<MainLive24hRow>(sql`
+    WITH succeeded_events AS (
+      SELECT
+        pwe.id,
+        pwe.received_at,
+        pwe.provider_resource_id,
+        pwe.payload #>> '{data,id}' AS payment_id,
+        pwe.payload #>> '{data,metadata,deposit_intent_id}'
+          AS metadata_intent_id,
+        (pwe.payload #>> '{data,paid_at}')::timestamptz
+          AS provider_paid_at,
+        CASE
+          WHEN pwe.payload #>> '{data,usd_total}'
+            ~ '^[0-9]+([.][0-9]+)?$'
+          THEN (pwe.payload #>> '{data,usd_total}')::numeric
+          ELSE NULL
+        END AS gross_paid_usd
+      FROM payment_webhook_events pwe
+      WHERE pwe.provider = 'whop'
+        AND pwe.event_type = 'payment.succeeded'
+        AND pwe.payload #>> '{data,status}' = 'paid'
+        AND pwe.received_at >= now() - interval '7 days'
+        AND NULLIF(pwe.payload #>> '{data,id}', '') IS NOT NULL
+        AND NULLIF(pwe.payload #>> '{data,paid_at}', '') IS NOT NULL
+    ),
+    provider_paid AS (
+      SELECT newest.*
+      FROM (
+        SELECT DISTINCT ON (payment_id)
+          payment_id,
+          provider_resource_id,
+          metadata_intent_id,
+          provider_paid_at,
+          gross_paid_usd
+        FROM succeeded_events
+        WHERE provider_paid_at <= CURRENT_TIMESTAMP
+        ORDER BY payment_id, received_at DESC, id DESC
+      ) newest
+      WHERE newest.provider_paid_at >= now() - interval '24 hours'
+        AND newest.provider_paid_at < now()
+    ),
+    linked_paid AS (
+      SELECT paid.*, intent.user_id
+      FROM provider_paid paid
+      LEFT JOIN LATERAL (
+        SELECT i.user_id
+        FROM fiat_deposit_intents i
+        WHERE i.provider = 'whop'
+          AND (
+            i.provider_payment_id = paid.payment_id
+            OR i.provider_payment_id = paid.provider_resource_id
+            OR i.id::text = paid.metadata_intent_id
+          )
+        ORDER BY
+          (i.provider_payment_id = paid.payment_id) DESC,
+          (i.id::text = paid.metadata_intent_id) DESC,
+          i.updated_at DESC
+        LIMIT 1
+      ) intent ON TRUE
+    ),
+    classified_paid AS (
+      SELECT
+        linked.*,
+        ${fraudPredicate} AS is_fraud
+      FROM linked_paid linked
+      LEFT JOIN "user" u ON u.id = linked.user_id
+    )
+    SELECT
+      (
+        SELECT COUNT(*) FROM "user"
+        WHERE created_at >= now() - interval '24 hours'
+          AND created_at < now()
+      ) AS signups_24h,
+      (
+        SELECT COUNT(DISTINCT user_id)
+        FROM (
+          SELECT id AS user_id, locked_at AS at
+          FROM "user"
+          WHERE locked_at >= now() - interval '24 hours'
+            AND locked_at < now()
+          UNION ALL
+          SELECT user_id, locked_withdrawals_at AS at
+          FROM user_feature_locks
+          WHERE locked_withdrawals_at >= now() - interval '24 hours'
+            AND locked_withdrawals_at < now()
+        ) lock_events
+      ) AS locks_24h,
+      COALESCE(SUM(gross_paid_usd) FILTER (WHERE NOT is_fraud), 0)
+        * 100 AS legitimate_fiat_cents_24h,
+      COALESCE(SUM(gross_paid_usd) FILTER (WHERE is_fraud), 0)
+        * 100 AS fraudulent_fiat_cents_24h
+    FROM classified_paid
+  `);
+
+  const row = result.rows[0];
+  return {
+    signups24h: numeric(row?.signups_24h),
+    locks24h: numeric(row?.locks_24h),
+    legitimateFiatCents24h: numeric(row?.legitimate_fiat_cents_24h),
+    fraudulentFiatCents24h: numeric(row?.fraudulent_fiat_cents_24h),
+  };
+}
+
+const cachedAntifraudLive24hMetrics = unstable_cache(
+  computeAntifraudLive24hMetrics,
+  ["antifraud-live-24h-v1"],
+  {
+    revalidate: 30,
+    tags: ["antifraud-overview", "fiat-operations"],
+  },
+);
+
+/**
+ * Live 24h counters for the monitor console's KPI strip.
+ *
+ * The fiat overlay is byte-for-byte the same derivation
+ * `getAntifraudOverviewData` applies to its own `live` block, so the four
+ * numbers mean exactly what they meant when they came out of the full
+ * dashboard computation: the monitor's own assessment scope wins when it
+ * reports the split, the canonical fraud leg is subtracted from the mirror
+ * total when only that is available, and the mirror numbers stand otherwise.
+ */
+export async function getAntifraudLive24hMetrics(): Promise<AntifraudLiveMirrorMetrics> {
+  const env = await readDbEnv();
+  const [base, monitor] = await Promise.all([
+    env === "prod"
+      ? cachedAntifraudLive24hMetrics(env)
+      : computeAntifraudLive24hMetrics(env),
+    getAntifraudMonitorOverview(),
+  ]);
+
+  const split = monitor.data?.fiat;
+  if (split) {
+    return {
+      ...base,
+      legitimateFiatCents24h: split.legitimateLast24HoursCents,
+      fraudulentFiatCents24h: split.fraudulentLast24HoursCents,
+    };
+  }
+
+  const canonical = monitor.data?.fraudulentFiat;
+  if (!canonical) return base;
+
+  return {
+    ...base,
+    legitimateFiatCents24h: Math.max(
+      0,
+      base.legitimateFiatCents24h +
+        base.fraudulentFiatCents24h -
+        canonical.last24HoursCents,
+    ),
+    fraudulentFiatCents24h: canonical.last24HoursCents,
+  };
 }

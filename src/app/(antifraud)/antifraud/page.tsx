@@ -24,14 +24,24 @@ import {
   getAntifraudMonitorOverview,
   getAntifraudPollerHealth,
   type AntifraudMonitorOverview,
+  type AntifraudPollerHealth,
 } from "@/lib/antifraud/monitor-api";
-import { getReviewQueueStats } from "@/lib/antifraud/reviews";
+import {
+  getReviewQueueStats,
+  type ReviewQueueStats,
+} from "@/lib/antifraud/reviews";
+import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { OverviewActionFeed } from "./_components/overview-panels";
+// Recharts is the heaviest client dependency in this sub-app and only the two
+// 30-day charts need it. The lazy boundary lives in its own client module
+// (`overview-charts-lazy`) because `next/dynamic` called from a Server
+// Component leaves the chart in the page's initial chunk group.
 import {
-  OverviewActionFeed,
+  ChartRowSkeleton,
   OverviewCharts,
-} from "./_components/overview-panels";
+} from "./_components/overview-charts-lazy";
 import { PulseBar, QueueStrip } from "./_components/overview-status";
 import { PanelErrorBoundary } from "./_components/panel-error-boundary";
 
@@ -59,92 +69,168 @@ const EMPTY_OVERVIEW: AntifraudOverviewData = {
   feed: [],
 };
 
+type OverviewPromise = Promise<SafeQueryResult<AntifraudOverviewData>>;
+type MonitorPromise = Promise<
+  SafeQueryResult<{
+    configured: boolean;
+    data: AntifraudMonitorOverview | null;
+    error: boolean;
+  }>
+>;
+
+/**
+ * Each band waits only on the data it renders.
+ *
+ * The four reads are started here and deliberately NOT awaited: they are
+ * handed to the bands as promises, so the engine-health bar, the case queue,
+ * the KPI strip, the action feed and the 30-day charts each paint the moment
+ * THEIR read lands, instead of all five waiting on the slowest. `safeQuery`
+ * always resolves (it catches and returns a fallback), so a hoisted promise
+ * here can never surface as an unhandled rejection.
+ *
+ * Feed and charts share the one overview promise, so this adds no queries —
+ * and `getAntifraudOverviewData` internally awaits the `cache()`-wrapped
+ * `getAntifraudMonitorOverview`, so the KPI band's separate monitor read is
+ * deduped rather than doubled. Do not "fix" that by merging them again.
+ *
+ * The composed fallbacks below add up to exactly `loading.tsx`, so the route
+ * skeleton stays valid without touching it.
+ */
 export default async function AntifraudOverviewPage() {
   await requireAntifraudPageAccess();
   const snapshotAt = new Date().toISOString();
 
+  const overviewPromise: OverviewPromise = safeQuery(
+    () => getAntifraudOverviewData(),
+    EMPTY_OVERVIEW,
+    "antifraud.overview-dashboard",
+    QUERY_TIMEOUT_MS,
+  );
+  const monitorPromise: MonitorPromise = safeQuery(
+    () => getAntifraudMonitorOverview(),
+    { configured: false, data: null, error: true },
+    "antifraud.monitor-overview",
+    QUERY_TIMEOUT_MS,
+  );
+  const pollerPromise = safeQuery(
+    () => getAntifraudPollerHealth(),
+    { configured: false, data: null, error: true },
+    "antifraud.poller-health",
+    QUERY_TIMEOUT_MS,
+  );
+  const queuePromise = safeQuery(
+    () => getReviewQueueStats(),
+    { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 },
+    "antifraud.review-queue-stats",
+    QUERY_TIMEOUT_MS,
+  );
+
   return (
-    <div className="space-y-4">
-      <Suspense fallback={<DashboardSkeleton />}>
-        <Dashboard snapshotAt={snapshotAt} />
+    <div className="space-y-4" data-snapshot-at={snapshotAt}>
+      <Suspense fallback={<Skeleton className="h-11 w-full rounded-lg" />}>
+        <PulseBand overview={overviewPromise} poller={pollerPromise} />
       </Suspense>
+
+      <Suspense fallback={<QueueBandSkeleton />}>
+        <QueueBand queue={queuePromise} />
+      </Suspense>
+
+      <Suspense fallback={<KpiBandSkeleton />}>
+        <KpiBand overview={overviewPromise} monitor={monitorPromise} />
+      </Suspense>
+
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
+        <Suspense fallback={<Skeleton className="h-[336px] w-full rounded-xl" />}>
+          <FeedBand overview={overviewPromise} />
+        </Suspense>
+        <Suspense fallback={<ChartRowSkeleton />}>
+          <ChartsBand overview={overviewPromise} />
+        </Suspense>
+      </div>
     </div>
   );
 }
 
-async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
-  const [overviewResult, monitorResult, pollerResult, queueResult] =
-    await Promise.all([
-      safeQuery(
-        () => getAntifraudOverviewData(),
-        EMPTY_OVERVIEW,
-        "antifraud.overview-dashboard",
-        QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getAntifraudMonitorOverview(),
-        { configured: false, data: null, error: true },
-        "antifraud.monitor-overview",
-        QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getAntifraudPollerHealth(),
-        { configured: false, data: null, error: true },
-        "antifraud.poller-health",
-        QUERY_TIMEOUT_MS,
-      ),
-      safeQuery(
-        () => getReviewQueueStats(),
-        { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 },
-        "antifraud.review-queue-stats",
-        QUERY_TIMEOUT_MS,
-      ),
-    ]);
-
-  // The Admin-DB queue read is independent of the mirror overview, so a failed
-  // overview must not blank the one band that says what is waiting for a human.
-  const queueStrip = queueResult.error ? null : (
-    <QueueStrip stats={queueResult.data} />
+/** Engine health + the last 24 hours. Hidden entirely if the mirror read failed. */
+async function PulseBand({
+  overview,
+  poller,
+}: {
+  overview: OverviewPromise;
+  poller: Promise<
+    SafeQueryResult<{
+      configured: boolean;
+      data: AntifraudPollerHealth | null;
+      error: boolean;
+    }>
+  >;
+}) {
+  const [overviewResult, pollerResult] = await Promise.all([overview, poller]);
+  // No zero values dressed up as real 24h numbers.
+  if (overviewResult.error) return null;
+  return (
+    <PulseBar
+      poller={pollerResult.error ? null : pollerResult.data.data}
+      pollerConfigured={
+        pollerResult.error === null && pollerResult.data.configured
+      }
+      live={overviewResult.data.live}
+    />
   );
+}
+
+/**
+ * The Admin-DB queue read is independent of the mirror overview, so a failed
+ * overview must not blank the one band that says what is waiting for a human.
+ */
+async function QueueBand({
+  queue,
+}: {
+  queue: Promise<SafeQueryResult<ReviewQueueStats>>;
+}) {
+  const queueResult = await queue;
+  if (queueResult.error) return null;
+  return <QueueStrip stats={queueResult.data} />;
+}
+
+async function KpiBand({
+  overview,
+  monitor,
+}: {
+  overview: OverviewPromise;
+  monitor: MonitorPromise;
+}) {
+  const [overviewResult, monitorResult] = await Promise.all([
+    overview,
+    monitor,
+  ]);
 
   if (overviewResult.error) {
     return (
-      <div className="space-y-4">
-        {queueStrip}
-        <UnavailablePanel
-          title="Dashboard metrics are unavailable"
-          detail={
-            overviewResult.kind === "timeout"
-              ? "The read-only dashboard query took too long. The live connection above remains independent."
-              : "The Admin or MAIN mirror read failed. No zero values are being shown as real data."
-          }
-        />
-      </div>
+      <UnavailablePanel
+        title="Dashboard metrics are unavailable"
+        detail={
+          overviewResult.kind === "timeout"
+            ? "The read-only dashboard query took too long. The live connection above remains independent."
+            : "The Admin or MAIN mirror read failed. No zero values are being shown as real data."
+        }
+      />
     );
   }
 
-  const monitor = monitorResult.data;
+  const monitorData = monitorResult.data;
   const monitorUnavailable =
-    monitorResult.error !== null || monitor.error || monitor.data === null;
+    monitorResult.error !== null ||
+    monitorData.error ||
+    monitorData.data === null;
 
   return (
-    <div className="space-y-4" data-snapshot-at={snapshotAt}>
-      <PulseBar
-        poller={pollerResult.error ? null : pollerResult.data.data}
-        pollerConfigured={
-          pollerResult.error === null && pollerResult.data.configured
-        }
-        live={overviewResult.data.live}
-      />
-
-      {queueStrip}
-
+    <>
       <KpiGrid
         data={overviewResult.data}
-        monitor={monitor.data}
+        monitor={monitorData.data}
         monitorUnavailable={monitorUnavailable}
       />
-
       {monitorUnavailable && (
         <UnavailablePanel
           compact
@@ -152,22 +238,33 @@ async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
           detail={
             monitorResult.error !== null
               ? "The monitor queue request failed or timed out. Retry after the service recovers; MAIN and Admin metrics remain current."
-              : monitor.configured
+              : monitorData.configured
               ? "The monitor service did not return its Antifraud-DB counts. MAIN and Admin metrics remain current."
               : "Configure the monitor API URL and read token to load signup and Fiat review queues."
           }
         />
       )}
+    </>
+  );
+}
 
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
-        <PanelErrorBoundary label="Live action feed">
-          <OverviewActionFeed initialItems={overviewResult.data.feed} />
-        </PanelErrorBoundary>
-        <PanelErrorBoundary label="Thirty-day charts">
-          <OverviewCharts days={overviewResult.data.days} />
-        </PanelErrorBoundary>
-      </div>
-    </div>
+async function FeedBand({ overview }: { overview: OverviewPromise }) {
+  const overviewResult = await overview;
+  if (overviewResult.error) return null;
+  return (
+    <PanelErrorBoundary label="Live action feed">
+      <OverviewActionFeed initialItems={overviewResult.data.feed} />
+    </PanelErrorBoundary>
+  );
+}
+
+async function ChartsBand({ overview }: { overview: OverviewPromise }) {
+  const overviewResult = await overview;
+  if (overviewResult.error) return null;
+  return (
+    <PanelErrorBoundary label="Thirty-day charts">
+      <OverviewCharts days={overviewResult.data.days} />
+    </PanelErrorBoundary>
   );
 }
 
@@ -357,27 +454,27 @@ function UnavailablePanel({
   );
 }
 
-function DashboardSkeleton() {
+/**
+ * Per-band fallbacks. Stacked in page order they are byte-for-byte the shape
+ * `loading.tsx` renders, so the route-level skeleton and these boundaries can
+ * never disagree about the page's geometry.
+ */
+function QueueBandSkeleton() {
   return (
-    <div className="space-y-4">
-      <Skeleton className="h-11 rounded-lg" />
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-[52px] rounded-lg" />
-        ))}
-      </div>
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
-        {Array.from({ length: 6 }).map((_, index) => (
-          <Skeleton key={index} className="h-24 rounded-xl" />
-        ))}
-      </div>
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(300px,0.8fr)_minmax(0,2.2fr)]">
-        <Skeleton className="h-[336px] rounded-xl" />
-        <div className="grid gap-4 lg:grid-cols-2">
-          <Skeleton className="h-[336px] rounded-xl" />
-          <Skeleton className="h-[336px] rounded-xl" />
-        </div>
-      </div>
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      {Array.from({ length: 4 }).map((_, index) => (
+        <Skeleton key={index} className="h-[52px] w-full rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
+function KpiBandSkeleton() {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
+      {Array.from({ length: 6 }).map((_, index) => (
+        <Skeleton key={index} className="h-24 w-full rounded-xl" />
+      ))}
     </div>
   );
 }

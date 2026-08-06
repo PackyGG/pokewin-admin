@@ -16,7 +16,13 @@ import {
 } from "lucide-react";
 
 import { HostLink } from "@/components/host-link";
-import { KpiTile, SectionHeading } from "@/components/modern-panels";
+import {
+  KpiTile,
+  SectionHeading,
+  TILE_COLORS,
+  type AccentColor,
+} from "@/components/modern-panels";
+import { Skeleton } from "@/components/ui/skeleton";
 import { retrySseConnection, useSseStream } from "@/lib/hooks/use-sse";
 import { subscribePackyWs, type PackyEvent } from "@/lib/packy-ws";
 import { cn } from "@/lib/utils";
@@ -37,7 +43,9 @@ import { RiskScoreBar } from "../_components/risk-score-bar";
  * Live behaviour monitor console.
  *
  * Data flow (deliberate, do not "simplify" back into a poller):
- *   - ONE snapshot fetch on mount paints the initial state.
+ *   - The server hands the first snapshot down as `initialSnapshot`; the
+ *     mount fetch only runs when that prop is absent (or the server read
+ *     degraded), and then serves purely as the resync path.
  *   - Every subsequent change arrives on the SSE stream and is applied from
  *     the frame payload itself. No frame triggers a refetch; the engine
  *     expires a whole batch of sessions in one statement and publishes one
@@ -464,23 +472,180 @@ function caseHref(caseId: string): string {
   return `/antifraud/reviews?monitorCaseId=${encodeURIComponent(caseId)}`;
 }
 
-export function MonitorConsole() {
-  const [streamState, setStreamState] =
-    React.useState<StreamState>("connecting");
-  const [streamNotice, setStreamNotice] = React.useState<string | null>(null);
-  const [snapshotNotice, setSnapshotNotice] = React.useState<string | null>(
-    null,
+/**
+ * `KpiTile`'s chrome with a skeleton where the number goes.
+ *
+ * `KpiTile` types `value` as `string`, and widening it would touch a shared
+ * primitive ninety-odd call sites deep — so the loading twin lives here
+ * instead. Everything except the value line is copied from `KpiTile` verbatim,
+ * so a settling tile does not shift by a pixel.
+ */
+function PendingKpiTile({
+  label,
+  sub,
+  icon: Icon,
+  accent,
+}: {
+  label: string;
+  sub: string;
+  icon: React.ElementType;
+  accent: AccentColor;
+}) {
+  return (
+    <div
+      role="group"
+      aria-label={`${label}: loading`}
+      aria-busy
+      className="h-full rounded-lg border bg-card px-3 py-2.5 sm:px-4 sm:py-3"
+    >
+      <div className="flex min-w-0 items-center gap-1.5 sm:gap-2">
+        <Icon
+          className={cn("size-3.5 shrink-0 sm:size-4", TILE_COLORS[accent].icon)}
+          aria-hidden
+        />
+        <span className="truncate text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+          {label}
+        </span>
+      </div>
+      <div className="mt-1.5 flex items-center text-xl leading-tight sm:text-2xl">
+        <Skeleton className="h-6 w-20" />
+      </div>
+      <p className="mt-1 truncate text-xs text-muted-foreground">{sub}</p>
+    </div>
   );
-  const [sessions, setSessions] = React.useState<MonitorSession[]>([]);
+}
+
+/** Placeholder rows for a list panel that has not received its first snapshot. */
+function PendingRows({ rows, className }: { rows: number; className?: string }) {
+  return (
+    <div
+      aria-busy
+      aria-label="Loading"
+      role="status"
+      className={cn("space-y-2.5 p-3", className)}
+    >
+      {Array.from({ length: rows }).map((_, index) => (
+        <Skeleton key={index} className="h-16 rounded-lg" />
+      ))}
+    </div>
+  );
+}
+
+type InitialConsoleState = {
+  settled: boolean;
+  unconfigured: boolean;
+  degraded: boolean;
+  sessions: MonitorSession[];
+  cases: MonitorCase[];
+  recentSessions: RecentMonitorSession[];
+  liveMetrics: LiveMetrics | null;
+  summary: SnapshotSummary | null;
+  liveAvailable: boolean | null;
+};
+
+const EMPTY_INITIAL_STATE: InitialConsoleState = {
+  settled: false,
+  unconfigured: false,
+  degraded: false,
+  sessions: [],
+  cases: [],
+  recentSessions: [],
+  liveMetrics: null,
+  summary: null,
+  liveAvailable: null,
+};
+
+/**
+ * Seed every panel from the server-rendered snapshot.
+ *
+ * Pure by construction so it can run inside `useState` initialisers: it makes
+ * exactly the same per-section decisions `loadSnapshot` makes for a fetched
+ * payload (honour `errors.overview` / `errors.liveMetrics` / `errors.live`,
+ * surface `degraded` as the dismissible notice), so a server-seeded console
+ * and a fetch-seeded console cannot show different things.
+ */
+function initialStateFromSnapshot(
+  snapshot: Snapshot | null | undefined,
+): InitialConsoleState {
+  if (!snapshot) return EMPTY_INITIAL_STATE;
+  if (snapshot.configured === false) {
+    return { ...EMPTY_INITIAL_STATE, settled: true, unconfigured: true, liveAvailable: false };
+  }
+  const overviewFailed = snapshot.errors?.overview === true;
+  return {
+    settled: true,
+    unconfigured: false,
+    degraded: snapshot.degraded === true,
+    sessions: snapshot.errors?.live
+      ? []
+      : list(snapshot.live, parseSession).sort(
+          (a, b) => timeOf(b.started_at) - timeOf(a.started_at),
+        ),
+    cases: snapshot.errors?.cases
+      ? []
+      : mergeCases([], list(snapshot.cases, parseCase)),
+    recentSessions: overviewFailed
+      ? []
+      : list(snapshot.recentSessions, parseRecentSession),
+    summary: overviewFailed ? null : parseSnapshotSummary(snapshot.summary),
+    liveMetrics: snapshot.errors?.liveMetrics
+      ? null
+      : parseLiveMetrics(snapshot.liveMetrics),
+    liveAvailable: snapshot.errors?.live ? false : true,
+  };
+}
+
+export function MonitorConsole({
+  initialSnapshot = null,
+}: {
+  /**
+   * Server-rendered first paint. Plain JSON — the page reads it through the
+   * same builder the `/api/antifraud/monitor` route serves, so the shape is
+   * identical field for field.
+   */
+  initialSnapshot?: Snapshot | null;
+} = {}) {
+  const [initial] = React.useState(() =>
+    initialStateFromSnapshot(initialSnapshot),
+  );
+  const [streamState, setStreamState] = React.useState<StreamState>(
+    initial.unconfigured ? "unconfigured" : "connecting",
+  );
+  const [streamNotice, setStreamNotice] = React.useState<string | null>(
+    initial.unconfigured
+      ? "Add the monitor API URL and token to enable this page."
+      : null,
+  );
+  const [snapshotNotice, setSnapshotNotice] = React.useState<string | null>(
+    initial.degraded
+      ? "Some snapshot sections could not refresh. Working sections and live events remain available."
+      : null,
+  );
+  const [sessions, setSessions] = React.useState<MonitorSession[]>(
+    initial.sessions,
+  );
   const [liveSnapshotAvailable, setLiveSnapshotAvailable] = React.useState<
     boolean | null
-  >(null);
-  const [cases, setCases] = React.useState<MonitorCase[]>([]);
+  >(initial.liveAvailable);
+  /**
+   * Has ANY snapshot resolved yet (success or failure)?
+   *
+   * Without it, "no data yet" and "the snapshot said there is nothing" are the
+   * same render, so the console's first frame claimed sessions were
+   * unavailable and told the operator to reload the page while the very first
+   * read was still in flight. Panels render skeletons until this flips.
+   */
+  const [snapshotSettled, setSnapshotSettled] = React.useState(initial.settled);
+  const [cases, setCases] = React.useState<MonitorCase[]>(initial.cases);
   const [recentSessions, setRecentSessions] = React.useState<
     RecentMonitorSession[]
-  >([]);
-  const [liveMetrics, setLiveMetrics] = React.useState<LiveMetrics | null>(null);
-  const [summary, setSummary] = React.useState<SnapshotSummary | null>(null);
+  >(initial.recentSessions);
+  const [liveMetrics, setLiveMetrics] = React.useState<LiveMetrics | null>(
+    initial.liveMetrics,
+  );
+  const [summary, setSummary] = React.useState<SnapshotSummary | null>(
+    initial.summary,
+  );
   const [events, setEvents] = React.useState<LiveEvent[]>([]);
   const [now, setNow] = React.useState(() => Date.now());
 
@@ -576,6 +741,10 @@ export function MonitorConsole() {
       setSnapshotNotice(
         "The last snapshot refresh failed. Live events keep arriving.",
       );
+    } finally {
+      // Only the newest request settles the UI — an aborted or superseded one
+      // must not let a stale outcome dismiss the skeletons.
+      if (token === snapshotToken.current) setSnapshotSettled(true);
     }
   }, []);
 
@@ -594,10 +763,13 @@ export function MonitorConsole() {
     }, wait);
   }, [loadSnapshot]);
 
-  // One snapshot on mount for the initial paint. Everything after this comes
-  // from the stream.
+  // One snapshot on mount for the initial paint — skipped when the server
+  // already rendered one, which is the normal path. Everything after this
+  // comes from the stream.
+  const skipMountSnapshot = React.useRef(initial.settled);
   React.useEffect(() => {
-    void loadSnapshot();
+    if (!skipMountSnapshot.current) void loadSnapshot();
+    skipMountSnapshot.current = false;
     return () => {
       snapshotAbort.current?.abort();
       if (resyncTimer.current) clearTimeout(resyncTimer.current);
@@ -940,6 +1112,11 @@ export function MonitorConsole() {
     { resumeParam: "after", staleAfterMs: STALE_STREAM_MS },
   );
 
+  // Nothing has come back yet. Distinct from "the snapshot came back empty"
+  // and from "the snapshot failed" — those three states used to render the
+  // same amber "unavailable" copy.
+  const snapshotPending = !snapshotSettled;
+
   const connectionLabel =
     streamState === "live"
       ? "Live"
@@ -962,68 +1139,122 @@ export function MonitorConsole() {
             accent={streamState === "live" ? "emerald" : "rose"}
           />
         </div>
-        <KpiTile
-          label="Monitoring now"
-          value={
-            liveSnapshotAvailable
-              ? sessions.length.toLocaleString()
-              : "—"
-          }
-          sub={
-            liveSnapshotAvailable
-              ? "Active behavior windows"
-              : "Snapshot unavailable"
-          }
-          icon={UserRoundSearch}
-          accent="cyan"
-        />
-        <KpiTile
-          label="24h signups"
-          value={liveMetrics?.signups24h.toLocaleString() ?? "—"}
-          sub="Mirror signup records"
-          icon={UserRoundSearch}
-          accent="blue"
-        />
-        <KpiTile
-          label="24h locked"
-          value={liveMetrics?.locks24h.toLocaleString() ?? "—"}
-          sub="Current lock events"
-          icon={ShieldAlert}
-          accent="amber"
-        />
-        <KpiTile
-          label="24h legitimate fiat"
-          value={
-            liveMetrics
-              ? formatCurrency(liveMetrics.legitimateFiatCents24h / 100)
-              : "—"
-          }
-          sub="Succeeded, fraud excluded"
-          icon={CircleDollarSign}
-          accent="emerald"
-        />
-        <KpiTile
-          label="24h fraudulent fiat"
-          value={
-            liveMetrics
-              ? formatCurrency(liveMetrics.fraudulentFiatCents24h / 100)
-              : "—"
-          }
-          sub="Confirmed fraud funding"
-          icon={CircleDollarSign}
-          accent="rose"
-        />
-        <KpiTile
-          label="Domains / IP catches"
-          value={
-            summary
-              ? `${summary.activeDomainBlacklist.toLocaleString()} / ${summary.blockedIpCatches.toLocaleString()}`
-              : "—"
-          }
-          sub="Active rules / confirmed catches"
-          icon={Ban}
-          accent="purple"
-        />
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="Monitoring now"
+            sub="Active behavior windows"
+            icon={UserRoundSearch}
+            accent="cyan"
+          />
+        ) : (
+          <KpiTile
+            label="Monitoring now"
+            value={
+              liveSnapshotAvailable
+                ? sessions.length.toLocaleString()
+                : "—"
+            }
+            sub={
+              liveSnapshotAvailable
+                ? "Active behavior windows"
+                : "Snapshot unavailable"
+            }
+            icon={UserRoundSearch}
+            accent="cyan"
+          />
+        )}
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="24h signups"
+            sub="Mirror signup records"
+            icon={UserRoundSearch}
+            accent="blue"
+          />
+        ) : (
+          <KpiTile
+            label="24h signups"
+            value={liveMetrics?.signups24h.toLocaleString() ?? "—"}
+            sub="Mirror signup records"
+            icon={UserRoundSearch}
+            accent="blue"
+          />
+        )}
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="24h locked"
+            sub="Current lock events"
+            icon={ShieldAlert}
+            accent="amber"
+          />
+        ) : (
+          <KpiTile
+            label="24h locked"
+            value={liveMetrics?.locks24h.toLocaleString() ?? "—"}
+            sub="Current lock events"
+            icon={ShieldAlert}
+            accent="amber"
+          />
+        )}
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="24h legitimate fiat"
+            sub="Succeeded, fraud excluded"
+            icon={CircleDollarSign}
+            accent="emerald"
+          />
+        ) : (
+          <KpiTile
+            label="24h legitimate fiat"
+            value={
+              liveMetrics
+                ? formatCurrency(liveMetrics.legitimateFiatCents24h / 100)
+                : "—"
+            }
+            sub="Succeeded, fraud excluded"
+            icon={CircleDollarSign}
+            accent="emerald"
+          />
+        )}
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="24h fraudulent fiat"
+            sub="Confirmed fraud funding"
+            icon={CircleDollarSign}
+            accent="rose"
+          />
+        ) : (
+          <KpiTile
+            label="24h fraudulent fiat"
+            value={
+              liveMetrics
+                ? formatCurrency(liveMetrics.fraudulentFiatCents24h / 100)
+                : "—"
+            }
+            sub="Confirmed fraud funding"
+            icon={CircleDollarSign}
+            accent="rose"
+          />
+        )}
+        {snapshotPending ? (
+          <PendingKpiTile
+            label="Domains / IP catches"
+            sub="Active rules / confirmed catches"
+            icon={Ban}
+            accent="purple"
+          />
+        ) : (
+          <KpiTile
+            label="Domains / IP catches"
+            value={
+              summary
+                ? `${summary.activeDomainBlacklist.toLocaleString()} / ${summary.blockedIpCatches.toLocaleString()}`
+                : "—"
+            }
+            sub="Active rules / confirmed catches"
+            icon={Ban}
+            accent="purple"
+          />
+        )}
       </div>
       </PanelErrorBoundary>
 
@@ -1064,7 +1295,9 @@ export function MonitorConsole() {
             }
           />
           <div className="flex h-[460px] flex-col overflow-y-auto rounded-xl border border-border/60 bg-card p-3">
-          {!liveSnapshotAvailable ? (
+          {snapshotPending && liveSnapshotAvailable === null ? (
+            <PendingRows rows={4} className="p-0" />
+          ) : !liveSnapshotAvailable ? (
             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-4 text-center">
               <AlertTriangle
                 className="size-6 text-amber-500"
@@ -1272,7 +1505,9 @@ export function MonitorConsole() {
           }
         />
         <div className="h-[560px] overflow-y-auto rounded-xl border border-border/60 bg-card">
-        {cases.length === 0 ? (
+        {snapshotPending ? (
+          <PendingRows rows={6} />
+        ) : cases.length === 0 ? (
           <p className="px-4 py-10 text-center text-xs text-muted-foreground">
             No monitor cases have been recorded yet.
           </p>
@@ -1346,7 +1581,9 @@ export function MonitorConsole() {
             }
           />
           <div className="h-[560px] overflow-y-auto rounded-xl border border-border/60 bg-card">
-            {recentSessions.length === 0 ? (
+            {snapshotPending ? (
+              <PendingRows rows={6} />
+            ) : recentSessions.length === 0 ? (
               <p className="px-4 py-10 text-center text-xs text-muted-foreground">
                 No recent monitor sessions are available.
               </p>

@@ -7,12 +7,24 @@ const queryPath = "src/lib/antifraud/overview.ts";
 const loadingPath = "src/app/(antifraud)/antifraud/loading.tsx";
 const panelsPath =
   "src/app/(antifraud)/antifraud/_components/overview-panels.tsx";
+// Recharts lives in its own module so the action feed can hydrate (and open
+// its SSE stream) without waiting on the chart bundle.
+const chartsPath =
+  "src/app/(antifraud)/antifraud/_components/overview-charts.tsx";
+// The lazy boundary has to sit in a client module: `next/dynamic` called from
+// a Server Component leaves Recharts in the page's initial chunk group
+// (measured — /antifraud First Load JS was unchanged at 448 kB, and dropped to
+// 334 kB once the boundary moved here).
+const chartsLazyPath =
+  "src/app/(antifraud)/antifraud/_components/overview-charts-lazy.tsx";
 
 test("fraud overview renders the complete owner KPI and chart contract", async () => {
-  const [page, loading, panels] = await Promise.all([
+  const [page, loading, panels, charts, chartsLazy] = await Promise.all([
     readFile(pagePath, "utf8"),
     readFile(loadingPath, "utf8"),
     readFile(panelsPath, "utf8"),
+    readFile(chartsPath, "utf8"),
+    readFile(chartsLazyPath, "utf8"),
   ]);
 
   for (const label of [
@@ -36,15 +48,24 @@ test("fraud overview renders the complete owner KPI and chart contract", async (
   }
   assert.match(page, /xl:grid-cols-6/);
   assert.match(loading, /Array\.from\(\{ length: 6 \}/);
-  assert.match(panels, /Fiat deposits/);
-  assert.match(panels, /Accounts/);
-  assert.match(panels, /30 days/);
+  assert.match(charts, /Fiat deposits/);
+  assert.match(charts, /Accounts/);
+  assert.match(charts, /30 days/);
   assert.match(
-    panels,
+    charts,
     /accountDays = days\.filter\(\(day\) => day\.date !== "2026-07-22"\)/,
   );
-  assert.match(panels, /<LineChart[\s\S]*data=\{accountDays\}/);
+  assert.match(charts, /<LineChart[\s\S]*data=\{accountDays\}/);
   assert.match(panels, /OverviewActionFeed/);
+  // The split is the point: no chart library may creep back into the feed
+  // module or straight into the page, the lazy boundary must stay a client
+  // module, and the charts must stay server-rendered (never `ssr: false`).
+  assert.doesNotMatch(panels, /from "recharts"/);
+  assert.doesNotMatch(page, /from "recharts"/);
+  assert.match(page, /from "\.\/_components\/overview-charts-lazy"/);
+  assert.match(chartsLazy, /^"use client";/);
+  assert.match(chartsLazy, /dynamic\(\s*\(\) => import\("\.\/overview-charts"\)/);
+  assert.doesNotMatch(chartsLazy, /ssr:\s*false/);
   assert.match(page, /PanelErrorBoundary/);
 });
 
