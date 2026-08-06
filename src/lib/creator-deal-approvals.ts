@@ -248,6 +248,7 @@ export type CreatorDealApprovalDeliveryJob = {
   id: string; requestId: string; leaseToken: string; guildId: string; categoryId: string;
   channelId: string; creatorDiscordUserId: string; creator: { userId: string; username: string | null };
   deal: unknown; rewards: unknown | null; terms: { version: number; lines: string[] }; attempt: number;
+  previousMessageId: string | null;
 };
 
 export async function claimCreatorDealApprovalJobs(input: { guildId: string; workerId: string; limit: number }): Promise<CreatorDealApprovalDeliveryJob[]> {
@@ -257,7 +258,7 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
   const result = await adminDrizzle.execute<{
     id: string; lease_token: string; guild_id: string; category_id: string; chat_channel_id: string;
     creator_discord_user_id: string; creator_user_id: string; deal_payload: unknown; reward_payload: unknown | null;
-    agreement_version: number; agreement_lines: unknown; delivery_attempt_count: number;
+    agreement_version: number; agreement_lines: unknown; delivery_attempt_count: number; summary_message_id: string | null;
   }>(sql`
     WITH exhausted AS (
       UPDATE creator_deal_approval_requests SET status = 'delivery_failed', delivery_lease_token = NULL,
@@ -283,7 +284,7 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
     RETURNING request.id::text, request.delivery_lease_token::text AS lease_token, request.guild_id,
       request.category_id, request.chat_channel_id, request.creator_discord_user_id, request.creator_user_id,
       request.deal_payload, request.reward_payload, request.agreement_version, request.agreement_lines,
-      request.delivery_attempt_count
+      request.delivery_attempt_count, request.summary_message_id
   `);
   return result.rows.map((row) => {
     const deal = DealPayloadSchema.parse(row.deal_payload);
@@ -292,9 +293,9 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
       categoryId: row.category_id, channelId: row.chat_channel_id, creatorDiscordUserId: row.creator_discord_user_id,
       creator: { userId: row.creator_user_id, username: null },
       deal: { ...deal, conversionRatePercent: deal.conversion_rate_bps / 100 },
-      rewards: rewards ? { ...rewards, accrualStartAt: deal.week_start_utc } : null,
+      rewards: rewards ? { ...rewards, accrualStartAt: deal.week_start_utc, endsAt: deal.week_end_utc } : null,
       terms: { version: row.agreement_version, lines: z.array(z.string()).parse(row.agreement_lines) },
-      attempt: row.delivery_attempt_count };
+      attempt: row.delivery_attempt_count, previousMessageId: row.summary_message_id };
   });
 }
 
@@ -362,7 +363,6 @@ export async function retryCreatorDealApprovalDelivery(input: {
     }
     const [request] = await tx.update(creator_deal_approval_requests).set({
       status: "pending_delivery",
-      summary_message_id: null,
       delivery_attempt_count: 0,
       delivery_available_at: new Date().toISOString(),
       delivery_lease_token: null,
