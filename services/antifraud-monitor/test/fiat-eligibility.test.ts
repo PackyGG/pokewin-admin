@@ -879,6 +879,9 @@ test("pre-Fiat observations query every assessment without creating actions", as
         linked_active_risk_users: 1,
         amount_attempts_30m: 4,
         amount_distinct_users_30m: 2,
+        ip_has_current_user_24h: false,
+        device_has_current_user_24h: false,
+        amount_has_current_user_30m: false,
       }] };
     },
   } as never, {
@@ -896,6 +899,38 @@ test("pre-Fiat observations query every assessment without creating actions", as
   assert.match(sql, /provider_evidence#>>'\{requestContext,currency\}'/);
   assert.equal(evidence.ipAttempts10m, 3);
   assert.equal(evidence.amountDistinctUsers30m, 3);
+  assert.equal(evidence.status, "complete");
+  assert.match(sql, /CASE[\s\S]+\^\[0-9\]\+\$/);
+});
+
+test("pre-Fiat distinct counts do not add an already-seen current user", async () => {
+  const evidence = await fiatEligibilityInternals.loadPrePaymentObservations({
+    query: async () => ({ rows: [{
+      ip_attempts_10m: 2,
+      device_attempts_10m: 2,
+      platform_attempts_10m: 5,
+      ip_distinct_users_24h: 2,
+      device_distinct_users_24h: 2,
+      linked_active_risk_users: 0,
+      amount_attempts_30m: 2,
+      amount_distinct_users_30m: 2,
+      ip_has_current_user_24h: true,
+      device_has_current_user_24h: true,
+      amount_has_current_user_30m: true,
+    }] }),
+  } as never, {
+    environment: "prod",
+    userId: "user-1",
+    requestIp: "203.0.113.20",
+    checkoutVisitorId: "visitor-1",
+    amountCents: 2000,
+    currency: "USD",
+  });
+  assert.equal(evidence.ipAttempts10m, 3);
+  assert.equal(evidence.ipDistinctUsers24h, 2);
+  assert.equal(evidence.deviceDistinctUsers24h, 2);
+  assert.equal(evidence.amountAttempts30m, 3);
+  assert.equal(evidence.amountDistinctUsers30m, 2);
 });
 
 test("behaviour rewards self-funded play and punishes reward farming", () => {

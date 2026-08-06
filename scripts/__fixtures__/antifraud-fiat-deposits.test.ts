@@ -198,3 +198,19 @@ test("Antifraud stores sanitized provider evidence instead of raw Whop payloads"
   assert.doesNotMatch(migration, /billing_address/);
   assert.doesNotMatch(migration, /last4/);
 });
+
+test("legacy fiat rows and unavailable observations stay readable and non-scoring", () => {
+  const api = read("src/lib/antifraud/fiat-deposits-api.ts");
+  const risk = read("services/antifraud-monitor/src/fiat-risk.ts");
+  const observations = read(
+    "services/antifraud-monitor/src/fiat-observations.ts",
+  );
+  assert.match(api, /checkoutEmailDiffersFromAccount: z\.boolean\(\)\.default\(false\)/);
+  assert.match(api, /minutesToFirstTip: z\.number\(\)\.nullable\(\)\.default\(null\)/);
+  assert.match(api, /fiatDetectionEvidenceSchema\.optional\(\)\.default\(/);
+  assert.match(risk, /const effectivePoints = signal\.evidenceOnly \? 0 : signal\.points/);
+  assert.match(risk, /!signal\.evidenceOnly[\s\S]*NON_DISCOUNTABLE_SIGNAL_KEYS/);
+  assert.match(observations, /observe_pre_payment_evidence_unavailable/);
+  assert.match(observations, /observe_payment_identity_history_unavailable/);
+  assert.match(observations, /observe_3ds_result_unavailable/);
+});

@@ -665,15 +665,18 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
     behavior: 0,
   };
   for (const signal of signals) {
+    const effectivePoints = signal.evidenceOnly ? 0 : signal.points;
     scoreBreakdown[signal.category] = Math.min(
       100,
-      scoreBreakdown[signal.category] + signal.points,
+      scoreBreakdown[signal.category] + effectivePoints,
     );
   }
   const nonDiscountableRisk = signals
     .filter(
       (signal) =>
-        signal.points > 0 && NON_DISCOUNTABLE_SIGNAL_KEYS.has(signal.key),
+        !signal.evidenceOnly
+        && signal.points > 0
+        && NON_DISCOUNTABLE_SIGNAL_KEYS.has(signal.key),
     )
     .reduce((total, signal) => total + signal.points, 0);
   const riskScore = Math.max(
@@ -743,7 +746,7 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
     };
   });
   const primary = [...signals]
-    .filter((signal) => signal.points > 0)
+    .filter((signal) => !signal.evidenceOnly && signal.points > 0)
     .sort((a, b) => b.points - a.points)[0];
   const summary =
     primary?.detail ??
@@ -942,6 +945,11 @@ type PaymentIdentityReuse = {
 type AuthorizedNetworkReuse = {
   checkoutIpSharedUsers: number;
   checkoutDeviceSharedUsers: number;
+};
+
+type ObservationLoad<T> = {
+  values: Map<string, T>;
+  status: "complete" | "partial" | "unavailable";
 };
 
 function intentTime(intent: SourceFiatIntent): Date {
@@ -1265,7 +1273,7 @@ function addIdentityUser(
 function unavailableObservationMap<T>(
   scope: "payment_identity" | "authorized_network",
   error: unknown,
-): Map<string, T> {
+): ObservationLoad<T> {
   console.warn("[fiat-observations] post-payment evidence query unavailable", {
     scope,
     errorType: error instanceof Error ? error.name : typeof error,
@@ -1273,32 +1281,48 @@ function unavailableObservationMap<T>(
       ? (error as Error & { code?: unknown }).code
       : undefined,
   });
-  return new Map<string, T>();
+  return { values: new Map<string, T>(), status: "unavailable" };
 }
 
 async function loadPaymentIdentityReuse(
   source: Pool,
   intents: SourceFiatIntent[],
   providers: Map<string, FiatProviderEvidence>,
-): Promise<Map<string, PaymentIdentityReuse>> {
-  if (intents.length === 0) return new Map();
-  const result = await source.query<{ user_id: string; payload: unknown }>(
+): Promise<ObservationLoad<PaymentIdentityReuse>> {
+  if (intents.length === 0) {
+    return { values: new Map(), status: "complete" };
+  }
+  const result = await source.query<{
+    user_id: string | null;
+    payload: unknown | null;
+    history_truncated: boolean;
+  }>(
     `
       WITH recent_events AS (
-        SELECT id, provider_resource_id, payload
+        SELECT id, provider_resource_id, payload, received_at
         FROM payment_webhook_events
         WHERE provider='whop'
           AND event_type='payment.succeeded'
           AND received_at>=now()-interval '365 days'
         ORDER BY received_at DESC, id DESC
+        LIMIT 20001
+      ), bounded_events AS (
+        SELECT * FROM recent_events
+        ORDER BY received_at DESC, id DESC
         LIMIT 20000
+      ), matched_events AS (
+        SELECT DISTINCT ON (pwe.id) fdi.user_id, pwe.payload
+        FROM bounded_events pwe
+        JOIN fiat_deposit_intents fdi
+          ON pwe.provider_resource_id=fdi.provider_payment_id
+          OR pwe.provider_resource_id=fdi.provider_checkout_id
+        ORDER BY pwe.id, fdi.created_at DESC
       )
-      SELECT DISTINCT ON (pwe.id) fdi.user_id, pwe.payload
-      FROM recent_events pwe
-      JOIN fiat_deposit_intents fdi
-        ON pwe.provider_resource_id=fdi.provider_payment_id
-        OR pwe.provider_resource_id=fdi.provider_checkout_id
-      ORDER BY pwe.id, fdi.created_at DESC
+      SELECT matched.user_id, matched.payload, stats.history_truncated
+      FROM (
+        SELECT COUNT(*)>20000 AS history_truncated FROM recent_events
+      ) stats
+      LEFT JOIN matched_events matched ON TRUE
     `,
   );
   const emailUsers = new Map<string, Set<string>>();
@@ -1306,6 +1330,7 @@ async function loadPaymentIdentityReuse(
   const methodUsers = new Map<string, Set<string>>();
   const cardUsers = new Map<string, Set<string>>();
   for (const row of result.rows) {
+    if (!row.user_id || !row.payload) continue;
     const evidence = parseWhopEvidence(row.payload, "payment.succeeded", null);
     addIdentityUser(
       emailUsers,
@@ -1343,14 +1368,19 @@ async function loadPaymentIdentityReuse(
       cardSignatureSharedUsers: cardUsers.get(card ?? "")?.size ?? 0,
     });
   }
-  return output;
+  return {
+    values: output,
+    status: result.rows[0]?.history_truncated ? "partial" : "complete",
+  };
 }
 
 async function loadAuthorizedNetworkReuse(
   antifraud: Pool,
   intentIds: string[],
-): Promise<Map<string, AuthorizedNetworkReuse>> {
-  if (intentIds.length === 0) return new Map();
+): Promise<ObservationLoad<AuthorizedNetworkReuse>> {
+  if (intentIds.length === 0) {
+    return { values: new Map(), status: "complete" };
+  }
   const result = await antifraud.query<{
     intent_id: string;
     checkout_ip_shared_users: number;
@@ -1376,10 +1406,13 @@ async function loadAuthorizedNetworkReuse(
     `,
     [intentIds],
   );
-  return new Map(result.rows.map((row) => [row.intent_id, {
-    checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
-    checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
-  }]));
+  return {
+    values: new Map(result.rows.map((row) => [row.intent_id, {
+      checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
+      checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
+    }])),
+    status: "complete",
+  };
 }
 
 function postDetectionEvidence(input: {
@@ -1388,12 +1421,42 @@ function postDetectionEvidence(input: {
   context: ContextRow | undefined;
   identity: PaymentIdentityReuse | undefined;
   network: AuthorizedNetworkReuse | undefined;
+  paymentIdentityHistoryStatus: ObservationLoad<PaymentIdentityReuse>["status"];
+  authorizedNetworkHistoryStatus: "complete" | "unavailable";
 }): FiatPostPaymentDetectionEvidence {
   const firstTip = input.context?.first_tip_at
     ? new Date(input.context.first_tip_at).getTime()
     : null;
   const occurredAt = intentTime(input.intent).getTime();
+  const paymentSucceeded = [
+    "completed",
+    "partially_refunded",
+    "refunded",
+    "disputed",
+    "paid_unreconciled",
+  ].includes(input.intent.status);
   return {
+    paymentIdentityHistoryStatus: paymentSucceeded
+      ? input.paymentIdentityHistoryStatus
+      : "not_applicable",
+    authorizedNetworkHistoryStatus: paymentSucceeded
+      ? input.authorizedNetworkHistoryStatus
+      : "not_applicable",
+    payerEmailStatus: paymentSucceeded
+      ? input.provider.checkoutEmail ? "available" : "unavailable"
+      : "not_applicable",
+    threeDsStatus: paymentSucceeded
+      ? input.provider.threeDsVerified === true
+        ? "verified"
+        : input.provider.threeDsVerified === false
+          ? "failed"
+          : "unavailable"
+      : "not_applicable",
+    stablePaymentIdentityStatus: paymentSucceeded
+      ? input.provider.customerIdHash || input.provider.paymentMethodIdHash
+        ? "available"
+        : "unavailable"
+      : "not_applicable",
     checkoutEmailDiffersFromAccount: Boolean(
       normalizedIdentity(input.provider.checkoutEmail)
       && normalizedIdentity(input.intent.email)
@@ -1834,8 +1897,13 @@ export class FiatRiskService {
         intent,
         provider,
         context,
-        identity: paymentIdentityReuse.get(intent.id),
-        network: authorizedNetworkReuse.get(intent.id),
+        identity: paymentIdentityReuse.values.get(intent.id),
+        network: authorizedNetworkReuse.values.get(intent.id),
+        paymentIdentityHistoryStatus: paymentIdentityReuse.status,
+        authorizedNetworkHistoryStatus:
+          authorizedNetworkReuse.status === "unavailable"
+            ? "unavailable"
+            : "complete",
       });
       const baseScore = scoreFiatDeposit({
         status: intent.status,

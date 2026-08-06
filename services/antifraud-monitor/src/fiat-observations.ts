@@ -4,6 +4,7 @@ import type {
 import type { FiatSignal } from "./fiat-risk.js";
 
 export type FiatPrePaymentObservationEvidence = {
+  status: "complete" | "unavailable";
   ipAttempts10m: number;
   deviceAttempts10m: number;
   platformAttempts10m: number;
@@ -15,6 +16,25 @@ export type FiatPrePaymentObservationEvidence = {
 };
 
 export type FiatPostPaymentDetectionEvidence = {
+  paymentIdentityHistoryStatus:
+    | "complete"
+    | "partial"
+    | "unavailable"
+    | "not_applicable";
+  authorizedNetworkHistoryStatus:
+    | "complete"
+    | "unavailable"
+    | "not_applicable";
+  payerEmailStatus: "available" | "unavailable" | "not_applicable";
+  threeDsStatus:
+    | "verified"
+    | "failed"
+    | "unavailable"
+    | "not_applicable";
+  stablePaymentIdentityStatus:
+    | "available"
+    | "unavailable"
+    | "not_applicable";
   checkoutEmailDiffersFromAccount: boolean;
   disposableCheckoutEmailDomain: string | null;
   billingCountryMismatch: boolean;
@@ -58,6 +78,13 @@ export function prePaymentObservationSignals(
   evidence: FiatPrePaymentObservationEvidence,
 ): FiatEligibilitySignal[] {
   const signals: FiatEligibilitySignal[] = [];
+  if (evidence.status === "unavailable") {
+    signals.push(preSignal(
+      "observe_pre_payment_evidence_unavailable",
+      "Historical pre-payment observations were unavailable for this check.",
+      "history",
+    ));
+  }
   if (evidence.ipAttempts10m >= 3) {
     signals.push(preSignal(
       "observe_checkout_ip_velocity",
@@ -132,6 +159,53 @@ export function postPaymentObservationSignals(
   evidence: FiatPostPaymentDetectionEvidence,
 ): FiatSignal[] {
   const signals: FiatSignal[] = [];
+  if (evidence.paymentIdentityHistoryStatus === "partial") {
+    signals.push(postSignal(
+      "observe_payment_identity_history_partial",
+      "Partial payment-identity history",
+      "Payment-identity reuse was checked against a bounded history window; older records were not included.",
+      "provider",
+    ));
+  } else if (evidence.paymentIdentityHistoryStatus === "unavailable") {
+    signals.push(postSignal(
+      "observe_payment_identity_history_unavailable",
+      "Payment-identity history unavailable",
+      "Historical payment-identity reuse could not be checked for this assessment.",
+      "provider",
+    ));
+  }
+  if (evidence.authorizedNetworkHistoryStatus === "unavailable") {
+    signals.push(postSignal(
+      "observe_authorized_network_history_unavailable",
+      "Authorized network history unavailable",
+      "Historical checkout IP and device reuse could not be checked for this assessment.",
+      "network",
+    ));
+  }
+  if (evidence.payerEmailStatus === "unavailable") {
+    signals.push(postSignal(
+      "observe_checkout_email_unavailable",
+      "Checkout email unavailable",
+      "The completed payment did not include a payer email to compare or screen.",
+      "provider",
+    ));
+  }
+  if (evidence.threeDsStatus === "unavailable") {
+    signals.push(postSignal(
+      "observe_3ds_result_unavailable",
+      "3DS result unavailable",
+      "The completed payment did not include a definitive 3DS result.",
+      "provider",
+    ));
+  }
+  if (evidence.stablePaymentIdentityStatus === "unavailable") {
+    signals.push(postSignal(
+      "observe_stable_payment_identity_unavailable",
+      "Stable payment identity unavailable",
+      "The completed payment did not include a Whop customer or payment-method identity.",
+      "provider",
+    ));
+  }
   if (evidence.checkoutEmailDiffersFromAccount) {
     signals.push(postSignal(
       "observe_checkout_email_changed",

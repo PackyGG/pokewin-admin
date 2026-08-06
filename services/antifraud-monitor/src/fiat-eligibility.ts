@@ -46,6 +46,7 @@ import type { ScoreWeightStore } from "./score-weight-store.js";
 import type { Signal, Signup } from "./types.js";
 
 const EMPTY_PRE_PAYMENT_OBSERVATIONS: FiatPrePaymentObservationEvidence = {
+  status: "complete",
   ipAttempts10m: 0,
   deviceAttempts10m: 0,
   platformAttempts10m: 0,
@@ -65,7 +66,7 @@ function unavailablePrePaymentObservations(
       ? (error as Error & { code?: unknown }).code
       : undefined,
   });
-  return EMPTY_PRE_PAYMENT_OBSERVATIONS;
+  return { ...EMPTY_PRE_PAYMENT_OBSERVATIONS, status: "unavailable" };
 }
 
 export type FiatEligibilityRequest = {
@@ -628,6 +629,9 @@ async function loadPrePaymentObservations(
     linked_active_risk_users: number;
     amount_attempts_30m: number;
     amount_distinct_users_30m: number;
+    ip_has_current_user_24h: boolean;
+    device_has_current_user_24h: boolean;
+    amount_has_current_user_30m: boolean;
   }>(
     `
       WITH recent AS (
@@ -663,9 +667,14 @@ async function loadPrePaymentObservations(
         COUNT(DISTINCT user_id) FILTER (
           WHERE request_ip=$3::inet
         )::int AS ip_distinct_users_24h,
+        COALESCE(BOOL_OR(request_ip=$3::inet AND user_id=$2), false)
+          AS ip_has_current_user_24h,
         COUNT(DISTINCT user_id) FILTER (
           WHERE $4::text IS NOT NULL AND checkout_visitor_id=$4
         )::int AS device_distinct_users_24h,
+        COALESCE(BOOL_OR(
+          $4::text IS NOT NULL AND checkout_visitor_id=$4 AND user_id=$2
+        ), false) AS device_has_current_user_24h,
         (
           SELECT COUNT(DISTINCT c.user_id)::int
           FROM cases c
@@ -676,19 +685,37 @@ async function loadPrePaymentObservations(
         COUNT(*) FILTER (
           WHERE $5::int IS NOT NULL
             AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
-            AND NULLIF(
-              provider_evidence#>>'{requestContext,amountCents}', ''
-            )::int=$5
+            AND CASE
+              WHEN provider_evidence#>>'{requestContext,amountCents}'
+                ~ '^[0-9]+$'
+              THEN (provider_evidence#>>'{requestContext,amountCents}')::int
+              ELSE NULL
+            END=$5
             AND created_at>=now()-interval '30 minutes'
         )::int AS amount_attempts_30m,
         COUNT(DISTINCT user_id) FILTER (
           WHERE $5::int IS NOT NULL
             AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
-            AND NULLIF(
-              provider_evidence#>>'{requestContext,amountCents}', ''
-            )::int=$5
+            AND CASE
+              WHEN provider_evidence#>>'{requestContext,amountCents}'
+                ~ '^[0-9]+$'
+              THEN (provider_evidence#>>'{requestContext,amountCents}')::int
+              ELSE NULL
+            END=$5
             AND created_at>=now()-interval '30 minutes'
-        )::int AS amount_distinct_users_30m
+        )::int AS amount_distinct_users_30m,
+        COALESCE(BOOL_OR(
+          $5::int IS NOT NULL
+          AND user_id=$2
+          AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+          AND CASE
+            WHEN provider_evidence#>>'{requestContext,amountCents}'
+              ~ '^[0-9]+$'
+            THEN (provider_evidence#>>'{requestContext,amountCents}')::int
+            ELSE NULL
+          END=$5
+          AND created_at>=now()-interval '30 minutes'
+        ), false) AS amount_has_current_user_30m
       FROM recent
     `,
     [
@@ -702,15 +729,26 @@ async function loadPrePaymentObservations(
   );
   const row = result.rows[0];
   const includeCurrent = (value: number | undefined): number => (value ?? 0) + 1;
+  const includeCurrentUser = (
+    value: number | undefined,
+    alreadyIncluded: boolean | undefined,
+  ): number => (value ?? 0) + (alreadyIncluded ? 0 : 1);
   return {
+    status: "complete",
     ipAttempts10m: includeCurrent(row?.ip_attempts_10m),
     deviceAttempts10m: input.checkoutVisitorId
       ? includeCurrent(row?.device_attempts_10m)
       : 0,
     platformAttempts10m: includeCurrent(row?.platform_attempts_10m),
-    ipDistinctUsers24h: includeCurrent(row?.ip_distinct_users_24h),
+    ipDistinctUsers24h: includeCurrentUser(
+      row?.ip_distinct_users_24h,
+      row?.ip_has_current_user_24h,
+    ),
     deviceDistinctUsers24h: input.checkoutVisitorId
-      ? includeCurrent(row?.device_distinct_users_24h)
+      ? includeCurrentUser(
+          row?.device_distinct_users_24h,
+          row?.device_has_current_user_24h,
+        )
       : 0,
     linkedActiveRiskUsers: row?.linked_active_risk_users ?? 0,
     amountAttempts30m: input.amountCents === undefined
@@ -718,7 +756,10 @@ async function loadPrePaymentObservations(
       : includeCurrent(row?.amount_attempts_30m),
     amountDistinctUsers30m: input.amountCents === undefined
       ? 0
-      : includeCurrent(row?.amount_distinct_users_30m),
+      : includeCurrentUser(
+          row?.amount_distinct_users_30m,
+          row?.amount_has_current_user_30m,
+        ),
   };
 }
 
@@ -1221,7 +1262,7 @@ export class FiatEligibilityService {
               ? "suppressed"
               : "none",
           outcome.signals
-            .filter((signal) => signal.points > 0)
+            .filter((signal) => !signal.evidenceOnly && signal.points > 0)
             .map((signal) => signal.key),
           outcome.enforcementReasons,
           JSON.stringify(outcome.signals),

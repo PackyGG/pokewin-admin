@@ -8,6 +8,7 @@ import {
 
 test("pre-payment heuristics are evidence-only and cannot act", () => {
   const signals = prePaymentObservationSignals({
+    status: "complete",
     ipAttempts10m: 5,
     deviceAttempts10m: 5,
     platformAttempts10m: 50,
@@ -25,6 +26,11 @@ test("pre-payment heuristics are evidence-only and cannot act", () => {
 
 test("post-payment correlations are evidence-only and cannot change risk", () => {
   const signals = postPaymentObservationSignals({
+    paymentIdentityHistoryStatus: "complete",
+    authorizedNetworkHistoryStatus: "complete",
+    payerEmailStatus: "available",
+    threeDsStatus: "verified",
+    stablePaymentIdentityStatus: "available",
     checkoutEmailDiffersFromAccount: true,
     disposableCheckoutEmailDomain: "temporary.example",
     billingCountryMismatch: true,
@@ -49,6 +55,11 @@ test("post-payment correlations are evidence-only and cannot change risk", () =>
 
 test("weak card signatures need three linked accounts before surfacing", () => {
   const base = {
+    paymentIdentityHistoryStatus: "complete" as const,
+    authorizedNetworkHistoryStatus: "complete" as const,
+    payerEmailStatus: "available" as const,
+    threeDsStatus: "verified" as const,
+    stablePaymentIdentityStatus: "available" as const,
     checkoutEmailDiffersFromAccount: false,
     disposableCheckoutEmailDomain: null,
     billingCountryMismatch: false,
@@ -73,4 +84,52 @@ test("weak card signatures need three linked accounts before surfacing", () => {
     ...base,
     cardSignatureSharedUsers: 3,
   }).some((signal) => signal.key === "observe_card_signature_reuse"), true);
+});
+
+test("missing and partial observations stay explicit and evidence-only", () => {
+  const pre = prePaymentObservationSignals({
+    status: "unavailable",
+    ipAttempts10m: 0,
+    deviceAttempts10m: 0,
+    platformAttempts10m: 0,
+    ipDistinctUsers24h: 0,
+    deviceDistinctUsers24h: 0,
+    linkedActiveRiskUsers: 0,
+    amountAttempts30m: 0,
+    amountDistinctUsers30m: 0,
+  });
+  assert.deepEqual(pre.map((signal) => signal.key), [
+    "observe_pre_payment_evidence_unavailable",
+  ]);
+
+  const post = postPaymentObservationSignals({
+    checkoutEmailDiffersFromAccount: false,
+    disposableCheckoutEmailDomain: null,
+    billingCountryMismatch: false,
+    checkoutEmailSharedUsers: 0,
+    whopCustomerSharedUsers: 0,
+    paymentMethodSharedUsers: 0,
+    cardSignatureSharedUsers: 0,
+    checkoutIpSharedUsers: 0,
+    checkoutDeviceSharedUsers: 0,
+    exactAmountAttempts30m: 0,
+    exactAmountDistinctUsers30m: 0,
+    exactAmountSettled7d: 0,
+    exactAmountRefunded7d: 0,
+    tipsAfterDeposit: 0,
+    tipsAfterDepositUsd: 0,
+    minutesToFirstTip: null,
+    paymentIdentityHistoryStatus: "partial",
+    authorizedNetworkHistoryStatus: "unavailable",
+    payerEmailStatus: "unavailable",
+    threeDsStatus: "unavailable",
+    stablePaymentIdentityStatus: "unavailable",
+  });
+  const keys = new Set(post.map((signal) => signal.key));
+  assert.ok(keys.has("observe_payment_identity_history_partial"));
+  assert.ok(keys.has("observe_authorized_network_history_unavailable"));
+  assert.ok(keys.has("observe_checkout_email_unavailable"));
+  assert.ok(keys.has("observe_3ds_result_unavailable"));
+  assert.ok(keys.has("observe_stable_payment_identity_unavailable"));
+  assert.ok(post.every((signal) => signal.evidenceOnly && signal.points === 0));
 });
