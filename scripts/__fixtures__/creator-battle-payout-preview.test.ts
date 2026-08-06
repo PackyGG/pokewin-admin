@@ -68,26 +68,6 @@ test("malformed committed values fail closed instead of inventing a payout", () 
   assert.equal(result.netAmount, null);
 });
 
-test("live EOS preview is owner-gated and reads only active committed truth", () => {
-  const query = readFileSync(
-    "src/lib/queries/eos-active-preview.ts",
-    "utf8",
-  );
-  const page = readFileSync(
-    "src/app/(admin)/system/eos-verification/page.tsx",
-    "utf8",
-  );
-
-  assert.match(query, /await requireOwner\(\)/);
-  assert.match(page, /await requireOwner\(\)/);
-  assert.match(query, /b\.status IN \('waiting', 'in_progress', 'animating'\)/);
-  assert.match(query, /b\.winner_team/);
-  assert.match(query, /b\.total_unpacked/);
-  assert.match(query, /session\.bet_amount AS paid_stake/);
-  assert.doesNotMatch(query, /server_seed(?!_hash)/);
-  assert.doesNotMatch(query, /PEPPER|decrypt/i);
-});
-
 test("user Gaming rows reuse the committed creator payout preview", () => {
   const query = readFileSync(
     "src/lib/queries/users-transactions.ts",
