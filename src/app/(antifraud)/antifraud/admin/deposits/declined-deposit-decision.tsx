@@ -37,11 +37,13 @@ const CONFIRMATIONS: Record<ResolutionAction, string> = {
 export function DeclinedDepositDecision({
   caseId,
   amount,
+  refundStatus,
   status,
   version,
 }: {
   caseId: string;
   amount: string;
+  refundStatus: string;
   status: string;
   version: number;
 }) {
@@ -52,6 +54,9 @@ export function DeclinedDepositDecision({
   const [confirmation, setConfirmation] = useState("");
   const [pending, startTransition] = useTransition();
   const actionable = status === "declined" || status === "resolution_failed";
+  const refundUncertain =
+    refundStatus === "unknown" ||
+    (status === "resolution_failed" && refundStatus === "processing");
 
   function open(next: ResolutionAction) {
     setAction(next);
@@ -89,9 +94,14 @@ export function DeclinedDepositDecision({
   return (
     <>
       <div className="flex flex-wrap content-start gap-2 lg:max-w-72 lg:justify-end">
-        <Button size="sm" variant="outline" onClick={() => open("refund")}>Refund only</Button>
+        <Button size="sm" variant="outline" disabled={refundUncertain} onClick={() => open("refund")}>Refund only</Button>
         <Button size="sm" variant="destructive" onClick={() => open("ban")}>Ban only</Button>
-        <Button size="sm" variant="destructive" onClick={() => open("refund_and_ban")}>Refund + ban</Button>
+        <Button size="sm" variant="destructive" disabled={refundUncertain} onClick={() => open("refund_and_ban")}>Refund + ban</Button>
+        {refundUncertain && (
+          <p className="w-full text-right text-xs text-amber-700 dark:text-amber-300">
+            Refund outcome needs provider reconciliation. A ban-only decision is still safe.
+          </p>
+        )}
       </div>
       <AlertDialog open={action !== null} onOpenChange={(openState) => !openState && !pending && setAction(null)}>
         <AlertDialogContent>

@@ -12,7 +12,11 @@ import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
-import { safeWhopError, whopAdminClient } from "@/lib/whop-admin";
+import {
+  requireWhopCompanyId,
+  safeWhopError,
+  whopAdminClient,
+} from "@/lib/whop-admin";
 
 const schema = z.object({
   caseId: z.string().uuid(),
@@ -119,7 +123,14 @@ export async function resolveDeclinedDepositAction(
             attempt_count = attempt_count + 1, last_error = NULL,
             updated_at = NOW(), version = version + 1
         WHERE id = ${parsed.data.caseId}::uuid
-          AND status IN ('declined', 'resolution_failed')
+          AND (
+            status IN ('declined', 'resolution_failed')
+            OR (status = 'resolving' AND updated_at < NOW() - INTERVAL '5 minutes')
+          )
+          AND NOT (
+            refund_status IN ('processing', 'unknown')
+            AND ${parsed.data.action} <> 'ban'
+          )
           AND version = ${parsed.data.expectedVersion}
         RETURNING id::text, deposit_intent_id::text, user_id,
                   provider_payment_id, amount_cents
@@ -130,6 +141,30 @@ export async function resolveDeclinedDepositAction(
       return result.rows[0];
     });
     if (!claimed) return { success: true, status: "resolved", message: "This decision was already completed." };
+
+    const client = wantsRefund ? whopAdminClient() : null;
+    let refundPayment = null;
+    if (wantsRefund) {
+      try {
+        const expectedCompany = requireWhopCompanyId();
+        refundPayment = await client!.payments.retrieve(claimed.provider_payment_id);
+        if (refundPayment.company?.id !== expectedCompany) {
+          throw new Error("The Whop payment belongs to another company.");
+        }
+      } catch (error) {
+        const message =
+          error instanceof Error
+            ? error.message
+            : "The Whop payment could not be verified.";
+        await adminDrizzle.execute(sql`
+          UPDATE admin_fiat_credit_reviews
+          SET refund_status = 'failed', refund_error_message = ${message},
+              updated_at = NOW()
+          WHERE id = ${claimed.id}::uuid AND status = 'resolving'
+        `);
+        throw error;
+      }
+    }
 
     let banStatus = wantsBan ? "failed" : "not_requested";
     let banError: string | null = null;
@@ -163,8 +198,7 @@ export async function resolveDeclinedDepositAction(
     if (wantsRefund) {
       let requestSent = false;
       try {
-        const client = whopAdminClient();
-        const current = await client.payments.retrieve(claimed.provider_payment_id);
+        const current = refundPayment!;
         providerStatus = current.status;
         providerSubstatus = current.substatus;
         refundedAmount = current.refunded_amount;
@@ -178,7 +212,7 @@ export async function resolveDeclinedDepositAction(
           refundErrorMessage = "Whop reports that this payment is not refundable.";
         } else {
           requestSent = true;
-          const refunded = await client.payments.refund(claimed.provider_payment_id);
+          const refunded = await client!.payments.refund(claimed.provider_payment_id);
           providerStatus = refunded.status;
           providerSubstatus = refunded.substatus;
           refundedAmount = refunded.refunded_amount;
@@ -231,23 +265,31 @@ export async function resolveDeclinedDepositAction(
           updated_at = NOW(), version = version + 1
       WHERE id = ${claimed.id}::uuid AND status = 'resolving'
     `);
-    await createAdminAuditEvent({
-      adminUserId: session.userId,
-      targetUserId: claimed.user_id,
-      eventType: finalStatus === "resolved"
-        ? "fiat_deposit_resolution_completed"
-        : "fiat_deposit_resolution_failed",
-      metadata: {
+    try {
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        targetUserId: claimed.user_id,
+        eventType: finalStatus === "resolved"
+          ? "fiat_deposit_resolution_completed"
+          : "fiat_deposit_resolution_failed",
+        metadata: {
+          caseId: claimed.id,
+          intentId: claimed.deposit_intent_id,
+          providerPaymentId: claimed.provider_payment_id,
+          action: parsed.data.action,
+          reason: parsed.data.reason,
+          refundStatus,
+          banStatus,
+          idempotencyKey: parsed.data.idempotencyKey,
+        },
+      });
+    } catch (auditError) {
+      console.error("[fiat-deposit-resolution] secondary admin audit failed", {
+        auditError,
         caseId: claimed.id,
-        intentId: claimed.deposit_intent_id,
-        providerPaymentId: claimed.provider_payment_id,
-        action: parsed.data.action,
-        reason: parsed.data.reason,
-        refundStatus,
-        banStatus,
-        idempotencyKey: parsed.data.idempotencyKey,
-      },
-    });
+        adminUserId: session.userId,
+      });
+    }
     revalidatePath("/antifraud/admin/deposits");
     revalidatePath("/antifraud/fiat-deposits");
     revalidatePath("/antifraud/banned-users");

@@ -24,6 +24,17 @@ export function whopAdminClient(): Whop {
   return client;
 }
 
+export function requireWhopCompanyId(): string {
+  const value = process.env.WHOP_COMPANY_ID?.trim();
+  if (!value) {
+    throw new Error("The Whop company id is not configured.");
+  }
+  if (!/^biz_[A-Za-z0-9]+$/.test(value)) {
+    throw new Error("The configured Whop company id is invalid.");
+  }
+  return value;
+}
+
 export type SafeWhopError = {
   code: string;
   message: string;

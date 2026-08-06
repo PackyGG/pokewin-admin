@@ -7,12 +7,13 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getFiatAssessment } from "@/lib/antifraud/fiat-deposits-api";
 import {
   assessmentSnapshot,
+  completeReviewedFiatPostCreditEffects,
   creditReviewedFiatDeposit,
   lockFiatAndWithdrawals,
 } from "@/lib/antifraud/fiat-credit-review";
 import { adminDrizzle } from "@/lib/admin-db";
 import { sql } from "drizzle-orm";
-import { whopAdminClient } from "@/lib/whop-admin";
+import { requireWhopCompanyId, whopAdminClient } from "@/lib/whop-admin";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
@@ -72,18 +73,33 @@ export async function decideFiatDepositAction(
         status: string;
         staff_decision: string | null;
         decision_idempotency_key: string | null;
+        updated_at: string;
       }>(sql`
-        SELECT status, staff_decision, decision_idempotency_key::text
+        SELECT status, staff_decision, decision_idempotency_key::text,
+               updated_at::text
         FROM admin_fiat_credit_reviews
         WHERE deposit_intent_id = ${snapshot.depositIntentId}::uuid
         FOR UPDATE
       `)).rows[0];
-      if (existing?.decision_idempotency_key === parsed.data.idempotencyKey) {
+      if (
+        existing?.decision_idempotency_key === parsed.data.idempotencyKey &&
+        (existing.status === "approved" || existing.status === "declined")
+      ) {
         return { replay: true, status: existing.status };
       }
+      const processingStale =
+        existing != null &&
+        ["approving", "containing"].includes(existing.status) &&
+        new Date(existing.updated_at).getTime() < Date.now() - 5 * 60_000;
       const retryable =
-        (parsed.data.decision === "approve" && existing?.status === "approval_failed" && existing.staff_decision === "approve") ||
-        (parsed.data.decision === "decline" && existing?.status === "containment_failed" && existing.staff_decision === "decline");
+        (parsed.data.decision === "approve" &&
+          (existing?.status === "approval_failed" ||
+            (processingStale && existing?.status === "approving")) &&
+          existing.staff_decision === "approve") ||
+        (parsed.data.decision === "decline" &&
+          (existing?.status === "containment_failed" ||
+            (processingStale && existing?.status === "containing")) &&
+          existing.staff_decision === "decline");
       if (existing && !retryable) {
         throw new Error("Another staff member already decided this deposit.");
       }
@@ -117,34 +133,26 @@ export async function decideFiatDepositAction(
     });
     if (claimed.replay) return { success: true, status: claimed.status };
 
+    let affiliateBonusCents = 0;
     if (parsed.data.decision === "approve") {
+      const expectedCompany = requireWhopCompanyId();
       const payment = await whopAdminClient().payments.retrieve(snapshot.providerPaymentId);
-      const expectedCompany = process.env.WHOP_COMPANY_ID?.trim();
-      if (expectedCompany && payment.company?.id !== expectedCompany) {
+      if (payment.company?.id !== expectedCompany) {
         throw new Error("The Whop payment belongs to another company.");
       }
-      if (payment.status !== "paid" || payment.substatus !== "succeeded") {
-        throw new Error("The Whop payment is no longer successful.");
-      }
-      if (
-        payment.dispute_alerted_at ||
-        (payment.disputes?.length ?? 0) > 0 ||
-        (payment.refunded_amount ?? 0) > 0
-      ) {
-        throw new Error("Refunded or disputed Whop payments cannot be approved.");
-      }
-      if (
-        payment.metadata?.deposit_intent_id &&
-        payment.metadata.deposit_intent_id !== snapshot.depositIntentId
-      ) {
-        throw new Error("The Whop payment does not match this deposit intent.");
-      }
-      await creditReviewedFiatDeposit({
+      const credited = await creditReviewedFiatDeposit({
         ...snapshot,
-        providerStatus: payment.substatus,
+        payment,
         reviewedBy: session.userId,
         reason: parsed.data.reason,
       });
+      const effects = await completeReviewedFiatPostCreditEffects({
+        ...credited,
+        depositIntentId: snapshot.depositIntentId,
+        payment,
+        providerPaymentId: snapshot.providerPaymentId,
+      });
+      affiliateBonusCents = effects.affiliateBonusCents;
       await adminDrizzle.execute(sql`
         UPDATE admin_fiat_credit_reviews
         SET status = 'approved', contained_at = NULL, last_error = NULL,
@@ -184,6 +192,7 @@ export async function decideFiatDepositAction(
           decision: parsed.data.decision,
           reason: parsed.data.reason,
           creditedAmountCents: snapshot.amountCents,
+          affiliateBonusCents,
           currency: snapshot.currency,
           futureAutoApprovalChanged: false,
           ...(parsed.data.decision === "decline"

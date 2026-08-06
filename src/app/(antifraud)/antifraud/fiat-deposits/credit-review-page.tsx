@@ -83,6 +83,39 @@ function toReviewItem(item: FiatAssessment): ReviewItem {
   };
 }
 
+async function loadAllActiveAssessments(): Promise<{
+  assessments: FiatAssessment[];
+  failed: boolean;
+}> {
+  try {
+    const first = await listFiatAssessments({ page: 1, limit: 100, status: "review" });
+    if (first.error) return { assessments: [], failed: true };
+
+    const assessments = [...first.data];
+    const pageCount = Math.max(first.pagination?.pages ?? 1, 1);
+    for (let start = 2; start <= pageCount; start += 10) {
+      const batch = await Promise.all(
+        Array.from(
+          { length: Math.min(10, pageCount - start + 1) },
+          (_, index) =>
+            listFiatAssessments({
+              page: start + index,
+              limit: 100,
+              status: "review",
+            }),
+        ),
+      );
+      if (batch.some((result) => result.error)) {
+        return { assessments: [], failed: true };
+      }
+      assessments.push(...batch.flatMap((result) => result.data));
+    }
+    return { assessments, failed: false };
+  } catch {
+    return { assessments: [], failed: true };
+  }
+}
+
 export default async function FiatDepositReviewsPage({
   searchParams,
 }: {
@@ -94,34 +127,7 @@ export default async function FiatDepositReviewsPage({
   const perPage = Math.min(parsePerPage(firstValue(raw.perPage)), 100);
   const offset = (page - 1) * perPage;
 
-  const queueResult = await listFiatAssessments({
-    page: 1,
-    limit: 100,
-    status: "review",
-  }).then(
-    (value) => ({ status: "fulfilled" as const, value }),
-    (reason: unknown) => ({ status: "rejected" as const, reason }),
-  );
-  const firstAssessments =
-    queueResult.status === "fulfilled" && !queueResult.value.error
-      ? queueResult.value.data
-      : [];
-  const remainingPages =
-    queueResult.status === "fulfilled" && !queueResult.value.error
-      ? Math.min(Math.max((queueResult.value.pagination?.pages ?? 1) - 1, 0), 9)
-      : 0;
-  const additionalResults = await Promise.all(
-    Array.from({ length: remainingPages }, (_, index) =>
-      listFiatAssessments({ page: index + 2, limit: 100, status: "review" }),
-    ),
-  );
-  const sourceFailed =
-    queueResult.status === "rejected" ||
-    (queueResult.status === "fulfilled" && queueResult.value.error) ||
-    additionalResults.some((result) => result.error);
-  const assessments = sourceFailed
-    ? []
-    : [firstAssessments, ...additionalResults.map((result) => result.data)].flat();
+  const { assessments, failed: sourceFailed } = await loadAllActiveAssessments();
   const stateResult = await getFiatCreditReviewStates(
     assessments.map((item) => item.deposit_intent_id),
   ).then(

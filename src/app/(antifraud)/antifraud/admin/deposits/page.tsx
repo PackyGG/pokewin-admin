@@ -84,6 +84,7 @@ export default async function AdminDepositsPage() {
                 <DeclinedDepositDecision
                   caseId={item.id}
                   amount={formatCurrency(item.amountCents / 100)}
+                  refundStatus={item.refundStatus}
                   status={item.status}
                   version={item.version}
                 />

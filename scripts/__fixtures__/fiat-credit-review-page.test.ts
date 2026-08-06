@@ -40,6 +40,8 @@ test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.doesNotMatch(page, /BigDepositsToggle/);
   assert.doesNotMatch(page, /getWithdrawals/);
   assert.doesNotMatch(page, /tab ===/);
+  assert.match(page, /loadAllActiveAssessments/);
+  assert.doesNotMatch(page, /remainingPages|Math\.min\(Math\.max/);
   assert.match(page, /requireAntifraudPageAccess\(\)/);
   assert.match(sidebar, /label: "Deposit reviews"/);
   assert.doesNotMatch(nav, /id: "nav\.deposits"/);
@@ -53,9 +55,18 @@ test("review decisions do not use the customer backend", () => {
   assert.doesNotMatch(actions, /decideFiatDepositReview/);
   assert.match(actions, /getFiatAssessment/);
   assert.match(actions, /whopAdminClient/);
+  assert.match(actions, /requireWhopCompanyId/);
   assert.match(actions, /creditReviewedFiatDeposit/);
+  assert.match(actions, /completeReviewedFiatPostCreditEffects/);
   assert.match(workflow, /UPDATE fiat_deposit_intents/);
   assert.match(workflow, /coin_deposit_grant/);
+  assert.match(workflow, /payment\.metadata\?\.deposit_intent_id !== input\.depositIntentId/);
+  assert.match(workflow, /Whop amount mismatch/);
+  assert.match(workflow, /payment_method_type/);
+  assert.match(workflow, /affiliate_code_usages/);
+  assert.match(workflow, /type = 'deposit_bonus'/);
+  assert.match(workflow, /payment_provider_fees/);
+  assert.match(workflow, /deposit_completed:/);
 });
 
 test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit", () => {
@@ -67,6 +78,7 @@ test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit"
   assert.match(actions, /fiat_deposit_credit_approved/);
   assert.match(actions, /fiat_deposit_declined_for_admin_review/);
   assert.match(actions, /futureAutoApprovalChanged: false/);
+  assert.match(actions, /Date\.now\(\) - 5 \* 60_000/);
   assert.match(workflow, /locked_deposits_fiat = ARRAY\['all'\]/);
   assert.match(workflow, /locked_withdrawals_crypto = ARRAY\['all'\]/);
   assert.match(workflow, /locked_withdrawals_items = TRUE/);
@@ -87,9 +99,14 @@ test("Admin Deposits is manager-only and supports independent refund and ban dec
   assert.match(adminActions, /whopAdminClient/);
   assert.match(adminActions, /blockKnownUserIdentifiers/);
   assert.match(adminActions, /safeWhopError/);
+  assert.match(adminActions, /requireWhopCompanyId/);
+  assert.match(adminActions, /INTERVAL '5 minutes'/);
+  assert.match(adminActions, /refund_status IN \('processing', 'unknown'\)/);
+  assert.match(adminActions, /secondary admin audit failed/);
   assert.match(adminControls, /Refund only/);
   assert.match(adminControls, /Ban only/);
   assert.match(adminControls, /Refund \+ ban/);
+  assert.match(adminControls, /Refund outcome needs provider reconciliation/);
   assert.match(adminControls, /Ban-only keeps the payment without crediting or refunding it/);
 });
 
