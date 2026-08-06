@@ -36,7 +36,9 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Fingerprints",
     "Banned users",
     "Risk locations",
-    "Sign Up & Monitor",
+    "Signup Risk",
+    "Account Review",
+    "Blacklists & Bans",
     // System group — one Settings page (every config section is a tab on it)
     // plus the staff audit log.
     "Settings",
@@ -96,22 +98,92 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
   );
 });
 
-test("Fraud guide keeps access control and documents signup risk actions", () => {
-  const page = read(
-    "src/app/(antifraud)/antifraud/guide/sign-up/page.tsx",
+test("every Fraud guide route gates access and shares the guide primitives", () => {
+  const routes = [
+    "sign-up",
+    "fiat-deposits",
+    "account-review",
+    "refunds",
+    "blacklists",
+    "troubleshooting",
+  ];
+
+  for (const route of routes) {
+    const page = read(`src/app/(antifraud)/antifraud/guide/${route}/page.tsx`);
+    assert.match(page, /requireAntifraudPageAccess\(\)/);
+    assert.match(page, /export const metadata/);
+    // Built from the shared primitives, never hand-rolled section markup: that
+    // divergence is what made the guide stop matching the rest of the app.
+    assert.match(page, /from "\.\.\/_components\/guide-primitives"/);
+    assert.match(page, /<GuidePage/);
+    // A route-local skeleton — otherwise the guide inherits the Antifraud
+    // DASHBOARD skeleton (KPI grid + charts) and flashes the wrong shape.
+    const loading = read(
+      `src/app/(antifraud)/antifraud/guide/${route}/loading.tsx`,
+    );
+    assert.match(loading, /GuideLoading/);
+    // The skeleton must describe THIS page: one panel per section, or the
+    // placeholder shape jumps when the real content arrives.
+    const sections = (page.match(/<GuideSection/g) ?? []).length;
+    const panels = Number(loading.match(/panels=\{(\d+)\}/)?.[1]);
+    assert.equal(
+      panels,
+      sections,
+      `${route}: loading.tsx renders ${panels} panels but the page has ${sections} sections`,
+    );
+    // Pages compose primitives only — no hand-rolled markup, no inline
+    // classes. That divergence is what made the old guide pages drift.
+    assert.doesNotMatch(page, /className=/);
+    assert.doesNotMatch(page, /<(?:div|section|article|ul|ol|dl|table|h1|h2|h3) /);
+  }
+
+  // The retired pre-payment URL must redirect, never 404.
+  const retired = read(
+    "src/app/(antifraud)/antifraud/guide/fiat-pre-payment/page.tsx",
+  );
+  assert.match(retired, /redirect\("\/antifraud\/guide\/fiat-deposits"\)/);
+});
+
+test("the guide primitives stay flat — no hue-filled surfaces", () => {
+  const primitives = read(
+    "src/app/(antifraud)/antifraud/guide/_components/guide-primitives.tsx",
   );
 
-  assert.match(page, /requireAntifraudPageAccess\(\)/);
-  assert.match(page, /<PageHero>/);
-  assert.doesNotMatch(page, />\s*Sign Up &amp; Monitor\s*</);
-  assert.doesNotMatch(page, />\s*Guide\s*</);
+  // Accent belongs on the icon and the number; the surface stays `bg-card`.
+  // The old guide pages violated this with `bg-rose-500/5` tinted headers and
+  // whole-card hue fills.
+  assert.doesNotMatch(primitives, /bg-(?:rose|cyan|emerald|amber|orange|violet|purple|blue)-500\//);
+  assert.doesNotMatch(primitives, /bg-gradient-to|shadow-\[0_0|blur-/);
+  // Dark mode must be paired, never a bare -400.
+  assert.match(primitives, /text-cyan-600 dark:text-cyan-400/);
+  // `violet` is not in TILE_COLORS; `purple` is.
+  assert.doesNotMatch(primitives, /violet/);
+});
+
+test("the signup guide reconciles the band name with the badge an operator sees", () => {
+  const page = read("src/app/(antifraud)/antifraud/guide/sign-up/page.tsx");
+
+  // The catalog calls 21-49 "Low risk" but the severity key is `medium`, so
+  // the badge reads "Medium". The guide must state both, not repeat one.
   assert.match(page, /Low risk/);
-  assert.match(page, /High risk/);
-  assert.match(page, /Critical risk/);
-  assert.match(page, /Discord/);
-  assert.match(page, /Review/);
-  assert.match(page, /Monitor flow/);
-  assert.doesNotMatch(page, /Critical containment/);
+  assert.match(page, /Medium/);
+  assert.match(page, /Read the badge, not the name/);
+  // The window is fixed once it opens.
+  assert.match(page, /It never extends/);
+});
+
+test("the fiat guide does not resurrect the 60-second allow", () => {
+  const page = read(
+    "src/app/(antifraud)/antifraud/guide/fiat-deposits/page.tsx",
+  );
+
+  // DECISION_TTL_MS is "never a reusable grant" and is not returned by the
+  // API — the response is only {decisionId, allowed, timestamp}.
+  assert.doesNotMatch(page, /valid for 60 seconds|allow is valid/);
+  assert.match(page, /Every checkout is assessed fresh/);
+  // Deny (50) and contain (70) are different thresholds.
+  assert.match(page, /Deny floor/);
+  assert.match(page, /Contain floor/);
 });
 
 test("deposit credit reviews keep staff on the active decision queue", () => {

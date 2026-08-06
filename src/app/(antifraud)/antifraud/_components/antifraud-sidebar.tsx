@@ -121,15 +121,41 @@ const BLACKLIST_NAV: NavItem[] = [
   },
 ];
 
+/**
+ * Operator guide. The first two entries keep their original slots (signup, then
+ * fiat) so the reading order staff already learned is unchanged; the pre-payment
+ * page grew into the full end-to-end fiat guide, and `/guide/fiat-pre-payment`
+ * redirects to it rather than 404ing on old bookmarks.
+ */
 const GUIDE_NAV: NavItem[] = [
   {
-    label: "Sign Up & Monitor",
+    label: "Signup Risk",
     href: "/antifraud/guide/sign-up",
     icon: BookOpen,
   },
   {
-    label: "Fiat Pre-Payment Check",
-    href: "/antifraud/guide/fiat-pre-payment",
+    label: "Fiat Deposits",
+    href: "/antifraud/guide/fiat-deposits",
+    icon: BookOpen,
+  },
+  {
+    label: "Account Review",
+    href: "/antifraud/guide/account-review",
+    icon: BookOpen,
+  },
+  {
+    label: "Money Out & Refunds",
+    href: "/antifraud/guide/refunds",
+    icon: BookOpen,
+  },
+  {
+    label: "Blacklists & Bans",
+    href: "/antifraud/guide/blacklists",
+    icon: BookOpen,
+  },
+  {
+    label: "When Something Breaks",
+    href: "/antifraud/guide/troubleshooting",
     icon: BookOpen,
   },
 ];

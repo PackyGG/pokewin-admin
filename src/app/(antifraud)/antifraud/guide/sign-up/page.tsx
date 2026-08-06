@@ -1,223 +1,201 @@
 import {
   Activity,
-  ArrowRight,
-  BellRing,
-  CheckCircle2,
-  Clock3,
-  Database,
-  Eye,
+  AlertTriangle,
+  Ban,
+  Bot,
   Gauge,
-  ListChecks,
+  Lock,
+  PlugZap,
   Radar,
-  SearchCheck,
   ShieldAlert,
-  ShieldCheck,
-  Siren,
+  Tags,
   TimerReset,
-  Workflow,
 } from "lucide-react";
 
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import {
+  GuideBadge,
+  GuideBullets,
+  GuideCallout,
+  GuideDefList,
+  GuideFacts,
+  GuidePage,
+  GuideSection,
+  GuideSubHeading,
+  GuideTable,
+  type GuideFact,
+} from "../_components/guide-primitives";
 
-export const metadata = { title: "Sign Up & Monitor Guide · Antifraud" };
+export const metadata = { title: "Signup Risk Guide · Antifraud" };
 
-const riskBands = [
+/**
+ * Every number on this page is traced to a constant in this repo; the citation
+ * sits next to the data it backs so it can be re-checked, not trusted.
+ */
+
+// Bands: services/antifraud-monitor/src/score-catalog.ts:254-259 (SEVERITY_BANDS)
+// and the duplicate resolver profile-risk.ts:158-163.
+// Badge text: src/lib/antifraud/constants.ts:67-72 (REVIEW_SEVERITY_LABELS)
+// rendered by _components/badges.tsx:38.
+// Monitor length: services/antifraud-monitor/src/signup-alerts.ts:21-26.
+// Discord event key: monitor.ts:1612-1622; below 21 the alert kind is null
+// (signup-alerts.ts:12-19) so nothing is sent at all.
+const bandRows = [
   {
-    range: "0-20",
-    name: "No risk",
-    icon: ShieldCheck,
-    accent:
-      "border-emerald-500/30 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400",
-    monitor: "No monitor",
-    notification: "None",
-    review: "No",
-    locks: "None",
+    key: "low",
+    cells: [
+      "0 – 20",
+      <GuideBadge key="b" accent="slate">
+        Low
+      </GuideBadge>,
+      "No risk",
+      "None",
+      "None",
+      "None",
+    ],
   },
   {
-    range: "21-49",
-    name: "Low risk",
-    icon: Eye,
-    accent: "border-cyan-500/30 bg-cyan-500/5 text-cyan-600 dark:text-cyan-400",
-    monitor: "5-minute monitor",
-    notification: "Action available · No channel",
-    review: "No",
-    locks: "None",
+    key: "medium",
+    cells: [
+      "21 – 49",
+      <GuideBadge key="b" accent="blue">
+        Medium
+      </GuideBadge>,
+      "Low risk",
+      "5 minutes",
+      "Low-risk route",
+      "None",
+    ],
   },
   {
-    range: "50-69",
-    name: "High risk",
-    icon: ShieldAlert,
-    accent:
-      "border-orange-500/30 bg-orange-500/5 text-orange-600 dark:text-orange-400",
-    monitor: "10-minute monitor",
-    notification: "#high-risk",
-    review: "Yes",
-    locks: "None",
+    key: "high",
+    cells: [
+      "50 – 69",
+      <GuideBadge key="b" accent="amber">
+        High
+      </GuideBadge>,
+      "High risk",
+      "10 minutes",
+      "High-risk route",
+      "Account review",
+    ],
   },
   {
-    range: "70-100",
-    name: "Critical risk",
-    icon: Siren,
-    accent: "border-rose-500/30 bg-rose-500/5 text-rose-600 dark:text-rose-400",
-    monitor: "15-minute monitor",
-    notification: "#critical-risk",
-    review: "Yes",
-    locks: "Fiat deposits · Crypto withdrawals · Item withdrawals · Tips",
+    key: "critical",
+    cells: [
+      "70 – 100",
+      <GuideBadge key="b" accent="rose">
+        Critical
+      </GuideBadge>,
+      "Critical risk",
+      "15 minutes",
+      "Critical route",
+      "Account review + containment",
+    ],
   },
 ] as const;
 
-const flow = [
-  {
-    icon: SearchCheck,
-    title: "1. Sign-up check",
-    detail:
-      "Check the account, identity, network, device, and provider evidence.",
-  },
-  {
-    icon: CheckCircle2,
-    title: "2. Score it",
-    detail: "Turn the combined evidence into one score from 0 to 100.",
-  },
-  {
-    icon: Clock3,
-    title: "3. Monitor higher scores",
-    detail: "A score above 20 starts the monitor for that risk band.",
-  },
-  {
-    icon: BellRing,
-    title: "4. Apply the entry actions",
-    detail:
-      "The initial band decides its signup alert, Account Review, and lock actions. Live activity is recorded separately during the timer.",
-  },
-] as const;
-
-const monitorStages = [
-  {
-    step: "01",
-    icon: Radar,
-    title: "Open the window",
-    detail:
-      "A score of 21+ opens one monitor session from the signup time. The band sets its base length; a risky-location policy can extend it.",
-    accent: "border-cyan-500/25 bg-cyan-500/5 text-cyan-600 dark:text-cyan-400",
-  },
-  {
-    step: "02",
-    icon: Database,
-    title: "Save the baseline",
-    detail:
-      "Every signup signal is stored as evidence. Initial, current, and peak scores begin from the assessed result.",
-    accent: "border-blue-500/25 bg-blue-500/5 text-blue-600 dark:text-blue-400",
-  },
-  {
-    step: "03",
-    icon: Activity,
-    title: "Collect fresh activity",
-    detail:
-      "New account events are read in order, deduplicated, and written to the same monitor trail with their configured points.",
-    accent:
-      "border-violet-500/25 bg-violet-500/5 text-violet-600 dark:text-violet-400",
-  },
-  {
-    step: "04",
-    icon: Workflow,
-    title: "Evaluate behavior flows",
-    detail:
-      "After activity commits, enabled sequence rules can add points and run their own configured review or alert action.",
-    accent:
-      "border-orange-500/25 bg-orange-500/5 text-orange-600 dark:text-orange-400",
-  },
-  {
-    step: "05",
-    icon: CheckCircle2,
-    title: "Close on the latest score",
-    detail:
-      "At the fixed deadline, the session completes and the latest score and severity become the monitor case result.",
-    accent:
-      "border-emerald-500/25 bg-emerald-500/5 text-emerald-600 dark:text-emerald-400",
-  },
-] as const;
-
-const liveScoreFacts = [
+// monitor.ts:2576 `const trustFloor = Math.max(0, session.initial_score - 30);`
+// clamped in SQL at monitor.ts:2596; profile-risk.ts:263 applies the same −30 to
+// assessment-time trust credit.
+// Review floor: src/lib/antifraud/ws.ts:109-110 SIGNUP_REVIEW_SCORE_FLOOR = 50.
+// Containment floor: profile-risk.ts:366-372 (`score >= 70 || priorityLock ||
+// deterministicBan`) and the ingest admission check at
+// src/app/api/antifraud/ingest/route.ts:712-722.
+// ends_at is written once on INSERT (monitor.ts:2416-2431) and no UPDATE in the
+// service ever touches it.
+const scoreFacts: readonly GuideFact[] = [
   {
     icon: Gauge,
-    label: "Bounded score",
-    value: "0-100",
-    detail:
-      "Every accepted event adds or subtracts its configured point value.",
+    label: "Review floor",
+    value: "50",
+    detail: "At or above this, a case is opened for a human. Below it, nobody is asked to look.",
+    accent: "amber",
   },
   {
-    icon: ShieldCheck,
+    icon: Lock,
+    label: "Containment floor",
+    value: "70",
+    detail: "The only score band that automatically restricts the account.",
+    accent: "rose",
+  },
+  {
+    icon: TimerReset,
     label: "Trust floor",
-    value: "Initial -30",
-    detail:
-      "Positive activity can reduce risk, but never more than 30 points below the starting score.",
+    value: "start − 30",
+    detail: "Good behaviour during the window can pull the score down by 30 points, never more.",
+    accent: "emerald",
   },
   {
-    icon: ListChecks,
-    label: "Durable trail",
-    value: "One row per event",
+    icon: Radar,
+    label: "Deadline",
+    value: "Fixed",
+    detail: "Set once when the window opens. Nothing that happens afterwards moves it.",
+    accent: "cyan",
+  },
+];
+
+// profile-risk.ts:95-108 CONTAINMENT_POLICIES — these pin the score to 100
+// (:345-348 `containmentMatches`) and drive the lock branch at :433.
+// deterministicBan :405-407; priorityLock :411-422.
+const containmentPolicyItems = [
+  {
+    term: "Email — catch-all domain, blacklisted domain",
     detail:
-      "The evidence, point change, and score after the event remain attached to the session.",
+      "The two that also mark the account for an automatic ban. A confirmed catch-all additionally queues the domain, IP and fingerprint for blocking.",
   },
   {
-    icon: TimerReset,
-    label: "Fixed deadline",
-    value: "No restart",
+    term: "Blocklist hit — IP, fingerprint",
+    detail: "The identifier is already on one of our lists.",
+  },
+  {
+    term: "Clustering — third account on one fingerprint or exact IP in 30 days",
+    detail: "Counted over a rolling 30-day window.",
+  },
+  {
+    term: "Fingerprint — replayed event, linked-ID mismatch",
+    detail: "Evidence the client is not who it claims to be.",
+  },
+  {
+    term: "Funding — active use of restricted downstream funds",
     detail:
-      "New activity changes the score but does not restart or extend the signup monitor.",
+      "Money received from an account that is itself banned, locked, suspected alt, or KYC-gated.",
+  },
+  {
+    term: "Promotions — third promo redemption on a fresh account",
+    detail: "Redemption farming inside the first minutes of the account's life.",
   },
 ] as const;
 
-const reviewHandlingSteps = [
+// profile-risk.ts:109-121 EVIDENCE_POLICIES + the comment at :109-115.
+// Weights read from score-catalog.ts:26 (bad bot 80), :29 + :60 (Tor 65),
+// :35 (confirmed VM 25). They land in `policyMatches`, so the outcome is
+// review_required (:398-403), but they are excluded from `containmentMatches`
+// so they neither pin the score nor set priorityLock.
+const evidencePolicyRows = [
   {
-    step: "01",
-    icon: Eye,
-    title: "Open and take ownership",
-    detail:
-      "Clicking Review starts the case and automatically assigns it to your admin account.",
+    key: "badbot",
+    cells: [
+      "Automation / bad bot",
+      "80",
+      "Scores above the containment floor on its own, so in practice it still locks.",
+    ],
   },
   {
-    step: "02",
-    icon: CheckCircle2,
-    title: "Take action or postpone",
-    detail:
-      "Complete a review action, or use the Postpone button when you need more time.",
+    key: "tor",
+    cells: [
+      "Tor exit node",
+      "65",
+      "Above the review floor, below the containment floor. Reviewed, not locked, unless something else adds points.",
+    ],
   },
   {
-    step: "03",
-    icon: TimerReset,
-    title: "Closing also postpones",
-    detail:
-      "If no action was completed, clicking the X or outside the review postpones it and schedules a Discord reminder in 2 hours.",
-  },
-] as const;
-
-const monitoredBands = [
-  {
-    range: "21-49",
-    name: "Low risk",
-    duration: "5 minutes",
-    action: "Monitor + optional low-risk Discord route",
-    note: "No Account Review or automatic locks.",
-    accent: "border-cyan-500/25 bg-cyan-500/5 text-cyan-600 dark:text-cyan-400",
-  },
-  {
-    range: "50-69",
-    name: "High risk",
-    duration: "10 minutes",
-    action: "High-risk alert + Account Review",
-    note: "No score-based automatic locks.",
-    accent:
-      "border-orange-500/25 bg-orange-500/5 text-orange-600 dark:text-orange-400",
-  },
-  {
-    range: "70-100",
-    name: "Critical risk",
-    duration: "15 minutes",
-    action: "Priority alert + Account Review + containment",
-    note: "Fiat deposits, withdrawals, items, and tips are locked.",
-    accent: "border-rose-500/25 bg-rose-500/5 text-rose-600 dark:text-rose-400",
+    key: "vm",
+    cells: [
+      "Confirmed virtual machine",
+      "25",
+      "Barely moves the score by itself. It still forces the review outcome, but it will not lock anything.",
+    ],
   },
 ] as const;
 
@@ -225,314 +203,173 @@ export default async function AntifraudSignupGuidePage() {
   await requireAntifraudPageAccess();
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity />
-      </PageHero>
+    <GuidePage
+      eyebrow="Guide"
+      title="Signup risk and the monitor window"
+      intro="Every new account is scored once at signup. That single number decides whether anyone is told, whether a case is opened, whether the account is restricted, and how long we watch it. Nothing about that decision is revisited later — only the score moves."
+    >
+      <GuideSection
+        icon={Tags}
+        title="The four bands"
+        description="One score, two vocabularies. The scoring catalog has its own band names, the badge in the UI shows the severity key. They do not match, and the mismatch is the single most common source of confusion when reading a case."
+      >
+        <GuideTable
+          columns={[
+            "Score",
+            "Badge you see",
+            "Name in scoring",
+            "Monitor",
+            "Discord",
+            "Action",
+          ]}
+          rows={bandRows}
+        />
+        <GuideCallout icon={AlertTriangle} tone="warning" title="Read the badge, not the name">
+          A signup that scored 30 is filed as{" "}
+          <GuideBadge accent="blue">Medium</GuideBadge> everywhere in the panel,
+          even though the scoring page calls that band &ldquo;Low risk&rdquo;.
+          Likewise a 10 shows as <GuideBadge accent="slate">Low</GuideBadge>,
+          not &ldquo;No risk&rdquo;. Same score, two words — the badge is what
+          filters and queues actually use.
+        </GuideCallout>
+      </GuideSection>
 
-      <section className="grid gap-4 xl:grid-cols-4">
-        {riskBands.map((band) => {
-          const Icon = band.icon;
-          return (
-            <article
-              key={band.range}
-              className={`rounded-xl border p-4 ${band.accent}`}
-            >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="text-xs font-semibold uppercase tracking-[0.16em] opacity-80">
-                    {band.range} points
-                  </p>
-                  <h2 className="mt-1 text-lg font-semibold text-foreground">
-                    {band.name}
-                  </h2>
-                </div>
-                <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-background/80">
-                  <Icon className="size-4" />
-                </span>
-              </div>
+      <GuideSection
+        icon={Gauge}
+        title="The four numbers that matter"
+        description="Everything else in signup scoring is a weight you can tune. These four are structural."
+      >
+        <GuideFacts facts={scoreFacts} />
+      </GuideSection>
 
-              <dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">
-                <div className="min-w-0">
-                  <dt className="text-muted-foreground">Monitoring</dt>
-                  <dd className="mt-0.5 font-semibold text-foreground">
-                    {band.monitor}
-                  </dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="text-muted-foreground">Discord</dt>
-                  <dd className="mt-0.5 font-semibold text-foreground">
-                    {band.notification}
-                  </dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="text-muted-foreground">Review</dt>
-                  <dd className="mt-0.5 font-semibold text-foreground">
-                    {band.review}
-                  </dd>
-                </div>
-                <div className="min-w-0">
-                  <dt className="text-muted-foreground">Locks</dt>
-                  <dd className="mt-0.5 font-semibold text-foreground">
-                    {band.locks}
-                  </dd>
-                </div>
-              </dl>
-            </article>
-          );
-        })}
-      </section>
+      <GuideSection
+        icon={Radar}
+        title="The monitor window"
+        description="A score of 21 or more opens one watch window, timed from the signup. It exists to catch what the account does in its first minutes, when a farmed account behaves nothing like a real one."
+      >
+        <GuideSubHeading
+          title="The length is decided once, at the moment it opens"
+          hint="The band sets the base — 5, 10 or 15 minutes. Two things can make it longer, and both apply before the window starts."
+        />
+        <GuideBullets
+          accent="cyan"
+          items={[
+            "A hard policy hit, or any critical score, forces at least 15 minutes.",
+            "A risky-location policy for the signup country can specify a longer window; the longer of the two wins.",
+          ]}
+        />
+        <GuideCallout icon={TimerReset} tone="note" title="It never extends">
+          The deadline is written when the session is created and no code path
+          updates it afterwards. New activity raises the score; a second signup
+          event for the same account raises the score. Neither moves the clock.
+          If you see a flow described as &ldquo;extend the live monitor
+          window&rdquo;, that only affects the length chosen at open time.
+        </GuideCallout>
 
-      <section className="overflow-hidden rounded-xl border border-orange-500/20 bg-card">
-        <div className="border-b border-border/60 bg-orange-500/[0.04] p-5 sm:p-6">
-          <div className="flex items-start gap-3">
-            <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
-              <ShieldAlert className="size-5" />
-            </span>
-            <div>
-              <h2 className="text-base font-semibold">
-                How staff handles signup reviews
-              </h2>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                High and Critical signups enter Account Review. Opening one
-                means taking responsibility for its next action.
-              </p>
-            </div>
-          </div>
-        </div>
+        <GuideSubHeading
+          title="What the score does during the window"
+          hint="Most tracked activity is trust-building, so the usual direction of travel is down."
+        />
+        <GuideBullets
+          items={[
+            "A crypto deposit is the strongest positive signal. Paid pack opens, battle bets and normal reward claims also pull the score down.",
+            "Only two activity types add risk by default: session hopping and a dormant device switch.",
+            "Every event is recorded once. A replayed batch or a second service replica cannot double-count it.",
+            "Reward-enrollment rows created by signup itself are dropped, not scored — they are plumbing, not player behaviour.",
+            "The case severity follows the live score and can drop back down. The peak score never does — that is what to read when a case looks calm but was not.",
+          ]}
+        />
+      </GuideSection>
 
-        <div className="space-y-4 p-5 sm:p-6">
-          <div className="grid gap-3 md:grid-cols-3">
-            {reviewHandlingSteps.map((step, index) => {
-              const Icon = step.icon;
-              return (
-                <article
-                  key={step.step}
-                  className="relative rounded-lg border border-border/60 bg-muted/20 p-4"
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.18em] text-orange-600 dark:text-orange-400">
-                      Step {step.step}
-                    </span>
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                      <Icon className="size-4" />
-                    </span>
-                  </div>
-                  <h3 className="mt-4 text-sm font-semibold">{step.title}</h3>
-                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                    {step.detail}
-                  </p>
-                  {index < reviewHandlingSteps.length - 1 && (
-                    <ArrowRight className="absolute -right-3 top-1/2 z-10 hidden size-4 -translate-y-1/2 text-muted-foreground/50 md:block" />
-                  )}
-                </article>
-              );
-            })}
-          </div>
+      <GuideSection
+        icon={ShieldAlert}
+        title="Containment policies — the signals that force 100"
+        description="These bypass the weights entirely. If one of them matches, the score is 100 no matter what the rest of the evidence says, the monitor runs the full 15 minutes, and the account is contained. The underlying fact is binary, not a judgement call."
+      >
+        <GuideDefList items={containmentPolicyItems} />
+        <GuideCallout icon={Ban} tone="note">
+          Two of them go further than containment: a catch-all email and a
+          blacklisted email domain both mark the account for an automatic ban.
+          The rest lock it and ask for a review.
+        </GuideCallout>
+      </GuideSection>
 
-        </div>
-      </section>
+      <GuideSection
+        icon={Bot}
+        title="Privacy and automation evidence is no longer a hard policy"
+        description="Tor, confirmed virtual machines and automation used to pin the score to 100 and lock withdrawals like any other hard policy. They no longer do — a Tor exit node or a VM at signup is a large false-positive surface among ordinary privacy-tool users."
+      >
+        <GuideTable
+          columns={["Signal", "Points", "What that means in practice"]}
+          rows={evidencePolicyRows}
+        />
+        <GuideCallout icon={AlertTriangle} tone="note">
+          They are still recorded as a policy match and still force the
+          review outcome. What changed is that the configured weight now
+          actually governs the score — so these are tunable from Rules &amp;
+          Scoring, and setting a weight to zero genuinely disables its effect.
+          A Tor signup that used to arrive locked at 100 now arrives at 65:
+          reviewed, not contained.
+        </GuideCallout>
+      </GuideSection>
 
-      <section className="rounded-xl border border-border/70 bg-card p-5">
-        <div className="flex items-start gap-3">
-          <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-muted-foreground">
-            <SearchCheck className="size-4" />
-          </span>
-          <div>
-            <h2 className="text-sm font-semibold">
-              How a signup moves through Fraud
-            </h2>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground">
-              The initial assessment is permanent evidence. Monitoring then
-              watches fresh activity and can add new evidence to the same case.
-            </p>
-          </div>
-        </div>
+      <GuideSection
+        icon={Lock}
+        title="What containment at 70 actually locks"
+        description="Only the critical-signup path applies the full set, and only in production. The account keeps working — it just cannot move money."
+      >
+        <GuideBullets
+          accent="rose"
+          items={[
+            "Fiat deposits",
+            "Crypto withdrawals",
+            "Item withdrawals",
+            "Tip rewards",
+          ]}
+        />
+        <GuideCallout icon={AlertTriangle} tone="warning">
+          The other containment paths lock less. Behavioural containment, risky
+          free-battle containment and blocklist containment lock crypto and item
+          withdrawals only — no fiat-deposit block, no tips lock. If you are
+          looking at a locked account and fiat deposits are still open, it was
+          not the critical-signup path that locked it.
+        </GuideCallout>
+        <GuideBullets
+          items={[
+            "A re-delivered duplicate never re-applies containment — staff may have reviewed and unlocked the account in between, and re-locking would erase that.",
+          ]}
+        />
+      </GuideSection>
 
-        <div className="mt-5 grid gap-3 md:grid-cols-4">
-          {flow.map((step) => {
-            const Icon = step.icon;
-            return (
-              <div
-                key={step.title}
-                className="rounded-lg border border-border/60 bg-muted/20 p-3"
-              >
-                <Icon className="size-4 text-cyan-600 dark:text-cyan-400" />
-                <p className="mt-3 text-xs font-semibold">{step.title}</p>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                  {step.detail}
-                </p>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      <GuideSection
+        icon={PlugZap}
+        title="When a provider is down, the signup is not scored"
+        description="Fingerprint and IP reputation are mandatory. If either of those, or any other enrichment provider, fails while a signup is being assessed, the assessment is abandoned rather than completed on partial evidence."
+      >
+        <GuideBullets
+          accent="amber"
+          items={[
+            "A partial assessment row is still written, marked incomplete — so the signup is visible, but it has no band you should act on.",
+            "No case, no monitor session, no Discord alert and no review are created. A silent gap in the queue during an outage is this, not a quiet day.",
+            "The signup lands in the ingestion dead letter and retries every 60 seconds. Provider failures retry forever; other failures give up after five attempts.",
+            "The ingestion cursor still advances, so one bad signup never blocks the stream behind it.",
+            "One exception: a confirmed catch-all email is contained before the assessment is abandoned, so an unrelated outage cannot delay it.",
+          ]}
+        />
+      </GuideSection>
 
-      <section className="overflow-hidden rounded-xl border border-cyan-500/20 bg-card">
-        <div className="border-b border-border/60 bg-cyan-500/[0.04] p-5 sm:p-6">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div className="flex items-start gap-3">
-              <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
-                <Radar className="size-5" />
-              </span>
-              <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h2 className="text-base font-semibold">Monitor flow</h2>
-                  <span className="rounded-full border border-cyan-500/25 bg-cyan-500/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-cyan-600 dark:text-cyan-400">
-                    Starts at 21 points
-                  </span>
-                </div>
-              </div>
-            </div>
-            <div className="grid grid-cols-3 gap-1.5 text-center text-[10px] font-semibold tabular-nums">
-              <span className="rounded-md border border-cyan-500/20 bg-cyan-500/5 px-2 py-1.5 text-cyan-600 dark:text-cyan-400">
-                5 min
-              </span>
-              <span className="rounded-md border border-orange-500/20 bg-orange-500/5 px-2 py-1.5 text-orange-600 dark:text-orange-400">
-                10 min
-              </span>
-              <span className="rounded-md border border-rose-500/20 bg-rose-500/5 px-2 py-1.5 text-rose-600 dark:text-rose-400">
-                15 min
-              </span>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-5 p-5 sm:p-6">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
-            {monitorStages.map((stage, index) => {
-              const Icon = stage.icon;
-              return (
-                <article
-                  key={stage.step}
-                  className={`relative rounded-lg border p-3.5 ${stage.accent}`}
-                >
-                  <div className="flex items-center justify-between gap-3">
-                    <span className="text-[10px] font-bold uppercase tracking-[0.18em] opacity-70">
-                      Step {stage.step}
-                    </span>
-                    <span className="flex size-7 items-center justify-center rounded-md bg-background/80">
-                      <Icon className="size-3.5" />
-                    </span>
-                  </div>
-                  <h3 className="mt-4 text-sm font-semibold text-foreground">
-                    {stage.title}
-                  </h3>
-                  <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-                    {stage.detail}
-                  </p>
-                  {index < monitorStages.length - 1 && (
-                    <ArrowRight className="absolute -right-3 top-1/2 z-10 hidden size-4 -translate-y-1/2 text-muted-foreground/50 xl:block" />
-                  )}
-                </article>
-              );
-            })}
-          </div>
-
-          <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
-            <div className="rounded-xl border border-border/60 bg-muted/15 p-4">
-              <div className="flex items-start gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Gauge className="size-4" />
-                </span>
-                <div>
-                  <h3 className="text-sm font-semibold">
-                    How the live score works
-                  </h3>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    The same point weights shown in Rules &amp; Scoring are
-                    applied to accepted activity during the window.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-2 rounded-lg border border-border/60 bg-background px-3 py-2.5 font-mono text-[11px] font-medium">
-                <span className="text-muted-foreground">current score</span>
-                <span>+</span>
-                <span className="text-violet-600 dark:text-violet-400">
-                  event points
-                </span>
-                <ArrowRight className="size-3.5 text-muted-foreground" />
-                <span className="text-cyan-600 dark:text-cyan-400">
-                  clamp(initial - 30, result, 100)
-                </span>
-              </div>
-
-              <div className="mt-3 grid gap-2 sm:grid-cols-2">
-                {liveScoreFacts.map((fact) => {
-                  const Icon = fact.icon;
-                  return (
-                    <div
-                      key={fact.label}
-                      className="rounded-lg border border-border/50 bg-background/70 p-3"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <span className="flex items-center gap-2 text-xs font-semibold">
-                          <Icon className="size-3.5 text-cyan-600 dark:text-cyan-400" />
-                          {fact.label}
-                        </span>
-                        <span className="text-[11px] font-semibold tabular-nums text-foreground">
-                          {fact.value}
-                        </span>
-                      </div>
-                      <p className="mt-1.5 text-[11px] leading-4 text-muted-foreground">
-                        {fact.detail}
-                      </p>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div className="rounded-xl border border-border/60 bg-muted/15 p-4">
-              <div className="flex items-start gap-3">
-                <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                  <Clock3 className="size-4" />
-                </span>
-                <div>
-                  <h3 className="text-sm font-semibold">
-                    What the entry band starts
-                  </h3>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    These actions are decided once, from the completed signup
-                    assessment.
-                  </p>
-                </div>
-              </div>
-
-              <div className="mt-4 space-y-2">
-                {monitoredBands.map((band) => (
-                  <div
-                    key={band.range}
-                    className={`rounded-lg border p-3 ${band.accent}`}
-                  >
-                    <div className="flex flex-wrap items-center justify-between gap-2">
-                      <div className="flex items-center gap-2">
-                        <span className="rounded-md bg-background/80 px-2 py-1 text-[10px] font-bold tabular-nums">
-                          {band.range}
-                        </span>
-                        <span className="text-xs font-semibold text-foreground">
-                          {band.name}
-                        </span>
-                      </div>
-                      <span className="text-[11px] font-semibold tabular-nums">
-                        {band.duration}
-                      </span>
-                    </div>
-                    <p className="mt-2 text-xs font-medium text-foreground">
-                      {band.action}
-                    </p>
-                    <p className="mt-0.5 text-[11px] leading-4 text-muted-foreground">
-                      {band.note}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
-          </div>
-
-        </div>
-      </section>
-    </div>
+      <GuideSection
+        icon={Activity}
+        title="What happens at the end"
+        description="At the deadline the session closes on whatever the score is at that moment. There is no second decision."
+      >
+        <GuideBullets
+          items={[
+            "The entry band already decided the alert, the review and the locks. A score that fell during the window does not undo any of them.",
+            "Clearing a case is a human action on Account reviews — it is the only thing that lifts a signup lock.",
+          ]}
+        />
+      </GuideSection>
+    </GuidePage>
   );
 }

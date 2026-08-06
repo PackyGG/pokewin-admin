@@ -7,53 +7,61 @@ const read = (path: string) => readFileSync(path, "utf8");
 test("signup risk bands expose the agreed monitoring and staff actions", () => {
   const guide = read("src/app/(antifraud)/antifraud/guide/sign-up/page.tsx");
   const policy = read("services/antifraud-monitor/src/signup-alerts.ts");
+  const bands = read("services/antifraud-monitor/src/score-catalog.ts");
+  const ws = read("src/lib/antifraud/ws.ts");
 
-  for (const range of ["0-20", "21-49", "50-69", "70-100"]) {
-    assert.match(guide, new RegExp(`range: "${range}"`));
+  // The band boundaries the guide prints must be the ones the engine uses.
+  // Guide renders them with an en dash; the catalog is the source of truth.
+  assert.match(bands, /key: "low", label: "No risk", minimum: 0, maximum: 20/);
+  assert.match(
+    bands,
+    /key: "medium", label: "Low risk", minimum: 21, maximum: 49/,
+  );
+  assert.match(
+    bands,
+    /key: "high", label: "High risk", minimum: 50, maximum: 69/,
+  );
+  assert.match(
+    bands,
+    /key: "critical", label: "Critical risk", minimum: 70, maximum: 100/,
+  );
+  for (const range of ["0 – 20", "21 – 49", "50 – 69", "70 – 100"]) {
+    assert.ok(
+      guide.includes(range),
+      `signup guide is missing the ${range} band`,
+    );
   }
+
+  // Monitor durations.
   assert.match(policy, /return 5 \* 60/);
   assert.match(policy, /return 10 \* 60/);
   assert.match(policy, /return 15 \* 60/);
-  assert.match(guide, /notification: "#high-risk"/);
-  assert.match(guide, /notification: "#critical-risk"/);
-  assert.match(guide, /notification: "Action available · No channel"/);
-  assert.equal((guide.match(/review: "No"/g) ?? []).length, 2);
-  assert.equal((guide.match(/review: "Yes"/g) ?? []).length, 2);
-  assert.equal((guide.match(/locks: "None"/g) ?? []).length, 3);
-  assert.match(
-    guide,
-    /locks: "Fiat deposits · Crypto withdrawals · Item withdrawals · Tips"/,
-  );
-  assert.doesNotMatch(
-    guide,
-    /Staff are informed|Nothing else happens|No automatic restriction/,
-  );
-  assert.match(guide, /title: "1\. Sign-up check"/);
-  assert.match(guide, /title: "2\. Score it"/);
-  assert.match(guide, /title: "3\. Monitor higher scores"/);
-  assert.match(guide, /title: "4\. Apply the entry actions"/);
-  assert.match(
-    guide,
-    /<dl className="mt-4 grid grid-cols-2 gap-x-4 gap-y-3 text-xs">/,
-  );
-  assert.match(guide, /How staff handles signup reviews/);
-  assert.match(guide, /automatically assigns it to your admin account/);
-  assert.match(guide, /Take action or postpone/);
-  assert.match(guide, /schedules a Discord reminder in 2 hours/);
-  assert.match(guide, /title: "Open the window"/);
-  assert.match(guide, /title: "Save the baseline"/);
-  assert.match(guide, /title: "Collect fresh activity"/);
-  assert.match(guide, /title: "Evaluate behavior flows"/);
-  assert.match(guide, /title: "Close on the latest score"/);
-  assert.match(guide, /value: "Initial -30"/);
-  assert.match(guide, /value: "No restart"/);
-  assert.match(guide, /clamp\(initial - 30, result, 100\)/);
-  assert.doesNotMatch(
-    guide,
-    /A live score change is evidence, not a second signup/,
-  );
-  assert.doesNotMatch(guide, /Move up immediately/);
-  assert.doesNotMatch(guide, /cross a higher threshold/);
+  for (const duration of ["5 minutes", "10 minutes", "15 minutes"]) {
+    assert.ok(guide.includes(duration), `guide is missing ${duration}`);
+  }
+
+  // The two structural floors, pinned to their constants.
+  assert.match(ws, /SIGNUP_REVIEW_SCORE_FLOOR = 50/);
+  assert.match(guide, /label: "Review floor",\s*value: "50"/);
+  assert.match(guide, /label: "Containment floor",\s*value: "70"/);
+  assert.match(guide, /value: "start − 30"/);
+
+  // The full critical containment set, and the fact that the other paths lock
+  // less — an operator reading a locked account needs both halves.
+  for (const lock of [
+    "Fiat deposits",
+    "Crypto withdrawals",
+    "Item withdrawals",
+    "Tip rewards",
+  ]) {
+    assert.ok(guide.includes(lock), `guide is missing the ${lock} lock`);
+  }
+  assert.match(guide, /The other containment paths lock less/);
+
+  // Corrections that must not regress: the badge/name mismatch is stated, and
+  // the window is documented as never extending.
+  assert.match(guide, /Read the badge, not the name/);
+  assert.match(guide, /It never extends/);
   assert.doesNotMatch(guide, /Critical containment/);
 });
 
