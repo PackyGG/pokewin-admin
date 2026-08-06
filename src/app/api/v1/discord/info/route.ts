@@ -4,6 +4,10 @@ import { eq } from "drizzle-orm";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import {
+  REWARD_QUERY_TIMEOUT_MS,
+  safeQueryOrNull,
+} from "@/lib/errors/safe-query";
 import { getPlayerRewardSummary } from "@/lib/creator-vip/queries";
 
 /**
@@ -31,8 +35,16 @@ import { getPlayerRewardSummary } from "@/lib/creator-vip/queries";
  * Numbers come from the same `computeAllEntitlements` behind `/check`, so the
  * two commands can never quote different figures.
  *
- * DATA BOUNDARY: reads prod read-only (`getProdReadDrizzleDb()`) plus
- * the admin DB for claim totals. Writes nothing.
+ * DATA BOUNDARY: reads prod read-only (`getProdReadDrizzleDb()`) plus the admin
+ * DB for claim totals.
+ *
+ * NOT write-free, despite the read-only scope. `getPlayerRewardSummary` runs
+ * `computeAllEntitlements`, which calls `enforceOfferExpiry` — that materialises
+ * `creator_reward_offer_windows` rows and therefore STARTS the offer clock as a
+ * side effect of merely looking. It is inherent to how an offer gets an expiry
+ * at all (an offer nobody has seen has no deadline to run), but it means a
+ * `discord:info:read` key mutates the admin DB. Documented here because this
+ * comment previously claimed "Writes nothing", which was false.
  */
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -96,7 +108,26 @@ export const POST = withApiKey(
       );
     }
 
-    const summary = await getPlayerRewardSummary(linkedAccount.userId);
-    return { discordUserId, ...summary };
+    // Bounded, and degraded to a clean 503 rather than a hung request.
+    // `getPlayerRewardSummary` fans out across both databases via
+    // `computeAllEntitlements`, so a slow MAIN read used to hold this
+    // connection until the platform killed it — the bot saw a socket error it
+    // has no branch for, instead of a retriable status. `/check` already
+    // isolates the same subsystem; this endpoint can't degrade partially,
+    // because the summary IS the response, so it fails cleanly instead.
+    const summary = await safeQueryOrNull(
+      () => getPlayerRewardSummary(linkedAccount.userId),
+      "api.discord.info.summary",
+      REWARD_QUERY_TIMEOUT_MS,
+    );
+    if (summary.data === null) {
+      return apiError(
+        503,
+        "temporarily_unavailable",
+        "Couldn't read reward totals right now. Try again shortly.",
+      );
+    }
+
+    return { discordUserId, ...summary.data };
   },
 );

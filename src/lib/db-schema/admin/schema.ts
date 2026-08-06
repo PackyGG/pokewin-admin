@@ -1090,9 +1090,13 @@ export const creator_reward_programs = pgTable("creator_reward_programs", {
 	vip_reward_usd: numeric({ precision: 20, scale:  2 }),
 	lossback_pct: numeric({ precision: 6, scale:  2 }),
 	min_deposit_usd: numeric({ precision: 20, scale:  2 }),
+	archived_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	archived_by: uuid(),
 }, (table) => [
 	index("creator_reward_programs_creator_idx").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops")),
 	index("creator_reward_programs_is_active_idx").using("btree", table.is_active.asc().nullsLast().op("bool_ops")),
+	index("creator_reward_programs_live_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(archived_at IS NULL)`),
+	check("creator_reward_programs_archived_not_active", sql`(archived_at IS NULL) OR (is_active = false)`),
 ]);
 
 export const creator_reward_program_windows = pgTable("creator_reward_program_windows", {

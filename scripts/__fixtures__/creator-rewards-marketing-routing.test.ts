@@ -37,17 +37,23 @@ test("Creator Rewards lives only in the Marketing workspace", () => {
     "resendClaimDecisionNotice",
     "testBotWebhookConnection",
     "searchCreatorsWithCodes",
+    // Program lifecycle (2026-08-06). Edit and removal move money terms and
+    // retire live agreements, so they are gated exactly like the rest.
+    "updateCreatorRewardProgram",
+    "planCreatorRewardProgramRemoval",
+    "removeCreatorRewardProgram",
+    "restoreCreatorRewardProgram",
   ]) {
     assert.match(actions, new RegExp(`export async function ${action}\\b`));
   }
   assert.equal(
     actions.match(/await requireAdmin\(\)/g)?.length,
-    10,
+    14,
     "every mutation/search action must retain its admin gate",
   );
   assert.equal(
     actions.match(/await requirePageAccess\("\/creator-rewards"\)/g)?.length,
-    10,
+    14,
     "every mutation/search action must retain its page permission gate",
   );
   assert.match(actions, /revalidatePath\("\/creator-hub\/rewards"\)/);

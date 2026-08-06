@@ -365,56 +365,92 @@ async function wagerPosition(
 }
 
 /**
- * Basis already held, and reward already approved, for this user on this
- * program. One grouped read over the admin-side claims.
+ * Reward already HELD against the program's per-user cap, in whole cents.
+ *
+ * ── ONE CEILING, BOTH LEGS ────────────────────────────────────────────────
+ * `max_reward_per_user_usd` is a "lifetime cap per user" on the PROGRAM — the
+ * create dialog says exactly that, and the program card renders it as
+ * "cap $X/user". It is not a per-leg allowance. Counting one leg's claims made
+ * the ceiling depend on the ORDER the legs were claimed in: an approved FTD
+ * lossback was invisible to the wager leg's check, so lossback-then-wager paid
+ * cap + lossback while wager-then-lossback paid the cap. Both legs now read
+ * this one number, so there is no order left to exploit.
+ *
+ * ── WHY PENDING HOLDS ─────────────────────────────────────────────────────
+ * A pending claim is a payout already queued, and nothing stops a user filing
+ * the next one while it waits. Counting approved rows only hands every fresh
+ * claim a clean slate, and the cap is discovered to be blown only once staff
+ * approve the backlog — by which point the money is out. So pending holds
+ * against the cap exactly as it holds wager basis (`BASIS_HOLDING_STATUSES`),
+ * and rejection releases both by simply falling out of the filter, with no
+ * compensating write.
+ *
+ * Summed in SQL as numeric and rounded to cents ONCE, so no float chain forms.
  */
-async function priorHoldings(
+async function heldRewardCents(
   programId: string,
   userId: string,
-  runStart: Date,
-): Promise<{ consumedUsd: number; approvedRewardUsd: number }> {
-  // ONE grouped read instead of two aggregates. Consumed basis and approved
-  // reward differ only in which rows they count, so they are derived in JS
-  // from a single pass rather than costing a second round-trip.
+): Promise<number> {
   const rows = await adminDrizzle
     .select({
-      status: creator_reward_claims.status,
-      consumed: sql<string>`COALESCE(SUM(${creator_reward_claims.consumed_wager_usd}), 0)::text`,
-      amount: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+      value: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
     })
     .from(creator_reward_claims)
     .where(
       and(
         eq(creator_reward_claims.program_id, programId),
         eq(creator_reward_claims.user_id, userId),
-      // WAGER leg only. A lossback claim consumes no wager basis (it writes
-      // 0), so today this changes nothing — but leaving the legs mixed here
-      // would silently break the moment that stopped being true.
+        // No `leg` filter, and deliberately NOT run-scoped: this is a lifetime
+        // ceiling on the program, so a code switch does not reset it either.
+        inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+      ),
+    );
+  return toCents(toNumber(rows[0]?.value));
+}
+
+/**
+ * Wager BASIS already held by this user's claims on this program.
+ *
+ * Strictly wager-leg: basis is a wager-leg concept, a lossback claim consumes
+ * none of it (it writes 0), and widening this to other legs would let a
+ * lossback silently eat wager the player is still owed against. The per-user
+ * reward cap is a separate quantity with separate scoping — see
+ * `heldRewardCents`.
+ */
+async function priorHoldings(
+  programId: string,
+  userId: string,
+  runStart: Date,
+): Promise<{ consumedUsd: number }> {
+  const rows = await adminDrizzle
+    .select({
+      status: creator_reward_claims.status,
+      consumed: sql<string>`COALESCE(SUM(${creator_reward_claims.consumed_wager_usd}), 0)::text`,
+    })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        eq(creator_reward_claims.program_id, programId),
+        eq(creator_reward_claims.user_id, userId),
         eq(creator_reward_claims.leg, "wager"),
       ),
     )
     // Consumption is scoped to the CURRENT run for the same reason the wager
     // is: basis burned on a previous run must not eat into the new one, or the
     // reset would be one-sided and a returning player could never claim again.
-    // The per-user reward CAP is deliberately NOT run-scoped — it is a
-    // lifetime ceiling, so it is summed from every approved row below.
     .groupBy(creator_reward_claims.status);
 
   let consumedUsd = 0;
-  let approvedRewardUsd = 0;
   for (const r of rows) {
-    if (r.status === "approved") {
-      approvedRewardUsd += toNumber(r.amount);
-    }
     if (r.status === "approved" || r.status === "pending") {
       consumedUsd += toNumber(r.consumed);
     }
   }
 
-  // Run-scoping the consumed basis needs a row-level date filter, which a
-  // groupBy can't express alongside the lifetime cap sum. Claims per
-  // (program, user) are few, so this correction is a cheap targeted read and
-  // only runs when there is something to correct.
+  // Run-scoping the consumed basis needs a row-level date filter, which the
+  // status groupBy above can't express. Claims per (program, user) are few, so
+  // this correction is a cheap targeted read and only runs when there is
+  // something to correct.
   if (consumedUsd > 0) {
     const stale = await adminDrizzle
       .select({
@@ -435,7 +471,7 @@ async function priorHoldings(
   }
 
   consumedUsd += await expiredWagerBasisUsd(programId, userId, runStart);
-  return { consumedUsd, approvedRewardUsd };
+  return { consumedUsd };
 }
 
 /**
@@ -535,8 +571,12 @@ export async function computeEntitlement(
   const wagerUsd = position.currentUsd;
   const lifetimeWagerUsd = position.lifetimeUsd;
 
-  const [prior, vip] = await Promise.all([
+  // Basis consumption and cap holdings are different quantities with different
+  // scoping (see both functions), so they are two reads — issued together, so
+  // the split costs no extra latency.
+  const [prior, heldCents, vip] = await Promise.all([
     priorHoldings(program.id, userId, runStart),
+    capUsd == null ? 0 : heldRewardCents(program.id, userId),
     facts?.isVip ?? isVipNow(userId),
   ]);
 
@@ -560,10 +600,7 @@ export async function computeEntitlement(
   let cappedByUserLimit = false;
 
   if (capUsd != null) {
-    const remainingCents = Math.max(
-      0,
-      toCents(capUsd) - toCents(prior.approvedRewardUsd),
-    );
+    const remainingCents = Math.max(0, toCents(capUsd) - heldCents);
     const unitsAllowedByCap = Math.floor(remainingCents / rewardCents);
     if (unitsAllowedByCap < units) {
       units = unitsAllowedByCap;
@@ -711,27 +748,15 @@ export async function computeLossbackEntitlement(
     await programWindows(program),
   );
 
-  // The per-user cap applies to BOTH legs. It was previously enforced on the
-  // wager leg only, so a capped program still paid an uncapped lossback.
+  // The per-user cap applies to BOTH legs, and both legs measure what is
+  // already held the SAME way — `heldRewardCents` is the single definition.
   let payout = ftd.payoutUsd;
   let capped = false;
   if (program.max_reward_per_user_usd != null) {
-    const approved = await adminDrizzle
-      .select({
-        value: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
-      })
-      .from(creator_reward_claims)
-      .where(
-        and(
-          eq(creator_reward_claims.program_id, program.id),
-          eq(creator_reward_claims.user_id, userId),
-          eq(creator_reward_claims.status, "approved"),
-        ),
-      );
     const remainingCents = Math.max(
       0,
       toCents(toNumber(program.max_reward_per_user_usd)) -
-        toCents(toNumber(approved[0]?.value)),
+        (await heldRewardCents(program.id, userId)),
     );
     if (toCents(payout) > remainingCents) {
       payout = fromCents(remainingCents);

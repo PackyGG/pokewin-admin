@@ -92,7 +92,9 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
   // distinct from a successful read that genuinely found nothing.
   const [programs, claims] = await Promise.all([
     safeQueryOrNull(
-      () => getProgramsWithStats(),
+      // Archived programs come along so the panel can offer "Show archived"
+      // without a second read; it hides them by default.
+      () => getProgramsWithStats({ includeArchived: true }),
       "creator-hub.rewards.programs",
       REWARD_QUERY_TIMEOUT_MS,
     ),
@@ -115,6 +117,11 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
         )
       : null;
   const activePrograms = (programs.data ?? []).filter((p) => p.isActive).length;
+  // "of N total" counts what still exists as a program — an archived one is
+  // retired history and can never be activated again.
+  const livePrograms = (programs.data ?? []).filter(
+    (p) => p.archivedAt == null,
+  ).length;
 
   return (
     <FadeIn>
@@ -168,7 +175,7 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
             sub={
               programs.data === null
                 ? undefined
-                : `of ${programs.data.length} total`
+                : `of ${livePrograms} total`
             }
             icon={Crown}
             accent="blue"

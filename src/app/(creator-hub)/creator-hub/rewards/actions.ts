@@ -17,6 +17,7 @@ import {
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   creator_reward_claims,
+  creator_reward_offer_windows,
   creator_reward_program_windows,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
@@ -129,6 +130,25 @@ const CodesSchema = z
   .min(1, "Pick at least one code")
   .max(25);
 
+/**
+ * Money fields land in `numeric(20,2)`, so anything finer than a cent is
+ * rounded AT STORAGE — after `validateTerms` has already passed judgement on
+ * the unrounded number. That gap is a money pump the validator exists to
+ * prevent: `threshold 10.004 / reward 10.001` clears "reward must be smaller
+ * than threshold" and then stores as `10.00 / 10.00`, paying out exactly what
+ * it takes in, forever. Refusing sub-cent input closes it at the boundary
+ * rather than trying to re-validate post-rounding.
+ */
+const UsdSchema = (max: number) =>
+  z
+    .number()
+    .finite()
+    .positive()
+    .max(max)
+    .refine((v) => Number.isInteger(Math.round(v * 100)) && Math.abs(v * 100 - Math.round(v * 100)) < 1e-9, {
+      message: "Amounts can't be finer than one cent.",
+    });
+
 const ProgramInputSchema = z.object({
   name: z.string().trim().min(2).max(80),
   creatorUserId: z.string().trim().min(1).max(64),
@@ -138,14 +158,15 @@ const ProgramInputSchema = z.object({
   // every terms field is nullable here and the real rules live in
   // `validateTerms`, where an error can name the leg it belongs to instead of
   // producing a bare "required" on a field the operator never opened.
-  thresholdUsd: z.number().finite().positive().max(1_000_000).nullable(),
-  rewardUsd: z.number().finite().positive().max(100_000).nullable(),
+  thresholdUsd: UsdSchema(1_000_000).nullable(),
+  rewardUsd: UsdSchema(100_000).nullable(),
   /** Uplift rate for `vip`-tagged players. null = everyone earns the standard rate. */
-  vipRewardUsd: z.number().finite().positive().max(100_000).nullable(),
-  // FTD_LOSSBACK only.
-  lossbackPct: z.number().finite().positive().max(100).nullable(),
-  minDepositUsd: z.number().finite().positive().max(1_000_000).nullable(),
-  maxRewardPerUserUsd: z.number().finite().positive().max(1_000_000).nullable(),
+  vipRewardUsd: UsdSchema(100_000).nullable(),
+  // FTD_LOSSBACK only. The percent stores as numeric(6,2), so it takes the same
+  // two-decimal treatment as the dollar fields.
+  lossbackPct: UsdSchema(100).nullable(),
+  minDepositUsd: UsdSchema(1_000_000).nullable(),
+  maxRewardPerUserUsd: UsdSchema(1_000_000).nullable(),
 });
 
 export type ActionResult<T = undefined> =
@@ -376,7 +397,10 @@ export async function setCreatorRewardProgramActive(input: {
   await adminDrizzle.transaction(async (tx) => {
     await tx
       .update(creator_reward_programs)
-      .set({ is_active: parsed.data.isActive })
+      // `updated_at` has to be written explicitly — the column's default only
+      // applies on INSERT and there is no trigger, so before this it always
+      // equalled `created_at` and the field was effectively dead.
+      .set({ is_active: parsed.data.isActive, updated_at: now.toISOString() })
       .where(eq(creator_reward_programs.id, existing.id));
 
     if (parsed.data.isActive) {
@@ -432,6 +456,432 @@ export async function setCreatorRewardProgramActive(input: {
   return { success: true };
 }
 
+/* ───────────────────── Program edit / archive / delete ───────────────────── */
+
+/**
+ * Uppercase, dedupe, and prove every code belongs to this creator.
+ *
+ * Shared by create and edit because the failure it prevents is the same in
+ * both: a program accruing on someone else's traffic. On edit it matters more,
+ * not less — an operator adding a code to a live program is doing it against a
+ * creator they picked weeks ago, with no picker in front of them.
+ */
+async function normalizeAndVerifyCodes(
+  creatorUserId: string,
+  codes: string[],
+): Promise<{ ok: true; codes: string[] } | { ok: false; error: string }> {
+  const upper = [...new Set(codes.map((c) => c.trim().toUpperCase()))];
+  const owned = await getProdReadDrizzleDb()
+    .select({ code: affiliate_codes.code })
+    .from(affiliate_codes)
+    .where(eq(affiliate_codes.user_id, creatorUserId));
+  const ownedUpper = new Set(owned.map((c) => c.code.toUpperCase()));
+  const foreign = upper.filter((c) => !ownedUpper.has(c));
+  if (foreign.length > 0) {
+    return {
+      ok: false,
+      error: `Not owned by this creator: ${foreign.join(", ")}`,
+    };
+  }
+  return { ok: true, codes: upper };
+}
+
+/**
+ * Edit a program's terms in place.
+ *
+ * ── WHAT IS DELIBERATELY NOT EDITABLE ─────────────────────────────────────
+ * `creatorUserId` and `accrualStartAt`. Both are the program's identity as an
+ * accrual instrument, not settings: re-pointing a program at another creator
+ * would silently re-attribute every claim already paid under it, and moving the
+ * start date would either invent or erase wager history. Wanting either means
+ * wanting a different program — archive this one and create that one.
+ *
+ * ── WHAT AN EDIT DOES AND DOESN'T TOUCH ───────────────────────────────────
+ * Terms are read live by `computeProgramOffers`, so new rates apply to the very
+ * next offer. Claims already raised are frozen artifacts — `amount_usd` was
+ * stamped when the player was told what they'd get, and approval pays the
+ * stored number (see `approveCreatorRewardClaim`). So an edit never changes
+ * what a pending claim pays out, which is the correct behaviour: the player was
+ * quoted that figure. Staff who want the new terms applied reject the claim,
+ * which releases its basis, and the player re-claims at the new rate.
+ *
+ * Turning a leg OFF stops it producing new offers; it does not withdraw the
+ * pending claims it already produced. The dialog says so before submitting.
+ */
+export async function updateCreatorRewardProgram(input: {
+  programId: string;
+  name: string;
+  codes: string[];
+  thresholdUsd: number | null;
+  rewardUsd: number | null;
+  vipRewardUsd: number | null;
+  lossbackPct: number | null;
+  minDepositUsd: number | null;
+  maxRewardPerUserUsd: number | null;
+}): Promise<ActionResult> {
+  await requirePageAccess("/creator-rewards");
+  const session = await requireAdmin();
+
+  const parsed = ProgramInputSchema.omit({ creatorUserId: true })
+    .extend({ programId: z.string().uuid() })
+    .safeParse(input);
+  if (!parsed.success) {
+    return {
+      success: false,
+      error: parsed.error.issues[0]?.message ?? "Invalid input",
+    };
+  }
+  const d = parsed.data;
+
+  const rateError = validateTerms(d);
+  if (rateError) return { success: false, error: rateError };
+
+  const name = sanitizeProgramName(d.name);
+  if (name.length < 2) {
+    return {
+      success: false,
+      error: "Program name has no usable characters — try plain text.",
+    };
+  }
+
+  const existing = (
+    await adminDrizzle
+      .select({
+        id: creator_reward_programs.id,
+        name: creator_reward_programs.name,
+        creator_user_id: creator_reward_programs.creator_user_id,
+        codes: creator_reward_programs.codes,
+        threshold_usd: creator_reward_programs.threshold_usd,
+        reward_usd: creator_reward_programs.reward_usd,
+        vip_reward_usd: creator_reward_programs.vip_reward_usd,
+        lossback_pct: creator_reward_programs.lossback_pct,
+        min_deposit_usd: creator_reward_programs.min_deposit_usd,
+        max_reward_per_user_usd:
+          creator_reward_programs.max_reward_per_user_usd,
+        archived_at: creator_reward_programs.archived_at,
+      })
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, d.programId))
+      .limit(1)
+  )[0];
+  if (!existing) return { success: false, error: "Program not found" };
+  if (existing.archived_at) {
+    return {
+      success: false,
+      error: "This program is archived — restore it before editing.",
+    };
+  }
+
+  const codesResult = await normalizeAndVerifyCodes(
+    existing.creator_user_id,
+    d.codes,
+  );
+  if (!codesResult.ok) return { success: false, error: codesResult.error };
+
+  await adminDrizzle
+    .update(creator_reward_programs)
+    .set({
+      name,
+      codes: codesResult.codes,
+      threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
+      reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
+      vip_reward_usd: d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
+      lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
+      min_deposit_usd: d.minDepositUsd != null ? String(d.minDepositUsd) : null,
+      max_reward_per_user_usd:
+        d.maxRewardPerUserUsd != null ? String(d.maxRewardPerUserUsd) : null,
+      updated_at: new Date().toISOString(),
+    })
+    .where(eq(creator_reward_programs.id, existing.id));
+
+  // Before/after in one event: an operator asking "why did this program start
+  // paying double?" gets the answer from the audit row without diffing two.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_reward_program_updated",
+    targetUserId: existing.creator_user_id,
+    metadata: {
+      program_id: existing.id,
+      before: {
+        name: existing.name,
+        codes: existing.codes ?? [],
+        threshold_usd: existing.threshold_usd,
+        reward_usd: existing.reward_usd,
+        vip_reward_usd: existing.vip_reward_usd,
+        lossback_pct: existing.lossback_pct,
+        min_deposit_usd: existing.min_deposit_usd,
+        max_reward_per_user_usd: existing.max_reward_per_user_usd,
+      },
+      after: {
+        name,
+        codes: codesResult.codes,
+        threshold_usd: d.thresholdUsd,
+        reward_usd: d.rewardUsd,
+        vip_reward_usd: d.vipRewardUsd,
+        lossback_pct: d.lossbackPct,
+        min_deposit_usd: d.minDepositUsd,
+        max_reward_per_user_usd: d.maxRewardPerUserUsd,
+      },
+    },
+  });
+
+  revalidateCreatorRewards();
+  return { success: true };
+}
+
+/** What removing a given program would actually do — drives the confirm dialog. */
+export type ProgramRemovalPlan = {
+  programId: string;
+  name: string;
+  /** `delete` when nothing references it, otherwise `archive`. */
+  mode: "delete" | "archive";
+  totalClaims: number;
+  pendingClaims: number;
+  approvedClaims: number;
+  paidOutUsd: number;
+  /** Open offers that would be dropped — bot messages already sent out. */
+  openOffers: number;
+};
+
+/**
+ * Tell the operator what removal will do BEFORE they confirm it.
+ *
+ * The mode is decided by data, not by the UI: `creator_reward_claims` has an
+ * ON DELETE RESTRICT back to programs, so a program that ever produced a claim
+ * cannot be hard-deleted without destroying paid-out history. Rather than let
+ * the delete fail with a foreign-key error, the plan reports `archive` and the
+ * dialog changes what it offers.
+ */
+export async function planCreatorRewardProgramRemoval(input: {
+  programId: string;
+}): Promise<ActionResult<ProgramRemovalPlan>> {
+  await requirePageAccess("/creator-rewards");
+  await requireAdmin();
+
+  const parsed = z
+    .object({ programId: z.string().uuid() })
+    .safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid input" };
+
+  const program = (
+    await adminDrizzle
+      .select({
+        id: creator_reward_programs.id,
+        name: creator_reward_programs.name,
+      })
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, parsed.data.programId))
+      .limit(1)
+  )[0];
+  if (!program) return { success: false, error: "Program not found" };
+
+  const [claimStats] = await adminDrizzle
+    .select({
+      total: sql<number>`count(*)::int`,
+      pending: sql<number>`count(*) FILTER (WHERE ${creator_reward_claims.status} = 'pending')::int`,
+      approved: sql<number>`count(*) FILTER (WHERE ${creator_reward_claims.status} = 'approved')::int`,
+      paidOut: sql<string>`coalesce(sum(${creator_reward_claims.amount_usd}) FILTER (WHERE ${creator_reward_claims.status} = 'approved'), 0)`,
+    })
+    .from(creator_reward_claims)
+    .where(eq(creator_reward_claims.program_id, program.id));
+
+  const [offerStats] = await adminDrizzle
+    .select({ open: sql<number>`count(*)::int` })
+    .from(creator_reward_offer_windows)
+    .where(
+      and(
+        eq(creator_reward_offer_windows.program_id, program.id),
+        isNull(creator_reward_offer_windows.claimed_at),
+      ),
+    );
+
+  const totalClaims = claimStats?.total ?? 0;
+  return {
+    success: true,
+    data: {
+      programId: program.id,
+      name: program.name,
+      mode: totalClaims === 0 ? "delete" : "archive",
+      totalClaims,
+      pendingClaims: claimStats?.pending ?? 0,
+      approvedClaims: claimStats?.approved ?? 0,
+      paidOutUsd: Number(claimStats?.paidOut ?? 0),
+      openOffers: offerStats?.open ?? 0,
+    },
+  };
+}
+
+/**
+ * Remove a program — hard delete when it is disposable, archive when it isn't.
+ *
+ * The caller states which one it expects (`expectedMode`, straight from the
+ * plan the operator was shown). If the data moved in between — a claim landed
+ * between opening the dialog and confirming it — the mismatch is refused rather
+ * than silently upgraded to the other action. Deleting a program the operator
+ * believed was empty, right after it took its first claim, is exactly the
+ * mistake worth one extra round-trip.
+ *
+ * A pending claim blocks BOTH paths. Archiving one out from under a player who
+ * is waiting on review would leave the claim in the queue attached to a retired
+ * program; decide the queue first.
+ */
+export async function removeCreatorRewardProgram(input: {
+  programId: string;
+  expectedMode: "delete" | "archive";
+}): Promise<ActionResult<{ mode: "delete" | "archive" }>> {
+  await requirePageAccess("/creator-rewards");
+  const session = await requireAdmin();
+
+  const parsed = z
+    .object({
+      programId: z.string().uuid(),
+      expectedMode: z.enum(["delete", "archive"]),
+    })
+    .safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid input" };
+
+  const plan = await planCreatorRewardProgramRemoval({
+    programId: parsed.data.programId,
+  });
+  if (!plan.success) return plan;
+
+  if (plan.data.pendingClaims > 0) {
+    return {
+      success: false,
+      error: `${plan.data.pendingClaims} claim${plan.data.pendingClaims === 1 ? " is" : "s are"} still pending review — approve or reject ${plan.data.pendingClaims === 1 ? "it" : "them"} first.`,
+    };
+  }
+
+  if (plan.data.mode !== parsed.data.expectedMode) {
+    return {
+      success: false,
+      error:
+        plan.data.mode === "archive"
+          ? "This program has claims now — it can only be archived. Reopen the dialog."
+          : "This program no longer has claims. Reopen the dialog.",
+    };
+  }
+
+  const now = new Date().toISOString();
+
+  if (plan.data.mode === "delete") {
+    // Windows and offer windows cascade; claims are proven absent above, so
+    // the RESTRICT can't fire. Wrapped anyway so a concurrent claim insert
+    // rolls the whole thing back instead of half-removing the program.
+    try {
+      await adminDrizzle.transaction(async (tx) => {
+        await tx
+          .delete(creator_reward_programs)
+          .where(eq(creator_reward_programs.id, plan.data.programId));
+      });
+    } catch (err) {
+      // 23503 = foreign_key_violation: a claim landed on this program between
+      // the plan and the delete, so the RESTRICT fired after all.
+      if (isPostgresError(err, "23503")) {
+        return {
+          success: false,
+          error:
+            "A claim was raised on this program just now — reopen the dialog to archive it instead.",
+        };
+      }
+      throw err;
+    }
+  } else {
+    await adminDrizzle.transaction(async (tx) => {
+      await tx
+        .update(creator_reward_programs)
+        .set({ archived_at: now, archived_by: session.userId, is_active: false, updated_at: now })
+        .where(eq(creator_reward_programs.id, plan.data.programId));
+      // Close the accrual window, exactly as pausing does — an archived
+      // program must not leave an open interval behind that a later restore
+      // would treat as continuous.
+      await tx
+        .update(creator_reward_program_windows)
+        .set({ ended_at: now })
+        .where(
+          and(
+            eq(creator_reward_program_windows.program_id, plan.data.programId),
+            isNull(creator_reward_program_windows.ended_at),
+          ),
+        );
+    });
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType:
+      plan.data.mode === "delete"
+        ? "creator_reward_program_deleted"
+        : "creator_reward_program_archived",
+    metadata: {
+      program_id: plan.data.programId,
+      name: plan.data.name,
+      total_claims: plan.data.totalClaims,
+      approved_claims: plan.data.approvedClaims,
+      paid_out_usd: plan.data.paidOutUsd,
+      open_offers_dropped: plan.data.openOffers,
+      at: now,
+    },
+  });
+
+  revalidateCreatorRewards();
+  return { success: true, data: { mode: plan.data.mode } };
+}
+
+/**
+ * Bring an archived program back — paused, never straight to live.
+ *
+ * Restoring into an active state would resume accrual the instant someone
+ * clicked, on terms nobody had looked at since it was retired. It comes back
+ * paused with its window still closed; the normal toggle starts a fresh one.
+ */
+export async function restoreCreatorRewardProgram(input: {
+  programId: string;
+}): Promise<ActionResult> {
+  await requirePageAccess("/creator-rewards");
+  const session = await requireAdmin();
+
+  const parsed = z.object({ programId: z.string().uuid() }).safeParse(input);
+  if (!parsed.success) return { success: false, error: "Invalid input" };
+
+  const existing = (
+    await adminDrizzle
+      .select({
+        id: creator_reward_programs.id,
+        name: creator_reward_programs.name,
+        creator_user_id: creator_reward_programs.creator_user_id,
+        archived_at: creator_reward_programs.archived_at,
+      })
+      .from(creator_reward_programs)
+      .where(eq(creator_reward_programs.id, parsed.data.programId))
+      .limit(1)
+  )[0];
+  if (!existing) return { success: false, error: "Program not found" };
+  if (!existing.archived_at) {
+    return { success: false, error: "That program isn't archived." };
+  }
+
+  const now = new Date().toISOString();
+  await adminDrizzle
+    .update(creator_reward_programs)
+    .set({
+      archived_at: null,
+      archived_by: null,
+      is_active: false,
+      updated_at: now,
+    })
+    .where(eq(creator_reward_programs.id, existing.id));
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_reward_program_restored",
+    targetUserId: existing.creator_user_id,
+    metadata: { program_id: existing.id, name: existing.name, at: now },
+  });
+
+  revalidateCreatorRewards();
+  return { success: true };
+}
 
 /**
  * Tell the Discord bot about a decision, then record how that went.
@@ -605,10 +1055,26 @@ export async function approveCreatorRewardClaim(input: {
     }
 
     let credit: Awaited<ReturnType<typeof adjustBalance>> | null = null;
+    // The reason line on an immutable ledger row must describe the payment that
+    // was actually made, so it is built from the CLAIM's frozen columns, never
+    // from the program's current terms.
+    //
+    // Two ways the old `claim.program.reward_usd` version was wrong. It ignored
+    // VIP uplift — a claim priced at the VIP rate recorded the standard one, so
+    // `units × rate` didn't equal the amount paid on the same row. And now that
+    // programs are editable, a rate changed after a claim was raised would have
+    // rewritten the description of a payment made under the old terms.
+    //
+    // `applied_reward_usd` defaults to 0 on rows written before it existed;
+    // those fall back to the program rate, which is what they were priced at.
+    const appliedRate = Number(claim.applied_reward_usd);
     const payoutBasis =
       claim.leg === "ftd_lossback"
-        ? `${Number(claim.program.lossback_pct).toFixed(2)}% FTD lossback`
-        : `${claim.units} × $${Number(claim.program.reward_usd).toFixed(2)}`;
+        ? `${Number(claim.ftd_loss_usd ?? 0).toFixed(2)} lost on first deposit`
+        : `${claim.units} × $${(appliedRate > 0
+            ? appliedRate
+            : Number(claim.program.reward_usd)
+          ).toFixed(2)}${claim.was_vip ? " (VIP rate)" : ""}`;
     try {
       credit = await adjustBalance({
         userId: claim.user_id,
@@ -866,8 +1332,9 @@ export async function reinstateCreatorRewardClaim(input: {
     };
   }
 
+  let reinstated: { id: string }[];
   try {
-    await adminDrizzle
+    reinstated = await adminDrizzle
       .update(creator_reward_claims)
       .set({
         status: "pending",
@@ -878,7 +1345,21 @@ export async function reinstateCreatorRewardClaim(input: {
         reviewed_by: null,
         reviewed_at: null,
       })
-      .where(eq(creator_reward_claims.id, claim.id));
+      // `status = 'rejected'` REPEATED IN THE WHERE, not just read above.
+      // The read at the top of this function is a TOCTOU window: between it and
+      // this write, another reviewer can approve the claim (approval is allowed
+      // on a rejected-then-reinstated row) — and this update would then flip an
+      // APPROVED, ALREADY PAID claim back to pending while leaving its
+      // `ledger_tx_id` populated, making it approvable a second time. Every
+      // sibling mutation here guards in the WHERE for exactly this reason;
+      // this one didn't. A zero-row result now means someone got there first.
+      .where(
+        and(
+          eq(creator_reward_claims.id, claim.id),
+          eq(creator_reward_claims.status, "rejected"),
+        ),
+      )
+      .returning({ id: creator_reward_claims.id });
   } catch (err) {
     if (isPostgresError(err, "23505")) {
       return {
@@ -888,6 +1369,12 @@ export async function reinstateCreatorRewardClaim(input: {
       };
     }
     throw err;
+  }
+  if (reinstated.length !== 1) {
+    return {
+      success: false,
+      error: "That claim was decided by someone else just now — reload the queue.",
+    };
   }
 
   await createAdminAuditEvent({
@@ -1014,15 +1501,20 @@ export async function previewCreatorRewardEntitlement(input: {
   if (!programRow) return { success: false, error: "Program not found" };
   const program = normalizeProgram(programRow);
 
+  // This preview is an EXACT lookup — the operator has already picked a person.
+  // The wildcards are escaped because `ilike` treats `%` and `_` as patterns:
+  // unescaped, a lone `%` matched an arbitrary account and the dialog then
+  // rendered that stranger's entitlement as if it had been asked for.
   const q = parsed.data.query;
+  const qLike = q.replace(/[\\%_]/g, "\\$&");
   const [matchedUser] = await getProdReadDrizzleDb()
     .select({ id: user.id, username: user.username, email: user.email })
     .from(user)
     .where(
       or(
         eq(user.id, q),
-        ilike(user.username, q),
-        ilike(user.email, q),
+        ilike(user.username, qLike),
+        ilike(user.email, qLike),
       ),
     )
     .limit(1);
@@ -1100,12 +1592,21 @@ export type CreatorSearchResult = {
  * Safe to press repeatedly: the event id is derived from the claim and the
  * decision, so the bot dedupes it. A second press after a successful delivery
  * returns `200 duplicate` and sends no second DM.
+ *
+ * ── KNOWN LIMIT: THIS CANNOT RECOVER A CLOSED-DMs FAILURE ─────────────────
+ * The bot keeps the event id after a PERMANENT delivery failure (the player has
+ * DMs closed, or the account is gone) rather than releasing it the way it does
+ * for transient ones. A resend for that claim therefore comes back
+ * `200 duplicate`, which this path reads as delivered — the operator is told it
+ * worked and the player still hears nothing. Only a transient failure (bot
+ * down, secret rotated) is actually recoverable here. Fixing it needs a bot
+ * change: honour a `force` flag on the event and drop the cached id.
  */
 export async function resendClaimDecisionNotice(input: {
   claimId: string;
 }): Promise<ActionResult> {
   await requirePageAccess("/creator-rewards");
-  await requireAdmin();
+  const session = await requireAdmin();
 
   const parsed = z
     .object({ claimId: z.string().uuid() })
@@ -1150,6 +1651,23 @@ export async function resendClaimDecisionNotice(input: {
       .where(eq(creator_reward_claims.id, claim.id))
       .limit(1)
   )[0];
+
+  // Audited because it is an admin-triggered, player-facing send that also
+  // mutates the claim's delivery state — without this, a DM the player disputes
+  // has no record of who re-sent it or when.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_reward_claim_notice_resent",
+    targetUserId: claim.user_id,
+    metadata: {
+      claim_id: claim.id,
+      program_id: claim.program_id,
+      decision: claim.status,
+      discord_user_id: claim.discord_user_id,
+      delivered: Boolean(after_?.bot_notified_at),
+      error: after_?.bot_notify_error ?? null,
+    },
+  });
 
   revalidateCreatorRewards();
   return after_?.bot_notified_at
@@ -1226,7 +1744,13 @@ export async function searchCreatorsWithCodes(
   await requirePageAccess("/creator-rewards");
   await requireAdmin();
 
-  const q = query.trim();
+  // Bounded before it reaches prod. The query is parameterized and LIKE-escaped
+  // below, so this isn't an injection guard — it stops an unbounded operator
+  // string being shipped to the MAIN database as a scan predicate.
+  const parsedQuery = z.string().max(120).safeParse(query);
+  if (!parsedQuery.success) return [];
+
+  const q = parsedQuery.data.trim();
   const db = getProdReadDrizzleDb();
 
   type Row = {

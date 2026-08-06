@@ -108,19 +108,40 @@ async function resolveUsers(
   }
 }
 
-export async function getProgramsWithStats(): Promise<
-  CreatorRewardProgramWithStats[]
-> {
+/**
+ * Every program the Hub list shows.
+ *
+ * Archived programs are excluded by default. They are retired agreements kept
+ * only because their claims can't be deleted — showing them by default would
+ * make the list grow forever with rows nobody can act on. `includeArchived`
+ * powers the explicit "Show archived" view, where restoring one lives.
+ */
+export async function getProgramsWithStats(
+  opts: { includeArchived?: boolean } = {},
+): Promise<CreatorRewardProgramWithStats[]> {
   const programs = await adminDrizzle
     .select()
     .from(creator_reward_programs)
+    .where(
+      opts.includeArchived
+        ? undefined
+        : isNull(creator_reward_programs.archived_at),
+    )
     .orderBy(
+      // Archived last, then live-before-paused, then newest — the order an
+      // operator scans in: what's running, what's stopped, what's retired.
+      sql`(${creator_reward_programs.archived_at} IS NOT NULL)`,
       desc(creator_reward_programs.is_active),
       desc(creator_reward_programs.created_at),
     );
   if (programs.length === 0) return [];
 
-  // One grouped pass over claims rather than N per-program queries.
+  // One grouped pass over claims rather than N per-program queries — but
+  // narrowed to the programs actually being listed. Without the IN, this was a
+  // full scan of `creator_reward_claims` on every render of the page, growing
+  // with total claim volume forever; with it, the leading column of
+  // `creator_reward_claims_program_user_idx` does the work.
+  const programIds = programs.map((p) => p.id);
   const grouped = await adminDrizzle
     .select({
       program_id: creator_reward_claims.program_id,
@@ -129,12 +150,20 @@ export async function getProgramsWithStats(): Promise<
       amount: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
     })
     .from(creator_reward_claims)
+    .where(inArray(creator_reward_claims.program_id, programIds))
     .groupBy(creator_reward_claims.program_id, creator_reward_claims.status);
+
+  const byProgram = new Map<string, typeof grouped>();
+  for (const g of grouped) {
+    const bucket = byProgram.get(g.program_id);
+    if (bucket) bucket.push(g);
+    else byProgram.set(g.program_id, [g]);
+  }
 
   const users = await resolveUsers(programs.map((p) => p.creator_user_id));
 
   return programs.map((p) => {
-    const rows = grouped.filter((g) => g.program_id === p.id);
+    const rows = byProgram.get(p.id) ?? [];
     const countOf = (s: CreatorRewardClaimStatus) =>
       rows.find((r) => r.status === s)?.claimCount ?? 0;
     const approved = rows.find((r) => r.status === "approved");
@@ -158,6 +187,7 @@ export async function getProgramsWithStats(): Promise<
       vipRewardUsd:
         p.vip_reward_usd == null ? null : toNumber(p.vip_reward_usd),
       isActive: p.is_active,
+      archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : null,
       accrualStartAt: new Date(p.accrual_start_at).toISOString(),
       maxRewardPerUserUsd:
         p.max_reward_per_user_usd == null
@@ -261,8 +291,18 @@ export async function getClaims(params: {
     // Pending first when unfiltered, then newest — the review queue is the
     // point of this table, so an old pending row must never sink below a
     // freshly-approved one.
+    //
+    // This USED to be `asc(status)`, which did the opposite of what it says:
+    // `status` is a plain text column, and alphabetically 'approved' sorts
+    // BEFORE 'pending'. Every approved claim therefore outranked every pending
+    // one, so once approvals passed the caller's cap (200 from the Hub page)
+    // the oldest pending claims fell off the end of the list entirely — they
+    // were invisible in the only queue that reviews them. The explicit CASE
+    // states the intent instead of relying on the storage encoding. It costs a
+    // sort the old plan got free from `creator_reward_claims_status_requested_idx`;
+    // that index still serves the `params.status` path, which is the selective one.
     .orderBy(
-      asc(creator_reward_claims.status),
+      sql`CASE WHEN ${creator_reward_claims.status} = 'pending' THEN 0 ELSE 1 END`,
       desc(creator_reward_claims.requested_at),
     )
     .limit(limit);

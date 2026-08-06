@@ -57,8 +57,19 @@ test("creator hub cleanup preserves truthful money and query contracts", () => {
   assert.match(boardPnl, /queryRowsInTimeboxedTx\(/);
   assert.match(boardPnl, /CREATOR_PNL_STATEMENT_TIMEOUT_MS/);
   assert.match(rewards, /claim\.leg === "ftd_lossback"/);
-  assert.match(rewards, /% FTD lossback/);
   assert.match(rewards, /\(\$\{payoutBasis\}\)/);
+  // The ledger reason describes a payment that already happened, so it must be
+  // built from the CLAIM's frozen columns — never from the program's current
+  // terms. Reading `claim.program.reward_usd` here understated every VIP payout
+  // (the rate actually applied lives in `applied_reward_usd`) and, now that
+  // programs are editable, would let a later rate change rewrite the
+  // description of money paid under the old terms.
+  // `claim.program.reward_usd` survives only as the fallback for rows written
+  // before `applied_reward_usd` existed, so the applied rate must be the value
+  // actually preferred.
+  assert.match(rewards, /const appliedRate = Number\(claim\.applied_reward_usd\)/);
+  assert.match(rewards, /appliedRate > 0\s*\n?\s*\?\s*appliedRate/);
+  assert.match(rewards, /claim\.ftd_loss_usd/);
   assert.equal(
     altAccounts.match(/await enrichMembers\(/g)?.length,
     1,

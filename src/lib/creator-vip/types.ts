@@ -65,6 +65,14 @@ export type CreatorRewardProgram = {
   isActive: boolean;
   accrualStartAt: string;
   maxRewardPerUserUsd: number | null;
+  /**
+   * Set when the program was retired but could not be deleted, because its
+   * claims are payout history (`creator_reward_claims` is ON DELETE RESTRICT).
+   * An archived program is always inactive — a DB CHECK constraint enforces it —
+   * so every bot-facing read, which already filters `is_active`, drops it
+   * without needing to know archiving exists.
+   */
+  archivedAt: string | null;
   createdAt: string;
   updatedAt: string;
 };
