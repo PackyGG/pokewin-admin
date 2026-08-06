@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPrimaryDrizzleDb } from "@/lib/db";
-import { queryRows } from "@/lib/drizzle-query";
+import { queryRowsInTimeboxedTx } from "@/lib/drizzle-query";
 import {
   officialStreamAdjustmentSqlPredicate,
   removeLockedBalanceAdjustmentSqlPredicate,
@@ -16,6 +16,8 @@ export type FreshUserBalances = {
   inventoryValue: number;
   vouchersValue: number;
 };
+
+const BALANCE_QUERY_TIMEOUT_MS = 5_000;
 
 /**
  * Uncached, authoritative balance-box read.
@@ -47,36 +49,45 @@ export async function readFreshUserBalances(
     remove_locked: string;
   };
 
-  const [row] = await queryRows<Row[]>(
+  const [row] = await queryRowsInTimeboxedTx(
     db,
-    `SELECT
-       b.available_balance::text AS available_balance,
-       b.locked_balance::text AS locked_balance,
-       b.unlock_at,
-       COALESCE((SELECT SUM(ui.value_at_obtained::numeric)
-                 FROM user_inventory ui
-                 JOIN "user" u ON u.id = ui.user_id
-                 WHERE ui.user_id = $1
-                   AND ui.sold_at IS NULL
-                   AND ui.exchanged_at IS NULL
-                   AND ui.withdrawal_locked_at IS NULL
-                   AND u.role::text <> 'creator'), 0)::text AS inventory_value,
-       COALESCE((SELECT SUM(v.value::numeric)
-                 FROM vouchers v
-                 WHERE v.user_id = $1 AND v.claimed_at IS NULL), 0)::text AS voucher_value,
-       COALESCE((SELECT SUM(lt.amount::numeric)
-                 FROM ledger_transactions lt
-                 WHERE lt.user_id = $1
-                   AND lt.status::text = 'completed'
-                   AND ${officialStream}), 0)::text AS official_stream,
-       COALESCE((SELECT SUM(lt.amount::numeric)
-                 FROM ledger_transactions lt
-                 WHERE lt.user_id = $1
-                   AND lt.status::text = 'completed'
-                   AND ${removeLocked}), 0)::text AS remove_locked
-     FROM balances b
-     WHERE b.user_id = $1`,
-    userId,
+    BALANCE_QUERY_TIMEOUT_MS,
+    (query) =>
+      query<Row[]>(
+        `SELECT
+           b.available_balance::text AS available_balance,
+           b.locked_balance::text AS locked_balance,
+           b.unlock_at,
+           COALESCE((SELECT SUM(ui.value_at_obtained::numeric)
+                     FROM user_inventory ui
+                     JOIN "user" u ON u.id = ui.user_id
+                     WHERE ui.user_id = $1
+                       AND ui.sold_at IS NULL
+                       AND ui.exchanged_at IS NULL
+                       AND ui.withdrawal_locked_at IS NULL
+                       AND u.role::text <> 'creator'), 0)::text AS inventory_value,
+           COALESCE((SELECT SUM(v.value::numeric)
+                     FROM vouchers v
+                     WHERE v.user_id = $1 AND v.claimed_at IS NULL), 0)::text AS voucher_value,
+           adjustments.official_stream,
+           adjustments.remove_locked
+         FROM balances b
+         CROSS JOIN LATERAL (
+           SELECT
+             COALESCE(SUM(CASE WHEN ${officialStream}
+                               THEN lt.amount::numeric ELSE 0 END), 0)::text
+               AS official_stream,
+             COALESCE(SUM(CASE WHEN ${removeLocked}
+                               THEN lt.amount::numeric ELSE 0 END), 0)::text
+               AS remove_locked
+           FROM ledger_transactions lt
+           WHERE lt.user_id = $1
+             AND lt.type::text = 'admin_balance_adjustment'
+             AND lt.status::text = 'completed'
+         ) adjustments
+         WHERE b.user_id = $1`,
+        userId,
+      ),
   );
 
   if (!row) return null;

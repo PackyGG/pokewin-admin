@@ -14,7 +14,12 @@ const detailCache = readFileSync(
 
 test("balance box uses an uncached primary consistency read", () => {
   assert.match(freshBalances, /getPrimaryDrizzleDb/);
-  assert.match(freshBalances, /queryRows<Row\[]>/);
+  assert.match(freshBalances, /queryRowsInTimeboxedTx/);
+  assert.match(freshBalances, /BALANCE_QUERY_TIMEOUT_MS = 5_000/);
+  assert.match(freshBalances, /CROSS JOIN LATERAL/);
+  assert.match(freshBalances, /SUM\(CASE WHEN \$\{officialStream\}/);
+  assert.match(freshBalances, /SUM\(CASE WHEN \$\{removeLocked\}/);
+  assert.match(freshBalances, /lt\.type::text = 'admin_balance_adjustment'/);
   assert.doesNotMatch(freshBalances, /unstable_cache|readDrizzleForEnv/);
   assert.match(freshBalances, /officialStreamAdjustmentSqlPredicate/);
   assert.match(freshBalances, /removeLockedBalanceAdjustmentSqlPredicate/);
