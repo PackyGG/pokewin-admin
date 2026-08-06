@@ -142,7 +142,7 @@ export function GlobalFiatReviewCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {requestedEnabled
-                ? "Verified Fiat deposits will credit automatically for all users. Existing safety checks still apply."
+                ? "Verified Fiat deposits will credit automatically for all users."
                 : "New verified Fiat deposits will enter the admin review queue. Users with an explicit per-account auto-approval override will still credit automatically."}
             </AlertDialogDescription>
           </AlertDialogHeader>

@@ -106,7 +106,7 @@ export function GlobalFiatAvailabilityCard({
             />
           </div>
           <CardDescription>
-            When disabled, card and wallet Fiat deposit methods are blocked site-wide. When enabled, users still must pass every account, country, KYC, payment, and fraud restriction.
+            When disabled, card and wallet Fiat deposit methods are blocked site-wide.
           </CardDescription>
         </div>
       </CardHeader>
@@ -123,7 +123,7 @@ export function GlobalFiatAvailabilityCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {requestedAllowed
-                ? "Fiat deposit methods will become available site-wide for users who pass all narrower restrictions."
+                ? "Fiat deposit methods will become available site-wide."
                 : "Card and wallet Fiat deposit methods will be blocked for every user until this switch is enabled again."}
             </AlertDialogDescription>
           </AlertDialogHeader>

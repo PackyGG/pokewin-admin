@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { FiatDepositAccessClient } from "../src/fiat-deposit-access.js";
@@ -8,6 +9,14 @@ const config = {
   ADMIN_API_KEY: "admin-key",
   xbypasssecret: "bypass-secret",
 };
+
+const defaultSignupAccessMigration = readFileSync(
+  new URL(
+    "../migrations/056_default_new_signup_fiat_access_off.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 
 test("per-user Fiat access uses and confirms the backend controller contract", async () => {
   let requestUrl = "";
@@ -64,4 +73,16 @@ test("per-user Fiat access fails closed without backend credentials", async () =
     client.update("user-1", false),
     /fiat_deposit_access_admin_key_missing/,
   );
+});
+
+test("new signups default to disabled without changing existing accounts", () => {
+  assert.match(
+    defaultSignupAccessMigration,
+    /'new_signups'[\s\S]*?false[\s\S]*?'system:default-new-signup-policy'/,
+  );
+  assert.match(
+    defaultSignupAccessMigration,
+    /fiat_deposit_access_cursors\(stream, occurred_at, source_id\)/,
+  );
+  assert.doesNotMatch(defaultSignupAccessMigration, /'existing_accounts'/);
 });

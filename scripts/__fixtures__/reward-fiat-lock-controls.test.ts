@@ -34,6 +34,9 @@ const fraudAccessActions = read(
 const fraudAccessControl = read(
   "services/antifraud-monitor/src/fiat-deposit-access-control.ts",
 );
+const defaultSignupAccessMigration = read(
+  "services/antifraud-monitor/migrations/056_default_new_signup_fiat_access_off.sql",
+);
 const fraudConfigPage = read(
   "src/app/(antifraud)/antifraud/config/page.tsx",
 );
@@ -106,6 +109,8 @@ test("global switch confirms the production-impacting policy change", () => {
   assert.match(fraudConfigCard, /per-account auto-approval override/);
   assert.doesNotMatch(fraudConfigCard, /This controls the credit step only/);
   assert.doesNotMatch(fraudAvailabilityCard, /This is the master availability gate/);
+  assert.doesNotMatch(fraudAvailabilityCard, /users still must pass every account/);
+  assert.doesNotMatch(fraudConfigCard, /Existing safety checks still apply/);
   assert.match(fraudConfigCard, /<Badge variant="outline">Unavailable<\/Badge>/);
   assert.match(fraudConfigCard, /checked=\{false\}[\s\S]*?disabled/);
   assert.match(fraudConfigCard, /max-w-3xl space-y-2/);
@@ -127,6 +132,8 @@ test("Fraud Config owns all four Fiat controls and hides raw Security config", (
   assert.match(fraudAccessCard, /Fiat access for existing accounts/);
   assert.match(fraudAccessCard, /Fiat access for new signups/);
   assert.match(fraudAccessCard, /fiat_deposits_enabled/);
+  assert.match(fraudAccessCard, /signup\.generation === 0/);
+  assert.match(fraudAccessCard, /Not configured/);
   assert.match(fraudAccessActions, /requireAntifraudManager\(/);
   assert.match(fraudAccessActions, /fiat_deposit_access_policy_updated/);
   assert.doesNotMatch(fraudAccessCard, /Country, KYC, fraud, payment/);
@@ -141,6 +148,15 @@ test("Fraud Config owns all four Fiat controls and hides raw Security config", (
     /scope = 'new_signups'[\s\S]*?VALUES \('new_signups'/,
   );
   assert.match(fraudAccessControl, /created_at < \$3/);
+  assert.match(
+    defaultSignupAccessMigration,
+    /'new_signups'[\s\S]*?false[\s\S]*?'system:default-new-signup-policy'/,
+  );
+  assert.match(
+    defaultSignupAccessMigration,
+    /fiat_deposit_access_cursors\(stream, occurred_at, source_id\)/,
+  );
+  assert.doesNotMatch(defaultSignupAccessMigration, /'existing_accounts'/);
   assert.match(fraudAvailabilityCard, /setGlobalFiatDeposits/);
   assert.match(fraudSidebar, /label: "Config",\s*href: "\/antifraud\/config"/);
   assert.match(automationCatalog, /href: "\/antifraud\/config"/);

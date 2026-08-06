@@ -104,7 +104,13 @@ export function FiatDepositAccessControlCard({
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-medium">Fiat access for new signups</p>
-              <Badge variant="outline">{signup.enabled ? "Access on" : "Access off"}</Badge>
+              <Badge variant="outline">
+                {signup.generation === 0
+                  ? "Not configured"
+                  : signup.enabled
+                    ? "Access on"
+                    : "Access off"}
+              </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
               Automatically sets the same backend controller for every account created after this switch changes.
