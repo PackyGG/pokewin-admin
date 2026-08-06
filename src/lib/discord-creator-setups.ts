@@ -5,6 +5,7 @@ import { and, desc, eq, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import {
   admin_audit_events,
+  creator_deals,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
@@ -90,6 +91,8 @@ export type CreatorSetupDeal = {
     maxSponsorshipPerStreamUsd: number;
     allowSiteLeaderboards: boolean;
     allowCodeLeaderboards: boolean;
+    leaderboardPrizePoolUsd: number | null;
+    leaderboardPackySharePercent: number | null;
   } | null;
 };
 
@@ -543,7 +546,53 @@ export async function getCreatorSetupStats(input: {
   };
 }
 
-function creatorFacingDeal(deal: CreatorDealResponse): NonNullable<CreatorSetupDeal["deal"]> {
+type CreatorLeaderboardTerms = Pick<
+  NonNullable<CreatorSetupDeal["deal"]>,
+  "leaderboardPrizePoolUsd" | "leaderboardPackySharePercent"
+>;
+
+async function getCreatorLeaderboardTerms(
+  creatorUserId: string,
+): Promise<CreatorLeaderboardTerms> {
+  const [legacyDeal] = await adminDrizzle
+    .select({
+      prizePool: creator_deals.leaderboard_prize_pool,
+      packyShare: creator_deals.leaderboard_our_share,
+    })
+    .from(creator_deals)
+    .where(
+      and(
+        eq(creator_deals.target_user_id, creatorUserId),
+        eq(creator_deals.status, "active"),
+        sql`${creator_deals.start_date} <= NOW()`,
+        sql`(${creator_deals.end_date} IS NULL OR ${creator_deals.end_date} > NOW())`,
+      ),
+    )
+    .orderBy(desc(creator_deals.created_at))
+    .limit(1);
+
+  const prizePool = legacyDeal?.prizePool;
+  const packyShare = legacyDeal?.packyShare;
+  const prizePoolNumber = prizePool == null ? null : toNumber(prizePool);
+  const packyShareFraction = packyShare == null ? null : toNumber(packyShare);
+  return {
+    leaderboardPrizePoolUsd:
+      prizePoolNumber !== null && prizePoolNumber >= 0
+        ? money(prizePoolNumber)
+        : null,
+    leaderboardPackySharePercent:
+      packyShareFraction !== null &&
+      packyShareFraction >= 0 &&
+      packyShareFraction <= 1
+        ? Math.round(packyShareFraction * 10_000) / 100
+        : null,
+  };
+}
+
+function creatorFacingDeal(
+  deal: CreatorDealResponse,
+  leaderboard: CreatorLeaderboardTerms,
+): NonNullable<CreatorSetupDeal["deal"]> {
   return {
     status: deal.status === "scheduled" ? "scheduled" : "active",
     weekStartUtc: deal.week_start_utc,
@@ -566,6 +615,7 @@ function creatorFacingDeal(deal: CreatorDealResponse): NonNullable<CreatorSetupD
     ),
     allowSiteLeaderboards: deal.allow_site_leaderboards,
     allowCodeLeaderboards: deal.allow_code_leaderboards,
+    ...leaderboard,
   };
 }
 
@@ -587,11 +637,14 @@ export async function getCreatorSetupDeal(input: {
       .filter((deal) => deal.status === "scheduled")
       .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc))[0] ??
     null;
+  const leaderboard = current
+    ? await getCreatorLeaderboardTerms(setup.creator_user_id)
+    : null;
 
   return {
     generatedAt: new Date().toISOString(),
     creator: { userId: creator.id, username: creator.username },
-    deal: current ? creatorFacingDeal(current) : null,
+    deal: current && leaderboard ? creatorFacingDeal(current, leaderboard) : null,
   };
 }
 
