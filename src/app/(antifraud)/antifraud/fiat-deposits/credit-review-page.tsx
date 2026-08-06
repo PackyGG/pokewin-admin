@@ -81,10 +81,27 @@ function toReviewItem(item: FiatAssessment): ReviewItem {
   };
 }
 
-/** Wall-clock bound on every read this queue makes, matching the other
- *  antifraud routes. The monitor client has its own 12s fetch timeout, but a
- *  hung socket / slow admin-DB read must not be able to hold the segment. */
+/** Wall-clock bound on the ADMIN-DB reads this queue makes. */
 const QUERY_TIMEOUT_MS = 10_000;
+
+/**
+ * Budget for the FIRST upstream page — deliberately larger than the monitor
+ * client's own 12s fetch timeout (`fiat-deposits-api.ts`).
+ *
+ * A 10s outer budget over a 12s inner one is strictly wrong: it guarantees the
+ * outer timer fires on a request that was still legitimately in flight, so the
+ * queue renders empty for a monitor that was about to answer. The outer bound
+ * exists to stop a hung socket holding the segment, so it must sit ABOVE the
+ * inner one, not below it.
+ */
+const FIRST_PAGE_TIMEOUT_MS = 14_000;
+
+/**
+ * Budget for the follow-up pages. Smaller on purpose: page 1 is already on
+ * screen by the time these matter, so a slow tail degrades to "scan
+ * incomplete" instead of making the operator wait.
+ */
+const REST_PAGES_TIMEOUT_MS = 8_000;
 
 /** Monitor page size. Its API caps `limit` at 100, so this is the largest
  *  number of review rows a single upstream hop can return. */
@@ -106,14 +123,6 @@ const UPSTREAM_PAGE_SIZE = 100;
  */
 const MAX_UPSTREAM_PAGES = 5;
 
-type QueueScan = {
-  assessments: FiatAssessment[];
-  /** Upstream review rows outside the scan window (0 in the normal case). */
-  notScanned: number;
-};
-
-const EMPTY_SCAN: QueueScan = { assessments: [], notScanned: 0 };
-
 /**
  * Bounded read of the active review queue.
  *
@@ -121,7 +130,11 @@ const EMPTY_SCAN: QueueScan = { assessments: [], notScanned: 0 };
  * degraded banner — an empty queue rendered as if it were real would read as
  * "nothing to decide", which is the one wrong answer this page must not give.
  */
-async function scanActiveAssessments(): Promise<QueueScan> {
+async function scanFirstPage(): Promise<{
+  assessments: FiatAssessment[];
+  pageCount: number;
+  upstreamTotal: number;
+}> {
   const first = await listFiatAssessments({
     page: 1,
     limit: UPSTREAM_PAGE_SIZE,
@@ -130,32 +143,38 @@ async function scanActiveAssessments(): Promise<QueueScan> {
   if (first.error) {
     throw new Error("The Antifraud monitor did not return the review queue.");
   }
-
-  const assessments = [...first.data];
-  const pageCount = Math.max(first.pagination?.pages ?? 1, 1);
-  const scanPages = Math.min(pageCount, MAX_UPSTREAM_PAGES);
-  if (scanPages > 1) {
-    // ONE parallel wave (≤ 4 calls), not the old serial batches.
-    const rest = await Promise.all(
-      Array.from({ length: scanPages - 1 }, (_, index) =>
-        listFiatAssessments({
-          page: index + 2,
-          limit: UPSTREAM_PAGE_SIZE,
-          status: "review",
-        }),
-      ),
-    );
-    if (rest.some((result) => result.error)) {
-      throw new Error("The Antifraud monitor did not return the review queue.");
-    }
-    assessments.push(...rest.flatMap((result) => result.data));
-  }
-
-  const upstreamTotal = first.pagination?.total ?? assessments.length;
   return {
-    assessments,
-    notScanned: Math.max(0, upstreamTotal - assessments.length),
+    assessments: [...first.data],
+    pageCount: Math.max(first.pagination?.pages ?? 1, 1),
+    upstreamTotal: first.pagination?.total ?? first.data.length,
   };
+}
+
+/**
+ * Pages 2..N, fetched one at a time.
+ *
+ * Deliberately SERIAL. Every `GET /v1/fiat-deposits` makes the monitor re-run
+ * `refresh({limit: 100})` — a full re-scoring pass including provider
+ * enrichment. Firing the extra pages as a parallel wave multiplies that work
+ * by the number of pages and is what pushed the whole scan past its budget.
+ * Serial keeps the monitor's load identical to one page at a time, and the
+ * caller's timeout bounds the total either way.
+ */
+async function scanRestPages(pageCount: number): Promise<FiatAssessment[]> {
+  const scanPages = Math.min(pageCount, MAX_UPSTREAM_PAGES);
+  const assessments: FiatAssessment[] = [];
+  for (let page = 2; page <= scanPages; page += 1) {
+    const result = await listFiatAssessments({
+      page,
+      limit: UPSTREAM_PAGE_SIZE,
+      status: "review",
+    });
+    // Keep what we already have. A partial scan is reported as a shortfall by
+    // the caller; it must never discard page 1.
+    if (result.error) break;
+    assessments.push(...result.data);
+  }
+  return assessments;
 }
 
 export async function FiatDepositReviewQueue({
@@ -169,13 +188,34 @@ export async function FiatDepositReviewQueue({
 }) {
   const offset = (page - 1) * perPage;
 
-  const scanResult = await safeQuery(
-    () => scanActiveAssessments(),
-    EMPTY_SCAN,
+  // Page 1 decides whether this queue is usable at all. It gets its own budget,
+  // above the monitor client's 12s fetch timeout.
+  const firstResult = await safeQuery(
+    () => scanFirstPage(),
+    null,
     "antifraud.fiat-review-queue",
-    QUERY_TIMEOUT_MS,
+    FIRST_PAGE_TIMEOUT_MS,
   );
-  const { assessments, notScanned } = scanResult.data;
+
+  // The tail is best-effort: if it is slow or fails, the operator still gets
+  // page 1 plus an honest count of what was not scanned.
+  const firstPage = firstResult.data;
+  const restResult = firstPage && firstPage.pageCount > 1
+    ? await safeQuery(
+        () => scanRestPages(firstPage.pageCount),
+        [] as FiatAssessment[],
+        "antifraud.fiat-review-queue-tail",
+        REST_PAGES_TIMEOUT_MS,
+      )
+    : { data: [] as FiatAssessment[], error: null };
+
+  const assessments: FiatAssessment[] = firstPage
+    ? [...firstPage.assessments, ...restResult.data]
+    : [];
+  const notScanned = firstPage
+    ? Math.max(0, firstPage.upstreamTotal - assessments.length)
+    : 0;
+  const scanResult = firstResult;
 
   // Genuinely dependent: the decision states are keyed on the intent ids the
   // scan just returned, and the player lookup is keyed on the user ids of the

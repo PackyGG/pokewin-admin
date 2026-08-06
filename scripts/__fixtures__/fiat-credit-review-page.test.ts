@@ -43,12 +43,40 @@ test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.doesNotMatch(page, /BigDepositsToggle/);
   assert.doesNotMatch(page, /getWithdrawals/);
   assert.doesNotMatch(page, /tab ===/);
-  assert.match(page, /scanActiveAssessments/);
+  assert.match(page, /scanFirstPage/);
+  assert.match(page, /scanRestPages/);
   assert.doesNotMatch(page, /remainingPages|Math\.min\(Math\.max/);
   // The upstream walk stays BOUNDED. The monitor keeps staff-declined intents
   // in `status='review'` forever, so an all-pages loop grows without limit.
   assert.match(page, /const MAX_UPSTREAM_PAGES = \d+/);
   assert.match(page, /Math\.min\(pageCount, MAX_UPSTREAM_PAGES\)/);
+  // Page 1 must survive a failing tail. Throwing on any page discarded rows
+  // the operator could have decided, and rendered the queue empty on a money
+  // surface — the one wrong answer this page must never give.
+  assert.match(page, /if \(result\.error\) break;/);
+  // The tail is fetched SERIALLY. Every list GET makes the monitor re-run a
+  // full refresh pass, so a parallel wave multiplies that work per page and
+  // is what pushed the scan past its budget in production.
+  assert.doesNotMatch(page, /Promise\.all\(\s*Array\.from/);
+  // The outer budget for page 1 must exceed the monitor client's own fetch
+  // timeout. A smaller outer bound aborts requests that were still in flight
+  // and reports a healthy monitor as a failure.
+  const firstBudget = Number(
+    /const FIRST_PAGE_TIMEOUT_MS = ([\d_]+)/.exec(page)?.[1]?.replace(/_/g, ""),
+  );
+  const clientTimeout = Number(
+    /const TIMEOUT_MS = ([\d_]+)/
+      .exec(read("src/lib/antifraud/fiat-deposits-api.ts"))?.[1]
+      ?.replace(/_/g, ""),
+  );
+  assert.ok(
+    Number.isFinite(firstBudget) && Number.isFinite(clientTimeout),
+    "could not read the two timeout constants",
+  );
+  assert.ok(
+    firstBudget > clientTimeout,
+    `first-page budget ${firstBudget}ms must exceed the client fetch timeout ${clientTimeout}ms`,
+  );
   // …and every read is timeout-bounded and degrades LOUDLY (money surface).
   assert.match(page, /safeQuery\(/);
   assert.match(page, /DegradedNotice/);
