@@ -1,0 +1,54 @@
+---
+description: Lean antifraud map — load only when Fraud/monitor files are in scope
+globs:
+  - src/app/(antifraud)/**
+  - src/app/api/antifraud/**
+  - src/lib/antifraud/**
+  - src/lib/require-antifraud-access.ts
+  - services/antifraud-monitor/**
+  - docs/ANTIFRAUD*.md
+alwaysApply: false
+---
+
+# Antifraud map (keep lean)
+
+Deep contracts: `docs/ANTIFRAUD_CONTRACTS.md` — open only when the task needs them. Do not dump that doc into chat.
+
+## Runtime
+
+| Piece | Where | Deploy |
+|---|---|---|
+| Fraud UI | `src/app/(antifraud)/antifraud/**` · `fraud.packydash.com` | Vercel `packy-admin-dashboard` |
+| API/ingest | `src/app/api/antifraud/**` | same |
+| Client libs | `src/lib/antifraud/**` · gate `require-antifraud-access.ts` | — |
+| Monitor | `services/antifraud-monitor` (Fastify + pollers) | Railway + Redis |
+| Schema | monitor `migrations/` = Antifraud DB · `drizzle/admin/migrations/` = ADMIN reviews/Discord/refunds | — |
+
+## Data ownership
+
+- **Antifraud DB** — assessments, profiles, signals, cases, blocklists, fiat eligibility/outbox, networks
+- **ADMIN DB** — `antifraud_reviews*`, security audit, Discord routes, Whop refund batches, access toggles
+- **MAIN** — mirror **SELECT only** (`SOURCE_DATABASE_URL` / mirrors). No agent DDL/DML. Bans/locks only via existing mutation clients
+
+## Entry points
+
+- Reviews: `/antifraud/reviews` → `review-workflow.ts` · ingest `api/antifraud/ingest`
+- Fiat: `/antifraud/fiat-deposits` · monitor `fiat-*.ts` · gate `POST /v1/fiat-eligibility/check`
+- KYC: `/antifraud/kyc` · Sumsub via monitor `/v1/kyc/*`
+- Config: `/antifraud/config` (site Fiat lock + auto-credit) · monitor `FIAT_ELIGIBILITY_GLOBALLY_ENABLED`
+- Discord: `/antifraud/discord` · routing in ADMIN · never put webhooks in the browser
+- Networks / creator fraud: REST only via `network-api.ts` — no WS for graph data
+
+## Hard rules
+
+1. Fiat link = `fiat_deposit_intents.completed_ledger_id` — never infer fiat from null crypto fields
+2. Score 0–100; ≥50 → Account Review. Analyst actions: Approve / Ban / Postpone only
+3. Auto-containment ≠ auto-KYC / auto-ban (Abstract catch-all ban is the known exception)
+4. `paid_unreconciled` = expected credit, never “credited”
+5. Fiat eligibility uses dedicated keys/IPs — not `API_TOKEN` / `API_ADMIN_TOKEN`
+6. Sensitive Fraud mutations fail closed without security audit / step-up
+7. Do not reintroduce retired Fiat-screening or withdrawal-assessment workspaces
+
+## Env names (no secrets)
+
+`ANTIFRAUD_DATABASE_URL` · `SOURCE_DATABASE_URL` (MAIN mirror) · `REDIS_URL` · `ANTIFRAUD_MONITOR_API_URL` · `ANTIFRAUD_INGEST_URL` / `ANTIFRAUD_INGEST_SECRET` · `API_TOKEN` / `API_ADMIN_TOKEN` · `FIAT_ELIGIBILITY_*` · `WHOP_ADMIN_KEY` · provider: `FINGERPRINT_*` `PROXYCHECK_*` `ABSTRACT_*` `MAXMIND_*` `SUMSUB_ADMIN_*`

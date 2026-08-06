@@ -1,0 +1,52 @@
+---
+description: Access boundaries, stack, auth, verification, and release for pokewin-admin
+alwaysApply: true
+---
+
+# Project core
+
+Next.js 15 App Router · TypeScript strict · React 19 · Tailwind 4 + shadcn/ui · Drizzle · Zod · TanStack Table · Recharts.
+
+## Access boundaries (owner rule)
+
+| Target | Access |
+|---|---|
+| **pokewin-admin** | Full — edit, commit, push, deploy |
+| **Admin DB** | Full — DDL/DML/migrations/ops as needed |
+| **Antifraud backend** | Full — edit, deploy, operate |
+| **Antifraud DB** | Full — DDL/DML/migrations/ops as needed |
+| **Production / MAIN game DB** | **Read-only** — no AI writes, merges, DDL, or DML |
+| **Sibling `frontend` repo** | **Read-only** — open a PR only when the owner approves in the current message |
+| **Sibling `backend` repo** | **Read-only** — open a PR only when the owner approves in the current message |
+
+PR approval for frontend/backend is per-request and does **not** authorize push/deploy to their production branches unless the owner says so separately.
+
+## Auth
+
+Use DAL only (`src/lib/dal.ts`): `verifySession`, `requireAdmin`, `requireRole`, `requirePageAccess`. Never bypass middleware or trust client-side checks for security.
+
+## Dual DB
+
+- `db` / MAIN = game data (read-only). `adminDb` / ADMIN = admin-only tables (writable).
+- No cross-DB joins — query separately, merge in code.
+- New table: MAIN if it could surface in the player app; ADMIN if admin-only. Prefer ADMIN when unsure.
+
+## Verification gate
+
+| Change | Gate |
+|---|---|
+| Docs / markdown | none |
+| CSS / copy / static JSX | `tsc --noEmit` + `npm run lint` |
+| RSC, types, routes, schema, deps | + `npm run build` |
+
+Never start a browser, Playwright, screenshots, or the dev server for verification unless the owner asks in that message.
+
+## Release (pokewin-admin)
+
+- Production: Vercel `packy-admin-dashboard` · branch `main` · https://pokewin-admin.vercel.app
+- Commit with `git commit --only <paths>`, never `git add -A`.
+- Never commit `.env`, secrets, `src/generated/*`, or `recent-pushes.json`.
+
+## Hotspots (don't blind-edit in parallel)
+
+`app-sidebar.tsx` · `permissions.ts` · `admin-pages.ts` · `dal.ts` · `(admin)/layout.tsx` · `package.json` / `next.config.ts` · shared query + panel primitives · `drizzle/admin/migrations/`

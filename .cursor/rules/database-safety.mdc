@@ -1,0 +1,36 @@
+---
+description: MAIN read-only, Admin + Antifraud DB full access, secrets, query safety
+alwaysApply: true
+---
+
+# Database safety
+
+## Production / MAIN game DB — read-only (absolute)
+
+- No AI writes, merges, DDL, DML, migrations, or schema push on MAIN / production game DB.
+- Ordinary reads: `MIRROR_PRODUCTION_DB` / `MIRROR_DEV_DB` (fail closed, read-only).
+- Do not build features that require a MAIN schema change — model in ADMIN or say it can't ship.
+- Missing MAIN indexes: document in `prisma/recommended-indexes.sql` only; never apply on primary.
+
+## Admin DB — full access
+
+- Reviewed idempotent SQL under `drizzle/admin/migrations/`.
+- Apply with `npm run admin:sql -- <file>`, then `npm run db:pull:admin`.
+- Audit-log admin mutations via `createAdminAuditEvent()`.
+
+## Antifraud DB — full access
+
+- Full task-scoped DDL/DML/migrations/ops allowed after verifying target + impact.
+- Keep MAIN game DB out of antifraud mutation paths.
+
+## Secrets
+
+Local `.env` points at live prod. Never commit, print, log, or paste `DATABASE_URL` or derived secrets.
+
+## Query rules
+
+- Every MAIN read hits a confirmed index, or has an `EXPLAIN ANALYZE` reason.
+- Drizzle by default; parameterized `sql` only — never concatenate user input.
+- Lists paginate server-side. Heavy pages: shell-first `PageHero` + `<Suspense>` + matching `loading.tsx`.
+- Active timeframe/tab only — don't prefetch every window/tab.
+- Money is `Decimal(20,2)` — no JS float math. Reuse existing GGR/NGR/P&L queries.

@@ -1,0 +1,32 @@
+---
+description: Modern admin page pattern and house-POV finance colors
+globs: src/app/**/*.tsx,src/components/**/*.tsx
+alwaysApply: false
+---
+
+# UI conventions
+
+## New admin pages
+
+1. Server Component `page.tsx` with `requirePageAccess(key)` first.
+2. `PageHero` first; page owns the visible title (`PageHeroIdentity` = back/actions only).
+3. KPI strip: 3–6 `KpiTile` / `MetricTile` — never bare `<Card>` stats.
+4. Sections via `SectionHeading`. Tables: TanStack + `src/components/data-table/`.
+5. Charts: `animationDuration={700}`, `animationEasing="ease-out"`.
+6. Dark mode + `motion-safe` / reduced-motion respected.
+
+Primitives: `src/components/modern-panels.tsx`. Colors only from `globals.css` + `src/lib/constants.ts`.
+
+Flat neutral tiles — accent on icon/number only. No new UI frameworks without asking.
+
+**Never pass function props from Server → Client Components** (only `npm run build` catches this).
+
+## House-POV money colors (strict)
+
+- User gains / profits → **rose**
+- User loses money / house gains → **emerald**
+- Neutral (signup etc.) → **blue**
+
+Deposits & wagers = emerald. Withdrawals, wins, tips, bonuses, credits = rose. Positive house P&L = emerald.
+
+Test: "if the user celebrates this event, is it rose?" Yes → correct.
