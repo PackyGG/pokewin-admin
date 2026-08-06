@@ -12,6 +12,7 @@ import {
   lt,
   or,
   sql,
+  type SQL,
 } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
@@ -30,7 +31,13 @@ import {
   type CreatorRewardEntitlement,
   type CreatorRewardType,
 } from "./types";
-import { computeFtdLossback, firstDeposits, holdingsUsd } from "./ftd-lossback";
+import {
+  batchLossbackHeldClaims,
+  computeFtdLossback,
+  firstDeposits,
+  holdingsUsd,
+  signedUpCodes,
+} from "./ftd-lossback";
 import { enforceOfferExpiry, expiredWagerBasisUsd } from "./offer-expiry";
 
 /**
@@ -282,6 +289,19 @@ function windowBounds(
   return { starts, ends };
 }
 
+export type WagerPosition = {
+  runStart: Date;
+  currentUsd: number;
+  lifetimeUsd: number;
+};
+
+type WagerPositionRow = {
+  program_id: string;
+  run_start: Date | string | null;
+  current: string | null;
+  lifetime: string | null;
+};
+
 /**
  * Run start + qualifying wager + lifetime wager, in ONE round-trip.
  *
@@ -314,33 +334,38 @@ function windowBounds(
  *
  * Codes match case-insensitively — `affiliate_codes` casing is MIXED for rows
  * the 0068 migration backfilled, and acu mirrors whatever the caller resolved.
+ *
+ * The live windows arrive already clamped to the program's `ends_at` by
+ * `programWindows`, so a scheduled end narrows the accrual bound here exactly
+ * as a pause would — this function never reads `ends_at` itself.
+ *
+ * Written as a fragment, so the single-program read and the
+ * batched read are the SAME SQL rather than two hand-kept copies. It carries
+ * its own `program_id` label so N of these can be UNION ALL'd into one
+ * round-trip and demultiplexed by id on the way back.
+ *
+ * Returns null for the two cases that have no query at all — no codes, or
+ * every live stretch ending before accrual start — which the caller answers
+ * with the zero fallback.
  */
-async function wagerPosition(
+function wagerPositionSql(
+  programId: string,
   userId: string,
   codes: readonly string[],
   accrualStart: Date,
   windows: { started_at: Date; ended_at: Date | null }[],
-): Promise<{ runStart: Date; currentUsd: number; lifetimeUsd: number }> {
-  const fallback = {
-    runStart: accrualStart,
-    currentUsd: 0,
-    lifetimeUsd: 0,
-  };
-  if (codes.length === 0) return fallback;
+): SQL | null {
+  if (codes.length === 0) return null;
 
   const { starts, ends } = windowBounds(windows, accrualStart);
   // Every live stretch ended before the program's accrual start — impossible
   // in practice, but it would make the window predicate match nothing.
-  if (starts.length === 0) return fallback;
+  if (starts.length === 0) return null;
 
   const upper = codes.map((c) => c.toUpperCase());
   const since = utcNaive(accrualStart);
 
-  const result = await getProdReadDrizzleDb().execute<{
-    run_start: Date | string;
-    current: string;
-    lifetime: string;
-  }>(sql`
+  return sql`
     WITH boundary AS (
       SELECT COALESCE(MAX(created_at), ${since}::timestamp) AS run_start
         FROM affiliate_code_usages
@@ -362,16 +387,21 @@ async function wagerPosition(
          )
     )
     SELECT
+      ${programId}::text AS program_id,
       (SELECT run_start FROM boundary) AS run_start,
       COALESCE(SUM(live.wager_amount_usd::numeric) FILTER (
         WHERE live.created_at >= (SELECT run_start FROM boundary)
       ), 0)::text AS current,
       COALESCE(SUM(live.wager_amount_usd::numeric), 0)::text AS lifetime
     FROM live
-  `);
+  `;
+}
 
-  const row = result.rows[0];
-  if (!row) return fallback;
+function parseWagerPosition(
+  row: WagerPositionRow | undefined,
+  accrualStart: Date,
+): WagerPosition {
+  if (!row) return { runStart: accrualStart, currentUsd: 0, lifetimeUsd: 0 };
   return {
     runStart:
       row.run_start == null
@@ -380,6 +410,104 @@ async function wagerPosition(
     currentUsd: toNumber(row.current ?? 0),
     lifetimeUsd: toNumber(row.lifetime ?? 0),
   };
+}
+
+async function wagerPosition(
+  programId: string,
+  userId: string,
+  codes: readonly string[],
+  accrualStart: Date,
+  windows: { started_at: Date; ended_at: Date | null }[],
+): Promise<WagerPosition> {
+  const statement = wagerPositionSql(
+    programId,
+    userId,
+    codes,
+    accrualStart,
+    windows,
+  );
+  if (!statement) {
+    return { runStart: accrualStart, currentUsd: 0, lifetimeUsd: 0 };
+  }
+  const result =
+    await getProdReadDrizzleDb().execute<WagerPositionRow>(statement);
+  return parseWagerPosition(result.rows[0], accrualStart);
+}
+
+/**
+ * Every program's wager position for one player, in ONE prod round-trip.
+ *
+ * The per-program statement is unchanged — it is literally the same fragment,
+ * UNION ALL'd. Each branch is independent and self-bounded, so the planner
+ * still resolves each one through `idx_acu_upper_code` ∧
+ * `idx_acu_referred_user_created_at`; nothing is joined across branches.
+ *
+ * Chunked because the parameter count grows with programs × (codes + windows),
+ * and a statement wide enough to matter is also one the planner spends real
+ * time on. Programs with no codes / no live stretch produce no branch and keep
+ * the zero fallback, exactly as the single-program path does.
+ */
+const WAGER_POSITION_CHUNK = 20;
+
+async function batchWagerPositions(
+  userId: string,
+  programs: ProgramForCompute[],
+): Promise<Map<string, WagerPosition>> {
+  const out = new Map<string, WagerPosition>();
+  const branches: { programId: string; statement: SQL }[] = [];
+
+  // Same resolution the single-program path uses — including the "no rows means
+  // live since accrual start" fallback, which is a different thing from an
+  // empty window list and would otherwise zero out every program silently.
+  const resolved = await Promise.all(
+    programs.map(async (program) => ({
+      program,
+      windows: await programWindows(program),
+    })),
+  );
+
+  for (const { program, windows } of resolved) {
+    // Seeded with the fallback first: presence in this map is what tells the
+    // per-program path "already batched, do not re-read", so every covered
+    // program must have an entry even when it has no query.
+    out.set(program.id, {
+      runStart: program.accrual_start_at,
+      currentUsd: 0,
+      lifetimeUsd: 0,
+    });
+    const statement = wagerPositionSql(
+      program.id,
+      userId,
+      program.codes,
+      program.accrual_start_at,
+      windows,
+    );
+    if (statement) branches.push({ programId: program.id, statement });
+  }
+  if (branches.length === 0) return out;
+
+  const accrualById = new Map(
+    programs.map((program) => [program.id, program.accrual_start_at]),
+  );
+
+  for (let i = 0; i < branches.length; i += WAGER_POSITION_CHUNK) {
+    const chunk = branches.slice(i, i + WAGER_POSITION_CHUNK);
+    const statement =
+      chunk.length === 1
+        ? chunk[0].statement
+        : sql.join(
+            chunk.map((branch) => sql`(${branch.statement})`),
+            sql` UNION ALL `,
+          );
+    const result =
+      await getProdReadDrizzleDb().execute<WagerPositionRow>(statement);
+    for (const row of result.rows) {
+      const accrual = accrualById.get(row.program_id);
+      if (!accrual) continue;
+      out.set(row.program_id, parseWagerPosition(row, accrual));
+    }
+  }
+  return out;
 }
 
 /**
@@ -493,6 +621,153 @@ async function priorHoldings(
 }
 
 /**
+ * `heldRewardCents` for many programs at once — one GROUP BY instead of one
+ * statement per program. A program with no holding claims produces no row and
+ * keeps the seeded 0, which is the same number the per-program SUM returns.
+ */
+async function batchHeldRewardCents(
+  programIds: string[],
+  userId: string,
+): Promise<Map<string, number>> {
+  const out = new Map(programIds.map((id) => [id, 0]));
+  if (programIds.length === 0) return out;
+
+  const rows = await adminDrizzle
+    .select({
+      program_id: creator_reward_claims.program_id,
+      value: sql<string>`COALESCE(SUM(${creator_reward_claims.amount_usd}), 0)::text`,
+    })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        inArray(creator_reward_claims.program_id, programIds),
+        eq(creator_reward_claims.user_id, userId),
+        inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+      ),
+    )
+    .groupBy(creator_reward_claims.program_id);
+
+  for (const row of rows) {
+    out.set(row.program_id, toCents(toNumber(row.value)));
+  }
+  return out;
+}
+
+/**
+ * `priorHoldings` for many programs at once.
+ *
+ * The three reads it makes are program-scoped in the same shape, differing
+ * only in the program id and — for the two run-scoped ones — the run start
+ * that program resolved to. Batched by binding the (program, run start) pairs
+ * as parallel arrays and joining them with `unnest`, so each becomes one
+ * statement regardless of program count.
+ *
+ * The arithmetic is deliberately assembled in JS in the SAME order the
+ * per-program function uses (status sums, then the stale subtraction with its
+ * clamp, then expired basis) — the intermediate is a float and reordering it
+ * would be a behaviour change dressed up as an optimisation.
+ *
+ * `now` is taken ONCE for the whole sweep instead of per program. That is the
+ * only observable difference from N separate calls, and it is the safer
+ * direction: every program in one check now measures expiry against the same
+ * instant rather than drifting across the fan-out.
+ */
+async function batchPriorConsumedUsd(
+  entries: { programId: string; runStart: Date }[],
+  userId: string,
+): Promise<Map<string, number>> {
+  const out = new Map(entries.map((entry) => [entry.programId, 0]));
+  if (entries.length === 0) return out;
+
+  const programIds = entries.map((entry) => entry.programId);
+  const runStartsIso = entries.map((entry) => entry.runStart.toISOString());
+  const holding = [...BASIS_HOLDING_STATUSES];
+  const now = new Date().toISOString();
+
+  const byStatus = await adminDrizzle
+    .select({
+      program_id: creator_reward_claims.program_id,
+      status: creator_reward_claims.status,
+      consumed: sql<string>`COALESCE(SUM(${creator_reward_claims.consumed_wager_usd}), 0)::text`,
+    })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        inArray(creator_reward_claims.program_id, programIds),
+        eq(creator_reward_claims.user_id, userId),
+        eq(creator_reward_claims.leg, "wager"),
+      ),
+    )
+    .groupBy(creator_reward_claims.program_id, creator_reward_claims.status);
+
+  for (const row of byStatus) {
+    if (row.status !== "approved" && row.status !== "pending") continue;
+    out.set(
+      row.program_id,
+      (out.get(row.program_id) ?? 0) + toNumber(row.consumed),
+    );
+  }
+
+  // Only the programs that actually consumed something need the run-scoped
+  // correction — the per-program path skips the read entirely otherwise, and
+  // skipping it here too keeps the batch from costing MORE statements than the
+  // fan-out it replaces when a player has no claims (the common case).
+  const needsStale = entries.filter(
+    (entry) => (out.get(entry.programId) ?? 0) > 0,
+  );
+
+  const [stale, expired] = await Promise.all([
+    needsStale.length === 0
+      ? null
+      : adminDrizzle.execute<{ program_id: string; value: string }>(sql`
+          SELECT c.program_id::text AS program_id,
+                 COALESCE(SUM(c.consumed_wager_usd), 0)::text AS value
+            FROM creator_reward_claims c
+            JOIN unnest(
+                   ${pgArrayParam(needsStale.map((e) => e.programId))}::uuid[],
+                   ${pgArrayParam(needsStale.map((e) => e.runStart.toISOString()))}::timestamptz[]
+                 ) AS r(program_id, run_start)
+              ON r.program_id = c.program_id
+           WHERE c.user_id = ${userId}
+             AND c.leg = 'wager'
+             AND c.status = ANY(${pgArrayParam(holding)}::text[])
+             AND c.requested_at < r.run_start
+           GROUP BY 1
+        `),
+
+    adminDrizzle.execute<{ program_id: string; value: string }>(sql`
+      SELECT w.program_id::text AS program_id,
+             COALESCE(SUM(w.basis_usd), 0)::text AS value
+        FROM creator_reward_offer_windows w
+        JOIN unnest(
+               ${pgArrayParam(programIds)}::uuid[],
+               ${pgArrayParam(runStartsIso)}::timestamptz[]
+             ) AS r(program_id, run_start)
+          ON r.program_id = w.program_id
+       WHERE w.user_id = ${userId}
+         AND w.leg = 'wager'
+         AND w.run_started_at = r.run_start
+         AND w.claimed_at IS NULL
+         AND w.expires_at <= ${now}::timestamptz
+       GROUP BY 1
+    `),
+  ]);
+
+  for (const row of stale?.rows ?? []) {
+    const consumed = out.get(row.program_id);
+    // Never drives the total negative — same clamp as the per-program path.
+    if (consumed === undefined) continue;
+    out.set(row.program_id, Math.max(0, consumed - toNumber(row.value)));
+  }
+  for (const row of expired.rows) {
+    const consumed = out.get(row.program_id);
+    if (consumed === undefined) continue;
+    out.set(row.program_id, consumed + toNumber(row.value));
+  }
+  return out;
+}
+
+/**
  * What can this user claim on this program right now?
  *
  * Returns a fully-populated entitlement even when nothing is claimable —
@@ -503,6 +778,7 @@ export async function computeEntitlement(
   program: ProgramForCompute,
   userId: string,
   facts?: UserFacts,
+  batch?: EntitlementBatch,
 ): Promise<CreatorRewardEntitlement> {
   const thresholdCents = toCents(toNumber(program.threshold_usd));
   const standardRewardCents = toCents(toNumber(program.reward_usd));
@@ -579,15 +855,20 @@ export async function computeEntitlement(
     };
   }
 
-  const windows = await programWindows(program);
-
   // Run start and both wager totals arrive together — see `wagerPosition`.
-  const position = await wagerPosition(
-    userId,
-    program.codes,
-    program.accrual_start_at,
-    windows,
-  );
+  // A batched position is the SAME statement already executed for this
+  // program; anything not in the batch falls back to its own read, which is
+  // what keeps the single-program callers (the claim path, the admin preview)
+  // on exactly the code they have always run.
+  const position =
+    batch?.positions.get(program.id) ??
+    (await wagerPosition(
+      program.id,
+      userId,
+      program.codes,
+      program.accrual_start_at,
+      await programWindows(program),
+    ));
   const runStart = position.runStart;
   const wagerUsd = position.currentUsd;
   const lifetimeWagerUsd = position.lifetimeUsd;
@@ -595,9 +876,15 @@ export async function computeEntitlement(
   // Basis consumption and cap holdings are different quantities with different
   // scoping (see both functions), so they are two reads — issued together, so
   // the split costs no extra latency.
+  const batchedConsumed = batch?.priorConsumedUsd.get(program.id);
+  const batchedHeld = batch?.heldRewardCents.get(program.id);
   const [prior, heldCents, vip] = await Promise.all([
-    priorHoldings(program.id, userId, runStart),
-    capUsd == null ? 0 : heldRewardCents(program.id, userId),
+    batchedConsumed === undefined
+      ? priorHoldings(program.id, userId, runStart)
+      : { consumedUsd: batchedConsumed },
+    capUsd == null
+      ? 0
+      : (batchedHeld ?? (await heldRewardCents(program.id, userId))),
     facts?.isVip ?? isVipNow(userId),
   ]);
 
@@ -709,6 +996,7 @@ export async function computeLossbackEntitlement(
   program: ProgramForCompute,
   userId: string,
   facts?: UserFacts,
+  batch?: EntitlementBatch,
 ): Promise<CreatorRewardEntitlement> {
   const base = {
     programId: program.id,
@@ -773,6 +1061,7 @@ export async function computeLossbackEntitlement(
     userId,
     facts,
     await programWindows(program),
+    batch,
   );
 
   // The per-user cap applies to BOTH legs, and both legs measure what is
@@ -780,10 +1069,11 @@ export async function computeLossbackEntitlement(
   let payout = ftd.payoutUsd;
   let capped = false;
   if (program.max_reward_per_user_usd != null) {
+    const batchedHeld = batch?.heldRewardCents.get(program.id);
     const remainingCents = Math.max(
       0,
       toCents(toNumber(program.max_reward_per_user_usd)) -
-        (await heldRewardCents(program.id, userId)),
+        (batchedHeld ?? (await heldRewardCents(program.id, userId))),
     );
     if (toCents(payout) > remainingCents) {
       payout = fromCents(remainingCents);
@@ -826,15 +1116,108 @@ export async function computeProgramOffers(
   program: ProgramForCompute,
   userId: string,
   facts?: UserFacts,
+  batch?: EntitlementBatch,
 ): Promise<CreatorRewardEntitlement[]> {
   const legs: Promise<CreatorRewardEntitlement>[] = [];
   if (legConfigured(program, "wager")) {
-    legs.push(computeEntitlement(program, userId, facts));
+    legs.push(computeEntitlement(program, userId, facts, batch));
   }
   if (legConfigured(program, "ftd_lossback")) {
-    legs.push(computeLossbackEntitlement(program, userId, facts));
+    legs.push(computeLossbackEntitlement(program, userId, facts, batch));
   }
   return Promise.all(legs);
+}
+
+/**
+ * The program-SCOPED reads, pre-resolved for a whole sweep.
+ *
+ * `UserFacts` removed the reads that don't vary by program. This removes the
+ * ones that do: each entry here is a query whose SHAPE repeats per program and
+ * differs only in the program id (and, for the run-scoped ones, the run start
+ * that program resolved to), so N programs collapse to a fixed number of
+ * statements instead of N × legs round-trips.
+ *
+ * ── PRESENCE IS THE CONTRACT ──────────────────────────────────────────────
+ * A program id present in a map means "already read, use this". Absent means
+ * "not batched, read it yourself". Every covered program is therefore seeded
+ * with its zero/fallback value BEFORE the query runs, so a program that simply
+ * has no rows is still covered and never silently falls back to a duplicate
+ * read. This is also what makes the batch a pure cost optimisation: nothing
+ * that isn't in it changes behaviour.
+ */
+export type EntitlementBatch = {
+  positions: Map<string, WagerPosition>;
+  priorConsumedUsd: Map<string, number>;
+  heldRewardCents: Map<string, number>;
+  /** Wager-leg only; the lossback leg's own claim count is keyed separately. */
+  lossbackHeldClaims: Map<string, number>;
+  /** UPPERCASE codes this player signed up under. null = not batched. */
+  signupCodes: Set<string> | null;
+};
+
+/**
+ * Build the batch for one player across many programs.
+ *
+ * ── WHAT IT DELIBERATELY DOES NOT DO ──────────────────────────────────────
+ * It does not re-implement any guard. The caller passes only the programs that
+ * could plausibly reach these reads, which is a COST filter and nothing else:
+ * a program wrongly included is answered from the batch by an entitlement that
+ * was going to block anyway (the read is wasted, the answer unchanged), and a
+ * program wrongly excluded simply reads for itself. Correctness never depends
+ * on that filter agreeing with the guards.
+ *
+ * Two latency layers, not one: the run-scoped reads cannot be issued until the
+ * wager positions have resolved the run starts, which is the same dependency
+ * the per-program path has.
+ */
+export async function loadEntitlementBatch(
+  programs: ProgramForCompute[],
+  userId: string,
+): Promise<EntitlementBatch> {
+  const wagerPrograms = programs.filter((p) => legConfigured(p, "wager"));
+  const lossbackPrograms = programs.filter((p) =>
+    legConfigured(p, "ftd_lossback"),
+  );
+  const cappedIds = programs
+    .filter((p) => p.max_reward_per_user_usd != null)
+    .map((p) => p.id);
+  const lossbackCodes = [
+    ...new Set(
+      lossbackPrograms.flatMap((p) => p.codes.map((c) => c.toUpperCase())),
+    ),
+  ];
+
+  const [positions, heldRewardCentsByProgram, lossbackClaims, signup] =
+    await Promise.all([
+      batchWagerPositions(userId, wagerPrograms),
+      batchHeldRewardCents(cappedIds, userId),
+      batchLossbackHeldClaims(
+        lossbackPrograms.map((p) => p.id),
+        userId,
+      ),
+      lossbackPrograms.length === 0
+        ? Promise.resolve(null)
+        : signedUpCodes(userId, lossbackCodes),
+    ]);
+
+  const priorConsumedUsd = await batchPriorConsumedUsd(
+    wagerPrograms.map((p) => ({
+      programId: p.id,
+      // Present by construction: `batchWagerPositions` seeds every program it
+      // is given, so this never silently substitutes the wrong run start.
+      runStart:
+        positions.get(p.id)?.runStart ?? p.accrual_start_at,
+    })),
+    userId,
+  );
+
+  return {
+    positions,
+    priorConsumedUsd,
+    heldRewardCents: heldRewardCentsByProgram,
+    lossbackHeldClaims: lossbackClaims,
+    signupCodes: signup,
+  };
 }
 
 /**
@@ -925,9 +1308,30 @@ export async function computeAllEntitlements(
   // player with 4 programs would trigger 4 deposit lookups and 4 holdings
   // reads for answers that are identical every time.
   const facts = await loadUserFacts(userId);
+
+  // ── COST FILTER, NOT A GUARD ──────────────────────────────────────────────
+  // Which programs are worth pre-reading for. It mirrors the cheap guards that
+  // short-circuit BEFORE any program-scoped read (no standing, banned, locked,
+  // creator's own program, switched to another creator's code) purely so the
+  // batch doesn't pay for answers nobody will use. It decides nothing: the
+  // entitlement functions re-assert every one of these themselves, and a
+  // program left out of the batch reads for itself exactly as before.
+  const standing = facts.standing;
+  const switchedCode = standing?.currentCode ?? null;
+  const worthBatching =
+    standing == null || standing.banned || standing.locked
+      ? []
+      : programs.filter(
+          (p) =>
+            p.creator_user_id !== userId &&
+            (switchedCode == null ||
+              p.codes.some((c) => c.toUpperCase() === switchedCode)),
+        );
+  const batch = await loadEntitlementBatch(worthBatching, userId);
+
   const results = (
     await Promise.all(
-      programs.map((p) => computeProgramOffers(p, userId, facts)),
+      programs.map((p) => computeProgramOffers(p, userId, facts, batch)),
     )
   ).flat();
 

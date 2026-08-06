@@ -106,6 +106,67 @@ async function signedUpUnderCode(
 }
 
 /**
+ * The same question for MANY programs at once: which of these codes did the
+ * player sign up under?
+ *
+ * Returned as the set of matching UPPERCASE codes rather than a per-program
+ * boolean, so the caller answers each program by testing its own codes against
+ * it — `codes.some(...)` is exactly the EXISTS above, evaluated in memory.
+ *
+ * Same predicate, same `idx_acu_upper_code` path, and signup rows are one per
+ * referral so the set is tiny. The EXISTS short-circuit in
+ * `computeAllEntitlements` is deliberately left alone: it must stay a
+ * first-row-and-stop probe for the common "not attached to anything" case.
+ */
+export async function signedUpCodes(
+  userId: string,
+  codes: readonly string[],
+): Promise<Set<string>> {
+  if (codes.length === 0) return new Set();
+  const upper = codes.map((c) => c.toUpperCase());
+  const result = await getProdReadDrizzleDb().execute<{ code: string }>(sql`
+    SELECT DISTINCT UPPER(code) AS code
+      FROM affiliate_code_usages
+     WHERE referred_user_id = ${userId}
+       AND usage_type::text = 'signup'
+       AND UPPER(code) = ANY(${pgArrayParam(upper)}::text[])
+  `);
+  return new Set(result.rows.map((row) => row.code));
+}
+
+/**
+ * Lossback claims already held, per program, in one GROUP BY. A program with
+ * none produces no row and keeps the seeded 0 — the same answer the
+ * per-program COUNT gives.
+ */
+export async function batchLossbackHeldClaims(
+  programIds: string[],
+  userId: string,
+): Promise<Map<string, number>> {
+  const out = new Map(programIds.map((id) => [id, 0]));
+  if (programIds.length === 0) return out;
+
+  const rows = await adminDrizzle
+    .select({
+      program_id: creator_reward_claims.program_id,
+      value: count(),
+    })
+    .from(creator_reward_claims)
+    .where(
+      and(
+        inArray(creator_reward_claims.program_id, programIds),
+        eq(creator_reward_claims.user_id, userId),
+        eq(creator_reward_claims.leg, "ftd_lossback"),
+        inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+      ),
+    )
+    .groupBy(creator_reward_claims.program_id);
+
+  for (const row of rows) out.set(row.program_id, row.value);
+  return out;
+}
+
+/**
  * The player's first two completed deposits, oldest first.
  *
  * ── WHY `type = 'deposit'::ledger_transaction_type` AND NOT `type::text` ──
@@ -228,6 +289,15 @@ export async function computeFtdLossback(
   facts?: { deposits: { amountUsd: number; at: Date }[]; holdingsUsd: number },
   /** Live intervals — the deposit must fall inside one of them. */
   windows?: { started_at: Date; ended_at: Date | null }[],
+  /**
+   * Program-scoped reads already resolved for a whole sweep. Presence of this
+   * program's id (or a non-null code set) means "already read"; anything
+   * missing falls through to the per-program read below.
+   */
+  batch?: {
+    lossbackHeldClaims: Map<string, number>;
+    signupCodes: Set<string> | null;
+  },
 ): Promise<FtdLossbackState> {
   const pct = program.lossback_pct == null ? 0 : toNumber(program.lossback_pct);
   const minDeposit =
@@ -243,25 +313,33 @@ export async function computeFtdLossback(
   // SCOPED TO THIS LEG. A program can also run wager milestones, and those
   // share this table: without the `leg` filter a single pending wager claim
   // would report the lossback as "already claimed" and silently withhold it.
-  const existingRows = await adminDrizzle
-    .select({ value: count() })
-    .from(creator_reward_claims)
-    .where(
-      and(
-        eq(creator_reward_claims.program_id, program.id),
-        eq(creator_reward_claims.user_id, userId),
-        eq(creator_reward_claims.leg, "ftd_lossback"),
-        inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
-      ),
-    );
-  const existing = existingRows[0]?.value ?? 0;
+  const batchedExisting = batch?.lossbackHeldClaims.get(program.id);
+  let existing = batchedExisting;
+  if (existing === undefined) {
+    const existingRows = await adminDrizzle
+      .select({ value: count() })
+      .from(creator_reward_claims)
+      .where(
+        and(
+          eq(creator_reward_claims.program_id, program.id),
+          eq(creator_reward_claims.user_id, userId),
+          eq(creator_reward_claims.leg, "ftd_lossback"),
+          inArray(creator_reward_claims.status, [...BASIS_HOLDING_STATUSES]),
+        ),
+      );
+    existing = existingRows[0]?.value ?? 0;
+  }
   if (existing > 0) {
     return { ...EMPTY, blockedReason: "Already claimed." };
   }
 
+  const batchedSignupCodes = batch?.signupCodes;
   const [signedUp, deposits] = await Promise.all([
-    // Program-specific — cannot be hoisted.
-    signedUpUnderCode(userId, program.codes),
+    // Program-specific — batched across programs as a code SET when the caller
+    // supplies one, since membership is the same test the EXISTS performs.
+    batchedSignupCodes
+      ? program.codes.some((c) => batchedSignupCodes.has(c.toUpperCase()))
+      : signedUpUnderCode(userId, program.codes),
     facts?.deposits ?? firstDeposits(userId),
   ]);
 
