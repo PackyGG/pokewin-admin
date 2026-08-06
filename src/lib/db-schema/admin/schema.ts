@@ -1083,6 +1083,7 @@ export const creator_reward_programs = pgTable("creator_reward_programs", {
 	reward_usd: numeric({ precision: 20, scale:  2 }),
 	is_active: boolean().default(true).notNull(),
 	accrual_start_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	ends_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	max_reward_per_user_usd: numeric({ precision: 20, scale:  2 }),
 	created_by: uuid().notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
@@ -1097,6 +1098,7 @@ export const creator_reward_programs = pgTable("creator_reward_programs", {
 	index("creator_reward_programs_is_active_idx").using("btree", table.is_active.asc().nullsLast().op("bool_ops")),
 	index("creator_reward_programs_live_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(archived_at IS NULL)`),
 	check("creator_reward_programs_archived_not_active", sql`(archived_at IS NULL) OR (is_active = false)`),
+	check("creator_reward_programs_end_after_start", sql`(ends_at IS NULL) OR (ends_at > accrual_start_at)`),
 ]);
 
 export const creator_reward_program_windows = pgTable("creator_reward_program_windows", {

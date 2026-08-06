@@ -157,6 +157,8 @@ export function ProgramRow({
                 >
                   Archived
                 </Flag>
+              ) : program.hasEnded ? (
+                <Flag tone="zinc">Ended</Flag>
               ) : (
                 !program.isActive && <Flag tone="zinc">Paused</Flag>
               )}
@@ -177,9 +179,7 @@ export function ProgramRow({
                 {program.creatorUsername ?? program.creatorUserId}
               </Link>
               {program.creatorCountryCode && (
-                <span className="shrink-0">
-                  · {program.creatorCountryCode}
-                </span>
+                <span className="shrink-0">· {program.creatorCountryCode}</span>
               )}
             </div>
           </div>
@@ -206,6 +206,7 @@ export function ProgramRow({
           </div>
           <div>
             Accrues from {formatDateTime(program.accrualStartAt)}
+            {program.endsAt && <> · ends {formatDateTime(program.endsAt)}</>}
             {program.maxRewardPerUserUsd != null && (
               <> · cap {formatCurrency(program.maxRewardPerUserUsd)}/user</>
             )}
@@ -230,7 +231,7 @@ export function ProgramRow({
               size="sm"
               variant="outline"
               onClick={() => setRaiseOpen(true)}
-              disabled={!program.isActive}
+              disabled={!program.isActive || program.hasEnded}
               // Every row carries this button, so the bare label repeats N
               // times in a screen reader's control list with nothing to tell
               // them apart.
@@ -241,12 +242,14 @@ export function ProgramRow({
             <Switch
               checked={program.isActive}
               onCheckedChange={toggle}
-              disabled={isPending}
+              disabled={isPending || program.hasEnded}
               aria-label={`${program.name} active`}
             />
             <DropdownMenu>
               <DropdownMenuTrigger
-                render={<Button variant="ghost" size="icon" className="size-8" />}
+                render={
+                  <Button variant="ghost" size="icon" className="size-8" />
+                }
                 aria-label={`More actions for ${program.name}`}
               >
                 <MoreHorizontal className="size-4" />

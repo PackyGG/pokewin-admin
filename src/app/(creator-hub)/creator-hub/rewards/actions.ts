@@ -43,13 +43,12 @@ import {
   type CreatorRewardType,
 } from "@/lib/creator-vip/types";
 
-function normalizeProgram(
-  row: typeof creator_reward_programs.$inferSelect,
-) {
+function normalizeProgram(row: typeof creator_reward_programs.$inferSelect) {
   return {
     ...row,
     codes: row.codes ?? [],
     accrual_start_at: new Date(row.accrual_start_at),
+    ends_at: row.ends_at ? new Date(row.ends_at) : null,
   };
 }
 
@@ -68,9 +67,7 @@ async function getClaimWithProgram(id: string) {
       .where(eq(creator_reward_claims.id, id))
       .limit(1)
   )[0];
-  return row
-    ? { ...row.claim, program: normalizeProgram(row.program) }
-    : null;
+  return row ? { ...row.claim, program: normalizeProgram(row.program) } : null;
 }
 
 async function findCreatorRewardLedgerId(
@@ -145,9 +142,14 @@ const UsdSchema = (max: number) =>
     .finite()
     .positive()
     .max(max)
-    .refine((v) => Number.isInteger(Math.round(v * 100)) && Math.abs(v * 100 - Math.round(v * 100)) < 1e-9, {
-      message: "Amounts can't be finer than one cent.",
-    });
+    .refine(
+      (v) =>
+        Number.isInteger(Math.round(v * 100)) &&
+        Math.abs(v * 100 - Math.round(v * 100)) < 1e-9,
+      {
+        message: "Amounts can't be finer than one cent.",
+      },
+    );
 
 const ProgramInputSchema = z.object({
   name: z.string().trim().min(2).max(80),
@@ -167,6 +169,7 @@ const ProgramInputSchema = z.object({
   lossbackPct: UsdSchema(100).nullable(),
   minDepositUsd: UsdSchema(1_000_000).nullable(),
   maxRewardPerUserUsd: UsdSchema(1_000_000).nullable(),
+  endsAt: z.string().datetime().nullable(),
 });
 
 export type ActionResult<T = undefined> =
@@ -245,6 +248,7 @@ export async function createCreatorRewardProgram(input: {
   lossbackPct: number | null;
   minDepositUsd: number | null;
   maxRewardPerUserUsd: number | null;
+  endsAt: string | null;
 }): Promise<ActionResult> {
   await requirePageAccess("/creator-rewards");
   const session = await requireAdmin();
@@ -308,30 +312,32 @@ export async function createCreatorRewardProgram(input: {
   // Accrual starts NOW. Wager booked before this instant never counts — the
   // guard against a new program instantly owing against years of history.
   const accrualStartAt = new Date();
+  const endsAt = d.endsAt ? new Date(d.endsAt) : null;
+  if (endsAt && endsAt <= accrualStartAt) {
+    return { success: false, error: "End date must be in the future." };
+  }
 
   const created = await adminDrizzle.transaction(async (tx) => {
     const [program] = await tx
       .insert(creator_reward_programs)
       .values({
-      // Opens the first live window. Wager only counts inside these, so a
-      // program with none would accrue nothing — it is created atomically
-      // with the program rather than as a follow-up write.
-      name,
-      creator_user_id: d.creatorUserId,
-      codes,
-      threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
-      reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
-      vip_reward_usd:
-        d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
-      lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
-      min_deposit_usd:
-        d.minDepositUsd != null ? String(d.minDepositUsd) : null,
-      max_reward_per_user_usd:
-        d.maxRewardPerUserUsd != null
-          ? String(d.maxRewardPerUserUsd)
-          : null,
-      accrual_start_at: accrualStartAt.toISOString(),
-      created_by: session.userId,
+        // Opens the first live window. Wager only counts inside these, so a
+        // program with none would accrue nothing — it is created atomically
+        // with the program rather than as a follow-up write.
+        name,
+        creator_user_id: d.creatorUserId,
+        codes,
+        threshold_usd: d.thresholdUsd != null ? String(d.thresholdUsd) : null,
+        reward_usd: d.rewardUsd != null ? String(d.rewardUsd) : null,
+        vip_reward_usd: d.vipRewardUsd != null ? String(d.vipRewardUsd) : null,
+        lossback_pct: d.lossbackPct != null ? String(d.lossbackPct) : null,
+        min_deposit_usd:
+          d.minDepositUsd != null ? String(d.minDepositUsd) : null,
+        max_reward_per_user_usd:
+          d.maxRewardPerUserUsd != null ? String(d.maxRewardPerUserUsd) : null,
+        accrual_start_at: accrualStartAt.toISOString(),
+        ends_at: endsAt?.toISOString() ?? null,
+        created_by: session.userId,
       })
       .returning({ id: creator_reward_programs.id });
     await tx.insert(creator_reward_program_windows).values({
@@ -356,6 +362,7 @@ export async function createCreatorRewardProgram(input: {
       min_deposit_usd: d.minDepositUsd,
       max_reward_per_user_usd: d.maxRewardPerUserUsd,
       accrual_start_at: accrualStartAt.toISOString(),
+      ends_at: endsAt?.toISOString() ?? null,
     },
   });
 
@@ -382,18 +389,30 @@ export async function setCreatorRewardProgramActive(input: {
         name: creator_reward_programs.name,
         is_active: creator_reward_programs.is_active,
         creator_user_id: creator_reward_programs.creator_user_id,
+        ends_at: creator_reward_programs.ends_at,
       })
       .from(creator_reward_programs)
       .where(eq(creator_reward_programs.id, parsed.data.programId))
       .limit(1)
   )[0];
   if (!existing) return { success: false, error: "Program not found" };
+  const now = new Date();
+  if (
+    parsed.data.isActive &&
+    existing.ends_at &&
+    new Date(existing.ends_at).getTime() <= now.getTime()
+  ) {
+    return {
+      success: false,
+      error:
+        "This program has ended. Extend its end date before activating it.",
+    };
+  }
 
   // Pausing CLOSES the open window; resuming OPENS a new one. Wager placed in
   // between therefore never counts, while progress earned before the pause
   // survives it — which is why this models intervals instead of moving the
   // program's start date forward.
-  const now = new Date();
   await adminDrizzle.transaction(async (tx) => {
     await tx
       .update(creator_reward_programs)
@@ -518,6 +537,7 @@ export async function updateCreatorRewardProgram(input: {
   lossbackPct: number | null;
   minDepositUsd: number | null;
   maxRewardPerUserUsd: number | null;
+  endsAt: string | null;
 }): Promise<ActionResult> {
   await requirePageAccess("/creator-rewards");
   const session = await requireAdmin();
@@ -558,6 +578,8 @@ export async function updateCreatorRewardProgram(input: {
         min_deposit_usd: creator_reward_programs.min_deposit_usd,
         max_reward_per_user_usd:
           creator_reward_programs.max_reward_per_user_usd,
+        accrual_start_at: creator_reward_programs.accrual_start_at,
+        ends_at: creator_reward_programs.ends_at,
         archived_at: creator_reward_programs.archived_at,
       })
       .from(creator_reward_programs)
@@ -569,6 +591,13 @@ export async function updateCreatorRewardProgram(input: {
     return {
       success: false,
       error: "This program is archived — restore it before editing.",
+    };
+  }
+  const endsAt = d.endsAt ? new Date(d.endsAt) : null;
+  if (endsAt && endsAt <= new Date(existing.accrual_start_at)) {
+    return {
+      success: false,
+      error: "End date must be after the program was created.",
     };
   }
 
@@ -590,6 +619,7 @@ export async function updateCreatorRewardProgram(input: {
       min_deposit_usd: d.minDepositUsd != null ? String(d.minDepositUsd) : null,
       max_reward_per_user_usd:
         d.maxRewardPerUserUsd != null ? String(d.maxRewardPerUserUsd) : null,
+      ends_at: endsAt?.toISOString() ?? null,
       updated_at: new Date().toISOString(),
     })
     .where(eq(creator_reward_programs.id, existing.id));
@@ -611,6 +641,7 @@ export async function updateCreatorRewardProgram(input: {
         lossback_pct: existing.lossback_pct,
         min_deposit_usd: existing.min_deposit_usd,
         max_reward_per_user_usd: existing.max_reward_per_user_usd,
+        ends_at: existing.ends_at,
       },
       after: {
         name,
@@ -621,6 +652,7 @@ export async function updateCreatorRewardProgram(input: {
         lossback_pct: d.lossbackPct,
         min_deposit_usd: d.minDepositUsd,
         max_reward_per_user_usd: d.maxRewardPerUserUsd,
+        ends_at: endsAt?.toISOString() ?? null,
       },
     },
   });
@@ -658,9 +690,7 @@ export async function planCreatorRewardProgramRemoval(input: {
   await requirePageAccess("/creator-rewards");
   await requireAdmin();
 
-  const parsed = z
-    .object({ programId: z.string().uuid() })
-    .safeParse(input);
+  const parsed = z.object({ programId: z.string().uuid() }).safeParse(input);
   if (!parsed.success) return { success: false, error: "Invalid input" };
 
   const program = (
@@ -790,7 +820,12 @@ export async function removeCreatorRewardProgram(input: {
     await adminDrizzle.transaction(async (tx) => {
       await tx
         .update(creator_reward_programs)
-        .set({ archived_at: now, archived_by: session.userId, is_active: false, updated_at: now })
+        .set({
+          archived_at: now,
+          archived_by: session.userId,
+          is_active: false,
+          updated_at: now,
+        })
         .where(eq(creator_reward_programs.id, plan.data.programId));
       // Close the accrual window, exactly as pausing does — an archived
       // program must not leave an open interval behind that a later restore
@@ -919,7 +954,8 @@ async function notifyBotOfDecision(params: {
 
     const event: ClaimDecisionEvent = {
       id: claimEventId(params.claimId, params.decision),
-      type: params.decision === "approved" ? "claim.approved" : "claim.rejected",
+      type:
+        params.decision === "approved" ? "claim.approved" : "claim.rejected",
       ...(params.force ? { force: true } : {}),
       data: {
         claimId: params.claimId,
@@ -1012,7 +1048,10 @@ export async function approveCreatorRewardClaim(input: {
         !Number.isFinite(reservedAt) ||
         Date.now() - reservedAt < 5 * 60 * 1000
       ) {
-        return { success: false, error: "Claim approval is already in progress" };
+        return {
+          success: false,
+          error: "Claim approval is already in progress",
+        };
       }
       // No ledger appeared within five minutes (well beyond the 30s database
       // statement timeout): the worker died before payment. Release only the
@@ -1029,7 +1068,10 @@ export async function approveCreatorRewardClaim(input: {
         )
         .returning({ id: creator_reward_claims.id });
       if (released.length !== 1) {
-        return { success: false, error: "Claim approval is already in progress" };
+        return {
+          success: false,
+          error: "Claim approval is already in progress",
+        };
       }
 
       // Audited because this forcibly clears ANOTHER admin's reservation. It is
@@ -1147,7 +1189,7 @@ export async function approveCreatorRewardClaim(input: {
             eq(creator_reward_claims.status, "pending"),
             eq(creator_reward_claims.reviewed_by, session.userId),
           ),
-      );
+        );
       return { success: false, error: credit.error };
     }
     if (!ledgerTxId && credit?.success) {
@@ -1399,7 +1441,8 @@ export async function reinstateCreatorRewardClaim(input: {
   if (reinstated.length !== 1) {
     return {
       success: false,
-      error: "That claim was decided by someone else just now — reload the queue.",
+      error:
+        "That claim was decided by someone else just now — reload the queue.",
     };
   }
 
@@ -1537,11 +1580,7 @@ export async function previewCreatorRewardEntitlement(input: {
     .select({ id: user.id, username: user.username, email: user.email })
     .from(user)
     .where(
-      or(
-        eq(user.id, q),
-        ilike(user.username, qLike),
-        ilike(user.email, qLike),
-      ),
+      or(eq(user.id, q), ilike(user.username, qLike), ilike(user.email, qLike)),
     )
     .limit(1);
   if (!matchedUser) return { success: false, error: "No user matches that" };
@@ -1626,9 +1665,7 @@ export async function resendClaimDecisionNotice(input: {
   await requirePageAccess("/creator-rewards");
   const session = await requireAdmin();
 
-  const parsed = z
-    .object({ claimId: z.string().uuid() })
-    .safeParse(input);
+  const parsed = z.object({ claimId: z.string().uuid() }).safeParse(input);
   if (!parsed.success) return { success: false, error: "Invalid input" };
 
   if (!isBotWebhookConfigured()) {
@@ -1646,7 +1683,8 @@ export async function resendClaimDecisionNotice(input: {
   if (!claim.discord_user_id) {
     return {
       success: false,
-      error: "This claim was raised in the dashboard — there's no Discord user to notify.",
+      error:
+        "This claim was raised in the dashboard — there's no Discord user to notify.",
     };
   }
 
@@ -1691,7 +1729,6 @@ export async function resendClaimDecisionNotice(input: {
         error: deliveryError,
       };
 }
-
 
 /**
  * Check the Discord-bot webhook without messaging anyone.

@@ -32,6 +32,13 @@ function moneyField(v: number | null): string {
   return v == null ? "" : String(v);
 }
 
+function localDateTimeField(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  const offsetMs = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offsetMs).toISOString().slice(0, 16);
+}
+
 /**
  * Create OR edit a reward program — one form, because the terms, their
  * validation mirror and the money-pump guard are identical in both. The only
@@ -63,13 +70,17 @@ export function ProgramFormDialog({
   const [creatorCodes, setCreatorCodes] = useState<string[]>(
     program?.codes ?? [],
   );
-  const [pickedCodes, setPickedCodes] = useState<string[]>(program?.codes ?? []);
+  const [pickedCodes, setPickedCodes] = useState<string[]>(
+    program?.codes ?? [],
+  );
   // Both legs can run at once — creators hand them out together.
   const [wagerOn, setWagerOn] = useState(
     isEdit ? program.thresholdUsd != null && program.rewardUsd != null : true,
   );
   const [lossbackOn, setLossbackOn] = useState(
-    isEdit ? program.lossbackPct != null && program.minDepositUsd != null : true,
+    isEdit
+      ? program.lossbackPct != null && program.minDepositUsd != null
+      : true,
   );
   const [threshold, setThreshold] = useState(
     isEdit ? moneyField(program.thresholdUsd) : "1000",
@@ -89,6 +100,7 @@ export function ProgramFormDialog({
   const [cap, setCap] = useState(
     isEdit ? moneyField(program.maxRewardPerUserUsd) : "",
   );
+  const [endsAt, setEndsAt] = useState(localDateTimeField(program?.endsAt));
   const [isPending, startTransition] = useTransition();
 
   const thresholdNum = Number(threshold);
@@ -137,6 +149,7 @@ export function ProgramFormDialog({
     setLossbackPct(isEdit ? moneyField(program.lossbackPct) : "5");
     setMinDeposit(isEdit ? moneyField(program.minDepositUsd) : "50");
     setCap(isEdit ? moneyField(program.maxRewardPerUserUsd) : "");
+    setEndsAt(localDateTimeField(program?.endsAt));
   }
 
   // Edit mode has no picker, so the creator's FULL code list has to come from
@@ -174,6 +187,15 @@ export function ProgramFormDialog({
       toast.error("Pick at least one code");
       return;
     }
+    const parsedEnd = endsAt === "" ? null : new Date(endsAt);
+    if (parsedEnd && Number.isNaN(parsedEnd.getTime())) {
+      toast.error("Enter a valid end date");
+      return;
+    }
+    if (!isEdit && parsedEnd && parsedEnd.getTime() <= Date.now()) {
+      toast.error("End date must be in the future");
+      return;
+    }
     const terms = {
       name: name.trim(),
       codes: pickedCodes,
@@ -183,6 +205,7 @@ export function ProgramFormDialog({
       lossbackPct: lossbackOn ? lossbackPctNum : null,
       minDepositUsd: lossbackOn ? minDepositNum : null,
       maxRewardPerUserUsd: cap.trim() === "" ? null : Number(cap),
+      endsAt: parsedEnd?.toISOString() ?? null,
     };
     startTransition(async () => {
       const res = program
@@ -288,6 +311,23 @@ export function ProgramFormDialog({
               placeholder="Jimmy VIP wager reward"
               disabled={isPending}
             />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label className="text-xs" htmlFor={`${uid}-ends-at`}>
+              End date and time — optional
+            </Label>
+            <Input
+              id={`${uid}-ends-at`}
+              type="datetime-local"
+              value={endsAt}
+              onChange={(e) => setEndsAt(e.target.value)}
+              disabled={isPending}
+            />
+            <p className="text-[11px] text-muted-foreground">
+              Start is fixed to creation time. Leave this empty to run until you
+              pause it.
+            </p>
           </div>
 
           <div className="space-y-1.5">
@@ -487,8 +527,8 @@ export function ProgramFormDialog({
               />
               <p className="text-[11px] text-muted-foreground">
                 Paid instead of the standard rate to players carrying the VIP
-                tag. Checked live on every claim — losing the tag drops them back
-                to the standard rate immediately.
+                tag. Checked live on every claim — losing the tag drops them
+                back to the standard rate immediately.
               </p>
             </div>
           )}

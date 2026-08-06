@@ -64,6 +64,9 @@ export type CreatorRewardProgram = {
   minDepositUsd: number | null;
   isActive: boolean;
   accrualStartAt: string;
+  /** Optional scheduled stop. No new offers or claims are allowed at/after it. */
+  endsAt: string | null;
+  hasEnded: boolean;
   maxRewardPerUserUsd: number | null;
   /**
    * Set when the program was retired but could not be deleted, because its
@@ -102,7 +105,8 @@ export type CreatorRewardType = (typeof CREATOR_REWARD_TYPES)[number];
 
 export function isCreatorRewardType(v: unknown): v is CreatorRewardType {
   return (
-    typeof v === "string" && (CREATOR_REWARD_TYPES as readonly string[]).includes(v)
+    typeof v === "string" &&
+    (CREATOR_REWARD_TYPES as readonly string[]).includes(v)
   );
 }
 

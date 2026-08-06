@@ -169,6 +169,8 @@ export async function getProgramsWithStats(
       rows.find((r) => r.status === s)?.claimCount ?? 0;
     const approved = rows.find((r) => r.status === "approved");
 
+    const hasEnded =
+      p.ends_at != null && new Date(p.ends_at).getTime() <= Date.now();
     return {
       id: p.id,
       name: p.name,
@@ -187,9 +189,11 @@ export async function getProgramsWithStats(
         p.min_deposit_usd == null ? null : toNumber(p.min_deposit_usd),
       vipRewardUsd:
         p.vip_reward_usd == null ? null : toNumber(p.vip_reward_usd),
-      isActive: p.is_active,
+      isActive: p.is_active && !hasEnded,
+      hasEnded,
       archivedAt: p.archived_at ? new Date(p.archived_at).toISOString() : null,
       accrualStartAt: new Date(p.accrual_start_at).toISOString(),
+      endsAt: p.ends_at ? new Date(p.ends_at).toISOString() : null,
       maxRewardPerUserUsd:
         p.max_reward_per_user_usd == null
           ? null
@@ -409,9 +413,7 @@ export async function getClaims(params: {
       const now = activeCodeByUser.get(c.user_id) ?? null;
       // No code set is not a switch — only being on a DIFFERENT one is.
       if (!now) return false;
-      return !(c.program.codes ?? [])
-        .map((x) => x.toUpperCase())
-        .includes(now);
+      return !(c.program.codes ?? []).map((x) => x.toUpperCase()).includes(now);
     })(),
   }));
 }
@@ -479,14 +481,10 @@ export async function getPlayerRewardSummary(
   const user = userRows[0];
 
   const expiresAt = user?.affiliate_code_expires_at ?? null;
-  const msLeft = expiresAt
-    ? new Date(expiresAt).getTime() - Date.now()
-    : null;
+  const msLeft = expiresAt ? new Date(expiresAt).getTime() - Date.now() : null;
 
   const sumFor = (status: string) =>
-    toNumber(
-      claimTotals.find((t) => t.status === status)?.amount ?? 0,
-    );
+    toNumber(claimTotals.find((t) => t.status === status)?.amount ?? 0);
 
   return {
     userId,
@@ -570,12 +568,17 @@ export async function createClaimRequest(params: {
       .limit(1)
   )[0];
   if (!programRow) {
-    return { ok: false, error: "Program not found.", code: "program_not_found" };
+    return {
+      ok: false,
+      error: "Program not found.",
+      code: "program_not_found",
+    };
   }
   const program = {
     ...programRow,
     codes: programRow.codes ?? [],
     accrual_start_at: new Date(programRow.accrual_start_at),
+    ends_at: programRow.ends_at ? new Date(programRow.ends_at) : null,
   };
 
   const entitlement =
@@ -664,7 +667,10 @@ export async function createClaimRequest(params: {
       // concurrent writer holds it. Either way the priced claim is no longer
       // the claim we can honour, so it must not be written at all.
       if (claimedWindows.length !== entitlement.units) {
-        throw new OfferWindowShortfall(entitlement.units, claimedWindows.length);
+        throw new OfferWindowShortfall(
+          entitlement.units,
+          claimedWindows.length,
+        );
       }
       // `claim_id` alongside `claimed_at`: the link is what lets
       // `enforceOfferExpiry` re-issue a REJECTED claim's window without ever

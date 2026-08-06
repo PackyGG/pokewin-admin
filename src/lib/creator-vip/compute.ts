@@ -1,7 +1,18 @@
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import "server-only";
 
-import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNull,
+  lt,
+  or,
+  sql,
+} from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_user_tags,
@@ -19,15 +30,8 @@ import {
   type CreatorRewardEntitlement,
   type CreatorRewardType,
 } from "./types";
-import {
-  computeFtdLossback,
-  firstDeposits,
-  holdingsUsd,
-} from "./ftd-lossback";
-import {
-  enforceOfferExpiry,
-  expiredWagerBasisUsd,
-} from "./offer-expiry";
+import { computeFtdLossback, firstDeposits, holdingsUsd } from "./ftd-lossback";
+import { enforceOfferExpiry, expiredWagerBasisUsd } from "./offer-expiry";
 
 /**
  * The ONE eligibility engine for creator VIP wager rewards.
@@ -65,7 +69,6 @@ import {
  * the generated client, and a bare comparison against an unknown label throws
  * at parse time instead of simply matching nothing.
  */
-
 
 /**
  * Render a Date as a NAIVE UTC timestamp string: `YYYY-MM-DD HH:MM:SS.mmm`.
@@ -108,6 +111,7 @@ export type ProgramForCompute = {
   min_deposit_usd: unknown;
   is_active: boolean;
   accrual_start_at: Date;
+  ends_at: Date | null;
   max_reward_per_user_usd: unknown;
   /**
    * Live intervals, pre-loaded by the caller when available. Absent means
@@ -231,14 +235,28 @@ async function programWindows(
         .from(creator_reward_program_windows)
         .where(eq(creator_reward_program_windows.program_id, program.id))
         .orderBy(asc(creator_reward_program_windows.started_at))
-    ).map((row) => ({
-      started_at: new Date(row.started_at),
-      ended_at: row.ended_at ? new Date(row.ended_at) : null,
-    }));
+    ).map((row) => {
+      const rowEnd = row.ended_at ? new Date(row.ended_at) : null;
+      return {
+        started_at: new Date(row.started_at),
+        ended_at:
+          program.ends_at && (!rowEnd || program.ends_at < rowEnd)
+            ? program.ends_at
+            : rowEnd,
+      };
+    });
   if (rows.length === 0) {
-    return [{ started_at: program.accrual_start_at, ended_at: null }];
+    return [
+      { started_at: program.accrual_start_at, ended_at: program.ends_at },
+    ];
   }
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    ended_at:
+      program.ends_at && (!row.ended_at || program.ends_at < row.ended_at)
+        ? program.ends_at
+        : row.ended_at,
+  }));
 }
 
 /**
@@ -522,6 +540,9 @@ export async function computeEntitlement(
   if (!program.is_active) {
     return { ...empty, blockedReason: "This program is not active." };
   }
+  if (program.ends_at && program.ends_at.getTime() <= Date.now()) {
+    return { ...empty, blockedReason: "This program has ended." };
+  }
 
   if (thresholdCents <= 0 || standardRewardCents <= 0) {
     return { ...empty, blockedReason: "The wager leg isn't configured." };
@@ -620,31 +641,32 @@ export async function computeEntitlement(
   const lifetimeCents = toCents(lifetimeWagerUsd);
   const forfeitedCents = Math.max(0, lifetimeCents - wagerCents);
 
-  return enforceOfferExpiry({
-    ...base,
-    type: "wager",
-    ftd: null,
-    isVip: vip,
-    appliedRewardUsd: fromCents(rewardCents),
-    qualifyingWagerUsd: fromCents(wagerCents),
-    lifetimeWagerUsd: fromCents(lifetimeCents),
-    forfeitedWagerUsd: fromCents(forfeitedCents),
-    runStartedAt: runStart.toISOString(),
-    priorConsumedUsd: fromCents(consumedCents),
-    availableWagerUsd: fromCents(availableCents),
-    units,
-    amountUsd: fromCents(units * rewardCents),
-    consumesWagerUsd: fromCents(units * thresholdCents),
-    wagerToNextUnitUsd: fromCents(toNextCents),
-    cappedByUserLimit,
-    blockedReason:
-      units === 0 && cappedByUserLimit
-        ? "This user has reached the program's per-user reward cap."
-        : null,
-  }, userId);
+  return enforceOfferExpiry(
+    {
+      ...base,
+      type: "wager",
+      ftd: null,
+      isVip: vip,
+      appliedRewardUsd: fromCents(rewardCents),
+      qualifyingWagerUsd: fromCents(wagerCents),
+      lifetimeWagerUsd: fromCents(lifetimeCents),
+      forfeitedWagerUsd: fromCents(forfeitedCents),
+      runStartedAt: runStart.toISOString(),
+      priorConsumedUsd: fromCents(consumedCents),
+      availableWagerUsd: fromCents(availableCents),
+      units,
+      amountUsd: fromCents(units * rewardCents),
+      consumesWagerUsd: fromCents(units * thresholdCents),
+      wagerToNextUnitUsd: fromCents(toNextCents),
+      cappedByUserLimit,
+      blockedReason:
+        units === 0 && cappedByUserLimit
+          ? "This user has reached the program's per-user reward cap."
+          : null,
+    },
+    userId,
+  );
 }
-
-
 
 /**
  * Per-user facts that do NOT vary by program.
@@ -716,6 +738,9 @@ export async function computeLossbackEntitlement(
   if (!program.is_active) {
     return { ...empty, blockedReason: "This program is not active." };
   }
+  if (program.ends_at && program.ends_at.getTime() <= Date.now()) {
+    return { ...empty, blockedReason: "This program has ended." };
+  }
   if (program.lossback_pct == null || program.min_deposit_usd == null) {
     return { ...empty, blockedReason: "The lossback leg isn't configured." };
   }
@@ -728,8 +753,10 @@ export async function computeLossbackEntitlement(
 
   const standing = facts?.standing ?? (await userStanding(userId));
   if (!standing) return { ...empty, blockedReason: "No such player." };
-  if (standing.banned) return { ...empty, blockedReason: "This account is banned." };
-  if (standing.locked) return { ...empty, blockedReason: "This account is locked." };
+  if (standing.banned)
+    return { ...empty, blockedReason: "This account is banned." };
+  if (standing.locked)
+    return { ...empty, blockedReason: "This account is locked." };
 
   // Same switch rule as the wager leg: leaving for another creator's code
   // forfeits it, an expired code does not.
@@ -764,18 +791,21 @@ export async function computeLossbackEntitlement(
     }
   }
 
-  return enforceOfferExpiry({
-    ...empty,
-    ftd: { ...ftd, payoutUsd: payout },
-    units: payout > 0 ? 1 : 0,
-    amountUsd: payout,
-    appliedRewardUsd: payout,
-    cappedByUserLimit: capped,
-    blockedReason:
-      capped && payout === 0
-        ? "This user has reached the program's per-user reward cap."
-        : ftd.blockedReason,
-  }, userId);
+  return enforceOfferExpiry(
+    {
+      ...empty,
+      ftd: { ...ftd, payoutUsd: payout },
+      units: payout > 0 ? 1 : 0,
+      amountUsd: payout,
+      appliedRewardUsd: payout,
+      cappedByUserLimit: capped,
+      blockedReason:
+        capped && payout === 0
+          ? "This user has reached the program's per-user reward cap."
+          : ftd.blockedReason,
+    },
+    userId,
+  );
 }
 
 /** Is this leg configured on the program at all? */
@@ -820,7 +850,15 @@ export async function computeAllEntitlements(
   const programRows = await adminDrizzle
     .select()
     .from(creator_reward_programs)
-    .where(eq(creator_reward_programs.is_active, true))
+    .where(
+      and(
+        eq(creator_reward_programs.is_active, true),
+        or(
+          isNull(creator_reward_programs.ends_at),
+          gt(creator_reward_programs.ends_at, new Date().toISOString()),
+        ),
+      ),
+    )
     // Windows come along for the ride — otherwise every program would
     // trigger its own lookup inside the fan-out.
     .orderBy(desc(creator_reward_programs.created_at));
@@ -851,6 +889,7 @@ export async function computeAllEntitlements(
     ...program,
     codes: program.codes ?? [],
     accrual_start_at: new Date(program.accrual_start_at),
+    ends_at: program.ends_at ? new Date(program.ends_at) : null,
     windows: windowsByProgram.get(program.id) ?? [],
   }));
 
