@@ -4,7 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { eq, or, sql } from "drizzle-orm";
 import { z } from "zod";
 
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { BackendApiError } from "@/lib/backend-api/errors";
 import {
   getUserKyc,
@@ -143,7 +143,9 @@ export async function requireAccountKyc(
   }
 
   try {
-    await createAdminAuditEvent({
+    // Durable: retries, then a fallback row, so a transient ADMIN-DB blip
+    // can't leave this KYC mutation without a per-target audit row.
+    const outcome = await createAdminAuditEventDurable({
       adminUserId: session.userId,
       eventType: "user_kyc_required",
       targetUserId: userId,
@@ -157,6 +159,12 @@ export async function requireAccountKyc(
         tipsLocked,
       },
     });
+    if (outcome.status === "lost") {
+      console.error(
+        "[antifraud-kyc] secondary require audit failed:",
+        outcome.error,
+      );
+    }
   } catch (error) {
     // The backend owns the authoritative KYC audit trail. Do not invite a
     // duplicate require/retry after that mutation succeeded just because the
@@ -195,7 +203,7 @@ export async function reviewAccountKyc(
   }
 
   try {
-    await createAdminAuditEvent({
+    const outcome = await createAdminAuditEventDurable({
       adminUserId: session.userId,
       eventType: "user_kyc_reviewed",
       targetUserId: parsed.data.userId,
@@ -206,6 +214,12 @@ export async function reviewAccountKyc(
         idempotencyKey: parsed.data.idempotencyKey,
       },
     });
+    if (outcome.status === "lost") {
+      console.error(
+        "[antifraud-kyc] secondary review audit failed:",
+        outcome.error,
+      );
+    }
   } catch (error) {
     console.error("[antifraud-kyc] secondary review audit failed:", error);
   }

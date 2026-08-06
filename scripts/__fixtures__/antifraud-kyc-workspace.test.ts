@@ -49,7 +49,10 @@ test("KYC mutations are manager-only and preserve the verification-cycle guard",
   assert.match(actions, /requireUserKyc\(/);
   assert.match(actions, /reviewUserKyc\(/);
   assert.match(actions, /expectedCycle:\s*parsed\.data\.expectedCycle/);
-  assert.match(actions, /createAdminAuditEvent\(/);
+  // Durable (retry + fallback row), not a bare try/catch: a transient
+  // ADMIN-DB blip must not leave a completed KYC mutation unaudited.
+  assert.match(actions, /createAdminAuditEventDurable\(/);
+  assert.match(actions, /outcome\.status === "lost"/);
 });
 
 test("the dashboard reports both internal state and Sumsub evidence", () => {

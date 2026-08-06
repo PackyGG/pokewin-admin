@@ -3,12 +3,14 @@
 import crypto from "crypto";
 import { sql } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
+import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import {
   createAdminAuditEvent,
   createAdminAuditEventDurable,
 } from "@/lib/admin-audit";
+import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
@@ -28,6 +30,40 @@ type Selection =
   | { mode: "all"; ids?: never }
   | { mode: "users"; ids: string[] }
   | { mode: "payments"; ids: string[] };
+
+const TOO_FEW = "Select at least one payment or user.";
+const TOO_MANY = `Select at most ${MAX_REFUNDS_PER_BATCH} records.`;
+
+const selectionIdsSchema = z
+  .array(z.string().trim().min(1, TOO_FEW))
+  .min(1, TOO_FEW)
+  .max(MAX_REFUNDS_PER_BATCH, TOO_MANY);
+
+/**
+ * Hard allowlist of selection modes. Without it an unrecognised `mode` fell
+ * through `queryCandidates` to the unfiltered "everything flagged" query —
+ * i.e. a refund + ban + balance/inventory confiscation of up to
+ * MAX_REFUNDS_PER_BATCH accounts from a single malformed call.
+ */
+const selectionSchema = z.discriminatedUnion("mode", [
+  z.object({ mode: z.literal("all") }),
+  z.object({ mode: z.literal("users"), ids: selectionIdsSchema }),
+  z.object({ mode: z.literal("payments"), ids: selectionIdsSchema }),
+]);
+
+// Key order mirrors the previous hand-rolled check order, so the first
+// reported issue stays the message operators already know.
+const createRefundBatchSchema = z.object({
+  confirmation: z.literal("REFUND", "Type REFUND exactly to confirm."),
+  reason: z
+    .string()
+    .trim()
+    .min(4, "Enter a refund reason from 4 to 500 characters.")
+    .max(500, "Enter a refund reason from 4 to 500 characters."),
+  // Not trimmed — the raw value is what require2FA verifies.
+  credential: z.string().min(1, "Two-factor verification is required."),
+  selection: selectionSchema,
+});
 
 export type RefundBatchProgress = {
   batchId: string;
@@ -592,17 +628,8 @@ function validateSelection(selection: Selection): Selection {
   return { mode: selection.mode, ids } as Selection;
 }
 
-function actionErrorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : "";
-  if (
-    /(?:2FA|passkey|verification|already used|confirmation|reason|select at least|select at most|eligible selection|refundable deposits|already in refund batches|more than [\d,]+ refundable)/i.test(
-      message,
-    )
-  ) {
-    return message;
-  }
-  return "The refund operation could not be completed. No automatic retry was made.";
-}
+const REFUND_FALLBACK =
+  "The refund operation could not be completed. No automatic retry was made.";
 
 export async function createRefundBatch(input: {
   selection: Selection;
@@ -614,16 +641,13 @@ export async function createRefundBatch(input: {
     "Only owners and admins can execute refunds.",
   );
   try {
-    if (input.confirmation !== "REFUND") {
-      throw new Error("Type REFUND exactly to confirm.");
-    }
-    const reason = input.reason.trim();
-    if (reason.length < 4 || reason.length > 500) {
-      throw new Error("Enter a refund reason from 4 to 500 characters.");
-    }
-    await require2FA(session.userId, input.credential);
+    const parsed = createRefundBatchSchema.safeParse(input);
+    if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+    const reason = parsed.data.reason;
+    await require2FA(session.userId, parsed.data.credential);
 
-    const selection = validateSelection(input.selection);
+    // De-dupes the (already shape-validated) ids exactly as before.
+    const selection = validateSelection(parsed.data.selection as Selection);
     const candidates = await resolveRefundSelection(selection);
     if (candidates.length === 0) {
       throw new Error(
@@ -695,7 +719,7 @@ export async function createRefundBatch(input: {
     revalidatePath("/antifraud/refunds");
     return ok(await getRefundBatchProgress(batch.id));
   } catch (error) {
-    return fail(actionErrorMessage(error));
+    return fail(actionErrorMessage(error, REFUND_FALLBACK));
   }
 }
 
@@ -881,7 +905,7 @@ export async function processNextRefund(
       recoveryAuditFailures: recovery?.auditFailures,
     });
   } catch (error) {
-    return fail(actionErrorMessage(error));
+    return fail(actionErrorMessage(error, REFUND_FALLBACK));
   }
 }
 
@@ -905,7 +929,7 @@ export async function recoverRefundedBatch(input: {
     revalidatePath("/users");
     return ok(result);
   } catch (error) {
-    return fail(actionErrorMessage(error));
+    return fail(actionErrorMessage(error, REFUND_FALLBACK));
   }
 }
 
@@ -927,7 +951,7 @@ export async function recoverAllRefundedAccounts(input: {
     revalidatePath("/users");
     return ok(result);
   } catch (error) {
-    return fail(actionErrorMessage(error));
+    return fail(actionErrorMessage(error, REFUND_FALLBACK));
   }
 }
 

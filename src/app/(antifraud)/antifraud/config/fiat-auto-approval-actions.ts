@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import {
   getFiatDepositAutomaticCreditConfig,
   updateFiatDepositAutomaticCreditConfig,
@@ -47,10 +48,11 @@ export async function updateFiatAutomaticCreditAction(input: {
   } catch (error) {
     return {
       success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "Fiat automatic-credit service is unavailable",
+      // Narrowed: backend-fetch errors carry URLs/DNS/status internals.
+      error: actionErrorMessage(
+        error,
+        "Fiat automatic-credit service is unavailable",
+      ),
     };
   }
 

@@ -191,6 +191,17 @@ async function queryCandidates(
   limit: number,
   strictLimit = true,
 ): Promise<RefundCandidate[]> {
+  // Fail closed on an unknown mode. Previously anything that was not
+  // "users" / "payments" silently degraded to the unfiltered "every flagged
+  // account" query, which the refund pipeline then bans and drains.
+  if (
+    filter.mode !== "all" &&
+    filter.mode !== "users" &&
+    filter.mode !== "payments"
+  ) {
+    throw new Error("Unsupported refund selection mode.");
+  }
+
   const allFlaggedIds = [...flagged.keys()];
   if (allFlaggedIds.length === 0) return [];
 

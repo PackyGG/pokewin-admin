@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import {
   updateFiatAccessControl,
   type FiatAccessControlStatus,
@@ -49,7 +50,8 @@ export async function updateFiatDepositAccessControlAction(input: {
   } catch (error) {
     return {
       success: false,
-      error: error instanceof Error ? error.message : "Fiat access policy update failed.",
+      // Narrowed: monitor-API fetch errors carry host/status internals.
+      error: actionErrorMessage(error, "Fiat access policy update failed."),
     };
   }
 }

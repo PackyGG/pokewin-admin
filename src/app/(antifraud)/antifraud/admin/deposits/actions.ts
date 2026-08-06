@@ -5,7 +5,8 @@ import { sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
+import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { requireAntifraudManager } from "@/lib/require-antifraud-access";
@@ -60,22 +61,51 @@ async function banAccount(input: {
     actorId: input.adminUserId,
     actorUsername: input.adminUsername,
   });
-  await db.transaction(async (tx) => {
-    const updated = await tx.execute<{ id: string }>(sql`
-      UPDATE "user"
-      SET is_banned = TRUE, banned_reason = ${input.reason}, banned_at = NOW(),
-          banned_by = ${issuerMainUserId}, updated_at = NOW()
-      WHERE id = ${input.userId} AND is_banned = FALSE
-      RETURNING id
-    `);
-    if (updated.rows.length === 0) {
-      const readback = (await tx.execute<{ is_banned: boolean }>(sql`
-        SELECT is_banned FROM "user" WHERE id = ${input.userId}
-      `)).rows[0];
-      if (!readback?.is_banned) throw new Error("The account could not be banned.");
+  try {
+    await db.transaction(async (tx) => {
+      const updated = await tx.execute<{ id: string }>(sql`
+        UPDATE "user"
+        SET is_banned = TRUE, banned_reason = ${input.reason}, banned_at = NOW(),
+            banned_by = ${issuerMainUserId}, updated_at = NOW()
+        WHERE id = ${input.userId} AND is_banned = FALSE
+        RETURNING id
+      `);
+      if (updated.rows.length === 0) {
+        const readback = (await tx.execute<{ is_banned: boolean }>(sql`
+          SELECT is_banned FROM "user" WHERE id = ${input.userId}
+        `)).rows[0];
+        if (!readback?.is_banned) throw new Error("The account could not be banned.");
+      }
+      await tx.execute(sql`DELETE FROM session WHERE "userId" = ${input.userId}`);
+    });
+  } catch (error) {
+    // The IP/fingerprint blocklist writes above are NOT rolled back by this
+    // transaction and affect every account sharing those identifiers, so the
+    // partial state has to be on the record even though the ban failed.
+    const outcome = await createAdminAuditEventDurable({
+      adminUserId: input.adminUserId,
+      eventType: "antifraud_ban_partial_failure",
+      targetUserId: input.userId,
+      metadata: {
+        source: "antifraud_admin_deposits",
+        reason: input.reason,
+        identifier_blocklist_applied: true,
+        blacklisted_ip_count: identifiers.ipCount,
+        blacklisted_fingerprint_count: identifiers.fingerprintCount,
+        blocklist_changes: identifiers.changedCount,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+    if (outcome.status === "lost") {
+      console.error(
+        "[fiat-deposit-resolution] partial-ban audit lost",
+        { userId: input.userId, auditError: outcome.error },
+      );
     }
-    await tx.execute(sql`DELETE FROM session WHERE "userId" = ${input.userId}`);
-  });
+    throw new Error(
+      "The account could not be banned, but its known IP/fingerprint identifiers may already be blocklisted.",
+    );
+  }
   return { status: "succeeded" as const, identifiers, issuerMainUserId };
 }
 
@@ -266,7 +296,7 @@ export async function resolveDeclinedDepositAction(
       WHERE id = ${claimed.id}::uuid AND status = 'resolving'
     `);
     try {
-      await createAdminAuditEvent({
+      const auditOutcome = await createAdminAuditEventDurable({
         adminUserId: session.userId,
         targetUserId: claimed.user_id,
         eventType: finalStatus === "resolved"
@@ -283,6 +313,15 @@ export async function resolveDeclinedDepositAction(
           idempotencyKey: parsed.data.idempotencyKey,
         },
       });
+      // Durable: retries, then a fallback row. Only `lost` means this
+      // refund/ban decision really has no per-target audit trail.
+      if (auditOutcome.status === "lost") {
+        console.error("[fiat-deposit-resolution] secondary admin audit failed", {
+          auditError: auditOutcome.error,
+          caseId: claimed.id,
+          adminUserId: session.userId,
+        });
+      }
     } catch (auditError) {
       console.error("[fiat-deposit-resolution] secondary admin audit failed", {
         auditError,
@@ -313,7 +352,12 @@ export async function resolveDeclinedDepositAction(
     `).catch(() => undefined);
     return {
       success: false,
-      error: message,
+      // `last_error` above keeps the full detail; the browser only gets
+      // messages we authored for an operator.
+      error: actionErrorMessage(
+        error,
+        "The declined deposit could not be resolved.",
+      ),
     };
   }
 }

@@ -5,7 +5,10 @@ import { z } from "zod";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
 import {
   admin_audit_events,
   admin_users,
@@ -853,8 +856,42 @@ export async function runQuickReviewAccountAction(
       });
     } catch (error) {
       console.error("[antifraud] quick review ban failed:", error);
+      // `blockKnownUserIdentifiers` runs before the ban transaction and is NOT
+      // rolled back with it, so a failed ban can still leave IP/fingerprint
+      // blocklist entries in place — entries that also hit other accounts
+      // sharing those identifiers. Record the partial state durably before
+      // rethrowing; otherwise this leaves no audit row at all.
+      const blocklistApplied = identifiers !== undefined;
+      const auditOutcome = await createAdminAuditEventDurable({
+        adminUserId: session.userId,
+        eventType: "antifraud_ban_partial_failure",
+        targetUserId: review.targetUserId,
+        metadata: {
+          source: "antifraud_reviews",
+          reviewId,
+          reason,
+          idempotencyKey,
+          identifier_blocklist_applied: blocklistApplied,
+          ...(identifiers
+            ? {
+                blacklisted_ip_count: identifiers.ipCount,
+                blacklisted_fingerprint_count: identifiers.fingerprintCount,
+                blocklist_changes: identifiers.changedCount,
+              }
+            : {}),
+          error: error instanceof Error ? error.message : String(error),
+        },
+      });
+      if (auditOutcome.status === "lost") {
+        console.error(
+          "[antifraud] quick review partial-ban audit lost:",
+          auditOutcome.error,
+        );
+      }
       throw new Error(
-        "The account or its known IP/fingerprint identifiers could not be banned. Nothing was hidden.",
+        blocklistApplied
+          ? "The account could not be banned, but its known IP/fingerprint identifiers may already be blocklisted. Nothing was hidden."
+          : "The account or its known IP/fingerprint identifiers could not be banned. Nothing was hidden.",
       );
     }
 
@@ -1232,6 +1269,7 @@ export async function assignReview(input: unknown): Promise<void> {
     const [current] = await tx.select({
       assigned_to: antifraud_reviews.assigned_to, status: antifraud_reviews.status,
       reason: antifraud_reviews.reason,
+      target_user_id: antifraud_reviews.target_user_id,
     }).from(antifraud_reviews).where(eq(antifraud_reviews.id, reviewId)).limit(1);
     if (!current) throw new Error("That case no longer exists");
     if (current.assigned_to === assignee) return null;
@@ -1263,6 +1301,21 @@ export async function assignReview(input: unknown): Promise<void> {
           ? "Picked this case up."
           : "Assigned this case to another analyst."
         : "Unassigned this case.",
+    });
+
+    // Same transaction as the note, so /antifraud/audit never disagrees with
+    // the case timeline about who took (or handed over) a case.
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: session.userId,
+      event_type: "antifraud_review_assigned",
+      target_user_id: current.target_user_id,
+      metadata: {
+        reviewId,
+        assignedTo: assignee,
+        previousAssignee: current.assigned_to,
+        previousStatus: current.status,
+        status: nextStatus,
+      },
     });
 
     // Claiming a case pulls it out of every analyst's active queue the same
@@ -1465,15 +1518,28 @@ export async function addReviewNote(input: unknown): Promise<void> {
   const parsed = noteSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
 
-  const [exists] = await adminDrizzle.select({ id: antifraud_reviews.id })
+  const [exists] = await adminDrizzle.select({
+    id: antifraud_reviews.id,
+    target_user_id: antifraud_reviews.target_user_id,
+  })
     .from(antifraud_reviews).where(eq(antifraud_reviews.id, parsed.data.reviewId)).limit(1);
   if (!exists) throw new Error("That case no longer exists");
 
-  await adminDrizzle.insert(antifraud_review_notes).values({
+  // Note + audit row in one transaction, so /antifraud/audit can't miss a
+  // note that the case timeline shows (or vice versa).
+  await adminDrizzle.transaction(async (tx) => {
+    await tx.insert(antifraud_review_notes).values({
       review_id: parsed.data.reviewId,
       admin_user_id: session.userId,
       kind: "note",
       body: parsed.data.body,
+    });
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: session.userId,
+      event_type: "antifraud_review_note_added",
+      target_user_id: exists.target_user_id,
+      metadata: { reviewId: parsed.data.reviewId, body: parsed.data.body },
+    });
   });
 
   revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);

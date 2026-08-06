@@ -12,6 +12,7 @@ import {
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { require2FA } from "@/lib/require-2fa";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireCapability } from "@/lib/require-capability";
 import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { userDetailTag } from "@/lib/queries/users-detail-cache";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
@@ -29,6 +30,13 @@ export async function mutateBannedUser(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
   const parsed = schema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  // Same capability every other ban path requires (/users actions, antifraud
+  // review quick actions) — antifraud page access alone is not enough.
+  await requireCapability(
+    session,
+    "__can_ban_users",
+    parsed.data.action === "ban" ? "ban users" : "unban users",
+  );
   await require2FA(session.userId, parsed.data.credential);
   const roles = [...new Set([session.role, ...(session.roles ?? [])])];
   const correlationId = await beginAntifraudAction({

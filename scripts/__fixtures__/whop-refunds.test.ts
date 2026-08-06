@@ -122,8 +122,34 @@ test("refund confirmation requires reason, typed confirmation, and manager step-
   assert.match(refundsPanel, /confirmation !== "REFUND"/);
   assert.match(actions, /confirmation:\s*string/);
   assert.match(actions, /reason:\s*string/);
-  assert.match(actions, /input\.confirmation !== "REFUND"/);
-  assert.match(actions, /reason\.length < 4 \|\| reason\.length > 500/);
+  // Enforced by `createRefundBatchSchema` (Zod), not hand-rolled ifs.
+  assert.match(
+    actions,
+    /confirmation: z\.literal\("REFUND", "Type REFUND exactly to confirm\."\)/,
+  );
+  assert.match(actions, /\.min\(4, "Enter a refund reason from 4 to 500/);
+  assert.match(actions, /\.max\(500, "Enter a refund reason from 4 to 500/);
+  assert.match(actions, /createRefundBatchSchema\.safeParse\(input\)/);
+});
+
+test("refund selection mode is a closed set, not passed through verbatim", () => {
+  // An unrecognised `mode` used to fall through `queryCandidates` to the
+  // unfiltered "every flagged account" query — a mass refund + ban + balance
+  // and inventory confiscation from one malformed call.
+  assert.match(actions, /z\.discriminatedUnion\("mode", \[/);
+  for (const mode of ["all", "users", "payments"]) {
+    assert.match(actions, new RegExp(`mode: z\\.literal\\("${mode}"\\)`));
+  }
+  assert.match(
+    actions,
+    /\.max\(MAX_REFUNDS_PER_BATCH, TOO_MANY\)/,
+    "refund selection ids must be bounded by MAX_REFUNDS_PER_BATCH",
+  );
+  // Belt and braces at the query layer itself.
+  assert.match(
+    queries,
+    /throw new Error\("Unsupported refund selection mode\."\)/,
+  );
 });
 
 test("Whop mutations disable SDK retries and retrieve before refunding", () => {

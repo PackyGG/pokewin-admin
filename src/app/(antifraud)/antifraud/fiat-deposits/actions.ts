@@ -3,7 +3,8 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
+import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import { getFiatAssessment } from "@/lib/antifraud/fiat-deposits-api";
 import {
   assessmentSnapshot,
@@ -177,7 +178,7 @@ export async function decideFiatDepositAction(
     }
 
     try {
-      await createAdminAuditEvent({
+      const auditOutcome = await createAdminAuditEventDurable({
         adminUserId: session.userId,
         targetUserId: snapshot.userId,
         eventType:
@@ -201,6 +202,15 @@ export async function decideFiatDepositAction(
           idempotencyKey: parsed.data.idempotencyKey,
         },
       });
+      // Durable: retries, then a fallback row. Only a `lost` outcome means
+      // this money decision really has no audit trail.
+      if (auditOutcome.status === "lost") {
+        console.error("[fiat-deposit-review] secondary admin audit failed", {
+          auditError: auditOutcome.error,
+          intentId: snapshot.depositIntentId,
+          adminUserId: session.userId,
+        });
+      }
     } catch (auditError) {
       console.error("[fiat-deposit-review] secondary admin audit failed", {
         auditError,
@@ -237,10 +247,12 @@ export async function decideFiatDepositAction(
     `).catch(() => undefined);
     return {
       success: false,
-      error:
-        error instanceof Error
-          ? error.message
-          : "The Fiat deposit decision could not be completed.",
+      // Narrowed: the raw message can carry Postgres constraint/column names
+      // and Whop SDK internals. `last_error` above keeps the full detail.
+      error: actionErrorMessage(
+        error,
+        "The Fiat deposit decision could not be completed.",
+      ),
     };
   }
 }
