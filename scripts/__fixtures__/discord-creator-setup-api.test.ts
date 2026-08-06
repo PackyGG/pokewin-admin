@@ -69,6 +69,10 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(userStats, /username: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(64\)/);
   assert.match(userStats, /rejectWrongGuild/);
   assert.match(service, /export async function getCreatorSetupUserStats/);
+  assert.match(
+    service,
+    /getCreatorSetupUserStats[\s\S]*requireLinkedSetupActor\(input, \{\s*allowDashboardOperator: true,/,
+  );
   assert.match(service, /LOWER\(candidate\.username\) = LOWER\(\$\{input\.username\}\)/);
   assert.match(service, /candidate\.affiliate_code_active = true/);
   assert.match(service, /candidate\.affiliate_code_expires_at > NOW\(\)/);
@@ -76,6 +80,9 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /creator_user_not_active/);
   assert.match(service, /weighted_wager_amount_usd/);
   assert.match(service, /lt\.type = 'deposit'/);
+  assert.match(service, /calculateWindowedPnl\(\{/);
+  assert.match(service, /pnlUsd: money\(-windowedPnl\.pnl\)/);
+  assert.match(service, /const activeRecheck = await db\.execute/);
   assert.match(dashboardContext, /getCreatorDashboardContext/);
   assert.match(dashboardContext, /rejectWrongGuild/);
   assert.match(service, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);

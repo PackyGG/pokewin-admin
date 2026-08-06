@@ -22,6 +22,7 @@ import {
 import { getAffiliateLeaderboardPage } from "@/lib/queries/creators-leaderboards";
 import { isDiscordBotSuperuser } from "@/lib/discord-bot-superusers";
 import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
+import { calculateWindowedPnl } from "@/lib/queries/pnl";
 
 export const CREATOR_SETUP_GUILD_ID = "1402743122789929022";
 
@@ -72,11 +73,11 @@ export type CreatorSetupUserStats = {
     periodExpiresAt: string;
   };
   totals: {
-    wagerCount: number;
-    wagerUsd: number;
     leaderboardWagerUsd: number;
     depositsUsd: number;
     earningsUsd: number;
+    /** Player perspective: positive means the player won, negative means they lost. */
+    pnlUsd: number;
   };
 };
 
@@ -330,7 +331,9 @@ export async function requireLinkedSetupActor(input: {
   categoryId: string;
   channelId: string;
   actorDiscordUserId: string;
-}): Promise<SetupRow & { creator_user_id: string }> {
+}, options: {
+  allowDashboardOperator?: boolean;
+} = {}): Promise<SetupRow & { creator_user_id: string }> {
   const setupResult = await adminDrizzle.execute<SetupRow>(sql`
     SELECT
       id,
@@ -364,8 +367,12 @@ export async function requireLinkedSetupActor(input: {
       "This channel does not belong to an active creator section.",
     );
   }
+  const isPrivilegedActor =
+    isDiscordBotSuperuser(input.actorDiscordUserId) ||
+    (options.allowDashboardOperator === true &&
+      isDiscordDashboardOperator(input.actorDiscordUserId));
   if (
-    !isDiscordBotSuperuser(input.actorDiscordUserId) &&
+    !isPrivilegedActor &&
     input.actorDiscordUserId !== setup.creator_discord_user_id &&
     input.actorDiscordUserId !== setup.created_by_discord_user_id
   ) {
@@ -601,7 +608,9 @@ export async function getCreatorSetupUserStats(input: {
   actorDiscordUserId: string;
   username: string;
 }): Promise<CreatorSetupUserStats> {
-  const setup = await requireLinkedSetupActor(input);
+  const setup = await requireLinkedSetupActor(input, {
+    allowDashboardOperator: true,
+  });
   await requireActiveCreator(setup.creator_user_id);
 
   const db = getProdReadDrizzleDb();
@@ -616,8 +625,6 @@ export async function getCreatorSetupUserStats(input: {
     code: string;
     period_started_at: Date | string;
     period_expires_at: Date | string;
-    wager_count: string;
-    wager_usd: string;
     leaderboard_wager_usd: string;
     deposits_usd: string;
     earnings_usd: string;
@@ -644,10 +651,6 @@ export async function getCreatorSetupUserStats(input: {
       LIMIT 1
     ), usage AS (
       SELECT
-        COUNT(*) FILTER (WHERE acu.usage_type::text = 'wager')::text AS wager_count,
-        COALESCE(SUM(acu.wager_amount_usd::numeric) FILTER (
-          WHERE acu.usage_type::text = 'wager'
-        ), 0)::text AS wager_usd,
         COALESCE(SUM(
           COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric
         ) FILTER (WHERE acu.usage_type::text = 'wager'), 0)::text AS leaderboard_wager_usd,
@@ -672,8 +675,6 @@ export async function getCreatorSetupUserStats(input: {
     )
     SELECT
       target.*,
-      usage.wager_count,
-      usage.wager_usd,
       usage.leaderboard_wager_usd,
       deposits.deposits_usd,
       usage.earnings_usd
@@ -701,6 +702,36 @@ export async function getCreatorSetupUserStats(input: {
     target.period_expires_at,
     "creatorUserStats.period_expires_at",
   );
+  const windowedPnl = await calculateWindowedPnl({
+    since: periodStartedAt,
+    userId: target.id,
+  });
+
+  // The PnL calculation spans several canonical balance/inventory sources.
+  // Recheck ownership after it completes so a concurrent code switch cannot
+  // return stats after this creator's access has ended.
+  const activeRecheck = await db.execute<{ active: boolean }>(sql`
+    SELECT true AS active
+    FROM "user" candidate
+    WHERE candidate.id = ${target.id}
+      AND candidate.affiliate_code_active = true
+      AND candidate.affiliate_code_expires_at > NOW()
+      AND UPPER(candidate.affiliate_code) = ${target.code}
+      AND EXISTS (
+        SELECT 1
+        FROM affiliate_codes owned
+        WHERE owned.user_id = ${setup.creator_user_id}
+          AND UPPER(owned.code) = ${target.code}
+      )
+    LIMIT 1
+  `);
+  if (!activeRecheck.rows[0]) {
+    throw new CreatorSetupError(
+      404,
+      "creator_user_not_active",
+      "No active user with that username is currently using this creator's code.",
+    );
+  }
 
   return {
     generatedAt: new Date().toISOString(),
@@ -711,11 +742,10 @@ export async function getCreatorSetupUserStats(input: {
       periodExpiresAt: periodExpiresAt.toISOString(),
     },
     totals: {
-      wagerCount: Number(target.wager_count ?? 0),
-      wagerUsd: money(target.wager_usd ?? 0),
       leaderboardWagerUsd: money(target.leaderboard_wager_usd ?? 0),
       depositsUsd: money(target.deposits_usd ?? 0),
       earningsUsd: money(target.earnings_usd ?? 0),
+      pnlUsd: money(-windowedPnl.pnl),
     },
   };
 }
