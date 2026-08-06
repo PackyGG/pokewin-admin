@@ -23,10 +23,12 @@ const sidebar = read(
 const legacyPage = read("src/app/(admin)/transactions/deposits/page.tsx");
 
 test("Deposits is a Fiat-only credit review queue", () => {
-  assert.match(page, /title="Fiat Deposit Reviews"/);
   assert.match(page, /getFiatDepositReviewQueue/);
-  assert.match(page, /GlobalFiatReviewCard/);
-  assert.match(page, /Crypto deposits are not included/);
+  assert.doesNotMatch(page, /GlobalFiatReviewCard/);
+  assert.doesNotMatch(page, /getFiatDepositAutomaticCreditConfig/);
+  assert.doesNotMatch(page, /title="Fiat Deposit Reviews"/);
+  assert.doesNotMatch(page, /title="Credit review queue"/);
+  assert.doesNotMatch(page, /Review authorized Whop payments/);
   assert.doesNotMatch(page, /getDepositTransactions/);
   assert.doesNotMatch(page, /BigDepositsToggle/);
   assert.doesNotMatch(page, /getWithdrawals/);

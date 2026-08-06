@@ -1,15 +1,12 @@
 import {
   AlertTriangle,
-  BadgeDollarSign,
   ExternalLink,
   ShieldCheck,
 } from "lucide-react";
 
-import { GlobalFiatReviewCard } from "@/app/(antifraud)/antifraud/config/fiat-auto-approval-card";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { EmptyState } from "@/components/empty-state";
 import { HostLink } from "@/components/host-link";
-import { PageHero, PageHeroIdentity, SectionHeading } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -23,7 +20,6 @@ import {
 import { canManageAntifraud } from "@/lib/antifraud/access";
 import {
   FiatDepositReviewStatusSchema,
-  getFiatDepositAutomaticCreditConfig,
   getFiatDepositReviewQueue,
   type FiatDepositReviewItem,
   type FiatDepositReviewStatus,
@@ -118,10 +114,14 @@ export default async function FiatDepositReviewsPage({
   const status = queueStatus(firstValue(raw.status));
   const offset = (page - 1) * perPage;
 
-  const [queueResult, configResult] = await Promise.allSettled([
-    getFiatDepositReviewQueue({ status, limit: perPage, offset }),
-    getFiatDepositAutomaticCreditConfig(),
-  ]);
+  const queueResult = await getFiatDepositReviewQueue({
+    status,
+    limit: perPage,
+    offset,
+  }).then(
+    (value) => ({ status: "fulfilled" as const, value }),
+    (reason: unknown) => ({ status: "rejected" as const, reason }),
+  );
   const queue =
     queueResult.status === "fulfilled"
       ? queueResult.value
@@ -131,51 +131,10 @@ export default async function FiatDepositReviewsPage({
   ).catch(() => new Map());
   const totalPages = Math.ceil(queue.total / perPage);
   const canDecide = canManageAntifraud(session);
-  const automaticCredit =
-    configResult.status === "fulfilled"
-      ? configResult.value.fiat_deposit_automatic_credit_enabled
-      : null;
 
   return (
-    <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity />
-      </PageHero>
-
-      <div className="space-y-1">
-        <SectionHeading icon={BadgeDollarSign} title="Fiat Deposit Reviews" />
-        <p className="text-sm text-muted-foreground">
-          Review authorized Whop payments before player balances are credited.
-          Crypto deposits are not included.
-        </p>
-      </div>
-
-      {canDecide ? (
-        <GlobalFiatReviewCard initialEnabled={automaticCredit} />
-      ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-sm">Fiat credit policy</CardTitle>
-            <CardDescription>
-              You can inspect this queue. Only owners and admins can approve,
-              reject, or change the global credit policy.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Badge variant="outline">
-              {automaticCredit === null
-                ? "Policy unavailable"
-                : automaticCredit
-                  ? "Automatic credit"
-                  : "Admin approval required"}
-            </Badge>
-          </CardContent>
-        </Card>
-      )}
-
-      <div className="space-y-3">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <SectionHeading icon={ShieldCheck} title="Credit review queue" />
+    <div className="space-y-3">
+        <div className="flex justify-end">
           <span className="text-xs text-muted-foreground">
             {queue.total} payment{queue.total === 1 ? "" : "s"}
           </span>
@@ -343,7 +302,6 @@ export default async function FiatDepositReviewsPage({
           perPage={perPage}
           degraded={queueResult.status === "rejected"}
         />
-      </div>
     </div>
   );
 }
