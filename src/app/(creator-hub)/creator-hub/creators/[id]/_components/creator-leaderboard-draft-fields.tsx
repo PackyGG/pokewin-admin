@@ -37,9 +37,12 @@ const DEFAULT_TIERS = [1, 2, 3, 4, 5].map((position) => ({
   amount: "",
 }));
 
-export function buildLeaderboardDraft(codes: string[]): CreatorLeaderboardDraft {
+export function buildLeaderboardDraft(
+  codes: string[],
+  creatorName: string,
+): CreatorLeaderboardDraft {
   return {
-    title: "",
+    title: `${creatorName} Leaderboard`,
     codes,
     siteBonus: "",
     // Bundled boards default to a 50/50 split rather than the 100% the
@@ -175,17 +178,9 @@ export function CreatorLeaderboardDraftFields({
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label htmlFor="approval_lb_title">Title</Label>
-        <Input
-          id="approval_lb_title"
-          value={draft.title}
-          onChange={(event) => set("title", event.target.value)}
-          maxLength={100}
-          placeholder="January Race"
-          disabled={disabled}
-        />
-      </div>
+      <p className="text-sm text-muted-foreground">
+        Title: <span className="font-medium text-foreground">{draft.title}</span>
+      </p>
 
       <div className="space-y-1.5">
         <Label htmlFor="approval_lb_pool">Total prize pool (USD, site-funded)</Label>

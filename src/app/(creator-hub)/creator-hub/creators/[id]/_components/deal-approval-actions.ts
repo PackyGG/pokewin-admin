@@ -4,7 +4,7 @@ import { eq } from "drizzle-orm";
 
 import { createCreatorDealApprovalRequest } from "@/lib/creator-deal-approvals";
 import { getProdReadDrizzleDb } from "@/lib/db";
-import { affiliate_codes } from "@/lib/db-schema/main/schema";
+import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 
 import type { DealPayload } from "./deal-form-shared";
@@ -48,6 +48,19 @@ export async function loadCreatorCodesForApproval(
   return [...new Set(rows.map((row) => row.code.trim().toUpperCase()))].filter(
     Boolean,
   );
+}
+
+/** Creator's display name for auto-generated leaderboard titles ("<name> Leaderboard"). */
+export async function loadCreatorNameForApproval(
+  creatorUserId: string,
+): Promise<string> {
+  await requireCreatorHubAccess("Not authorized to prepare creator deals.");
+  const [row] = await getProdReadDrizzleDb()
+    .select({ username: user.username })
+    .from(user)
+    .where(eq(user.id, creatorUserId))
+    .limit(1);
+  return row?.username?.trim() || creatorUserId;
 }
 
 /**

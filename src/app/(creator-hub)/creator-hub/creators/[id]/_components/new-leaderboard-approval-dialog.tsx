@@ -19,6 +19,7 @@ import { Spinner } from "@/components/ux";
 
 import {
   loadCreatorCodesForApproval,
+  loadCreatorNameForApproval,
   submitCreatorDealApproval,
 } from "./deal-approval-actions";
 import {
@@ -41,7 +42,7 @@ export function NewLeaderboardApprovalDialog({ userId }: { userId: string }) {
   const [open, setOpen] = useState(false);
   const [codesLoaded, setCodesLoaded] = useState(false);
   const [draft, setDraft] = useState<CreatorLeaderboardDraft>(() =>
-    buildLeaderboardDraft([]),
+    buildLeaderboardDraft([], userId),
   );
   const [queued, setQueued] = useState<{
     requestId: string;
@@ -53,10 +54,13 @@ export function NewLeaderboardApprovalDialog({ userId }: { userId: string }) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void loadCreatorCodesForApproval(userId)
-      .then((codes) => {
+    void Promise.all([
+      loadCreatorCodesForApproval(userId),
+      loadCreatorNameForApproval(userId),
+    ])
+      .then(([codes, creatorName]) => {
         if (cancelled) return;
-        setDraft(buildLeaderboardDraft(codes));
+        setDraft(buildLeaderboardDraft(codes, creatorName));
         setCodesLoaded(true);
       })
       .catch(() => {
@@ -71,7 +75,7 @@ export function NewLeaderboardApprovalDialog({ userId }: { userId: string }) {
     if (pending) return;
     setOpen(next);
     if (next) {
-      setDraft(buildLeaderboardDraft([]));
+      setDraft(buildLeaderboardDraft([], userId));
       setCodesLoaded(false);
       setQueued(null);
     }

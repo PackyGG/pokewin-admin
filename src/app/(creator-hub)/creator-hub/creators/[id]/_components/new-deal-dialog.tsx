@@ -20,6 +20,7 @@ import { formatCurrency, formatDate } from "@/lib/utils/format";
 
 import {
   loadCreatorCodesForApproval,
+  loadCreatorNameForApproval,
   submitCreatorDealApproval,
   type CreatorLeaderboardApprovalPayload,
   type CreatorRewardApprovalPayload,
@@ -60,7 +61,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
   const [rewardPayload, setRewardPayload] =
     useState<CreatorRewardApprovalPayload | null>(null);
   const [leaderboardDraft, setLeaderboardDraft] =
-    useState<CreatorLeaderboardDraft>(() => buildLeaderboardDraft([]));
+    useState<CreatorLeaderboardDraft>(() => buildLeaderboardDraft([], userId));
   const [leaderboardPayload, setLeaderboardPayload] =
     useState<CreatorLeaderboardApprovalPayload | null>(null);
   const [queued, setQueued] = useState<{
@@ -73,12 +74,15 @@ export function NewDealDialog({ userId }: { userId: string }) {
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
-    void loadCreatorCodesForApproval(userId)
-      .then((codes) => {
+    void Promise.all([
+      loadCreatorCodesForApproval(userId),
+      loadCreatorNameForApproval(userId),
+    ])
+      .then(([codes, creatorName]) => {
         if (cancelled) return;
         setAvailableCodes(codes);
         setRewardDraft(buildRewardDraft(codes));
-        setLeaderboardDraft(buildLeaderboardDraft(codes));
+        setLeaderboardDraft(buildLeaderboardDraft(codes, creatorName));
       })
       .catch(() => {
         if (!cancelled) toast.error("Could not load this creator's codes");
@@ -96,7 +100,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
     setAvailableCodes([]);
     setRewardDraft(buildRewardDraft([]));
     setRewardPayload(null);
-    setLeaderboardDraft(buildLeaderboardDraft([]));
+    setLeaderboardDraft(buildLeaderboardDraft([], userId));
     setLeaderboardPayload(null);
     setQueued(null);
   }
