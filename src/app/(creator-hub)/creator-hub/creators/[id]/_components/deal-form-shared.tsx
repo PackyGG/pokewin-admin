@@ -496,8 +496,7 @@ export function DealFormFields({
                 />
               )}
               <p className="mt-1 text-[11px] text-muted-foreground">
-                Starts at 00:00 UTC and ends after {form.duration_days || "—"}
-                full days.
+                Runs for {form.duration_days || "—"} full days.
               </p>
             </DealFormField>
           )}

@@ -16,7 +16,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ux";
-import { formatCurrency, formatDateTime } from "@/lib/utils/format";
+import { formatCurrency, formatDate } from "@/lib/utils/format";
 
 import {
   loadCreatorCodesForApproval,
@@ -163,7 +163,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
           </DialogTitle>
           <DialogDescription>
             {step === "deal" &&
-              "Set the deal terms. The start is always 00:00 UTC on the selected date."}
+              "Select the start date and deal length."}
             {step === "rewards" &&
               "Optional. Add rewards now, or skip this step and submit only the deal."}
             {step === "confirm" &&
@@ -196,8 +196,8 @@ export function NewDealDialog({ userId }: { userId: string }) {
         {step === "confirm" && dealPayload && (
           <div className="space-y-4">
             <ReviewSection title="Deal">
-              <ReviewRow label="Starts" value={`${formatDateTime(dealPayload.week_start_utc, "UTC")} UTC`} />
-              <ReviewRow label="Ends" value={`${formatDateTime(dealPayload.week_end_utc, "UTC")} UTC`} />
+              <ReviewRow label="Starts" value={formatDate(dealPayload.week_start_utc, "UTC")} />
+              <ReviewRow label="Ends" value={formatDate(dealPayload.week_end_utc, "UTC")} />
               <ReviewRow label="Fills" value={`${dealPayload.fills_allowed} × ${formatCurrency(dealPayload.per_fill_amount_usd)}`} />
               <ReviewRow label="Creator keeps" value={`${dealPayload.conversion_rate_bps / 100}%`} />
               <ReviewRow label="Fill cooldown" value={`${dealPayload.cooldown_minutes} minutes`} />

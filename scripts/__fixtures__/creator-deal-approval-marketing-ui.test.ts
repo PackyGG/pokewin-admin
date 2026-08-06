@@ -13,6 +13,8 @@ test("new creator deal is a three-step approval request, never an immediate crea
   assert.match(dialog, /"deal" \| "rewards" \| "confirm" \| "queued"/);
   assert.match(dialog, /Skip rewards/);
   assert.match(dialog, /submitCreatorDealApproval/);
+  assert.match(dialog, /formatDate\(dealPayload\.week_start_utc, "UTC"\)/);
+  assert.doesNotMatch(dialog, /formatDateTime\(dealPayload\.week_start_utc/);
   assert.doesNotMatch(dialog, /createCreatorDeal\(|createCreatorRewardProgram\(/);
   assert.match(action, /createCreatorDealApprovalRequest/);
   assert.doesNotMatch(action, /createCreatorDeal\(|createCreatorRewardProgram\(/);
