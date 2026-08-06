@@ -22,14 +22,17 @@ import {
 } from "@/lib/antifraud/overview";
 import {
   getAntifraudMonitorOverview,
+  getAntifraudPollerHealth,
   type AntifraudMonitorOverview,
 } from "@/lib/antifraud/monitor-api";
+import { getReviewQueueStats } from "@/lib/antifraud/reviews";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 import {
   OverviewActionFeed,
   OverviewCharts,
 } from "./_components/overview-panels";
+import { PulseBar, QueueStrip } from "./_components/overview-status";
 import { PanelErrorBoundary } from "./_components/panel-error-boundary";
 
 export const metadata = { title: "Antifraud Dashboard" };
@@ -70,31 +73,53 @@ export default async function AntifraudOverviewPage() {
 }
 
 async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
-  const [overviewResult, monitorResult] = await Promise.all([
-    safeQuery(
-      () => getAntifraudOverviewData(),
-      EMPTY_OVERVIEW,
-      "antifraud.overview-dashboard",
-      QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getAntifraudMonitorOverview(),
-      { configured: false, data: null, error: true },
-      "antifraud.monitor-overview",
-      QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const [overviewResult, monitorResult, pollerResult, queueResult] =
+    await Promise.all([
+      safeQuery(
+        () => getAntifraudOverviewData(),
+        EMPTY_OVERVIEW,
+        "antifraud.overview-dashboard",
+        QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getAntifraudMonitorOverview(),
+        { configured: false, data: null, error: true },
+        "antifraud.monitor-overview",
+        QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getAntifraudPollerHealth(),
+        { configured: false, data: null, error: true },
+        "antifraud.poller-health",
+        QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getReviewQueueStats(),
+        { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 },
+        "antifraud.review-queue-stats",
+        QUERY_TIMEOUT_MS,
+      ),
+    ]);
+
+  // The Admin-DB queue read is independent of the mirror overview, so a failed
+  // overview must not blank the one band that says what is waiting for a human.
+  const queueStrip = queueResult.error ? null : (
+    <QueueStrip stats={queueResult.data} />
+  );
 
   if (overviewResult.error) {
     return (
-      <UnavailablePanel
-        title="Dashboard metrics are unavailable"
-        detail={
-          overviewResult.kind === "timeout"
-            ? "The read-only dashboard query took too long. The live connection above remains independent."
-            : "The Admin or MAIN mirror read failed. No zero values are being shown as real data."
-        }
-      />
+      <div className="space-y-4">
+        {queueStrip}
+        <UnavailablePanel
+          title="Dashboard metrics are unavailable"
+          detail={
+            overviewResult.kind === "timeout"
+              ? "The read-only dashboard query took too long. The live connection above remains independent."
+              : "The Admin or MAIN mirror read failed. No zero values are being shown as real data."
+          }
+        />
+      </div>
     );
   }
 
@@ -104,6 +129,16 @@ async function Dashboard({ snapshotAt }: { snapshotAt: string }) {
 
   return (
     <div className="space-y-4" data-snapshot-at={snapshotAt}>
+      <PulseBar
+        poller={pollerResult.error ? null : pollerResult.data.data}
+        pollerConfigured={
+          pollerResult.error === null && pollerResult.data.configured
+        }
+        live={overviewResult.data.live}
+      />
+
+      {queueStrip}
+
       <KpiGrid
         data={overviewResult.data}
         monitor={monitor.data}
@@ -325,6 +360,12 @@ function UnavailablePanel({
 function DashboardSkeleton() {
   return (
     <div className="space-y-4">
+      <Skeleton className="h-11 rounded-lg" />
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {Array.from({ length: 4 }).map((_, index) => (
+          <Skeleton key={index} className="h-[52px] rounded-lg" />
+        ))}
+      </div>
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
         {Array.from({ length: 6 }).map((_, index) => (
           <Skeleton key={index} className="h-24 rounded-xl" />
