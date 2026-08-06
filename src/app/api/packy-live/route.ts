@@ -51,6 +51,10 @@ export const maxDuration = 300;
 
 const ROTATION_MS = 240_000;
 const HEARTBEAT_MS = 15_000;
+/** Reconnect delay advertised to the browser's own EventSource retry. */
+const CLIENT_RETRY_MS = 10_000;
+/** Longer pause on a capacity refusal so the per-user counter can drain. */
+const CAPACITY_RETRY_MS = 15_000;
 const PRODUCTION_DASHBOARD_ORIGIN = "https://packydash.com";
 const PRODUCTION_FRAUD_ORIGIN = "https://fraud.packydash.com";
 
@@ -71,6 +75,46 @@ const PACKY_WS_BASE_HEADERS: Record<string, string> = {
   "Sec-WebSocket-Version": "13",
   "Sec-WebSocket-Extensions": "permessage-deflate; client_max_window_bits",
 };
+
+const SSE_HEADERS: Record<string, string> = {
+  "Content-Type": "text/event-stream; charset=utf-8",
+  "Cache-Control": "private, no-store, no-transform",
+  Connection: "keep-alive",
+  "X-Accel-Buffering": "no",
+  "X-Content-Type-Options": "nosniff",
+  "Cross-Origin-Resource-Policy": "same-origin",
+  "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
+  "X-Frame-Options": "DENY",
+  Vary: "Cookie, Origin",
+};
+
+/**
+ * A 200 `text/event-stream` response that carries a single terminal frame and
+ * then ends. Mirrors `api/antifraud/monitor/stream/route.ts`.
+ *
+ * Per the HTML spec a NON-2xx response makes an EventSource fail PERMANENTLY —
+ * `readyState` goes CLOSED and the browser never retries. Answering a capacity
+ * or backend refusal with a bare 429/503 therefore killed this live wire for
+ * the whole life of the page while the UI still claimed "Live". A clean 2xx EOF
+ * lets the browser reconnect on its own after `retry:` instead.
+ *
+ * `fatal: true` additionally emits an `event: fatal` frame so the client stops
+ * retrying permanently. Only a permanent refusal may set it — a capacity
+ * refusal must keep the normal `retry:`-spaced reconnect so the counter drains.
+ */
+function terminalStream(
+  message: string,
+  retryMs: number,
+  fatal = false,
+): Response {
+  const frame = (event: string, data: unknown) =>
+    `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  const body =
+    `retry: ${retryMs}\n\n` +
+    frame("upstream-error", { message, terminal: true }) +
+    (fatal ? frame("fatal", { message }) : "");
+  return new Response(new TextEncoder().encode(body), { headers: SSE_HEADERS });
+}
 
 function isLoopbackOrigin(origin: string): boolean {
   try {
@@ -222,12 +266,23 @@ export async function GET(request: Request): Promise<Response> {
     };
   } catch (error) {
     console.error("[packy-live] backend unavailable", error);
-    return new Response("Live backend unavailable", { status: 503 });
+    // Permanent for this page load: the backend config could not be resolved,
+    // so reconnecting changes nothing until the deployment does.
+    return terminalStream(
+      "The live backend is unavailable.",
+      CLIENT_RETRY_MS,
+      true,
+    );
   }
 
   const currentOpen = openStreams.get(userId) ?? 0;
   if (currentOpen >= MAX_CONCURRENT) {
-    return new Response("Too many concurrent streams", { status: 429 });
+    // Transient: another tab (or a rotation overlap) holds the slots. NOT
+    // fatal — the client must keep its `retry:`-spaced reconnect.
+    return terminalStream(
+      "Too many live streams open for this account — retrying automatically.",
+      CAPACITY_RETRY_MS,
+    );
   }
   openStreams.set(userId, currentOpen + 1);
   let decremented = false;
@@ -332,7 +387,7 @@ export async function GET(request: Request): Promise<Response> {
       };
 
       cancelStream = cleanup;
-      write("retry: 10000\n\n");
+      write(`retry: ${CLIENT_RETRY_MS}\n\n`);
 
       if (request.signal.aborted) {
         cleanup();
@@ -613,17 +668,5 @@ export async function GET(request: Request): Promise<Response> {
     },
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "private, no-store, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-      "X-Content-Type-Options": "nosniff",
-      "Cross-Origin-Resource-Policy": "same-origin",
-      "Content-Security-Policy": "default-src 'none'; frame-ancestors 'none'",
-      "X-Frame-Options": "DENY",
-      Vary: "Cookie, Origin",
-    },
-  });
+  return new Response(stream, { headers: SSE_HEADERS });
 }

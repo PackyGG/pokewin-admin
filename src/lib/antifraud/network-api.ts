@@ -173,6 +173,13 @@ export async function getAccountNetwork(userId: string): Promise<{
         error: false,
       };
     }
+    // 202 ("queued") is a 2xx, so `response.ok` already covers it; 404 returned
+    // above. Anything else (401/403/429/5xx) is an error envelope that would
+    // fail the schema below and surface as an undifferentiated `error: true` —
+    // throw with the status so the log says which failure it actually was.
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
     const payload = z.object({
       data: snapshotSchema.nullable(),
       jobId: z.string().uuid().optional(),
@@ -264,6 +271,12 @@ export async function getCreatorFraud(
     const response = await request(
       `/v1/creator-fraud/${encodeURIComponent(creatorId)}?window=${window}`,
     );
+    // The service answers this route with 200 (assessment) or 202 (queued) —
+    // both 2xx, so `response.ok` keeps the queued branch below intact. Every
+    // other status is an error envelope, not an assessment.
+    if (!response.ok) {
+      throw new Error(`Monitor API returned ${response.status}`);
+    }
     const payload = z.object({
       data: creatorAssessmentSchema.nullable(),
       status: z.string().optional(),
@@ -387,13 +400,36 @@ export async function updateAnalysisRule(input: {
   actorId: string;
   actorUsername?: string;
 }): Promise<void> {
+  // `key` is a PATH param and the service body schema is `.strict()` — sending
+  // it inside the body made Zod reject EVERY save with a 400 `invalid_request`.
+  // Keep this destructure: the body must carry exactly
+  // { enabled, points, threshold, actorId, actorUsername? }.
+  const { key, ...body } = input;
   const response = await request(
-    `/v1/analysis-rules/${encodeURIComponent(input.key)}`,
+    `/v1/analysis-rules/${encodeURIComponent(key)}`,
     {
       method: "PUT",
       admin: true,
-      body: JSON.stringify(input),
+      body: JSON.stringify(body),
     },
   );
-  if (!response.ok) throw new Error("The analysis rule could not be saved.");
+  if (!response.ok) {
+    const code = await response
+      .json()
+      .then((payload: unknown) =>
+        z.object({ error: z.string() }).safeParse(payload).data?.error
+      )
+      .catch(() => undefined);
+    throw new Error(
+      code === "not_found"
+        ? "That analysis rule no longer exists."
+        : code === "invalid_request"
+          ? "The monitor service rejected those rule values."
+          : code === "rate_limited"
+            ? "Too many rule edits right now — try again in a minute."
+            : code === "request_rejected"
+              ? "The monitor service rejected the rule-edit credentials."
+              : `The analysis rule could not be saved (${code ?? response.status}).`,
+    );
+  }
 }

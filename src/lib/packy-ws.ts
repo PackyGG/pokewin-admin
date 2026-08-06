@@ -72,6 +72,29 @@ let visibilityBound = false;
 let hasOpened = false;
 let connectionState: PackyConnectionState = "connecting";
 
+/**
+ * Reconnect escalation, mirroring `src/lib/hooks/use-sse.ts`.
+ *
+ * EventSource retries on its own ONLY after a clean 2xx EOF. Anything that
+ * lands it in `readyState === CLOSED` (a non-2xx response, a hard network
+ * failure) is permanent as far as the browser is concerned, so the escalation
+ * below is what actually keeps this wire alive.
+ */
+const MAX_FAILURES = 8;
+/** A session shorter than this is a flap, not a recovery — keep escalating. */
+const STABLE_SESSION_MS = 30_000;
+let failures = 0;
+let openedAt = 0;
+let backoffTimer: ReturnType<typeof setTimeout> | null = null;
+let gaveUp = false;
+
+function clearBackoff() {
+  if (backoffTimer) {
+    clearTimeout(backoffTimer);
+    backoffTimer = null;
+  }
+}
+
 function setConnectionState(next: PackyConnectionState) {
   connectionState = next;
   for (const handler of connectionStateHandlers) {
@@ -125,6 +148,8 @@ function dispatch(evt: PackyEvent) {
 }
 
 function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
+  clearBackoff();
+  openedAt = 0;
   if (source) {
     source.onopen = null;
     source.onerror = null;
@@ -137,10 +162,14 @@ function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
     source = null;
   }
   if (reason === "rotation") {
+    // A graceful server rotation is a successful cycle, not a failure.
+    failures = 0;
     setConnectionState("reconnecting");
     openSource();
   } else if (reason === "teardown") {
     hasOpened = false;
+    failures = 0;
+    gaveUp = false;
     setConnectionState("connecting");
   } else if (reason === "hidden") {
     setConnectionState("paused");
@@ -149,6 +178,8 @@ function closeSource(reason: "manual" | "hidden" | "teardown" | "rotation") {
 
 function openSource() {
   if (typeof window === "undefined") return;
+  // Escalation exhausted — only `online` or a tab refocus reopens the door.
+  if (gaveUp) return;
   if (totalSubscribers() === 0) return;
   if (source) return;
   if (
@@ -169,13 +200,50 @@ function openSource() {
   }
   source = es;
   es.onopen = () => {
+    if (source !== es) return;
     hasOpened = true;
+    openedAt = Date.now();
+    // Deliberately NOT resetting `failures` here (same reasoning as use-sse):
+    // an endpoint that opens and dies immediately would otherwise retry at 1s
+    // forever. Only a session that LASTED resets the schedule, below.
   };
   es.onerror = () => {
-    if (source === es && connectionState !== "unavailable") {
-      setConnectionState("reconnecting");
+    if (source !== es) return;
+    // EventSource fires `error` for BOTH a transient drop it will retry itself
+    // (readyState CONNECTING) and a terminal failure (readyState CLOSED). Only
+    // the terminal case needs us; the old handler just relabelled the state and
+    // left the dead EventSource in `source` forever.
+    if (es.readyState !== EventSource.CLOSED) {
+      if (connectionState !== "unavailable") setConnectionState("reconnecting");
+      return;
     }
+
+    const sessionMs = openedAt ? Date.now() - openedAt : 0;
+    closeSource("manual");
+    failures = sessionMs >= STABLE_SESSION_MS ? 1 : failures + 1;
+    if (failures >= MAX_FAILURES) {
+      gaveUp = true;
+      setConnectionState("unavailable");
+      return;
+    }
+    setConnectionState("reconnecting");
+    backoffTimer = setTimeout(
+      () => {
+        backoffTimer = null;
+        openSource();
+      },
+      Math.min(30_000, 1000 * 2 ** (failures - 1)),
+    );
   };
+
+  es.addEventListener("fatal", () => {
+    if (source !== es) return;
+    // The proxy says retrying is pointless (permanent refusal). Without this
+    // its clean EOF would be retried every `retry:` interval forever.
+    closeSource("manual");
+    gaveUp = true;
+    setConnectionState("unavailable");
+  });
 
   es.addEventListener("upstream-open", () => {
     if (source === es) setConnectionState("live");
@@ -215,6 +283,15 @@ function openSource() {
 function handleVisibility() {
   if (typeof document === "undefined") return;
   if (document.visibilityState === "visible") {
+    // A refocus is a fresh chance: clear a give-up that happened while the tab
+    // was hidden or the machine asleep. Drop a dead EventSource FIRST — the
+    // old `!source` guard made this a permanent no-op, because a CLOSED
+    // EventSource still sits in `source`.
+    gaveUp = false;
+    failures = 0;
+    if (source && source.readyState === EventSource.CLOSED) {
+      closeSource("manual");
+    }
     if (totalSubscribers() > 0 && !source) {
       openSource();
     }
@@ -223,10 +300,29 @@ function handleVisibility() {
   }
 }
 
+function handleOffline() {
+  // Without this a wifi drop burns the whole failure budget on retries that
+  // cannot succeed.
+  closeSource("manual");
+  if (connectionState !== "paused") setConnectionState("reconnecting");
+}
+
+function handleOnline() {
+  gaveUp = false;
+  failures = 0;
+  if (totalSubscribers() > 0 && !source) {
+    openSource();
+  }
+}
+
 function ensureVisibilityBinding() {
   if (visibilityBound) return;
   if (typeof document === "undefined") return;
   document.addEventListener("visibilitychange", handleVisibility);
+  if (typeof window !== "undefined") {
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
+  }
   visibilityBound = true;
 }
 

@@ -631,7 +631,21 @@ async function mutateAntifraudRule(
   const payload = await response.json().catch(() => null);
   if (response.status === 404) throw new Error("That flow no longer exists.");
   if (response.status === 409) {
-    throw new Error("That retry key was already used for another flow change.");
+    // Four distinct 409s come back from the rules routes. Only one of them is
+    // an idempotency-key collision — the others describe real, actionable
+    // rejections that the old single message hid completely.
+    const code = z
+      .object({ error: z.string() })
+      .safeParse(payload).data?.error;
+    throw new Error(
+      code === "rule_limit_reached"
+        ? "The flow limit is reached. Delete an existing flow before adding another."
+        : code === "duplicate_rule"
+          ? "An identical flow already exists (same sequence, exclusions and window)."
+          : code === "stale_rule"
+            ? "Someone else saved this flow first. Reload and reapply your change."
+            : "That retry key was already used for a different flow change. Reload and submit again.",
+    );
   }
   if (response.status === 401 || response.status === 403) {
     throw new Error("The monitor service rejected the flow-edit credentials.");
@@ -800,7 +814,23 @@ export async function submitAntifraudCaseDecision(input: {
   }
 
   if (response.status === 404) throw new Error("That case no longer exists.");
-  if (response.status === 409) throw new Error("This case is already resolved.");
+  if (response.status === 409) {
+    // The service returns TWO different 409s here: `case_already_resolved`
+    // (the case is genuinely done) and `idempotency_conflict` (this retry key
+    // was already spent on a DIFFERENT decision — nothing was recorded).
+    // Collapsing them told the analyst the case was handled when it wasn't.
+    const code = await response
+      .json()
+      .then((body: unknown) =>
+        z.object({ error: z.string() }).safeParse(body).data?.error
+      )
+      .catch(() => undefined);
+    throw new Error(
+      code === "idempotency_conflict"
+        ? "That retry key was already used for a different decision. Reload and submit again."
+        : "This case is already resolved.",
+    );
+  }
   if (response.status === 401 || response.status === 403) {
     throw new Error("The monitor service rejected the decision credentials.");
   }

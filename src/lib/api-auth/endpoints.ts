@@ -257,6 +257,41 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/antifraud/jobs/claim",
+    summary:
+      "Body { guildId, workerId, limit: 1-25 }. Leases due Antifraud notification jobs for durable delivery to their configured Discord channels.",
+    scopes: ["discord:antifraud"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/antifraud/jobs/[id]/ack",
+    summary:
+      "Body { leaseToken, status: delivered|failed, discordMessageId?, errorCode?, errorMessage? }. Completes a leased Antifraud notification job or returns it to bounded retry handling. The guild is resolved server-side.",
+    scopes: ["discord:antifraud"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/antifraud/channel-jobs/claim",
+    summary:
+      "Body { guildId, workerId, limit: 1-10 }. Leases pending Antifraud channel-creation jobs so the bot can create the missing notification channels.",
+    scopes: ["discord:antifraud"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/antifraud/channel-jobs/[id]/ack",
+    summary:
+      "Body { leaseToken, status: created|failed, channelId?, channelName?, errorCode?, errorMessage? }. Records the created Antifraud channel or returns the job to bounded retry handling. `created` requires channelId and channelName.",
+    scopes: ["discord:antifraud"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/antifraud/channels/sync",
+    summary:
+      "Body { guildId, guildName, channels: [{ id, name, type, parentId, parentName?, position, canView, canSend, canEmbed }] (max 1000), syncedAt }. Replaces the cached Antifraud guild channel list used by the notification routing UI.",
+    scopes: ["discord:antifraud"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/claim",
     summary:
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",
