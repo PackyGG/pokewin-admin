@@ -37,14 +37,17 @@ export function createFixedWindowIpLimiter(
   const windows = new Map<string, { resetAt: number; count: number }>();
   return (ip: string) => {
     const currentTime = now();
+    // Sweep unconditionally, BEFORE the window lookup. Nested inside the
+    // new-window branch it never ran for the traffic shape that actually grows
+    // the map: a flood of distinct IPs that keep hitting live windows leaves
+    // every expired entry behind.
+    if (windows.size > 10_000) {
+      for (const [key, value] of windows) {
+        if (value.resetAt <= currentTime) windows.delete(key);
+      }
+    }
     const window = windows.get(ip);
     if (!window || window.resetAt <= currentTime) {
-      // Opportunistic sweep so long-gone IPs cannot grow the map forever.
-      if (windows.size > 10_000) {
-        for (const [key, value] of windows) {
-          if (value.resetAt <= currentTime) windows.delete(key);
-        }
-      }
       windows.set(ip, { resetAt: currentTime + windowMs, count: 1 });
       return true;
     }

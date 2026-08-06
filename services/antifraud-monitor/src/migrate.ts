@@ -134,6 +134,13 @@ export async function migrate(pool: pg.Pool): Promise<void> {
 
   const client = await pool.connect();
   try {
+    // The pool sets statement_timeout=15000 for normal queries, but migration
+    // work is neither normal nor interruptible: pg_advisory_lock() BLOCKS, so
+    // during a rolling deploy the second booting replica waits behind the
+    // first. Aborting that wait at 15s (57014) rejects migrate() before
+    // app.listen() ever runs, which makes any migration slower than 15s a
+    // deterministic boot failure for every concurrent replica.
+    await client.query("SET statement_timeout = 0");
     await client.query("SELECT pg_advisory_lock($1)", [841_772_991]);
     await client.query(`
       CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -159,7 +166,9 @@ export async function migrate(pool: pg.Pool): Promise<void> {
         );
         const checksum = stored.rows[0]?.checksum ?? null;
         if (checksum) {
-          const current = computeChecksum(await readFile(join(migrationsDir, file)));
+          const current = computeChecksum(
+            await readFile(join(migrationsDir, file)),
+          );
           if (current !== checksum) {
             throw new Error(
               `Migration "${file}" was already applied but its file content has changed since ` +
@@ -171,10 +180,14 @@ export async function migrate(pool: pg.Pool): Promise<void> {
         continue;
       }
 
+      // One read: the SQL text and the checksum both come from the same bytes,
+      // so the record can never describe a different revision than the one
+      // that was executed.
+      const raw = await readFile(join(migrationsDir, file));
+      const checksum = computeChecksum(raw);
       await client.query("BEGIN");
       try {
-        await client.query(await readFile(join(migrationsDir, file), "utf8"));
-        const checksum = computeChecksum(await readFile(join(migrationsDir, file)));
+        await client.query(raw.toString("utf8"));
         await client.query(
           "INSERT INTO schema_migrations(version, checksum) VALUES ($1, $2)",
           [file, checksum],
@@ -186,7 +199,20 @@ export async function migrate(pool: pg.Pool): Promise<void> {
       }
     }
   } finally {
-    await client.query("SELECT pg_advisory_unlock($1)", [841_772_991]);
+    // Both cleanup statements are best-effort: on a dead connection they would
+    // otherwise throw out of `finally` and REPLACE the real migration error,
+    // leaving the logs describing the symptom instead of the cause.
+    await client
+      .query("SELECT pg_advisory_unlock($1)", [841_772_991])
+      .catch((error: unknown) => {
+        console.error("[migrate] advisory unlock failed", {
+          message: error instanceof Error ? error.message : String(error),
+        });
+      });
+    await client.query("RESET statement_timeout").catch(() => {
+      // The connection is going back to the pool either way; pg discards a
+      // client it cannot reset.
+    });
     client.release();
   }
 }

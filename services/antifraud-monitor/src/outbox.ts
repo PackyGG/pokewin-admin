@@ -21,6 +21,15 @@ export type OutboxAttemptResult = {
   delivered: boolean;
   /** Provider-supplied retry hint (e.g. Discord retry-after), if any. */
   retryAfterSeconds?: number | null;
+  /**
+   * False when the delivery was never put on the wire (an open circuit
+   * breaker, for instance). Such a pass must NOT consume an attempt: a 60s
+   * open circuit at a 1s poll tick would otherwise inflate `attempt_count` by
+   * ~60 and push the row to the 300s backoff ceiling, delaying the alert by
+   * minutes after the provider had already recovered. Defaults to true, so
+   * existing outboxes keep counting every pass as an attempt.
+   */
+  attempted?: boolean;
 };
 
 export type OutboxOutcome = {
@@ -51,13 +60,29 @@ export async function drainOutbox<Row>(
 ): Promise<void> {
   const pending = await config.fetchPending();
   const drainRow = async (row: Row): Promise<void> => {
-    const result = await config.attempt(row);
-    const attempt = config.attemptCount(row) + 1;
+    // A throw out of attempt() used to escape drainOutbox entirely, so
+    // record() never ran: the row kept its attempt_count and next_attempt_at
+    // and retried at the full poll rate forever, blocking the rest of the
+    // batch behind it. An unexpected throw is just a failed delivery.
+    let result: OutboxAttemptResult;
+    try {
+      result = await config.attempt(row);
+    } catch {
+      result = { delivered: false };
+    }
+    const attempted = result.attempted !== false;
+    // An unattempted pass keeps the row's attempt count where it was, so the
+    // backoff curve reflects real delivery attempts only.
+    const attempt = config.attemptCount(row) + (attempted ? 1 : 0);
     const outcome: OutboxOutcome = {
       delivered: result.delivered,
       attempt,
-      retrySeconds: result.retryAfterSeconds ?? outboxRetrySeconds(attempt),
+      retrySeconds:
+        result.retryAfterSeconds ??
+        outboxRetrySeconds(attempted ? attempt : attempt + 1),
     };
+    // record()'s own throw still propagates: a DB failure genuinely should
+    // fail the phase rather than be swallowed as a delivery outcome.
     await config.record(row, outcome);
     await config.onRecorded?.(row, outcome);
   };

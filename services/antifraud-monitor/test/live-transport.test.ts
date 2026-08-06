@@ -213,7 +213,7 @@ test("publish retries once and counts sustained failures", async () => {
 
   await bus.publish("monitor.event", { caseId: "case-1" });
   assert.equal(redis.evalCalls, 2);
-  assert.equal(bus.publishFailureCount, 0);
+  assert.equal(bus.stats().publishFailures, 0);
 
   redis.evalResults = [new Error("redis gone"), new Error("still gone")];
   await assert.rejects(
@@ -221,7 +221,7 @@ test("publish retries once and counts sustained failures", async () => {
     /still gone/,
   );
   assert.equal(redis.evalCalls, 4);
-  assert.equal(bus.publishFailureCount, 1);
+  assert.equal(bus.stats().publishFailures, 1);
   await bus.close();
 });
 
@@ -235,5 +235,46 @@ test("backpressure evicts with close code 1013 instead of a bare terminate", asy
 
   assert.deepEqual(client.closes, [{ code: 1013, reason: "backpressure" }]);
   assert.equal(client.terminated, 0);
+  await bus.close();
+});
+
+test("a backpressured client is evicted once, not on every frame", async () => {
+  const { bus, redis } = liveBusFixture();
+  const client = new FakeWebSocket();
+  assert.equal(bus.addClient(client as unknown as WebSocket, "staff-1"), true);
+  const listenersBefore = client.listenerCount("close");
+
+  client.bufferedAmount = 10 * 1024 * 1024;
+  // A broadcast storm: every frame used to re-evict the same socket, because
+  // bufferedAmount was tested BEFORE readyState and evict() had no idempotence
+  // guard — so each frame allocated a fresh terminate timer and registered
+  // another `close` listener, tripping MaxListenersExceededWarning.
+  for (let i = 0; i < 25; i += 1) {
+    redis.emit("message", "antifraud:live", "{}");
+  }
+
+  assert.deepEqual(client.closes, [{ code: 1013, reason: "backpressure" }]);
+  assert.equal(client.terminated, 0);
+  assert.ok(
+    client.listenerCount("close") - listenersBefore <= 1,
+    `evict registered ${client.listenerCount("close") - listenersBefore} close listeners`,
+  );
+  await bus.close();
+});
+
+test("a still-open client keeps receiving frames after a peer is evicted", async () => {
+  const { bus, redis } = liveBusFixture();
+  const stuck = new FakeWebSocket();
+  const healthy = new FakeWebSocket();
+  assert.equal(bus.addClient(stuck as unknown as WebSocket, "staff-1"), true);
+  assert.equal(bus.addClient(healthy as unknown as WebSocket, "staff-2"), true);
+  const healthyBefore = healthy.sent.length;
+
+  stuck.bufferedAmount = 10 * 1024 * 1024;
+  redis.emit("message", "antifraud:live", '{"type":"monitor.event"}');
+  redis.emit("message", "antifraud:live", '{"type":"monitor.event"}');
+
+  assert.equal(stuck.closes.length, 1);
+  assert.equal(healthy.sent.length - healthyBefore, 2);
   await bus.close();
 });

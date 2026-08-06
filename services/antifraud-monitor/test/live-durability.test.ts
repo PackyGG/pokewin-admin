@@ -139,7 +139,7 @@ test("publish parks the frame in the outbox when Redis stays down", async () => 
   await bus.publish("monitor.event", { caseId: "case-1" });
 
   assert.equal(redis.evalCalls, 2);
-  assert.equal(bus.publishFailureCount, 1);
+  assert.equal(bus.stats().publishFailures, 1);
   assert.equal(pool.rows.length, 1);
   const parked = pool.rows[0]?.payload ?? {};
   assert.equal(parked.type, "monitor.event");

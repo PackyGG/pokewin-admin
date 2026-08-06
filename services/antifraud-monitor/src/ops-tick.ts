@@ -142,17 +142,27 @@ export class DashboardOpsTick {
       ) {
         throw new Error("health_contract_invalid");
       }
-      if (this.outageOpen) {
-        await this.sendAlert(
+      const wasOutage = this.outageOpen;
+      // Clear the recovered state BEFORE awaiting the alert: sendAlert can
+      // take the full 5s Discord timeout, and until it resolved `status()`
+      // kept reporting "degraded" for a webapp that is demonstrably healthy.
+      this.healthFailures = 0;
+      this.outageOpen = false;
+      if (wasOutage) {
+        const sent = await this.sendAlert(
           correlationId,
           `webapp_recovered_${this.episode}`,
           "✅ Antifraud webapp recovered",
           "The Railway probe can reach the antifraud webapp again.",
           0x57f287,
         );
+        if (!sent) {
+          this.log.warn(
+            { correlationId, episode: this.episode },
+            "Antifraud webapp recovery alert was not delivered",
+          );
+        }
       }
-      this.healthFailures = 0;
-      this.outageOpen = false;
     } catch (error) {
       this.healthFailures += 1;
       this.log.warn(
@@ -177,6 +187,16 @@ export class DashboardOpsTick {
           0xed4245,
         );
         if (sent) this.lastAlertAt = now;
+        else {
+          this.log.error(
+            {
+              correlationId,
+              episode: this.episode,
+              failures: this.healthFailures,
+            },
+            "Antifraud webapp outage alert was not delivered; retrying next tick",
+          );
+        }
         this.outageOpen = true;
       }
     }

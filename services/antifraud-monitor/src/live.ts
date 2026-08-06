@@ -164,6 +164,8 @@ export class LiveBus {
   private readonly sessionMaxAgeMs: number;
   private readonly drainIntervalMs: number;
   private readonly clients = new Set<WebSocket>();
+  /** Sockets already handed a close frame by evict(); see evict() for why. */
+  private readonly evicting = new WeakSet<WebSocket>();
   private readonly frameListeners: Array<
     (type: LiveEventType, data: Record<string, unknown>) => void
   > = [];
@@ -196,6 +198,14 @@ export class LiveBus {
       maxRetriesPerRequest: 2,
       enableReadyCheck: true,
       connectTimeout: 5_000,
+      // ioredis has NO default command timeout: a Redis that is connected but
+      // wedged makes every eval/xrange/GETDEL hang forever, and the poller's
+      // broadcast path has no HTTP-timeout backstop to bound the tick. Every
+      // call site already treats a rejection as a routine failure (publish
+      // falls through to the durable outbox, consumeTicket's caller closes
+      // 1013, streamTipId returns "0-0"), so a bounded reject is strictly
+      // better than an unbounded hang.
+      commandTimeout: 5_000,
       keepAlive: 10_000,
       // Reconnect forever (the bus outlives transient Redis restarts) but cap
       // the backoff so recovery is prompt once Redis returns.
@@ -286,9 +296,13 @@ export class LiveBus {
 
   private broadcast(payload: string): void {
     for (const client of this.clients) {
+      // readyState FIRST: a client already closing/closed keeps whatever
+      // bufferedAmount it had, so testing backpressure first re-evicted the
+      // same socket on every single frame of a storm.
+      if (client.readyState !== client.OPEN) continue;
       if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
         this.evict(client, 1013, "backpressure");
-      } else if (client.readyState === client.OPEN) {
+      } else {
         try {
           client.send(payload, (error?: Error) => {
             if (error) this.evict(client, 1011, "send_failed");
@@ -306,6 +320,11 @@ export class LiveBus {
    * bounded terminate fallback for peers that never finish the handshake.
    */
   private evict(client: WebSocket, code: number, reason: string): void {
+    // Idempotent: without this a repeated evict allocates a fresh terminate
+    // timer AND registers another `close` listener each time, which trips
+    // MaxListenersExceededWarning and churns timers during a broadcast storm.
+    if (this.evicting.has(client)) return;
+    this.evicting.add(client);
     try {
       client.close(code, reason);
     } catch {
@@ -341,16 +360,11 @@ export class LiveBus {
         void this.drainOutbox();
       }, this.drainIntervalMs);
       this.drainTimer.unref();
+      // Seed the depth immediately: without a first pass `stats().outboxDepth`
+      // reports 0 for a full drain interval after boot, so a process that
+      // restarted with a backlog looks clean on /v1/operations/live.
+      void this.drainOutbox();
     }
-  }
-
-  /**
-   * Total publishes that failed against Redis after the retry — surfaced on
-   * /ready for alerting. With an outbox configured these frames were parked
-   * durably instead of lost; without one they are gone.
-   */
-  get publishFailureCount(): number {
-    return this.publishFailures;
   }
 
   stats(): LiveBusStats {
@@ -649,7 +663,12 @@ export class LiveBus {
       release();
     });
     client.on("close", release);
-    void this.sendConnectedFrame(client);
+    void this.sendConnectedFrame(client).catch((error: unknown) => {
+      this.log.warn(
+        { err: error, actorId },
+        "Antifraud live connected frame failed",
+      );
+    });
     return true;
   }
 

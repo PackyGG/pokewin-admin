@@ -14,6 +14,11 @@ export function parseFiatEligibilityGloballyEnabled(
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
+  // Nothing reads `config.TZ` — the process timezone is pinned by
+  // `process.env.TZ ??= "UTC"` in server.ts and by `-c TimeZone=UTC` on both
+  // pools. The field stays declared anyway: the audit-contracts test requires
+  // every `process.env.X` consumed under src/ to be declared here, so this is
+  // the schema's record of an env var the service does read.
   TZ: z.string().min(1).default("UTC"),
   PORT: z.coerce.number().int().min(1).max(65535).default(4100),
   SOURCE_DATABASE_URL: z.string().min(1),

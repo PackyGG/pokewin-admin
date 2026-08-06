@@ -298,3 +298,57 @@ test("an alert can link directly to Account Review", () => {
   );
   assert.ok(!("escalate" in payload));
 });
+
+// ---------------------------------------------------------------------------
+// Per-eventKey circuit breaker
+// ---------------------------------------------------------------------------
+
+test("the discord enqueue circuit is scoped per event key", async () => {
+  const { sendBotDiscordEventDetailed, resetDiscordEventCircuits } =
+    await import("../src/discord-events.js");
+  resetDiscordEventCircuits();
+
+  const quiet = { warn() {}, error() {} };
+  const config = {
+    ADMIN_GUILD_ID: "1",
+    ANTIFRAUD_INGEST_URL: "https://ingest.example.com",
+    ANTIFRAUD_INGEST_SECRET: "secret",
+  };
+  const send = (eventKey: string) =>
+    sendBotDiscordEventDetailed(config, quiet, {
+      eventKey,
+      dedupeKey: `${eventKey}:1`,
+      payload: { embeds: [{ title: "x" }] },
+    });
+
+  const originalFetch = globalThis.fetch;
+  let calls = 0;
+  globalThis.fetch = (async () => {
+    calls += 1;
+    return new Response("nope", { status: 500 });
+  }) as typeof fetch;
+  try {
+    // Five failures on ONE key opens that key's circuit.
+    for (let i = 0; i < 5; i += 1) {
+      const result = await send("antifraud.alert.fiat");
+      assert.deepEqual(result, { delivered: false, attempted: true });
+    }
+    assert.equal(calls, 5);
+
+    const blocked = await send("antifraud.alert.fiat");
+    assert.equal(blocked.delivered, false);
+    // Not attempted: the caller must not bill this as a delivery attempt.
+    assert.equal(blocked.attempted, false);
+    assert.ok((blocked.retryAfterSeconds ?? 0) > 0);
+    assert.equal(calls, 5, "an open circuit issues no request");
+
+    // A DIFFERENT key — notably the "the webapp is down" alarm — is untouched
+    // and still reaches the wire. A single shared circuit used to silence it.
+    const other = await send("antifraud.error.webapp");
+    assert.deepEqual(other, { delivered: false, attempted: true });
+    assert.equal(calls, 6);
+  } finally {
+    globalThis.fetch = originalFetch;
+    resetDiscordEventCircuits();
+  }
+});

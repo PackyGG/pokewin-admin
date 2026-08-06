@@ -601,48 +601,85 @@ app.get("/health", {
   if (stalledForMs !== null) return reply.code(503).send(body);
   return body;
 });
+/**
+ * `/ready` is unauthenticated (probes must stay so) but it is the only probe
+ * that touches the databases: `assertDatabaseConnections` issues `SELECT 1` on
+ * three pools. Left unmetered, any anonymous caller could turn one HTTP request
+ * into three DB round-trips at unlimited rate and starve the poller out of the
+ * pools — while the resulting 503 is exactly the signal that tells the platform
+ * to restart us. Two brakes: a never-banning per-IP limiter (the platform probe
+ * must never be banned away from its own healthcheck) and a ~1s memo of the
+ * probe result so a burst collapses onto a single set of queries.
+ */
+const READY_DB_PROBE_TTL_MS = 1_000;
+let readyDbProbe: { at: number; ok: boolean } | null = null;
+
+async function readyDatabasesOk(): Promise<boolean> {
+  const now = Date.now();
+  if (readyDbProbe && now - readyDbProbe.at < READY_DB_PROBE_TTL_MS) {
+    return readyDbProbe.ok;
+  }
+  let ok: boolean;
+  try {
+    await assertDatabaseConnections(db);
+    ok = true;
+  } catch {
+    ok = false;
+  }
+  readyDbProbe = { at: Date.now(), ok };
+  return ok;
+}
+
 app.get("/ready", {
-  config: { rateLimit: false },
+  config: {
+    rateLimit: {
+      max: 60,
+      timeWindow: "1 minute",
+      ban: -1,
+    },
+  },
 }, async (_request, reply) => {
   if (shuttingDown) {
     return reply.code(503).send({ status: "draining", reason: "draining" });
   }
-  try {
-    await assertDatabaseConnections(db);
-    const poller = engine.healthSnapshot();
-    const liveStatus = live.stats();
-    const webappMonitor = dashboardOpsTick.status();
-    // Readiness gates only on HARD poller faults: no successful tick yet,
-    // repeated tick failures, or a stale tick. The snapshot also reports
-    // "degraded" for pending signup dead-letters awaiting STAFF review —
-    // an operator queue item, not an infrastructure fault; a service that
-    // ticks cleanly must stay ready while one sits in the queue.
-    const lastTickMs = poller.lastSuccessfulTickAt
-      ? Date.parse(poller.lastSuccessfulTickAt)
-      : Number.NaN;
-    const pollerStale =
-      !Number.isFinite(lastTickMs) || Date.now() - lastTickMs > 5 * 60_000;
-    const pollerBroken =
-      poller.status === "starting" ||
-      poller.consecutiveFailures > 0 ||
-      (poller.status === "degraded" && pollerStale);
-    const reason = pollerBroken
-      ? `poller_${poller.status}`
-      : !liveStatus.subscribed
-        ? "live_unsubscribed"
-        : config.NODE_ENV === "production" &&
-            webappMonitor.status === "degraded"
-          ? `webapp_monitor_${webappMonitor.status}`
-          : null;
-    if (reason !== null) {
-      return reply.code(503).send({ status: "not_ready", reason });
-    }
-    return { status: "ready" };
-  } catch {
+  if (!(await readyDatabasesOk())) {
     return reply
       .code(503)
       .send({ status: "not_ready", reason: "database_unavailable" });
   }
+  const poller = engine.healthSnapshot();
+  const liveStatus = live.stats();
+  const webappMonitor = dashboardOpsTick.status();
+  // Readiness gates only on HARD poller faults: no successful tick yet,
+  // repeated tick failures, or a stale tick. The snapshot also reports
+  // "degraded" for pending signup dead-letters awaiting STAFF review —
+  // an operator queue item, not an infrastructure fault; a service that
+  // ticks cleanly must stay ready while one sits in the queue.
+  const lastTickMs = poller.lastSuccessfulTickAt
+    ? Date.parse(poller.lastSuccessfulTickAt)
+    : Number.NaN;
+  const pollerStale =
+    !Number.isFinite(lastTickMs) || Date.now() - lastTickMs > 5 * 60_000;
+  const pollerBroken =
+    poller.status === "starting" ||
+    poller.consecutiveFailures > 0 ||
+    (poller.status === "degraded" && pollerStale);
+  // Readiness gates ONLY on this service's own hard dependencies. The webapp
+  // monitor deliberately does NOT gate: it probes an external Vercel app, so
+  // letting it 503 us would convert a dashboard outage into a fraud-ingestion
+  // outage — and the alert for that outage routes through the same webapp, so
+  // it would silence its own alarm. It stays reported, never gating.
+  const reason = pollerBroken
+    ? `poller_${poller.status}`
+    : !liveStatus.subscribed
+      ? "live_unsubscribed"
+      : null;
+  if (reason !== null) {
+    return reply
+      .code(503)
+      .send({ status: "not_ready", reason, webappMonitor: webappMonitor.status });
+  }
+  return { status: "ready", webappMonitor: webappMonitor.status };
 });
 
 app.get("/v1/operations/poller", async () => ({
@@ -1269,7 +1306,11 @@ app.get("/v1/cases/:id", async (request, reply) => {
     [id],
   );
   if (!caseResult.rows[0]) return reply.code(404).send({ error: "not_found" });
-  const [events, checks, sessions, actions, members, membersCount, matches] = await Promise.all([
+  // Fan-out is capped at 4 concurrent connections per request. The antifraud
+  // pool is shared with the poller and the outbox drains; a single request
+  // that grabbed 7 slots meant two staff opening cases at once could push the
+  // poller past connectionTimeoutMillis and degrade ingestion.
+  const [events, checks, sessions, actions] = await Promise.all([
     db.antifraud.query(
       `SELECT id, case_id, session_id, user_id, event_type, source, source_ref,
               score_delta,
@@ -1313,19 +1354,24 @@ app.get("/v1/cases/:id", async (request, reply) => {
         LIMIT 200`,
       [id],
     ),
-    db.antifraud.query(
-      `SELECT ncm.user_id, ncm.is_root, s.username, s.avatar_url
+  ]);
+  // Second wave: members and its total collapse into ONE query via
+  // COUNT(*) OVER (), so the whole route now peaks at 4 connections.
+  const [members, matches] = await Promise.all([
+    db.antifraud.query<{
+      user_id: string;
+      is_root: boolean;
+      username: string | null;
+      avatar_url: string | null;
+      members_total: number;
+    }>(
+      `SELECT ncm.user_id, ncm.is_root, s.username, s.avatar_url,
+              (COUNT(*) OVER ())::int AS members_total
          FROM network_case_members ncm
          LEFT JOIN subjects s ON s.user_id=ncm.user_id
         WHERE ncm.case_id=$1
         ORDER BY ncm.is_root DESC, COALESCE(s.username, ncm.user_id)
         LIMIT 101`,
-      [id],
-    ),
-    db.antifraud.query<{ total: number }>(
-      `SELECT COUNT(*)::int AS total
-         FROM network_case_members
-        WHERE case_id=$1`,
       [id],
     ),
     db.antifraud.query(
@@ -1357,8 +1403,13 @@ app.get("/v1/cases/:id", async (request, reply) => {
       providerChecks: checks.rows,
       sessions: sessions.rows,
       actions: actions.rows,
-      members: members.rows.slice(0, 100),
-      membersTotal: membersCount.rows[0]?.total ?? 0,
+      // `members_total` is the windowed count carried on every row; it is
+      // stripped here so the wire shape stays byte-identical to the two-query
+      // version that preceded it.
+      members: members.rows
+        .slice(0, 100)
+        .map(({ members_total: _total, ...member }) => member),
+      membersTotal: members.rows[0]?.members_total ?? 0,
       matches: matches.rows,
     },
   };
@@ -2230,11 +2281,19 @@ app.addHook("onClose", async () => {
   shuttingDown = true;
   dashboardOpsTick.stop();
   if (maxmindReportTimer) clearInterval(maxmindReportTimer);
-  await ingestDelivery.stop();
-  await engine.stop();
-  await networkRisk.stop();
-  await live.close();
-  await closeDatabases(db);
+  // Each teardown step is isolated: one failing subsystem must never abort the
+  // hook before closeDatabases() runs, which would leak the pools (and, on
+  // Railway, hold source-mirror connections until the process is killed).
+  const teardown = async (step: string, run: () => Promise<void>) => {
+    await run().catch((error: unknown) => {
+      app.log.error({ err: error, step }, "Antifraud shutdown step failed");
+    });
+  };
+  await teardown("ingest_delivery", () => ingestDelivery.stop());
+  await teardown("engine", () => engine.stop());
+  await teardown("network_risk", () => networkRisk.stop());
+  await teardown("live", () => live.close());
+  await teardown("databases", () => closeDatabases(db));
 });
 
 let shutdownPromise: Promise<void> | null = null;
@@ -2279,7 +2338,12 @@ maxmindReportTimer = setInterval(() => {
   });
 }, 30_000);
 maxmindReportTimer.unref();
-void maxmind.drainReports();
+// Same guarded shape as the interval above: drainReports() opens with a pool
+// query, and an unhandled rejection here (the DB is coldest right at boot)
+// would kill the process under Node's default --unhandled-rejections=throw.
+void maxmind.drainReports().catch((error) => {
+  app.log.warn({ err: error }, "MaxMind feedback outbox drain failed");
+});
 await app.listen({ port: config.PORT, host: "0.0.0.0" });
 app.log.info(
   {
@@ -2303,6 +2367,17 @@ void (async () => {
   while (!shuttingDown) {
     try {
       await engine.start();
+      // SIGTERM can land WHILE start() is in flight: onClose already ran
+      // engine.stop() against an engine that had not installed its interval
+      // yet, so the interval start() just installed would outlive the pools
+      // closeDatabases() is about to end. Stop it again now that it exists.
+      if (shuttingDown) {
+        await engine.stop();
+        app.log.info(
+          "Antifraud source poller start raced shutdown; stopped again",
+        );
+        return;
+      }
       app.log.info(
         failures > 0 ? { failures } : undefined,
         "Antifraud source poller started",

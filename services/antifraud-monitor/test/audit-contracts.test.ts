@@ -611,6 +611,76 @@ test("shared outbox drain reaches the five-minute retry ceiling", async () => {
   assert.deepEqual(recorded, [{ delivered: false, attempt: 9, retry: 300 }]);
 });
 
+test("a throwing outbox attempt is recorded as a failure, not an escape", async () => {
+  const recorded: Array<{ delivered: boolean; attempt: number }> = [];
+  const drained: string[] = [];
+  // Before the fix, the throw escaped drainOutbox entirely: record() never
+  // ran, so the row kept its attempt_count and next_attempt_at and retried at
+  // the full poll rate forever — blocking every row behind it in the batch.
+  await drainOutbox({
+    fetchPending: async () => [{ id: "poison", attemptCount: 0 }, { id: "next", attemptCount: 0 }],
+    attemptCount: (row) => row.attemptCount,
+    attempt: async (row) => {
+      drained.push(row.id);
+      if (row.id === "poison") throw new Error("provider client blew up");
+      return { delivered: true };
+    },
+    record: async (row, outcome) => {
+      recorded.push({ delivered: outcome.delivered, attempt: outcome.attempt });
+      assert.ok(row.id);
+    },
+  });
+  assert.deepEqual(drained, ["poison", "next"]);
+  assert.deepEqual(recorded, [
+    { delivered: false, attempt: 1 },
+    { delivered: true, attempt: 1 },
+  ]);
+});
+
+test("an unattempted outbox pass does not consume a retry attempt", async () => {
+  const recorded: Array<{ attempt: number; retry: number }> = [];
+  const record = async (
+    _row: { attemptCount: number },
+    outcome: { attempt: number; retrySeconds: number },
+  ) => {
+    recorded.push({ attempt: outcome.attempt, retry: outcome.retrySeconds });
+  };
+
+  // Circuit open: never put on the wire, so the attempt count must not move
+  // and the provider's own remaining window is used as the retry delay.
+  await drainOutbox({
+    fetchPending: async () => [{ attemptCount: 3 }],
+    attemptCount: (row) => row.attemptCount,
+    attempt: async () => ({
+      delivered: false,
+      attempted: false,
+      retryAfterSeconds: 42,
+    }),
+    record,
+  });
+  assert.deepEqual(recorded, [{ attempt: 3, retry: 42 }]);
+
+  // Unattempted with no provider hint keeps the backoff it would have had.
+  recorded.length = 0;
+  await drainOutbox({
+    fetchPending: async () => [{ attemptCount: 3 }],
+    attemptCount: (row) => row.attemptCount,
+    attempt: async () => ({ delivered: false, attempted: false }),
+    record,
+  });
+  assert.deepEqual(recorded, [{ attempt: 3, retry: outboxRetrySeconds(4) }]);
+
+  // A real attempt still increments, so existing outboxes are unchanged.
+  recorded.length = 0;
+  await drainOutbox({
+    fetchPending: async () => [{ attemptCount: 3 }],
+    attemptCount: (row) => row.attemptCount,
+    attempt: async () => ({ delivered: false }),
+    record,
+  });
+  assert.deepEqual(recorded, [{ attempt: 4, retry: outboxRetrySeconds(4) }]);
+});
+
 test("poison signup is dead-lettered and later siblings do not reemit", async () => {
   const items = ["a", "poison", "c"];
   const prepared: string[] = [];

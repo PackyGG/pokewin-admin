@@ -113,12 +113,30 @@ test("migration runner serializes, rolls back failures, and records only commits
     migrate,
     /SELECT EXISTS\(SELECT 1 FROM schema_migrations WHERE version = \$1\)/,
   );
+  // The SQL that runs and the checksum that is recorded come from ONE read of
+  // the file, so the recorded checksum can never describe a different revision
+  // than the one that was executed.
   assert.match(
     migrate,
-    /await client\.query\(await readFile[\s\S]*?INSERT INTO schema_migrations[\s\S]*?COMMIT/,
+    /const raw = await readFile\(join\(migrationsDir, file\)\);\s*const checksum = computeChecksum\(raw\);/,
+  );
+  assert.match(
+    migrate,
+    /await client\.query\(raw\.toString\("utf8"\)\)[\s\S]*?INSERT INTO schema_migrations[\s\S]*?COMMIT/,
   );
   assert.match(migrate, /catch \(error\) \{\s+await client\.query\("ROLLBACK"\)/);
   assert.match(migrate, /SELECT pg_advisory_unlock\(\$1\)/);
+  // The blocking advisory lock must not inherit the pool's statement_timeout:
+  // during a rolling deploy the waiting replica would abort with 57014 and
+  // fail its boot before app.listen().
+  assert.match(migrate, /await client\.query\("SET statement_timeout = 0"\);/);
+  assert.match(migrate, /await client\.query\("RESET statement_timeout"\)/);
+  // A dead connection must not let the cleanup throw out of `finally` and
+  // replace the real migration error.
+  assert.match(
+    migrate,
+    /pg_advisory_unlock\(\$1\)", \[841_772_991\]\)\s*\.catch\(/,
+  );
 });
 
 test("fiat scores retain an explicit model identity", async () => {

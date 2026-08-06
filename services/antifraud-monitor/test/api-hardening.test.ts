@@ -495,10 +495,150 @@ test("hardened route behaviors stay wired in server.ts", async () => {
   // Rule creation is bounded and de-duplicated.
   assert.match(server, /error: "rule_limit_reached"/);
   assert.match(server, /error: "duplicate_rule"/);
-  // Probes bypass the limiter; unseen-count windows are bounded server-side.
-  assert.ok(server.split("config: { rateLimit: false }").length >= 3);
+  // /health touches nothing and stays fully exempt from the limiter.
+  assert.match(server, /app\.get\("\/health", \{\s*config: \{ rateLimit: false \}/);
+  // /ready DOES touch three pools, so it is metered instead of exempt — with a
+  // never-banning limiter so the platform probe cannot be banned off its own
+  // healthcheck — and its probe result is memoized for a beat.
+  assert.match(server, /const READY_DB_PROBE_TTL_MS = 1_000;/);
+  assert.match(
+    server,
+    /app\.get\("\/ready", \{\s*config: \{\s*rateLimit: \{\s*max: 60,\s*timeWindow: "1 minute",\s*ban: -1,/,
+  );
+  // A webapp (Vercel) outage must never mark the fraud monitor NOT READY.
+  assert.doesNotMatch(server, /webapp_monitor_\$\{/);
+  // unseen-count windows are bounded server-side.
   assert.match(server, /window must not exceed 31 days/);
   assert.match(server, /first_seen_at > \$1::timestamptz/);
   // Scoring changes broadcast a live frame like rules already do.
   assert.match(server, /publishCommittedMutation\("score_weight\.updated"/);
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed write authorization
+// ---------------------------------------------------------------------------
+
+/**
+ * Scans every `src/*.ts` file for registered POST/PUT/PATCH/DELETE routes and
+ * asserts each one rejects the widely-distributed read token. `auth.ts` is
+ * fail-closed by construction, so this test is the tripwire for the one way
+ * that can regress: someone adding a path to READ_TOKEN_WRITES, or a mutating
+ * route slipping into a carve-out.
+ *
+ * Known, deliberate exceptions are listed below with the reason each is safe.
+ */
+const READ_TOKEN_WRITE_EXCEPTIONS = new Map<string, string>([
+  [
+    "POST /v1/ws/tickets",
+    "mints a short-lived ws ticket for an already-authenticated dashboard actor",
+  ],
+  [
+    "POST /v1/fiat-eligibility/check",
+    "authenticated by the FIAT_ELIGIBILITY_* api keys in the onRequest hook; " +
+      "never reaches serviceRequestAuthorized",
+  ],
+]);
+
+/** Substitutes a concrete value for every `:param` segment. */
+function concretePath(routePath: string): string {
+  return routePath.replace(/:[A-Za-z0-9_]+/g, "sample-value");
+}
+
+test("every registered write route rejects the read token", async () => {
+  const { readdir } = await import("node:fs/promises");
+  const srcDir = new URL("../src/", import.meta.url);
+  const files = (await readdir(srcDir)).filter((name) => name.endsWith(".ts"));
+
+  const literal =
+    /\b(?:app|server|instance|fastify)\.(post|put|patch|delete)\(\s*[`"]([^`"]+)[`"]/g;
+  const routes = new Set<string>();
+  for (const file of files) {
+    const source = await readFile(new URL(file, srcDir), "utf8");
+    for (const match of source.matchAll(literal)) {
+      const method = match[1]!.toUpperCase();
+      const path = match[2]!;
+      // Template segments like `/${action}` cannot be resolved statically;
+      // the enclosing literal prefix is what auth.ts matches on anyway.
+      routes.add(`${method} ${path.replace(/\$\{[^}]*\}/g, "sample-value")}`);
+    }
+    // Routes registered against an exported path constant.
+    if (/\.post\(\s*FIAT_ELIGIBILITY_PATH/.test(source)) {
+      routes.add("POST /v1/fiat-eligibility/check");
+    }
+  }
+
+  // Guard against the scan silently matching nothing.
+  assert.ok(
+    routes.size >= 20,
+    `expected to find at least 20 write routes, found ${routes.size}`,
+  );
+  assert.ok(routes.has("POST /v1/rules"));
+  assert.ok(routes.has("PUT /v1/scoring/:key"));
+  assert.ok(routes.has("POST /v1/fiat-eligibility/check"));
+  assert.ok(routes.has("POST /v1/ws/tickets"));
+
+  const config = {
+    API_TOKEN: "read-token-that-is-at-least-32-chars",
+    API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-chars",
+  };
+  for (const route of routes) {
+    const [method = "", rawPath = ""] = route.split(" ", 2);
+    const pathname = concretePath(rawPath);
+    const key = `${method} ${rawPath}`;
+    const readAllowed = serviceRequestAuthorized(
+      method,
+      pathname,
+      config.API_TOKEN,
+      config,
+    );
+    if (READ_TOKEN_WRITE_EXCEPTIONS.has(key)) {
+      continue;
+    }
+    assert.equal(
+      readAllowed,
+      false,
+      `${key} must NOT be reachable with the read token`,
+    );
+    assert.equal(
+      serviceRequestAuthorized(method, pathname, config.API_ADMIN_TOKEN, config),
+      true,
+      `${key} must be reachable with the admin token`,
+    );
+  }
+});
+
+test("write authorization is fail-closed for routes nobody enumerated", () => {
+  const config = {
+    API_TOKEN: "read-token-that-is-at-least-32-chars",
+    API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-chars",
+  };
+  // A hypothetical future write route that no allowlist mentions.
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    assert.equal(
+      serviceRequestAuthorized(method, "/v1/not-yet-invented", config.API_TOKEN, config),
+      false,
+      `${method} on an unenumerated path must default to admin-only`,
+    );
+    assert.equal(
+      serviceRequestAuthorized(
+        method,
+        "/v1/not-yet-invented",
+        config.API_ADMIN_TOKEN,
+        config,
+      ),
+      true,
+    );
+  }
+  // Safe methods keep their read-token access.
+  for (const method of ["GET", "HEAD", "OPTIONS"]) {
+    assert.equal(
+      serviceRequestAuthorized(method, "/v1/cases", config.API_TOKEN, config),
+      true,
+    );
+  }
+  // The one deliberate read-token write stays reachable.
+  assert.equal(
+    serviceRequestAuthorized("POST", "/v1/ws/tickets", config.API_TOKEN, config),
+    true,
+  );
 });
