@@ -5,10 +5,11 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("Discord message history is bounded, private, durable, and idempotent", async () => {
-  const [route, service, migration, schema, scopes, endpoints] = await Promise.all([
+  const [route, service, migration, exclusionMigration, schema, scopes, endpoints] = await Promise.all([
     read("src/app/api/v1/discord/message-events/route.ts"),
     read("src/lib/discord-message-history.ts"),
     read("drizzle/admin/migrations/20260806_discord_message_history.sql"),
+    read("drizzle/admin/migrations/20260806_discord_message_history_exclusions.sql"),
     read("src/lib/db-schema/admin/schema.ts"),
     read("src/lib/api-auth/scopes.ts"),
     read("src/lib/api-auth/endpoints.ts"),
@@ -38,6 +39,9 @@ test("Discord message history is bounded, private, durable, and idempotent", asy
   assert.match(service, /MESSAGE_LOG_EXCLUDED_USER_IDS\.has\(authorId\)/);
   assert.match(service, /authorIsBot === true/);
   assert.match(service, /webhookId !== null/);
+  assert.match(service, /excluded_from_logging/);
+  assert.match(service, /!snapshot && authorId === null/);
+  assert.match(service, /snapshot\.author_id !== input\.message\.authorId/);
   assert.match(service, /discord_message_snapshots/);
   assert.match(service, /discord_message_events/);
   assert.match(service, /before_state/);
@@ -51,6 +55,9 @@ test("Discord message history is bounded, private, durable, and idempotent", asy
   assert.match(migration, /discord_message_events_author_observed_idx/);
   assert.match(migration, /discord_message_events_message_observed_idx/);
   assert.match(migration, /array_append\("scopes", 'discord:message-events'\)/);
+  assert.match(exclusionMigration, /ADD COLUMN IF NOT EXISTS "excluded_from_logging"/);
+  assert.match(exclusionMigration, /"content" = NULL/);
+  assert.match(exclusionMigration, /"attachments" = '\[\]'::jsonb/);
   assert.match(schema, /export const discord_message_snapshots/);
   assert.match(schema, /export const discord_message_events/);
   assert.match(scopes, /"discord:message-events"/);

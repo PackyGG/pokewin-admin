@@ -80,6 +80,7 @@ type SnapshotRow = {
   author_display_name: string | null;
   author_is_bot: boolean | null;
   webhook_id: string | null;
+  excluded_from_logging: boolean;
   content: string | null;
   attachments: DiscordMessageAttachment[];
   referenced_message_id: string | null;
@@ -225,6 +226,7 @@ export async function recordDiscordMessageEvents(
           author_display_name,
           author_is_bot,
           webhook_id,
+          excluded_from_logging,
           content,
           attachments,
           referenced_message_id,
@@ -243,6 +245,11 @@ export async function recordDiscordMessageEvents(
         && (
           snapshot.guild_id !== input.message.guildId
           || snapshot.channel_id !== input.message.channelId
+          || (
+            snapshot.author_id !== null
+            && input.message.authorId !== null
+            && snapshot.author_id !== input.message.authorId
+          )
         )
       ) {
         throw new DiscordMessageHistoryError(
@@ -255,15 +262,80 @@ export async function recordDiscordMessageEvents(
       const authorId = input.message.authorId ?? snapshot?.author_id ?? null;
       const authorIsBot = input.message.authorIsBot ?? snapshot?.author_is_bot ?? null;
       const webhookId = input.message.webhookId ?? snapshot?.webhook_id ?? null;
-      if (
-        authorIsBot === true
+      const excludedFromLogging = snapshot?.excluded_from_logging === true
+        || authorIsBot === true
         || webhookId !== null
-        || (authorId !== null && MESSAGE_LOG_EXCLUDED_USER_IDS.has(authorId))
-      ) {
+        || (authorId !== null && MESSAGE_LOG_EXCLUDED_USER_IDS.has(authorId));
+      if (excludedFromLogging) {
+        const observedAt = new Date(input.observedAt).toISOString();
+        const createdAt = snapshot?.discord_created_at
+          ?? new Date(input.message.createdAt).toISOString();
+        if (!snapshot) {
+          await tx.execute(sql`
+            INSERT INTO discord_message_snapshots (
+              message_id,
+              guild_id,
+              channel_id,
+              author_id,
+              author_username,
+              author_display_name,
+              author_is_bot,
+              webhook_id,
+              excluded_from_logging,
+              content,
+              attachments,
+              referenced_message_id,
+              discord_created_at,
+              discord_edited_at,
+              deleted_at,
+              first_observed_at,
+              last_observed_at
+            ) VALUES (
+              ${input.message.messageId},
+              ${input.message.guildId},
+              ${input.message.channelId},
+              ${authorId},
+              NULL,
+              NULL,
+              ${authorIsBot},
+              ${webhookId},
+              true,
+              NULL,
+              '[]'::jsonb,
+              NULL,
+              ${createdAt}::timestamptz,
+              NULL,
+              NULL,
+              ${observedAt}::timestamptz,
+              ${observedAt}::timestamptz
+            )
+          `);
+        } else {
+          await tx.execute(sql`
+            UPDATE discord_message_snapshots
+            SET
+              author_id = COALESCE(${input.message.authorId}, author_id),
+              author_is_bot = COALESCE(${input.message.authorIsBot}, author_is_bot),
+              webhook_id = COALESCE(${input.message.webhookId}, webhook_id),
+              excluded_from_logging = true,
+              content = NULL,
+              attachments = '[]'::jsonb,
+              referenced_message_id = NULL,
+              last_observed_at = GREATEST(last_observed_at, ${observedAt}::timestamptz),
+              updated_at = now()
+            WHERE message_id = ${input.message.messageId}
+          `);
+        }
         results.push({ eventId: input.eventId, ignored: true });
         continue;
       }
-
+      if (!snapshot && authorId === null) {
+        // A partial mutation with no baseline cannot be safely classified. It
+        // may belong to an excluded admin/bot/webhook, so fail closed instead
+        // of creating an "unknown user" audit record.
+        results.push({ eventId: input.eventId, ignored: true });
+        continue;
+      }
       const currentState = snapshot
         ? state(snapshot.content, snapshot.attachments)
         : state(null, []);
@@ -339,6 +411,7 @@ export async function recordDiscordMessageEvents(
             author_display_name,
             author_is_bot,
             webhook_id,
+            excluded_from_logging,
             content,
             attachments,
             referenced_message_id,
@@ -356,6 +429,7 @@ export async function recordDiscordMessageEvents(
             ${authorDisplayName},
             ${authorIsBot},
             ${webhookId},
+            false,
             ${input.message.content},
             ${JSON.stringify(input.message.attachments)}::jsonb,
             ${input.message.referencedMessageId},
