@@ -396,11 +396,12 @@ async function DashboardUpgraderDoubleDownToday() {
 /**
  * P&L Today tile — house P&L for the current calendar day since 00:00
  * UTC (NOT a rolling past-24h window). Its own standalone query
- * (getTodayPnl, cached 60s + keyed on the UTC day boundary), wrapped in
- * safeQuery so a slow today-window scan degrades to a tile fallback
- * instead of crashing the dashboard. The query reuses the canonical
- * windowed-delta P&L formula (calculateWindowedPnl), so this reconciles
- * with the period-P&L card + daily-P&L chart.
+ * (getTodayPnl — UNCACHED, so the figure is always live; the page's own
+ * 60s AutoRefresh paces it), wrapped in safeQuery so a slow today-window
+ * scan degrades to a tile fallback instead of crashing the dashboard. The
+ * query reuses the canonical windowed-delta P&L formula
+ * (calculateWindowedPnlOneShot — same math as calculateWindowedPnl, one
+ * statement), so this reconciles with the period-P&L card + daily-P&L chart.
  *
  * Also fetches the "today" GGR payload (owner request, 2026-07-02: fill the
  * P&L Today tile's empty space with GGR at the bottom, P&L stays at the
