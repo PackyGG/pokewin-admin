@@ -21,22 +21,18 @@ import {
   listFiatAssessments,
   type FiatAssessment,
 } from "@/lib/antifraud/fiat-deposits-api";
-import { getFiatCreditReviewStates } from "@/lib/antifraud/fiat-credit-review";
-import { canManageAntifraud } from "@/lib/antifraud/access";
-import { getFiatDepositReviewUsers } from "@/lib/queries/fiat-deposit-review-users";
-import { requireAntifraudPageAccess } from "@/lib/require-antifraud-access";
+import {
+  getFiatCreditReviewStates,
+  type FiatCreditReviewState,
+} from "@/lib/antifraud/fiat-credit-review";
+import { safeQuery } from "@/lib/errors/safe-query";
+import {
+  getFiatDepositReviewUsers,
+  type FiatDepositReviewUser,
+} from "@/lib/queries/fiat-deposit-review-users";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
-import { parsePage, parsePerPage } from "@/lib/utils/pagination";
 import { RequireKycAction } from "./require-kyc-action";
 import { FiatDepositReviewDecision } from "./review-decision";
-
-export const metadata = { title: "Fiat Deposit Reviews" };
-
-type SearchParams = Record<string, string | string[] | undefined>;
-
-function firstValue(value: string | string[] | undefined): string | undefined {
-  return Array.isArray(value) ? value[0] : value;
-}
 
 function money(cents: number): string {
   return formatCurrency(cents / 100);
@@ -85,60 +81,117 @@ function toReviewItem(item: FiatAssessment): ReviewItem {
   };
 }
 
-async function loadAllActiveAssessments(): Promise<{
-  assessments: FiatAssessment[];
-  failed: boolean;
-}> {
-  try {
-    const first = await listFiatAssessments({ page: 1, limit: 100, status: "review" });
-    if (first.error) return { assessments: [], failed: true };
+/** Wall-clock bound on every read this queue makes, matching the other
+ *  antifraud routes. The monitor client has its own 12s fetch timeout, but a
+ *  hung socket / slow admin-DB read must not be able to hold the segment. */
+const QUERY_TIMEOUT_MS = 10_000;
 
-    const assessments = [...first.data];
-    const pageCount = Math.max(first.pagination?.pages ?? 1, 1);
-    for (let start = 2; start <= pageCount; start += 10) {
-      const batch = await Promise.all(
-        Array.from(
-          { length: Math.min(10, pageCount - start + 1) },
-          (_, index) =>
-            listFiatAssessments({
-              page: start + index,
-              limit: 100,
-              status: "review",
-            }),
-        ),
-      );
-      if (batch.some((result) => result.error)) {
-        return { assessments: [], failed: true };
-      }
-      assessments.push(...batch.flatMap((result) => result.data));
-    }
-    return { assessments, failed: false };
-  } catch {
-    return { assessments: [], failed: true };
+/** Monitor page size. Its API caps `limit` at 100, so this is the largest
+ *  number of review rows a single upstream hop can return. */
+const UPSTREAM_PAGE_SIZE = 100;
+
+/**
+ * Hard ceiling on how many upstream pages this page will pull.
+ *
+ * The queue is filtered against the ADMIN DB (`admin_fiat_credit_reviews`)
+ * AFTER the monitor returns it, because the monitor has no knowledge of which
+ * deposits staff already decided — so the visible list cannot be produced by
+ * asking the monitor for one page. The old code answered that by walking
+ * EVERY upstream page (unbounded: the monitor keeps declined intents in
+ * `status='review'` forever, so that list only ever grows).
+ *
+ * This bounds the walk at 5 × 100 = 500 review rows, fetched as ONE parallel
+ * wave, and reports the shortfall LOUDLY when the upstream queue is bigger.
+ * A money queue must never quietly hide rows.
+ */
+const MAX_UPSTREAM_PAGES = 5;
+
+type QueueScan = {
+  assessments: FiatAssessment[];
+  /** Upstream review rows outside the scan window (0 in the normal case). */
+  notScanned: number;
+};
+
+const EMPTY_SCAN: QueueScan = { assessments: [], notScanned: 0 };
+
+/**
+ * Bounded read of the active review queue.
+ *
+ * Throws on ANY upstream failure so `safeQuery` can turn it into the loud
+ * degraded banner — an empty queue rendered as if it were real would read as
+ * "nothing to decide", which is the one wrong answer this page must not give.
+ */
+async function scanActiveAssessments(): Promise<QueueScan> {
+  const first = await listFiatAssessments({
+    page: 1,
+    limit: UPSTREAM_PAGE_SIZE,
+    status: "review",
+  });
+  if (first.error) {
+    throw new Error("The Antifraud monitor did not return the review queue.");
   }
+
+  const assessments = [...first.data];
+  const pageCount = Math.max(first.pagination?.pages ?? 1, 1);
+  const scanPages = Math.min(pageCount, MAX_UPSTREAM_PAGES);
+  if (scanPages > 1) {
+    // ONE parallel wave (≤ 4 calls), not the old serial batches.
+    const rest = await Promise.all(
+      Array.from({ length: scanPages - 1 }, (_, index) =>
+        listFiatAssessments({
+          page: index + 2,
+          limit: UPSTREAM_PAGE_SIZE,
+          status: "review",
+        }),
+      ),
+    );
+    if (rest.some((result) => result.error)) {
+      throw new Error("The Antifraud monitor did not return the review queue.");
+    }
+    assessments.push(...rest.flatMap((result) => result.data));
+  }
+
+  const upstreamTotal = first.pagination?.total ?? assessments.length;
+  return {
+    assessments,
+    notScanned: Math.max(0, upstreamTotal - assessments.length),
+  };
 }
 
-export default async function FiatDepositReviewsPage({
-  searchParams,
+export async function FiatDepositReviewQueue({
+  page,
+  perPage,
+  canManageKyc,
 }: {
-  searchParams: Promise<SearchParams>;
+  page: number;
+  perPage: number;
+  canManageKyc: boolean;
 }) {
-  const session = await requireAntifraudPageAccess();
-  const canManageKyc = canManageAntifraud(session);
-  const raw = await searchParams;
-  const page = parsePage(firstValue(raw.page));
-  const perPage = Math.min(parsePerPage(firstValue(raw.perPage)), 100);
   const offset = (page - 1) * perPage;
 
-  const { assessments, failed: sourceFailed } = await loadAllActiveAssessments();
-  const stateResult = await getFiatCreditReviewStates(
-    assessments.map((item) => item.deposit_intent_id),
-  ).then(
-    (value) => ({ ok: true as const, value }),
-    () => ({ ok: false as const, value: new Map() }),
+  const scanResult = await safeQuery(
+    () => scanActiveAssessments(),
+    EMPTY_SCAN,
+    "antifraud.fiat-review-queue",
+    QUERY_TIMEOUT_MS,
   );
-  const queueFailed = sourceFailed || !stateResult.ok;
-  const states = stateResult.value;
+  const { assessments, notScanned } = scanResult.data;
+
+  // Genuinely dependent: the decision states are keyed on the intent ids the
+  // scan just returned, and the player lookup is keyed on the user ids of the
+  // rows that survive the filter. Both stay bounded by the scan window.
+  const stateResult = await safeQuery(
+    () =>
+      getFiatCreditReviewStates(
+        assessments.map((item) => item.deposit_intent_id),
+      ),
+    new Map<string, FiatCreditReviewState>(),
+    "antifraud.fiat-review-states",
+    QUERY_TIMEOUT_MS,
+  );
+
+  const queueFailed = scanResult.error !== null || stateResult.error !== null;
+  const states = stateResult.data;
   const activeItems = assessments
     .filter((item) => {
       const state = states.get(item.deposit_intent_id);
@@ -149,13 +202,49 @@ export default async function FiatDepositReviewsPage({
     items: queueFailed ? [] : activeItems.slice(offset, offset + perPage),
     total: queueFailed ? 0 : activeItems.length,
   };
-  const users = await getFiatDepositReviewUsers(
-    queue.items.map((item) => item.user_id),
-  ).catch(() => new Map());
+  const usersResult = await safeQuery(
+    () => getFiatDepositReviewUsers(queue.items.map((item) => item.user_id)),
+    new Map<string, FiatDepositReviewUser>(),
+    "antifraud.fiat-review-users",
+    QUERY_TIMEOUT_MS,
+  );
+  const users = usersResult.data;
   const totalPages = Math.ceil(queue.total / perPage);
 
   return (
-    <div className="space-y-3">
+    <>
+      {scanResult.error !== null && (
+        <DegradedNotice
+          title="The Fiat review queue could not be loaded"
+          detail={
+            scanResult.kind === "timeout"
+              ? "The monitor read timed out. This queue is EMPTY because of that failure, not because there is nothing to decide — refresh before concluding anything."
+              : "The monitor read failed. This queue is EMPTY because of that failure, not because there is nothing to decide."
+          }
+        />
+      )}
+      {stateResult.error !== null && (
+        <DegradedNotice
+          title="Existing decisions could not be checked"
+          detail={
+            stateResult.kind === "timeout"
+              ? "The admin-side decision read timed out, so already-decided deposits cannot be filtered out. The queue is EMPTY rather than showing deposits somebody may already have actioned — refresh to retry."
+              : "The admin-side decision read failed, so already-decided deposits cannot be filtered out. The queue is EMPTY rather than showing deposits somebody may already have actioned."
+          }
+        />
+      )}
+      {!queueFailed && notScanned > 0 && (
+        <DegradedNotice
+          title="The review queue is larger than one scan window"
+          detail={`Only the ${assessments.length} most recent deposits in the monitor's review state were checked; up to ${notScanned} older ones are NOT listed below. Decide the visible queue down first, then refresh.`}
+        />
+      )}
+      {usersResult.error !== null && (
+        <DegradedNotice
+          title="Player details could not be loaded"
+          detail="Every review below is real and complete, but the player name and country are missing — rows fall back to the raw user id."
+        />
+      )}
         <div className="space-y-3 lg:hidden">
           {queue.items.length === 0 ? (
             <QueueEmpty failed={queueFailed} />
@@ -300,6 +389,32 @@ export default async function FiatDepositReviewsPage({
           perPage={perPage}
           degraded={queueFailed}
         />
+    </>
+  );
+}
+
+/**
+ * Loud degradation for a money surface — same contract as `/antifraud/refunds`.
+ * A failed read is stated outright instead of being smoothed into an empty
+ * state, because "no deposits need review" and "we could not find out" must
+ * never look the same on this page.
+ */
+function DegradedNotice({
+  title,
+  detail,
+}: {
+  title: string;
+  detail: string;
+}) {
+  return (
+    <div
+      role="status"
+      className="rounded-xl border border-amber-500/30 bg-amber-500/5 px-4 py-3"
+    >
+      <p className="text-sm font-semibold text-amber-800 dark:text-amber-200">
+        {title}
+      </p>
+      <p className="mt-1 text-xs text-muted-foreground">{detail}</p>
     </div>
   );
 }

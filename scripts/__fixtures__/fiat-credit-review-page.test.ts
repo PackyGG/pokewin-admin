@@ -7,6 +7,9 @@ const read = (path: string): string => readFileSync(path, "utf8");
 const page = read(
   "src/app/(antifraud)/antifraud/fiat-deposits/credit-review-page.tsx",
 );
+// Shell-first split: `page.tsx` owns the access gate + searchParams and paints
+// the static shell; `credit-review-page.tsx` owns the queue behind <Suspense>.
+const shell = read("src/app/(antifraud)/antifraud/fiat-deposits/page.tsx");
 const actions = read(
   "src/app/(antifraud)/antifraud/fiat-deposits/actions.ts",
 );
@@ -40,9 +43,18 @@ test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.doesNotMatch(page, /BigDepositsToggle/);
   assert.doesNotMatch(page, /getWithdrawals/);
   assert.doesNotMatch(page, /tab ===/);
-  assert.match(page, /loadAllActiveAssessments/);
+  assert.match(page, /scanActiveAssessments/);
   assert.doesNotMatch(page, /remainingPages|Math\.min\(Math\.max/);
-  assert.match(page, /requireAntifraudPageAccess\(\)/);
+  // The upstream walk stays BOUNDED. The monitor keeps staff-declined intents
+  // in `status='review'` forever, so an all-pages loop grows without limit.
+  assert.match(page, /const MAX_UPSTREAM_PAGES = \d+/);
+  assert.match(page, /Math\.min\(pageCount, MAX_UPSTREAM_PAGES\)/);
+  // …and every read is timeout-bounded and degrades LOUDLY (money surface).
+  assert.match(page, /safeQuery\(/);
+  assert.match(page, /DegradedNotice/);
+  assert.match(shell, /requireAntifraudPageAccess\(\)/);
+  assert.match(shell, /<Suspense/);
+  assert.match(shell, /FiatDepositReviewsSkeleton/);
   assert.match(sidebar, /label: "Deposit reviews"/);
   assert.doesNotMatch(nav, /id: "nav\.deposits"/);
   assert.match(legacyPage, /redirect\("\/antifraud\/fiat-deposits"\)/);
@@ -94,6 +106,10 @@ test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit"
 test("Admin Deposits is manager-only and supports independent refund and ban decisions", () => {
   assert.match(adminPage, /requireAntifraudManagerPage\(\)/);
   assert.match(adminPage, /getDeclinedFiatCreditReviews/);
+  // The declined queue streams behind <Suspense> with a timeout-bounded read.
+  assert.match(adminPage, /<Suspense/);
+  assert.match(adminPage, /safeQuery\(/);
+  assert.match(adminPage, /antifraud\.admin\.declined-deposits/);
   assert.match(adminActions, /requireAntifraudManager\(/);
   assert.match(adminActions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
   assert.match(adminActions, /whopAdminClient/);
