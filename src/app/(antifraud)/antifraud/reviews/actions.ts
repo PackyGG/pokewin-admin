@@ -1265,6 +1265,70 @@ export async function assignReview(input: unknown): Promise<void> {
         : "Unassigned this case.",
     });
 
+    // Claiming a case pulls it out of every analyst's active queue the same
+    // way the explicit "Postpone" button does — a case someone is already
+    // working must not also sit in front of everyone else. If it isn't
+    // closed before the window lapses it resurfaces in the Postponed tab.
+    // Unassigning reverses that: the case belongs back in the live queue
+    // immediately, not hidden behind a stale claim.
+    if (assignee) {
+      const dueAt = new Date(Date.now() + REVIEW_REMINDER_DELAYS_MS.postponed);
+      await tx.execute(sql`
+        INSERT INTO antifraud_review_workflow (
+          review_id,
+          queue_state,
+          evidence,
+          postponed_until,
+          postponed_by,
+          state_updated_at,
+          updated_at
+        )
+        VALUES (
+          ${reviewId}::uuid,
+          'normal',
+          '{}'::jsonb,
+          ${dueAt},
+          ${session.userId}::uuid,
+          now(),
+          now()
+        )
+        ON CONFLICT (review_id) DO UPDATE SET
+          postponed_until = EXCLUDED.postponed_until,
+          postponed_by = EXCLUDED.postponed_by,
+          updated_at = now()
+      `);
+      await tx.execute(sql`
+        INSERT INTO antifraud_review_reminder_state (
+          review_id,
+          reminder_kind,
+          next_reminder_at,
+          lease_token,
+          leased_until,
+          updated_at
+        )
+        VALUES (
+          ${reviewId}::uuid,
+          'postponed',
+          ${dueAt},
+          NULL,
+          NULL,
+          now()
+        )
+        ON CONFLICT (review_id) DO UPDATE SET
+          reminder_kind = 'postponed',
+          next_reminder_at = EXCLUDED.next_reminder_at,
+          lease_token = NULL,
+          leased_until = NULL,
+          updated_at = now()
+      `);
+    } else {
+      await tx.execute(sql`
+        UPDATE antifraud_review_workflow
+        SET postponed_until = NULL, postponed_by = NULL, updated_at = now()
+        WHERE review_id = ${reviewId}::uuid
+      `);
+    }
+
     return { reason: current.reason };
   });
   if (!applied) return;
