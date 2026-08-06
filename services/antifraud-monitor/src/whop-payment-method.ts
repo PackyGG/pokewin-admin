@@ -1,14 +1,45 @@
+import { createHash } from "node:crypto";
+
 export const APPLE_PAY_RISK_MULTIPLIER = 0.8;
 
 const METHOD_KEYS = new Set(["payment_method_type", "paymentMethodType"]);
 const CARD_BRAND_KEYS = new Set(["card_brand", "cardBrand"]);
 const CARD_LAST4_KEYS = new Set(["card_last4", "cardLast4"]);
+const PAYMENT_METHOD_ID_KEYS = new Set([
+  "payment_method_id",
+  "paymentMethodId",
+  "payment_method_token",
+  "paymentMethodToken",
+  "token_id",
+  "tokenId",
+]);
+const CUSTOMER_ID_KEYS = new Set([
+  "customer_id",
+  "customerId",
+  "whop_user_id",
+  "whopUserId",
+]);
 
 export type WhopPaymentMethodInfo = {
   type: string | null;
   cardBrand: string | null;
   cardLast4: string | null;
+  /** Stable non-reversible identities used only for cross-account matching. */
+  customerIdHash: string | null;
+  paymentMethodIdHash: string | null;
 };
+
+function object(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function identityHash(value: string | null): string | null {
+  return value
+    ? createHash("sha256").update(value).digest("hex")
+    : null;
+}
 
 export function normalizeWhopPaymentMethod(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -57,15 +88,27 @@ function findValue(
 export function whopPaymentMethodInfo(
   ...sources: unknown[]
 ): WhopPaymentMethodInfo {
+  let type: string | null = null;
+  let cardBrand: string | null = null;
+  let cardLast4: string | null = null;
+  let customerId: string | null = null;
+  let paymentMethodId: string | null = null;
   for (const source of sources) {
-    const type = normalizeWhopPaymentMethod(findValue(source, METHOD_KEYS));
-    const cardBrand = findValue(source, CARD_BRAND_KEYS)?.toLowerCase() ?? null;
-    const cardLast4 = findValue(source, CARD_LAST4_KEYS);
-    if (type || cardBrand || cardLast4) {
-      return { type, cardBrand, cardLast4 };
-    }
+    type ??= normalizeWhopPaymentMethod(findValue(source, METHOD_KEYS));
+    cardBrand ??= findValue(source, CARD_BRAND_KEYS)?.toLowerCase() ?? null;
+    cardLast4 ??= findValue(source, CARD_LAST4_KEYS);
+    const data = object(object(source).data);
+    customerId ??= scalarString(object(data.user).id)
+      ?? findValue(data, CUSTOMER_ID_KEYS);
+    paymentMethodId ??= findValue(data, PAYMENT_METHOD_ID_KEYS);
   }
-  return { type: null, cardBrand: null, cardLast4: null };
+  return {
+    type,
+    cardBrand,
+    cardLast4,
+    customerIdHash: identityHash(customerId),
+    paymentMethodIdHash: identityHash(paymentMethodId),
+  };
 }
 
 export function whopPaymentMethodFromPayload(

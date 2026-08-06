@@ -30,6 +30,7 @@ const signalSchema = z.object({
   points: z.number(),
   tone: z.enum(["good", "neutral", "warning", "bad"]),
   category,
+  evidenceOnly: z.literal(true).optional(),
 });
 const checkSchema = z.object({
   key: category,
@@ -66,6 +67,8 @@ const providerEvidenceSchema = z.object({
   paymentMethodType: z.string().nullable(),
   cardBrand: z.string().nullable().optional().default(null),
   cardLast4: z.string().nullable().optional().default(null),
+  customerIdHash: z.string().nullable().optional().default(null),
+  paymentMethodIdHash: z.string().nullable().optional().default(null),
 });
 const fundingEvidenceSchema = z.object({
   priorCryptoDeposits: z.number(),
@@ -104,6 +107,24 @@ const accountEvidenceSchema = z.object({
   priorRefundedFiat: z.number(),
 });
 const breakdownSchema = z.record(category, z.number());
+const detectionEvidenceSchema = z.object({
+  checkoutEmailDiffersFromAccount: z.boolean(),
+  disposableCheckoutEmailDomain: z.string().nullable(),
+  billingCountryMismatch: z.boolean(),
+  checkoutEmailSharedUsers: z.number(),
+  whopCustomerSharedUsers: z.number(),
+  paymentMethodSharedUsers: z.number(),
+  cardSignatureSharedUsers: z.number(),
+  checkoutIpSharedUsers: z.number(),
+  checkoutDeviceSharedUsers: z.number(),
+  exactAmountAttempts30m: z.number(),
+  exactAmountDistinctUsers30m: z.number(),
+  exactAmountSettled7d: z.number(),
+  exactAmountRefunded7d: z.number(),
+  tipsAfterDeposit: z.number(),
+  tipsAfterDepositUsd: z.number(),
+  minutesToFirstTip: z.number().nullable(),
+});
 
 const assessmentSchema = z.object({
   deposit_intent_id: z.string().uuid(),
@@ -137,6 +158,24 @@ const assessmentSchema = z.object({
   account_evidence: accountEvidenceSchema,
   score_breakdown: breakdownSchema,
   flow_checks: z.array(checkSchema),
+  detection_evidence: detectionEvidenceSchema.optional().default({
+    checkoutEmailDiffersFromAccount: false,
+    disposableCheckoutEmailDomain: null,
+    billingCountryMismatch: false,
+    checkoutEmailSharedUsers: 0,
+    whopCustomerSharedUsers: 0,
+    paymentMethodSharedUsers: 0,
+    cardSignatureSharedUsers: 0,
+    checkoutIpSharedUsers: 0,
+    checkoutDeviceSharedUsers: 0,
+    exactAmountAttempts30m: 0,
+    exactAmountDistinctUsers30m: 0,
+    exactAmountSettled7d: 0,
+    exactAmountRefunded7d: 0,
+    tipsAfterDeposit: 0,
+    tipsAfterDepositUsd: 0,
+    minutesToFirstTip: null,
+  }),
   review_status: reviewStatusSchema,
   review_decision: z.string().nullable(),
   reviewed_by: z.string().nullable(),

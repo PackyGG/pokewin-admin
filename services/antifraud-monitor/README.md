@@ -115,7 +115,11 @@ environment is rejected.
   "createdAt": "2026-07-29T12:00:00.000Z",
   "ipAddress": "203.0.113.20",
   "fingerprint": "fresh-fingerprint-request-id",
-  "userID": "packy-user-id"
+  "userID": "packy-user-id",
+  "amountCents": 2000,
+  "currency": "USD",
+  "locale": "en-US",
+  "timezone": "Europe/Berlin"
 }
 ```
 
@@ -130,6 +134,12 @@ account and Fiat locks, KYC, country policy, every fraud-enforcement list
 (operator IP/fingerprint/email-domain and disposable email), shared networks,
 signup/case history, deposit, play and reward
 behaviour, previous Fiat history and recent eligibility velocity.
+
+`amountCents`, `currency`, `locale`, and `timezone` are optional checkout
+context. When supplied, amount/currency burst evidence is captured before
+authorization. IP/device velocity, cross-account reuse, platform bursts,
+linked active cases, amount clustering, and locale context are evidence-only:
+they add zero points and cannot deny, contain, lock, refund, or start KYC.
 
 ### Hard containment rules
 
@@ -168,6 +178,12 @@ An exact amount/currency becomes active only when at least five payments across
 three accounts were refunded and refunds are at least 50% of all settled
 payments for that amount inside seven days. Refunded members are contained, and
 the next authorized matching payment is contained while the campaign is active.
+
+It also stores evidence-only payer-email, disposable-domain, billing-country,
+hashed customer/payment-method, IP/device, exact-amount, and rapid-tipping
+correlations. These observations add zero points and trigger no action. Whop's
+raw risk score is retained only as provider audit evidence; it never affects
+the score, verdict, alert routing, or review flag.
 
 ### Behaviour trust
 

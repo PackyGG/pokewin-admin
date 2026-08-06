@@ -182,6 +182,34 @@ const HISTORY_RULES: Rule[] = [
   },
 ];
 
+const OBSERVATION_RULES: Rule[] = [
+  {
+    title: "IP and device checkout velocity",
+    detail: "Repeated checks and distinct-account reuse over 10-minute and 24-hour windows.",
+    points: "Evidence only",
+  },
+  {
+    title: "Platform-wide checkout burst",
+    detail: "Detects coordinated traffic increases across all accounts, not only one user.",
+    points: "Evidence only",
+  },
+  {
+    title: "Linked active Fraud cases",
+    detail: "Finds high or critical cases connected through the current checkout IP or device.",
+    points: "Evidence only",
+  },
+  {
+    title: "Requested-amount cluster",
+    detail: "When the backend supplies amount and currency, detects repeated equal-value checkouts across accounts.",
+    points: "Evidence only",
+  },
+  {
+    title: "Locale and timezone context",
+    detail: "Stores caller-provided locale and timezone for later correlation without drawing an automatic conclusion.",
+    points: "Evidence only",
+  },
+];
+
 const CONTAINMENT_RULES: Rule[] = [
   {
     title: "Forged checkout identity",
@@ -196,12 +224,6 @@ const CONTAINMENT_RULES: Rule[] = [
     blocking: true,
   },
   {
-    title: "New-account identity change",
-    detail: "IP changed under 7 days old, or device changed under 36 hours old.",
-    points: "Contain",
-    blocking: true,
-  },
-  {
     title: "Changed identity with bad reputation",
     detail: "Both IP and device changed and the new identity has bad provider evidence.",
     points: "Contain",
@@ -210,7 +232,7 @@ const CONTAINMENT_RULES: Rule[] = [
   {
     title: "Rapid repeat payment",
     detail: "Another paid Fiat deposit completed less than 60 seconds ago.",
-    points: "Contain",
+    points: "Block",
     blocking: true,
   },
 ];
@@ -375,6 +397,12 @@ export default async function FiatEligibilityPage() {
         title="History, behavior, and trust"
         description="Previous risk, repeated behavior, and discounted small crypto deposits."
         rules={HISTORY_RULES}
+      />
+      <RuleSection
+        icon={Activity}
+        title="Evidence-only detections"
+        description="Stored for review with zero points and no automatic action."
+        rules={OBSERVATION_RULES}
       />
       <RuleSection
         icon={ShieldX}

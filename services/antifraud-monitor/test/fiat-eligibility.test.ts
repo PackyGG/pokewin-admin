@@ -225,6 +225,10 @@ test("Fiat request contract accepts only the exact dev/prod payload", () => {
     ipAddress: "2001:db8::123",
     fingerprint: "fingerprint-request-id",
     userID: "user-1",
+    amountCents: 2000,
+    currency: "USD",
+    locale: "en-US",
+    timezone: "Europe/Berlin",
   });
   assert.equal(parsed.success, true);
   assert.equal(
@@ -857,6 +861,41 @@ test("pre-Fiat reads operator and disposable email lists", async () => {
   assert.equal(matches.emailDomain, "mailinator.com");
   assert.equal(matches.disposableEmailDomain, "mailinator.com");
   assert.ok(queries.some((sql) => sql.includes("fiat_email_domain_blacklist")));
+});
+
+test("pre-Fiat observations query every assessment without creating actions", async () => {
+  let sql = "";
+  let values: unknown[] = [];
+  const evidence = await fiatEligibilityInternals.loadPrePaymentObservations({
+    query: async (text: string, bound: unknown[]) => {
+      sql = text;
+      values = bound;
+      return { rows: [{
+        ip_attempts_10m: 2,
+        device_attempts_10m: 1,
+        platform_attempts_10m: 19,
+        ip_distinct_users_24h: 2,
+        device_distinct_users_24h: 1,
+        linked_active_risk_users: 1,
+        amount_attempts_30m: 4,
+        amount_distinct_users_30m: 2,
+      }] };
+    },
+  } as never, {
+    environment: "prod",
+    userId: "user-1",
+    requestIp: "203.0.113.20",
+    checkoutVisitorId: "visitor-1",
+    amountCents: 2000,
+    currency: "USD",
+  });
+  assert.deepEqual(values, [
+    "prod", "user-1", "203.0.113.20", "visitor-1", 2000, "USD",
+  ]);
+  assert.match(sql, /fiat_eligibility_assessments/);
+  assert.match(sql, /provider_evidence#>>'\{requestContext,currency\}'/);
+  assert.equal(evidence.ipAttempts10m, 3);
+  assert.equal(evidence.amountDistinctUsers30m, 3);
 });
 
 test("behaviour rewards self-funded play and punishes reward farming", () => {

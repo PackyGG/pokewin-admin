@@ -41,6 +41,10 @@ export const fiatEligibilityRequestSchema = z.object({
   ),
   fingerprint: z.string().trim().min(10).max(200),
   userID: z.string().trim().min(1).max(100),
+  amountCents: z.number().int().positive().max(100_000_000).optional(),
+  currency: z.string().trim().regex(/^[A-Za-z]{3}$/).optional(),
+  locale: z.string().trim().min(2).max(35).optional(),
+  timezone: z.string().trim().min(1).max(100).optional(),
 }).strict();
 
 function bearerToken(authorization: string | undefined): string {

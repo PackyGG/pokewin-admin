@@ -111,26 +111,48 @@ test("known crypto funding and verified 3DS produce a good assessment", () => {
 test("established accounts with meaningful prior crypto funding receive lower fiat risk", () => {
   const established = scoreFiatDeposit({
     ...safeInput,
-    provider: { ...safeInput.provider, riskScore: 60 },
+    amountUsd: 500,
+    funding: { ...safeInput.funding, currentVsAverageRatio: 5 },
   });
   const recent = scoreFiatDeposit({
     ...safeInput,
-    provider: { ...safeInput.provider, riskScore: 60 },
-    account: { ...safeInput.account, accountAgeDays: 14 },
+    amountUsd: 500,
+    funding: { ...safeInput.funding, currentVsAverageRatio: 5 },
+    account: {
+      ...safeInput.account,
+      accountAgeDays: 14,
+    },
   });
   const cryptoDust = scoreFiatDeposit({
     ...safeInput,
-    provider: { ...safeInput.provider, riskScore: 60 },
+    amountUsd: 500,
     funding: {
       ...safeInput.funding,
       priorCryptoDeposits: 1,
       priorCryptoUsd: 1,
+      currentVsAverageRatio: 5,
     },
   });
 
   assert.equal(established.riskScore, 0);
-  assert.equal(recent.riskScore, 20);
-  assert.equal(cryptoDust.riskScore, 20);
+  assert.equal(recent.riskScore, 15);
+  assert.equal(cryptoDust.riskScore, 15);
+});
+
+test("Whop raw risk score is retained as evidence but never affects scoring", () => {
+  const low = scoreFiatDeposit({
+    ...safeInput,
+    provider: { ...safeInput.provider, riskScore: 0 },
+  });
+  const high = scoreFiatDeposit({
+    ...safeInput,
+    provider: { ...safeInput.provider, riskScore: 100 },
+  });
+  assert.equal(high.riskScore, low.riskScore);
+  assert.equal(
+    high.signals.some((signal) => signal.key === "whop_risk_score"),
+    false,
+  );
 });
 
 test("blocked checkout email is an unconditional critical lock", () => {

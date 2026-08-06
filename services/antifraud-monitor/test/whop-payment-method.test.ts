@@ -6,6 +6,7 @@ import {
   adjustFiatRiskForPaymentMethod,
   normalizeWhopPaymentMethod,
   whopPaymentMethodFromPayload,
+  whopPaymentMethodInfo,
   whopPaymentMethodLabel,
 } from "../src/whop-payment-method.js";
 
@@ -29,6 +30,39 @@ test("extracts and labels nested Whop payment options without inference", () => 
   assert.equal(whopPaymentMethodLabel("card"), "Card");
   assert.equal(whopPaymentMethodLabel(null), "Unknown");
   assert.equal(whopPaymentMethodFromPayload({ data: { card: {} } }), null);
+});
+
+test("payment identities are one-way hashed for cross-account matching", () => {
+  const info = whopPaymentMethodInfo({
+    data: {
+      user: { id: "whop-customer-secret" },
+      payment: { payment_method_id: "payment-token-secret" },
+    },
+  });
+  assert.match(info.customerIdHash ?? "", /^[a-f0-9]{64}$/);
+  assert.match(info.paymentMethodIdHash ?? "", /^[a-f0-9]{64}$/);
+  assert.equal(JSON.stringify(info).includes("secret"), false);
+});
+
+test("combines payment evidence from separate provider sources", () => {
+  const info = whopPaymentMethodInfo(
+    { data: { user: { id: "customer-secret" } } },
+    {
+      data: {
+        payment: {
+          payment_method_type: "card",
+          payment_method_id: "method-secret",
+          card_brand: "Visa",
+          card_last4: "4242",
+        },
+      },
+    },
+  );
+  assert.equal(info.type, "card");
+  assert.equal(info.cardBrand, "visa");
+  assert.equal(info.cardLast4, "4242");
+  assert.match(info.customerIdHash ?? "", /^[a-f0-9]{64}$/);
+  assert.match(info.paymentMethodIdHash ?? "", /^[a-f0-9]{64}$/);
 });
 
 test("Apple Pay reduces positive fiat risk by 20 percent", () => {

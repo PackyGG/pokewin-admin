@@ -77,7 +77,7 @@ const assessmentSelect = `
   occurred_at, source_updated_at, provider_risk_score, three_ds_verified,
   risk_score, verdict, recommendation, summary, signals, provider_evidence,
   funding_evidence, behavior_evidence, account_evidence, score_breakdown,
-  flow_checks,
+  flow_checks, detection_evidence,
   CASE WHEN review_status='escalated' THEN 'in_review' ELSE review_status END
     AS review_status,
   review_decision, reviewed_by,
@@ -220,8 +220,7 @@ export async function registerFiatRoutes(
               AS in_review,
             COUNT(*) FILTER (WHERE review_status='hold_recommended')::int
               AS hold_recommended,
-            COUNT(*) FILTER (WHERE provider_risk_score>=60)::int
-              AS provider_high_risk,
+            0::int AS provider_high_risk,
             COUNT(*) FILTER (WHERE three_ds_verified=false)::int
               AS three_ds_failed,
             COUNT(*) FILTER (WHERE status='disputed')::int AS disputed,

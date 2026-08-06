@@ -139,6 +139,8 @@ export type FiatEligibilitySignal = {
   blocking: boolean;
   /** Denies AND contains the account. Implies `blocking`. */
   containing: boolean;
+  /** Persisted for analysts but excluded from scoring and every action. */
+  evidenceOnly?: true;
   source: FiatEligibilitySignalSource;
 };
 

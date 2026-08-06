@@ -4,6 +4,11 @@ import type { Databases } from "./db.js";
 import type { MaxMindEvaluation } from "./maxmind.js";
 import { MaxMindService, maxMindRiskPoints } from "./maxmind.js";
 import { whopPaymentMethodInfo } from "./whop-payment-method.js";
+import { disposableEmailDomain } from "./scoring.js";
+import {
+  postPaymentObservationSignals,
+  type FiatPostPaymentDetectionEvidence,
+} from "./fiat-observations.js";
 
 export type FiatVerdict = "good" | "review" | "bad";
 export type FiatRiskCategory =
@@ -21,6 +26,8 @@ export type FiatSignal = {
   points: number;
   tone: "good" | "neutral" | "warning" | "bad";
   category: FiatRiskCategory;
+  /** Visible evidence that contributes no points and cannot drive an action. */
+  evidenceOnly?: true;
 };
 
 export type FiatScoreBreakdown = Record<FiatRiskCategory, number>;
@@ -55,6 +62,8 @@ export type FiatProviderEvidence = {
   paymentMethodType: string | null;
   cardBrand?: string | null;
   cardLast4?: string | null;
+  customerIdHash?: string | null;
+  paymentMethodIdHash?: string | null;
   maxmind?: {
     id: string | null;
     riskScore: number | null;
@@ -110,6 +119,7 @@ export type FiatScoreInput = {
   funding: FiatFundingEvidence;
   behavior: FiatBehaviorEvidence;
   account: FiatAccountEvidence;
+  detection?: FiatPostPaymentDetectionEvidence;
 };
 
 export type FiatTimelineEvent = {
@@ -175,8 +185,6 @@ const NON_DISCOUNTABLE_SIGNAL_KEYS = new Set([
   "payment_disputed",
   "auto_refunded",
   "payment_refunded",
-  "three_ds_failed",
-  "provider_history_risk",
   "repeated_failed_payments",
   "restricted_account",
   "suspected_alt",
@@ -217,7 +225,6 @@ function array(value: unknown): unknown[] {
 const SAFE_WHOP_SIGNALS = new Set([
   "account_age_days",
   "fraud_decline_rate",
-  "merch_txns_1h",
   "prior_dispute_count",
   "prior_fraud_declines",
   "prior_purchase_count",
@@ -225,7 +232,6 @@ const SAFE_WHOP_SIGNALS = new Set([
   "user_cards_7d",
   "user_payment_methods",
   "user_high_risk_sessions",
-  "merch_decline_rate_1h",
   "proxy_level",
 ]);
 
@@ -291,6 +297,8 @@ export function parseWhopEvidence(
     paymentMethodType: paymentMethod.type,
     cardBrand: paymentMethod.cardBrand,
     cardLast4: paymentMethod.cardLast4,
+    customerIdHash: paymentMethod.customerIdHash,
+    paymentMethodIdHash: paymentMethod.paymentMethodIdHash,
   };
 }
 
@@ -388,32 +396,10 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       key: "three_ds_failed",
       label: "3DS not verified",
       detail: "The completed payment does not have a successful 3DS result.",
-      points: 25,
+      points: 0,
       tone: "bad",
       category: "provider",
-    });
-  }
-
-  if (input.provider.riskScore !== null) {
-    const score = Math.max(0, Math.min(100, input.provider.riskScore));
-    const points = score >= 80 ? 30 : score >= 60 ? 20 : score >= 40 ? 10 : 0;
-    addSignal(signals, {
-      key: "whop_risk_score",
-      label: "Whop risk score",
-      detail: `Whop returned ${score}/100 for this payment.`,
-      points,
-      tone: points >= 30 ? "bad" : points > 0 ? "warning" : "good",
-      category: "provider",
-    });
-  } else if (paymentSucceeded) {
-    addSignal(signals, {
-      key: "provider_evidence_missing",
-      label: "Provider evidence missing",
-      detail:
-        "The payment completed, but no stored Whop risk score is linked to it.",
-      points: 15,
-      tone: "warning",
-      category: "provider",
+      evidenceOnly: true,
     });
   }
 
@@ -434,9 +420,10 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       key: "provider_history_risk",
       label: "Risky payment history",
       detail: `${priorDisputes} prior disputes, ${priorFraudDeclines} fraud declines, and ${highRiskSessions} high-risk sessions are reported.`,
-      points: 15,
+      points: 0,
       tone: "warning",
       category: "provider",
+      evidenceOnly: true,
     });
   }
   const proxyLevel = whopSignalString(input.provider, "proxy_level");
@@ -445,9 +432,10 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       key: "provider_proxy_risk",
       label: "Proxy or VPN signal",
       detail: `Whop reports ${proxyLevel} proxy/VPN risk for the payment session.`,
-      points: proxyLevel === "high" ? 15 : 8,
+      points: 0,
       tone: proxyLevel === "high" ? "bad" : "warning",
       category: "provider",
+      evidenceOnly: true,
     });
   }
 
@@ -496,6 +484,10 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
       tone: "warning",
       category: "funding",
     });
+  }
+
+  if (input.detection) {
+    signals.push(...postPaymentObservationSignals(input.detection));
   }
 
   if (input.account.fiatAttempts1h >= 4) {
@@ -707,7 +699,7 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
     {
       key: "provider",
       label: "Whop checks",
-      description: "Review Whop risk, 3DS, refunds, and disputes.",
+      description: "Review 3DS, payer identity, refunds, and disputes.",
     },
     {
       key: "funding",
@@ -918,6 +910,13 @@ type ContextRow = {
   withdrawal_requests: number;
   withdrawal_usd: string;
   first_withdrawal_at: string | null;
+  exact_amount_attempts_30m: number;
+  exact_amount_distinct_users_30m: number;
+  exact_amount_settled_7d: number;
+  exact_amount_refunded_7d: number;
+  tips_after_deposit: number;
+  tips_after_deposit_usd: string;
+  first_tip_at: string | null;
 };
 
 type NetworkRow = {
@@ -931,6 +930,18 @@ type WebhookRow = {
   event_type: string;
   payload: unknown;
   received_at: string;
+};
+
+type PaymentIdentityReuse = {
+  checkoutEmailSharedUsers: number;
+  whopCustomerSharedUsers: number;
+  paymentMethodSharedUsers: number;
+  cardSignatureSharedUsers: number;
+};
+
+type AuthorizedNetworkReuse = {
+  checkoutIpSharedUsers: number;
+  checkoutDeviceSharedUsers: number;
 };
 
 function intentTime(intent: SourceFiatIntent): Date {
@@ -954,8 +965,13 @@ async function loadContexts(
           $1::uuid[],
           $2::text[],
           $3::timestamptz[],
-          $4::timestamptz[]
-        ) AS t(intent_id, user_id, occurred_at, created_at)
+          $4::timestamptz[],
+          $5::bigint[],
+          $6::text[]
+        ) AS t(
+          intent_id, user_id, occurred_at, created_at,
+          requested_amount_cents, currency
+        )
       )
       SELECT
         t.intent_id::text,
@@ -977,7 +993,16 @@ async function loadContexts(
         COALESCE(activity.game_events, 0)::int AS game_events,
         COALESCE(cashout.withdrawal_requests, 0)::int AS withdrawal_requests,
         COALESCE(cashout.withdrawal_usd, 0)::text AS withdrawal_usd,
-        cashout.first_withdrawal_at
+        cashout.first_withdrawal_at,
+        COALESCE(amounts.attempts_30m, 0)::int AS exact_amount_attempts_30m,
+        COALESCE(amounts.distinct_users_30m, 0)::int
+          AS exact_amount_distinct_users_30m,
+        COALESCE(amounts.settled_7d, 0)::int AS exact_amount_settled_7d,
+        COALESCE(amounts.refunded_7d, 0)::int AS exact_amount_refunded_7d,
+        COALESCE(activity.tips_after_deposit, 0)::int AS tips_after_deposit,
+        COALESCE(activity.tips_after_deposit_usd, 0)::text
+          AS tips_after_deposit_usd,
+        activity.first_tip_at
       FROM targets t
       LEFT JOIN LATERAL (
         SELECT
@@ -1043,26 +1068,39 @@ async function loadContexts(
       LEFT JOIN LATERAL (
         SELECT
           COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
-            WHERE lt.type::text=ANY($5::text[])
+            WHERE lt.type::text=ANY($7::text[])
           ), 0) AS game_wager_usd,
           COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
-            WHERE lt.type::text=ANY($6::text[])
+            WHERE lt.type::text=ANY($8::text[])
           ), 0) AS game_payout_usd,
           COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
-            WHERE lt.type::text=ANY($7::text[])
+            WHERE lt.type::text=ANY($9::text[])
           ), 0) AS rewards_usd,
           COUNT(*) FILTER (
-            WHERE lt.type::text=ANY($5::text[])
-               OR lt.type::text=ANY($6::text[])
-          ) AS game_events
+            WHERE lt.type::text=ANY($7::text[])
+               OR lt.type::text=ANY($8::text[])
+          ) AS game_events,
+          COUNT(*) FILTER (
+            WHERE lt.type::text IN ('creator_tip','rain_tip')
+              AND lt.created_at<t.occurred_at+interval '7 days'
+          ) AS tips_after_deposit,
+          COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
+            WHERE lt.type::text IN ('creator_tip','rain_tip')
+              AND lt.created_at<t.occurred_at+interval '7 days'
+          ), 0) AS tips_after_deposit_usd,
+          MIN(lt.created_at) FILTER (
+            WHERE lt.type::text IN ('creator_tip','rain_tip')
+              AND lt.created_at<t.occurred_at+interval '7 days'
+          ) AS first_tip_at
         FROM ledger_transactions lt
         WHERE lt.user_id=t.user_id
           AND lt.status='completed'
           AND lt.created_at>=t.occurred_at
           AND (
-            lt.type::text=ANY($5::text[])
-            OR lt.type::text=ANY($6::text[])
-            OR lt.type::text=ANY($7::text[])
+            lt.type::text=ANY($7::text[])
+            OR lt.type::text=ANY($8::text[])
+            OR lt.type::text=ANY($9::text[])
+            OR lt.type::text IN ('creator_tip','rain_tip')
           )
       ) activity ON TRUE
       LEFT JOIN LATERAL (
@@ -1074,12 +1112,40 @@ async function loadContexts(
         WHERE cwr.user_id=t.user_id
           AND cwr.requested_at>=t.occurred_at
       ) cashout ON TRUE
+      LEFT JOIN LATERAL (
+        SELECT
+          COUNT(*) FILTER (
+            WHERE f.created_at >= t.created_at - interval '15 minutes'
+              AND f.created_at <= t.created_at + interval '15 minutes'
+          ) AS attempts_30m,
+          COUNT(DISTINCT f.user_id) FILTER (
+            WHERE f.created_at >= t.created_at - interval '15 minutes'
+              AND f.created_at <= t.created_at + interval '15 minutes'
+          ) AS distinct_users_30m,
+          COUNT(*) FILTER (
+            WHERE f.paid_at IS NOT NULL
+              AND f.created_at >= t.created_at - interval '7 days'
+              AND f.created_at <= t.created_at
+          ) AS settled_7d,
+          COUNT(*) FILTER (
+            WHERE f.status::text IN (
+              'refunded','partially_refunded','disputed'
+            )
+              AND f.created_at >= t.created_at - interval '7 days'
+              AND f.created_at <= t.created_at
+          ) AS refunded_7d
+        FROM fiat_deposit_intents f
+        WHERE upper(f.currency)=upper(t.currency)
+          AND f.requested_amount_cents=t.requested_amount_cents
+      ) amounts ON TRUE
     `,
     [
       intents.map((intent) => intent.id),
       intents.map((intent) => intent.user_id),
       intents.map((intent) => intentTime(intent).toISOString()),
       intents.map((intent) => new Date(intent.created_at).toISOString()),
+      intents.map((intent) => intent.requested_amount_cents),
+      intents.map((intent) => intent.currency),
       GAME_WAGER_TYPES,
       GAME_PAYOUT_TYPES,
       REWARD_TYPES,
@@ -1178,6 +1244,189 @@ async function loadProviderEvidence(
     output.set(intentId, evidence);
   }
   return output;
+}
+
+function normalizedIdentity(value: string | null | undefined): string | null {
+  const normalized = value?.trim().toLowerCase() ?? "";
+  return normalized || null;
+}
+
+function addIdentityUser(
+  index: Map<string, Set<string>>,
+  identity: string | null,
+  userId: string,
+): void {
+  if (!identity) return;
+  const users = index.get(identity) ?? new Set<string>();
+  users.add(userId);
+  index.set(identity, users);
+}
+
+function unavailableObservationMap<T>(
+  scope: "payment_identity" | "authorized_network",
+  error: unknown,
+): Map<string, T> {
+  console.warn("[fiat-observations] post-payment evidence query unavailable", {
+    scope,
+    errorType: error instanceof Error ? error.name : typeof error,
+    errorCode: error instanceof Error
+      ? (error as Error & { code?: unknown }).code
+      : undefined,
+  });
+  return new Map<string, T>();
+}
+
+async function loadPaymentIdentityReuse(
+  source: Pool,
+  intents: SourceFiatIntent[],
+  providers: Map<string, FiatProviderEvidence>,
+): Promise<Map<string, PaymentIdentityReuse>> {
+  if (intents.length === 0) return new Map();
+  const result = await source.query<{ user_id: string; payload: unknown }>(
+    `
+      WITH recent_events AS (
+        SELECT id, provider_resource_id, payload
+        FROM payment_webhook_events
+        WHERE provider='whop'
+          AND event_type='payment.succeeded'
+          AND received_at>=now()-interval '365 days'
+        ORDER BY received_at DESC, id DESC
+        LIMIT 20000
+      )
+      SELECT DISTINCT ON (pwe.id) fdi.user_id, pwe.payload
+      FROM recent_events pwe
+      JOIN fiat_deposit_intents fdi
+        ON pwe.provider_resource_id=fdi.provider_payment_id
+        OR pwe.provider_resource_id=fdi.provider_checkout_id
+      ORDER BY pwe.id, fdi.created_at DESC
+    `,
+  );
+  const emailUsers = new Map<string, Set<string>>();
+  const customerUsers = new Map<string, Set<string>>();
+  const methodUsers = new Map<string, Set<string>>();
+  const cardUsers = new Map<string, Set<string>>();
+  for (const row of result.rows) {
+    const evidence = parseWhopEvidence(row.payload, "payment.succeeded", null);
+    addIdentityUser(
+      emailUsers,
+      normalizedIdentity(evidence.checkoutEmail),
+      row.user_id,
+    );
+    addIdentityUser(customerUsers, evidence.customerIdHash ?? null, row.user_id);
+    addIdentityUser(
+      methodUsers,
+      evidence.paymentMethodIdHash ?? null,
+      row.user_id,
+    );
+    addIdentityUser(
+      cardUsers,
+      evidence.cardBrand && evidence.cardLast4
+        ? `${evidence.cardBrand}:${evidence.cardLast4}`
+        : null,
+      row.user_id,
+    );
+  }
+  const output = new Map<string, PaymentIdentityReuse>();
+  for (const intent of intents) {
+    const provider = providers.get(intent.id) ?? EMPTY_PROVIDER;
+    const card = provider.cardBrand && provider.cardLast4
+      ? `${provider.cardBrand}:${provider.cardLast4}`
+      : null;
+    output.set(intent.id, {
+      checkoutEmailSharedUsers:
+        emailUsers.get(normalizedIdentity(provider.checkoutEmail) ?? "")?.size
+          ?? 0,
+      whopCustomerSharedUsers:
+        customerUsers.get(provider.customerIdHash ?? "")?.size ?? 0,
+      paymentMethodSharedUsers:
+        methodUsers.get(provider.paymentMethodIdHash ?? "")?.size ?? 0,
+      cardSignatureSharedUsers: cardUsers.get(card ?? "")?.size ?? 0,
+    });
+  }
+  return output;
+}
+
+async function loadAuthorizedNetworkReuse(
+  antifraud: Pool,
+  intentIds: string[],
+): Promise<Map<string, AuthorizedNetworkReuse>> {
+  if (intentIds.length === 0) return new Map();
+  const result = await antifraud.query<{
+    intent_id: string;
+    checkout_ip_shared_users: number;
+    checkout_device_shared_users: number;
+  }>(
+    `
+      SELECT
+        current.intent_id,
+        CASE WHEN current.checkout_ip IS NULL THEN 0 ELSE (
+          SELECT COUNT(DISTINCT peer.user_id)::int
+          FROM fiat_deposit_identity_checks peer
+          WHERE peer.checkout_ip=current.checkout_ip
+            AND peer.occurred_at>=now()-interval '365 days'
+        ) END AS checkout_ip_shared_users,
+        CASE WHEN current.checkout_visitor_id IS NULL THEN 0 ELSE (
+          SELECT COUNT(DISTINCT peer.user_id)::int
+          FROM fiat_deposit_identity_checks peer
+          WHERE peer.checkout_visitor_id=current.checkout_visitor_id
+            AND peer.occurred_at>=now()-interval '365 days'
+        ) END AS checkout_device_shared_users
+      FROM fiat_deposit_identity_checks current
+      WHERE current.intent_id=ANY($1::uuid[])
+    `,
+    [intentIds],
+  );
+  return new Map(result.rows.map((row) => [row.intent_id, {
+    checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
+    checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
+  }]));
+}
+
+function postDetectionEvidence(input: {
+  intent: SourceFiatIntent;
+  provider: FiatProviderEvidence;
+  context: ContextRow | undefined;
+  identity: PaymentIdentityReuse | undefined;
+  network: AuthorizedNetworkReuse | undefined;
+}): FiatPostPaymentDetectionEvidence {
+  const firstTip = input.context?.first_tip_at
+    ? new Date(input.context.first_tip_at).getTime()
+    : null;
+  const occurredAt = intentTime(input.intent).getTime();
+  return {
+    checkoutEmailDiffersFromAccount: Boolean(
+      normalizedIdentity(input.provider.checkoutEmail)
+      && normalizedIdentity(input.intent.email)
+      && normalizedIdentity(input.provider.checkoutEmail)
+        !== normalizedIdentity(input.intent.email),
+    ),
+    disposableCheckoutEmailDomain:
+      disposableEmailDomain(input.provider.checkoutEmail),
+    billingCountryMismatch: Boolean(
+      normalizedIdentity(input.provider.billingCountry)
+      && normalizedIdentity(input.intent.country_code)
+      && normalizedIdentity(input.provider.billingCountry)
+        !== normalizedIdentity(input.intent.country_code),
+    ),
+    checkoutEmailSharedUsers: input.identity?.checkoutEmailSharedUsers ?? 0,
+    whopCustomerSharedUsers: input.identity?.whopCustomerSharedUsers ?? 0,
+    paymentMethodSharedUsers: input.identity?.paymentMethodSharedUsers ?? 0,
+    cardSignatureSharedUsers: input.identity?.cardSignatureSharedUsers ?? 0,
+    checkoutIpSharedUsers: input.network?.checkoutIpSharedUsers ?? 0,
+    checkoutDeviceSharedUsers: input.network?.checkoutDeviceSharedUsers ?? 0,
+    exactAmountAttempts30m: input.context?.exact_amount_attempts_30m ?? 0,
+    exactAmountDistinctUsers30m:
+      input.context?.exact_amount_distinct_users_30m ?? 0,
+    exactAmountSettled7d: input.context?.exact_amount_settled_7d ?? 0,
+    exactAmountRefunded7d: input.context?.exact_amount_refunded_7d ?? 0,
+    tipsAfterDeposit: input.context?.tips_after_deposit ?? 0,
+    tipsAfterDepositUsd: rounded(
+      finiteNumber(input.context?.tips_after_deposit_usd) ?? 0,
+    ),
+    minutesToFirstTip: firstTip === null
+      ? null
+      : rounded((firstTip - occurredAt) / 60_000),
+  };
 }
 
 const EMPTY_PROVIDER: FiatProviderEvidence = {
@@ -1479,6 +1728,20 @@ export class FiatRiskService {
       intents.map((intent) => intent.user_id),
     );
     const providers = await loadProviderEvidence(this.db.source, intents);
+    const [paymentIdentityReuse, authorizedNetworkReuse] = await Promise.all([
+      loadPaymentIdentityReuse(this.db.source, intents, providers)
+        .catch((error) => unavailableObservationMap<PaymentIdentityReuse>(
+          "payment_identity",
+          error,
+        )),
+      loadAuthorizedNetworkReuse(
+        this.db.antifraud,
+        intents.map((intent) => intent.id),
+      ).catch((error) => unavailableObservationMap<AuthorizedNetworkReuse>(
+        "authorized_network",
+        error,
+      )),
+    ]);
     const blacklistedCheckoutEmails = await loadBlacklistedCheckoutEmails(
       this.db.antifraud,
       intents.map((intent) => intent.id),
@@ -1567,6 +1830,13 @@ export class FiatRiskService {
         priorDisputedFiat: context?.prior_disputed_fiat ?? 0,
         priorRefundedFiat: context?.prior_refunded_fiat ?? 0,
       };
+      const detection = postDetectionEvidence({
+        intent,
+        provider,
+        context,
+        identity: paymentIdentityReuse.get(intent.id),
+        network: authorizedNetworkReuse.get(intent.id),
+      });
       const baseScore = scoreFiatDeposit({
         status: intent.status,
         amountUsd,
@@ -1574,6 +1844,7 @@ export class FiatRiskService {
         funding,
         behavior,
         account,
+        detection,
       });
       const blacklistedCheckoutEmail = blacklistedCheckoutEmails.get(intent.id);
       const locallyScored = blacklistedCheckoutEmail
@@ -1589,6 +1860,7 @@ export class FiatRiskService {
         funding,
         behavior,
         account,
+        detection,
         ...scored,
       };
     });
@@ -1608,12 +1880,14 @@ export class FiatRiskService {
               provider_risk_score, three_ds_verified, risk_score, verdict,
               recommendation, summary, signals, provider_evidence,
               funding_evidence, behavior_evidence, account_evidence,
-              score_breakdown, flow_checks, provider_payment_id,
+              score_breakdown, flow_checks, detection_evidence,
+              provider_payment_id,
               score_version, assessed_at
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,
               $16,$17,$18,$19,$20,$21,$22::jsonb,$23::jsonb,$24::jsonb,
-              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29,'fiat-v3',now()
+              $25::jsonb,$26::jsonb,$27::jsonb,$28::jsonb,$29::jsonb,
+              $30,'fiat-v4',now()
             )
             ON CONFLICT (deposit_intent_id) DO UPDATE SET
               user_id=EXCLUDED.user_id,
@@ -1643,8 +1917,9 @@ export class FiatRiskService {
               account_evidence=EXCLUDED.account_evidence,
               score_breakdown=EXCLUDED.score_breakdown,
               flow_checks=EXCLUDED.flow_checks,
+              detection_evidence=EXCLUDED.detection_evidence,
               provider_payment_id=EXCLUDED.provider_payment_id,
-              score_version='fiat-v3',
+              score_version='fiat-v4',
               assessed_at=now()
           `,
           [
@@ -1680,6 +1955,7 @@ export class FiatRiskService {
             JSON.stringify(assessment.account),
             JSON.stringify(assessment.scoreBreakdown),
             JSON.stringify(assessment.flowChecks),
+            JSON.stringify(assessment.detection),
             intent.provider_payment_id,
           ],
         );

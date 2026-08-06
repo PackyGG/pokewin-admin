@@ -38,8 +38,35 @@ import {
   type FiatEligibilitySignal,
 } from "./fiat-eligibility-policy.js";
 import { disposableEmailDomain } from "./scoring.js";
+import {
+  prePaymentObservationSignals,
+  type FiatPrePaymentObservationEvidence,
+} from "./fiat-observations.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
 import type { Signal, Signup } from "./types.js";
+
+const EMPTY_PRE_PAYMENT_OBSERVATIONS: FiatPrePaymentObservationEvidence = {
+  ipAttempts10m: 0,
+  deviceAttempts10m: 0,
+  platformAttempts10m: 0,
+  ipDistinctUsers24h: 0,
+  deviceDistinctUsers24h: 0,
+  linkedActiveRiskUsers: 0,
+  amountAttempts30m: 0,
+  amountDistinctUsers30m: 0,
+};
+
+function unavailablePrePaymentObservations(
+  error: unknown,
+): FiatPrePaymentObservationEvidence {
+  console.warn("[fiat-observations] pre-payment evidence query unavailable", {
+    errorType: error instanceof Error ? error.name : typeof error,
+    errorCode: error instanceof Error
+      ? (error as Error & { code?: unknown }).code
+      : undefined,
+  });
+  return EMPTY_PRE_PAYMENT_OBSERVATIONS;
+}
 
 export type FiatEligibilityRequest = {
   env: FiatEligibilityEnvironment;
@@ -47,6 +74,11 @@ export type FiatEligibilityRequest = {
   ipAddress: string;
   fingerprint: string;
   userID: string;
+  /** Optional until the checkout backend sends payment context. */
+  amountCents?: number;
+  currency?: string;
+  locale?: string;
+  timezone?: string;
 };
 
 export type FiatEligibilityDecision = {
@@ -576,6 +608,120 @@ async function loadAdditionalBlocklists(
   };
 }
 
+async function loadPrePaymentObservations(
+  antifraud: Pool,
+  input: {
+    environment: FiatEligibilityEnvironment;
+    userId: string;
+    requestIp: string;
+    checkoutVisitorId: string | null;
+    amountCents?: number;
+    currency?: string;
+  },
+): Promise<FiatPrePaymentObservationEvidence> {
+  const result = await antifraud.query<{
+    ip_attempts_10m: number;
+    device_attempts_10m: number;
+    platform_attempts_10m: number;
+    ip_distinct_users_24h: number;
+    device_distinct_users_24h: number;
+    linked_active_risk_users: number;
+    amount_attempts_30m: number;
+    amount_distinct_users_30m: number;
+  }>(
+    `
+      WITH recent AS (
+        SELECT user_id, request_ip, checkout_visitor_id, provider_evidence,
+          created_at
+        FROM fiat_eligibility_assessments
+        WHERE environment=$1 AND created_at>=now()-interval '24 hours'
+      ), linked_users AS (
+        SELECT DISTINCT user_id
+        FROM recent
+        WHERE user_id<>$2
+          AND (
+            request_ip=$3::inet
+            OR (
+              $4::text IS NOT NULL
+              AND checkout_visitor_id=$4
+            )
+          )
+      )
+      SELECT
+        COUNT(*) FILTER (
+          WHERE request_ip=$3::inet
+            AND created_at>=now()-interval '10 minutes'
+        )::int AS ip_attempts_10m,
+        COUNT(*) FILTER (
+          WHERE $4::text IS NOT NULL
+            AND checkout_visitor_id=$4
+            AND created_at>=now()-interval '10 minutes'
+        )::int AS device_attempts_10m,
+        COUNT(*) FILTER (
+          WHERE created_at>=now()-interval '10 minutes'
+        )::int AS platform_attempts_10m,
+        COUNT(DISTINCT user_id) FILTER (
+          WHERE request_ip=$3::inet
+        )::int AS ip_distinct_users_24h,
+        COUNT(DISTINCT user_id) FILTER (
+          WHERE $4::text IS NOT NULL AND checkout_visitor_id=$4
+        )::int AS device_distinct_users_24h,
+        (
+          SELECT COUNT(DISTINCT c.user_id)::int
+          FROM cases c
+          JOIN linked_users linked ON linked.user_id=c.user_id
+          WHERE c.status<>'resolved'
+            AND c.severity IN ('high','critical')
+        ) AS linked_active_risk_users,
+        COUNT(*) FILTER (
+          WHERE $5::int IS NOT NULL
+            AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+            AND NULLIF(
+              provider_evidence#>>'{requestContext,amountCents}', ''
+            )::int=$5
+            AND created_at>=now()-interval '30 minutes'
+        )::int AS amount_attempts_30m,
+        COUNT(DISTINCT user_id) FILTER (
+          WHERE $5::int IS NOT NULL
+            AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+            AND NULLIF(
+              provider_evidence#>>'{requestContext,amountCents}', ''
+            )::int=$5
+            AND created_at>=now()-interval '30 minutes'
+        )::int AS amount_distinct_users_30m
+      FROM recent
+    `,
+    [
+      input.environment,
+      input.userId,
+      input.requestIp,
+      input.checkoutVisitorId,
+      input.amountCents ?? null,
+      input.currency ?? "",
+    ],
+  );
+  const row = result.rows[0];
+  const includeCurrent = (value: number | undefined): number => (value ?? 0) + 1;
+  return {
+    ipAttempts10m: includeCurrent(row?.ip_attempts_10m),
+    deviceAttempts10m: input.checkoutVisitorId
+      ? includeCurrent(row?.device_attempts_10m)
+      : 0,
+    platformAttempts10m: includeCurrent(row?.platform_attempts_10m),
+    ipDistinctUsers24h: includeCurrent(row?.ip_distinct_users_24h),
+    deviceDistinctUsers24h: input.checkoutVisitorId
+      ? includeCurrent(row?.device_distinct_users_24h)
+      : 0,
+    linkedActiveRiskUsers: row?.linked_active_risk_users ?? 0,
+    amountAttempts30m: input.amountCents === undefined
+      ? 0
+      : includeCurrent(row?.amount_attempts_30m),
+    amountDistinctUsers30m: input.amountCents === undefined
+      ? 0
+      : includeCurrent(row?.amount_distinct_users_30m),
+  };
+}
+
 function requestHash(input: FiatEligibilityRequest, requestIp: string): string {
   return createHash("sha256")
     .update([
@@ -584,6 +730,10 @@ function requestHash(input: FiatEligibilityRequest, requestIp: string): string {
       requestIp,
       input.fingerprint,
       input.userID,
+      input.amountCents ?? "",
+      input.currency?.toUpperCase() ?? "",
+      input.locale ?? "",
+      input.timezone ?? "",
     ].join("\n"))
     .digest("hex");
 }
@@ -768,6 +918,22 @@ export class FiatEligibilityService {
         "fiat_blocklist_read",
       );
     });
+    const observationsPromise = fingerprintPromise.then(
+      (result) => withDeadline(
+        loadPrePaymentObservations(this.db.antifraud, {
+          environment: input.env,
+          userId: input.userID,
+          requestIp,
+          checkoutVisitorId: fingerprintEventIdentity(result.response)
+            .visitorId,
+          amountCents: input.amountCents,
+          currency: input.currency,
+        }),
+        ANTIFRAUD_READ_TIMEOUT_MS,
+        "fiat_observations_read",
+      ).catch(unavailablePrePaymentObservations),
+      () => EMPTY_PRE_PAYMENT_OBSERVATIONS,
+    );
 
     const [
       fingerprint,
@@ -778,6 +944,7 @@ export class FiatEligibilityService {
       velocity,
       blocklistMatches,
       additionalBlocklists,
+      observations,
     ] = await Promise.all([
       fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
@@ -790,12 +957,13 @@ export class FiatEligibilityService {
       this.loadVelocity(input),
       blocklistPromise,
       additionalBlocklistsPromise,
+      observationsPromise,
     ]);
 
     const identity = fingerprintEventIdentity(fingerprint.response);
     const providers = [fingerprint, proxycheck, abstractIp];
     const behaviour = behaviourFrom(subject, now);
-    const outcome = evaluateFiatEligibility({
+    const policyOutcome = evaluateFiatEligibility({
       now,
       requestCreatedAt,
       requestIp,
@@ -819,6 +987,13 @@ export class FiatEligibilityService {
       attempts10m: velocity.attempts10m,
       deniedAttempts24h: velocity.deniedAttempts24h,
     });
+    const outcome: FiatEligibilityPolicyOutcome = {
+      ...policyOutcome,
+      signals: [
+        ...policyOutcome.signals,
+        ...prePaymentObservationSignals(observations),
+      ],
+    };
 
     return this.persist({
       input,
@@ -832,6 +1007,7 @@ export class FiatEligibilityService {
       network,
       blocklistMatches,
       additionalBlocklists,
+      observations,
       outcome,
     });
   }
@@ -929,6 +1105,7 @@ export class FiatEligibilityService {
     network: FiatEligibilityNetwork;
     blocklistMatches: FiatEligibilityBlocklistMatch[];
     additionalBlocklists: FiatEligibilityAdditionalBlocklists;
+    observations: FiatPrePaymentObservationEvidence;
     outcome: FiatEligibilityPolicyOutcome;
   }): Promise<FiatEligibilityDecision> {
     const { input, now, providers, outcome } = context;
@@ -984,6 +1161,7 @@ export class FiatEligibilityService {
       network: FiatEligibilityNetwork;
       blocklistMatches: FiatEligibilityBlocklistMatch[];
       additionalBlocklists: FiatEligibilityAdditionalBlocklists;
+      observations: FiatPrePaymentObservationEvidence;
       outcome: FiatEligibilityPolicyOutcome;
       byName: Map<string, EnrichmentResult>;
       expiresAt: Date;
@@ -1087,6 +1265,13 @@ export class FiatEligibilityService {
               matchedOn: match.matched_on,
             })),
             additionalBlocklists: context.additionalBlocklists,
+            observations: context.observations,
+            requestContext: {
+              amountCents: input.amountCents ?? null,
+              currency: input.currency?.toUpperCase() ?? null,
+              locale: input.locale ?? null,
+              timezone: input.timezone ?? null,
+            },
             providerSignals: context.providerSignals,
           }),
           context.expiresAt,
@@ -1209,6 +1394,7 @@ export const fiatEligibilityInternals = {
   loadSourceSubject,
   loadBlocklistMatches,
   loadAdditionalBlocklists,
+  loadPrePaymentObservations,
   behaviourSignals,
   badIpReputation,
   badDeviceReputation,

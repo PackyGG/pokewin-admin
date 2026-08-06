@@ -643,7 +643,6 @@ export async function fetchHighRiskFiatProblems(
           'credited_amount_cents',
             round(fda.credited_amount_usd * 100)::bigint,
           'provider_payment_status', fda.provider_payment_status,
-          'provider_risk_score', fda.provider_risk_score,
           'payment_method_type',
             fda.provider_evidence->>'paymentMethodType',
           'risk_score', fda.risk_score,

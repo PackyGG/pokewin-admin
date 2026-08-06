@@ -128,7 +128,7 @@ test("fiat scores retain an explicit model identity", async () => {
   const fiat = await source("../src/fiat-risk.ts");
 
   assert.match(fiatMigration, /score_version text NOT NULL DEFAULT 'fiat-v1'/);
-  assert.match(fiat, /score_version='fiat-v3'/);
+  assert.match(fiat, /score_version='fiat-v4'/);
 });
 
 test("legacy withdrawal funding backfill seeds missing subject shells first", async () => {
