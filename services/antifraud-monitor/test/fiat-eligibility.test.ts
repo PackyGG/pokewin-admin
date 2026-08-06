@@ -1088,13 +1088,19 @@ test("fresh Fingerprint identity is mandatory and replay-safe", () => {
 });
 
 test("every containment reason is one the dashboard will honour", () => {
-  // The ingest route re-validates reason codes before it touches MAIN. A rule
-  // the policy can emit but the route rejects would deny and silently never
+  // The dashboard re-validates reason codes before it touches MAIN. A rule the
+  // policy can emit but the dashboard rejects would deny and silently never
   // lock, so the two lists must not drift.
+  //
+  // BOTH sides are read from source: the dashboard's allow-list, and every key
+  // this policy can emit with `containing: true`. Nothing below is a hand-kept
+  // list of emitted keys — that is exactly how the drift this test now catches
+  // slipped through — and anything the extraction cannot resolve statically
+  // fails loudly instead of quietly shrinking the guard.
   const dashboardReasons = new Set(
     [...readFileSync(
       new URL(
-        "../../../src/app/api/antifraud/ingest/route.ts",
+        "../../../src/lib/antifraud/fiat-eligibility-containment.ts",
         import.meta.url,
       ),
       "utf8",
@@ -1105,19 +1111,168 @@ test("every containment reason is one the dashboard will honour", () => {
         .map((entry) => entry[1] ?? ""),
     ),
   );
-  assert.ok(dashboardReasons.size >= 9);
+  assert.ok(
+    dashboardReasons.size >= 10,
+    "the dashboard allow-list could not be read — the constant moved or was "
+    + "renamed, and this guard would pass on an empty set",
+  );
 
-  const emitted = new Set<string>([
-    "checkout_identity_changed_with_bad_reputation",
-    "checkout_identity_changed_from_latest_login_with_bad_reputation",
+  const policySource = readFileSync(
+    new URL("../src/fiat-eligibility-policy.ts", import.meta.url),
+    "utf8",
+  );
+
+  // Keys built from a template literal are expanded from their own source of
+  // truth, so a new blocklist kind widens this test on the day it is added.
+  const blocklistKinds = [...readFileSync(
+    new URL("../src/identifier-blocklists.ts", import.meta.url),
+    "utf8",
+  ).matchAll(/IdentifierBlocklistKind =([^;]*);/g)]
+    .flatMap((match) =>
+      [...(match[1] ?? "").matchAll(/"([a-z0-9_]+)"/g)]
+        .map((entry) => entry[1] ?? ""),
+    );
+  assert.ok(
+    blocklistKinds.length >= 2,
+    "IdentifierBlocklistKind could not be read — the blocklist key template "
+    + "would expand to nothing",
+  );
+  const templateHoles: Record<string, string[]> = {
+    "match.kind": blocklistKinds,
+  };
+
+  // Resolve a `key:` expression to the concrete keys it can produce, or null
+  // when it is not statically knowable (the caller then decides whether that
+  // is acceptable).
+  const staticKeys = (expression: string): string[] | null => {
+    const trimmed = expression.trim();
+    const literal = trimmed.match(/^"([a-z0-9_]+)"$/);
+    if (literal) return [literal[1] ?? ""];
+    const template = trimmed.match(/^`([^`]+)`$/);
+    if (template) {
+      let expansions = [""];
+      const segments = (template[1] ?? "").split(/\$\{([^}]+)\}/);
+      segments.forEach((segment, index) => {
+        // Odd segments are the `${…}` holes, even ones the literal text.
+        const values = index % 2 === 0
+          ? [segment]
+          : templateHoles[segment.trim()];
+        assert.ok(
+          values,
+          `the key template ${trimmed} interpolates ${segment.trim()}, which `
+          + "this test cannot expand — teach it that value or the guard goes "
+          + "vacuous",
+        );
+        expansions = expansions.flatMap((prefix) =>
+          (values ?? []).map((value) => prefix + value),
+        );
+      });
+      return expansions;
+    }
+    const ternary = trimmed.match(
+      /^[\s\S]*?\?\s*"([a-z0-9_]+)"\s*:\s*"([a-z0-9_]+)"$/,
+    );
+    if (ternary) return [ternary[1] ?? "", ternary[2] ?? ""];
+    return null;
+  };
+
+  // A `containing:` value the extractor cannot read as a literal has to be
+  // classified here, by hand, once. Anything unclassified fails the test.
+  const dynamicContaining: Record<string, string[]> = {
+    // Only the "linked to a different user" branch contains; a missing link is
+    // a broken integration and denies only.
+    "Boolean(identity.linkedId)": ["fingerprint_linked_id_mismatch"],
+    // Provider signals consult this exact set at runtime, so it expands
+    // itself.
+    "CONTAINING_FINGERPRINT_SIGNALS.has(providerSignal.key)":
+      [...CONTAINING_FINGERPRINT_SIGNALS],
+  };
+  const nonEmittingContaining = new Set([
+    // The `FiatEligibilitySignal.containing` field declaration.
+    "boolean;",
+    // Dedupe merge: re-carries an already-classified flag, emits no new key.
+    "sameKey.some((candidate) => candidate.containing)",
+  ]);
+
+  const containingSites = [
+    ...policySource.matchAll(/\bcontaining:\s*([^,\n]+)/g),
+  ];
+  assert.ok(
+    containingSites.length >= 8,
+    "no `containing:` sites were found in the policy — the extraction broke",
+  );
+
+  const emitted = new Set<string>();
+  for (const site of containingSites) {
+    const expression = (site[1] ?? "").trim().replace(/,$/, "");
+    if (expression === "false" || nonEmittingContaining.has(expression)) {
+      continue;
+    }
+    const keyStart = policySource.slice(0, site.index ?? 0).lastIndexOf("key:");
+    assert.ok(
+      keyStart >= 0,
+      `no key: precedes the containing: ${expression} signal`,
+    );
+    const keyExpression = policySource
+      .slice(keyStart + "key:".length)
+      .split(",")[0] ?? "";
+    const candidates = staticKeys(keyExpression);
+
+    if (expression === "true") {
+      assert.ok(
+        candidates,
+        `containing: true sits on the key expression `
+        + `"${keyExpression.trim()}", which this test cannot resolve to `
+        + "concrete keys — extend staticKeys() instead of leaving a containing "
+        + "signal unchecked",
+      );
+      for (const key of candidates ?? []) emitted.add(key);
+      continue;
+    }
+
+    const declared = dynamicContaining[expression];
+    assert.ok(
+      declared,
+      `the policy derives containing from ${expression}, which this test `
+      + "cannot evaluate — add it to dynamicContaining with the keys it can "
+      + "turn on, or to nonEmittingContaining if it emits none",
+    );
+    for (const key of declared ?? []) {
+      if (candidates) {
+        assert.ok(
+          candidates.includes(key),
+          `${expression} is declared to contain ${key}, but its key `
+          + `expression can only produce ${candidates.join(", ")}`,
+        );
+      }
+      emitted.add(key);
+    }
+  }
+
+  assert.ok(
+    emitted.size >= 8,
+    "too few containing keys were extracted from the policy — the extraction "
+    + "broke, and this guard would pass vacuously",
+  );
+  for (const anchor of [
     "blocklist_ip_match",
     "blocklist_fingerprint_match",
-    ...CONTAINING_FINGERPRINT_SIGNALS,
-  ]);
+    "blocklist_email_domain_match",
+    "fingerprint_linked_id_mismatch",
+    "checkout_identity_changed_with_bad_reputation",
+  ]) {
+    assert.ok(
+      emitted.has(anchor),
+      `${anchor} was not extracted from the policy — the extraction is `
+      + "narrower than the policy it is meant to mirror",
+    );
+  }
   for (const reason of emitted) {
     assert.ok(
       dashboardReasons.has(reason),
-      `${reason} is not accepted by the ingest route`,
+      `${reason} is emitted with containing: true but the dashboard will not `
+      + "honour it — the checkout would be denied and the account never "
+      + "contained",
     );
   }
 });

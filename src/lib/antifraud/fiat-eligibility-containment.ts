@@ -22,7 +22,11 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
  * Containment rules the automatic Fiat-checkout endpoint is allowed to enforce.
  * The monitor decides; this list is the dashboard's independent second opinion,
  * so a bug or a forged payload on the other side cannot invent a new reason to
- * lock an account.
+ * lock an account. It validates against invented reasons; it is not a veto on
+ * legitimate ones, so every reason the policy emits with `containing: true`
+ * must appear here. `services/antifraud-monitor/test/fiat-eligibility.test.ts`
+ * ("every containment reason is one the dashboard will honour") reads both
+ * sides from source and fails on drift.
  */
 export const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
   "new_account_checkout_ip_changed",
@@ -32,6 +36,7 @@ export const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
   "repeat_fiat_within_sixty_seconds",
   "blocklist_ip_match",
   "blocklist_fingerprint_match",
+  "blocklist_email_domain_match",
   "fingerprint_event_replayed",
   "fingerprint_linked_id_mismatch",
   "fingerprint_bad_bot",
