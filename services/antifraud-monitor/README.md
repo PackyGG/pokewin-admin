@@ -127,8 +127,8 @@ a corroborating Abstract IP-intelligence lookup. Fingerprint and proxycheck are
 mandatory and fail closed; Abstract only adds points when it degrades. It
 compares the checkout with signup IP/device, account age,
 account and Fiat locks, KYC, country policy, every fraud-enforcement list
-(operator IP/fingerprint/email-domain, disposable email, and Admin excluded
-users), shared networks, signup/case history, deposit, play and reward
+(operator IP/fingerprint/email-domain and disposable email), shared networks,
+signup/case history, deposit, play and reward
 behaviour, previous Fiat history and recent eligibility velocity.
 
 ### Hard containment rules
@@ -136,12 +136,10 @@ behaviour, previous Fiat history and recent eligibility velocity.
 A denial normally touches nothing. These rules additionally CONTAIN the account
 — Fiat deposits off, withdrawals locked — and cannot be out-scored:
 
-- the checkout IP differs from signup and the account is younger than 7 days;
-- the checkout device differs from signup and the account is younger than 36
-  hours;
 - the checkout IP *and* device both differ from signup and either carries a bad
   provider reputation, at any account age;
-- a Fiat deposit for the account was paid less than 60 seconds ago;
+- the checkout IP *and* device both differ from the latest verified login and
+  either carries a bad provider reputation;
 - the checkout IP or device matches an active operator blocklist rule;
 - the stored account email matches an active operator Fiat domain rule;
 - Fingerprint reports the event as replayed, linked to a different account, or
@@ -160,9 +158,16 @@ withholding the locks (`enforcement='suppressed'` on the stored row).
 
 Account state that is already correct — banned, locked, self-excluded, Fiat or
 country locked, KYC not cleared — denies without containment, as do provider
-outages and stale requests. Disposable account email and Admin excluded-user
-matches also deny without containment. The actual payer email remains unknown
+outages and stale requests. Disposable account email and a second checkout less
+than 60 seconds after a paid deposit also deny without containment. IP or device
+change alone is scored, never contained. The actual payer email remains unknown
 before checkout and is checked again after authorization.
+
+The post-authorization monitor also learns active refunded-amount campaigns.
+An exact amount/currency becomes active only when at least five payments across
+three accounts were refunded and refunds are at least 50% of all settled
+payments for that amount inside seven days. Refunded members are contained, and
+the next authorized matching payment is contained while the campaign is active.
 
 ### Behaviour trust
 
@@ -202,9 +207,7 @@ Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
 `FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL`. Allowlist entries are exact IPv4 or
 IPv6 addresses or CIDRs. The allowlist applies to the calling backend's trusted
 source IP; `ipAddress` in the JSON body is the end user's IP and is never used
-to authenticate the caller. `ADMIN_DATABASE_URL` is a required read-only Admin
-DB connection used for the excluded-users checkout list. Configure its TLS with
-`ADMIN_DATABASE_SSL` and optional `ADMIN_DATABASE_CA`.
+to authenticate the caller.
 
 Every request writes structured `fiat_eligibility.*` lifecycle logs with the
 Fastify request ID. Logs cover validation and authentication rejection, rate

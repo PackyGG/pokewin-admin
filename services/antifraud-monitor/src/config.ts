@@ -27,11 +27,6 @@ const schema = z.object({
   ANTIFRAUD_DATABASE_URL: z.string().min(1),
   ANTIFRAUD_DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
   ANTIFRAUD_DATABASE_CA: z.string().optional(),
-  // Read-only access to the Admin DB is required so the checkout gate can
-  // enforce the operator-managed excluded-users list without a stale copy.
-  ADMIN_DATABASE_URL: z.string().min(1),
-  ADMIN_DATABASE_SSL: z.enum(["disable", "require"]).default("require"),
-  ADMIN_DATABASE_CA: z.string().optional(),
   REDIS_URL: z.string().min(1),
   FINGERPRINT_SECRET_API_KEY: z.string().min(1),
   FINGERPRINT_REGION: z.enum(["eu", "us", "ap"]).default("eu"),

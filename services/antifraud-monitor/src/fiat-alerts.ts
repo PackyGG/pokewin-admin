@@ -377,7 +377,9 @@ export function buildFiatDiscordPayload(
   const url = new URL(dashboardUrl).toString();
   const description =
     problem.problem_code === "suspicious_deposit_cluster"
-      ? "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
+      ? details.cluster_basis === "refunded_amount"
+        ? "A high share of settled payments for this exact amount was refunded across distinct accounts and payment identities. Crypto and item withdrawals are locked."
+        : "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
       : problem.problem_code === "blacklisted_email_domain"
       ? patternMatch
         ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked and KYC is required."

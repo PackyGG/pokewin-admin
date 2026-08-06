@@ -547,20 +547,16 @@ async function loadBlocklistMatches(
 }
 
 /**
- * Remaining fraud-enforcement lists used by checkout. The Admin lookup is
- * deliberately direct and read-only so an operator change takes effect on the
- * next request without waiting for a cross-database synchronization job.
+ * Remaining email fraud-enforcement lists used by checkout.
  */
 async function loadAdditionalBlocklists(
   antifraud: Pool,
-  admin: Pool,
-  input: { userId: string; email: string | null; disposableEmailPoints: number },
+  input: { email: string | null; disposableEmailPoints: number },
 ): Promise<FiatEligibilityAdditionalBlocklists> {
   const emailDomain = input.email ? domainFromEmail(input.email) : null;
   const disposableDomain = disposableEmailDomain(input.email);
-  const [emailRule, excludedUser] = await Promise.all([
-    emailDomain
-      ? antifraud.query<{ active: boolean }>(
+  const emailRule = emailDomain
+    ? await antifraud.query<{ active: boolean }>(
           `
             SELECT EXISTS (
               SELECT 1
@@ -572,19 +568,11 @@ async function loadAdditionalBlocklists(
           `,
           [emailDomain],
         )
-      : Promise.resolve({ rows: [{ active: false }] }),
-    admin.query<{ active: boolean }>(
-      `SELECT EXISTS (
-         SELECT 1 FROM excluded_users WHERE user_id = $1
-       ) AS active`,
-      [input.userId],
-    ),
-  ]);
+    : { rows: [{ active: false }] };
   return {
     emailDomain: emailRule.rows[0]?.active === true ? emailDomain : null,
     disposableEmailDomain: disposableDomain,
     disposableEmailPoints: input.disposableEmailPoints,
-    excludedUser: excludedUser.rows[0]?.active === true,
   };
 }
 
@@ -733,8 +721,7 @@ export class FiatEligibilityService {
       weights,
     );
     const additionalBlocklistsPromise = withDeadline(
-      loadAdditionalBlocklists(this.db.antifraud, this.db.admin, {
-        userId: input.userID,
+      loadAdditionalBlocklists(this.db.antifraud, {
         email: subject.email,
         disposableEmailPoints: weights.disposable_email,
       }),

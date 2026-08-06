@@ -39,6 +39,7 @@ function observation(
     checkoutVisitorId: "visitor-a",
     email: { catchall: false, deliverability: "deliverable" },
     blacklistedEmailDomain: null,
+    refundedAmountClusterReason: null,
     blocklistMatches: [],
     priorCleanDeposits: 1,
     ...overrides,
@@ -81,6 +82,20 @@ test("operator blocklist hits contain and name the right kind", () => {
   assert.deepEqual(outcome.reasonCodes, [
     "checkout_ip_blocklisted",
     "checkout_fingerprint_blocklisted",
+  ]);
+});
+
+test("an active refunded-amount campaign contains the next matching payment", () => {
+  const outcome = evaluateFiatDepositIdentity({
+    baseline: null,
+    observation: observation({
+      refundedAmountClusterReason:
+        "5 of 6 settled payments were refunded across 5 accounts",
+    }),
+  });
+  assert.equal(outcome.verdict, "contain");
+  assert.deepEqual(outcome.reasonCodes, [
+    "checkout_refunded_amount_cluster",
   ]);
 });
 

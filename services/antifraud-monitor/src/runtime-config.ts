@@ -37,7 +37,6 @@ export function sanitizedRuntimeConfig(
     devSourceConfigured: boolean;
     devIpAllowlistConfigured: boolean;
     prodIpAllowlistConfigured: boolean;
-    adminSourceConfigured: boolean;
   };
 } {
   return {
@@ -91,7 +90,6 @@ export function sanitizedRuntimeConfig(
       prodIpAllowlistConfigured: Boolean(
         config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS.trim(),
       ),
-      adminSourceConfigured: Boolean(config.ADMIN_DATABASE_URL),
     },
   };
 }

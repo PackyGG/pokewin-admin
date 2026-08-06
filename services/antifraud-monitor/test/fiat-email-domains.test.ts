@@ -8,14 +8,18 @@ import {
   domainFromEmail,
   FiatEmailDomainGuard,
   fetchCheckoutEmailEvents,
+  fetchRefundedAmountClusterCandidates,
   fetchSuspiciousDepositClusterCandidates,
   fetchSuspiciousGmailEvents,
   normalizeEmailDomain,
   qualifyingDepositClusterMembers,
+  qualifyingRefundedAmountCluster,
   suspiciousGmailClusterCandidate,
   suspiciousGmailDotPattern,
   type DepositClusterCandidate,
   type DepositClusterMember,
+  type RefundedAmountClusterCandidate,
+  type RefundedAmountClusterMember,
 } from "../src/fiat-email-domains.js";
 import {
   applyBlacklistedCheckoutEmail,
@@ -178,6 +182,81 @@ test("deposit-cluster polling is bounded and conjunctive", async () => {
   assert.match(calls[0]?.sql ?? "", /\(pwe\.received_at, pwe\.id::text\) >/);
   assert.match(calls[0]?.sql ?? "", /LIMIT \$3/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "cluster-row-1", 75]);
+});
+
+function refundedMember(index: number): RefundedAmountClusterMember {
+  return {
+    ...clusterMember(index, `payer${index}@example.com`, {
+      requested_amount_cents: 2000,
+      currency: "USD",
+      account_identity: `user-${(index % 3) + 1}`,
+    }),
+    status: "refunded",
+    updated_at: new Date(`2026-08-05T12:0${index}:00.000Z`),
+  };
+}
+
+function refundedCandidate(
+  totalPaymentCount: number,
+): RefundedAmountClusterCandidate {
+  const members = [1, 2, 3, 4, 5].map(refundedMember);
+  return {
+    ...members[4]!,
+    total_payment_count: totalPaymentCount,
+    refunded_members: members,
+  };
+}
+
+test("refunded amount clusters require volume, distinct accounts, and refund concentration", () => {
+  const campaign = qualifyingRefundedAmountCluster(refundedCandidate(6));
+  assert.ok(campaign);
+  assert.equal(campaign.members.length, 5);
+  assert.equal(campaign.accountCount, 3);
+  assert.equal(campaign.paymentCount, 5);
+  assert.equal(Number(campaign.refundRatio.toFixed(3)), 0.833);
+
+  assert.equal(qualifyingRefundedAmountCluster(refundedCandidate(20)), null);
+  assert.equal(qualifyingRefundedAmountCluster({
+    ...refundedCandidate(6),
+    refunded_members: refundedCandidate(6).refunded_members.map((member) => ({
+      ...member,
+      account_identity: "same-user",
+    })),
+  }), null);
+});
+
+test("refunded amount polling follows refund updates and measures all settled payments", async () => {
+  const calls: Array<{ sql: string; values?: unknown[] }> = [];
+  const source = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      return { rows: [] };
+    },
+  } as unknown as pg.Pool;
+  const occurredAt = new Date("2026-07-01T00:00:00.000Z");
+  await fetchRefundedAmountClusterCandidates(
+    source,
+    { occurredAt, sourceId: "intent-1" },
+    50,
+  );
+  assert.match(calls[0]?.sql ?? "", /fdi\.status::text IN \('refunded', 'partially_refunded'\)/);
+  assert.match(calls[0]?.sql ?? "", /\(fdi\.updated_at, fdi\.id::text\) >/);
+  assert.match(calls[0]?.sql ?? "", /COUNT\(\*\)::int AS total_payment_count/);
+  assert.match(calls[0]?.sql ?? "", /interval '3 days 12 hours'/);
+  assert.deepEqual(calls[0]?.values, [occurredAt, "intent-1", 50]);
+});
+
+test("refunded amount cluster migration creates durable campaign state and backfill cursor", async () => {
+  const migration = await readFile(
+    new URL("../migrations/057_refunded_amount_clusters.sql", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS fiat_refunded_amount_clusters/);
+  assert.match(migration, /UNIQUE \(currency, requested_amount_cents\)/);
+  assert.match(migration, /active_until timestamptz NOT NULL/);
+  assert.match(migration, /'fiat_refunded_amount_clusters_v1'/);
+  assert.match(migration, /now\(\) - interval '30 days'/);
 });
 
 test("Gmail pattern backfill includes heavy fragments and coded numeric suffixes", async () => {
@@ -518,6 +597,6 @@ test("a clustered checkout uses explicit cluster evidence", () => {
   assert.match(result.summary, /coordinated deposit cluster/);
   assert.match(
     result.flowChecks[0]?.evidence.join(" ") ?? "",
-    /same amount, short window, distinct accounts/,
+    /same amount, distinct accounts and payment identities/,
   );
 });

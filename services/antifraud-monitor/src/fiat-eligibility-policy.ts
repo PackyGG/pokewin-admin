@@ -29,12 +29,8 @@ export const MAX_FUTURE_SKEW_MS = 30_000;
 /** Scored-band deny floor. */
 export const AUTOMATIC_DENY_SCORE = 50;
 
-/** "New account" ceiling for the IP-change containment rule. */
-export const IP_CHANGE_CONTAINMENT_AGE_DAYS = 7;
-/** "New account" ceiling for the device-change containment rule, in hours. */
-export const DEVICE_CHANGE_CONTAINMENT_AGE_HOURS = 36;
-/** A second checkout this soon after a paid deposit is card testing. */
-export const RECENT_PAID_FIAT_CONTAINMENT_MS = 60_000;
+/** A second checkout this soon after a paid deposit is temporarily denied. */
+export const RECENT_PAID_FIAT_DENY_MS = 60_000;
 /** A login this recent is expected to describe the checkout session. */
 export const RECENT_LOGIN_IDENTITY_WINDOW_MS = 30 * 60_000;
 /** Account age at which the trust credits and lighter drift weights unlock. */
@@ -218,8 +214,6 @@ export type FiatEligibilityAdditionalBlocklists = {
   /** Stored account email matched the maintained disposable-domain list. */
   disposableEmailDomain: string | null;
   disposableEmailPoints: number;
-  /** User id exists in the Admin DB excluded-users list. */
-  excludedUser: boolean;
 };
 
 export type FiatEligibilityPolicyInput = {
@@ -470,7 +464,6 @@ export function evaluateFiatEligibility(
 
   const ageDays = accountAgeDays(input.subject.created_at, input.now);
   const established = ageDays >= ESTABLISHED_ACCOUNT_DAYS;
-  const ageHours = ageDays * 24;
 
   // ── Account state ────────────────────────────────────────────────────────
   // Already-correct states. Deny, never contain: re-locking an account staff
@@ -664,13 +657,6 @@ export function evaluateFiatEligibility(
     blocking: true,
     source: "policy",
   });
-  add(input.additionalBlocklists.excludedUser, {
-    key: "excluded_user_blocklist_match",
-    detail: "The account is present on the Admin excluded-users list.",
-    points: 100,
-    blocking: true,
-    source: "account",
-  });
 
   // ── Drift from signup, and the hard rules built on it ────────────────────
   const ipChanged = Boolean(
@@ -697,30 +683,6 @@ export function evaluateFiatEligibility(
   const latestLoginIsRecent = latestLoginAgeMs >= 0
     && latestLoginAgeMs <= RECENT_LOGIN_IDENTITY_WINDOW_MS;
 
-  add(
-    ipChanged && ageDays < IP_CHANGE_CONTAINMENT_AGE_DAYS,
-    {
-      key: "new_account_checkout_ip_changed",
-      detail:
-        `The account is ${ageDays.toFixed(2)} days old and is checking out `
-        + "from a different IP than signup.",
-      points: 100,
-      containing: true,
-      source: "policy",
-    },
-  );
-  add(
-    deviceChanged && ageHours < DEVICE_CHANGE_CONTAINMENT_AGE_HOURS,
-    {
-      key: "new_account_checkout_device_changed",
-      detail:
-        `The account is ${ageHours.toFixed(1)} hours old and is checking out `
-        + "from a different device than signup.",
-      points: 100,
-      containing: true,
-      source: "policy",
-    },
-  );
   const badIp = badIpReputation(input.providers);
   const badDevice = badDeviceReputation(input.providers);
   add(
@@ -775,7 +737,7 @@ export function evaluateFiatEligibility(
     input.behaviour.msSinceLastPaidFiat !== null
       && input.behaviour.msSinceLastPaidFiat >= 0
       && input.behaviour.msSinceLastPaidFiat
-        < RECENT_PAID_FIAT_CONTAINMENT_MS,
+        < RECENT_PAID_FIAT_DENY_MS,
     {
       key: "repeat_fiat_within_sixty_seconds",
       detail:
@@ -783,7 +745,7 @@ export function evaluateFiatEligibility(
         + `${Math.round((input.behaviour.msSinceLastPaidFiat ?? 0) / 1000)}s `
         + "ago and another checkout was requested.",
       points: 100,
-      containing: true,
+      blocking: true,
       source: "policy",
     },
   );

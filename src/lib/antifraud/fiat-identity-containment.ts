@@ -8,15 +8,16 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
 import { logError } from "@/lib/errors/logger";
 
 /**
- * Automatic containment for post-authorization Fiat deposit identity drift.
+ * Automatic containment for high-confidence post-authorization Fiat fraud.
  *
  * This is the ONE place in the codebase where an automated signal requires KYC.
  * Every other containment path deliberately does not: `ingest/route.ts` used to
  * carry the blanket invariant "automated signals never mutate KYC state", and
  * the owner-contract test asserted it. The owner lifted that invariant for this
- * rule specifically (2026-07-30) — a payer whose card, email, or device stopped
- * matching the identity the account established on its first authorized deposit
- * has to prove who they are before the money moves again.
+ * rule specifically (2026-07-30) — a payer whose identity stopped matching the
+ * first authorized deposit has to prove who they are before money moves again.
+ * Confirmed refunded-payment campaigns use this same contained review path
+ * because 3DS alone does not rule out authorized-payment fraud.
  *
  * The invariant still holds for every other kind. Nothing here is reachable
  * from the generic containment paths.
@@ -54,6 +55,7 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = new Set([
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
+  "checkout_refunded_amount_cluster",
   "checkout_email_catchall",
   "checkout_email_undeliverable",
   "checkout_email_changed",
@@ -109,7 +111,7 @@ export function fiatIdentityContainmentTarget(signal: {
     intentId,
     reasons,
     reason: (
-      "Automatic fraud lock: authorized Fiat deposit identity changed ("
+      "Automatic fraud lock: high-confidence authorized Fiat risk ("
       + `${reasons.join(", ")})`
     ).slice(0, 500),
   };

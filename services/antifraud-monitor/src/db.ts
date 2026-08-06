@@ -69,7 +69,6 @@ export type Databases = {
   source: pg.Pool;
   fiatDevSource: pg.Pool | null;
   antifraud: pg.Pool;
-  admin: pg.Pool;
 };
 
 function createSourcePool(input: {
@@ -141,32 +140,7 @@ export function createDatabases(config: Config): Databases {
     });
   });
 
-  const admin = new Pool({
-    connectionString: sourceConnectionString(
-      config.ADMIN_DATABASE_URL,
-      config.ADMIN_DATABASE_SSL,
-      config.ADMIN_DATABASE_CA,
-    ),
-    ssl: sourceSslFor(
-      config.ADMIN_DATABASE_SSL,
-      config.ADMIN_DATABASE_CA,
-    ),
-    max: 4,
-    idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 8_000,
-    options:
-      "-c default_transaction_read_only=on -c statement_timeout=10000 -c TimeZone=UTC",
-    application_name: "packy-antifraud-admin-reader",
-  });
-  admin.on("error", (error) => {
-    console.error("[admin-db] idle pool client error", {
-      name: error.name,
-      message: error.message,
-      code: (error as { code?: string }).code,
-    });
-  });
-
-  return { source, fiatDevSource, antifraud, admin };
+  return { source, fiatDevSource, antifraud };
 }
 
 export async function assertDatabaseConnections(db: Databases): Promise<void> {
@@ -174,7 +148,6 @@ export async function assertDatabaseConnections(db: Databases): Promise<void> {
     db.source.query("SELECT 1"),
     db.fiatDevSource?.query("SELECT 1"),
     db.antifraud.query("SELECT 1"),
-    db.admin.query("SELECT 1"),
   ]);
 }
 
@@ -183,6 +156,5 @@ export async function closeDatabases(db: Databases): Promise<void> {
     db.source.end(),
     db.fiatDevSource?.end(),
     db.antifraud.end(),
-    db.admin.end(),
   ]);
 }

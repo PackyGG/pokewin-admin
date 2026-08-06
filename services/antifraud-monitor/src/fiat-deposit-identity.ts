@@ -69,6 +69,7 @@ type AuthorizedIntentRow = {
   provider_checkout_id: string | null;
   provider_payment_id: string | null;
   currency: string;
+  requested_amount_cents: number;
   credited_amount_cents: number;
   status: string;
   intent_created_at: Date;
@@ -203,6 +204,7 @@ export class FiatDepositIdentityChecks {
           fdi.provider_checkout_id,
           fdi.provider_payment_id,
           fdi.currency,
+          fdi.requested_amount_cents,
           fdi.credited_amount_cents,
           fdi.status,
           (fdi.created_at ${UTC}) AS intent_created_at,
@@ -433,6 +435,23 @@ export class FiatDepositIdentityChecks {
     return result.rows[0]?.active === true ? domain : null;
   }
 
+  private async refundedAmountCluster(
+    intent: AuthorizedIntentRow,
+  ): Promise<string | null> {
+    const result = await this.db.antifraud.query<{ reason: string }>(
+      `
+        SELECT reason
+        FROM fiat_refunded_amount_clusters
+        WHERE currency = upper($1)
+          AND requested_amount_cents = $2
+          AND active_until > now()
+        LIMIT 1
+      `,
+      [intent.currency, intent.requested_amount_cents],
+    );
+    return result.rows[0]?.reason ?? null;
+  }
+
   /**
    * Operator IP and fingerprint blocklist rules matching this checkout.
    *
@@ -522,11 +541,19 @@ export class FiatDepositIdentityChecks {
       intent.user_id,
       intent.intent_created_at,
     );
-    const [baseline, priorClean, blacklisted, blocklist, email] =
+    const [
+      baseline,
+      priorClean,
+      blacklisted,
+      refundedAmountCluster,
+      blocklist,
+      email,
+    ] =
       await Promise.all([
         this.baselineFor(intent),
         this.priorCleanDeposits(intent),
         this.blacklistedDomain(facts.checkoutEmail),
+        this.refundedAmountCluster(intent),
         this.blocklistMatches(network.ip, network.visitorId),
         this.emailReputation(intent.user_id, facts.checkoutEmail),
       ]);
@@ -544,6 +571,7 @@ export class FiatDepositIdentityChecks {
         checkoutVisitorId: network.visitorId,
         email,
         blacklistedEmailDomain: blacklisted,
+        refundedAmountClusterReason: refundedAmountCluster,
         blocklistMatches: blocklist,
         priorCleanDeposits: priorClean,
       },
@@ -570,6 +598,7 @@ export class FiatDepositIdentityChecks {
       checkoutEmail: facts.checkoutEmail,
       baselineCardLast4: baseline?.cardLast4 ?? null,
       baselineCheckoutEmail: baseline?.checkoutEmail ?? null,
+      refundedAmountClusterReason: refundedAmountCluster,
       signals: outcome.signals,
     };
 

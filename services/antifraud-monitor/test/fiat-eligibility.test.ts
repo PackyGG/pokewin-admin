@@ -150,7 +150,6 @@ function reviewInput(
       emailDomain: null,
       disposableEmailDomain: null,
       disposableEmailPoints: 60,
-      excludedUser: false,
     },
     signupRiskScore: 0,
     activeCaseSeverity: null,
@@ -512,7 +511,7 @@ test("established matching account is automatically allowed", () => {
   assert.ok(credit >= -30);
 });
 
-test("changed checkout IP contains an account younger than seven days", () => {
+test("changed checkout IP alone is scored and never contains", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -522,11 +521,10 @@ test("changed checkout IP contains an account younger than seven days", () => {
       signup_ip: "198.51.100.4",
     }),
   });
-  assert.equal(reviewed.decision, "deny");
-  assert.equal(reviewed.enforce, true);
-  assert.deepEqual(reviewed.enforcementReasons, [
-    "new_account_checkout_ip_changed",
-  ]);
+  assert.equal(reviewed.decision, "allow");
+  assert.equal(reviewed.enforce, false);
+  assert.deepEqual(reviewed.enforcementReasons, []);
+  assert.ok(reviewed.signals.some((signal) => signal.key === "signup_ip_changed"));
 
   // Eight days old, identical evidence: scored, not contained.
   const older = fiatEligibilityInternals.automaticReview({
@@ -540,7 +538,7 @@ test("changed checkout IP contains an account younger than seven days", () => {
   assert.equal(older.decision, "allow");
 });
 
-test("changed checkout device contains an account younger than 36 hours", () => {
+test("changed checkout device is scored against signup and latest login without containment", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -551,12 +549,11 @@ test("changed checkout device contains an account younger than 36 hours", () => 
     identity: { ...base.identity, visitorId: "checkout-device" },
   });
   assert.equal(reviewed.decision, "deny");
-  assert.equal(reviewed.enforce, true);
-  assert.ok(
-    reviewed.enforcementReasons.includes(
-      "new_account_checkout_device_changed",
-    ),
-  );
+  assert.equal(reviewed.enforce, false);
+  assert.deepEqual(reviewed.enforcementReasons, []);
+  assert.ok(reviewed.signals.some(
+    (signal) => signal.key === "signup_fingerprint_changed",
+  ));
 
   // 40 hours old: past the device window, and the IP window does not apply
   // because the IP still matches signup.
@@ -711,16 +708,18 @@ test("a live provider risk score alone counts as bad reputation", () => {
   );
 });
 
-test("a second checkout within 60s of a paid deposit is contained", () => {
+test("a second checkout within 60s is denied without containment", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
     behaviour: behaviourFixture({ msSinceLastPaidFiat: 12_000 }),
   });
   assert.equal(reviewed.decision, "deny");
-  assert.deepEqual(reviewed.enforcementReasons, [
-    "repeat_fiat_within_sixty_seconds",
-  ]);
+  assert.equal(reviewed.enforce, false);
+  assert.deepEqual(reviewed.enforcementReasons, []);
+  assert.ok(reviewed.signals.some(
+    (signal) => signal.key === "repeat_fiat_within_sixty_seconds",
+  ));
 
   const later = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -838,21 +837,9 @@ test("all remaining checkout blocklists deny with the correct containment", () =
     (signal) => signal.key === "disposable_email_domain_match",
   ));
 
-  const excluded = fiatEligibilityInternals.automaticReview({
-    ...reviewInput(),
-    additionalBlocklists: {
-      ...reviewInput().additionalBlocklists,
-      excludedUser: true,
-    },
-  });
-  assert.equal(excluded.decision, "deny");
-  assert.equal(excluded.enforce, false);
-  assert.ok(excluded.signals.some(
-    (signal) => signal.key === "excluded_user_blocklist_match",
-  ));
 });
 
-test("pre-Fiat reads operator email, disposable email, and excluded-user lists", async () => {
+test("pre-Fiat reads operator and disposable email lists", async () => {
   const queries: string[] = [];
   const antifraud = {
     query: async (sql: string) => {
@@ -860,26 +847,16 @@ test("pre-Fiat reads operator email, disposable email, and excluded-user lists",
       return { rows: [{ active: true }] };
     },
   };
-  const admin = {
-    query: async (sql: string) => {
-      queries.push(sql);
-      return { rows: [{ active: true }] };
-    },
-  };
   const matches = await fiatEligibilityInternals.loadAdditionalBlocklists(
     antifraud as never,
-    admin as never,
     {
-      userId: "excluded-user",
       email: "person@mailinator.com",
       disposableEmailPoints: 60,
     },
   );
   assert.equal(matches.emailDomain, "mailinator.com");
   assert.equal(matches.disposableEmailDomain, "mailinator.com");
-  assert.equal(matches.excludedUser, true);
   assert.ok(queries.some((sql) => sql.includes("fiat_email_domain_blacklist")));
-  assert.ok(queries.some((sql) => sql.includes("excluded_users")));
 });
 
 test("behaviour rewards self-funded play and punishes reward farming", () => {
@@ -1057,11 +1034,8 @@ test("every containment reason is one the dashboard will honour", () => {
   assert.ok(dashboardReasons.size >= 9);
 
   const emitted = new Set<string>([
-    "new_account_checkout_ip_changed",
-    "new_account_checkout_device_changed",
     "checkout_identity_changed_with_bad_reputation",
     "checkout_identity_changed_from_latest_login_with_bad_reputation",
-    "repeat_fiat_within_sixty_seconds",
     "blocklist_ip_match",
     "blocklist_fingerprint_match",
     ...CONTAINING_FINGERPRINT_SIGNALS,
@@ -1186,7 +1160,6 @@ test("concurrent identical requests share one automatic provider review", async 
       source,
       fiatDevSource: null,
       antifraud,
-      admin,
     } as never,
     { get: async () => ({}) } as never,
     enrichment as never,
@@ -1291,7 +1264,6 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
       release: () => undefined,
     }),
   };
-  const admin = { query: async () => ({ rows: [{ active: false }] }) };
   const never = new Promise<never>(() => {});
   const enrichment = {
     fingerprintCheck: async () =>
@@ -1313,7 +1285,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
     abstractIpCheck: () => never,
   };
   const service = new FiatEligibilityService(
-    { source, fiatDevSource: null, antifraud, admin } as never,
+    { source, fiatDevSource: null, antifraud } as never,
     { get: async () => ({}) } as never,
     enrichment as never,
     true,

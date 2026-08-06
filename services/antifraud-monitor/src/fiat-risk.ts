@@ -830,7 +830,7 @@ export function applyBlacklistedCheckoutEmail(
             score: 100,
             evidence: [
               clusterMatch
-                ? "Blocked deposit cluster: same amount, short window, distinct accounts and payment identities, unusual Gmail aliases"
+                ? "Blocked deposit cluster: same amount, distinct accounts and payment identities, corroborated by email-pattern or refund concentration evidence"
                 : patternMatch
                 ? "Blocked checkout pattern: dot-fragmented Gmail"
                 : `Blocked checkout domain: ${match.domain}`,

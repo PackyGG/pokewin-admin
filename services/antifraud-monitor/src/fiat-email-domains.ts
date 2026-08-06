@@ -10,9 +10,14 @@ import type { Signup } from "./types.js";
 const STREAM = "fiat_email_domains";
 const GMAIL_PATTERN_STREAM = "fiat_gmail_dot_patterns";
 const DEPOSIT_CLUSTER_STREAM = "fiat_suspicious_deposit_clusters_v2";
+const REFUNDED_AMOUNT_CLUSTER_STREAM = "fiat_refunded_amount_clusters_v1";
 const BATCH_SIZE = 100;
 const CLUSTER_WINDOW_MINUTES = 30;
 const CLUSTER_MIN_MEMBERS = 3;
+const REFUND_CLUSTER_WINDOW_DAYS = 7;
+const REFUND_CLUSTER_MIN_MEMBERS = 5;
+const REFUND_CLUSTER_MIN_ACCOUNTS = 3;
+const REFUND_CLUSTER_MIN_RATIO = 0.5;
 
 export type CheckoutEmailEvent = {
   source_event_id: string;
@@ -35,6 +40,16 @@ export type DepositClusterMember = CheckoutEmailEvent & {
 
 export type DepositClusterCandidate = DepositClusterMember & {
   cluster_members: DepositClusterMember[];
+};
+
+export type RefundedAmountClusterMember = DepositClusterMember & {
+  status: "refunded" | "partially_refunded";
+  updated_at: Date;
+};
+
+export type RefundedAmountClusterCandidate = RefundedAmountClusterMember & {
+  total_payment_count: number;
+  refunded_members: RefundedAmountClusterMember[];
 };
 
 type PendingMatch = Omit<CheckoutEmailEvent, "user_id"> & {
@@ -584,6 +599,232 @@ export function qualifyingDepositClusterMembers(
   return members;
 }
 
+type RawRefundedAmountClusterCandidate = Omit<
+  RefundedAmountClusterCandidate,
+  "requested_amount_cents" | "total_payment_count" | "refunded_members"
+> & {
+  requested_amount_cents: number | string;
+  total_payment_count: number | string;
+  refunded_members: unknown;
+};
+
+function parseRefundedAmountClusterMember(
+  value: unknown,
+): RefundedAmountClusterMember | null {
+  const base = parseDepositClusterMember(value);
+  if (!base || !value || typeof value !== "object") return null;
+  const row = value as Record<string, unknown>;
+  if (row.status !== "refunded" && row.status !== "partially_refunded") {
+    return null;
+  }
+  const updatedAt = row.updated_at instanceof Date
+    ? row.updated_at
+    : new Date(String(row.updated_at ?? ""));
+  if (!Number.isFinite(updatedAt.getTime())) return null;
+  return { ...base, status: row.status, updated_at: updatedAt };
+}
+
+/**
+ * Refunded campaigns are discovered from intent updates, not payment-created
+ * cursors: a payment can become fraudulent/refunded days after authorization.
+ * The total settled population is returned as the denominator so a common
+ * amount such as $20 is never suspicious merely because it is popular.
+ */
+export async function fetchRefundedAmountClusterCandidates(
+  source: pg.Pool,
+  cursor: { occurredAt: Date; sourceId: string },
+  limit = BATCH_SIZE,
+): Promise<RefundedAmountClusterCandidate[]> {
+  const result = await source.query<RawRefundedAmountClusterCandidate>(
+    `
+      WITH new_refunds AS (
+        SELECT
+          ('refund-amount:' || fdi.id::text) AS source_event_id,
+          COALESCE(checkout.provider_event_id, fdi.id::text)
+            AS provider_event_id,
+          fdi.id::text AS deposit_intent_id,
+          COALESCE(fdi.provider_payment_id, checkout.payment_id, fdi.id::text)
+            AS provider_payment_id,
+          fdi.user_id,
+          u.username,
+          lower(COALESCE(checkout.checkout_email, u.email, ''))
+            AS checkout_email,
+          COALESCE(
+            NULLIF(fdi.provider_metadata ->> 'payment_method_type', ''),
+            checkout.payment_method_type,
+            'card'
+          ) AS payment_method_type,
+          lower(fdi.user_id) AS account_identity,
+          upper(fdi.currency) AS currency,
+          lower(COALESCE(
+            fdi.provider_payment_id,
+            checkout.payment_id,
+            fdi.id::text
+          )) AS payment_identity,
+          fdi.requested_amount_cents,
+          fdi.status::text AS status,
+          fdi.created_at AS occurred_at,
+          fdi.updated_at
+        FROM fiat_deposit_intents fdi
+        JOIN "user" u ON u.id = fdi.user_id
+        LEFT JOIN LATERAL (
+          SELECT
+            pwe.provider_event_id,
+            NULLIF(pwe.payload #>> '{data,id}', '') AS payment_id,
+            NULLIF(pwe.payload #>> '{data,user,email}', '') AS checkout_email,
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', '')
+              AS payment_method_type
+          FROM payment_webhook_events pwe
+          WHERE pwe.provider = 'whop'
+            AND pwe.event_type = 'payment.created'
+            AND (
+              pwe.payload #>> '{data,metadata,deposit_intent_id}' = fdi.id::text
+              OR pwe.provider_resource_id IN (
+                fdi.provider_checkout_id,
+                fdi.provider_payment_id
+              )
+            )
+          ORDER BY pwe.received_at DESC, pwe.id DESC
+          LIMIT 1
+        ) checkout ON TRUE
+        WHERE fdi.status::text IN ('refunded', 'partially_refunded')
+          AND fdi.requested_amount_cents > 0
+          AND NULLIF(btrim(fdi.currency), '') IS NOT NULL
+          AND (fdi.updated_at, fdi.id::text) >
+            ($1::timestamptz, $2::text)
+        ORDER BY fdi.updated_at, fdi.id::text
+        LIMIT $3
+      )
+      SELECT
+        n.*,
+        stats.total_payment_count,
+        stats.refunded_members
+      FROM new_refunds n
+      CROSS JOIN LATERAL (
+        SELECT
+          COUNT(*)::int AS total_payment_count,
+          COALESCE(jsonb_agg(jsonb_build_object(
+            'source_event_id', 'refund-amount:' || peer.id::text,
+            'provider_event_id', COALESCE(
+              peer_checkout.provider_event_id,
+              peer.id::text
+            ),
+            'deposit_intent_id', peer.id::text,
+            'provider_payment_id', COALESCE(
+              peer.provider_payment_id,
+              peer_checkout.payment_id,
+              peer.id::text
+            ),
+            'user_id', peer.user_id,
+            'username', peer_user.username,
+            'checkout_email', lower(COALESCE(
+              peer_checkout.checkout_email,
+              peer_user.email,
+              ''
+            )),
+            'payment_method_type', COALESCE(
+              NULLIF(peer.provider_metadata ->> 'payment_method_type', ''),
+              peer_checkout.payment_method_type,
+              'card'
+            ),
+            'account_identity', lower(peer.user_id),
+            'currency', upper(peer.currency),
+            'payment_identity', lower(COALESCE(
+              peer.provider_payment_id,
+              peer_checkout.payment_id,
+              peer.id::text
+            )),
+            'requested_amount_cents', peer.requested_amount_cents,
+            'status', peer.status::text,
+            'occurred_at', peer.created_at,
+            'updated_at', peer.updated_at
+          ) ORDER BY peer.created_at, peer.id::text) FILTER (
+            WHERE peer.status::text IN ('refunded', 'partially_refunded')
+          ), '[]'::jsonb) AS refunded_members
+        FROM fiat_deposit_intents peer
+        JOIN "user" peer_user ON peer_user.id = peer.user_id
+        LEFT JOIN LATERAL (
+          SELECT
+            pwe.provider_event_id,
+            NULLIF(pwe.payload #>> '{data,id}', '') AS payment_id,
+            NULLIF(pwe.payload #>> '{data,user,email}', '') AS checkout_email,
+            NULLIF(pwe.payload #>> '{data,payment_method_type}', '')
+              AS payment_method_type
+          FROM payment_webhook_events pwe
+          WHERE pwe.provider = 'whop'
+            AND pwe.event_type = 'payment.created'
+            AND (
+              pwe.payload #>> '{data,metadata,deposit_intent_id}' = peer.id::text
+              OR pwe.provider_resource_id IN (
+                peer.provider_checkout_id,
+                peer.provider_payment_id
+              )
+            )
+          ORDER BY pwe.received_at DESC, pwe.id DESC
+          LIMIT 1
+        ) peer_checkout ON TRUE
+        WHERE upper(peer.currency) = n.currency
+          AND peer.requested_amount_cents = n.requested_amount_cents
+          AND peer.status::text IN (
+            'completed', 'refunded', 'partially_refunded', 'disputed'
+          )
+          AND peer.created_at BETWEEN
+            n.occurred_at - interval '3 days 12 hours'
+            AND n.occurred_at + interval '3 days 12 hours'
+      ) stats
+      ORDER BY n.updated_at, n.deposit_intent_id
+    `,
+    [cursor.occurredAt, cursor.sourceId, limit],
+  );
+  return result.rows.map((row) => ({
+    ...row,
+    requested_amount_cents: Number(row.requested_amount_cents),
+    total_payment_count: Number(row.total_payment_count),
+    refunded_members: Array.isArray(row.refunded_members)
+      ? row.refunded_members
+          .map(parseRefundedAmountClusterMember)
+          .filter((member): member is RefundedAmountClusterMember =>
+            member !== null
+          )
+      : [],
+  }));
+}
+
+export function qualifyingRefundedAmountCluster(
+  candidate: RefundedAmountClusterCandidate,
+): {
+  members: RefundedAmountClusterMember[];
+  refundRatio: number;
+  accountCount: number;
+  paymentCount: number;
+} | null {
+  const members = candidate.refunded_members.filter((member) =>
+    member.currency === candidate.currency
+    && member.requested_amount_cents === candidate.requested_amount_cents
+    && Boolean(member.user_id)
+    && Boolean(member.payment_identity)
+  );
+  const unique = [...new Map(
+    members.map((member) => [member.source_event_id, member]),
+  ).values()];
+  const accountCount = new Set(unique.map((member) => member.account_identity))
+    .size;
+  const paymentCount = new Set(unique.map((member) => member.payment_identity))
+    .size;
+  const refundRatio = candidate.total_payment_count > 0
+    ? unique.length / candidate.total_payment_count
+    : 0;
+  if (
+    unique.length < REFUND_CLUSTER_MIN_MEMBERS
+    || accountCount < REFUND_CLUSTER_MIN_ACCOUNTS
+    || paymentCount < REFUND_CLUSTER_MIN_MEMBERS
+    || refundRatio < REFUND_CLUSTER_MIN_RATIO
+  ) {
+    return null;
+  }
+  return { members: unique, refundRatio, accountCount, paymentCount };
+}
+
 export class FiatEmailDomainGuard {
   constructor(
     private readonly db: Databases,
@@ -615,12 +856,21 @@ export class FiatEmailDomainGuard {
       `,
       [DEPOSIT_CLUSTER_STREAM],
     );
+    await this.db.antifraud.query(
+      `
+        INSERT INTO source_cursors(stream, occurred_at, source_id)
+        VALUES ($1, now() - interval '30 days', '')
+        ON CONFLICT (stream) DO NOTHING
+      `,
+      [REFUNDED_AMOUNT_CLUSTER_STREAM],
+    );
   }
 
   async process(): Promise<void> {
     await this.captureNewEvents();
     await this.backfillSuspiciousGmailPatterns();
     await this.captureSuspiciousDepositClusters();
+    await this.captureRefundedAmountClusters();
     await this.backfillOneDomain();
     await this.confirmLocks();
     await this.releaseConfirmedClusterAlerts();
@@ -978,6 +1228,183 @@ export class FiatEmailDomainGuard {
     }
   }
 
+  private async captureRefundedAmountClusters(): Promise<void> {
+    const cursor = await this.db.antifraud.query<{
+      occurred_at: Date;
+      source_id: string;
+    }>(
+      "SELECT occurred_at, source_id FROM source_cursors WHERE stream = $1",
+      [REFUNDED_AMOUNT_CLUSTER_STREAM],
+    );
+    const current = cursor.rows[0];
+    if (!current) throw new Error("Fiat refunded-amount cursor is missing");
+    const candidates = await fetchRefundedAmountClusterCandidates(
+      this.db.source,
+      { occurredAt: current.occurred_at, sourceId: current.source_id },
+    );
+    const client = await this.db.antifraud.connect();
+    try {
+      await client.query("BEGIN");
+      for (const candidate of candidates) {
+        const cluster = qualifyingRefundedAmountCluster(candidate);
+        if (!cluster) continue;
+        const ratioPercent = Number((cluster.refundRatio * 100).toFixed(1));
+        const reason =
+          `${cluster.members.length} of ${candidate.total_payment_count} `
+          + `settled payments (${ratioPercent}%) for `
+          + `${candidate.requested_amount_cents} ${candidate.currency} cents `
+          + `were refunded across ${cluster.accountCount} accounts inside a `
+          + `${REFUND_CLUSTER_WINDOW_DAYS}-day payment window`;
+        const windowStart = new Date(Math.min(
+          ...cluster.members.map((member) => member.occurred_at.getTime()),
+        ));
+        const windowEnd = new Date(Math.max(
+          ...cluster.members.map((member) => member.occurred_at.getTime()),
+        ));
+        await client.query(
+          `
+            INSERT INTO fiat_refunded_amount_clusters (
+              currency, requested_amount_cents, window_start, window_end,
+              total_payment_count, refunded_payment_count, account_count,
+              payment_count, refund_ratio, reason, source_event_ids,
+              active_until
+            ) VALUES (
+              $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,
+              now() + interval '7 days'
+            )
+            ON CONFLICT (currency, requested_amount_cents) DO UPDATE SET
+              window_start = LEAST(
+                fiat_refunded_amount_clusters.window_start,
+                EXCLUDED.window_start
+              ),
+              window_end = GREATEST(
+                fiat_refunded_amount_clusters.window_end,
+                EXCLUDED.window_end
+              ),
+              total_payment_count = EXCLUDED.total_payment_count,
+              refunded_payment_count = EXCLUDED.refunded_payment_count,
+              account_count = EXCLUDED.account_count,
+              payment_count = EXCLUDED.payment_count,
+              refund_ratio = EXCLUDED.refund_ratio,
+              reason = EXCLUDED.reason,
+              source_event_ids = EXCLUDED.source_event_ids,
+              active_until = now() + interval '7 days',
+              updated_at = now()
+          `,
+          [
+            candidate.currency,
+            candidate.requested_amount_cents,
+            windowStart,
+            windowEnd,
+            candidate.total_payment_count,
+            cluster.members.length,
+            cluster.accountCount,
+            cluster.paymentCount,
+            cluster.refundRatio,
+            reason,
+            JSON.stringify(cluster.members.map((member) =>
+              member.source_event_id
+            )),
+          ],
+        );
+        for (const member of cluster.members) {
+          await this.persistMatch(
+            client,
+            { ...member, match_source: "whop_checkout" },
+            {
+              type: "suspicious_deposit_cluster",
+              domain: domainFromEmail(member.checkout_email)
+                ?? "refund-amount-cluster",
+              reason,
+            },
+          );
+        }
+
+        const sourceIds = cluster.members.map((member) =>
+          member.source_event_id
+        );
+        const existingAlert = await client.query<{ source_id: string }>(
+          `
+            SELECT source_id
+            FROM fiat_problem_alert_outbox
+            WHERE problem_code = 'suspicious_deposit_cluster'
+              AND details ->> 'cluster_basis' = 'refunded_amount'
+              AND EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements_text(
+                  details -> 'cluster_source_event_ids'
+                ) AS prior(source_event_id)
+                WHERE prior.source_event_id = ANY($1::text[])
+              )
+            LIMIT 1
+          `,
+          [sourceIds],
+        );
+        if (existingAlert.rows.length > 0) continue;
+        await client.query(
+          `
+            INSERT INTO fiat_problem_alert_outbox (
+              source_kind, source_id, problem_code, user_id, username,
+              details, occurred_at, next_attempt_at
+            ) VALUES (
+              'deposit_intent', $1, 'suspicious_deposit_cluster',
+              $2, $3, $4::jsonb, $5, 'infinity'::timestamptz
+            )
+            ON CONFLICT (source_kind, source_id) DO NOTHING
+          `,
+          [
+            `refund-amount-cluster:${candidate.deposit_intent_id}`,
+            candidate.user_id,
+            candidate.username,
+            {
+              intent_id: candidate.deposit_intent_id,
+              email_risk_type: "suspicious_deposit_cluster",
+              email_risk_reason: reason,
+              cluster_basis: "refunded_amount",
+              risk_score: 100,
+              status: "withdrawals_locked",
+              currency: candidate.currency,
+              amount_cents: candidate.requested_amount_cents,
+              cluster_member_count: cluster.members.length,
+              cluster_account_count: cluster.accountCount,
+              cluster_payment_count: cluster.paymentCount,
+              cluster_total_payment_count: candidate.total_payment_count,
+              cluster_refund_ratio: cluster.refundRatio,
+              cluster_window_days: REFUND_CLUSTER_WINDOW_DAYS,
+              cluster_source_event_ids: sourceIds,
+            },
+            candidate.updated_at,
+          ],
+        );
+      }
+      const last = candidates.at(-1);
+      await client.query(
+        `
+          UPDATE source_cursors
+          SET
+            occurred_at = COALESCE(
+              $2,
+              GREATEST(occurred_at, now() - interval '5 seconds')
+            ),
+            source_id = COALESCE($3, ''),
+            updated_at = now()
+          WHERE stream = $1
+        `,
+        [
+          REFUNDED_AMOUNT_CLUSTER_STREAM,
+          last?.updated_at ?? null,
+          last?.deposit_intent_id ?? null,
+        ],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   private async backfillOneDomain(): Promise<void> {
     const rule = await this.db.antifraud.query<{
       id: string;
@@ -1112,7 +1539,7 @@ export class FiatEmailDomainGuard {
     const detail = reviewOnly
       ? `${isSignup ? "Existing signup" : "Existing Whop checkout"} matches newly blocked email domain ${risk.domain}. Staff review is required; no automatic account action was taken.`
       : clusterMatch
-      ? "Whop checkout belongs to a same-amount cluster with distinct accounts, payment identities, and unusual Gmail aliases. Crypto and item withdrawals must be locked automatically."
+      ? "Whop checkout belongs to a corroborated same-amount cluster with distinct accounts and payment identities. Crypto and item withdrawals must be locked automatically."
       : patternMatch
       ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked automatically for staff review.`
       : `${isSignup ? "Signup" : "Whop checkout"} used active blocked email domain ${risk.domain}. The account must be banned automatically and reviewed by staff.`;

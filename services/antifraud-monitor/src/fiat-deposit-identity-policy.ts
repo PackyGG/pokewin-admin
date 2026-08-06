@@ -38,6 +38,7 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = [
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
+  "checkout_refunded_amount_cluster",
   "checkout_email_catchall",
   "checkout_email_undeliverable",
   "checkout_email_changed",
@@ -109,6 +110,8 @@ export type FiatIdentityObservation = {
   email: FiatIdentityEmailReputation;
   /** Non-null when the payer email's domain is on the active blacklist. */
   blacklistedEmailDomain: string | null;
+  /** Active global refund campaign for this exact currency and amount. */
+  refundedAmountClusterReason: string | null;
   blocklistMatches: readonly FiatIdentityBlocklistMatch[];
   /** Authorized deposits before this one that never reversed. */
   priorCleanDeposits: number;
@@ -181,6 +184,14 @@ export function evaluateFiatDepositIdentity(
     detail:
       "The payer email domain "
       + `${seen.blacklistedEmailDomain ?? ""} is on the active blacklist.`,
+    containing: true,
+  });
+
+  add(seen.refundedAmountClusterReason !== null, {
+    key: "checkout_refunded_amount_cluster",
+    detail:
+      "This exact payment amount is part of an active refunded-payment "
+      + `campaign: ${seen.refundedAmountClusterReason ?? "unknown"}`,
     containing: true,
   });
 

@@ -187,8 +187,6 @@ const runtimeConfig: Config = {
   SOURCE_DATABASE_SSL: "disable",
   FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_SSL: "disable",
   ANTIFRAUD_DATABASE_URL: "postgresql://fraud-user:fraud-secret@fraud/db",
-  ADMIN_DATABASE_URL: "postgresql://admin-user:admin-secret@admin/db",
-  ADMIN_DATABASE_SSL: "disable",
   ANTIFRAUD_DATABASE_SSL: "disable",
   REDIS_URL: "redis://default:redis-secret@redis",
   FINGERPRINT_SECRET_API_KEY: "fingerprint-secret",
