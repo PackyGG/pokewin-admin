@@ -8,6 +8,8 @@ import { adminDrizzle } from "@/lib/admin-db";
 import { api_keys } from "@/lib/db-schema/admin/schema";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { requireAdmin } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
+import { require2FA } from "@/lib/require-2fa";
 import { generateApiKey } from "@/lib/api-auth/token";
 import { looksLikeIp, normalizeIp } from "@/lib/api-auth/ip";
 import {
@@ -24,10 +26,49 @@ import {
  * non-interactive access to platform data, so it sits behind the same gate as
  * the other credential-bearing surfaces — never a plain page-access check.
  *
+ * On top of that, the three actions that CREATE or WIDEN a credential
+ * (`createApiKeyAction`, `updateApiKeyScopesAction`, `updateApiKeyIpsAction`)
+ * also require `__can_manage_api_keys` + a second factor, matching every
+ * other credential action in the panel. A minted wildcard key with
+ * `allowed_ips` cleared is a durable credential that survives session
+ * revocation, so a stolen session must not be enough to produce one.
+ *
+ * `revokeApiKeyAction` is DELIBERATELY left on `requireAdmin()` alone —
+ * killing a leaked key has to stay frictionless.
+ *
  * The plaintext token is returned to the caller EXACTLY ONCE, from
  * `createApiKeyAction`, and is never persisted or re-derivable. Losing it
  * means minting a new key.
  */
+
+/**
+ * Shared gate for the credential-issuing actions: admin → capability →
+ * second factor, in that order, so a denial never reveals more than the
+ * previous tier already did.
+ *
+ * Returns a result rather than throwing so each action can surface the
+ * reason as its normal `{ success: false, error }` toast, the same way the
+ * dialogs already report validation failures. (`requireAdmin` still
+ * redirects an unauthenticated / non-admin caller — that is unchanged.)
+ */
+async function requireApiKeyIssuer(
+  totpCode: string | undefined,
+): Promise<
+  | { ok: true; session: Awaited<ReturnType<typeof requireAdmin>> }
+  | { ok: false; error: string }
+> {
+  const session = await requireAdmin();
+  try {
+    await requireCapability(session, "__can_manage_api_keys", "manage API keys");
+    await require2FA(session.userId, totpCode);
+  } catch (err) {
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : "Verification failed",
+    };
+  }
+  return { ok: true, session };
+}
 
 const CreateSchema = z.object({
   name: z.string().trim().min(2).max(60),
@@ -93,8 +134,11 @@ export async function createApiKeyAction(input: {
   expiresInDays?: number | null;
   rateLimitPerMin?: number;
   allowedIps?: string[];
+  totpCode?: string;
 }): Promise<CreateApiKeyResult> {
-  const session = await requireAdmin();
+  const gate = await requireApiKeyIssuer(input.totpCode);
+  if (!gate.ok) return { success: false, error: gate.error };
+  const session = gate.session;
 
   const parsed = CreateSchema.safeParse(input);
   if (!parsed.success) {
@@ -161,8 +205,11 @@ export type UpdateApiKeyIpsResult =
 export async function updateApiKeyIpsAction(input: {
   keyId: string;
   allowedIps: string[];
+  totpCode?: string;
 }): Promise<UpdateApiKeyIpsResult> {
-  const session = await requireAdmin();
+  const gate = await requireApiKeyIssuer(input.totpCode);
+  if (!gate.ok) return { success: false, error: gate.error };
+  const session = gate.session;
 
   const parsed = z
     .object({
@@ -228,8 +275,11 @@ export type UpdateApiKeyScopesResult =
 export async function updateApiKeyScopesAction(input: {
   keyId: string;
   scopes: string[];
+  totpCode?: string;
 }): Promise<UpdateApiKeyScopesResult> {
-  const session = await requireAdmin();
+  const gate = await requireApiKeyIssuer(input.totpCode);
+  if (!gate.ok) return { success: false, error: gate.error };
+  const session = gate.session;
 
   const parsed = z
     .object({

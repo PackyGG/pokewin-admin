@@ -15,7 +15,10 @@ import { requireCapability } from "@/lib/require-capability";
 import { getUserInventory, getUserTransactions, getCreatorReferralClicks, getCreatorCodeUsages, getCreatorWithdrawalLimits, getUserAttributionJourney, getProvablyFairResults, getSeedRotationHistory, getUserBalanceHistory } from "@/lib/queries/users";
 import type { AttributionJourneyEntry } from "@/lib/queries/users";
 import { safeQuery } from "@/lib/errors/safe-query";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
 import { require2FA } from "@/lib/require-2fa";
 import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
 import { creatorsApi, BackendApiError } from "@/lib/backend-api";
@@ -568,6 +571,25 @@ export async function adjustBalance(data: {
   if (!categoryResult.ok) {
     return { success: false, error: categoryResult.error };
   }
+
+  // BACKSTOP for the removal-only (debit) invariant, driven by the
+  // `REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS` set rather than a per-category
+  // `case` arm. Every removal-only category in `validateAdjustmentCategory`
+  // above already rejects `amount >= 0` with its own specific message (which
+  // still wins, because this runs after), so this changes nothing today —
+  // it exists so a category ADDED to the removal-only set later cannot reach
+  // the ledger write as a CREDIT just because its `case` arm forgot the sign
+  // check. That would be silent: `countedAdjustmentSqlPredicate`
+  // (`balance-adjustment-categories.ts`) pins `amount > 0` AND excludes the
+  // removal-only keys, so a positive removal-only row is invisible to the
+  // whole reward-cost model. Mirrors the edit path's guard verbatim.
+  if (isRemovalOnlyAdjustmentCategory(parsed.category) && parsed.amount > 0) {
+    return {
+      success: false,
+      error: "Removal-only categories require a negative adjustment amount",
+    };
+  }
+
   const meta = categoryResult.meta;
 
   // Creator-linked adjustments (leaderboard, official_stream) link to a
@@ -838,7 +860,16 @@ export async function adjustBalance(data: {
     return { success: true, ledgerTxId };
   }
 
-  await createAdminAuditEvent({
+  // DURABLE audit write. The MAIN-DB money transaction has ALREADY committed
+  // by this line. The plain `createAdminAuditEvent` THREW on any ADMIN-DB
+  // hiccup, and that throw escaped the action: the client saw a generic
+  // failure with the dialog still filled in, the operator retried, and the
+  // balance moved a SECOND time. `createAdminAuditEventDurable` retries,
+  // falls back to `admin_audit_write_failures`, alerts, and never throws — a
+  // lost audit row can no longer turn one credit into two. (The
+  // less-important `admin_balance_adjustment_meta` insert below was already
+  // try/caught for exactly this reason.)
+  const auditOutcome = await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "balance_adjustment",
     targetUserId: parsed.userId,
@@ -858,6 +889,12 @@ export async function adjustBalance(data: {
         : {}),
     },
   });
+  if (auditOutcome.status !== "recorded") {
+    console.error(
+      "[adjustBalance] audit event did not reach admin_audit_events (ledger already committed):",
+      { status: auditOutcome.status, ledgerTxId },
+    );
+  }
 
   // Persist the RICH admin-side metadata (category-specific inputs) to the
   // admin DB. Best-effort — we already wrote the ledger row + the canonical
@@ -1300,12 +1337,17 @@ export async function updateBalanceAdjustmentMeta(data: {
 // flow at the admin level so support can park a user's whole spendable
 // balance instantly without going through the normal user-side flow.
 //
-// "Instant, no unlock time" => `unlock_at = null`. If the user already
-// had locked balance with a future `unlock_at` set, that is overridden:
-// the new pool of locked funds (old locked + the newly-moved available)
-// becomes immediately unlockable. This matches the user-stated intent
-// ("no unlock time, just instant") — admins want a one-click anti-tilt
-// safety pause without committing the user to a fixed window.
+// "Instant, no unlock time" applies to a user who has NO lock: `unlock_at`
+// stays NULL and the parked funds are immediately unlockable, which is the
+// one-click anti-tilt pause this action exists for.
+//
+// An EXISTING `unlock_at` is now PRESERVED, not cleared. The old version
+// wrote `unlock_at = NULL` unconditionally, so parking $1 in the vault
+// silently voided a live time-lock — releasing funds that `extendVaultLock`
+// (the neighbouring action that only pushes the SAME timestamp forward)
+// gates behind `__can_force_vault_unlock` + a 2FA code. Adding to the vault
+// must never be a way to unlock it, so the timer is left alone here and
+// loosening it stays exclusively on the gated actions.
 //
 // Total balance is unchanged. Reversible: admins can adjust back via
 // the existing balance-adjust flow if needed.
@@ -1340,15 +1382,26 @@ export async function moveBalanceToVault(
   // wager / admin adjust) from double-spending the available pool.
   let available = 0;
   let availableText = "0";
+  let preservedUnlockAt: string | null = null;
   try {
     await db.transaction(async (tx) => {
       const b = (await tx.execute<{
         id: string; available_balance: string; locked_balance: string;
+        unlock_at: Date | string | null;
       }>(sql`
-        SELECT id, available_balance::text, locked_balance::text
+        SELECT id, available_balance::text, locked_balance::text, unlock_at
         FROM balances WHERE user_id = ${userId} FOR UPDATE
       `)).rows[0];
       if (!b) throw new Error("User has no balance row");
+
+      // Recorded in the audit trail so it is visible that a pre-existing
+      // time-lock was carried over rather than dropped.
+      preservedUnlockAt = b.unlock_at
+        ? postgresTimestampIso(
+            postgresTimestamp(b.unlock_at, "moveBalanceToVault.unlock_at"),
+            "moveBalanceToVault.unlock_at",
+          )
+        : null;
 
       availableText = b.available_balance;
       available = Number(availableText);
@@ -1356,10 +1409,18 @@ export async function moveBalanceToVault(
         throw new Error("Available balance is already 0 — nothing to move");
       }
 
+      // `unlock_at` is deliberately NOT touched. The previous version set it
+      // to NULL, which VOIDED an existing vault time-lock — the same
+      // timestamp that `extendVaultLock` requires `__can_force_vault_unlock`
+      // + a 2FA code merely to push FORWARD. Parking more balance in the
+      // vault must never be a back door for releasing what is already locked,
+      // so an existing lock survives untouched and a user with no lock stays
+      // at NULL (the "instant, no unlock time" default this action was built
+      // for). Loosening a lock stays exclusively on the gated actions.
       await tx.execute(sql`
         UPDATE balances SET available_balance = 0,
           locked_balance = locked_balance::numeric + ${availableText}::numeric,
-          unlock_at = NULL, version = version + 1, updated_at = NOW()
+          version = version + 1, updated_at = NOW()
         WHERE id = ${b.id}::uuid
       `);
       await tx.execute(sql`
@@ -1393,7 +1454,11 @@ export async function moveBalanceToVault(
     adminUserId: session.userId,
     eventType: "balance_moved_to_vault",
     targetUserId: userId,
-    metadata: { amount: available, instant: true },
+    metadata: {
+      amount: available,
+      instant: preservedUnlockAt === null,
+      preserved_unlock_at: preservedUnlockAt,
+    },
   });
 
   invalidateUserCaches(userId);
@@ -1717,7 +1782,11 @@ export async function recordManualWithdrawal(data: {
     };
   }
 
-  await createAdminAuditEvent({
+  // DURABLE (same reasoning as `adjustBalance`): the balance deduction +
+  // `total_withdrawn` bump have already committed on MAIN. A throwing audit
+  // write here would surface as a generic failure and invite a retry that
+  // records the SAME payout twice.
+  const auditOutcome = await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "manual_withdrawal_recorded",
     targetUserId: parsed.userId,
@@ -1729,6 +1798,12 @@ export async function recordManualWithdrawal(data: {
       onSiteBalanceBefore: currentBalance,
     },
   });
+  if (auditOutcome.status !== "recorded") {
+    console.error(
+      "[recordManualWithdrawal] audit event did not reach admin_audit_events (withdrawal already committed):",
+      { status: auditOutcome.status, userId: parsed.userId },
+    );
+  }
 
   invalidateUserCaches(parsed.userId);
   return { success: true };

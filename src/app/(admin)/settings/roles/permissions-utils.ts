@@ -668,6 +668,23 @@ export const CAPABILITIES: CapabilityDef[] = [
       "Generate or regenerate a creator's external API key (affiliate stats, leaderboards)",
     group: "Creators",
   },
+  {
+    // The Cloudflare WAF whitelist is a PRODUCTION edge control and the read
+    // path returns the live bypass KEYS, so both sides are gated separately
+    // from plain /creators page access.
+    key: "__can_view_creator_waf_whitelist",
+    label: "View Creator WAF Whitelist",
+    description:
+      "Read the Cloudflare WAF allow-rule, including its bypass keys",
+    group: "Creators",
+  },
+  {
+    key: "__can_edit_creator_waf_whitelist",
+    label: "Edit Creator WAF Whitelist",
+    description:
+      "Change the production Cloudflare WAF allow-rule (IPs + bypass keys)",
+    group: "Creators",
+  },
 
   // ── Multiplier deals (parallel program, separate capabilities) ─────
   // Split into four keys so the "Review" action — which moves real money
@@ -770,6 +787,17 @@ export const CAPABILITIES: CapabilityDef[] = [
     key: "__can_delete_site_config",
     label: "Delete Site Config",
     description: "Remove a site-wide security / config entry",
+    group: "System",
+  },
+  {
+    // Minting / re-scoping / re-IPing an /api/v1 key hands out a DURABLE,
+    // non-interactive credential that outlives session revocation — so it
+    // needs the same capability + 2FA tier as every other credential action.
+    // Deliberately does NOT cover revocation: killing a key stays frictionless.
+    key: "__can_manage_api_keys",
+    label: "Manage API Keys",
+    description:
+      "Mint an /api/v1 key or change an existing key's scopes / IP allowlist (revocation is not gated)",
     group: "System",
   },
 

@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { sql } from "drizzle-orm";
 
 import { getProdReadDrizzleDb } from "@/lib/db";
+import { constantTimeEqual } from "@/lib/security/constant-time";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -22,7 +23,9 @@ export async function GET(request: Request): Promise<Response> {
   const secret = process.env.CRON_SECRET?.trim();
   if (secret) {
     const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
+    // Constant-time: a plain `!==` short-circuits on the first wrong byte,
+    // leaking the secret through response timing on a world-reachable route.
+    if (!constantTimeEqual(auth, `Bearer ${secret}`)) {
       return new NextResponse("Unauthorized", { status: 401 });
     }
   } else if (process.env.NODE_ENV === "production") {

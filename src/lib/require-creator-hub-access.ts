@@ -76,7 +76,18 @@ async function isCreatorHubAllowed(
   if (!active || !username) return false;
   const settings = await loadSettingsFailClosed();
   return canAccessCreatorHub(
-    { username, role: session.role, roles: session.roles },
+    {
+      username,
+      role: session.role,
+      roles: session.roles,
+      // `canAccessCreatorHub` reads `isOwner` for its documented owner
+      // bypass. This object omitted it, so the flag was permanently
+      // `undefined` and the bypass only ever fired for the hard-coded
+      // `motha` username — a DB-flagged owner was silently denied. It
+      // failed CLOSED, so this restores intended behaviour rather than
+      // opening anything: `isOwner` is set DB-fresh by `verifySession`.
+      isOwner: session.isOwner,
+    },
     settings,
   );
 }

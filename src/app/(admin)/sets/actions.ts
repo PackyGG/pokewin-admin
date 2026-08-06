@@ -4,7 +4,11 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { sql } from "drizzle-orm";
 import { getPrimaryDrizzleDb, type MainDrizzleDb } from "@/lib/db";
 import { SETS_CACHE_TAG } from "@/lib/queries/sets";
-import { verifySession } from "@/lib/dal";
+// requirePageAccess (not bare verifySession): capabilities and page keys are
+// granted INDEPENDENTLY in this panel, so a role holding `__can_update_set`
+// without `/sets` could mutate sets it can never see. The read siblings
+// already gate on the page key — the writers now match.
+import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { uploadImage } from "@/lib/imagekit";
@@ -16,7 +20,7 @@ import {
 import { logError } from "@/lib/errors/logger";
 
 export async function uploadSetImage(formData: FormData): Promise<string> {
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
   await requireCapability(session, "__can_upload_set_image", "upload set images");
 
   const file = formData.get("file");
@@ -68,7 +72,7 @@ function postgresErrorCode(error: unknown): string | undefined {
 
 export async function createSet(data: { name: string }): Promise<string> {
   const db = await getPrimaryDrizzleDb();
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
 
   if (!data.name.trim()) throw new Error("Name is required");
 
@@ -141,7 +145,7 @@ export async function updateSet(
   },
 ): Promise<void> {
   const db = await getPrimaryDrizzleDb();
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
 
   if (!id) throw new Error("Set id is required");
   if (!data.name.trim()) throw new Error("Name is required");
@@ -201,7 +205,7 @@ export async function seedInitialSets(): Promise<{
   onepieceCreated: boolean;
 }> {
   const db = await getPrimaryDrizzleDb();
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
   await requireCapability(
     session,
     "__can_seed_initial_sets",
@@ -326,7 +330,7 @@ export async function forceAbsorbIntoPokemon(): Promise<{
   legacySetsDeleted: number;
 }> {
   const db = await getPrimaryDrizzleDb();
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
   await requireCapability(
     session,
     "__can_force_absorb_cards",
@@ -436,7 +440,7 @@ export async function deleteSet(
   id: string,
 ): Promise<ServerActionResult<{ id: string; cardsOrphaned: number }>> {
   const db = await getPrimaryDrizzleDb();
-  const session = await verifySession();
+  const session = await requirePageAccess("/sets");
 
   try {
     await requireCapability(session, "__can_delete_set", "delete sets");

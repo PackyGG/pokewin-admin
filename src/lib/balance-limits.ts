@@ -34,8 +34,21 @@ function getPeriodStart(periodType: limit_period_type): Date {
  * - `manual_withdrawal_recorded` is recordManualWithdrawal()
  *   (metadata.amountUsd carries the positive USD amount that was moved off the
  *   user's on-site balance).
- * Manual withdrawals move user money around just like a balance adjustment
- * does, so we sum both event types. Returns the absolute total (always ≥ 0).
+ * - `voucher_created` / `promo_code_created` MINT redeemable value rather than
+ *   crediting a balance directly, but the house owes it the moment it exists,
+ *   so their `metadata.amountUsd` (for a promo code: value × max uses = the
+ *   full exposure) counts against the same cap. Without this the cap was
+ *   trivially bypassable — an operator capped at $500/day could still issue an
+ *   unlimited number of vouchers.
+ * Every one of these moves user money around just like a balance adjustment
+ * does, so we sum them all. Returns the absolute total (always ≥ 0).
+ *
+ * `admin_audit_write_failures` is UNIONed in: when the money committed but
+ * the audit insert failed, `createAdminAuditEventDurable` parks the SAME
+ * params (including `metadata.amount` / `metadata.amountUsd`) in that table.
+ * Reading only `admin_audit_events` would let an ADMIN-DB hiccup silently
+ * erase a spend from the cap, so a durable-fallback row counts exactly as the
+ * real row would.
  */
 async function sumPeriodUsage(
   adminUserId: string,
@@ -44,6 +57,25 @@ async function sumPeriodUsage(
   const periodStart = getPeriodStart(period);
 
   const result = await adminDrizzle.execute<{ current_usage: string }>(sql`
+    WITH counted AS (
+      SELECT metadata
+      FROM admin_audit_events
+      WHERE admin_user_id = ${adminUserId}::uuid
+        AND event_type IN (
+          'balance_adjustment', 'manual_withdrawal_recorded',
+          'voucher_created', 'promo_code_created'
+        )
+        AND created_at >= ${periodStart}
+      UNION ALL
+      SELECT metadata
+      FROM admin_audit_write_failures
+      WHERE admin_user_id = ${adminUserId}::uuid
+        AND event_type IN (
+          'balance_adjustment', 'manual_withdrawal_recorded',
+          'voucher_created', 'promo_code_created'
+        )
+        AND created_at >= ${periodStart}
+    )
     SELECT COALESCE(SUM(ABS(
       CASE
         WHEN jsonb_typeof(metadata->'amount') = 'number'
@@ -53,10 +85,7 @@ async function sumPeriodUsage(
         ELSE 0
       END
     )), 0)::text AS current_usage
-    FROM admin_audit_events
-    WHERE admin_user_id = ${adminUserId}::uuid
-      AND event_type IN ('balance_adjustment', 'manual_withdrawal_recorded')
-      AND created_at >= ${periodStart}
+    FROM counted
   `);
   return Number(result.rows[0]?.current_usage ?? 0);
 }

@@ -10,7 +10,12 @@ import { requirePageAccess } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
 import { createHash } from "crypto";
 import { resolveCodePepper } from "@/lib/reward-campaign-codes";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
+import { require2FA } from "@/lib/require-2fa";
+import { checkBalanceAdjustmentLimit } from "@/lib/balance-limits";
 import { safeQuery } from "@/lib/errors/safe-query";
 import { fail, ok, type ServerActionResult } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
@@ -58,6 +63,10 @@ const createPromoCodeSchema = z.object({
   requiresDiscord: z.boolean(),
   maxUses: z.number().int().nonnegative().max(10_000_000),
   expiresAt: z.string().nullable(),
+  // Second factor. A promo code mints `value × maxUses` of redeemable value,
+  // so it is gated like every other player-crediting action (adjustBalance,
+  // adjustXp, chat-raffle payouts) instead of by a capability alone.
+  totpCode: z.string().trim().min(1, "A 2FA code or passkey is required"),
 });
 
 export async function createPromoCode(
@@ -74,6 +83,30 @@ export async function createPromoCode(
     );
   }
   const v = parsed.data;
+
+  try {
+    await require2FA(session.userId, v.totpCode);
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "2FA verification failed",
+      "TWO_FACTOR_REQUIRED",
+    );
+  }
+
+  // Full exposure of the code, not the per-redemption value: `maxUses = 0`
+  // means UNLIMITED redemptions on the backend, which no per-period cap can
+  // bound — treat it as the hard schema ceiling so an admin with a cap can
+  // never mint an unbounded code.
+  const mintedExposureUsd =
+    v.maxUses === 0 ? v.value * 10_000_000 : v.value * v.maxUses;
+  try {
+    await checkBalanceAdjustmentLimit(session.userId, mintedExposureUsd);
+  } catch (error) {
+    return fail(
+      error instanceof Error ? error.message : "Balance limit exceeded",
+      "LIMIT_EXCEEDED",
+    );
+  }
 
   // Per-environment, and it must match the backend that will resolve the code.
   // This was `process.env.GIFT_CARD_PEPPER ?? ""`, which silently peppered with
@@ -142,11 +175,27 @@ export async function createPromoCode(
     );
   }
 
-  await createAdminAuditEvent({
+  // DURABLE: the promo code row is already committed on MAIN. A throwing
+  // audit write would surface as a generic dialog error and invite a retry
+  // that mints a second code. `amountUsd` carries the full exposure so the
+  // mint counts against the admin's spend cap (see `sumPeriodUsage`).
+  const auditOutcome = await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "promo_code_created",
-    metadata: { code_hash: codeHash, value: v.value, region: v.region },
+    metadata: {
+      code_hash: codeHash,
+      value: v.value,
+      region: v.region,
+      max_uses: v.maxUses,
+      amountUsd: mintedExposureUsd,
+    },
   });
+  if (auditOutcome.status !== "recorded") {
+    console.error(
+      "[createPromoCode] audit event did not reach admin_audit_events (promo code already created):",
+      { status: auditOutcome.status, codeHash },
+    );
+  }
 
   revalidatePath("/rewards");
   // Bust the cached KPI-strip aggregates so the count tiles + the money strip

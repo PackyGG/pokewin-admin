@@ -5,6 +5,7 @@ import { sql, type SQL } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
+import { neutralizeCsvFormula } from "@/lib/utils/export-csv";
 
 export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
 
@@ -207,8 +208,15 @@ export function rowsToCsv(rows: ExportedUser[]): string {
   return lines.join("\r\n") + "\r\n";
 }
 
+/**
+ * RFC 4180 quoting PLUS formula neutralization. `email` / `username` /
+ * `country` are player-controlled free text, and quoting alone does not stop
+ * Excel / Sheets evaluating a cell that starts with `=`, `+`, `-` or `@` —
+ * see {@link neutralizeCsvFormula}. Numbers are stringified first so a
+ * negative total keeps its sign (the sanitizer skips numeric literals).
+ */
 function escape(value: string | number): string {
-  const s = String(value);
+  const s = neutralizeCsvFormula(String(value));
   if (/[",\r\n]/.test(s)) {
     return `"${s.replace(/"/g, '""')}"`;
   }

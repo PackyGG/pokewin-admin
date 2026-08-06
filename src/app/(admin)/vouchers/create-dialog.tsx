@@ -16,6 +16,8 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Spinner } from "@/components/ux";
+import { StepUpField } from "@/components/step-up-field";
+import { parseUsdAmount } from "@/lib/utils/money";
 import { createVoucher, searchUsers } from "./actions";
 
 type UserResult = { id: string; username: string | null; email: string | null };
@@ -126,23 +128,35 @@ export function CreateVoucherDialog() {
   const [userLabel, setUserLabel] = useState("");
   const [value, setValue] = useState("");
   const [description, setDescription] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
   function handleCreate() {
     if (!userId.trim()) {
       toast.error("Please select a user");
       return;
     }
-    const numValue = Number(value);
-    if (!numValue || numValue <= 0) {
+    // `parseUsdAmount`, not `Number()`: "1,000" used to become NaN and
+    // "17.878" a silent $17.88 on the Decimal(20,2) column.
+    const parsedValue = parseUsdAmount(value);
+    if (!parsedValue.ok) {
+      toast.error(parsedValue.error);
+      return;
+    }
+    if (parsedValue.value <= 0) {
       toast.error("Please enter a valid value");
+      return;
+    }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
       return;
     }
     startTransition(async () => {
       try {
         await createVoucher({
           userId: userId.trim(),
-          value: numValue,
+          value: parsedValue.value,
           description: description || undefined,
+          totpCode: totpCode.trim(),
         });
         toast.success("Voucher created");
         setOpen(false);
@@ -150,6 +164,7 @@ export function CreateVoucherDialog() {
         setUserLabel("");
         setValue("");
         setDescription("");
+        setTotpCode("");
         router.refresh();
       } catch (e) {
         toast.error(e instanceof Error ? e.message : "Failed to create voucher");
@@ -194,6 +209,12 @@ export function CreateVoucherDialog() {
               placeholder="Reason for voucher..."
             />
           </div>
+          <StepUpField
+            id="create-voucher-2fa"
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
         </div>
         <DialogFooter>
           <Button onClick={handleCreate} disabled={isPending} className="w-full sm:w-auto">

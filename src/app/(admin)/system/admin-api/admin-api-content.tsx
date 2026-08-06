@@ -43,6 +43,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { EmptyState } from "@/components/empty-state";
+import { StepUpField } from "@/components/step-up-field";
 import { CopyButton } from "@/components/copy-button";
 import { RelativeTime } from "@/components/relative-time";
 import { cn } from "@/lib/utils";
@@ -474,6 +475,7 @@ function EditScopesDialog({
   const [scopes, setScopes] = useState<ApiScope[]>(() =>
     toApiScopes(target?.scopes ?? []),
   );
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   // Re-seed whenever a different key is opened.
@@ -481,6 +483,7 @@ function EditScopesDialog({
   if (target && seededFor !== target.id) {
     setSeededFor(target.id);
     setScopes(toApiScopes(target.scopes));
+    setTotpCode("");
   }
 
   // Compare against the key's CURRENT scopes, narrowed the same way, so a
@@ -493,8 +496,16 @@ function EditScopesDialog({
 
   function submit() {
     if (!target) return;
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     startTransition(async () => {
-      const res = await updateApiKeyScopesAction({ keyId: target.id, scopes });
+      const res = await updateApiKeyScopesAction({
+        keyId: target.id,
+        scopes,
+        totpCode: totpCode.trim(),
+      });
       if (res.success) {
         toast.success(
           hasFullAccess(res.scopes)
@@ -540,6 +551,13 @@ function EditScopesDialog({
           </div>
         )}
 
+        <StepUpField
+          id="api-key-scopes-2fa"
+          value={totpCode}
+          onChange={setTotpCode}
+          disabled={isPending}
+        />
+
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isPending}>
             Cancel
@@ -572,6 +590,7 @@ function EditIpsDialog({
   onClose: () => void;
 }) {
   const [value, setValue] = useState(target?.allowedIps.join(", ") ?? "");
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   // Re-seed whenever a different key is opened.
@@ -579,10 +598,15 @@ function EditIpsDialog({
   if (target && seededFor !== target.id) {
     setSeededFor(target.id);
     setValue(target.allowedIps.join(", "));
+    setTotpCode("");
   }
 
   function submit() {
     if (!target) return;
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     const allowedIps = value
       .split(",")
       .map((entry) => entry.trim())
@@ -591,6 +615,7 @@ function EditIpsDialog({
       const res = await updateApiKeyIpsAction({
         keyId: target.id,
         allowedIps,
+        totpCode: totpCode.trim(),
       });
       if (res.success) {
         toast.success(
@@ -642,6 +667,13 @@ function EditIpsDialog({
           </div>
         )}
 
+        <StepUpField
+          id="api-key-ips-2fa"
+          value={totpCode}
+          onChange={setTotpCode}
+          disabled={isPending}
+        />
+
         <DialogFooter>
           <Button variant="outline" onClick={onClose} disabled={isPending}>
             Cancel
@@ -669,6 +701,7 @@ function CreateKeyDialog({
   const [expiresInDays, setExpiresInDays] = useState("365");
   const [rateLimit, setRateLimit] = useState("120");
   const [allowedIps, setAllowedIps] = useState("");
+  const [totpCode, setTotpCode] = useState("");
   const [isPending, startTransition] = useTransition();
 
   function reset() {
@@ -677,9 +710,14 @@ function CreateKeyDialog({
     setExpiresInDays("365");
     setRateLimit("120");
     setAllowedIps("");
+    setTotpCode("");
   }
 
   function submit() {
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
+      return;
+    }
     const days = expiresInDays.trim() === "" ? null : Number(expiresInDays);
     if (days !== null && (!Number.isInteger(days) || days < 1)) {
       toast.error("Expiry must be a whole number of days (or blank for none)");
@@ -700,6 +738,7 @@ function CreateKeyDialog({
           .split(",")
           .map((entry) => entry.trim())
           .filter(Boolean),
+        totpCode: totpCode.trim(),
       });
       if (res.success) {
         toast.success("API key created");
@@ -786,6 +825,13 @@ function CreateKeyDialog({
               retrieved again.
             </span>
           </div>
+
+          <StepUpField
+            id="api-key-create-2fa"
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
         </div>
 
         <DialogFooter>

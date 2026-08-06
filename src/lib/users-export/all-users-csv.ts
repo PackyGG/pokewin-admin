@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 
 import { getReadDrizzleDb } from "@/lib/db";
 import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
+import { neutralizeCsvFormula } from "@/lib/utils/export-csv";
 
 export type AllUsersRow = {
   email: string;
@@ -52,6 +53,13 @@ export function allUsersToCsv(rows: AllUsersRow[]): string {
   return lines.join("\r\n") + "\r\n";
 }
 
+/**
+ * Always-quote escaping PLUS formula neutralization. `email` / `username`
+ * are player-controlled, and RFC 4180 quoting does not stop Excel / Sheets
+ * evaluating a cell that starts with `=`, `+`, `-` or `@` — see
+ * {@link neutralizeCsvFormula}.
+ */
 function csvEscape(value: string): string {
-  return `"${value.replace(/"/g, '""')}"`;
+  const safe = neutralizeCsvFormula(value);
+  return `"${safe.replace(/"/g, '""')}"`;
 }

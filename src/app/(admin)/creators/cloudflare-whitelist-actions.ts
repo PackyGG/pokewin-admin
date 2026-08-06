@@ -1,6 +1,7 @@
 "use server";
 
 import { requirePageAccess } from "@/lib/dal";
+import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import {
   CF_ZONE_ID,
@@ -75,7 +76,16 @@ function requireRule(rules: CfRule[], id: string): CfRule {
 }
 
 export async function getWhitelist(): Promise<Whitelist> {
-  await requirePageAccess("/creators");
+  const session = await requirePageAccess("/creators");
+  // Capability tier on top of page access: the parsed rule includes the WAF
+  // BYPASS KEYS, i.e. a live credential for skipping the production edge
+  // protections. Anyone with /creators could read them before. Admins and
+  // the owner bypass inside `requireCapability`.
+  await requireCapability(
+    session,
+    "__can_view_creator_waf_whitelist",
+    "view the Cloudflare WAF whitelist",
+  );
   // Both managed rules share the same whitelist — read from the primary.
   const rule = requireRule(await fetchRules(), CF_RULE_IDS[0]);
   const parsed = parseRuleExpression(rule.expression);
@@ -89,6 +99,13 @@ export async function getWhitelist(): Promise<Whitelist> {
 
 export async function saveWhitelist(next: Whitelist): Promise<Whitelist> {
   const session = await requirePageAccess("/creators");
+  // Write tier: this PATCHes PRODUCTION Cloudflare WAF rules. Page access
+  // alone is not enough — /creators is a broad read permission.
+  await requireCapability(
+    session,
+    "__can_edit_creator_waf_whitelist",
+    "edit the Cloudflare WAF whitelist",
+  );
 
   const ips = [...new Set(next.ips.map((s) => s.trim()).filter(Boolean))];
   const keys = [...new Set(next.keys.map((s) => s.trim()).filter(Boolean))];

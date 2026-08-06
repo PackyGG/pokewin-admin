@@ -631,6 +631,13 @@ const cachedDailyChart = unstable_cache(
     // `upgrader_bet` ledger member doesn't exist on a migration-lagged DB
     // and threw `22P02`. The daily upgrader series is merged in by the
     // caller from the upgrader-native table.
+    //
+    // CUSTOMER scope on BOTH legs = `CUSTOMER_EXCLUDED_ROLES`
+    // (`src/lib/metrics/scope.ts`): admin + support + creator + blacklist.
+    // This used to stop at ('admin','support') while the attribution series
+    // below (and `cachedDailyUpgrader`) already dropped creators, so the
+    // dashboard's wager segments did not reconcile with its own attribution
+    // split or with the Total Wager KPI.
     return queryRows<{
       date: Date | string;
       packs: string;
@@ -644,7 +651,7 @@ const cachedDailyChart = unstable_cache(
         WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit')
           AND status = 'completed'
           AND created_at >= NOW() - INTERVAL '30 days'
-          AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+          AND user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
         UNION ALL
         SELECT i.user_id, 'deposit_refund'::text,
                -${fiatRefundCreditUsdSql("i")},
@@ -652,7 +659,7 @@ const cachedDailyChart = unstable_cache(
         FROM fiat_deposit_intents i
         WHERE i.status IN ('partially_refunded', 'refunded')
           AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '30 days'
-          AND i.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn})
+          AND i.user_id IN (SELECT id FROM "user" WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn})
       )
       SELECT
         DATE(created_at) as date,

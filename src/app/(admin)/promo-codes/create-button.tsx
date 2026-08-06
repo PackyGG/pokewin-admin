@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Spinner } from "@/components/ux";
+import { StepUpField } from "@/components/step-up-field";
 import { createPromoCode } from "./actions";
 
 export function CreatePromoCodeButton() {
@@ -44,6 +45,7 @@ export function CreatePromoCodeButton() {
   const [requiresDiscord, setRequiresDiscord] = useState(true);
   const [maxUses, setMaxUses] = useState("1");
   const [expiresAt, setExpiresAt] = useState("");
+  const [totpCode, setTotpCode] = useState("");
 
   function reset() {
     setCode("");
@@ -61,6 +63,7 @@ export function CreatePromoCodeButton() {
     setRequiresDiscord(true);
     setMaxUses("1");
     setExpiresAt("");
+    setTotpCode("");
   }
 
   function handleSubmit() {
@@ -71,6 +74,10 @@ export function CreatePromoCodeButton() {
     }
     if (!code.trim()) {
       toast.error("Please enter a code");
+      return;
+    }
+    if (!totpCode.trim()) {
+      toast.error("Please enter your 2FA code");
       return;
     }
 
@@ -94,6 +101,7 @@ export function CreatePromoCodeButton() {
           requiresDiscord,
           maxUses: parseInt(maxUses) || 1,
           expiresAt: expiresAt || null,
+          totpCode: totpCode.trim(),
         });
         if (!result.success) {
           if (result.code === "PROMO_CODE_EXISTS") {
@@ -326,6 +334,13 @@ export function CreatePromoCodeButton() {
               onChange={(e) => setExpiresAt(e.target.value)}
             />
           </div>
+
+          <StepUpField
+            id="create-promo-code-2fa"
+            value={totpCode}
+            onChange={setTotpCode}
+            disabled={isPending}
+          />
         </div>
         <DialogFooter>
           <Button onClick={handleSubmit} disabled={isPending} className="w-full sm:w-auto">

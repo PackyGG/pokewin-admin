@@ -105,8 +105,17 @@ const rejectSchema = z.object({
     rejection_reason: z.string().trim().min(1, "Reason is required").max(500),
 });
 
+// MAX_LEADERBOARD_MONEY_USD bounds every operator-entered prize figure in
+// this file. These are unbounded `z.number()` fields that flow straight into
+// real payouts, so a fat-fingered or scripted 1e12 must be rejected at the
+// edge rather than land on the backend.
+const MAX_LEADERBOARD_MONEY_USD = 1_000_000;
+
 const sponsorSchema = z.object({
-    additional_bonus_usd: z.number().positive("Bonus must be positive"),
+    additional_bonus_usd: z
+        .number()
+        .positive("Bonus must be positive")
+        .max(MAX_LEADERBOARD_MONEY_USD, "Bonus is unrealistically large"),
 });
 
 const createSchema = z.object({
@@ -114,14 +123,20 @@ const createSchema = z.object({
     co_creator_user_ids: z.array(z.string().trim().min(1)).default([]),
     title: z.string().trim().min(1).max(100),
     affiliate_codes: z.array(z.string()).default([]),
-    site_bonus_usd: z.number().positive("Total prize pool must be positive"),
+    site_bonus_usd: z
+        .number()
+        .positive("Total prize pool must be positive")
+        .max(MAX_LEADERBOARD_MONEY_USD, "Total prize pool is unrealistically large"),
     start_date: z.string().min(1, "Start date is required"),
     end_date: z.string().min(1, "End date is required"),
     prize_tiers: z
         .array(
             z.object({
                 position: z.number().int().positive(),
-                prize_amount_usd: z.number().positive(),
+                prize_amount_usd: z
+                    .number()
+                    .positive()
+                    .max(MAX_LEADERBOARD_MONEY_USD, "Prize amount is unrealistically large"),
             }),
         )
         .min(5, "At least 5 prize tiers are required"),
@@ -137,7 +152,10 @@ const editSchema = z.object({
         .array(
             z.object({
                 position: z.number().int().positive(),
-                prize_amount_usd: z.number().positive(),
+                prize_amount_usd: z
+                    .number()
+                    .positive()
+                    .max(MAX_LEADERBOARD_MONEY_USD, "Prize amount is unrealistically large"),
             }),
         )
         .min(5)
@@ -146,7 +164,11 @@ const editSchema = z.object({
     // leaderboard after creation; the creator-funded portion stays
     // locked at deal time. 0 is allowed (leaderboard with creator-only
     // funding); negatives are rejected.
-    site_bonus_usd: z.number().min(0).optional(),
+    site_bonus_usd: z
+        .number()
+        .min(0)
+        .max(MAX_LEADERBOARD_MONEY_USD, "Total prize pool is unrealistically large")
+        .optional(),
 });
 
 // Admin-side "sponsored %" — a cost-accounting annotation, 0–100.
@@ -245,6 +267,18 @@ export async function createLeaderboard(
     // users; owner motha and page-permission holders pass exactly as before.
     const session = await requireLeaderboardActionAccess(
         "Not authorized to create leaderboards.",
+    );
+    // Capability tier, matching the hub twin `createCreatorDeal`
+    // (`creators/backend-actions.ts`) and every other mutation in this file.
+    // Without it `createLeaderboard` was the ONE money-moving action here
+    // reachable on page/hub access alone, while its siblings all require
+    // `__can_approve_leaderboard` / `__can_update_creator_deal`. Admins and
+    // the owner bypass inside `requireCapability`, so nothing changes for
+    // them; a hub manager who can already create deals holds this key.
+    await requireCapability(
+        session,
+        "__can_create_creator_deal",
+        "create creator leaderboards",
     );
     const parsed = createSchema.safeParse(input);
     if (!parsed.success) {

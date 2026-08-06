@@ -149,6 +149,14 @@ async function fetchTrendSeriesPg(
     attributionResult,
     ftdResult,
   ] = await runWithConcurrency([
+    // CUSTOMER scope on BOTH legs = `CUSTOMER_EXCLUDED_ROLES`
+    // (`src/lib/metrics/scope.ts`): admin + support + creator, plus the
+    // blacklist. This leg used to stop at ('admin','support') while the
+    // attribution leg below already dropped creators, so on /dashboard
+    // `organic + creatorCoded` did NOT add up to `packs + battles` and
+    // neither reconciled with the Total Wager KPI. Creators are dropped
+    // WHOLESALE from customer analytics (house-funded "for content" play is
+    // not customer revenue), so the wager/deposit legs must match.
     () => safeQuery(
       () => queryRows<LedgerBucketRow[]>(db, `
       WITH events AS (
@@ -159,7 +167,7 @@ async function fetchTrendSeriesPg(
           AND created_at >= $1
           AND user_id IN (
             SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+            WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
           )
         UNION ALL
         SELECT i.user_id, 'deposit_refund'::text AS type,
@@ -170,7 +178,7 @@ async function fetchTrendSeriesPg(
           AND ${fiatRefundAttributionTimestampSql("i")} >= $1
           AND i.user_id IN (
             SELECT id FROM "user"
-            WHERE role NOT IN ('admin', 'support') ${blacklistIdNotIn}
+            WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
           )
       )
       SELECT ${bucketLedger} AS bucket,
