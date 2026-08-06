@@ -159,6 +159,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/message-events",
+    summary:
+      "Body { events: [...] }. Idempotently stores up to 25 Creator/VIP message snapshots, edits, or deletions and returns the server-resolved before/after state. Bot, webhook, and configured admin-group messages are excluded.",
+    scopes: ["discord:message-events"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/deposit-settings",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns independent automatic sign-up and deposit notification settings for the linked creator section and its current logs channel.",

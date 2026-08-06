@@ -71,6 +71,12 @@ export const API_SCOPES = {
       "Create and deliver durable one-hour reminders for the fixed Creator and VIP destinations. Writes only reminder delivery state to the admin database.",
     access: "admin-write",
   },
+  "discord:message-events": {
+    label: "Store Discord message history",
+    description:
+      "Persist bounded message snapshots, edits, and deletions from the Creator and VIP servers in the admin database. Excludes bot, webhook, and configured admin-group messages.",
+    access: "admin-write",
+  },
   "discord:antifraud": {
     label: "Deliver Antifraud notifications",
     description:
