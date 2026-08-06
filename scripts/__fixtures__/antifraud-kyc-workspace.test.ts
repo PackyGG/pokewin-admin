@@ -65,7 +65,8 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.match(query, /backendUrlConfigured/);
   assert.match(query, /automaticUnlock:\s*false/);
   assert.doesNotMatch(page, /How KYC works here/);
-  assert.match(page, /Active \/ Waiting/);
+  assert.match(page, /active:\s*"Active"/);
+  assert.match(page, /waiting:\s*"Waiting \(24h\+\)"/);
   assert.match(page, /History \/ Finished/);
   assert.match(page, /Finished KYC history/);
   assert.match(page, /Ready for admin decision/);
@@ -79,16 +80,17 @@ test("the dashboard reports both internal state and Sumsub evidence", () => {
   assert.doesNotMatch(page, /<SystemDetails/);
 });
 
-test("the KYC landing view defaults to active and waiting records", () => {
+test("the KYC landing view defaults to the active records", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
 
   assert.match(
     page,
     /isKycFilter\(params\.status\)\s*\?\s*params\.status\s*:\s*"active"/,
   );
-  assert.match(page, /active:\s*"Active \/ Waiting"/);
+  assert.match(page, /active:\s*"Active"/);
+  assert.match(page, /waiting:\s*"Waiting \(24h\+\)"/);
   assert.match(page, /history:\s*"History \/ Finished"/);
-  assert.match(page, /No KYC checks are currently active or waiting/);
+  assert.match(page, /No KYC checks are currently active/);
   assert.match(page, /completed historical cycles/);
   assert.match(
     page,
@@ -112,7 +114,7 @@ test("untouched default KYC rows stay out of the review queue and totals", () =>
   assert.match(query, /status\} <> 'none'/);
 });
 
-test("the KYC queue exposes only active and finished history views", () => {
+test("the KYC queue exposes only the active, waiting and finished views", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
   const query = source("src/lib/antifraud/kyc.ts");
   const labels = page.slice(
@@ -120,8 +122,16 @@ test("the KYC queue exposes only active and finished history views", () => {
     page.indexOf("const FILTER_TITLES"),
   );
 
-  for (const label of ["Active / Waiting", "History / Finished"]) {
-    assert.match(labels, new RegExp(`\\b${label}\\b`));
+  // Exact `key: "Label"` pairs, compared literally. Several labels carry regex
+  // metacharacters, and the whole point of this guard is that the mapping
+  // cannot drift without the fixture noticing — which is exactly what happened
+  // when the Waiting tab was split out and this file was left behind.
+  for (const pair of [
+    'active: "Active"',
+    'waiting: "Waiting (24h+)"',
+    'history: "History / Finished"',
+  ]) {
+    assert.ok(labels.includes(pair), `FILTER_LABELS must contain ${pair}`);
   }
   for (const removed of [
     "All",
@@ -136,7 +146,7 @@ test("the KYC queue exposes only active and finished history views", () => {
   }
   assert.match(
     query,
-    /export const KYC_FILTERS = \["active", "history"\] as const/,
+    /export const KYC_FILTERS = \["active", "waiting", "history"\] as const/,
   );
 });
 

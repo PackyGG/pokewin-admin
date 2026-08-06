@@ -53,17 +53,38 @@ test("Discord delivery crosses the signed durable queue instead of direct webhoo
 
 test("manager mutations require admin service authority and durable local audit", () => {
   const auth = read("services/antifraud-monitor/src/auth.ts");
-  for (const pathFragment of [
-    "/v1/rules",
-    "/v1/fiat-email-domains",
-    "/v1/risky-locations",
-    "/decision",
-    "/rescan",
-    "/v1/operations/signup-failures",
-  ]) {
-    assert.match(auth, new RegExp(pathFragment.replaceAll("/", "\\/")));
-  }
+
+  // The gate is fail-closed: every non-safe method needs the admin token
+  // unless it is on an explicit, deliberately tiny read-token allowlist. This
+  // replaced an enumeration of admin paths, under which a newly added
+  // `app.post`/`app.put` silently shipped writable with the widely-distributed
+  // read token. Assert the property, not a list of paths — the list was what
+  // rotted.
+  assert.match(auth, /const READ_TOKEN_WRITES: ReadonlySet<string>/);
+  assert.match(auth, /const SAFE_METHODS: ReadonlySet<string>/);
+  assert.match(auth, /isWrite\s*&&\s*!READ_TOKEN_WRITES\.has\(/);
   assert.match(auth, /safeTokenEqual\(token, config\.API_ADMIN_TOKEN\)/);
+
+  // The allowlist must stay minimal. Ticket minting is a write only in the
+  // HTTP sense; anything else appearing here is a real privilege decision and
+  // should fail this guard until it is reviewed.
+  const allowlist = auth.slice(
+    auth.indexOf("const READ_TOKEN_WRITES"),
+    auth.indexOf("const SAFE_METHODS"),
+  );
+  const allowedWrites = [...allowlist.matchAll(/"([A-Z]+ \/[^"]*)"/g)].map(
+    (match) => match[1],
+  );
+  assert.deepEqual(allowedWrites, ["POST /v1/ws/tickets"]);
+
+  // Admin-only reads stay enumerated, because a GET is presumed safe.
+  for (const adminRead of [
+    "/v1/operations/live",
+    "/v1/operations/signup-failures",
+    "/v1/kyc/applicants/",
+  ]) {
+    assert.match(auth, new RegExp(adminRead.replaceAll("/", "\\/")));
+  }
 
   for (const action of [
     "src/app/(antifraud)/antifraud/flows/actions.ts",
