@@ -9,7 +9,7 @@ import { getPrimaryDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { whopAdminClient } from "@/lib/whop-admin";
 import type { FiatAssessment } from "@/lib/antifraud/fiat-deposits-api";
-import { requireAntifraudManager } from "@/lib/require-antifraud-access";
+import { requireAntifraudManagerRead } from "@/lib/require-antifraud-access";
 
 const PROCESSING_LEASE_MINUTES = 5;
 const DEPOSIT_BONUS_RATE_BPS = 500;
@@ -90,7 +90,9 @@ export async function getFiatCreditReviewStates(
 export async function getDeclinedFiatCreditReviews(): Promise<
   DeclinedFiatCreditReview[]
 > {
-  await requireAntifraudManager(
+  // Read gate, not the action gate: this runs during the page render, which has
+  // no `Origin` header for the same-origin check to pass.
+  await requireAntifraudManagerRead(
     "Only owners and admins can view declined Fiat deposits.",
   );
   const result = await adminDrizzle.execute<{

@@ -253,6 +253,23 @@ export async function requireAntifraudManagerPage(): Promise<SessionPayload> {
   return session;
 }
 
+/**
+ * Manage gate for READ paths that run during a page render (a Server Component
+ * awaiting a query helper) rather than inside a Server Action.
+ *
+ * Do NOT reach for `requireAntifraudManager` here: that one layers the action
+ * policy on top — same-origin `Origin` check plus the per-minute action rate
+ * limit. A page GET carries no `Origin` header, so the same-origin test always
+ * fails and the helper throws on every render, taking the whole page down.
+ */
+export async function requireAntifraudManagerRead(
+  unauthorizedMessage = "Only owners and admins can view this Antifraud page.",
+): Promise<SessionPayload> {
+  const session = await requireAntifraudReadAccess(unauthorizedMessage);
+  if (!canManageAntifraud(session)) throw new Error(unauthorizedMessage);
+  return session;
+}
+
 /** Server-action manage gate — throws on denial. */
 export async function requireAntifraudManager(
   unauthorizedMessage = "Only owners and admins can manage the Antifraud workspace.",
