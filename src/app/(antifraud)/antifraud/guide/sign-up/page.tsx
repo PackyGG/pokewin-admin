@@ -330,19 +330,6 @@ export default async function AntifraudSignupGuidePage() {
             })}
           </div>
 
-          <div className="flex items-start gap-3 rounded-lg border border-rose-500/25 bg-rose-500/5 p-4">
-            <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400">
-              <Siren className="size-4" />
-            </span>
-            <div>
-              <h3 className="text-sm font-semibold">Critical signup locks</h3>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">
-                Critical signups start with fiat deposits, crypto withdrawals,
-                item withdrawals, and tips locked while staff reviews the
-                account.
-              </p>
-            </div>
-          </div>
         </div>
       </section>
 
