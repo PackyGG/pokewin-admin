@@ -19,40 +19,9 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-import {
-  getKenoMultiplier,
-  KENO_GRID_SIZE,
-  KENO_MAX_CONFIGURABLE_BET_USD,
-  KENO_MAX_PICKS,
-  KENO_MIN_BET_USD,
-  KENO_RISK_MODES,
-} from "@/lib/keno/payouts";
-import { cn } from "@/lib/utils";
+import { KENO_GRID_SIZE } from "@/lib/keno/payouts";
 import { revealKenoNextPreviewAction } from "./actions";
 import type { KenoNextPreview } from "./types";
-
-const DEFAULT_SELECTED_NUMBERS = Array.from(
-  { length: KENO_MAX_PICKS },
-  (_, index) => index + 1,
-);
-
-function formatUsd(value: number): string {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(value);
-}
 
 export function KenoNextPreviewClient({
   targetUserId,
@@ -60,23 +29,13 @@ export function KenoNextPreviewClient({
   targetUserId: string;
 }) {
   const [preview, setPreview] = React.useState<KenoNextPreview | null>(null);
-  const [selectedNumbers, setSelectedNumbers] = React.useState<number[]>(
-    DEFAULT_SELECTED_NUMBERS,
-  );
-  const [betInput, setBetInput] = React.useState("1.00");
   const [error, setError] = React.useState<string | null>(null);
   const [isPending, startTransition] = React.useTransition();
 
-  const bet = Number(betInput);
-  const betIsValid =
-    Number.isFinite(bet) &&
-    bet >= KENO_MIN_BET_USD &&
-    bet <= KENO_MAX_CONFIGURABLE_BET_USD;
   const drawnSet = React.useMemo(
     () => new Set(preview?.drawnNumbers ?? []),
     [preview],
   );
-  const hits = selectedNumbers.filter((number) => drawnSet.has(number)).length;
 
   function revealPreview() {
     setError(null);
@@ -91,16 +50,6 @@ export function KenoNextPreviewClient({
       } catch {
         setError("Could not load the next Keno preview. Please retry.");
       }
-    });
-  }
-
-  function toggleNumber(number: number) {
-    setSelectedNumbers((current) => {
-      if (current.includes(number)) {
-        return current.filter((value) => value !== number);
-      }
-      if (current.length >= KENO_MAX_PICKS) return current;
-      return [...current, number].sort((left, right) => left - right);
     });
   }
 
@@ -152,170 +101,50 @@ export function KenoNextPreviewClient({
       ) : null}
 
       {preview ? (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle>Predicted next draw</CardTitle>
-              <CardDescription>
-                Drawn numbers for nonce {preview.nonce}. The committed
-                server-seed hash was verified before calculating this result.
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="flex flex-wrap gap-2">
-                {preview.drawnNumbers.map((number) => (
-                  <span
+        <Card>
+          <CardHeader>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <CardTitle>Predicted next tiles</CardTitle>
+              <Badge>10 tiles hit</Badge>
+            </div>
+            <CardDescription>
+              The highlighted player-facing tiles are the fixed draw for nonce{" "}
+              {preview.nonce}. Risk mode does not change them.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <ol className="grid grid-cols-5 gap-2 sm:grid-cols-8">
+              {Array.from({ length: KENO_GRID_SIZE }, (_, index) => {
+                const number = index + 1;
+                const drawn = drawnSet.has(number);
+                return (
+                  <li
                     key={number}
-                    className="flex size-9 items-center justify-center rounded-full bg-primary font-mono text-sm font-semibold text-primary-foreground"
+                    aria-label={`Tile ${number}${drawn ? ", predicted hit" : ""}`}
+                    className={
+                      drawn
+                        ? "relative flex h-12 items-center justify-center rounded-lg bg-primary font-mono text-sm font-semibold text-primary-foreground ring-2 ring-primary/30"
+                        : "flex h-12 items-center justify-center rounded-lg border border-border bg-muted/30 font-mono text-sm text-muted-foreground"
+                    }
                   >
                     {number}
-                  </span>
-                ))}
-              </div>
-              <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                <span className="break-all">
-                  Seed hash: {preview.serverSeedHash}
-                </span>
-                <span>
-                  Revealed {new Date(preview.revealedAt).toLocaleString()}
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(360px,0.72fr)]">
-            <Card>
-              <CardHeader>
-                <CardTitle>Test tiles</CardTitle>
-                <CardDescription>
-                  Choose 1–10 tiles. The default is a 10-tile bet.
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-5 gap-2 sm:grid-cols-8">
-                  {Array.from({ length: KENO_GRID_SIZE }, (_, index) => {
-                    const number = index + 1;
-                    const selected = selectedNumbers.includes(number);
-                    const drawn = drawnSet.has(number);
-                    return (
-                      <Button
-                        key={number}
-                        type="button"
-                        variant={selected ? "default" : "outline"}
-                        size="sm"
-                        aria-pressed={selected}
-                        onClick={() => toggleNumber(number)}
-                        className={cn(
-                          "relative font-mono",
-                          drawn &&
-                            !selected &&
-                            "border-emerald-500/60 text-emerald-600",
-                          drawn &&
-                            selected &&
-                            "ring-2 ring-emerald-400 ring-offset-2 ring-offset-background",
-                        )}
-                      >
-                        {number}
-                        {drawn && selected ? (
-                          <Check className="absolute -right-1 -top-1 size-3 rounded-full bg-emerald-500 text-white" />
-                        ) : null}
-                      </Button>
-                    );
-                  })}
-                </div>
-                <div className="flex flex-wrap items-end gap-3">
-                  <label className="space-y-1 text-xs font-medium">
-                    Bet amount (USD)
-                    <Input
-                      type="number"
-                      min={KENO_MIN_BET_USD}
-                      max={KENO_MAX_CONFIGURABLE_BET_USD}
-                      step="0.01"
-                      value={betInput}
-                      onChange={(event) => setBetInput(event.target.value)}
-                      className="w-36"
-                    />
-                  </label>
-                  <Button
-                    type="button"
-                    variant="secondary"
-                    onClick={() => setSelectedNumbers(preview.drawnNumbers)}
-                  >
-                    Select predicted 10
-                  </Button>
-                  <Badge variant="outline">
-                    {selectedNumbers.length} picks · {hits} hits
-                  </Badge>
-                </div>
-                {!betIsValid ? (
-                  <p className="text-xs text-destructive">
-                    Enter a bet from {formatUsd(KENO_MIN_BET_USD)} to{" "}
-                    {formatUsd(KENO_MAX_CONFIGURABLE_BET_USD)}.
-                  </p>
-                ) : null}
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Pre-run result</CardTitle>
-                <CardDescription>
-                  The same draw evaluated against every Keno risk mode.
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <Table>
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>Risk</TableHead>
-                      <TableHead>Result</TableHead>
-                      <TableHead className="text-right">Multiplier</TableHead>
-                      <TableHead className="text-right">Payout</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {KENO_RISK_MODES.map((risk) => {
-                      const multiplier = getKenoMultiplier(
-                        risk,
-                        selectedNumbers.length,
-                        hits,
-                      );
-                      const payout =
-                        betIsValid && multiplier > 0
-                          ? Number((bet * multiplier).toFixed(2))
-                          : 0;
-                      return (
-                        <TableRow
-                          key={risk}
-                          className={
-                            risk === "high" ? "bg-amber-500/5" : undefined
-                          }
-                        >
-                          <TableCell className="capitalize font-medium">
-                            {risk}
-                          </TableCell>
-                          <TableCell>
-                            <Badge
-                              variant={multiplier > 0 ? "default" : "secondary"}
-                            >
-                              {multiplier > 0 ? "Win" : "Lose"}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="text-right font-mono">
-                            {multiplier}×
-                          </TableCell>
-                          <TableCell className="text-right font-mono font-semibold">
-                            {betIsValid ? formatUsd(payout) : "—"}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
-          </div>
-        </>
+                    {drawn ? (
+                      <Check className="absolute right-1.5 top-1.5 size-3" />
+                    ) : null}
+                  </li>
+                );
+              })}
+            </ol>
+            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="break-all">
+                Seed hash: {preview.serverSeedHash}
+              </span>
+              <span>
+                Revealed {new Date(preview.revealedAt).toLocaleString()}
+              </span>
+            </div>
+          </CardContent>
+        </Card>
       ) : null}
     </div>
   );

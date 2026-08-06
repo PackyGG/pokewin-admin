@@ -75,22 +75,30 @@ test("Keno seed commitment is verified before previewing", () => {
   assert.equal(seedHashMatches(seed, "0".repeat(64)), false);
 });
 
-test("Keno preview is fixed, owner-gated, audited, and does not return the raw seed", async () => {
+test("Keno preview is fixed, owner-gated, audited, and draw-only", async () => {
   const root = process.cwd();
-  const [actionSource, pageSource, typeSource] = await Promise.all([
-    readFile(
-      join(root, "src/app/(admin)/system/keno-next-preview/actions.ts"),
-      "utf8",
-    ),
-    readFile(
-      join(root, "src/app/(admin)/system/keno-next-preview/page.tsx"),
-      "utf8",
-    ),
-    readFile(
-      join(root, "src/app/(admin)/system/keno-next-preview/types.ts"),
-      "utf8",
-    ),
-  ]);
+  const [actionSource, clientSource, pageSource, typeSource] =
+    await Promise.all([
+      readFile(
+        join(root, "src/app/(admin)/system/keno-next-preview/actions.ts"),
+        "utf8",
+      ),
+      readFile(
+        join(
+          root,
+          "src/app/(admin)/system/keno-next-preview/keno-next-preview-client.tsx",
+        ),
+        "utf8",
+      ),
+      readFile(
+        join(root, "src/app/(admin)/system/keno-next-preview/page.tsx"),
+        "utf8",
+      ),
+      readFile(
+        join(root, "src/app/(admin)/system/keno-next-preview/types.ts"),
+        "utf8",
+      ),
+    ]);
 
   assert.match(typeSource, new RegExp(TARGET_USER_ID));
   assert.match(actionSource, /await requireOwner\(\)/);
@@ -102,4 +110,10 @@ test("Keno preview is fixed, owner-gated, audited, and does not return the raw s
   );
   assert.doesNotMatch(typeSource, /serverSeed:/);
   assert.doesNotMatch(typeSource, /clientSeed:/);
+  assert.match(clientSource, /Array\.from\(\{ length: KENO_GRID_SIZE \}/);
+  assert.match(clientSource, /drawnSet\.has\(number\)/);
+  assert.doesNotMatch(
+    clientSource,
+    /selectedNumbers|getKenoMultiplier|betInput/,
+  );
 });
