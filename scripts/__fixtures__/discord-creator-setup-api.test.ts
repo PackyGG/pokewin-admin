@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, superusers, operators, prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, rewards, migration, linkMigration, scopes, endpoints] =
+  const [service, standings, superusers, operators, prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, leaderboard, rewards, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
+      read("src/lib/queries/creators-leaderboards.ts"),
       read("src/lib/discord-bot-superusers.ts"),
       read("src/lib/discord-dashboard-operators.ts"),
       read("src/app/api/v1/discord/creator-setups/prepare/route.ts"),
@@ -19,6 +20,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/app/api/v1/discord/creator-setups/user-stats/route.ts"),
       read("src/app/api/v1/discord/creator-setups/dashboard-context/route.ts"),
       read("src/app/api/v1/discord/creator-setups/deal/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/leaderboard/route.ts"),
       read("src/app/api/v1/discord/creator-setups/rewards/route.ts"),
       read(
         "drizzle/admin/migrations/20260729_discord_creator_setups.sql",
@@ -48,7 +50,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, rewards]) {
+  for (const route of [prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, leaderboard, rewards]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
@@ -95,6 +97,21 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /sponsored_percentage/);
   assert.match(service, /leaderboardPrizePoolUsd/);
   assert.match(service, /leaderboardPackySharePercent/);
+  assert.match(leaderboard, /getCreatorSetupLeaderboard/);
+  assert.match(leaderboard, /pageSize: z\.literal\(10\)/);
+  assert.match(leaderboard, /rejectWrongGuild/);
+  assert.match(service, /getCurrentCreatorLeaderboard/);
+  assert.match(service, /getAffiliateLeaderboardPage/);
+  assert.match(service, /username: entry\.username\?\.trim\(\) \|\| "Anonymous player"/);
+  assert.match(standings, /affiliate_leaderboard_snapshots/);
+  assert.match(standings, /weighted_wager_amount_usd/);
+  assert.match(standings, /COUNT\(\*\) OVER\(\)/);
+  assert.match(standings, /u\.role::text NOT IN \('admin', 'support'\)/);
+  const leaderboardPageQuery = standings.slice(
+    standings.indexOf("export async function getAffiliateLeaderboardPage"),
+    standings.indexOf("Compute the live standings"),
+  );
+  assert.doesNotMatch(leaderboardPageQuery, /email/);
   assert.match(rewards, /getCreatorSetupRewards/);
   assert.match(rewards, /rejectWrongGuild/);
   assert.match(service, /creator_reward_programs/);
@@ -186,6 +203,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/user-stats/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/dashboard-context/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deal/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/leaderboard/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
 });
 

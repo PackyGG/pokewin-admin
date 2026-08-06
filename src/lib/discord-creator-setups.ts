@@ -15,7 +15,11 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
 import { toNumber } from "@/lib/utils/decimal";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
-import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import {
+  affiliateLeaderboardsApi,
+  type LeaderboardAdminRow,
+} from "@/lib/backend-api/affiliate-leaderboards";
+import { getAffiliateLeaderboardPage } from "@/lib/queries/creators-leaderboards";
 import { isDiscordBotSuperuser } from "@/lib/discord-bot-superusers";
 import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
 
@@ -113,6 +117,20 @@ export type CreatorSetupDeal = {
     leaderboardPrizePoolUsd: number | null;
     leaderboardPackySharePercent: number | null;
   } | null;
+};
+
+export type CreatorSetupLeaderboard = {
+  generatedAt: string;
+  totalPrizeUsd: number;
+  totalEntries: number;
+  page: number;
+  pageSize: 10;
+  entries: Array<{
+    rank: number;
+    username: string;
+    wagerUsd: number;
+    prizeUsd: number | null;
+  }>;
 };
 
 export class CreatorSetupError extends Error {
@@ -707,9 +725,9 @@ type CreatorLeaderboardTerms = Pick<
   "leaderboardPrizePoolUsd" | "leaderboardPackySharePercent"
 >;
 
-async function getCreatorLeaderboardTerms(
+async function getCurrentCreatorLeaderboard(
   creatorUserId: string,
-): Promise<CreatorLeaderboardTerms> {
+): Promise<LeaderboardAdminRow | null> {
   const { leaderboards } = await affiliateLeaderboardsApi.list({
     status: "approved",
     creator_user_id: creatorUserId,
@@ -719,14 +737,21 @@ async function getCreatorLeaderboardTerms(
   const liveLeaderboards = leaderboards.filter(
     (leaderboard) => leaderboard.time_status !== "ended",
   );
-  const leaderboard =
+  return (
     liveLeaderboards.find(
-      (candidate) => candidate.time_status === "active",
+      (leaderboard) => leaderboard.time_status === "active",
     ) ??
     liveLeaderboards
-      .filter((candidate) => candidate.time_status === "upcoming")
+      .filter((leaderboard) => leaderboard.time_status === "upcoming")
       .sort((a, b) => a.start_date.localeCompare(b.start_date))[0] ??
-    null;
+    null
+  );
+}
+
+async function getCreatorLeaderboardTerms(
+  creatorUserId: string,
+): Promise<CreatorLeaderboardTerms> {
+  const leaderboard = await getCurrentCreatorLeaderboard(creatorUserId);
 
   if (!leaderboard) {
     return {
@@ -764,6 +789,70 @@ async function getCreatorLeaderboardTerms(
       packySharePercent <= 100
         ? Math.round(packySharePercent * 100) / 100
         : null,
+  };
+}
+
+export async function getCreatorSetupLeaderboard(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+  page: number;
+  pageSize: 10;
+}): Promise<CreatorSetupLeaderboard> {
+  const setup = await requireLinkedSetupActor(input);
+  await requireActiveCreator(setup.creator_user_id);
+  const leaderboard = await getCurrentCreatorLeaderboard(setup.creator_user_id);
+  if (!leaderboard) {
+    if (input.page > 0) {
+      throw new CreatorSetupError(
+        400,
+        "invalid_request",
+        "That leaderboard page no longer exists.",
+      );
+    }
+    return {
+      generatedAt: new Date().toISOString(),
+      totalPrizeUsd: 0,
+      totalEntries: 0,
+      page: 0,
+      pageSize: 10,
+      entries: [],
+    };
+  }
+
+  const standings = await getAffiliateLeaderboardPage({
+    leaderboardId: leaderboard.id,
+    creatorUserId: leaderboard.creator_user_id,
+    coCreatorUserIds: leaderboard.co_creator_user_ids,
+    affiliateCodes: leaderboard.affiliate_codes,
+    startDate: new Date(leaderboard.start_date),
+    endDate: new Date(leaderboard.end_date),
+    prizeTiers: leaderboard.prize_tiers,
+    page: input.page,
+    pageSize: input.pageSize,
+  });
+  const totalPages = Math.max(1, Math.ceil(standings.totalEntries / input.pageSize));
+  if (input.page >= totalPages) {
+    throw new CreatorSetupError(
+      400,
+      "invalid_request",
+      "That leaderboard page no longer exists.",
+    );
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totalPrizeUsd: money(leaderboard.total_prize_usd),
+    totalEntries: standings.totalEntries,
+    page: input.page,
+    pageSize: 10,
+    entries: standings.entries.map((entry) => ({
+      rank: entry.position,
+      username: entry.username?.trim() || "Anonymous player",
+      wagerUsd: money(entry.totalWageredUsd),
+      prizeUsd: entry.prizeUsd === null ? null : money(entry.prizeUsd),
+    })),
   };
 }
 

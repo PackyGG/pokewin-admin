@@ -118,6 +118,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/leaderboard",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId, page, pageSize: 10 }. Returns the active linked creator leaderboard's total prize and one exact standings page. Creator IDs, leaderboard IDs, emails, and internal review markings are omitted.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/rewards",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns active creator-facing reward-program terms for the Packy creator linked to that private Discord section. Internal IDs, staff data, claim totals, and payout history are omitted.",

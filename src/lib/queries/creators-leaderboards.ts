@@ -45,6 +45,170 @@ export type LeaderboardStandings = {
   source: "settled" | "live";
 };
 
+export type LeaderboardPageEntry = {
+  position: number;
+  username: string | null;
+  totalWageredUsd: number;
+  prizeUsd: number | null;
+};
+
+export type LeaderboardPage = {
+  totalEntries: number;
+  entries: LeaderboardPageEntry[];
+};
+
+/**
+ * Lightweight, exact page of public standings for non-admin consumers.
+ * Unlike the admin detail query, this deliberately skips P&L, emails,
+ * excluded-user markings, and position-reached calculations.
+ */
+export async function getAffiliateLeaderboardPage(opts: {
+  leaderboardId: string;
+  creatorUserId: string;
+  coCreatorUserIds?: string[];
+  affiliateCodes: string[];
+  startDate: Date;
+  endDate: Date;
+  prizeTiers: { position: number; prize_amount_usd: string }[];
+  page: number;
+  pageSize: number;
+}): Promise<LeaderboardPage> {
+  const pageSize = Math.max(1, Math.min(Math.floor(opts.pageSize), 10));
+  const page = Math.max(0, Math.floor(opts.page));
+  const offset = page * pageSize;
+  const prizeByPosition = new Map<number, number>();
+  for (const tier of opts.prizeTiers) {
+    prizeByPosition.set(tier.position, toNumber(tier.prize_amount_usd));
+  }
+
+  const snapshots = await queryMainRows<{
+    position: string;
+    username: string | null;
+    total_wagered_usd: string;
+    prize_amount_usd: string;
+    total_entries: string;
+  }[]>(
+    `SELECT als.position::text AS position,
+            u.username,
+            als.total_wagered_usd::text AS total_wagered_usd,
+            als.prize_amount_usd::text AS prize_amount_usd,
+            COUNT(*) OVER()::text AS total_entries
+     FROM affiliate_leaderboard_snapshots als
+     LEFT JOIN "user" u ON u.id = als.user_id
+     WHERE als.leaderboard_id = $1
+     ORDER BY als.position ASC
+     LIMIT $2 OFFSET $3`,
+    opts.leaderboardId,
+    pageSize,
+    offset,
+  );
+  if (snapshots.length > 0) {
+    return {
+      totalEntries: Number(snapshots[0]!.total_entries),
+      entries: snapshots.map((row) => {
+        const position = Number(row.position);
+        const frozenPrize = toNumber(row.prize_amount_usd);
+        return {
+          position,
+          username: row.username,
+          totalWageredUsd: toNumber(row.total_wagered_usd),
+          prizeUsd:
+            frozenPrize > 0
+              ? frozenPrize
+              : (prizeByPosition.get(position) ?? null),
+        };
+      }),
+    };
+  }
+
+  // An empty later page can still belong to a settled board. Check before
+  // falling through to live computation so snapshots remain authoritative.
+  if (offset > 0) {
+    const [snapshotCount] = await queryMainRows<{ total_entries: string }[]>(
+      `SELECT COUNT(*)::text AS total_entries
+       FROM affiliate_leaderboard_snapshots
+       WHERE leaderboard_id = $1`,
+      opts.leaderboardId,
+    );
+    const totalEntries = Number(snapshotCount?.total_entries ?? 0);
+    if (totalEntries > 0) return { totalEntries, entries: [] };
+  }
+
+  const coCreatorUserIds = (opts.coCreatorUserIds ?? []).filter(
+    (id) => id && id !== opts.creatorUserId,
+  );
+  const participatingCreatorIds = [opts.creatorUserId, ...coCreatorUserIds];
+  const codeFallback = opts.affiliateCodes.length === 0;
+  let codes = opts.affiliateCodes;
+  if (codeFallback) {
+    const owned = await queryMainRows<{ code: string }[]>(
+      `SELECT code FROM affiliate_codes WHERE user_id = ANY($1::text[])`,
+      participatingCreatorIds,
+    );
+    codes = owned.map((row) => row.code);
+  }
+  const upperCodes = Array.from(
+    new Set(codes.map((code) => code.trim().toUpperCase()).filter(Boolean)),
+  );
+  if (upperCodes.length === 0) return { totalEntries: 0, entries: [] };
+
+  const params: unknown[] = [upperCodes, opts.startDate, opts.endDate];
+  const creatorFilter = codeFallback
+    ? `AND acu.affiliate_user_id = ANY($4::text[])`
+    : ``;
+  if (codeFallback) params.push(participatingCreatorIds);
+  const limitParameter = params.length + 1;
+  const offsetParameter = params.length + 2;
+  params.push(pageSize, offset);
+
+  const rows = await queryMainRows<{
+    position: string;
+    username: string | null;
+    total_wagered_usd: string;
+    total_entries: string;
+  }[]>(
+    `WITH ranked AS (
+       SELECT
+         ROW_NUMBER() OVER (
+           ORDER BY SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) DESC,
+                    acu.referred_user_id ASC
+         )::text AS position,
+         u.username,
+         SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric)::text
+           AS total_wagered_usd,
+         COUNT(*) OVER()::text AS total_entries
+       FROM affiliate_code_usages acu
+       JOIN "user" u ON u.id = acu.referred_user_id
+       WHERE acu.usage_type::text = 'wager'
+         AND UPPER(acu.code) = ANY($1::text[])
+         AND acu.created_at >= $2
+         AND acu.created_at < $3
+         AND u.role::text NOT IN ('admin', 'support')
+         ${creatorFilter}
+       GROUP BY acu.referred_user_id, u.username
+       HAVING SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) > 0
+     )
+     SELECT position, username, total_wagered_usd, total_entries
+     FROM ranked
+     ORDER BY position::bigint ASC
+     LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
+    ...params,
+  );
+
+  return {
+    totalEntries: Number(rows[0]?.total_entries ?? 0),
+    entries: rows.map((row) => {
+      const position = Number(row.position);
+      return {
+        position,
+        username: row.username,
+        totalWageredUsd: toNumber(row.total_wagered_usd),
+        prizeUsd: prizeByPosition.get(position) ?? null,
+      };
+    }),
+  };
+}
+
 /**
  * Compute the live standings for an affiliate leaderboard event.
  *
