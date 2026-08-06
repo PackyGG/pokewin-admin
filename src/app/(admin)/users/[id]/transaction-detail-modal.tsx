@@ -499,7 +499,7 @@ export function TransactionDetailModal({
                 · {m}
               </span>
             ))}
-            {/* "Pending" chip — only while the linked battle is still
+            {/* "Running" chip — only while the linked battle is still
                 running (status animating / in_progress). Absent entirely
                 once the battle has settled (completed / cancelled) or is
                 merely queued (waiting), so a finished battle shows no
@@ -508,10 +508,10 @@ export function TransactionDetailModal({
             {t.battlePending === true && (
               <Badge
                 variant="outline"
-                className="gap-1 border-amber-500/30 bg-amber-500/15 text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                className="gap-1 border-orange-500/30 bg-orange-500/15 text-[10px] font-medium text-orange-600 dark:text-orange-400"
               >
                 <Loader2 className="size-3 motion-safe:animate-spin" />
-                Pending
+                Running
               </Badge>
             )}
           </div>
@@ -520,9 +520,9 @@ export function TransactionDetailModal({
     }
     // Live outcome row — only while the battle is PENDING (animating /
     // in_progress) AND the win/loss direction is known (winner_team is
-    // materialized vs the user's team). Shows the DIRECTION only; the exact
-    // dollar amount is not derivable yet so we surface a muted "exact amount
-    // resolving" note rather than a fabricated figure. House-POV colors:
+    // materialized vs the user's team). The owner-only creator preview shows
+    // the committed amount; all other rows keep the resolving fallback.
+    // House-POV colors:
     // user winning = rose (our loss), user losing = emerald (our gain).
     // Absent entirely when not pending or when the direction is unknown.
     if (t.battlePending === true && t.battleOutcomePending != null) {

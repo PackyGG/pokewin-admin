@@ -54,6 +54,20 @@ test("unresolved battle never invents an outcome", () => {
   assert.equal(result.netAmount, null);
 });
 
+test("malformed committed values fail closed instead of inventing a payout", () => {
+  const result = calculateCreatorBattleOutcome({
+    creatorWon: true,
+    creatorPaidStake: 100,
+    creatorBorrowPercentage: 0,
+    sponsorshipAmountPaid: 0,
+    totalUnpacked: Number.NaN,
+    winningTeamSize: 0,
+  });
+
+  assert.equal(result.payoutAmount, null);
+  assert.equal(result.netAmount, null);
+});
+
 test("live EOS preview is owner-gated and reads only active committed truth", () => {
   const query = readFileSync(
     "src/lib/queries/eos-active-preview.ts",
@@ -92,4 +106,5 @@ test("user Gaming rows reuse the committed creator payout preview", () => {
   assert.match(query, /winning_participant\.team_number = battles\.winner_team/);
   assert.match(table, /profit=\{t\.amount - t\.battlePreviewWinnings\}/);
   assert.match(table, /won=\{t\.battlePreviewWinnings\}/);
+  assert.match(table, />\s*Running\s*</);
 });

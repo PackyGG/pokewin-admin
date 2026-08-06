@@ -1146,6 +1146,9 @@ export async function getUserTransactions(
       `);
       const battleRows = battleResult.rows;
       for (const b of battleRows) {
+        const parsedTotalUnpacked =
+          b.total_unpacked === null ? null : Number(b.total_unpacked);
+        const parsedWinningTeamSize = Number(b.winning_team_size);
         battleBorrowMap.set(b.id, b.borrow_percentage ?? 0);
         battleSponsorshipMap.set(b.id, b.sponsorship_percentage ?? 0);
         battleModeMap.set(b.id, b.mode);
@@ -1155,8 +1158,16 @@ export async function getUserTransactions(
           creatorUserId: b.creator_user_id,
           eosBlockHash: b.eos_block_hash,
           totalUnpacked:
-            b.total_unpacked === null ? null : toNumber(b.total_unpacked),
-          winningTeamSize: Number(b.winning_team_size),
+            parsedTotalUnpacked !== null &&
+            Number.isFinite(parsedTotalUnpacked) &&
+            parsedTotalUnpacked >= 0
+              ? parsedTotalUnpacked
+              : null,
+          winningTeamSize:
+            Number.isInteger(parsedWinningTeamSize) &&
+            parsedWinningTeamSize >= 0
+              ? parsedWinningTeamSize
+              : 0,
         });
         battleHasPasswordMap.set(
           b.id,

@@ -952,6 +952,14 @@ export const CategoryTransactionsTable = React.memo(
                               <MergedPnlCell
                                 profit={t.amount - t.battlePreviewWinnings}
                                 won={t.battlePreviewWinnings}
+                                extra={
+                                  <Badge
+                                    variant="outline"
+                                    className="border-orange-500/30 bg-orange-500/15 text-[10px] font-medium text-orange-600 dark:text-orange-400"
+                                  >
+                                    Running
+                                  </Badge>
+                                }
                               />
                             );
                           }
