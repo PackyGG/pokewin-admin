@@ -88,7 +88,17 @@ reviews visuals himself. This binds every sub-agent and workflow step too: never
 render or screenshot, and never let one decide on its own that "this case needs a visual check". The
 only exception is the owner explicitly asking for a live interactive check in that exact message.
 
-Skip redundant re-verification. Don't spin up a fresh worktree + full install for a trivial edit.
+Skip redundant re-verification — meaning a gate you already ran on this exact code, or a gate for a
+change class the table doesn't call for. It does **not** mean skipping the gate the table *does* call
+for. Don't spin up a fresh worktree + full install for a trivial edit.
+
+**The table is a floor, not a ceiling.** Match the gate to the change class honestly: if the edit
+touches a Server→Client boundary, an import/export surface, a type used elsewhere, or anything
+generated, it is a `npm run build` change even when the diff looks like one line. When you're unsure
+which row a change falls in, take the stricter row — guessing low is how a break reaches prod.
+
+**Never report a gate you didn't run.** "tsc green" means you ran it and read the output in this
+session. If you skipped a gate deliberately, say which one and why, before pushing.
 
 **Hard floor this rule never overrides:** MAIN stays read-only · never commit `.env`, secrets,
 `src/generated`, or `recent-pushes.json` · the PostgreSQL/Drizzle rule · honest reporting. Speed cuts
