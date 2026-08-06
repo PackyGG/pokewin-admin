@@ -82,3 +82,10 @@ export function generateKenoNextDraw(
   drawnNumbers.sort((left, right) => left - right);
   return { drawnNumbers, resultHash };
 }
+
+/** Convert the backend's zero-based draw indexes to the player's 1–40 tiles. */
+export function toPlayerFacingKenoNumbers(
+  drawnNumbers: readonly number[],
+): number[] {
+  return drawnNumbers.map((number) => number + 1);
+}

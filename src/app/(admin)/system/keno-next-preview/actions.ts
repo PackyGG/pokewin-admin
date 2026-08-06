@@ -8,6 +8,7 @@ import {
   decryptActiveServerSeed,
   generateKenoNextDraw,
   seedHashMatches,
+  toPlayerFacingKenoNumbers,
 } from "@/lib/keno/next-draw";
 import { requireOwner } from "@/lib/owners";
 import { TARGET_KENO_USER_ID, type RevealKenoNextPreviewResult } from "./types";
@@ -80,11 +81,12 @@ export async function revealKenoNextPreviewAction(): Promise<RevealKenoNextPrevi
       };
     }
 
-    const { drawnNumbers } = generateKenoNextDraw(
+    const { drawnNumbers: backendDrawIndexes } = generateKenoNextDraw(
       serverSeed,
       row.client_seed,
       nonce,
     );
+    const drawnNumbers = toPlayerFacingKenoNumbers(backendDrawIndexes);
     const snapshotId = createHash("sha256")
       .update(`${row.server_seed_hash}:${row.client_seed}:${nonce}`)
       .digest("hex")

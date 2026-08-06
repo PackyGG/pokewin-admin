@@ -9,6 +9,7 @@ import {
   generateKenoNextDraw,
   hashServerSeed,
   seedHashMatches,
+  toPlayerFacingKenoNumbers,
 } from "@/lib/keno/next-draw";
 
 const TARGET_USER_ID = "Fj6ga9pNFr5BpJL0PEVKobW3xZmhdl9F";
@@ -44,6 +45,17 @@ test("Keno next draw matches the backend HMAC selection contract", () => {
     "bd264e592ba835437414c9e775db9313a6e6989a95861913ebda2ee43497c237",
   );
   assert.deepEqual(result.drawnNumbers, [1, 2, 3, 5, 9, 14, 19, 20, 34, 36]);
+  assert.deepEqual(
+    toPlayerFacingKenoNumbers(result.drawnNumbers),
+    [2, 3, 4, 6, 10, 15, 20, 21, 35, 37],
+  );
+});
+
+test("Keno preview maps backend indexes to the same 1–40 labels as the game", () => {
+  assert.deepEqual(
+    toPlayerFacingKenoNumbers([0, 1, 3, 11, 14, 19, 33, 34, 38, 39]),
+    [1, 2, 4, 12, 15, 20, 34, 35, 39, 40],
+  );
 });
 
 test("Keno active seed decryption mirrors backend v2 and plaintext behavior", () => {

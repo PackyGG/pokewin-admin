@@ -42,7 +42,7 @@ import type { KenoNextPreview } from "./types";
 
 const DEFAULT_SELECTED_NUMBERS = Array.from(
   { length: KENO_MAX_PICKS },
-  (_, index) => index,
+  (_, index) => index + 1,
 );
 
 function formatUsd(value: number): string {
@@ -193,7 +193,8 @@ export function KenoNextPreviewClient({
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid grid-cols-5 gap-2 sm:grid-cols-8">
-                  {Array.from({ length: KENO_GRID_SIZE }, (_, number) => {
+                  {Array.from({ length: KENO_GRID_SIZE }, (_, index) => {
+                    const number = index + 1;
                     const selected = selectedNumbers.includes(number);
                     const drawn = drawnSet.has(number);
                     return (
