@@ -125,53 +125,45 @@ export function SectionHeadingSkeleton({
 
 /**
  * Detail-page hero (e.g. /users/[id], /battles/[id], /packs/[id]).
- * Matches the back-button + icon chip + title / subtitle pattern used in
- * every detail view.
+ *
+ * Mirrors the de-boxed <PageHeroIdentity> (see modern-panels): a slim
+ * controls row — back affordance on the left, optional action on the right —
+ * and NOTHING else. This used to render the old gradient + `blur-3xl` glow
+ * hero BOX, which the flat sweep removed from the real hero; with 13
+ * `loading.tsx` files using this skeleton, every detail route flashed a large
+ * gradient card that then collapsed into a slim row. Now the placeholder and
+ * the loaded page have the same shape.
+ *
+ * `kpis` renders the detail page's KPI strip as a SIBLING of the controls row
+ * (not nested inside a hero box), matching how a real detail page stacks
+ * `PageHero` → KPI strip inside its own `space-y-*` container.
  */
 export function DetailHeroSkeleton({
   kpis = 0,
   action = false,
 }: {
-  /** Optional inline KPI pills tucked into the hero. */
+  /** Number of KPI tiles the detail page renders under the controls row. */
   kpis?: number;
   /** Reserve trailing space for a detail-level action button. */
   action?: boolean;
 }) {
   return (
-    // Mirrors PageHero's Liquid-Glass shape (rounded-2xl sm:rounded-3xl,
-    // p-5 sm:p-6) so detail heroes swap in without layout shift.
-    <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60 sm:rounded-3xl">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-24 -top-24 size-48 rounded-full bg-blue-500/[0.06] blur-3xl sm:size-72"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -left-24 -bottom-24 size-48 rounded-full bg-purple-500/[0.06] blur-3xl sm:size-72"
-      />
-      <div className="relative p-5 sm:p-6">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
-          <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-            <Skeleton className="size-8 shrink-0 rounded-md sm:size-9" />
-            <Skeleton className="size-9 shrink-0 rounded-xl sm:size-10" />
-            <div className="min-w-0 space-y-2">
-              <Skeleton className="h-5 w-40 sm:h-6 sm:w-56" />
-              <Skeleton className="h-3 w-28 sm:h-4 sm:w-40" />
-            </div>
-          </div>
-          {action && (
-            <Skeleton className="h-9 w-full max-w-[140px] rounded-md sm:w-28" />
-          )}
-        </div>
-        {kpis > 0 && (
-          <div className="mt-4 grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
-            {Array.from({ length: kpis }).map((_, i) => (
-              <Skeleton key={i} className="h-14 rounded-xl sm:h-16" />
-            ))}
-          </div>
+    <>
+      {/* Same geometry as PageHeroIdentity's controls row. */}
+      <div className="mb-4 flex items-center justify-between gap-2 sm:mb-6">
+        <Skeleton className="size-9 shrink-0 rounded-md" />
+        {action && (
+          <Skeleton className="h-9 w-full max-w-[140px] rounded-md sm:w-28" />
         )}
       </div>
-    </div>
+      {kpis > 0 && (
+        <div className="grid grid-cols-2 gap-2.5 sm:gap-3 md:grid-cols-4">
+          {Array.from({ length: kpis }).map((_, i) => (
+            <Skeleton key={i} className="h-14 rounded-xl sm:h-16" />
+          ))}
+        </div>
+      )}
+    </>
   );
 }
 
@@ -203,7 +195,7 @@ export function ToolbarSkeleton({
 export function TabBarSkeleton({ count = 4 }: { count?: number }) {
   return (
     <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+      <div className="inline-flex gap-1 rounded-lg border bg-muted/50 p-1">
         {Array.from({ length: count }).map((_, i) => (
           <Skeleton
             key={i}
@@ -416,40 +408,4 @@ export function FormCardSkeleton({ rows = 3 }: { rows?: number }) {
       ))}
     </div>
   );
-}
-
-// ─── Back-compat (legacy helpers) ────────────────────────────────────────
-
-/**
- * Older loading.tsx files use these. Kept as thin wrappers around the new
- * composites so they still look modern without a search-and-replace pass.
- */
-export function PageTitleSkeleton({ width = 200 }: { width?: number }) {
-  return <Skeleton className="h-8" style={{ width }} />;
-}
-
-export function StatCardRowSkeleton({
-  count = 4,
-}: {
-  count?: number;
-  /** @deprecated heights now come from KpiStripSkeleton */
-  height?: number;
-}) {
-  return <KpiStripSkeleton count={count} />;
-}
-
-export function CardGridSkeleton({
-  count = 8,
-  aspect = "3/4",
-}: {
-  count?: number;
-  aspect?: string;
-}) {
-  const kind =
-    aspect === "3/4" ? "card" : aspect === "4/3" ? "tile" : "square";
-  return <GridSkeleton count={count} aspect={kind} />;
-}
-
-export function DetailHeaderSkeleton() {
-  return <DetailHeroSkeleton />;
 }
