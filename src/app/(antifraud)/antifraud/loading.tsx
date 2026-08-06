@@ -2,7 +2,12 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 /**
  * Matches /antifraud: the pulse bar, the four queue tiles, six aligned KPI
- * cards, action feed and the two 30-day charts.
+ * cards, action feed, the two 30-day charts, the case-flow panel and the two
+ * detection-health panels.
+ *
+ * This is the composition of every Suspense fallback in `page.tsx`, in page
+ * order. Adding a band there without adding its skeleton here reintroduces
+ * layout shift — the two must be changed together.
  */
 export default function AntifraudOverviewLoading() {
   return (
@@ -24,6 +29,11 @@ export default function AntifraudOverviewLoading() {
           <Skeleton className="h-[336px] w-full rounded-xl" />
           <Skeleton className="h-[336px] w-full rounded-xl" />
         </div>
+      </div>
+      <Skeleton className="h-[420px] w-full rounded-xl" />
+      <div className="grid items-start gap-4 lg:grid-cols-2">
+        <Skeleton className="h-[344px] w-full rounded-xl" />
+        <Skeleton className="h-[344px] w-full rounded-xl" />
       </div>
     </div>
   );

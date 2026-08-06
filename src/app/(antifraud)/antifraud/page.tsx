@@ -30,6 +30,12 @@ import {
   getReviewQueueStats,
   type ReviewQueueStats,
 } from "@/lib/antifraud/reviews";
+import {
+  getAntifraudCaseThroughput,
+  getAntifraudDetectionHealth,
+  type AntifraudCaseThroughput,
+  type AntifraudDetectionHealth,
+} from "@/lib/antifraud/overview-operations";
 import type { SafeQueryResult } from "@/lib/errors/safe-query";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
@@ -43,6 +49,12 @@ import {
   OverviewCharts,
 } from "./_components/overview-charts-lazy";
 import { PulseBar, QueueStrip } from "./_components/overview-status";
+import {
+  CaseThroughputPanel,
+  CaseThroughputSkeleton,
+  DetectionHealthPanel,
+  DetectionHealthSkeleton,
+} from "./_components/overview-operations";
 import { PanelErrorBoundary } from "./_components/panel-error-boundary";
 
 export const metadata = { title: "Antifraud Dashboard" };
@@ -69,7 +81,31 @@ const EMPTY_OVERVIEW: AntifraudOverviewData = {
   feed: [],
 };
 
+/**
+ * Fallbacks for the two operational reads. Both bands return `null` when their
+ * read failed, exactly like the mirror-backed bands — these constants only
+ * exist because `safeQuery` requires a same-shaped fallback, and they are
+ * never rendered.
+ */
+const EMPTY_THROUGHPUT: AntifraudCaseThroughput = {
+  days: [],
+  openedTotal: 0,
+  clearedTotal: 0,
+  flaggedTotal: 0,
+  medianDecisionMinutes: null,
+  p90DecisionMinutes: null,
+  oldestOpenHours: null,
+};
+
+const EMPTY_DETECTION: AntifraudDetectionHealth = {
+  kinds: [],
+  totalSignals30d: 0,
+  bands: [],
+};
+
 type OverviewPromise = Promise<SafeQueryResult<AntifraudOverviewData>>;
+type ThroughputPromise = Promise<SafeQueryResult<AntifraudCaseThroughput>>;
+type DetectionPromise = Promise<SafeQueryResult<AntifraudDetectionHealth>>;
 type MonitorPromise = Promise<
   SafeQueryResult<{
     configured: boolean;
@@ -124,6 +160,21 @@ export default async function AntifraudOverviewPage() {
     "antifraud.review-queue-stats",
     QUERY_TIMEOUT_MS,
   );
+  // Two more Admin-DB-only reads, each owning its own band below. They are
+  // deliberately NOT folded into an existing band: the queue strip must never
+  // wait on a 30-day aggregate, and these two must never wait on the mirror.
+  const throughputPromise: ThroughputPromise = safeQuery(
+    () => getAntifraudCaseThroughput(),
+    EMPTY_THROUGHPUT,
+    "antifraud.case-throughput",
+    QUERY_TIMEOUT_MS,
+  );
+  const detectionPromise: DetectionPromise = safeQuery(
+    () => getAntifraudDetectionHealth(),
+    EMPTY_DETECTION,
+    "antifraud.detection-health",
+    QUERY_TIMEOUT_MS,
+  );
 
   return (
     <div className="space-y-4" data-snapshot-at={snapshotAt}>
@@ -147,6 +198,14 @@ export default async function AntifraudOverviewPage() {
           <ChartsBand overview={overviewPromise} />
         </Suspense>
       </div>
+
+      <Suspense fallback={<CaseThroughputSkeleton />}>
+        <ThroughputBand throughput={throughputPromise} />
+      </Suspense>
+
+      <Suspense fallback={<DetectionHealthSkeleton />}>
+        <DetectionBand detection={detectionPromise} />
+      </Suspense>
     </div>
   );
 }
@@ -264,6 +323,39 @@ async function ChartsBand({ overview }: { overview: OverviewPromise }) {
   return (
     <PanelErrorBoundary label="Thirty-day charts">
       <OverviewCharts days={overviewResult.data.days} />
+    </PanelErrorBoundary>
+  );
+}
+
+/**
+ * Is the queue keeping up? Admin-DB only, so it survives a mirror outage —
+ * and returns `null` rather than a zero-filled chart when its own read fails.
+ */
+async function ThroughputBand({
+  throughput,
+}: {
+  throughput: ThroughputPromise;
+}) {
+  const result = await throughput;
+  if (result.error) return null;
+  return (
+    <PanelErrorBoundary label="Case flow">
+      <CaseThroughputPanel data={result.data} />
+    </PanelErrorBoundary>
+  );
+}
+
+/** What is firing, what went quiet, and whether each risk band earns its keep. */
+async function DetectionBand({
+  detection,
+}: {
+  detection: DetectionPromise;
+}) {
+  const result = await detection;
+  if (result.error) return null;
+  return (
+    <PanelErrorBoundary label="Detection health">
+      <DetectionHealthPanel data={result.data} />
     </PanelErrorBoundary>
   );
 }

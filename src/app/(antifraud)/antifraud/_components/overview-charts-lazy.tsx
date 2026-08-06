@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 
 import { Skeleton } from "@/components/ui/skeleton";
 import type { AntifraudOverviewDay } from "@/lib/antifraud/overview";
+import type { CaseThroughputDay } from "@/lib/antifraud/overview-operations";
 
 /**
  * Lazy boundary for the 30-day charts.
@@ -36,4 +37,25 @@ export function ChartRowSkeleton() {
 
 export function OverviewCharts({ days }: { days: AntifraudOverviewDay[] }) {
   return <OverviewChartsImpl days={days} />;
+}
+
+/**
+ * Same treatment for the case-flow chart. Every Recharts consumer on this page
+ * goes through this module — a static `recharts` import anywhere else puts the
+ * library back in the initial chunk group, which the fixture guardrail fails.
+ */
+const OverviewThroughputChartImpl = dynamic(
+  () =>
+    import("./overview-throughput-chart").then(
+      (mod) => mod.OverviewThroughputChart,
+    ),
+  { loading: () => <Skeleton className="h-[240px] w-full rounded-lg" /> },
+);
+
+export function OverviewThroughputChart({
+  days,
+}: {
+  days: CaseThroughputDay[];
+}) {
+  return <OverviewThroughputChartImpl days={days} />;
 }
