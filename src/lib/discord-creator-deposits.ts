@@ -46,11 +46,32 @@ type CreatorTotals = {
 };
 
 export type CreatorDepositSettings = {
+  signupsEnabled: boolean;
+  depositsEnabled: boolean;
+  signupEnabledAt: string | null;
+  depositEnabledAt: string | null;
+  /** Compatibility fields for bot versions deployed before independent controls. */
   enabled: boolean;
   logsChannelId: string;
   enabledAt: string | null;
   updatedAt: string | null;
 };
+
+export type CreatorNotificationTarget = "signups" | "deposits";
+
+type CreatorSettingsRow = {
+  signup_notifications_enabled: boolean;
+  deposit_notifications_enabled: boolean;
+  logs_channel_id: string;
+  signup_notifications_enabled_at: string | null;
+  deposit_notifications_enabled_at: string | null;
+  deposit_notifications_updated_at: string | null;
+};
+
+type CreatorSettingsUpdateRow = Omit<
+  CreatorSettingsRow,
+  "deposit_notifications_updated_at"
+> & { deposit_notifications_updated_at: string };
 
 export type CreatorDepositDeliveryJob = {
   id: string;
@@ -87,15 +108,12 @@ export async function getCreatorDepositSettings(input: {
   actorDiscordUserId: string;
 }): Promise<CreatorDepositSettings> {
   const setup = await requireLinkedSetupActor(input);
-  const result = await adminDrizzle.execute<{
-    deposit_notifications_enabled: boolean;
-    logs_channel_id: string;
-    deposit_notifications_enabled_at: string | null;
-    deposit_notifications_updated_at: string | null;
-  }>(sql`
+  const result = await adminDrizzle.execute<CreatorSettingsRow>(sql`
     SELECT
+      signup_notifications_enabled,
       deposit_notifications_enabled,
       logs_channel_id,
+      signup_notifications_enabled_at,
       deposit_notifications_enabled_at,
       deposit_notifications_updated_at
     FROM discord_creator_setups
@@ -105,12 +123,22 @@ export async function getCreatorDepositSettings(input: {
   const row = result.rows[0];
   if (!row) throw new Error("Creator setup disappeared while reading settings.");
 
+  const signupsEnabled = row.signup_notifications_enabled;
+  const depositsEnabled = row.deposit_notifications_enabled;
+  const signupEnabledAt = row.signup_notifications_enabled_at
+    ? new Date(row.signup_notifications_enabled_at).toISOString()
+    : null;
+  const depositEnabledAt = row.deposit_notifications_enabled_at
+    ? new Date(row.deposit_notifications_enabled_at).toISOString()
+    : null;
   return {
-    enabled: row.deposit_notifications_enabled,
+    signupsEnabled,
+    depositsEnabled,
+    signupEnabledAt,
+    depositEnabledAt,
+    enabled: signupsEnabled && depositsEnabled,
     logsChannelId: row.logs_channel_id,
-    enabledAt: row.deposit_notifications_enabled_at
-      ? new Date(row.deposit_notifications_enabled_at).toISOString()
-      : null,
+    enabledAt: signupsEnabled && depositsEnabled ? depositEnabledAt : null,
     updatedAt: row.deposit_notifications_updated_at
       ? new Date(row.deposit_notifications_updated_at).toISOString()
       : null,
@@ -124,6 +152,7 @@ export async function updateCreatorDepositSettings(input: {
   actorDiscordUserId: string;
   interactionId: string;
   enabled: boolean;
+  target?: CreatorNotificationTarget;
   apiKeyId: string;
   apiKeyPrefix: string;
 }): Promise<CreatorDepositSettings> {
@@ -136,20 +165,38 @@ export async function updateCreatorDepositSettings(input: {
       )
     `);
 
-    const result = await tx.execute<{
-      deposit_notifications_enabled: boolean;
-      logs_channel_id: string;
-      deposit_notifications_enabled_at: string | null;
-      deposit_notifications_updated_at: string;
-    }>(sql`
+    const target = input.target ?? null;
+    const result = await tx.execute<CreatorSettingsUpdateRow>(sql`
       UPDATE discord_creator_setups
       SET
-        deposit_notifications_enabled = ${input.enabled},
+        signup_notifications_enabled = CASE
+          WHEN ${target}::text IS NULL OR ${target} = 'signups'
+            THEN ${input.enabled}
+          ELSE signup_notifications_enabled
+        END,
+        signup_notifications_enabled_at = CASE
+          WHEN ${target}::text IS NULL OR ${target} = 'signups' THEN CASE
+            WHEN ${input.enabled} = false THEN NULL
+            WHEN signup_notifications_enabled = false
+              OR signup_notifications_enabled_at IS NULL
+              THEN now()
+            ELSE signup_notifications_enabled_at
+          END
+          ELSE signup_notifications_enabled_at
+        END,
+        deposit_notifications_enabled = CASE
+          WHEN ${target}::text IS NULL OR ${target} = 'deposits'
+            THEN ${input.enabled}
+          ELSE deposit_notifications_enabled
+        END,
         deposit_notifications_enabled_at = CASE
-          WHEN ${input.enabled} = false THEN NULL
-          WHEN deposit_notifications_enabled = false
-            OR deposit_notifications_enabled_at IS NULL
-            THEN now()
+          WHEN ${target}::text IS NULL OR ${target} = 'deposits' THEN CASE
+            WHEN ${input.enabled} = false THEN NULL
+            WHEN deposit_notifications_enabled = false
+              OR deposit_notifications_enabled_at IS NULL
+              THEN now()
+            ELSE deposit_notifications_enabled_at
+          END
           ELSE deposit_notifications_enabled_at
         END,
         deposit_notifications_updated_at = now()
@@ -157,15 +204,17 @@ export async function updateCreatorDepositSettings(input: {
         AND status = 'active'
         AND creator_user_id IS NOT NULL
       RETURNING
+        signup_notifications_enabled,
         deposit_notifications_enabled,
         logs_channel_id,
+        signup_notifications_enabled_at,
         deposit_notifications_enabled_at,
         deposit_notifications_updated_at
     `);
     const row = result.rows[0];
     if (!row) throw new Error("Creator setup disappeared while updating settings.");
 
-    if (!input.enabled) {
+    if (!input.enabled && (target === null || target === "deposits")) {
       await tx.execute(sql`
         UPDATE discord_creator_deposit_jobs
         SET
@@ -179,6 +228,8 @@ export async function updateCreatorDepositSettings(input: {
         WHERE setup_id = ${setup.id}::uuid
           AND status IN ('pending', 'leased')
       `);
+    }
+    if (!input.enabled && (target === null || target === "signups")) {
       await tx.execute(sql`
         UPDATE discord_creator_signup_jobs
         SET
@@ -187,7 +238,7 @@ export async function updateCreatorDepositSettings(input: {
           lease_owner = NULL,
           leased_until = NULL,
           last_error_code = 'notifications_disabled',
-          last_error_message = 'Creator disabled activity notifications.',
+          last_error_message = 'Creator disabled sign-up notifications.',
           updated_at = now()
         WHERE setup_id = ${setup.id}::uuid
           AND status IN ('pending', 'leased')
@@ -196,9 +247,7 @@ export async function updateCreatorDepositSettings(input: {
 
     await tx.insert(admin_audit_events).values({
       admin_user_id: null,
-      event_type: input.enabled
-        ? "discord_creator_deposit_notifications_enabled"
-        : "discord_creator_deposit_notifications_disabled",
+      event_type: `discord_creator_${target === "signups" ? "signup" : target ?? "activity"}_notifications_${input.enabled ? "enabled" : "disabled"}`,
       target_user_id: setup.creator_user_id,
       metadata: {
         apiKeyId: input.apiKeyId,
@@ -210,15 +259,26 @@ export async function updateCreatorDepositSettings(input: {
         logsChannelId: row.logs_channel_id,
         actorDiscordUserId: input.actorDiscordUserId,
         interactionId: input.interactionId,
+        target: target ?? "signups_and_deposits",
       },
     });
 
+    const signupsEnabled = row.signup_notifications_enabled;
+    const depositsEnabled = row.deposit_notifications_enabled;
+    const signupEnabledAt = row.signup_notifications_enabled_at
+      ? new Date(row.signup_notifications_enabled_at).toISOString()
+      : null;
+    const depositEnabledAt = row.deposit_notifications_enabled_at
+      ? new Date(row.deposit_notifications_enabled_at).toISOString()
+      : null;
     return {
-      enabled: row.deposit_notifications_enabled,
+      signupsEnabled,
+      depositsEnabled,
+      signupEnabledAt,
+      depositEnabledAt,
+      enabled: signupsEnabled && depositsEnabled,
       logsChannelId: row.logs_channel_id,
-      enabledAt: row.deposit_notifications_enabled_at
-        ? new Date(row.deposit_notifications_enabled_at).toISOString()
-        : null,
+      enabledAt: signupsEnabled && depositsEnabled ? depositEnabledAt : null,
       updatedAt: new Date(row.deposit_notifications_updated_at).toISOString(),
     };
   });

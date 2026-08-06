@@ -56,7 +56,7 @@ export const API_SCOPES = {
   "discord:creator:setup": {
     label: "Provision creator Discord channels",
     description:
-      "Provision and link private creator sections; read performance, deals, and rewards; and manage durable deposit-notification delivery. Reads creator data from the production mirror and writes only provisioning, settings, audit, and delivery state to the admin database.",
+      "Provision and link private creator sections; read performance, deals, and rewards; and manage durable sign-up and deposit notification delivery. Reads creator data from the production mirror and writes only provisioning, settings, audit, and delivery state to the admin database.",
     access: "admin-write",
   },
   "discord:vips:link": {

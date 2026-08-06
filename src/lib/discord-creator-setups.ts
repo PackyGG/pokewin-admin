@@ -956,6 +956,11 @@ export async function linkCreatorSetup(input: {
               THEN now()
             ELSE NULL
           END,
+          signup_notifications_enabled_at = CASE
+            WHEN signup_notifications_enabled = true
+              THEN now()
+            ELSE NULL
+          END,
           linked_at = now()
       WHERE id = ${setup.id}::uuid
         AND creator_user_id IS NULL
@@ -1201,6 +1206,11 @@ export async function completeCreatorSetup(input: {
           deposit_notifications_enabled_at = CASE
             WHEN deposit_notifications_enabled = true
               THEN COALESCE(deposit_notifications_enabled_at, now())
+            ELSE NULL
+          END,
+          signup_notifications_enabled_at = CASE
+            WHEN signup_notifications_enabled = true
+              THEN COALESCE(signup_notifications_enabled_at, now())
             ELSE NULL
           END,
           completed_at = now()

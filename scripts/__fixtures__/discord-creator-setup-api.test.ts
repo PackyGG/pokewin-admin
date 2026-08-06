@@ -166,9 +166,9 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
 });
 
-test("creator activity notifications default on, are durable, and creator-guild pinned", async () => {
+test("creator activity notifications are independently controlled, durable, and creator-guild pinned", async () => {
   const [service, signupService, readSettings, updateSettings, claim, ack, signupAck,
-    migration, signupMigration, endpoints] =
+    migration, signupMigration, controlsMigration, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-deposits.ts"),
       read("src/lib/discord-creator-signups.ts"),
@@ -179,6 +179,7 @@ test("creator activity notifications default on, are durable, and creator-guild 
       read("src/app/api/v1/discord/creator-signups/jobs/[id]/ack/route.ts"),
       read("drizzle/admin/migrations/20260730_creator_deposit_notifications.sql"),
       read("drizzle/admin/migrations/20260804_creator_signup_notifications.sql"),
+      read("drizzle/admin/migrations/20260806_creator_activity_notification_controls.sql"),
       read("src/lib/api-auth/endpoints.ts"),
     ]);
 
@@ -203,16 +204,27 @@ test("creator activity notifications default on, are durable, and creator-guild 
   assert.match(signupMigration, /"deposit_notifications_updated_at" IS NULL/);
   assert.match(signupMigration, /CREATE TABLE IF NOT EXISTS "discord_creator_signup_jobs"/);
   assert.match(signupMigration, /discord_creator_signup_scan_state/);
+  assert.match(controlsMigration, /"signup_notifications_enabled" BOOLEAN/);
+  assert.match(controlsMigration, /"signup_notifications_enabled_at" TIMESTAMPTZ/);
+  assert.match(controlsMigration, /"signup_notifications_enabled" = "deposit_notifications_enabled"/);
+  assert.match(controlsMigration, /discord_creator_setups_signup_notifications_idx/);
   assert.match(service, /deposit\.status = 'completed'/);
   assert.match(service, /deposit\.amount::numeric > 0/);
   assert.match(service, /INTERVAL '7 days'/);
   assert.match(service, /deposit_notifications_enabled_at <= source\."occurredAt"/);
   assert.match(service, /ON CONFLICT \(source_deposit_id\) DO NOTHING/);
   assert.match(service, /FOR UPDATE OF job SKIP LOCKED/);
-  assert.match(service, /event_type: input\.enabled/);
+  assert.match(service, /target\?: CreatorNotificationTarget/);
+  assert.match(service, /target === "signups"/);
+  assert.match(service, /target === "deposits"/);
+  assert.match(service, /UPDATE discord_creator_deposit_jobs/);
+  assert.match(service, /UPDATE discord_creator_signup_jobs/);
   assert.doesNotMatch(service, /getProdWrite/);
   assert.match(signupService, /usage\.usage_type::text = 'signup'/);
   assert.match(signupService, /usage\.status::text = 'completed'/);
+  assert.match(signupService, /setup\.signup_notifications_enabled = true/);
+  assert.match(signupService, /setup\.signup_notifications_enabled = false/);
+  assert.doesNotMatch(signupService, /setup\.deposit_notifications_enabled/);
   assert.match(signupService, /ON CONFLICT \(source_signup_id\) DO NOTHING/);
   assert.match(signupService, /FOR UPDATE OF job SKIP LOCKED/);
   assert.doesNotMatch(signupService, /getProdWrite/);

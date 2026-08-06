@@ -161,14 +161,14 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-setups/deposit-settings",
     summary:
-      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns whether automatic deposit notifications are enabled for the linked creator section and its current logs channel.",
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns independent automatic sign-up and deposit notification settings for the linked creator section and its current logs channel.",
     scopes: ["discord:creator:setup"],
   },
   {
     method: "POST",
     path: "/api/v1/discord/creator-setups/deposit-settings/update",
     summary:
-      "Body { guildId, categoryId, channelId, actorDiscordUserId, interactionId, enabled }. Enables or disables future deposit notifications for the linked creator section. Writes only audited settings and delivery state in the admin database.",
+      "Body { guildId, categoryId, channelId, actorDiscordUserId, interactionId, target?, enabled }. Independently enables or disables future sign-up or deposit notifications for the linked creator section. Omitting target preserves the legacy combined update. Writes only audited settings and delivery state in the admin database.",
     scopes: ["discord:creator:setup"],
   },
   {

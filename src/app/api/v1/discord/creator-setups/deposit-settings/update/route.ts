@@ -19,6 +19,7 @@ const BodySchema = z.object({
   actorDiscordUserId: DiscordIdSchema,
   interactionId: DiscordIdSchema,
   enabled: z.boolean(),
+  target: z.enum(["signups", "deposits"]).optional(),
 });
 
 export const POST = withApiKey(

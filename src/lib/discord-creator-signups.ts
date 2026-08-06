@@ -16,7 +16,7 @@ const MAX_SCAN_ROWS = 100;
 type EnabledSetup = {
   id: string;
   creator_user_id: string;
-  deposit_notifications_enabled_at: string;
+  signup_notifications_enabled_at: string;
 };
 
 type ScanLease = { leaseToken: string; scanThroughAt: string };
@@ -100,14 +100,14 @@ async function releaseScanLease(lease: ScanLease): Promise<void> {
 
 async function enabledSetups(): Promise<EnabledSetup[]> {
   const result = await adminDrizzle.execute<EnabledSetup>(sql`
-    SELECT id::text, creator_user_id, deposit_notifications_enabled_at::text
+    SELECT id::text, creator_user_id, signup_notifications_enabled_at::text
     FROM discord_creator_setups
     WHERE guild_id = ${CREATOR_SETUP_GUILD_ID}
       AND status = 'active'
       AND creator_user_id IS NOT NULL
       AND logs_channel_id IS NOT NULL
-      AND deposit_notifications_enabled = true
-      AND deposit_notifications_enabled_at IS NOT NULL
+      AND signup_notifications_enabled = true
+      AND signup_notifications_enabled_at IS NOT NULL
     ORDER BY id
   `);
   return result.rows;
@@ -157,7 +157,7 @@ async function enqueueSignups(rows: SourceSignup[], setups: EnabledSetup[]): Pro
     if (
       !setup
       || new Date(row.occurred_at).getTime()
-        < new Date(setup.deposit_notifications_enabled_at).getTime()
+        < new Date(setup.signup_notifications_enabled_at).getTime()
     ) return [];
     return [{
       setupId: setup.id,
@@ -197,8 +197,8 @@ async function enqueueSignups(rows: SourceSignup[], setups: EnabledSetup[]): Pro
         ON setup.id = source."setupId"
        AND setup.status = 'active'
        AND setup.creator_user_id = source."creatorUserId"
-       AND setup.deposit_notifications_enabled = true
-       AND setup.deposit_notifications_enabled_at <= source."occurredAt"
+       AND setup.signup_notifications_enabled = true
+       AND setup.signup_notifications_enabled_at <= source."occurredAt"
       ON CONFLICT (source_signup_id) DO NOTHING
       RETURNING 1
     )
@@ -263,11 +263,11 @@ export async function claimCreatorSignupJobs(input: {
       UPDATE discord_creator_signup_jobs AS job
       SET status = 'dead', lease_token = NULL, lease_owner = NULL, leased_until = NULL,
           last_error_code = 'notifications_disabled',
-          last_error_message = 'Creator activity notifications are disabled.', updated_at = now()
+          last_error_message = 'Creator sign-up notifications are disabled.', updated_at = now()
       FROM discord_creator_setups AS setup
       WHERE job.setup_id = setup.id
         AND job.status IN ('pending', 'leased')
-        AND (setup.status <> 'active' OR setup.deposit_notifications_enabled = false OR setup.logs_channel_id IS NULL)
+        AND (setup.status <> 'active' OR setup.signup_notifications_enabled = false OR setup.logs_channel_id IS NULL)
       RETURNING job.id
     ), exhausted AS (
       UPDATE discord_creator_signup_jobs
@@ -283,7 +283,7 @@ export async function claimCreatorSignupJobs(input: {
       JOIN discord_creator_setups AS setup ON setup.id = job.setup_id
       WHERE setup.guild_id = ${input.guildId}
         AND setup.status = 'active'
-        AND setup.deposit_notifications_enabled = true
+        AND setup.signup_notifications_enabled = true
         AND setup.logs_channel_id IS NOT NULL
         AND job.available_at <= now()
         AND job.attempt_count < job.max_attempts
@@ -346,7 +346,7 @@ export async function acknowledgeCreatorSignupJob(input: {
   const result = await adminDrizzle.execute<{ status: "pending" | "dead" }>(sql`
     UPDATE discord_creator_signup_jobs AS job
     SET status = CASE
-          WHEN job.attempt_count >= job.max_attempts OR setup.deposit_notifications_enabled = false
+          WHEN job.attempt_count >= job.max_attempts OR setup.signup_notifications_enabled = false
             THEN 'dead' ELSE 'pending' END,
         available_at = now() + (LEAST(300, power(2, LEAST(job.attempt_count, 8))::int) * interval '1 second'),
         lease_token = NULL, lease_owner = NULL, leased_until = NULL,
