@@ -36,12 +36,14 @@ export const metadata = { title: "KYC Review · Antifraud" };
 const QUERY_TIMEOUT_MS = 10_000;
 
 const FILTER_LABELS: Record<KycFilter, string> = {
-  active: "Active / Waiting",
+  active: "Active",
+  waiting: "Waiting (24h+)",
   history: "History / Finished",
 };
 
 const FILTER_TITLES: Record<KycFilter, string> = {
-  active: "Active and waiting KYC reviews",
+  active: "Active KYC reviews",
+  waiting: "Required 24h+ ago, still not started or finished",
   history: "Finished KYC history",
 };
 
@@ -224,8 +226,10 @@ function AccountList({
           <CheckCircle2 className="mx-auto mb-3 size-6 text-muted-foreground" />
           <p className="text-sm font-semibold">
             {filter === "active"
-              ? "No KYC checks are currently active or waiting"
-              : "No finished KYC records match this view"}
+              ? "No KYC checks are currently active"
+              : filter === "waiting"
+                ? "No accounts have been stalled 24h+ without starting or finishing KYC"
+                : "No finished KYC records match this view"}
           </p>
           <p className="mt-1 text-xs text-muted-foreground">
             Change the view or search, or require KYC for an eligible locked

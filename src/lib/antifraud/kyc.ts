@@ -23,7 +23,7 @@ import {
   type KycCountryReview,
 } from "@/lib/antifraud/sumsub-review-api";
 
-export const KYC_FILTERS = ["active", "history"] as const;
+export const KYC_FILTERS = ["active", "waiting", "history"] as const;
 
 export type KycFilter = (typeof KYC_FILTERS)[number];
 
@@ -162,13 +162,30 @@ function integrationConfig(env: DbEnv): KycOperationalConfig {
   };
 }
 
+/**
+ * Required 24h+ ago, still on the provider's default "none" status — the
+ * player never started or never finished the Sumsub check. Pulled out of
+ * "active" into its own tab so stalled accounts don't spam the review list.
+ */
+function waitingCondition(): SQL {
+  return sql`(
+    ${user_kyc.kyc_required} = true
+    AND ${user_kyc.admin_decision} = 'pending'
+    AND ${user_kyc.status} = 'none'
+    AND ${user_kyc.kyc_required_at} IS NOT NULL
+    AND ${user_kyc.kyc_required_at} < NOW() - INTERVAL '24 hours'
+  )`;
+}
+
 function statusCondition(filter: KycFilter): SQL | undefined {
   switch (filter) {
     case "active":
-      return or(
-        eq(user_kyc.kyc_required, true),
-        eq(user_kyc.admin_decision, "pending"),
-      );
+      return sql`(
+        (${user_kyc.kyc_required} = true OR ${user_kyc.admin_decision} = 'pending')
+        AND NOT ${waitingCondition()}
+      )`;
+    case "waiting":
+      return waitingCondition();
     case "history":
       return or(
         eq(user_kyc.admin_decision, "safe"),
