@@ -73,7 +73,7 @@ export function RakebackTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
+      <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
         {RB_SUBTABS.map((t) => (
           <Link
             key={t.value}
@@ -135,7 +135,7 @@ export function RakebackTab({
             key={`${page}|${perPage}|${params.type ?? ""}|${params.search ?? ""}`}
             fallback={
               <>
-                <div className="flex gap-1 rounded-lg bg-muted p-1">
+                <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
                   {Array.from({ length: 4 }).map((_, i) => (
                     <div
                       key={i}
@@ -281,7 +281,7 @@ async function ClaimsTable({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-lg bg-muted p-1">
+      <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
         {["all", "daily", "weekly", "monthly"].map((t) => (
           <Link
             key={t}

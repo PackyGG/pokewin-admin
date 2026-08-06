@@ -40,17 +40,8 @@ import {
   type InventoryItem,
   type PaginatedInventory,
 } from "./user-tabs-types";
+import { RARITY_COLORS } from "../../transactions/_shared/rarity-colors";
 
-const INVENTORY_RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
 
 export const InventoryGrid = React.memo(function InventoryGrid({
   userId,
@@ -244,20 +235,20 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(1)}
                 disabled={page <= 1 || loading}
-              >
-                <ChevronsLeft className="size-3" />
+                aria-label="First page">
+                <ChevronsLeft className="size-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(page - 1)}
                 disabled={page <= 1 || loading}
-              >
-                <ChevronLeft className="size-3" />
+                aria-label="Previous page">
+                <ChevronLeft className="size-4" />
               </Button>
               <span className="px-2 text-xs text-muted-foreground">
                 {page} / {totalPages}
@@ -265,20 +256,20 @@ export const InventoryGrid = React.memo(function InventoryGrid({
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(page + 1)}
                 disabled={page >= totalPages || loading}
-              >
-                <ChevronRight className="size-3" />
+                aria-label="Next page">
+                <ChevronRight className="size-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(totalPages)}
                 disabled={page >= totalPages || loading}
-              >
-                <ChevronsRight className="size-3" />
+                aria-label="Last page">
+                <ChevronsRight className="size-4" />
               </Button>
             </div>
           )}
@@ -666,7 +657,7 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
       <CardHeader className="pb-3">
         <div className="flex flex-wrap items-center gap-3">
           {/* Status tabs */}
-          <div className="flex gap-1 rounded-lg bg-muted p-1">
+          <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
             {(["disposed", "sold", "exchanged"] as const).map((s) => (
               <button
                 key={s}
@@ -787,7 +778,7 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
                         <span
                           className={cn(
                             "rounded px-1 py-0 text-[10px] font-semibold uppercase",
-                            INVENTORY_RARITY_COLORS[item.rarity.toLowerCase()] ??
+                            RARITY_COLORS[item.rarity.toLowerCase()] ??
                               "bg-muted text-foreground",
                           )}
                         >
@@ -860,38 +851,38 @@ export const DisposedCardsTable = React.memo(function DisposedCardsTable({
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(1)}
                 disabled={page === 1}
-              >
-                <ChevronsLeft className="size-3.5" />
+                aria-label="First page">
+                <ChevronsLeft className="size-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(page - 1)}
                 disabled={page === 1}
-              >
-                <ChevronLeft className="size-3.5" />
+                aria-label="Previous page">
+                <ChevronLeft className="size-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(page + 1)}
                 disabled={page === totalPages}
-              >
-                <ChevronRight className="size-3.5" />
+                aria-label="Next page">
+                <ChevronRight className="size-4" />
               </Button>
               <Button
                 variant="outline"
                 size="icon"
-                className="size-7"
+                className="size-8"
                 onClick={() => navigate(totalPages)}
                 disabled={page === totalPages}
-              >
-                <ChevronsRight className="size-3.5" />
+                aria-label="Last page">
+                <ChevronsRight className="size-4" />
               </Button>
             </div>
           </div>

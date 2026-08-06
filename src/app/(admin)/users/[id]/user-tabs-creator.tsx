@@ -662,20 +662,20 @@ function ReferralClicksTable({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page <= 1 || isPending}
               onClick={() => goToPage(1)}
-            >
-              <ChevronsLeft className="size-3.5" />
+              aria-label="First page">
+              <ChevronsLeft className="size-4" />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page <= 1 || isPending}
               onClick={() => goToPage(page - 1)}
-            >
-              <ChevronLeft className="size-3.5" />
+              aria-label="Previous page">
+              <ChevronLeft className="size-4" />
             </Button>
             <span className="px-2">
               Page {page} of {data.totalPages}
@@ -683,20 +683,20 @@ function ReferralClicksTable({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page >= data.totalPages || isPending}
               onClick={() => goToPage(page + 1)}
-            >
-              <ChevronRight className="size-3.5" />
+              aria-label="Next page">
+              <ChevronRight className="size-4" />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page >= data.totalPages || isPending}
               onClick={() => goToPage(data.totalPages)}
-            >
-              <ChevronsRight className="size-3.5" />
+              aria-label="Last page">
+              <ChevronsRight className="size-4" />
             </Button>
           </div>
         </div>
@@ -784,20 +784,20 @@ function CodeUsagesTable({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page <= 1 || isPending}
               onClick={() => goToPage(1)}
-            >
-              <ChevronsLeft className="size-3.5" />
+              aria-label="First page">
+              <ChevronsLeft className="size-4" />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page <= 1 || isPending}
               onClick={() => goToPage(page - 1)}
-            >
-              <ChevronLeft className="size-3.5" />
+              aria-label="Previous page">
+              <ChevronLeft className="size-4" />
             </Button>
             <span className="px-2">
               Page {page} of {data.totalPages}
@@ -805,20 +805,20 @@ function CodeUsagesTable({
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page >= data.totalPages || isPending}
               onClick={() => goToPage(page + 1)}
-            >
-              <ChevronRight className="size-3.5" />
+              aria-label="Next page">
+              <ChevronRight className="size-4" />
             </Button>
             <Button
               variant="ghost"
               size="icon"
-              className="size-7"
+              className="size-8"
               disabled={page >= data.totalPages || isPending}
               onClick={() => goToPage(data.totalPages)}
-            >
-              <ChevronsRight className="size-3.5" />
+              aria-label="Last page">
+              <ChevronsRight className="size-4" />
             </Button>
           </div>
         </div>

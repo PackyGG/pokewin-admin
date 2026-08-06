@@ -35,19 +35,10 @@ import { cn } from "@/lib/utils";
 import { formatCurrency, formatDateTime } from "@/lib/utils/format";
 import { toast } from "sonner";
 import { fetchPackGames } from "../actions";
+import { RARITY_COLORS } from "../../transactions/_shared/rarity-colors";
 
 // Legacy rarity palette — still used by the games-table rows (not the
 // pack-card grid, which now delegates to <CardTile />).
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
 
 type GameItem = {
   id: string;
@@ -578,18 +569,18 @@ export function GamesTable({ packId, initialGames }: { packId: string; initialGa
           <CardTitle className="text-sm font-medium">Games ({total})</CardTitle>
           {totalPages > 1 && (
             <div className="flex items-center gap-1">
-              <Button variant="outline" size="icon" className="size-7" onClick={() => navigate(1)} disabled={page <= 1 || loading}>
-                <ChevronsLeft className="size-3" />
+              <Button variant="outline" size="icon" className="size-8" onClick={() => navigate(1)} disabled={page <= 1 || loading} aria-label="First page">
+                <ChevronsLeft className="size-4" />
               </Button>
-              <Button variant="outline" size="icon" className="size-7" onClick={() => navigate(page - 1)} disabled={page <= 1 || loading}>
-                <ChevronLeft className="size-3" />
+              <Button variant="outline" size="icon" className="size-8" onClick={() => navigate(page - 1)} disabled={page <= 1 || loading} aria-label="Previous page">
+                <ChevronLeft className="size-4" />
               </Button>
               <span className="px-2 text-xs text-muted-foreground">{page} / {totalPages}</span>
-              <Button variant="outline" size="icon" className="size-7" onClick={() => navigate(page + 1)} disabled={page >= totalPages || loading}>
-                <ChevronRight className="size-3" />
+              <Button variant="outline" size="icon" className="size-8" onClick={() => navigate(page + 1)} disabled={page >= totalPages || loading} aria-label="Next page">
+                <ChevronRight className="size-4" />
               </Button>
-              <Button variant="outline" size="icon" className="size-7" onClick={() => navigate(totalPages)} disabled={page >= totalPages || loading}>
-                <ChevronsRight className="size-3" />
+              <Button variant="outline" size="icon" className="size-8" onClick={() => navigate(totalPages)} disabled={page >= totalPages || loading} aria-label="Last page">
+                <ChevronsRight className="size-4" />
               </Button>
             </div>
           )}

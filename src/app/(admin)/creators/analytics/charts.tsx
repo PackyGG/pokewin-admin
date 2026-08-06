@@ -72,15 +72,9 @@ function ChartPanel({
   children: React.ReactNode;
 }) {
   return (
-    <div className="surface-sheen relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/70 p-4 sm:p-5">
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -right-16 -top-16 size-40 rounded-full bg-blue-500/[0.06] blur-3xl"
-      />
-      <div className="relative">
-        <SectionHeading icon={icon} title={title} />
-        <div className="mt-4">{children}</div>
-      </div>
+    <div className="rounded-2xl border bg-card p-4 sm:p-5">
+      <SectionHeading icon={icon} title={title} />
+      <div className="mt-4">{children}</div>
     </div>
   );
 }

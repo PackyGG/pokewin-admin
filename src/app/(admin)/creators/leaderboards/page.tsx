@@ -165,7 +165,7 @@ export default async function AffiliateLeaderboardsPage({
 
             <div className="space-y-4">
                 <div className="flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex gap-1 rounded-lg bg-muted p-1">
+                    <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
                         {STATUS_TABS.map((s) => (
                             <Link
                                 key={s.value}
@@ -190,7 +190,7 @@ export default async function AffiliateLeaderboardsPage({
                             fetched set. First click on a field sorts descending
                             (latest first); click the active field again to flip
                             to ascending. "Default" clears back to backend order. */}
-                        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+                        <div className="flex items-center gap-1 rounded-lg border bg-muted/50 p-1">
                             <span className="px-1.5 text-xs font-medium text-muted-foreground">
                                 Sort
                             </span>
@@ -464,7 +464,7 @@ async function LeaderboardsBody({
                         (offset is omitted from hrefWith's base params). */}
                     <div className="flex items-center gap-1">
                         <span className="text-xs">Show</span>
-                        <div className="flex items-center gap-1 rounded-lg bg-muted p-1">
+                        <div className="flex items-center gap-1 rounded-lg border bg-muted/50 p-1">
                             {PER_PAGE_OPTIONS.map((n) => (
                                 <Link
                                     key={n}

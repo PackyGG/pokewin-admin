@@ -153,7 +153,7 @@ export function LeaderboardsTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1 w-fit">
+      <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1 w-fit">
         {LB_SUBTABS.map((t) => (
           <Link
             key={t.value}
@@ -323,7 +323,7 @@ async function StandingsSubTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center gap-4">
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
+        <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
           {RACE_TYPE_FILTERS.map((type) => (
             <Link
               key={type}
@@ -441,7 +441,7 @@ async function HistorySubTab({
 
   return (
     <div className="space-y-4">
-      <div className="flex gap-1 rounded-lg bg-muted p-1 w-fit">
+      <div className="flex gap-1 rounded-lg border bg-muted/50 p-1 w-fit">
         {RACE_TYPE_FILTERS.map((type) => (
           <Link
             key={type}

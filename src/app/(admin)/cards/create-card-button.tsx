@@ -80,18 +80,11 @@ export function CreateCardButton({
         Create Card
       </DialogTrigger>
       <DialogContent className="sm:max-w-2xl max-h-[90vh] overflow-y-auto p-0">
-        {/* Header band — gradient to match the hero aesthetic. Stays in the
+        {/* Flat header band — solid `bg-card` + a hairline rule, matching the
+            app-wide flat sweep (no gradient, no corner glows). Stays in the
             light wrapper so it paints instantly when the dialog opens. */}
-        <div className="relative overflow-hidden rounded-t-xl border-b bg-gradient-to-br from-card via-card to-card/60 px-5 py-4">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-blue-500/[0.06] blur-3xl"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -left-16 -bottom-16 size-48 rounded-full bg-purple-500/[0.06] blur-3xl"
-          />
-          <DialogHeader className="relative">
+        <div className="border-b bg-card px-5 py-4">
+          <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-primary/10">
                 <Sparkles className="size-4 text-primary" />

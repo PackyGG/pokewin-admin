@@ -11,7 +11,7 @@ export function SocialsQueueCardSkeleton({ rows = 6 }: { rows?: number }) {
     <div className="rounded-xl border bg-card p-4">
       {/* Status tabs + "showing N of M". */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-        <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+        <div className="inline-flex gap-1 rounded-lg border bg-muted/50 p-1">
           {Array.from({ length: 3 }).map((_, i) => (
             <Skeleton key={i} className="h-7 w-20 rounded-md" />
           ))}

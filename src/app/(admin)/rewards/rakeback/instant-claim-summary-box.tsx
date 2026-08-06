@@ -64,7 +64,7 @@ export function InstantClaimSummaryBox({
             · {instantClaimPeriodLabel(period)}
           </span>
         </div>
-        <div className="flex flex-wrap gap-1 rounded-lg bg-muted p-1">
+        <div className="flex flex-wrap gap-1 rounded-lg border bg-muted/50 p-1">
           {INSTANT_CLAIM_PERIODS.map((p) => (
             <Link
               key={p}

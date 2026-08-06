@@ -78,19 +78,10 @@ import type {
   UserRewardPackOpensResult,
   RewardPackOpenEntry,
 } from "@/lib/queries/users-reward-pack-opens";
+import { RARITY_COLORS } from "../../transactions/_shared/rarity-colors";
 
 const ROSE = "text-rose-600 dark:text-rose-400";
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
 
 // Accent per reward cadence so the boxes read as a family but stay
 // distinguishable: daily = cyan (recurring), one-time = purple (welcome/level),

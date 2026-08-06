@@ -1350,7 +1350,7 @@ export const CategoryTransactionsTable = React.memo(
                     className="size-8"
                     onClick={() => load(1)}
                     disabled={txData.page <= 1 || isPending}
-                  >
+                    aria-label="First page">
                     <ChevronsLeft className="size-4" />
                   </Button>
                   <Button
@@ -1359,7 +1359,7 @@ export const CategoryTransactionsTable = React.memo(
                     className="size-8"
                     onClick={() => load(txData.page - 1)}
                     disabled={txData.page <= 1 || isPending}
-                  >
+                    aria-label="Previous page">
                     <ChevronLeft className="size-4" />
                   </Button>
                   <Button
@@ -1368,7 +1368,7 @@ export const CategoryTransactionsTable = React.memo(
                     className="size-8"
                     onClick={() => load(txData.page + 1)}
                     disabled={txData.page >= txData.totalPages || isPending}
-                  >
+                    aria-label="Next page">
                     <ChevronRight className="size-4" />
                   </Button>
                   <Button
@@ -1377,7 +1377,7 @@ export const CategoryTransactionsTable = React.memo(
                     className="size-8"
                     onClick={() => load(txData.totalPages)}
                     disabled={txData.page >= txData.totalPages || isPending}
-                  >
+                    aria-label="Last page">
                     <ChevronsRight className="size-4" />
                   </Button>
                 </div>

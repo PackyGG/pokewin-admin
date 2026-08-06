@@ -130,7 +130,7 @@ export function CreatorVipContent({
   return (
     <div className="space-y-4">
       <div
-        className="inline-flex gap-1 rounded-lg bg-muted p-1"
+        className="inline-flex gap-1 rounded-lg border bg-muted/50 p-1"
         role="tablist"
         aria-label="Creator rewards"
       >

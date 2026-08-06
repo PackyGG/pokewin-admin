@@ -34,6 +34,7 @@ import {
   searchCardsForUpgraderPicker,
   type UpgraderCardPickerItem,
 } from "./actions";
+import { RARITY_BADGE_COLORS } from "../transactions/_shared/rarity-colors";
 
 // Sort options for the picker grid. The value encodes both field and
 // direction so the Select holds a single string; we split it back into
@@ -55,16 +56,6 @@ const SORT_LABELS: Record<SortOption, string> = {
   name_asc: "Name: A → Z",
 };
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-  uncommon:
-    "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  rare: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  "ultra rare":
-    "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  secret:
-    "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-};
 
 export function AddUpgraderCardsDialog({
   existingCardIds,
@@ -345,7 +336,7 @@ export function AddUpgraderCardsDialog({
                         {card.rarity && (
                           <Badge
                             variant="outline"
-                            className={`px-1 py-0 text-[9px] ${RARITY_COLORS[card.rarity.toLowerCase()] ?? ""}`}
+                            className={`px-1 py-0 text-[9px] ${RARITY_BADGE_COLORS[card.rarity.toLowerCase()] ?? ""}`}
                           >
                             {card.rarity}
                           </Badge>

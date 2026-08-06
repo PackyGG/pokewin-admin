@@ -26,6 +26,7 @@ import {
 } from "@/lib/utils/upgrader-metadata";
 import { getUpgraderTxDialogDetails } from "./actions";
 import type { getTransactionDetail } from "@/lib/queries/transactions";
+import { RARITY_COLORS } from "../../transactions/_shared/rarity-colors";
 
 // Derived shape — whatever the underlying query returns. Awaited+
 // NonNullable so we get the actual data type (drop the `| null`).
@@ -33,16 +34,6 @@ type TxDetail = NonNullable<Awaited<ReturnType<typeof getTransactionDetail>>>;
 
 // Rarity → badge tone. Mirrors the map on /transactions/[id] so the
 // chip styling reads identically across the popup and the full page.
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-700/90 text-zinc-100",
-  uncommon: "bg-emerald-700/90 text-emerald-100",
-  rare: "bg-blue-700/90 text-blue-100",
-  "ultra rare": "bg-purple-700/90 text-purple-100",
-  "secret rare": "bg-yellow-600/90 text-yellow-100",
-  legendary: "bg-orange-600/90 text-orange-100",
-  holo: "bg-cyan-700/90 text-cyan-100",
-  secret: "bg-pink-700/90 text-pink-100",
-};
 
 /**
  * Click-an-ID popup for /transactions/upgrader rows.

@@ -204,16 +204,8 @@ export function MoveToSetDialog({
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="sm:max-w-xl max-h-[90vh] overflow-y-auto p-0">
         {/* Header band — matches the rest of the cards page chrome. */}
-        <div className="relative overflow-hidden rounded-t-xl border-b bg-gradient-to-br from-card via-card to-card/60 px-5 py-4">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-blue-500/[0.06] blur-3xl"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -left-16 -bottom-16 size-48 rounded-full bg-purple-500/[0.06] blur-3xl"
-          />
-          <DialogHeader className="relative">
+        <div className="border-b bg-card px-5 py-4">
+          <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-primary/10">
                 <Library className="size-4 text-primary" />

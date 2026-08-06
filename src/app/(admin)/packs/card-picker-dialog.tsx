@@ -22,14 +22,8 @@ import { Badge } from "@/components/ui/badge";
 import { CardImage } from "@/components/card-image";
 import { formatCurrency } from "@/lib/utils/format";
 import { searchCardsForPicker, type CardPickerItem } from "./actions";
+import { RARITY_BADGE_COLORS } from "../transactions/_shared/rarity-colors";
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400 border-zinc-500/30",
-  uncommon: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30",
-  rare: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
-  "ultra rare": "bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30",
-  secret: "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30",
-};
 
 export function CardPickerDialog({
   selectedIds,
@@ -264,7 +258,7 @@ export function CardPickerDialog({
                         {card.rarity && (
                           <Badge
                             variant="outline"
-                            className={`text-[9px] px-1 py-0 ${RARITY_COLORS[card.rarity.toLowerCase()] ?? ""}`}
+                            className={`text-[9px] px-1 py-0 ${RARITY_BADGE_COLORS[card.rarity.toLowerCase()] ?? ""}`}
                           >
                             {card.rarity}
                           </Badge>

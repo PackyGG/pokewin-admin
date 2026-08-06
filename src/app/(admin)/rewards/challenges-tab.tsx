@@ -47,7 +47,7 @@ export function ChallengesTab({
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-4 flex-wrap">
-        <div className="flex gap-1 rounded-lg bg-muted p-1">
+        <div className="flex gap-1 rounded-lg border bg-muted/50 p-1">
           {STATUS_TABS.map((s) => (
             <Link
               key={s}

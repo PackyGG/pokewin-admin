@@ -58,6 +58,7 @@ import type {
   GameSessionDetails,
   KenoGameDetails,
 } from "./user-tabs-types";
+import { RARITY_BADGE_COLORS } from "../../transactions/_shared/rarity-colors";
 
 // Readable labels for the battle_mode enum so the admin sees consistent
 // mode names everywhere. Unknown values fall back to the raw enum string.
@@ -69,15 +70,6 @@ const BATTLE_MODE_LABELS: Record<string, string> = {
   lowest: "Lowest",
 };
 
-const RARITY_COLORS: Record<string, string> = {
-  common: "bg-zinc-500/15 text-zinc-600 dark:text-zinc-400",
-  uncommon: "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400",
-  rare: "bg-blue-500/15 text-blue-600 dark:text-blue-400",
-  "ultra rare": "bg-purple-500/15 text-purple-600 dark:text-purple-400",
-  "secret rare": "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400",
-  legendary: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
-  holo: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400",
-};
 
 export function TransactionDetailModal({
   transaction,
@@ -625,7 +617,7 @@ export function TransactionDetailModal({
             {t.soldCard.rarity && (
               <Badge
                 variant="outline"
-                className={`text-[10px] ${RARITY_COLORS[t.soldCard.rarity.toLowerCase()] ?? ""}`}
+                className={`text-[10px] ${RARITY_BADGE_COLORS[t.soldCard.rarity.toLowerCase()] ?? ""}`}
               >
                 {t.soldCard.rarity}
               </Badge>
@@ -896,7 +888,7 @@ export function TransactionDetailModal({
                             {item.rarity && (
                               <Badge
                                 variant="outline"
-                                className={`text-[10px] ${RARITY_COLORS[item.rarity.toLowerCase()] ?? ""}`}
+                                className={`text-[10px] ${RARITY_BADGE_COLORS[item.rarity.toLowerCase()] ?? ""}`}
                               >
                                 {item.rarity}
                               </Badge>

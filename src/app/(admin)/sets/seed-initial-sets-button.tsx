@@ -62,12 +62,8 @@ export function SeedInitialSetsButton() {
         Seed initial sets
       </DialogTrigger>
       <DialogContent className="sm:max-w-md p-0">
-        <div className="relative overflow-hidden rounded-t-xl border-b bg-gradient-to-br from-card via-card to-card/60 px-5 py-4">
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -right-16 -top-16 size-48 rounded-full bg-amber-500/[0.08] blur-3xl"
-          />
-          <DialogHeader className="relative">
+        <div className="border-b bg-card px-5 py-4">
+          <DialogHeader>
             <div className="flex items-center gap-3">
               <div className="flex size-9 items-center justify-center rounded-xl bg-amber-500/15">
                 <Sparkles className="size-4 text-amber-500" />

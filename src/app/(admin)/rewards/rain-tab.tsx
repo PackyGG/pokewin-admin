@@ -75,7 +75,7 @@ export function RainTab({
   return (
     <div className="space-y-4">
       <div className="-mx-1 overflow-x-auto px-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <div className="inline-flex gap-1 rounded-lg bg-muted p-1">
+        <div className="inline-flex gap-1 rounded-lg border bg-muted/50 p-1">
           {RAIN_SUBTABS.map((t) => (
             <Link
               key={t.value}

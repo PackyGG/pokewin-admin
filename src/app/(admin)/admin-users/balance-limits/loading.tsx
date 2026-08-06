@@ -15,16 +15,8 @@ export default function BalanceLimitsLoading() {
   return (
     <div className="space-y-6">
       {/* Hero — back arrow + icon chip + title/subtitle (no trailing action). */}
-      <div className="relative overflow-hidden rounded-2xl border bg-gradient-to-br from-card via-card to-card/60">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -right-24 -top-24 size-72 rounded-full bg-blue-500/[0.06] blur-3xl"
-        />
-        <div
-          aria-hidden
-          className="pointer-events-none absolute -left-24 -bottom-24 size-72 rounded-full bg-purple-500/[0.06] blur-3xl"
-        />
-        <div className="relative p-5 md:p-6">
+      <div className="rounded-2xl border bg-card">
+        <div className="p-5 md:p-6">
           <div className="flex items-center gap-3">
             <Skeleton className="size-9 rounded-md" />
             <Skeleton className="size-10 rounded-xl" />
