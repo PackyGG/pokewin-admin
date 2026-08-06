@@ -175,11 +175,10 @@ export async function middleware(request: NextRequest) {
         ? "fiat-fraud"
         : retiredTransactionsTab === "refunds"
           ? "refunds"
-          : null;
+          : "fiat-deposits";
     if (
       (!appHost || appHost.basePath === null) &&
-      pathname === "/transactions/deposits" &&
-      fraudTransactionsRoute
+      pathname === "/transactions/deposits"
     ) {
       const fraudHost = APP_HOSTS.find(
         (entry) => entry.basePath === "/antifraud",

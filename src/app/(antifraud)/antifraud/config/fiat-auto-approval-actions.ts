@@ -64,6 +64,7 @@ export async function updateFiatAutomaticCreditAction(input: {
   });
 
   revalidatePath("/antifraud/config");
+  revalidatePath("/antifraud/fiat-deposits");
   revalidatePath("/transactions/deposits");
   return { success: true, data: updated };
 }

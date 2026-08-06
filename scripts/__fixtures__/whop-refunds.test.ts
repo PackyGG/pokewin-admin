@@ -47,7 +47,7 @@ const fiatDetail = readFileSync(
 );
 const fiatList = readFileSync(
   new URL(
-    "../../src/app/(antifraud)/antifraud/fiat-deposits/page.tsx",
+    "../../src/app/(antifraud)/antifraud/fiat-deposits/credit-review-page.tsx",
     import.meta.url,
   ),
   "utf8",
@@ -224,10 +224,7 @@ test("the Fiat review links managers into the exact guarded refund", () => {
     refundsPanel,
     /requestedPaymentAvailable[\s\S]*mode: "payments"/,
   );
-  assert.match(
-    fiatList,
-    /canManageKyc[\s\S]*\/antifraud\/refunds\?scope=paid_unreconciled/,
-  );
+  assert.match(fiatList, /refund_failed/);
   assert.match(refundPage, /params\.scope === "paid_unreconciled"/);
   assert.match(refundPage, /candidate\.status === "paid_unreconciled"/);
   assert.match(
@@ -240,9 +237,8 @@ test("the Fiat review links managers into the exact guarded refund", () => {
 test("Fiat review surfaces retain the durable refund outcome", () => {
   assert.match(queries, /export async function getWhopRefundStates/);
   assert.match(queries, /FROM admin_whop_refund_items/);
-  assert.match(fiatList, /getWhopRefundStates/);
-  assert.match(fiatList, /Refund queued/);
-  assert.match(fiatList, /Refund needs review/);
+  assert.match(fiatList, /Refund pending/);
+  assert.match(fiatList, /Refund failed/);
   assert.match(fiatDetail, /getWhopRefundStates/);
   assert.match(fiatDetail, /Refunded/);
 });

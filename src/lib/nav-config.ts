@@ -283,21 +283,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Authoritative queue for verified Whop payments awaiting balance credit.
-    id: "nav.deposits",
-    group: "Overview",
-    label: "Fiat Reviews",
-    paletteLabel: "Fiat Deposit Reviews",
-    href: "/transactions/deposits",
-    pageKey: "/transactions/deposits",
-    icon: "ArrowDownToLine",
-    sidebarIcon: "Receipt",
-    description: "Approve or refund Fiat deposit credits",
-    keywords: ["fiat", "whop", "approve", "refund", "payments"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
     // Withdrawals — palette-only. The standalone /withdrawals route redirects
     // to the unified Transactions page, but the palette still advertises the
     // legacy entry-point (key retained in ADMIN_PAGES).

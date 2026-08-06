@@ -1,20 +1,21 @@
-
-import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
+import {
+  PageHeroSkeleton,
+  PaginationSkeleton,
+  SectionHeadingSkeleton,
+  TableSkeleton,
+} from "@/components/loading-skeletons";
 import { Skeleton } from "@/components/ui/skeleton";
 
-export default function FiatDepositsLoading() {
+export default function FiatDepositReviewsLoading() {
   return (
     <div className="space-y-6">
-      <PageHero>
-        <PageHeroIdentity />
-      </PageHero>
-      <Skeleton className="h-10 w-full max-w-xs rounded-lg" />
-      <Skeleton className="h-20 rounded-xl" />
-      <Skeleton className="h-14 rounded-xl" />
+      <PageHeroSkeleton />
+      <Skeleton className="h-40 w-full rounded-xl" />
       <div className="space-y-3">
-        {Array.from({ length: 4 }).map((_, index) => (
-          <Skeleton key={index} className="h-36 rounded-xl" />
-        ))}
+        <SectionHeadingSkeleton titleWidth={180} />
+        <Skeleton className="h-8 w-full" />
+        <TableSkeleton rows={12} columns={6} />
+        <PaginationSkeleton />
       </div>
     </div>
   );

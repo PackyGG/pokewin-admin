@@ -25,7 +25,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
     "Dashboard",
     "Live events",
     "Account reviews",
-    "Deposits",
+    "Deposit reviews",
     "Refunds",
     "KYC reviews",
     "Discord routing",
@@ -112,20 +112,21 @@ test("Fraud guide keeps access control and documents signup risk actions", () =>
   assert.doesNotMatch(page, /Critical containment/);
 });
 
-test("deposit reviews preserve their queue in a URL-driven drawer", () => {
-  const deposits = read("src/app/(antifraud)/antifraud/fiat-deposits/page.tsx");
-  const drawer = read(
-    "src/app/(antifraud)/antifraud/_components/review-drawer.tsx",
+test("deposit credit reviews link to the existing Fraud evidence workspace", () => {
+  const deposits = read(
+    "src/app/(antifraud)/antifraud/fiat-deposits/credit-review-page.tsx",
+  );
+  const detail = read(
+    "src/app/(antifraud)/antifraud/fiat-deposits/[id]/review-workspace.tsx",
   );
 
   assert.match(
     deposits,
-    /review=\$\{encodeURIComponent\(item\.deposit_intent_id\)\}/,
+    /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/,
   );
-  assert.match(deposits, /<QueueReviewDrawer/);
-  assert.match(deposits, /<FiatReview[\s\S]*?embedded/);
-  assert.match(drawer, /router\.replace\(hrefForCurrentHost\(closeHref\)/);
-  assert.match(drawer, /overflow-y-auto/);
+  assert.match(deposits, /Risk evidence/);
+  assert.match(detail, /Money trail/);
+  assert.match(detail, /Whop risk signals/);
 });
 
 test("unrequested profile and connection indexes stay out of Fraud", () => {

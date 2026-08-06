@@ -85,7 +85,11 @@ const OVERVIEW_NAV: NavItem[] = [
 const ANTIFRAUD_NAV_ALERT_KEYS = ["fiat", "reviews"] as const;
 
 const MAIN_NAV: NavItem[] = [
-  { label: "Deposits", href: "/antifraud/fiat-deposits", icon: Banknote },
+  {
+    label: "Deposit reviews",
+    href: "/antifraud/fiat-deposits",
+    icon: Banknote,
+  },
   { label: "KYC reviews", href: "/antifraud/kyc", icon: Fingerprint },
 ];
 

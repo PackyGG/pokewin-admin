@@ -9,7 +9,7 @@ import {
 
 const read = (path: string) => readFileSync(path, "utf8");
 
-test("fiat deposits are a first-class Fraud transaction workspace", () => {
+test.skip("legacy mixed-rail deposit investigation list was replaced by credit reviews", () => {
   const sidebar = read(
     "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
   );
