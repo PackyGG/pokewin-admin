@@ -1,7 +1,6 @@
-import { unstable_cache } from "next/cache";
 import { withTiming } from "@/lib/observability/query-timings";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
-import { calculateWindowedPnl, type WindowedPnl } from "./pnl";
+import { calculateWindowedPnlOneShot, type WindowedPnl } from "./pnl";
 
 /**
  * Today's house P&L — the CURRENT CALENDAR DAY since 00:00 (NOT a rolling
@@ -46,48 +45,31 @@ function utcStartOfDay(now: Date): Date {
 }
 
 /**
- * Cached inner computation. Keyed on the UTC day string + the serialized
- * blacklist so it re-fills when the day rolls over OR when an admin edits
- * the excluded-users list. `revalidate: 60` matches the dashboard's
- * activity-cache cadence (cheap, slow-moving window).
+ * UNCACHED — deliberately (owner request, 2026-08-07: the tile must always
+ * show the live figure). There is no `unstable_cache` wrapper and no
+ * revalidate window, so every dashboard render reads the current state of the
+ * day; the page's own 60s `AutoRefresh` poll is what paces it.
  *
- * Pattern note: the blacklist is resolved OUTSIDE `unstable_cache` and
- * passed in as a serializable arg (same as `cachedDailyChart` &c. in
- * dashboard.ts) — `getExcludedUserIds()` reads the admin DB and can't run
- * inside the cache scope. `calculateWindowedPnl` resolves the MAIN client,
- * which resolves to the prod client inside the cache scope (cookies are
- * unavailable there, so `readDbEnv` falls back to prod) — identical to the
- * established dashboard cache wrappers.
+ * The affordability of that comes from `calculateWindowedPnlOneShot`: the
+ * same canonical five-term math as the cached period surfaces, but as ONE
+ * statement over ONE pool slot (~100ms for a today-sized window) instead of
+ * five parallel round-trips. That matters because the MAIN read pool is tiny
+ * — an uncached five-query tile would cost five slots per concurrent viewer.
+ *
+ * The blacklist is resolved here rather than inside the query: it lives in the
+ * ADMIN DB and is `cache()`-deduped per request.
  */
-const cachedTodayPnl = unstable_cache(
-  async (
-    dayKey: string,
-    sinceIso: string,
-    excludeUserIds: string[],
-  ): Promise<WindowedPnl> => {
-    void dayKey; // part of the cache key only
-    // through the cache on failure); off/comparison serve Postgres. Parity
-    // confirmed cent-exact (aligned-window harness; live-tail CDC-lag only).
-    return calculateWindowedPnl({
-      since: new Date(sinceIso),
-      excludeUserIds,
-    });
-  },
-  ["dashboard-today-pnl-v4-refund-attribution"],
-  { revalidate: 60, tags: ["dashboard-activity"] },
-);
-
 export async function getTodayPnl(): Promise<TodayPnl> {
   return withTiming("pnl.today", async () => {
     const now = new Date();
     const since = utcStartOfDay(now);
     const sinceIso = since.toISOString();
-    // YYYY-MM-DD in UTC — stable cache key for "today" that rolls at
-    // 00:00 UTC.
-    const dayKey = sinceIso.slice(0, 10);
     const excluded = await getExcludedUserIds();
 
-    const pnl = await cachedTodayPnl(dayKey, sinceIso, excluded);
+    const pnl: WindowedPnl = await calculateWindowedPnlOneShot({
+      since,
+      excludeUserIds: excluded,
+    });
     // calculateWindowedPnl owns the shared refund-aware net-deposit contract.
     // Do not subtract again here; this wrapper only adds the day boundary.
     return {

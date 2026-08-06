@@ -11,7 +11,6 @@ import {
   getTotalUserCount,
 } from "@/lib/queries/dashboard";
 import { getRealizedPnlSnapshot } from "@/lib/queries/_realized-pnl";
-import { getTodayPnl } from "@/lib/queries/dashboard-today-pnl";
 import { getRewardCostsToday } from "@/lib/queries/dashboard-reward-costs-today";
 import { getCreatorCostsToday } from "@/lib/queries/dashboard-creator-costs-today";
 import { getUpgraderStats } from "@/lib/queries/dashboard-upgrader";
@@ -94,7 +93,6 @@ export async function GET(request: Request): Promise<Response> {
       ["dashboardKpiToday", () => getDashboardKpiStats("today")],
       ["realizedPnl", () => getRealizedPnlSnapshot()],
       ["totalUserCount", () => getTotalUserCount()],
-      ["todayPnl", () => getTodayPnl()],
       ["rewardCostsToday", () => getRewardCostsToday()],
       ["creatorCostsToday", () => getCreatorCostsToday()],
       ["upgraderStats", () => getUpgraderStats()],

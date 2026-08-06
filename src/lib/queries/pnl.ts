@@ -306,7 +306,118 @@ export type WindowedPnl = {
  * (a single user is already a fully-resolved scope). MUST be a trusted,
  * hardcoded fragment (never user input) — it is inlined into the SQL.
  */
-export async function calculateWindowedPnl(opts: {
+/** Raw one-row-per-leg aggregate output of the windowed-P&L SQL. */
+type WindowedPnlLegRow = {
+  deposits: string | null;
+  manual_wd: string | null;
+  balance_change: string | null;
+  card_wd: string | null;
+  obtained: string | null;
+  disposed: string | null;
+  issued: string | null;
+  claimed: string | null;
+  refunds: string | null;
+};
+
+/**
+ * The five windowed-P&L leg queries as SQL text, parameterized ONLY by how a
+ * user-scope predicate is spelled. Single source of truth for the money math:
+ * both `calculateWindowedPnl` (five parallel round-trips) and
+ * `calculateWindowedPnlOneShot` (one round-trip, CTE scope) build their SQL
+ * from here, so the two paths can never drift apart.
+ *
+ * `$1` is always the window start. `scope(col)` must emit a self-contained
+ * boolean predicate restricting `col` to the cohort.
+ */
+function windowedPnlLegSql(scope: (col: string) => string) {
+  const statsExcluded = statsExcludedAdjustmentSqlPredicate({
+    typeColumn: "lt.type",
+    metadataColumn: "lt.metadata",
+  });
+  const userScopeLt = scope("lt.user_id");
+  return {
+    ledger: `SELECT
+         COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
+         COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
+                            AND lt.balance_after < lt.balance_before
+                            AND lt.description ILIKE 'Manual withdrawal:%'
+                           THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
+         COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
+       FROM ledger_transactions lt
+       WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
+    card: `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS card_wd
+       FROM card_withdrawal_requests cwr
+       WHERE cwr.status IN ('completed', 'shipped')
+         AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $1
+         AND ${scope("cwr.user_id")}`,
+    // CREATOR-INVENTORY carve-out: drop creator-owned inventory from BOTH
+    // the obtained and disposed legs symmetrically (incl. admin removals)
+    // so the windowed delta matches the lifetime liability carve-out. See
+    // _creator-pnl-exclusion.ts.
+    inv: `SELECT
+         COALESCE(SUM(CASE WHEN ui.obtained_at >= $1 THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
+         (
+           COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)
+           + ${adminInventoryRemovalDisposedSql("$1", `${userScopeLt} AND ${nonCreatorOwnerSql("lt.user_id")}`)}
+         )::text AS disposed
+       FROM user_inventory ui
+       WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
+         AND ${scope("ui.user_id")}
+         AND ${nonCreatorOwnerSql("ui.user_id")}`,
+    vch: `SELECT
+         COALESCE(SUM(CASE WHEN v.created_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
+         (
+           COALESCE(SUM(CASE WHEN v.claimed_at >= $1 THEN v.value::numeric ELSE 0 END), 0)
+           + ${adminVoucherRemovalClaimedSql("$1", userScopeLt)}
+         )::text AS claimed
+       FROM vouchers v
+       WHERE (v.created_at >= $1 OR v.claimed_at >= $1)
+         AND ${scope("v.user_id")}`,
+    refunds: `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refunds
+       FROM fiat_deposit_intents i
+       WHERE i.status IN ('partially_refunded', 'refunded')
+         AND ${fiatRefundAttributionTimestampSql("i")} >= $1
+         AND ${scope("i.user_id")}`,
+  };
+}
+
+/**
+ * The canonical five-term arithmetic, applied to one row of raw leg sums.
+ * Shared by every windowed-P&L path so the formula lives in exactly one place.
+ *
+ * Upgrader payouts are fully captured by `balanceChange` — the ledger carries
+ * both upgrader_bet (debit) and upgrader_payout (credit) rows, so no separate
+ * `upgrader_games` correction is needed here. A prior trailing term was based
+ * on a stale assumption that the backend never wrote upgrader_payout rows;
+ * that double-subtracted every upgrader win and inflated the surfaced house
+ * loss.
+ */
+function combineWindowedPnlLegs(row: WindowedPnlLegRow | undefined): WindowedPnl {
+  const deposits = toNumber(row?.deposits) - toNumber(row?.refunds);
+  const manualWd = toNumber(row?.manual_wd);
+  const cardWd = toNumber(row?.card_wd);
+  const withdrawalsGross = Math.abs(manualWd) + cardWd;
+  const balanceChange = toNumber(row?.balance_change);
+  const inventoryChange = toNumber(row?.obtained) - toNumber(row?.disposed);
+  const voucherChange = toNumber(row?.issued) - toNumber(row?.claimed);
+  const pnl =
+    deposits -
+    (manualWd + cardWd) -
+    balanceChange -
+    inventoryChange -
+    voucherChange;
+
+  return {
+    deposits,
+    withdrawals: withdrawalsGross,
+    balanceChange,
+    inventoryChange,
+    voucherChange,
+    pnl,
+  };
+}
+
+export type WindowedPnlOpts = {
   since: Date;
   userId?: string;
   excludeUserIds?: string[];
@@ -317,7 +428,11 @@ export async function calculateWindowedPnl(opts: {
    * into the scope subquery.
    */
   populationScopeSql?: string;
-}): Promise<WindowedPnl> {
+};
+
+export async function calculateWindowedPnl(
+  opts: WindowedPnlOpts,
+): Promise<WindowedPnl> {
   const { since, userId, excludeUserIds = [], populationScopeSql } = opts;
   return withTiming("pnl.windowed", async () => {
 
@@ -337,11 +452,7 @@ export async function calculateWindowedPnl(opts: {
         ? `${col} = $2`
         : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd})`;
     const params: unknown[] = userId ? [since, userId] : [since];
-    const statsExcluded = statsExcludedAdjustmentSqlPredicate({
-      typeColumn: "lt.type",
-      metadataColumn: "lt.metadata",
-    });
-    const userScopeLt = scope("lt.user_id");
+    const legs = windowedPnlLegSql(scope);
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
     type RefundRow = { refunds: string };
@@ -350,96 +461,83 @@ export async function calculateWindowedPnl(opts: {
     type VchRow = { issued: string; claimed: string };
 
     const [ledger, card, inv, vch, refunds] = await Promise.all([
-      queryMainRows<LedgerRow[]>(
-        `SELECT
-           COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
-           COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                              AND lt.balance_after < lt.balance_before
-                              AND lt.description ILIKE 'Manual withdrawal:%'
-                             THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
-           COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
-         FROM ledger_transactions lt
-         WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
-        ...params,
-      ),
-      queryMainRows<CardRow[]>(
-        `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS card_wd
-         FROM card_withdrawal_requests cwr
-         WHERE cwr.status IN ('completed', 'shipped')
-           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $1
-           AND ${scope("cwr.user_id")}`,
-        ...params,
-      ),
-      queryMainRows<InvRow[]>(
-        // CREATOR-INVENTORY carve-out: drop creator-owned inventory from BOTH
-        // the obtained and disposed legs symmetrically (incl. admin removals)
-        // so the windowed delta matches the lifetime liability carve-out. See
-        // _creator-pnl-exclusion.ts.
-        `SELECT
-           COALESCE(SUM(CASE WHEN ui.obtained_at >= $1 THEN ui.value_at_obtained::numeric ELSE 0 END), 0)::text AS obtained,
-           (
-             COALESCE(SUM(CASE WHEN (ui.sold_at >= $1 OR ui.exchanged_at >= $1) THEN ui.value_at_obtained::numeric ELSE 0 END), 0)
-             + ${adminInventoryRemovalDisposedSql("$1", `${userScopeLt} AND ${nonCreatorOwnerSql("lt.user_id")}`)}
-           )::text AS disposed
-         FROM user_inventory ui
-         WHERE (ui.obtained_at >= $1 OR ui.sold_at >= $1 OR ui.exchanged_at >= $1)
-           AND ${scope("ui.user_id")}
-           AND ${nonCreatorOwnerSql("ui.user_id")}`,
-        ...params,
-      ),
-      queryMainRows<VchRow[]>(
-        `SELECT
-           COALESCE(SUM(CASE WHEN v.created_at >= $1 THEN v.value::numeric ELSE 0 END), 0)::text AS issued,
-           (
-             COALESCE(SUM(CASE WHEN v.claimed_at >= $1 THEN v.value::numeric ELSE 0 END), 0)
-             + ${adminVoucherRemovalClaimedSql("$1", userScopeLt)}
-           )::text AS claimed
-         FROM vouchers v
-         WHERE (v.created_at >= $1 OR v.claimed_at >= $1)
-           AND ${scope("v.user_id")}`,
-        ...params,
-      ),
-      queryMainRows<RefundRow[]>(
-        `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS refunds
-         FROM fiat_deposit_intents i
-         WHERE i.status IN ('partially_refunded', 'refunded')
-           AND ${fiatRefundAttributionTimestampSql("i")} >= $1
-           AND ${scope("i.user_id")}`,
-        ...params,
-      ),
+      queryMainRows<LedgerRow[]>(legs.ledger, ...params),
+      queryMainRows<CardRow[]>(legs.card, ...params),
+      queryMainRows<InvRow[]>(legs.inv, ...params),
+      queryMainRows<VchRow[]>(legs.vch, ...params),
+      queryMainRows<RefundRow[]>(legs.refunds, ...params),
     ]);
 
-    const deposits =
-      toNumber(ledger[0]?.deposits) - toNumber(refunds[0]?.refunds);
-    const manualWd = toNumber(ledger[0]?.manual_wd);
-    const cardWd = toNumber(card[0]?.card_wd);
-    const withdrawalsGross = Math.abs(manualWd) + cardWd;
-    const balanceChange = toNumber(ledger[0]?.balance_change);
-    const inventoryChange =
-      toNumber(inv[0]?.obtained) - toNumber(inv[0]?.disposed);
-    const voucherChange = toNumber(vch[0]?.issued) - toNumber(vch[0]?.claimed);
-    // Upgrader payouts are fully captured by `balanceChange` — the
-    // ledger carries both upgrader_bet (debit) and upgrader_payout
-    // (credit) rows, so no separate `upgrader_games` correction is
-    // needed here. A prior trailing term was based on a stale
-    // assumption that the backend never wrote upgrader_payout rows;
-    // that double-subtracted every upgrader win and inflated the
-    // surfaced house loss.
-    const pnl =
-      deposits -
-      (manualWd + cardWd) -
-      balanceChange -
-      inventoryChange -
-      voucherChange;
+    return combineWindowedPnlLegs({
+      ...ledger[0],
+      ...card[0],
+      ...inv[0],
+      ...vch[0],
+      ...refunds[0],
+    } as WindowedPnlLegRow);
+  });
+}
 
-    return {
-      deposits,
-      withdrawals: withdrawalsGross,
-      balanceChange,
-      inventoryChange,
-      voucherChange,
-      pnl,
-    };
+/**
+ * Same windowed-delta P&L as {@link calculateWindowedPnl} — cent-identical by
+ * construction (both build their SQL from `windowedPnlLegSql` and combine it
+ * with `combineWindowedPnlLegs`) — but as a SINGLE statement over ONE
+ * connection instead of five parallel round-trips.
+ *
+ * Why it exists: the MAIN read pool is tiny (see the pool-stampede incident),
+ * so an UNCACHED tile that fires five concurrent queries per render is five
+ * pool slots per viewer. This variant takes one slot and one round-trip, and
+ * resolves the non-staff cohort ONCE in a MATERIALIZED CTE rather than
+ * re-running the same `"user"` scan inside each of the five legs. That makes
+ * it cheap enough to run on every dashboard render with no cache in front of
+ * it (see `getTodayPnl`).
+ *
+ * Trade-off vs. the parallel form: the legs run sequentially inside Postgres,
+ * so wall-clock is the SUM of the legs rather than the max. For a short
+ * window (today) that is ~100ms; for long windows prefer the parallel form.
+ */
+export async function calculateWindowedPnlOneShot(
+  opts: WindowedPnlOpts,
+): Promise<WindowedPnl> {
+  const { since, userId, excludeUserIds = [], populationScopeSql } = opts;
+  return withTiming("pnl.windowedOneShot", async () => {
+    const blacklist = blacklistNotInClause("u.id", excludeUserIds);
+    const populationAnd =
+      populationScopeSql && populationScopeSql.trim().length > 0
+        ? ` AND (${populationScopeSql})`
+        : "";
+    // The cohort is resolved once, up front. `MATERIALIZED` is deliberate:
+    // without it Postgres inlines the CTE into all five legs and we are back
+    // to re-scanning `"user"` per leg.
+    const scopedUsersCte = userId
+      ? `SELECT $2::text AS id`
+      : `SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd}`;
+    const params: unknown[] = userId ? [since, userId] : [since];
+    const legs = windowedPnlLegSql(
+      (col) => `${col} IN (SELECT id FROM scoped_users)`,
+    );
+
+    const rows = await queryMainRows<WindowedPnlLegRow[]>(
+      `WITH scoped_users AS MATERIALIZED (${scopedUsersCte}),
+            leg_ledger  AS (${legs.ledger}),
+            leg_card    AS (${legs.card}),
+            leg_inv     AS (${legs.inv}),
+            leg_vch     AS (${legs.vch}),
+            leg_refunds AS (${legs.refunds})
+       SELECT leg_ledger.deposits,
+              leg_ledger.manual_wd,
+              leg_ledger.balance_change,
+              leg_card.card_wd,
+              leg_inv.obtained,
+              leg_inv.disposed,
+              leg_vch.issued,
+              leg_vch.claimed,
+              leg_refunds.refunds
+       FROM leg_ledger, leg_card, leg_inv, leg_vch, leg_refunds`,
+      ...params,
+    );
+
+    return combineWindowedPnlLegs(rows[0]);
   });
 }
 

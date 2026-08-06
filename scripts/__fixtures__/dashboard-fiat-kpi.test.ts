@@ -116,7 +116,10 @@ test("refund credits restate their original deposit window exactly once", () => 
   assert.match(payload, /fiatRefunds: cashflow\?\.fiatRefunds/);
   assert.match(canonicalPnl, /fiatRefundCreditUsdSql/);
   assert.match(canonicalPnl, /fiatRefundAttributionTimestampSql/);
-  assert.match(canonicalPnl, /toNumber\(ledger\[0\]\?\.deposits\) - toNumber\(refunds\[0\]\?\.refunds\)/);
+  // Net deposits are computed once, in `combineWindowedPnlLegs` — the single
+  // combining step both windowed-P&L paths (parallel legs and one-shot CTE)
+  // feed their raw leg sums into.
+  assert.match(canonicalPnl, /toNumber\(row\?\.deposits\) - toNumber\(row\?\.refunds\)/);
   assert.match(
     refundContract,
     /COALESCE\(\$\{alias\}\.completed_at, \$\{alias\}\.paid_at, \$\{alias\}\.created_at\)/,

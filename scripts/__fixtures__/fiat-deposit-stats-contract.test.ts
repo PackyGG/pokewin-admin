@@ -124,9 +124,13 @@ test("dashboard and analytics surfaces stay wired to inclusive aggregates", () =
     dashboardWindow,
     /getDashboardCashflowFromPostgres\(window\)/,
   );
+  // The today tile must stay on the canonical windowed-delta path — either
+  // form (parallel legs or the one-shot CTE variant the uncached tile uses),
+  // since both build their SQL from `windowedPnlLegSql` and therefore carry
+  // the refund-aware net-deposit contract.
   assert.match(
     dashboardToday,
-    /calculateWindowedPnl\(\{\s*since: new Date\(sinceIso\)/,
+    /calculateWindowedPnl(OneShot)?\(\{\s*since,?/,
   );
   assert.match(analyticsOverview, /getAnalyticsData\(period\)/);
   assert.match(analyticsOverview, /getTopDepositors\(window\.key\)/);
