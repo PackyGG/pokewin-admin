@@ -2,9 +2,16 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
+import type pg from "pg";
+
 import { serviceRequestAuthorized } from "../src/auth.js";
+import type { Databases } from "../src/db.js";
 import {
+  findNetworkClusterHighRiskMembers,
+  listActiveNetworkClusterHighRiskMembers,
   maskIp,
+  NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+  NETWORK_HIGH_RISK_SIGNUP_SCORE,
   scoreAnalysisSignals,
   type AnalysisSignal,
 } from "../src/network-risk.js";
@@ -141,4 +148,81 @@ test("staff-requested network scans run ahead of background reconciliation", asy
   );
 
   assert.match(source, /ORDER BY \(requested_by IS NULL\), created_at/);
+});
+
+function fakeAntifraudDb(
+  handler: (sql: string, values: unknown[]) => { rows: Array<{ user_id: string }> },
+): Databases {
+  const antifraud = {
+    async query(sql: string, values: unknown[]) {
+      return handler(sql, values);
+    },
+  } as unknown as pg.Pool;
+  return { source: antifraud, fiatDevSource: null, antifraud };
+}
+
+test("cluster evidence reuses the exact high-risk thresholds free-battle-risk.ts already uses", () => {
+  assert.equal(NETWORK_HIGH_RISK_SIGNUP_SCORE, 60);
+  assert.equal(NETWORK_HIGH_RISK_CASE_PEAK_SCORE, 80);
+});
+
+test("targeted cluster lookup skips the query entirely for an empty input", async () => {
+  let calls = 0;
+  const db = fakeAntifraudDb(() => {
+    calls += 1;
+    return { rows: [] };
+  });
+  const result = await findNetworkClusterHighRiskMembers(db, []);
+  assert.deepEqual([...result], []);
+  assert.equal(calls, 0);
+});
+
+test("targeted cluster lookup is bounded, indexed, and returns only flagged members", async () => {
+  let queryText = "";
+  let queryValues: unknown[] = [];
+  const db = fakeAntifraudDb((sql, values) => {
+    queryText = sql;
+    queryValues = values;
+    return { rows: [{ user_id: "participant-1" }] };
+  });
+  const result = await findNetworkClusterHighRiskMembers(db, [
+    "participant-1",
+    "participant-2",
+  ]);
+  assert.deepEqual([...result], ["participant-1"]);
+  assert.match(queryText, /FROM network_nodes n/);
+  assert.match(queryText, /suspectedAlt/);
+  assert.match(queryText, /signup_assessments/);
+  assert.match(queryText, /peak_score, 0\) >= \$3/);
+  assert.deepEqual(queryValues, [
+    ["participant-1", "participant-2"],
+    NETWORK_HIGH_RISK_SIGNUP_SCORE,
+    NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+  ]);
+});
+
+test("targeted cluster lookup with no matches leaves the result empty (unaffected accounts stay unaffected)", async () => {
+  const db = fakeAntifraudDb(() => ({ rows: [] }));
+  const result = await findNetworkClusterHighRiskMembers(db, ["participant-1"]);
+  assert.equal(result.size, 0);
+});
+
+test("active cluster scan is capped by a lookback window and a bounded row limit", async () => {
+  let queryText = "";
+  let queryValues: unknown[] = [];
+  const db = fakeAntifraudDb((sql, values) => {
+    queryText = sql;
+    queryValues = values;
+    return { rows: [{ user_id: "creator-1" }] };
+  });
+  const result = await listActiveNetworkClusterHighRiskMembers(db);
+  assert.deepEqual([...result], ["creator-1"]);
+  assert.match(queryText, /scanned_at >= now\(\) - \(\$3::text \|\| ' days'\)::interval/);
+  assert.match(queryText, /LIMIT \$4/);
+  assert.deepEqual(queryValues, [
+    NETWORK_HIGH_RISK_SIGNUP_SCORE,
+    NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+    30,
+    5_000,
+  ]);
 });

@@ -5,6 +5,7 @@ import type pg from "pg";
 import type { Config } from "./config.js";
 import type { Databases } from "./db.js";
 import { DiscordAlerts } from "./discord.js";
+import { listActiveNetworkClusterHighRiskMembers } from "./network-risk.js";
 import { drainOutbox } from "./outbox.js";
 import { severity } from "./scoring.js";
 
@@ -20,7 +21,8 @@ export type CreatorRiskKind =
   | "kyc_rejected"
   | "fraud_kyc_required"
   | "suspected_alt"
-  | "antifraud_flagged";
+  | "antifraud_flagged"
+  | "network_cluster";
 
 export type CreatorRisk = {
   kind: CreatorRiskKind;
@@ -284,6 +286,20 @@ export class FreeBattleRiskMonitor {
       creators.set(userId, {
         kind: "antifraud_flagged",
         detail: `The battle creator has an active Antifraud score of ${score}.`,
+        points: 40,
+      });
+    }
+    // Additive evidence only: a creator whose account/device/IP network already contains a
+    // confirmed high-risk account (network-risk.ts's cluster graph) now also qualifies, on top
+    // of -- never instead of -- the direct KYC/suspected-alt/Antifraud-score checks above.
+    const clustered = await listActiveNetworkClusterHighRiskMembers(this.db);
+    for (const userId of clustered) {
+      if (creators.has(userId)) continue;
+      creators.set(userId, {
+        kind: "network_cluster",
+        detail:
+          "The battle creator's account network contains a confirmed high-risk account " +
+          "(suspected alt or an elevated Antifraud score).",
         points: 40,
       });
     }

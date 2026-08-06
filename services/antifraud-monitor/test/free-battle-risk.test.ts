@@ -109,3 +109,36 @@ test("free-battle containment is durable, distinct-battle based, and retroactive
   assert.match(source, /reconcileContainments/);
   assert.match(source, /containmentRequired: true/);
 });
+
+test("network-cluster membership only ever widens qualifying creators, never replaces the direct checks", async () => {
+  const source = await readFile(
+    new URL("../src/free-battle-risk.ts", import.meta.url),
+    "utf8",
+  );
+  const riskCreators = source.slice(
+    source.indexOf("private async riskCreators("),
+    source.indexOf("private async syncCreatorCursors("),
+  );
+
+  // The direct KYC/suspected-alt/Antifraud-score source query and fold-in still run first and
+  // unmodified.
+  assert.match(
+    riskCreators,
+    /WHERE creator\.is_suspected_alt = true[\s\S]*OR kyc\.kyc_required = true/,
+  );
+  assert.match(riskCreators, /classifyCreatorRisk/);
+
+  // Cluster evidence is folded in afterwards and only claims creators nothing else already
+  // flagged -- it can never downgrade or overwrite a direct-evidence classification.
+  assert.match(riskCreators, /listActiveNetworkClusterHighRiskMembers/);
+  const clusterFoldIn = riskCreators.slice(
+    riskCreators.indexOf("const clustered = await listActiveNetworkClusterHighRiskMembers"),
+  );
+  assert.match(clusterFoldIn, /if \(creators\.has\(userId\)\) continue;/);
+  assert.match(clusterFoldIn, /kind: "network_cluster"/);
+
+  // The "one battle = evidence, two distinct qualifying battles = contain" threshold semantics
+  // are untouched by this change.
+  assert.match(source, /battle_count < 2/);
+  assert.match(source, /HAVING COUNT\(DISTINCT match\.battle_id\) >= 2/);
+});

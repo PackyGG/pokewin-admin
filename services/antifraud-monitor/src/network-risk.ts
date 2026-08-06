@@ -14,6 +14,16 @@ const JOB_HEARTBEAT_MS = 30_000;
 const RECONCILIATION_INTERVAL_MS = 15 * 60_000;
 const CREATOR_RECONCILIATION_INTERVAL_MS = 24 * 60 * 60_000;
 
+// "Confirmed high risk" thresholds shared with the cluster-membership evidence helpers below.
+// These reuse the exact numbers free-battle-risk.ts already applies to a single account's own
+// Antifraud state (classifyCreatorRisk's antifraudScore >= 60, creatorAntifraudStates' peak_score
+// >= 80 for an open case) -- no new number is being invented here.
+export const NETWORK_HIGH_RISK_SIGNUP_SCORE = 60;
+export const NETWORK_HIGH_RISK_CASE_PEAK_SCORE = 80;
+const CLUSTER_LOOKUP_BATCH_SIZE = 500;
+const CLUSTER_SCAN_LOOKBACK_DAYS = 30;
+const CLUSTER_SCAN_MEMBER_LIMIT = 5_000;
+
 export const CREATOR_WINDOW_KEYS = ["7d", "30d", "90d", "lifetime"] as const;
 export type CreatorWindowKey = (typeof CREATOR_WINDOW_KEYS)[number];
 
@@ -155,6 +165,111 @@ export function scoreAnalysisSignals(signals: AnalysisSignal[]): {
         .reduce((total, signal) => total + signal.points, 0),
     },
   };
+}
+
+// $HIGH_RISK_SCORE_PARAM / $HIGH_RISK_PEAK_PARAM are substituted per call site so both queries
+// below can share this fragment while keeping their own parameter ordering.
+function highRiskSnapshotCte(
+  scoreParam: string,
+  peakParam: string,
+): string {
+  return `
+    cluster_members AS (
+      SELECT n.snapshot_id, n.user_id, n.metadata
+      FROM network_nodes n
+      JOIN target_snapshots ts ON ts.id = n.snapshot_id
+      WHERE n.user_id IS NOT NULL
+    ),
+    high_risk_snapshots AS (
+      SELECT DISTINCT cm.snapshot_id
+      FROM cluster_members cm
+      LEFT JOIN signup_assessments sa ON sa.user_id = cm.user_id
+      LEFT JOIN cases c ON c.user_id = cm.user_id
+        AND c.subject_type = 'account'
+        AND c.status IN ('open','monitoring','in_review','escalated')
+      WHERE COALESCE((cm.metadata->>'suspectedAlt')::boolean, false)
+        OR COALESCE(sa.score, 0) >= ${scoreParam}
+        OR COALESCE(c.peak_score, 0) >= ${peakParam}
+    )
+  `;
+}
+
+/**
+ * Bounded, indexed evidence lookup (additive only -- never a replacement for any existing
+ * check): does each of the given user IDs belong to a network cluster (the account/device/IP
+ * graph NetworkRiskService.scanAccount already builds into network_snapshots/network_nodes)
+ * that also contains a confirmed high-risk account -- the platform's own suspected-alt flag, an
+ * elevated Antifraud signup score, or an elevated open-case peak score? Returns the subset of
+ * `userIds` that qualify.
+ */
+export async function findNetworkClusterHighRiskMembers(
+  db: Databases,
+  userIds: readonly string[],
+): Promise<Set<string>> {
+  const unique = [...new Set(userIds.filter((id): id is string => Boolean(id)))];
+  if (unique.length === 0) return new Set();
+  const flagged = new Set<string>();
+  for (const batch of chunks(unique, CLUSTER_LOOKUP_BATCH_SIZE)) {
+    const result = await db.antifraud.query<{ user_id: string }>(
+      `
+        WITH latest AS (
+          SELECT DISTINCT ON (network_key) id
+          FROM network_snapshots
+          ORDER BY network_key, scanned_at DESC
+        ),
+        target_snapshots AS (
+          SELECT DISTINCT l.id
+          FROM latest l
+          JOIN network_nodes n ON n.snapshot_id = l.id
+          WHERE n.user_id = ANY($1::text[])
+        ),
+        ${highRiskSnapshotCte("$2", "$3")}
+        SELECT DISTINCT cm.user_id
+        FROM cluster_members cm
+        WHERE cm.user_id = ANY($1::text[])
+          AND cm.snapshot_id IN (SELECT snapshot_id FROM high_risk_snapshots)
+      `,
+      [batch, NETWORK_HIGH_RISK_SIGNUP_SCORE, NETWORK_HIGH_RISK_CASE_PEAK_SCORE],
+    );
+    for (const row of result.rows) flagged.add(row.user_id);
+  }
+  return flagged;
+}
+
+/**
+ * Bounded, indexed evidence lookup for callers that need the whole set of currently
+ * cluster-flagged accounts rather than checking specific IDs (e.g. to fold into a periodic
+ * "which creators are risky" refresh). Scoped to recently scanned clusters and capped by
+ * CLUSTER_SCAN_MEMBER_LIMIT so it never becomes an unbounded scan.
+ */
+export async function listActiveNetworkClusterHighRiskMembers(
+  db: Databases,
+): Promise<Set<string>> {
+  const result = await db.antifraud.query<{ user_id: string }>(
+    `
+      WITH latest AS (
+        SELECT DISTINCT ON (network_key) id
+        FROM network_snapshots
+        WHERE scanned_at >= now() - ($3::text || ' days')::interval
+        ORDER BY network_key, scanned_at DESC
+      ),
+      target_snapshots AS (
+        SELECT id FROM latest
+      ),
+      ${highRiskSnapshotCte("$1", "$2")}
+      SELECT DISTINCT cm.user_id
+      FROM cluster_members cm
+      WHERE cm.snapshot_id IN (SELECT snapshot_id FROM high_risk_snapshots)
+      LIMIT $4
+    `,
+    [
+      NETWORK_HIGH_RISK_SIGNUP_SCORE,
+      NETWORK_HIGH_RISK_CASE_PEAK_SCORE,
+      CLUSTER_SCAN_LOOKBACK_DAYS,
+      CLUSTER_SCAN_MEMBER_LIMIT,
+    ],
+  );
+  return new Set(result.rows.map((row) => row.user_id));
 }
 
 export class NetworkRiskService {

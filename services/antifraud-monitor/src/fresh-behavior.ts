@@ -1,10 +1,16 @@
 import type { FastifyBaseLogger } from "fastify";
 
 import type { Databases } from "./db.js";
+import { findNetworkClusterHighRiskMembers } from "./network-risk.js";
 import { severity } from "./scoring.js";
 
 const STREAM = "fresh-behavior-v1";
 const BATCH_SIZE = 100;
+// Additive score bump applied when a candidate (or, for creator-tip rows, the tip sender)
+// belongs to a confirmed high-risk network cluster. Capped by the existing 100-point ceiling
+// used everywhere else in this file -- it never opens a new containment path, only raises the
+// score/severity that the existing containment-required rows already carry.
+const NETWORK_CLUSTER_SCORE_BONUS = 30;
 
 type Candidate = {
   user_id: string;
@@ -66,6 +72,7 @@ export class FreshBehaviorMonitor {
     const current = cursor.rows[0];
     if (!current) return 0;
     const candidates = await this.fetch(current);
+    await this.applyNetworkClusterSignal(candidates);
     let processed = 0;
     for (const candidate of candidates) {
       await this.persist(candidate);
@@ -428,6 +435,44 @@ export class FreshBehaviorMonitor {
       [cursor.occurred_at, cursor.source_id, BATCH_SIZE],
     );
     return result.rows;
+  }
+
+  /**
+   * Additive evidence only: if a candidate account (or, for creator-tip rows, the tip sender)
+   * belongs to a confirmed high-risk network cluster (network-risk.ts's account/device/IP
+   * graph), fold that in as one more input to this file's existing per-row scoring -- the same
+   * way `senderRestricted` already raises a creator-tip row's score above. This never changes
+   * `containment_required`, which stays governed purely by event_type as before, so it cannot
+   * open a new auto-ban/auto-KYC path.
+   */
+  private async applyNetworkClusterSignal(
+    candidates: Candidate[],
+  ): Promise<void> {
+    const subjectIds = new Set<string>();
+    for (const candidate of candidates) {
+      subjectIds.add(candidate.user_id);
+      const senderUserId = candidate.payload?.senderUserId;
+      if (typeof senderUserId === "string" && senderUserId) {
+        subjectIds.add(senderUserId);
+      }
+    }
+    if (subjectIds.size === 0) return;
+    const clustered = await findNetworkClusterHighRiskMembers(
+      this.db,
+      [...subjectIds],
+    );
+    if (clustered.size === 0) return;
+    for (const candidate of candidates) {
+      const senderUserId = candidate.payload?.senderUserId;
+      const flagged =
+        clustered.has(candidate.user_id)
+        || (typeof senderUserId === "string" && clustered.has(senderUserId));
+      if (!flagged) continue;
+      candidate.score = Math.min(100, candidate.score + NETWORK_CLUSTER_SCORE_BONUS);
+      candidate.detail =
+        `${candidate.detail} The account network also contains a confirmed high-risk account.`;
+      candidate.payload = { ...candidate.payload, networkClusterFlagged: true };
+    }
   }
 
   private async persist(candidate: Candidate): Promise<void> {

@@ -58,3 +58,28 @@ test("behavior policy is additive, capped, and uses signed containment", async (
   assert.match(ingest, /locked_withdrawals_items = TRUE/);
   assert.doesNotMatch(ingest, /behavioral[\s\S]{0,500}kyc_required/i);
 });
+
+test("network-cluster membership is an additive score input, not a new containment path", async () => {
+  const source = await readFile(
+    new URL("../src/fresh-behavior.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(source, /import { findNetworkClusterHighRiskMembers } from "\.\/network-risk\.js";/);
+  assert.match(source, /await this\.applyNetworkClusterSignal\(candidates\)/);
+
+  const signalMethod = source.slice(
+    source.indexOf("private async applyNetworkClusterSignal("),
+    source.indexOf("private async persist("),
+  );
+  // It only ever raises score, never assigns or reads containment_required -- that stays
+  // governed purely by event_type in the SQL above, exactly as before.
+  assert.doesNotMatch(signalMethod, /containment_required/);
+  assert.match(signalMethod, /candidate\.score = Math\.min\(100, candidate\.score \+ NETWORK_CLUSTER_SCORE_BONUS\)/);
+  assert.match(signalMethod, /networkClusterFlagged: true/);
+
+  // Sender-side membership (the only cross-account subject this file already looks at, via
+  // senderRestricted) is checked in addition to the primary subject, not instead of it.
+  assert.match(signalMethod, /candidate\.payload\?\.senderUserId/);
+  assert.match(signalMethod, /clustered\.has\(candidate\.user_id\)/);
+});
