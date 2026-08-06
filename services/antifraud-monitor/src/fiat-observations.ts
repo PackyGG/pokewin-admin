@@ -154,7 +154,89 @@ function postSignal(
   };
 }
 
-/** Post-authorization detections. These deliberately cannot change risk. */
+/**
+ * Cross-account reuse signals, tiered by how exact the match is.
+ *
+ * Whop's own customer and payment-method ids are exact provider-verified
+ * identity, so they score like the existing signup-time shared-device signal
+ * (`shared_device` in fiat-risk.ts). Checkout email and checkout IP/device are
+ * the same class of evidence this service already trusts elsewhere (the post-
+ * authorization identity-drift check contains on a changed email outright).
+ * Card brand+last4 is the weakest of the six — a coincidental match between
+ * two different real cards is far more likely than for an exact token — so it
+ * scores lowest and needs a third account before it counts at all.
+ *
+ * 2026-08-06: promoted from evidence-only to scored per owner approval. This
+ * only changes the score and recommendation shown to staff on the Fiat
+ * review queue — crediting stays fully manual, and nothing here locks an
+ * account or requires KYC on its own.
+ */
+const REUSE_SIGNALS: ReadonlyArray<{
+  key: (evidence: FiatPostPaymentDetectionEvidence) => number;
+  threshold: number;
+  points: (users: number) => number;
+  label: string;
+  signalKey: string;
+  noun: string;
+  category: FiatSignal["category"];
+}> = [
+  {
+    key: (e) => e.whopCustomerSharedUsers,
+    threshold: 2,
+    points: (users) => Math.min(70, 45 + users * 10),
+    label: "Whop customer reused across accounts",
+    signalKey: "checkout_whop_customer_shared",
+    noun: "Whop customer identity",
+    category: "provider",
+  },
+  {
+    key: (e) => e.paymentMethodSharedUsers,
+    threshold: 2,
+    points: (users) => Math.min(70, 45 + users * 10),
+    label: "Payment method reused across accounts",
+    signalKey: "checkout_payment_method_shared",
+    noun: "payment-method identity",
+    category: "provider",
+  },
+  {
+    key: (e) => e.checkoutDeviceSharedUsers,
+    threshold: 2,
+    points: (users) => Math.min(60, 35 + users * 8),
+    label: "Checkout device reused across accounts",
+    signalKey: "checkout_device_shared",
+    noun: "checkout device",
+    category: "network",
+  },
+  {
+    key: (e) => e.checkoutEmailSharedUsers,
+    threshold: 2,
+    points: (users) => Math.min(50, 30 + users * 8),
+    label: "Checkout email reused across accounts",
+    signalKey: "checkout_email_shared",
+    noun: "payer email",
+    category: "provider",
+  },
+  {
+    key: (e) => e.checkoutIpSharedUsers,
+    threshold: 2,
+    points: (users) => Math.min(30, 15 + users * 2),
+    label: "Checkout IP reused across accounts",
+    signalKey: "checkout_ip_shared",
+    noun: "checkout IP",
+    category: "network",
+  },
+  {
+    key: (e) => e.cardSignatureSharedUsers,
+    threshold: 3,
+    points: (users) => Math.min(25, 10 + users * 5),
+    label: "Card signature reused across accounts",
+    signalKey: "checkout_card_signature_shared",
+    noun: "weak card brand and last-four signature",
+    category: "provider",
+  },
+];
+
+/** Post-authorization detections. Reuse signals score; the rest are evidence. */
 export function postPaymentObservationSignals(
   evidence: FiatPostPaymentDetectionEvidence,
 ): FiatSignal[] {
@@ -230,22 +312,17 @@ export function postPaymentObservationSignals(
       "provider",
     ));
   }
-  const reuse: Array<[number, number, string, string]> = [
-    [evidence.checkoutEmailSharedUsers, 2, "observe_checkout_email_reuse", "payer email"],
-    [evidence.whopCustomerSharedUsers, 2, "observe_whop_customer_reuse", "Whop customer identity"],
-    [evidence.paymentMethodSharedUsers, 2, "observe_payment_method_reuse", "payment-method identity"],
-    [evidence.cardSignatureSharedUsers, 3, "observe_card_signature_reuse", "weak card brand and last-four signature"],
-    [evidence.checkoutIpSharedUsers, 2, "observe_authorized_ip_reuse", "checkout IP"],
-    [evidence.checkoutDeviceSharedUsers, 2, "observe_authorized_device_reuse", "checkout device"],
-  ];
-  for (const [users, threshold, key, label] of reuse) {
-    if (users < threshold) continue;
-    signals.push(postSignal(
-      key,
-      "Cross-account payment link",
-      `${users} accounts share this ${label}. This is evidence only and may be legitimate.`,
-      key.includes("ip") || key.includes("device") ? "network" : "provider",
-    ));
+  for (const rule of REUSE_SIGNALS) {
+    const users = rule.key(evidence);
+    if (users < rule.threshold) continue;
+    signals.push({
+      key: rule.signalKey,
+      label: rule.label,
+      detail: `${users} other account(s) share this ${rule.noun}.`,
+      points: rule.points(users),
+      tone: "bad",
+      category: rule.category,
+    });
   }
   if (evidence.exactAmountDistinctUsers30m >= 3) {
     signals.push(postSignal(

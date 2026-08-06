@@ -24,7 +24,7 @@ test("pre-payment heuristics are evidence-only and cannot act", () => {
   assert.ok(signals.every((signal) => !signal.blocking && !signal.containing));
 });
 
-test("post-payment correlations are evidence-only and cannot change risk", () => {
+test("post-payment status gaps stay evidence-only; reuse signals now score", () => {
   const signals = postPaymentObservationSignals({
     paymentIdentityHistoryStatus: "complete",
     authorizedNetworkHistoryStatus: "complete",
@@ -49,11 +49,30 @@ test("post-payment correlations are evidence-only and cannot change risk", () =>
     minutesToFirstTip: 4,
   });
   assert.ok(signals.length >= 10);
-  assert.ok(signals.every((signal) => signal.evidenceOnly === true));
-  assert.ok(signals.every((signal) => signal.points === 0));
+
+  const reuseKeys = new Set([
+    "checkout_whop_customer_shared",
+    "checkout_payment_method_shared",
+    "checkout_device_shared",
+    "checkout_email_shared",
+    "checkout_ip_shared",
+    "checkout_card_signature_shared",
+  ]);
+  const reuseSignals = signals.filter((signal) => reuseKeys.has(signal.key));
+  const otherSignals = signals.filter((signal) => !reuseKeys.has(signal.key));
+
+  // All six reuse signals fire at these evidence levels.
+  assert.equal(reuseSignals.length, 6);
+  assert.ok(reuseSignals.every((signal) => !signal.evidenceOnly));
+  assert.ok(reuseSignals.every((signal) => signal.points > 0));
+
+  // Everything else (disposable email, billing mismatch, amount burst, etc.)
+  // is untouched and still cannot change risk.
+  assert.ok(otherSignals.every((signal) => signal.evidenceOnly === true));
+  assert.ok(otherSignals.every((signal) => signal.points === 0));
 });
 
-test("weak card signatures need three linked accounts before surfacing", () => {
+test("reuse signals are tiered by how exact the match is", () => {
   const base = {
     paymentIdentityHistoryStatus: "complete" as const,
     authorizedNetworkHistoryStatus: "complete" as const,
@@ -66,6 +85,7 @@ test("weak card signatures need three linked accounts before surfacing", () => {
     checkoutEmailSharedUsers: 0,
     whopCustomerSharedUsers: 0,
     paymentMethodSharedUsers: 0,
+    cardSignatureSharedUsers: 0,
     checkoutIpSharedUsers: 0,
     checkoutDeviceSharedUsers: 0,
     exactAmountAttempts30m: 0,
@@ -76,14 +96,28 @@ test("weak card signatures need three linked accounts before surfacing", () => {
     tipsAfterDepositUsd: 0,
     minutesToFirstTip: null,
   };
+
+  // Weak card-signature match needs three linked accounts before it counts.
   assert.equal(postPaymentObservationSignals({
     ...base,
     cardSignatureSharedUsers: 2,
-  }).some((signal) => signal.key === "observe_card_signature_reuse"), false);
+  }).some((signal) => signal.key === "checkout_card_signature_shared"), false);
   assert.equal(postPaymentObservationSignals({
     ...base,
     cardSignatureSharedUsers: 3,
-  }).some((signal) => signal.key === "observe_card_signature_reuse"), true);
+  }).some((signal) => signal.key === "checkout_card_signature_shared"), true);
+
+  // Exact Whop identity outweighs the weak card signature at the same count.
+  const customerSignal = postPaymentObservationSignals({
+    ...base,
+    whopCustomerSharedUsers: 2,
+  }).find((signal) => signal.key === "checkout_whop_customer_shared");
+  const cardSignal = postPaymentObservationSignals({
+    ...base,
+    cardSignatureSharedUsers: 3,
+  }).find((signal) => signal.key === "checkout_card_signature_shared");
+  assert.ok(customerSignal && cardSignal);
+  assert.ok(customerSignal.points > cardSignal.points);
 });
 
 test("missing and partial observations stay explicit and evidence-only", () => {
