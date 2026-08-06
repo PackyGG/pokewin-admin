@@ -1031,6 +1031,24 @@ export async function approveCreatorRewardClaim(input: {
       if (released.length !== 1) {
         return { success: false, error: "Claim approval is already in progress" };
       }
+
+      // Audited because this forcibly clears ANOTHER admin's reservation. It is
+      // the one mutation here that overrides a colleague, and without a record
+      // the trail shows their name simply vanishing from a claim someone else
+      // then approved. Written BEFORE the payment so it survives an
+      // `adjustBalance` crash — the override happened either way.
+      await createAdminAuditEvent({
+        adminUserId: session.userId,
+        eventType: "creator_reward_claim_reservation_released",
+        targetUserId: claim.user_id,
+        metadata: {
+          claim_id: claim.id,
+          program_id: claim.program_id,
+          displaced_admin_id: claim.reviewed_by,
+          reserved_at: claim.reviewed_at,
+          stale_for_ms: Date.now() - reservedAt,
+        },
+      });
     }
   } else if (claim.status !== "pending") {
     return { success: false, error: `Claim is already ${claim.status}` };
@@ -1692,7 +1710,7 @@ export async function testBotWebhookConnection(): Promise<
   ActionResult<{ message: string }>
 > {
   await requirePageAccess("/creator-rewards");
-  await requireAdmin();
+  const session = await requireAdmin();
 
   const status = botWebhookConfigStatus();
   if (!status.configured) {
@@ -1714,6 +1732,17 @@ export async function testBotWebhookConnection(): Promise<
   }
 
   const result = await testBotWebhook();
+
+  // Audited only from here down: the config pre-checks above send nothing, so
+  // logging them would fill the trail with events that never left the building.
+  // This is an admin-triggered OUTBOUND signed request, which is worth a record
+  // even though it messages no one.
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "creator_reward_bot_webhook_tested",
+    metadata: { ok: result.ok, error: result.ok ? null : result.error },
+  });
+
   if (result.ok) {
     return {
       success: true,

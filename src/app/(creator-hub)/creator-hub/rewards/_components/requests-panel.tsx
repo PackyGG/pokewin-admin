@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { BadgeCheck, Inbox, Search, ShieldQuestion } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -18,8 +18,12 @@ import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 import { HubEmptyState } from "../../_components/hub-notice";
 import { ClaimRow } from "./claim-row";
 import { WebhookTestButton } from "./claim-decision-dialogs";
+import { QueuePager } from "./queue-pager";
 
 const ALL_PROGRAMS = "__all__";
+
+/** Claims per page. Enough to work a queue without scrolling for a minute. */
+const PAGE_SIZE = 20;
 
 export function RequestsPanel({
   claims,
@@ -32,6 +36,8 @@ export function RequestsPanel({
 }) {
   const [query, setQuery] = useState("");
   const [programId, setProgramId] = useState<string>(ALL_PROGRAMS);
+  const [pendingPage, setPendingPage] = useState(1);
+  const [reviewedPage, setReviewedPage] = useState(1);
 
   /** Distinct programs present in the loaded page, so the filter can't offer
       an option that would match nothing. */
@@ -57,9 +63,19 @@ export function RequestsPanel({
     });
   }, [claims, query, programId]);
 
+  // A narrowed set almost never has the page the operator was on, and landing
+  // on an empty page after typing reads as "no results".
+  useEffect(() => {
+    setPendingPage(1);
+    setReviewedPage(1);
+  }, [query, programId]);
+
   const filtered = query.trim() !== "" || programId !== ALL_PROGRAMS;
   const pending = matching.filter((c) => c.status === "pending");
   const reviewed = matching.filter((c) => c.status !== "pending");
+
+  const pendingSlice = sliceFor(pending, pendingPage);
+  const reviewedSlice = sliceFor(reviewed, reviewedPage);
 
   function clearFilters() {
     setQuery("");
@@ -101,7 +117,7 @@ export function RequestsPanel({
             onValueChange={(v) => setProgramId(v ?? ALL_PROGRAMS)}
           >
             <SelectTrigger
-              className="h-9 w-[220px] text-xs"
+              className="h-9 w-full text-xs sm:w-[220px]"
               aria-label="Filter by program"
             >
               {/* Explicit label — `SelectValue` renders the raw value when it
@@ -129,11 +145,7 @@ export function RequestsPanel({
       )}
 
       <div className="space-y-3">
-        <SectionHeading
-          icon={Inbox}
-          title="Awaiting review"
-          action={<WebhookTestButton />}
-        />
+        <SectionHeading icon={Inbox} title="Awaiting review" />
         {pending.length === 0 ? (
           <HubEmptyState
             icon={BadgeCheck}
@@ -141,11 +153,22 @@ export function RequestsPanel({
             sub={emptySub}
           />
         ) : (
-          <div className="space-y-2">
-            {pending.map((c) => (
-              <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
-            ))}
-          </div>
+          <>
+            <div className="space-y-2">
+              {pendingSlice.rows.map((c) => (
+                <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
+              ))}
+            </div>
+            <QueuePager
+              page={pendingSlice.page}
+              pageCount={pendingSlice.pageCount}
+              first={pendingSlice.first}
+              last={pendingSlice.last}
+              total={pending.length}
+              noun="pending claims"
+              onPageChange={setPendingPage}
+            />
+          </>
         )}
       </div>
 
@@ -153,22 +176,54 @@ export function RequestsPanel({
         <div className="space-y-3">
           <SectionHeading icon={ShieldQuestion} title="Reviewed" />
           <div className="space-y-2">
-            {reviewed.map((c) => (
+            {reviewedSlice.rows.map((c) => (
               <ClaimRow key={c.id} claim={c} userHrefBase={userHrefBase} />
             ))}
           </div>
+          <QueuePager
+            page={reviewedSlice.page}
+            pageCount={reviewedSlice.pageCount}
+            first={reviewedSlice.first}
+            last={reviewedSlice.last}
+            total={reviewed.length}
+            noun="reviewed claims"
+            onPageChange={setReviewedPage}
+          />
         </div>
       )}
 
-      {/* Capped-list honesty: exactly hitting the fetch limit means older
-          claims exist but were cut off — say so rather than letting the list
-          read as the complete history. */}
-      {claimsCap != null && claims.length === claimsCap && (
+      {/* Diagnostics footer. "Test bot connection" used to sit as the section
+          action on "Awaiting review", where the eye reads it as a queue verb
+          alongside Approve/Reject — it is neither, it messages nobody and
+          decides nothing. Down here it sits with the other statement about how
+          complete this view is. */}
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t pt-3">
+        {/* Capped-list honesty: exactly hitting the fetch limit means older
+            claims exist but were cut off — say so rather than letting the
+            paged list read as the complete history. */}
         <p className="text-xs text-muted-foreground">
-          Showing the {claimsCap} most recent claims — older ones aren&apos;t
-          listed here.
+          {claims.length === 0
+            ? "No claims have been raised yet."
+            : claimsCap != null && claims.length === claimsCap
+              ? `Showing the ${claimsCap} most recent claims — older ones aren't listed here.`
+              : `Showing all ${claims.length} claim${claims.length === 1 ? "" : "s"}.`}
         </p>
-      )}
+        <WebhookTestButton />
+      </div>
     </div>
   );
+}
+
+/** Clamp the page against the current row count and slice it. */
+function sliceFor(rows: CreatorRewardClaimRow[], requested: number) {
+  const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(Math.max(requested, 1), pageCount);
+  const start = (page - 1) * PAGE_SIZE;
+  return {
+    rows: rows.slice(start, start + PAGE_SIZE),
+    page,
+    pageCount,
+    first: rows.length === 0 ? 0 : start + 1,
+    last: Math.min(start + PAGE_SIZE, rows.length),
+  };
 }

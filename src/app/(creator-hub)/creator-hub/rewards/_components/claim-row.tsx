@@ -10,7 +10,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatCurrency, formatDateTime, formatRelative } from "@/lib/utils/format";
 import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 
-import { Flag } from "./claim-flags";
+import { Flag, Hint } from "./claim-flags";
 import {
   ApproveDialog,
   RejectDialog,
@@ -88,27 +88,27 @@ export function ClaimRow({
               ) : claim.status === "rejected" ? (
                 <Flag tone="zinc">Rejected</Flag>
               ) : (
-                <Flag tone="amber">Pending</Flag>
+                <Flag tone="warn">Pending</Flag>
               )}
 
-              {claim.wasVip && <Flag tone="purple">VIP</Flag>}
+              {claim.wasVip && <Flag tone="vip">VIP</Flag>}
 
               {/* Account risk. Rare, so the row stays quiet in the normal case
                   and gets loud exactly when a reviewer should slow down. */}
               {claim.userIsBanned && (
-                <Flag tone="rose" title="This account is banned">
+                <Flag tone="rose" tip="This account is banned">
                   Banned
                 </Flag>
               )}
               {claim.userIsLocked && (
-                <Flag tone="amber" title="This account is locked">
+                <Flag tone="warn" tip="This account is locked">
                   Locked
                 </Flag>
               )}
               {claim.userSuspectedAlt && (
                 <Flag
-                  tone="amber"
-                  title="Device fingerprinting flagged this account as a suspected alt"
+                  tone="warn"
+                  tip="Device fingerprinting flagged this account as a suspected alt"
                 >
                   Alt
                 </Flag>
@@ -116,30 +116,34 @@ export function ClaimRow({
 
               {claim.switchedAway === true && (
                 <Flag
-                  tone="amber"
-                  title="The player has moved to a different creator's code since filing"
+                  tone="warn"
+                  tip="The player has moved to a different creator's code since filing"
                 >
                   Switched code
                 </Flag>
               )}
               {claim.reinstatedAt && <Flag tone="blue">Reopened</Flag>}
               {claim.botNotifyError && (
-                <Flag tone="amber" title={claim.botNotifyError}>
+                <Flag tone="warn" tip={claim.botNotifyError}>
                   DM failed
                 </Flag>
               )}
             </div>
 
-            <div
-              className="truncate text-xs text-muted-foreground"
-              title={formatDateTime(claim.requestedAt)}
+            {/* The exact filing time decides queue order disputes, so it has to
+                be reachable — a `title` here reached neither keyboard nor touch. */}
+            <Hint
+              tip={`Filed ${formatDateTime(claim.requestedAt)}`}
+              className="block text-xs text-muted-foreground"
             >
-              {claim.programName} · {claim.creatorUsername ?? "creator"} ·{" "}
-              {formatRelative(claim.requestedAt)}
-            </div>
+              <span className="truncate">
+                {claim.programName} · {claim.creatorUsername ?? "creator"} ·{" "}
+                {formatRelative(claim.requestedAt)}
+              </span>
+            </Hint>
 
             {meta.length > 0 && (
-              <div className="truncate text-[11px] text-muted-foreground/80">
+              <div className="truncate text-[11px] text-muted-foreground">
                 {meta.join(" · ")}
               </div>
             )}

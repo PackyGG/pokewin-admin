@@ -35,7 +35,8 @@ const CLAIMS_CAP = 200;
  * count, pending payout total, oldest pending age, active programs) computed
  * from the SAME two reads — no extra queries — and links creators to their
  * Hub pages (`/creator-hub/creators/{id}`) so the surface stays self-contained.
- * `?tab=programs|requests` deep-links a tab.
+ * `?tab=programs|requests` is the tab, read here and rendered as `<Link>`s —
+ * deep-linkable and back-navigable, the same contract the roster tabs use.
  *
  * ── ACCESS ────────────────────────────────────────────────────────────────
  * `requireCreatorHubPageAccess()` **and** `requirePageAccess("/creator-rewards")`.
@@ -182,13 +183,16 @@ async function Body({ tab }: { tab: CreatorVipTab | undefined }) {
           />
         </div>
 
-        {/* Keyed by tab so a `?tab=` navigation re-seeds the client state —
-            without it the deep-link only applies on first mount. */}
+        {/* The tab bar is URL-driven, so the active tab is resolved HERE and
+            passed down as a value — no client state to re-seed, and hence no
+            `key=` remount hack. Land on whichever side needs attention when
+            `?tab=` says nothing: an operator opening this page with claims
+            waiting almost certainly came to review them, not to read config. */}
         <CreatorVipContent
-          key={tab ?? "auto"}
           programs={programs.data ?? []}
           claims={claims.data ?? []}
-          initialTab={tab}
+          activeTab={tab ?? (pending.length > 0 ? "requests" : "programs")}
+          basePath="/creator-hub/rewards"
           creatorHrefBase="/creator-hub/creators"
           claimsCap={CLAIMS_CAP}
         />

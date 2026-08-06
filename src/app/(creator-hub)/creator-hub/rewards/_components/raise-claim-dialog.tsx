@@ -3,7 +3,6 @@
 import { useState, useTransition } from "react";
 import { toast } from "sonner";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -21,6 +20,7 @@ import {
   previewCreatorRewardEntitlement,
   raiseCreatorRewardClaimForUser,
 } from "../actions";
+import { Flag } from "./claim-flags";
 
 /**
  * Look a player up on this program, see what they'd get, and optionally raise
@@ -147,14 +147,8 @@ export function RaiseClaimDialog({
                 <span className="font-medium">
                   {preview.username ?? preview.userId}
                 </span>
-                {preview.isVip && (
-                  <Badge
-                    variant="outline"
-                    className="bg-purple-500/15 text-[10px] text-purple-600 dark:text-purple-400"
-                  >
-                    VIP
-                  </Badge>
-                )}
+                {/* Same flag the claim rows use — one VIP purple, not two. */}
+                {preview.isVip && <Flag tone="vip">VIP</Flag>}
                 {preview.leg === "wager" && program.thresholdUsd != null && (
                   <span className="text-xs text-muted-foreground">
                     {formatCurrency(preview.appliedRewardUsd)} per{" "}

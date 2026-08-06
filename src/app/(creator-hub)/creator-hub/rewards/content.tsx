@@ -1,10 +1,14 @@
 "use client";
 
-import { useId, useMemo, useState } from "react";
+import { useId, useMemo } from "react";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { Crown, Inbox } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { STATUS_COLORS } from "@/lib/constants";
 import { cn } from "@/lib/utils";
+import { useHostHref } from "@/lib/use-app-host";
 import type { CreatorRewardProgramWithStats } from "@/lib/creator-vip/types";
 import type { CreatorRewardClaimRow } from "@/lib/creator-vip/queries";
 
@@ -28,7 +32,8 @@ export type CreatorVipTab = "programs" | "requests";
 export function CreatorVipContent({
   programs,
   claims,
-  initialTab,
+  activeTab,
+  basePath,
   creatorHrefBase = "/users",
   userHrefBase = "/users",
   claimsCap,
@@ -36,11 +41,13 @@ export function CreatorVipContent({
   programs: CreatorRewardProgramWithStats[];
   claims: CreatorRewardClaimRow[];
   /**
-   * Deep-link override for the initial tab (e.g. driven from `?tab=` by the
-   * Creator Hub surface). When absent, the original behavior applies: land on
-   * Requests if claims are waiting, otherwise Programs.
+   * Which side is showing, resolved by the server from `?tab=` (falling back
+   * to whichever side needs attention). Authoritative: the tab bar below only
+   * renders links, it holds no state of its own.
    */
-  initialTab?: CreatorVipTab;
+  activeTab: CreatorVipTab;
+  /** Canonical in-app path of the page the tab links point back at. */
+  basePath: string;
   /**
    * Base path for links to the CREATOR who owns a program (`{base}/{userId}`).
    * Defaults to the admin `/users` profile; the Creator Hub passes
@@ -63,74 +70,100 @@ export function CreatorVipContent({
   claimsCap?: number;
 }) {
   const uid = useId();
-  const pending = useMemo(
-    () => claims.filter((c) => c.status === "pending"),
+  const searchParams = useSearchParams();
+  // Host-aware, like every other Hub tab bar: `/rewards` on
+  // marketing.packydash.com, `/creator-hub/rewards` on the apex. Without it a
+  // tab switch bounces through the middleware's canonicalizing redirect.
+  const pageHref = useHostHref(basePath);
+
+  const pendingCount = useMemo(
+    () => claims.filter((c) => c.status === "pending").length,
     [claims],
-  );
-  // Land on whichever side needs attention — an operator opening this tab with
-  // claims waiting almost certainly came to review them, not to read config.
-  const [subTab, setSubTab] = useState<CreatorVipTab>(
-    initialTab ?? (pending.length > 0 ? "requests" : "programs"),
   );
 
   // Archived programs are history, not inventory — the tab count reflects what
   // an operator can actually act on, matching the panel's default view.
   const liveCount = programs.filter((p) => p.archivedAt == null).length;
 
+  /**
+   * `?tab=` is always written explicitly, on both tabs. The no-param default is
+   * data-dependent (land on Requests when claims are waiting), so a bare href
+   * would mean "whatever the queue looks like right now" rather than the tab
+   * the operator just clicked.
+   */
+  function hrefFor(tab: CreatorVipTab): string {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", tab);
+    return `${pageHref}?${params.toString()}`;
+  }
+
+  const tabs = [
+    {
+      value: "programs" as const,
+      label: "Programs",
+      Icon: Crown,
+      badge: (
+        <span className="tabular-nums text-xs text-muted-foreground">
+          {liveCount}
+        </span>
+      ),
+    },
+    {
+      value: "requests" as const,
+      label: "Requests",
+      Icon: Inbox,
+      badge:
+        pendingCount > 0 ? (
+          <Badge
+            variant="outline"
+            className={cn("text-[10px]", STATUS_COLORS.pending)}
+          >
+            <span aria-hidden>{pendingCount}</span>
+            <span className="sr-only">
+              {pendingCount} claims awaiting review
+            </span>
+          </Badge>
+        ) : null,
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="inline-flex gap-1 rounded-lg bg-muted p-1" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          id={`${uid}-tab-programs`}
-          aria-selected={subTab === "programs"}
-          aria-controls={`${uid}-panel-programs`}
-          onClick={() => setSubTab("programs")}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-            subTab === "programs"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Crown className="size-4" aria-hidden />
-          Programs
-          <span className="tabular-nums text-xs text-muted-foreground">
-            {liveCount}
-          </span>
-        </button>
-        <button
-          type="button"
-          role="tab"
-          id={`${uid}-tab-requests`}
-          aria-selected={subTab === "requests"}
-          aria-controls={`${uid}-panel-requests`}
-          onClick={() => setSubTab("requests")}
-          className={cn(
-            "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
-            subTab === "requests"
-              ? "bg-background text-foreground shadow-sm"
-              : "text-muted-foreground hover:text-foreground",
-          )}
-        >
-          <Inbox className="size-4" aria-hidden />
-          Requests
-          {pending.length > 0 && (
-            <Badge
-              variant="outline"
-              className="bg-amber-500/15 text-[10px] text-amber-600 dark:text-amber-400"
+      <div
+        className="inline-flex gap-1 rounded-lg bg-muted p-1"
+        role="tablist"
+        aria-label="Creator rewards"
+      >
+        {tabs.map(({ value, label, Icon, badge }) => {
+          const active = activeTab === value;
+          return (
+            <Link
+              key={value}
+              href={hrefFor(value)}
+              role="tab"
+              id={`${uid}-tab-${value}`}
+              aria-selected={active}
+              aria-controls={`${uid}-panel-${value}`}
+              // Pushed, not replaced (the roster switch replaces): Back was the
+              // gap this tab bar was fixing, and a reviewer who deep-linked
+              // into Requests expects Back to return to Programs.
+              scroll={false}
+              className={cn(
+                "inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors",
+                active
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
             >
-              <span aria-hidden>{pending.length}</span>
-              <span className="sr-only">
-                {pending.length} claims awaiting review
-              </span>
-            </Badge>
-          )}
-        </button>
+              <Icon className="size-4" aria-hidden />
+              {label}
+              {badge}
+            </Link>
+          );
+        })}
       </div>
 
-      {subTab === "programs" ? (
+      {activeTab === "programs" ? (
         <div
           role="tabpanel"
           id={`${uid}-panel-programs`}

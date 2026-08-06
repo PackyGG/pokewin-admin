@@ -25,6 +25,7 @@ import {
   restoreCreatorRewardProgram,
   setCreatorRewardProgramActive,
 } from "../actions";
+import { Flag } from "./claim-flags";
 import { ProgramFormDialog } from "./program-form-dialog";
 import { ProgramRemoveDialog } from "./program-remove-dialog";
 import { RaiseClaimDialog } from "./raise-claim-dialog";
@@ -147,44 +148,36 @@ export function ProgramRow({
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
               <span className="truncate font-medium">{program.name}</span>
+              {/* Same `Flag` the claim queue uses, so "Paused" here and
+                  "Rejected" there can't drift into two different zincs. */}
               {archived ? (
-                <Badge
-                  variant="outline"
-                  className="bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400"
-                  title="Retired — it kept its claims, so it was archived instead of deleted."
+                <Flag
+                  tone="zinc"
+                  tip="Retired — it kept its claims, so it was archived instead of deleted."
                 >
                   Archived
-                </Badge>
+                </Flag>
               ) : (
-                !program.isActive && (
-                  <Badge
-                    variant="outline"
-                    className="bg-zinc-500/15 text-[10px] text-zinc-600 dark:text-zinc-400"
-                  >
-                    Paused
-                  </Badge>
-                )
+                !program.isActive && <Flag tone="zinc">Paused</Flag>
               )}
               {program.creatorIsBanned && (
-                <Badge
-                  variant="outline"
-                  className="border-rose-500/30 bg-rose-500/15 text-[10px] text-rose-600 dark:text-rose-400"
-                  title="This creator's account is banned — the program is still accruing."
+                <Flag
+                  tone="rose"
+                  tip="This creator's account is banned — the program is still accruing."
                 >
                   Creator banned
-                </Badge>
+                </Flag>
               )}
             </div>
             <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
               <Link
                 href={`${creatorHrefBase}/${program.creatorUserId}`}
-                className="truncate hover:text-foreground hover:underline"
-                title={`Open ${program.creatorUsername ?? program.creatorUserId}`}
+                className="truncate outline-none hover:text-foreground hover:underline focus-visible:rounded-md focus-visible:ring-2 focus-visible:ring-ring"
               >
                 {program.creatorUsername ?? program.creatorUserId}
               </Link>
               {program.creatorCountryCode && (
-                <span className="shrink-0 text-muted-foreground/70">
+                <span className="shrink-0">
                   · {program.creatorCountryCode}
                 </span>
               )}
@@ -238,6 +231,10 @@ export function ProgramRow({
               variant="outline"
               onClick={() => setRaiseOpen(true)}
               disabled={!program.isActive}
+              // Every row carries this button, so the bare label repeats N
+              // times in a screen reader's control list with nothing to tell
+              // them apart.
+              aria-label={`Check a player against ${program.name}`}
             >
               Check a player
             </Button>
@@ -245,7 +242,7 @@ export function ProgramRow({
               checked={program.isActive}
               onCheckedChange={toggle}
               disabled={isPending}
-              aria-label="Program active"
+              aria-label={`${program.name} active`}
             />
             <DropdownMenu>
               <DropdownMenuTrigger

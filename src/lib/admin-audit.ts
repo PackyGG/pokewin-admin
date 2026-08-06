@@ -2,7 +2,13 @@ import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 
 export async function createAdminAuditEvent(params: {
-  adminUserId: string;
+  /**
+   * null = no human actor. `admin_audit_events.admin_user_id` is nullable (the
+   * FK is ON DELETE SET NULL) and every reader already handles it, so an
+   * automated origin records honestly instead of being booked against whoever
+   * happened to be handy. Such callers put the real origin in `metadata`.
+   */
+  adminUserId: string | null;
   eventType: string;
   targetUserId?: string;
   ip?: string | null;
@@ -34,7 +40,7 @@ export async function createAdminAuditEvent(params: {
       admin_user_id, event_type, target_user_id, ip, metadata
     )
     VALUES (
-      ${params.adminUserId}::uuid,
+      ${params.adminUserId ?? null}::uuid,
       ${params.eventType},
       ${params.targetUserId ?? null},
       ${ip ?? null},

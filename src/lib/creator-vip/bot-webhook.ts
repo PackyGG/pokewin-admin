@@ -122,11 +122,16 @@ export function botWebhookConfigStatus(): {
  * Send a harmless event that proves URL + secret + signature all work,
  * WITHOUT messaging anyone.
  *
- * The bot verifies the signature and parses the payload BEFORE it looks at
- * `type`, and answers an unrecognised type with `200 unsupported_type`. So a
- * well-formed event of an unknown type exercises every part of the path that
- * can realistically be misconfigured — reachability, the shared secret, the
- * signing scheme — and stops short of a DM.
+ * The bot verifies the signature, then answers an unrecognised `type` with
+ * `200 unsupported_type`. So a well-formed event of an unknown type exercises
+ * every part of the path that can realistically be misconfigured —
+ * reachability, the shared secret, the signing scheme — and stops short of a DM.
+ *
+ * BE PRECISE ABOUT WHAT THIS PROVES. An earlier version of this comment claimed
+ * the bot "parses the payload BEFORE it looks at `type`". It does not: the
+ * unsupported-type branch returns before `data` is ever validated. So a green
+ * result here says nothing about whether the bot would accept the SHAPE of a
+ * real claim decision — only that it can be reached and trusts our signature.
  *
  * ONE attempt, short timeout. A real delivery retries for ~36s because getting
  * the DM out eventually is what matters; a diagnostic that makes someone stare
@@ -244,7 +249,14 @@ export async function sendClaimDecision(
         };
       }
 
-      const retriable = res.status === 503 || res.status >= 500;
+      // 429 belongs here with the 5xx. The bot's webhook server genuinely
+      // answers 429 under its own per-source throttle, and being throttled is
+      // the definition of "come back shortly" — treating it as permanent made a
+      // decision notice a one-shot loss the moment the bot was busy. The bot's
+      // own API client already retries our 429s; this is the same rule pointing
+      // the other way.
+      const retriable =
+        res.status === 429 || res.status === 503 || res.status >= 500;
       const detail = await res.text().catch(() => "");
       last = {
         ok: false,

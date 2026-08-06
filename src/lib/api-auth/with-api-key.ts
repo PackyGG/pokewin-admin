@@ -85,15 +85,27 @@ function errorResponse(
  *
  * Keep `message` operator-safe: describe the SHAPE that was wrong, never echo
  * back internals (SQL, stack, row contents).
+ *
+ * RATE HEADERS: omitting `rate` is safe for the normal path — a Response
+ * returned from a wrapped handler goes through the merge in `route()` below,
+ * which backfills the per-KEY `RateLimit-*` from the authenticated state. What
+ * that merge does NOT backfill is `Retry-After`, so a handler emitting its own
+ * 429 (e.g. a per-subject limit) MUST pass its `rate` here or the client is
+ * told to back off with no idea for how long.
  */
 export function apiError(
   status: number,
   code: string,
   message: string,
+  rate?: ApiRateLimitResult,
 ): Response {
+  const headers = baseHeaders(rate);
+  if (status === 429 && rate) {
+    headers.set("retry-after", String(rate.resetSeconds));
+  }
   return new Response(JSON.stringify({ error: { code, message } }), {
     status,
-    headers: baseHeaders(),
+    headers,
   });
 }
 

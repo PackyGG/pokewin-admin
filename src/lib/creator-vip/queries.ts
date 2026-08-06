@@ -18,6 +18,7 @@ import {
   creator_reward_offer_windows,
   creator_reward_programs,
 } from "@/lib/db-schema/admin/schema";
+import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { user as mainUsers } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { isPostgresError } from "@/lib/postgres-errors";
@@ -506,6 +507,23 @@ export type CreateClaimResult =
   | { ok: false; error: string; code: string };
 
 /**
+ * Thrown inside the claim transaction when the offer windows the claim is
+ * priced against are not all still there to consume. Carried as an exception
+ * rather than a return value so the whole transaction — the claim row included
+ * — rolls back; a claim that pays for N units while consuming fewer is a
+ * silent double-spend of the same wager basis.
+ */
+class OfferWindowShortfall extends Error {
+  constructor(
+    readonly wanted: number,
+    readonly got: number,
+  ) {
+    super(`offer window shortfall: wanted ${wanted}, got ${got}`);
+    this.name = "OfferWindowShortfall";
+  }
+}
+
+/**
  * Create a claim request. THE shared entry point — the Discord-bot endpoint
  * and the admin's "raise a claim" both land here, so eligibility can only ever
  * be decided in one place.
@@ -520,7 +538,22 @@ export type CreateClaimResult =
  * `creator_reward_claims_one_pending_per_user` makes the loser fail with
  * SQLSTATE 23505, which is translated into a friendly "already pending" rather than a
  * 500 — that index, not this function, is what actually guarantees the
- * one-open-claim rule.
+ * one-open-claim rule. The insert is therefore done FIRST inside the
+ * transaction, so that index serialises the two writers before either of them
+ * can touch an offer window.
+ *
+ * ── WHAT THE OFFER WINDOWS ARE FOR ────────────────────────────────────────
+ * Eligibility is computed OUTSIDE the transaction (it reads MAIN, which must
+ * not be held open behind an ADMIN transaction), so the numbers it produces
+ * are already a snapshot by the time the write starts. The offer windows are
+ * what closes that gap: they are the reservation ledger, and a claim is only
+ * valid if it consumes exactly one window per unit it pays for.
+ *
+ * That match used to be unchecked — the update took `LIMIT units` and wrote
+ * whatever it found, so a window that expired in the gap, or was locked by a
+ * concurrent writer, produced a claim consuming FEWER windows than it charged
+ * for. The same wager basis then re-appeared as claimable on the next check.
+ * A short count now aborts the claim outright.
  */
 export async function createClaimRequest(params: {
   programId: string;
@@ -602,6 +635,13 @@ export async function createClaimRequest(params: {
         .returning({ id: creator_reward_claims.id });
 
       const now = new Date().toISOString();
+      // Row-locked, so no concurrent claim can be reading the same windows as
+      // available while this one consumes them. SKIP LOCKED rather than a wait:
+      // a window another transaction is already consuming is not going to
+      // become ours, so treating it as absent short-counts us into an abort
+      // instead of parking behind a lock we can only lose. Same predicate and
+      // same `creator_reward_offer_windows_lookup_idx` access path as before —
+      // (program_id, user_id, leg, expires_at) — bounded by `units`.
       const claimedWindows = await tx
         .select({ id: creator_reward_offer_windows.id })
         .from(creator_reward_offer_windows)
@@ -615,20 +655,79 @@ export async function createClaimRequest(params: {
           ),
         )
         .orderBy(asc(creator_reward_offer_windows.expires_at))
-        .limit(entitlement.units);
-      if (claimedWindows.length > 0) {
-        await tx
-          .update(creator_reward_offer_windows)
-          .set({ claimed_at: now })
-          .where(
+        .limit(entitlement.units)
+        .for("update", { skipLocked: true });
+      // One window per unit, or nothing. `enforceOfferExpiry` writes exactly
+      // `units` windows immediately before this call and only ever hands back
+      // an entitlement whose units it just backed, so a shortfall means the
+      // world moved underneath us — an offer expired in the gap, or a
+      // concurrent writer holds it. Either way the priced claim is no longer
+      // the claim we can honour, so it must not be written at all.
+      if (claimedWindows.length !== entitlement.units) {
+        throw new OfferWindowShortfall(entitlement.units, claimedWindows.length);
+      }
+      // `claim_id` alongside `claimed_at`: the link is what lets
+      // `enforceOfferExpiry` re-issue a REJECTED claim's window without ever
+      // being able to resurrect an APPROVED one. The `claimed_at IS NULL` guard
+      // is belt-and-braces on top of the row lock — with it, the returning
+      // count is a second, independent proof that every window we charged for
+      // was still free at the instant we took it.
+      const consumed = await tx
+        .update(creator_reward_offer_windows)
+        .set({ claimed_at: now, claim_id: claim.id })
+        .where(
+          and(
             inArray(
               creator_reward_offer_windows.id,
               claimedWindows.map((window) => window.id),
             ),
-          );
+            isNull(creator_reward_offer_windows.claimed_at),
+          ),
+        )
+        .returning({ id: creator_reward_offer_windows.id });
+      if (consumed.length !== entitlement.units) {
+        throw new OfferWindowShortfall(entitlement.units, consumed.length);
       }
       return claim;
     });
+
+    // ── AUDIT ───────────────────────────────────────────────────────────────
+    // Bot-filed claims are the overwhelming majority and used to leave no trace
+    // at all, while `raiseCreatorRewardClaimForUser` audited its own. The admin
+    // path still writes its own richer event, so this one covers the API path
+    // only — otherwise every dashboard-raised claim would produce two rows.
+    //
+    // `adminUserId: null` is the honest answer: no human filed this. The FK is
+    // ON DELETE SET NULL and the column has always been nullable, so a null
+    // actor is a legal, already-rendered state — `origin` in the metadata is
+    // what stops it reading as "we forgot to record who".
+    //
+    // Never allowed to fail the claim: the money-side write has already
+    // committed, and losing the trail is strictly better than rolling back a
+    // valid claim over an audit insert.
+    if (params.discordUserId) {
+      await createAdminAuditEvent({
+        adminUserId: null,
+        eventType: "creator_reward_claim_filed",
+        targetUserId: params.userId,
+        metadata: {
+          origin: "discord_claim_api",
+          automated: true,
+          claim_id: created.id,
+          program_id: program.id,
+          program_name: program.name,
+          creator_user_id: program.creator_user_id,
+          discord_user_id: params.discordUserId,
+          leg: params.leg,
+          units: entitlement.units,
+          amount_usd: entitlement.amountUsd,
+          consumed_wager_usd: entitlement.consumesWagerUsd,
+          was_vip: entitlement.isVip,
+        },
+      }).catch((err) => {
+        console.error("[creator-vip] claim audit write failed:", err);
+      });
+    }
 
     return {
       ok: true,
@@ -642,6 +741,19 @@ export async function createClaimRequest(params: {
         ok: false,
         error: "You already have a claim awaiting review for this reward.",
         code: "already_pending",
+      };
+    }
+    if (err instanceof OfferWindowShortfall) {
+      // Nothing was written — the transaction rolled the claim back with the
+      // windows. Re-checking produces a fresh offer if the wager is still
+      // there, so "try again" is genuinely the right advice.
+      console.warn(
+        `[creator-vip] claim aborted for ${params.userId} on ${params.programId}: ${err.message}`,
+      );
+      return {
+        ok: false,
+        error: "That reward offer just expired — check again for a fresh one.",
+        code: "offer_expired",
       };
     }
     throw err;

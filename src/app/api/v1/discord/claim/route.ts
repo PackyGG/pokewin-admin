@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import { checkApiSubjectRateLimit } from "@/lib/api-auth/rate-limit";
 import { createClaimRequest } from "@/lib/creator-vip/queries";
 
 /**
@@ -67,9 +68,30 @@ const BodySchema = z.object({
   discordUserId: z
     .string()
     .trim()
-    .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
-  claimableId: z.string().trim().min(1).max(64),
+    // 17–20 digits, matching the ONLY caller: the bot validates `^\d{17,20}$`
+    // in `submitClaim` and parses the same bound out of the button custom id.
+    .regex(/^\d{17,20}$/, "discordUserId must be a numeric Discord user ID"),
+  // 80 is the widest value that can physically arrive: the claim button's
+  // custom id is capped at Discord's 100 chars and the bot's own id pattern is
+  // `[A-Za-z0-9_:.-]{1,80}`. The `max(64)` this replaces was a THIRD limit for
+  // one field and disagreed with both. It costs nothing to accept up to the
+  // caller's ceiling — CLAIMABLE_ID below is the load-bearing check, and every
+  // id we actually issue is ~40 chars, so nothing legitimate changes. What
+  // does change: an over-64 on-site id now gets the accurate
+  // `not_claimable_here` instead of a misleading shape error.
+  claimableId: z.string().trim().min(1).max(80),
 });
+
+/**
+ * Per-player ceiling for filing claims, ON TOP OF the key's own budget.
+ *
+ * The bot allows 2/min per user, client-side — which a leaked
+ * `discord:rewards:claim` key simply doesn't run, leaving the whole key budget
+ * pointable at one account. No money moves here (every row is staff-reviewed),
+ * but unbounded filing is queue spam and a review-fatigue attack. Set above the
+ * bot's default so nothing legitimate 429s.
+ */
+const SUBJECT_LIMIT_PER_MIN = 10;
 
 export const POST = withApiKey(
   { scopes: ["discord:rewards:claim"] },
@@ -92,6 +114,23 @@ export const POST = withApiKey(
     }
 
     const { discordUserId, claimableId } = parsed.data;
+
+    // Gated on the SUBJECT, before any lookup: the write path (and the review
+    // queue behind it) is the thing worth protecting, so the budget is spent
+    // whether or not the id turns out to be linked or the shape valid.
+    const subjectRate = await checkApiSubjectRateLimit(
+      "discord-claim",
+      discordUserId,
+      SUBJECT_LIMIT_PER_MIN,
+    );
+    if (!subjectRate.allowed) {
+      return apiError(
+        429,
+        "rate_limited",
+        "Too many claim attempts for this Discord account. Try again shortly.",
+        subjectRate,
+      );
+    }
 
     // Only VIP rewards are claimable through the bot. Everything else in the
     // /discord/rewards list (unopened rewards, rakeback) is claimed on-site,
@@ -135,11 +174,20 @@ export const POST = withApiKey(
       // well-formed and the player is eligible; there is simply already one in
       // the queue. A 409 lets the bot say "we're already on it" instead of
       // reporting a failure.
+      //
+      // `offer_expired` is the same shape: the claim transaction aborted
+      // because the offer windows it needed were consumed or lapsed between
+      // the eligibility read and the write. Nothing about the REQUEST is wrong,
+      // so a 400 would send the bot author hunting a payload bug that doesn't
+      // exist. It is a transient state conflict, and re-running `/check`
+      // produces a fresh offer.
       const status =
         result.code === "already_pending"
           ? 409
           : result.code === "not_eligible"
             ? 409
+            : result.code === "offer_expired"
+              ? 409
           : result.code === "program_not_found"
             ? 404
             : 400;

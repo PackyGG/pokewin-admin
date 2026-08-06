@@ -4,6 +4,7 @@ import { eq } from "drizzle-orm";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { account } from "@/lib/db-schema/main/schema";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import { checkApiSubjectRateLimit } from "@/lib/api-auth/rate-limit";
 import {
   REWARD_QUERY_TIMEOUT_MS,
   safeQueryOrNull,
@@ -68,8 +69,23 @@ const BodySchema = z
     discordUserId: z
       .string()
       .trim()
-      .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
+      // 17–20 digits, matching the ONLY caller: the rewards bot validates
+      // `^\d{17,20}$` before every request (adminApi.js `fetchInfo`). The old
+      // `{15,21}` was looser than anything that can reach here.
+      .regex(/^\d{17,20}$/, "discordUserId must be a numeric Discord user ID"),
   });
+
+/**
+ * Per-player ceiling for the profile card, ON TOP OF the key's own budget.
+ *
+ * This is the endpoint that returns a username and the internal user id, so
+ * repeat pulls on one id are exactly what shouldn't be cheap. The bot throttles
+ * to 4/min per user client-side, which a leaked key doesn't run. NOTE the real
+ * shape of the protection: an attacker walking DIFFERENT ids never trips this —
+ * enumeration is bounded only by the per-key budget and by not granting
+ * `discord:info:read` widely.
+ */
+const SUBJECT_LIMIT_PER_MIN = 15;
 
 export const POST = withApiKey(
   { scopes: ["discord:info:read"] },
@@ -92,6 +108,22 @@ export const POST = withApiKey(
     }
 
     const { discordUserId } = parsed.data;
+
+    // Before the account probe: an unlinked id must cost the same as a linked
+    // one, or the limiter itself becomes a cheap linked/not-linked oracle.
+    const subjectRate = await checkApiSubjectRateLimit(
+      "discord-info",
+      discordUserId,
+      SUBJECT_LIMIT_PER_MIN,
+    );
+    if (!subjectRate.allowed) {
+      return apiError(
+        429,
+        "rate_limited",
+        "Too many requests for this Discord account. Try again shortly.",
+        subjectRate,
+      );
+    }
 
     // Single index probe on the unique accountId. providerId is asserted so a
     // same-valued account on another provider can't resolve to a Packy user.

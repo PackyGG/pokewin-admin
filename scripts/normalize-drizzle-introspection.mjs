@@ -24,6 +24,21 @@ function normalizeArrayDefaults(source) {
   );
 }
 
+/**
+ * drizzle-kit emits an EMPTY-STRING column default as `.default(')` — an
+ * unterminated string literal that makes the entire schema module fail to
+ * parse, taking `tsc` down with it.
+ *
+ * It is not cosmetic and it is not rare: `discord_notification_events
+ * .description` triggers it on EVERY introspection, and a broken schema.ts
+ * reached the working tree twice on 2026-08-06 before anyone noticed, each time
+ * surfacing as a pile of confusing TS1005s in an unrelated agent's session.
+ * Normalising it here means the next `db:pull:admin` can't reintroduce it.
+ */
+function normalizeEmptyStringDefaults(source) {
+  return source.replace(/\.default\('\)/g, ".default('')");
+}
+
 function normalizeCustomTypes(source) {
   if (target === "main") {
     if (!source.includes("customType }")) {
@@ -86,9 +101,17 @@ function normalizeCustomTypes(source) {
 }
 
 let schema = await readFile(schemaPath, "utf8");
-schema = normalizeCustomTypes(normalizeArrayDefaults(schema));
+schema = normalizeCustomTypes(
+  normalizeEmptyStringDefaults(normalizeArrayDefaults(schema)),
+);
 if (/\.(?:array\(\))\.default\(\["(?:|RAY)"\]\)/.test(schema)) {
   throw new Error(`Unnormalized array default remains in ${schemaPath}`);
+}
+// Fail loudly rather than writing a file that cannot parse. Anything still
+// matching here is a NEW shape of the same drizzle-kit bug, and a thrown error
+// is far cheaper to diagnose than the TS1005 cascade it would otherwise cause.
+if (/\.default\('\)/.test(schema)) {
+  throw new Error(`Unterminated string default remains in ${schemaPath}`);
 }
 await writeFile(schemaPath, schema, "utf8");
 

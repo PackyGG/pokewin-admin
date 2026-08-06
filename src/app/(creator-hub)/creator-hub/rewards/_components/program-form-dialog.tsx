@@ -351,6 +351,30 @@ export function ProgramFormDialog({
                   className="flex flex-wrap gap-1.5"
                   role="group"
                   aria-labelledby={`${uid}-codes`}
+                  // Arrow keys walk the chip row the way a toolbar does, so a
+                  // creator with a dozen codes isn't a dozen Tab presses. Each
+                  // chip stays a real focusable button (Space/Enter toggles),
+                  // so this only ADDS a shortcut — it takes nothing away.
+                  onKeyDown={(e) => {
+                    const delta =
+                      e.key === "ArrowRight" || e.key === "ArrowDown"
+                        ? 1
+                        : e.key === "ArrowLeft" || e.key === "ArrowUp"
+                          ? -1
+                          : 0;
+                    if (delta === 0) return;
+                    const chips = Array.from(
+                      e.currentTarget.querySelectorAll<HTMLButtonElement>(
+                        "button:not([disabled])",
+                      ),
+                    );
+                    const at = chips.indexOf(
+                      document.activeElement as HTMLButtonElement,
+                    );
+                    if (at === -1 || chips.length === 0) return;
+                    e.preventDefault();
+                    chips[(at + delta + chips.length) % chips.length].focus();
+                  }}
                 >
                   {codeChoices.map((c) => {
                     const on = pickedCodes.includes(c);

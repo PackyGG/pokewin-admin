@@ -76,14 +76,11 @@ export function ResendNoticeButton({ claim }: { claim: CreatorRewardClaimRow }) 
     });
   }
 
+  // No `title` for the delivery error: the "DM failed" flag on the same row
+  // already carries it in a real tooltip, and a `title` here was unreachable by
+  // keyboard and touch anyway.
   return (
-    <Button
-      size="sm"
-      variant="outline"
-      onClick={resend}
-      disabled={isPending}
-      title={claim.botNotifyError ?? undefined}
-    >
+    <Button size="sm" variant="outline" onClick={resend} disabled={isPending}>
       <Send className="size-3.5" />
       {isPending ? "Sending…" : "Resend DM"}
     </Button>

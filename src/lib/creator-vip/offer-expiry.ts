@@ -1,8 +1,11 @@
 import "server-only";
 
-import { and, eq, gt, isNotNull, isNull, lte, sql } from "drizzle-orm";
+import { and, eq, gt, isNull, lte, sql } from "drizzle-orm";
 
-import { creator_reward_offer_windows } from "@/lib/db-schema/admin/schema";
+import {
+  creator_reward_claims,
+  creator_reward_offer_windows,
+} from "@/lib/db-schema/admin/schema";
 import { adminDrizzle } from "@/lib/drizzle";
 import { toNumber } from "@/lib/utils/decimal";
 
@@ -82,8 +85,36 @@ export async function enforceOfferExpiry(
         claimable_at: now.toISOString(),
         expires_at: new Date(now.getTime() + OFFER_LIFETIME_MS).toISOString(),
         claimed_at: null,
+        // Released together with `claimed_at` — the CHECK constraint
+        // `creator_reward_offer_windows_claim_link_chk` keeps the two facts
+        // from ever disagreeing.
+        claim_id: null,
       },
-      setWhere: isNotNull(creator_reward_offer_windows.claimed_at),
+      // ── WHY THIS RE-ISSUE IS NARROW ───────────────────────────────────────
+      // Un-claiming a window is load-bearing: `rejectCreatorRewardClaim`
+      // releases a claim's wager basis by flipping its status and nothing else,
+      // so the offer it consumed has to come back or reject-then-reclaim would
+      // strand the player's earned units forever.
+      //
+      // It is also the single most dangerous write in this module, because a
+      // window resurrected out from under an APPROVED claim sells the same
+      // wager basis twice — the player was already paid for it. What used to
+      // separate those two cases was ONLY that the recomputed
+      // `basis_position_usd` happened to land on a different numeric(20,2)
+      // value than the approved claim's; that quantity is derived from a float
+      // division (`unitBasis` above), so the guard was incidental, not a rule.
+      //
+      // The rule is now explicit: a window is re-issuable exactly when the
+      // claim it names was REJECTED. An approved claim's window can't be
+      // resurrected by any arithmetic, and a window that names no claim is by
+      // construction not consumed, so there is nothing to release.
+      setWhere: sql`${creator_reward_offer_windows.claim_id} IS NOT NULL
+        AND EXISTS (
+          SELECT 1
+            FROM ${creator_reward_claims}
+           WHERE ${creator_reward_claims.id} = ${creator_reward_offer_windows.claim_id}
+             AND ${creator_reward_claims.status} = 'rejected'
+        )`,
     });
 
   const active = await adminDrizzle

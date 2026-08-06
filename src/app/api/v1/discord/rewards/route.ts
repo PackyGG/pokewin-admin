@@ -12,6 +12,7 @@ import {
 } from "@/lib/db-schema/main/schema";
 import { toNumber } from "@/lib/utils/decimal";
 import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import { checkApiSubjectRateLimit } from "@/lib/api-auth/rate-limit";
 import { computeAllEntitlements } from "@/lib/creator-vip/compute";
 
 /**
@@ -80,11 +81,26 @@ const BodySchema = z.object({
   discordUserId: z
     .string()
     .trim()
-    .regex(/^\d{15,21}$/, "discordUserId must be a numeric Discord user ID"),
+    // 17–20 digits, matching the ONLY caller: the rewards bot validates
+    // `^\d{17,20}$` before every request (adminApi.js) and its button ids parse
+    // with the same bound. The old `{15,21}` was looser than anything that can
+    // reach here, so it only widened the space of ids an attacker could probe.
+    .regex(/^\d{17,20}$/, "discordUserId must be a numeric Discord user ID"),
 });
 
 /** Defensive bound on the payload for an account with a large grant history. */
 const MAX_REWARD_ROWS = 50;
+
+/**
+ * Per-player ceiling for `/check`, ON TOP OF the key's own budget.
+ *
+ * The bot throttles this to 3/min per user — but that runs on the CLIENT side
+ * of the trust boundary, so a leaked key ignores it entirely. Set well above
+ * the bot's default (its limit is env-tunable) so no legitimate `/check` ever
+ * 429s, while a single id can no longer be pulled hundreds of times a minute.
+ * Raise this first if `LIMIT_CHECK_PER_MINUTE` is ever raised past it.
+ */
+const SUBJECT_LIMIT_PER_MIN = 15;
 
 type ClaimableItem = {
   id: string;
@@ -135,6 +151,21 @@ export const POST = withApiKey(
     }
 
     const { discordUserId } = parsed.data;
+
+    const subjectRate = await checkApiSubjectRateLimit(
+      "discord-rewards",
+      discordUserId,
+      SUBJECT_LIMIT_PER_MIN,
+    );
+    if (!subjectRate.allowed) {
+      return apiError(
+        429,
+        "rate_limited",
+        "Too many requests for this Discord account. Try again shortly.",
+        subjectRate,
+      );
+    }
+
     const db = getProdReadDrizzleDb();
 
     // Same single index probe as /discord/linked. providerId is asserted so a
