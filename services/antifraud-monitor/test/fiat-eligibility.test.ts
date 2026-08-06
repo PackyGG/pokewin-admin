@@ -23,6 +23,8 @@ import {
 } from "../src/enrichment.js";
 import {
   CONTAINING_FINGERPRINT_SIGNALS,
+  SMALL_CRYPTO_DEPOSIT_USD,
+  SMALL_CRYPTO_TRUST_WEIGHT,
   type FiatEligibilityBehaviour,
   type FiatEligibilityPolicyInput,
   type FiatEligibilitySubject,
@@ -108,6 +110,7 @@ function behaviourFixture(
   return {
     cryptoDeposits: 3,
     cryptoDepositUsd: 150,
+    cryptoTrustUsd: 150,
     fiatDeposits: 2,
     fiatDepositUsd: 80,
     wagerUsd: 400,
@@ -741,9 +744,11 @@ test("an operator blocklist hit on the checkout IP or device contains", () => {
 
 test("pre-Fiat source and blocklist reads include latest login identity", async () => {
   let sourceSql = "";
+  let sourceValues: unknown[] = [];
   await fiatEligibilityInternals.loadSourceSubject({
-    query: async (text: string) => {
+    query: async (text: string, values: unknown[]) => {
       sourceSql = text;
+      sourceValues = values;
       return { rows: [] };
     },
   } as never, "user-1");
@@ -751,6 +756,11 @@ test("pre-Fiat source and blocklist reads include latest login identity", async 
   assert.match(sourceSql, /event_type = 'login'/);
   assert.match(sourceSql, /latest_login_visitor_id/);
   assert.match(sourceSql, /latest_login_ip/);
+  assert.match(sourceSql, /ABS\(lt\.amount::numeric\) < \$6::numeric/);
+  assert.deepEqual(sourceValues.slice(-2), [
+    SMALL_CRYPTO_DEPOSIT_USD,
+    SMALL_CRYPTO_TRUST_WEIGHT,
+  ]);
 
   let blocklistValues: unknown[] = [];
   let blocklistSql = "";
@@ -806,6 +816,7 @@ test("behaviour rewards self-funded play and punishes reward farming", () => {
     behaviour: behaviourFixture({
       cryptoDeposits: 0,
       cryptoDepositUsd: 0,
+      cryptoTrustUsd: 0,
       fiatDeposits: 0,
       fiatDepositUsd: 0,
       wagerUsd: 0,
@@ -823,14 +834,45 @@ test("behaviour rewards self-funded play and punishes reward farming", () => {
   assert.ok(farmedKeys.includes("behaviour_withdrawing_without_funding"));
 
   // Higher crypto volume buys strictly more headroom than a small deposit.
-  const scoreFor = (cryptoDepositUsd: number): number =>
+  const scoreFor = (cryptoTrustUsd: number): number =>
     fiatEligibilityInternals.automaticReview({
       ...reviewInput(),
       subject: subjectFixture({ signup_ip: "198.51.100.4" }),
-      behaviour: behaviourFixture({ cryptoDepositUsd }),
+      behaviour: behaviourFixture({
+        cryptoDepositUsd: cryptoTrustUsd,
+        cryptoTrustUsd,
+      }),
     }).riskScore;
   assert.ok(scoreFor(600) <= scoreFor(120));
   assert.ok(scoreFor(120) <= scoreFor(30));
+
+  const smallOnly = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({
+      created_at: new Date("2026-07-01T12:00:00.000Z"),
+    }),
+    behaviour: behaviourFixture({
+      cryptoDeposits: 3,
+      cryptoDepositUsd: 42,
+      cryptoTrustUsd: 10.5,
+      fiatDeposits: 0,
+      fiatDepositUsd: 0,
+      gameEvents: 0,
+      rewardUsd: 40,
+      withdrawalRequests: 1,
+    }),
+  });
+  assert.equal(
+    smallOnly.signals.some(
+      (signal) => signal.key === "behaviour_crypto_funding_history",
+    ),
+    false,
+  );
+  assert.ok(
+    smallOnly.signals.some(
+      (signal) => signal.key === "behaviour_reward_farmed_never_funded",
+    ),
+  );
 
   // Credits never apply once anything blocking fired.
   const blocked = fiatEligibilityInternals.automaticReview({
@@ -970,6 +1012,7 @@ test("concurrent identical requests share one automatic provider review", async 
     last_paid_fiat_at: null,
     crypto_deposits: 3,
     crypto_deposit_usd: "150.00",
+    crypto_trust_usd: "150.00",
     fiat_deposits: 2,
     fiat_deposit_usd: "80.00",
     wager_usd: "400.00",
@@ -1101,6 +1144,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
     last_paid_fiat_at: null,
     crypto_deposits: 3,
     crypto_deposit_usd: "150.00",
+    crypto_trust_usd: "150.00",
     fiat_deposits: 2,
     fiat_deposit_usd: "80.00",
     wager_usd: "400.00",

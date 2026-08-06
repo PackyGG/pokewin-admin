@@ -2,7 +2,6 @@ import {
   Activity,
   BadgeCheck,
   Ban,
-  Clock3,
   Fingerprint,
   Gauge,
   KeyRound,
@@ -106,6 +105,21 @@ const ACCOUNT_RULES: Rule[] = [
       "Checkout Fingerprint visitor differs from signup. The lower value applies at 7+ days.",
     points: "+35 / +20",
   },
+  {
+    title: "Latest login IP changed",
+    detail: "Checkout IP differs from the latest verified login.",
+    points: "+10 to +30",
+  },
+  {
+    title: "Latest login device changed",
+    detail: "Checkout device differs from the latest verified login.",
+    points: "+20 to +40",
+  },
+  {
+    title: "Latest login suspected alt",
+    detail: "The latest verified login was marked as suspected alternate use.",
+    points: "+55",
+  },
 ];
 
 const NETWORK_RULES: Rule[] = [
@@ -135,6 +149,12 @@ const NETWORK_RULES: Rule[] = [
 
 const HISTORY_RULES: Rule[] = [
   {
+    title: "Crypto funding trust",
+    detail:
+      "Each completed crypto deposit below $15 counts at 25% strength, so small deposits cannot be stacked into full-strength trust.",
+    points: "Up to -20",
+  },
+  {
     title: "Signup risk history",
     detail: "Prior signup score is at least 25 / at least 60.",
     points: "+20 / +45",
@@ -159,6 +179,39 @@ const HISTORY_RULES: Rule[] = [
     detail:
       "A 7+ day account with completed Fiat deposits receives credit only when no blocker exists.",
     points: "−6 to −15",
+  },
+];
+
+const CONTAINMENT_RULES: Rule[] = [
+  {
+    title: "Forged checkout identity",
+    detail: "Foreign linked user, replayed Fingerprint event, or confirmed bad bot.",
+    points: "Contain",
+    blocking: true,
+  },
+  {
+    title: "Active staff blocklist",
+    detail: "Checkout, latest-login, or signup IP/device matches a blocking rule.",
+    points: "Contain",
+    blocking: true,
+  },
+  {
+    title: "New-account identity change",
+    detail: "IP changed under 7 days old, or device changed under 36 hours old.",
+    points: "Contain",
+    blocking: true,
+  },
+  {
+    title: "Changed identity with bad reputation",
+    detail: "Both IP and device changed and the new identity has bad provider evidence.",
+    points: "Contain",
+    blocking: true,
+  },
+  {
+    title: "Rapid repeat payment",
+    detail: "Another paid Fiat deposit completed less than 60 seconds ago.",
+    points: "Contain",
+    blocking: true,
   },
 ];
 
@@ -227,10 +280,10 @@ export default async function FiatEligibilityPage() {
           accent="rose"
         />
         <KpiTile
-          label="Allow validity"
-          value="60 sec"
-          sub="bound to one checkout attempt"
-          icon={Clock3}
+          label="Check scope"
+          value="One call"
+          sub="one fresh assessment"
+          icon={RefreshCw}
           accent="amber"
         />
         <KpiTile
@@ -278,7 +331,7 @@ export default async function FiatEligibilityPage() {
             facts={[
               "decision = allow",
               "allowed = true",
-              "expires after 60 seconds",
+              "new call = new check",
             ]}
           />
           <DecisionCard
@@ -301,14 +354,14 @@ export default async function FiatEligibilityPage() {
 
       <RuleSection
         icon={Ban}
-        title="Immediate hard blockers"
-        description="One match is enough to return false, regardless of the score."
+        title="Basic and security checks"
+        description="Account access, KYC, and request integrity."
         rules={HARD_BLOCKERS}
       />
       <RuleSection
         icon={BadgeCheck}
-        title="Account and signup signals"
-        description="Fixed points added before the final threshold check."
+        title="Account and identity checks"
+        description="Signup and latest-login evidence both affect the score."
         rules={ACCOUNT_RULES}
       />
       <RuleSection
@@ -319,9 +372,15 @@ export default async function FiatEligibilityPage() {
       />
       <RuleSection
         icon={RefreshCw}
-        title="History and velocity"
-        description="Previous risk and repeated behavior, isolated by environment where applicable."
+        title="History, behavior, and trust"
+        description="Previous risk, repeated behavior, and discounted small crypto deposits."
         rules={HISTORY_RULES}
+      />
+      <RuleSection
+        icon={ShieldX}
+        title="Automatic containment"
+        description="Exact evidence that denies, opens review, disables Fiat, and locks withdrawals."
+        rules={CONTAINMENT_RULES}
       />
 
       <section className="space-y-3">
@@ -333,11 +392,11 @@ export default async function FiatEligibilityPage() {
           />
           <SafetyRow
             title="Single-use Fingerprint event"
-            detail="Repeating the exact payload returns the stored result. Reusing the same event with changed input returns false with fingerprint_reused."
+            detail="Every new checkout call uses a fresh event and runs a new assessment. Retrying the exact same request only returns its stored idempotent result."
           />
           <SafetyRow
             title="Fail closed"
-            detail="Invalid auth, disallowed caller IP, malformed input, provider failure, timeout, persistence error, non-200 response, or expired allow result must stop checkout."
+            detail="Invalid auth, disallowed caller IP, malformed input, provider failure, timeout, persistence error, or non-200 response must stop checkout."
           />
           <SafetyRow
             title="Auditable decision"

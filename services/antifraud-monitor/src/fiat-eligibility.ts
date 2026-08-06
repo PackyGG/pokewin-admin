@@ -23,6 +23,8 @@ import {
   evaluateFiatEligibility,
   MAX_FUTURE_SKEW_MS,
   MAX_REQUEST_AGE_MS,
+  SMALL_CRYPTO_DEPOSIT_USD,
+  SMALL_CRYPTO_TRUST_WEIGHT,
   accountAgeDays,
   badDeviceReputation,
   badIpReputation,
@@ -129,6 +131,7 @@ type SourceSubjectRow = Omit<Signup, "user_agent"> & {
   last_paid_fiat_at: Date | null;
   crypto_deposits: number;
   crypto_deposit_usd: string;
+  crypto_trust_usd: string;
   fiat_deposits: number;
   fiat_deposit_usd: string;
   wager_usd: string;
@@ -229,6 +232,7 @@ function behaviourFrom(
   return {
     cryptoDeposits: row.crypto_deposits ?? 0,
     cryptoDepositUsd: usd(row.crypto_deposit_usd),
+    cryptoTrustUsd: usd(row.crypto_trust_usd),
     fiatDeposits: row.fiat_deposits ?? 0,
     fiatDepositUsd: usd(row.fiat_deposit_usd),
     wagerUsd: usd(row.wager_usd),
@@ -282,6 +286,7 @@ async function loadSourceSubject(
         paid.last_paid_fiat_at,
         COALESCE(dep.crypto_deposits, 0)::int AS crypto_deposits,
         COALESCE(dep.crypto_deposit_usd, 0)::text AS crypto_deposit_usd,
+        COALESCE(dep.crypto_trust_usd, 0)::text AS crypto_trust_usd,
         COALESCE(dep.fiat_deposits, 0)::int AS fiat_deposits,
         COALESCE(dep.fiat_deposit_usd, 0)::text AS fiat_deposit_usd,
         COALESCE(act.wager_usd, 0)::text AS wager_usd,
@@ -341,6 +346,22 @@ async function loadSourceSubject(
                 OR lt.fireblocks_tx_id IS NOT NULL
               )
           ), 0) AS crypto_deposit_usd,
+          COALESCE(SUM(
+            CASE
+              WHEN intent.id IS NULL
+                AND (
+                  lt.crypto_asset IS NOT NULL
+                  OR lt.blockchain_tx_hash IS NOT NULL
+                  OR lt.fireblocks_tx_id IS NOT NULL
+                )
+              THEN CASE
+                WHEN ABS(lt.amount::numeric) < $6::numeric
+                  THEN ABS(lt.amount::numeric) * $7::numeric
+                ELSE ABS(lt.amount::numeric)
+              END
+              ELSE 0
+            END
+          ), 0) AS crypto_trust_usd,
           COUNT(*) FILTER (WHERE intent.id IS NOT NULL) AS fiat_deposits,
           COALESCE(SUM(ABS(lt.amount::numeric)) FILTER (
             WHERE intent.id IS NOT NULL
@@ -396,6 +417,8 @@ async function loadSourceSubject(
       GAME_WAGER_TYPES,
       GAME_PAYOUT_TYPES,
       REWARD_TYPES,
+      SMALL_CRYPTO_DEPOSIT_USD,
+      SMALL_CRYPTO_TRUST_WEIGHT,
     ],
   );
   return result.rows[0] ?? null;

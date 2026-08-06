@@ -20,7 +20,7 @@
 import type { EnrichmentResult } from "./enrichment.js";
 import type { Signal } from "./types.js";
 
-/** Allow decisions are valid for exactly this long. */
+/** Maximum freshness window recorded for a response; never a reusable grant. */
 export const DECISION_TTL_MS = 60_000;
 /** Backend request and Fingerprint event freshness ceiling. */
 export const MAX_REQUEST_AGE_MS = 120_000;
@@ -43,6 +43,10 @@ export const ESTABLISHED_ACCOUNT_DAYS = 7;
 export const LOYAL_ACCOUNT_DAYS = 30;
 /** Crypto volume that counts as real skin in the game (USD). */
 export const MEANINGFUL_CRYPTO_USD = 25;
+/** Individual crypto deposits below this value are cheap to manufacture. */
+export const SMALL_CRYPTO_DEPOSIT_USD = 15;
+/** Small deposits contribute only this share of their value to trust. */
+export const SMALL_CRYPTO_TRUST_WEIGHT = 0.25;
 /** Ceiling on every behaviour/history credit combined. */
 export const MAX_TRUST_CREDIT = 30;
 
@@ -171,7 +175,10 @@ export type FiatEligibilitySubject = {
  */
 export type FiatEligibilityBehaviour = {
   cryptoDeposits: number;
+  /** Raw completed crypto-deposit value for audit evidence. */
   cryptoDepositUsd: number;
+  /** Fraud-weighted value used by the trust policy. */
+  cryptoTrustUsd: number;
   fiatDeposits: number;
   fiatDepositUsd: number;
   wagerUsd: number;
@@ -345,18 +352,20 @@ export function behaviourSignals(input: {
     );
   }
 
-  if (behaviour.cryptoDepositUsd >= MEANINGFUL_CRYPTO_USD) {
+  if (behaviour.cryptoTrustUsd >= MEANINGFUL_CRYPTO_USD) {
     // Self-funded crypto history is the strongest good-faith evidence we hold:
     // it is irreversible money the account already committed.
-    const volumeCredit = behaviour.cryptoDepositUsd >= 500
+    const volumeCredit = behaviour.cryptoTrustUsd >= 500
       ? 20
-      : behaviour.cryptoDepositUsd >= 100
+      : behaviour.cryptoTrustUsd >= 100
         ? 14
         : 8;
     credit(
       "behaviour_crypto_funding_history",
       `The account completed ${behaviour.cryptoDeposits} crypto deposit(s) `
-        + `worth $${behaviour.cryptoDepositUsd.toFixed(2)}.`,
+        + `worth $${behaviour.cryptoDepositUsd.toFixed(2)}; `
+        + `$${behaviour.cryptoTrustUsd.toFixed(2)} counts toward trust after `
+        + `discounting deposits below $${SMALL_CRYPTO_DEPOSIT_USD}.`,
       volumeCredit,
     );
   }
@@ -370,8 +379,9 @@ export function behaviourSignals(input: {
     );
   }
 
-  const fundedUsd = behaviour.cryptoDepositUsd + behaviour.fiatDepositUsd;
-  if (behaviour.gameEvents >= 25 && fundedUsd > 0) {
+  const hasMeaningfulFunding = behaviour.fiatDeposits > 0
+    || behaviour.cryptoTrustUsd >= MEANINGFUL_CRYPTO_USD;
+  if (behaviour.gameEvents >= 25 && hasMeaningfulFunding) {
     credit(
       "behaviour_normal_play",
       `The account has ${behaviour.gameEvents} paid game events and `
@@ -383,7 +393,7 @@ export function behaviourSignals(input: {
   // Reward-only accounts: value came from rain, promos and claims, never from
   // the account's own money. A card showing up on one of those is the classic
   // farm-then-launder shape, so it pays points instead of earning them.
-  if (fundedUsd <= 0 && behaviour.rewardUsd > 0) {
+  if (!hasMeaningfulFunding && behaviour.rewardUsd > 0) {
     signals.push({
       key: "behaviour_reward_farmed_never_funded",
       detail:
@@ -397,7 +407,7 @@ export function behaviourSignals(input: {
     });
   }
 
-  if (fundedUsd <= 0 && behaviour.withdrawalRequests > 0) {
+  if (!hasMeaningfulFunding && behaviour.withdrawalRequests > 0) {
     signals.push({
       key: "behaviour_withdrawing_without_funding",
       detail:
@@ -410,7 +420,7 @@ export function behaviourSignals(input: {
     });
   }
 
-  if (behaviour.gameEvents === 0 && fundedUsd > 0) {
+  if (behaviour.gameEvents === 0 && hasMeaningfulFunding) {
     signals.push({
       key: "behaviour_funding_without_play",
       detail: "The account funded before but has never played a paid game.",

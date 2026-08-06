@@ -22,6 +22,11 @@ test("the automatic Fiat eligibility explainer remains a guarded direct route", 
   assert.match(page, /Fingerprint Pro Plus/);
   assert.match(page, /proxycheck\.io/);
   assert.match(page, /Single-use Fingerprint event/);
+  assert.match(page, /new call = new check/);
+  assert.match(page, /Latest login IP changed/);
+  assert.match(page, /below \$15 counts at 25% strength/);
+  assert.match(page, /Automatic containment/);
+  assert.doesNotMatch(page, /expires after 60 seconds/);
   assert.match(page, /Fail closed/);
   assert.doesNotMatch(sidebar, /href:\s*"\/antifraud\/fiat-eligibility"/);
   assert.match(
