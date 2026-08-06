@@ -97,6 +97,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/user-stats",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId, username }. Exact case-insensitive lookup by the public Packy username used in chat and leaderboards. Returns wager, weighted leaderboard wager, deposits, and creator earnings only for the user's current unexpired period on a code owned by the creator linked to that Discord section.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/dashboard-context",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns only the linked Packy user ID for an authorized dashboard operator in an active creator section.",

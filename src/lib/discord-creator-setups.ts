@@ -12,6 +12,7 @@ import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { postgresTimestamp } from "@/lib/postgres-runtime";
 import { toNumber } from "@/lib/utils/decimal";
 import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
@@ -56,6 +57,23 @@ export type CreatorSetupStats = {
   };
   totals: CreatorCodeStats;
   byCode: CreatorCodeStats[];
+};
+
+export type CreatorSetupUserStats = {
+  generatedAt: string;
+  player: {
+    username: string;
+    code: string;
+    periodStartedAt: string;
+    periodExpiresAt: string;
+  };
+  totals: {
+    wagerCount: number;
+    wagerUsd: number;
+    leaderboardWagerUsd: number;
+    depositsUsd: number;
+    earningsUsd: number;
+  };
 };
 
 export type CreatorCodeStats = {
@@ -546,6 +564,141 @@ export async function getCreatorSetupStats(input: {
         clicksByCode.get(code),
       ),
     ),
+  };
+}
+
+/**
+ * Returns one public-username player's activity only while their current,
+ * unexpired code belongs to the creator bound to this Discord section.
+ *
+ * The username is the canonical `user.username` rendered by Packy's public
+ * chat and creator leaderboards. Missing users, expired codes, and users on
+ * another creator's code deliberately share one error so this lookup cannot
+ * be used to enumerate unrelated accounts.
+ */
+export async function getCreatorSetupUserStats(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+  username: string;
+}): Promise<CreatorSetupUserStats> {
+  const setup = await requireLinkedSetupActor(input);
+  await requireActiveCreator(setup.creator_user_id);
+
+  const db = getProdReadDrizzleDb();
+  const excludedUserIds = await getExcludedUserIds();
+  const excludedFilter =
+    excludedUserIds.length > 0
+      ? sql`AND target.id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
+      : sql``;
+  const targetResult = await db.execute<{
+    id: string;
+    username: string;
+    code: string;
+    period_started_at: Date | string;
+    period_expires_at: Date | string;
+    wager_count: string;
+    wager_usd: string;
+    leaderboard_wager_usd: string;
+    deposits_usd: string;
+    earnings_usd: string;
+  }>(sql`
+    WITH target AS (
+      SELECT
+        candidate.id,
+        candidate.username,
+        UPPER(candidate.affiliate_code) AS code,
+        candidate.affiliate_code_expires_at - INTERVAL '7 days' AS period_started_at,
+        candidate.affiliate_code_expires_at AS period_expires_at
+      FROM "user" candidate
+      WHERE LOWER(candidate.username) = LOWER(${input.username})
+        AND candidate.role::text NOT IN ('admin', 'support', 'creator')
+        AND candidate.affiliate_code_active = true
+        AND candidate.affiliate_code IS NOT NULL
+        AND candidate.affiliate_code_expires_at > NOW()
+        AND EXISTS (
+          SELECT 1
+          FROM affiliate_codes owned
+          WHERE owned.user_id = ${setup.creator_user_id}
+            AND UPPER(owned.code) = UPPER(candidate.affiliate_code)
+        )
+      LIMIT 1
+    ), usage AS (
+      SELECT
+        COUNT(*) FILTER (WHERE acu.usage_type::text = 'wager')::text AS wager_count,
+        COALESCE(SUM(acu.wager_amount_usd::numeric) FILTER (
+          WHERE acu.usage_type::text = 'wager'
+        ), 0)::text AS wager_usd,
+        COALESCE(SUM(
+          COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric
+        ) FILTER (WHERE acu.usage_type::text = 'wager'), 0)::text AS leaderboard_wager_usd,
+        COALESCE(SUM(acu.referrer_cut_usd::numeric), 0)::text AS earnings_usd
+      FROM target
+      LEFT JOIN affiliate_code_usages acu
+        ON acu.referred_user_id = target.id
+        AND acu.affiliate_user_id = ${setup.creator_user_id}
+        AND UPPER(acu.code) = target.code
+        AND acu.status::text = 'completed'
+        AND acu.created_at >= target.period_started_at
+        AND acu.created_at <= NOW()
+    ), deposits AS (
+      SELECT COALESCE(SUM(lt.amount::numeric), 0)::text AS deposits_usd
+      FROM target
+      LEFT JOIN ledger_transactions lt
+        ON lt.user_id = target.id
+        AND lt.type = 'deposit'
+        AND lt.status = 'completed'
+        AND lt.created_at >= target.period_started_at
+        AND lt.created_at <= NOW()
+    )
+    SELECT
+      target.*,
+      usage.wager_count,
+      usage.wager_usd,
+      usage.leaderboard_wager_usd,
+      deposits.deposits_usd,
+      usage.earnings_usd
+    FROM target
+    CROSS JOIN usage
+    CROSS JOIN deposits
+    WHERE true
+      ${excludedFilter}
+    LIMIT 1
+  `);
+  const target = targetResult.rows[0];
+  if (!target) {
+    throw new CreatorSetupError(
+      404,
+      "creator_user_not_active",
+      "No active user with that username is currently using this creator's code.",
+    );
+  }
+
+  const periodStartedAt = postgresTimestamp(
+    target.period_started_at,
+    "creatorUserStats.period_started_at",
+  );
+  const periodExpiresAt = postgresTimestamp(
+    target.period_expires_at,
+    "creatorUserStats.period_expires_at",
+  );
+
+  return {
+    generatedAt: new Date().toISOString(),
+    player: {
+      username: target.username,
+      code: target.code,
+      periodStartedAt: periodStartedAt.toISOString(),
+      periodExpiresAt: periodExpiresAt.toISOString(),
+    },
+    totals: {
+      wagerCount: Number(target.wager_count ?? 0),
+      wagerUsd: money(target.wager_usd ?? 0),
+      leaderboardWagerUsd: money(target.leaderboard_wager_usd ?? 0),
+      depositsUsd: money(target.deposits_usd ?? 0),
+      earningsUsd: money(target.earnings_usd ?? 0),
+    },
   };
 }
 

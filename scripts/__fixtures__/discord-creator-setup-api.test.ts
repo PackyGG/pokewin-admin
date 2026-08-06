@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, superusers, operators, prepare, complete, repair, cancel, link, stats, dashboardContext, deal, rewards, migration, linkMigration, scopes, endpoints] =
+  const [service, superusers, operators, prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, rewards, migration, linkMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
       read("src/lib/discord-bot-superusers.ts"),
@@ -16,6 +16,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/app/api/v1/discord/creator-setups/cancel/route.ts"),
       read("src/app/api/v1/discord/creator-setups/link/route.ts"),
       read("src/app/api/v1/discord/creator-setups/stats/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/user-stats/route.ts"),
       read("src/app/api/v1/discord/creator-setups/dashboard-context/route.ts"),
       read("src/app/api/v1/discord/creator-setups/deal/route.ts"),
       read("src/app/api/v1/discord/creator-setups/rewards/route.ts"),
@@ -47,7 +48,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, repair, cancel, link, stats, dashboardContext, deal, rewards]) {
+  for (const route of [prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, rewards]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
@@ -62,6 +63,17 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(link, /principal\.keyId/);
   assert.match(stats, /getCreatorSetupStats/);
   assert.match(stats, /rejectWrongGuild/);
+  assert.match(userStats, /getCreatorSetupUserStats/);
+  assert.match(userStats, /username: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(64\)/);
+  assert.match(userStats, /rejectWrongGuild/);
+  assert.match(service, /export async function getCreatorSetupUserStats/);
+  assert.match(service, /LOWER\(candidate\.username\) = LOWER\(\$\{input\.username\}\)/);
+  assert.match(service, /candidate\.affiliate_code_active = true/);
+  assert.match(service, /candidate\.affiliate_code_expires_at > NOW\(\)/);
+  assert.match(service, /owned\.user_id = \$\{setup\.creator_user_id\}/);
+  assert.match(service, /creator_user_not_active/);
+  assert.match(service, /weighted_wager_amount_usd/);
+  assert.match(service, /lt\.type = 'deposit'/);
   assert.match(dashboardContext, /getCreatorDashboardContext/);
   assert.match(dashboardContext, /rejectWrongGuild/);
   assert.match(service, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);
@@ -171,6 +183,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
   assert.match(endpoints, /does not require or change the account's on-site Discord OAuth link/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/user-stats/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/dashboard-context/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deal/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
