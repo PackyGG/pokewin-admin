@@ -11,12 +11,6 @@ export const MESSAGE_LOG_GUILD_IDS = new Set([
   CREATOR_MESSAGE_LOG_GUILD_ID,
   VIP_MESSAGE_LOG_GUILD_ID,
 ]);
-export const MESSAGE_LOG_EXCLUDED_USER_IDS = new Set([
-  "660132586630414338",
-  "934854938641715240",
-  "188051599099297802",
-]);
-
 export type DiscordMessageAttachment = {
   id: string;
   name: string;
@@ -264,8 +258,7 @@ export async function recordDiscordMessageEvents(
       const webhookId = input.message.webhookId ?? snapshot?.webhook_id ?? null;
       const excludedFromLogging = snapshot?.excluded_from_logging === true
         || authorIsBot === true
-        || webhookId !== null
-        || (authorId !== null && MESSAGE_LOG_EXCLUDED_USER_IDS.has(authorId));
+        || webhookId !== null;
       if (excludedFromLogging) {
         const observedAt = new Date(input.observedAt).toISOString();
         const createdAt = snapshot?.discord_created_at
@@ -331,7 +324,7 @@ export async function recordDiscordMessageEvents(
       }
       if (!snapshot && authorId === null) {
         // A partial mutation with no baseline cannot be safely classified. It
-        // may belong to an excluded admin/bot/webhook, so fail closed instead
+        // may belong to an excluded bot/webhook, so fail closed instead
         // of creating an "unknown user" audit record.
         results.push({ eventId: input.eventId, ignored: true });
         continue;
