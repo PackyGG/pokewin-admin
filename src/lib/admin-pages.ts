@@ -53,13 +53,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // by the same __can_delete_user capability since restoring is the
   // inverse of deleting.
   { group: "Navigation", label: "Deleted Users", key: "/users/deleted" },
-  // Standalone /withdrawals route is now a redirect to
-  // /transactions/deposits?tab=withdrawals (the unified Transactions
-  // page with deposits + withdrawals tabs). The permission key is
-  // retained so support users who only had explicit withdrawals
-  // access still pass requirePageAccess on the legacy route; the
-  // combined page itself gates on `/transactions/deposits`.
-  { group: "Navigation", label: "Withdrawals (legacy)", key: "/withdrawals" },
+  { group: "Navigation", label: "Withdrawals", key: "/withdrawals" },
   // Insights — cross-cutting analytical surfaces. Mirrors the sidebar
   // group sitting directly below Overview. Separate from the per-feature
   // analytics keys (e.g. /rewards/analytics) so role grants can be
@@ -125,7 +119,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   // The deposits/withdrawals ledger lives in the Overview nav group (it
   // was NOT part of the Transactions→Content merge); its picker group is
   // left unchanged.
-  { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
+  { group: "Transactions", label: "Fiat Deposit Reviews", key: "/transactions/deposits" },
   { group: "Navigation", label: "Fiat", key: "/fiat" },
   // Notifications — global broadcast announcements (backend /v1/admin/announcements).
   // Sits with the player-facing operational tools.

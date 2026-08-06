@@ -25,15 +25,8 @@ test("the permission-gated Fiat Fraud route remains available without duplicate 
 test("The retired Admin deep link redirects to Fraud with query state intact", () => {
   const adminPage = read("src/app/(admin)/transactions/deposits/page.tsx");
   const middleware = read("src/middleware.ts");
-  assert.match(adminPage, /retiredFraudTab === "fiat-fraud"/);
-  assert.match(adminPage, /absoluteOriginForBasePath\("\/antifraud"\)/);
-  assert.match(
-    adminPage,
-    /retiredFraudTab === "refunds" \? "\/refunds" : "\/fiat-fraud"/,
-  );
-  assert.match(adminPage, /key === "tab"/);
-  assert.match(adminPage, /destination\.searchParams\.append\(key, value\)/);
-  assert.match(adminPage, /redirect\(destination\.toString\(\)\)/);
+  assert.doesNotMatch(adminPage, /retiredFraudTab/);
+  assert.doesNotMatch(adminPage, /value: "fiat-fraud"/);
   assert.match(middleware, /pathname === "\/transactions\/deposits"/);
   assert.match(middleware, /retiredTransactionsTab === "fiat-fraud"/);
   assert.match(middleware, /fraudTransactionsRoute/);

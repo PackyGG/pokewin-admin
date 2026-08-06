@@ -23,6 +23,7 @@ test("the standalone Antifraud withdrawal feature stays removed", () => {
   );
   const hosts = read("src/lib/app-hosts.ts");
   const middleware = read("src/middleware.ts");
+  const mainWithdrawals = read("src/app/(admin)/withdrawals/page.tsx");
   const server = read("services/antifraud-monitor/src/server.ts");
   const auth = read("services/antifraud-monitor/src/auth.ts");
   const fraudRoutes = hosts.slice(
@@ -32,7 +33,9 @@ test("the standalone Antifraud withdrawal feature stays removed", () => {
 
   assert.doesNotMatch(sidebar, /\/antifraud\/withdrawals/);
   assert.doesNotMatch(fraudRoutes, /"withdrawals"/);
-  assert.match(middleware, /if \(pathname === "\/withdrawals"\)/);
+  assert.doesNotMatch(middleware, /if \(pathname === "\/withdrawals"\)/);
+  assert.match(mainWithdrawals, /requirePageAccess\("\/withdrawals"\)/);
+  assert.match(mainWithdrawals, /getWithdrawals/);
   assert.doesNotMatch(server, /WithdrawalRiskService|registerWithdrawalRoutes/);
   assert.doesNotMatch(auth, /\/v1\/withdrawals/);
 });

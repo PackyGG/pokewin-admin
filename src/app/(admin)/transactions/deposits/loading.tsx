@@ -1,22 +1,20 @@
 import {
   PageHeroSkeleton,
-  ToolbarSkeleton,
-  TableSkeleton,
   PaginationSkeleton,
   SectionHeadingSkeleton,
+  TableSkeleton,
 } from "@/components/loading-skeletons";
+import { Skeleton } from "@/components/ui/skeleton";
 
-/** Matches /transactions/deposits: hero, search toolbar, deposits table section. */
-export default function DepositsTransactionsLoading() {
+export default function FiatDepositReviewsLoading() {
   return (
     <div className="space-y-6">
       <PageHeroSkeleton />
-      <div className="space-y-4">
-        <ToolbarSkeleton filters={0} />
-      </div>
+      <Skeleton className="h-40 w-full rounded-xl" />
       <div className="space-y-3">
-        <SectionHeadingSkeleton titleWidth={120} />
-        <TableSkeleton rows={15} columns={6} />
+        <SectionHeadingSkeleton titleWidth={180} />
+        <Skeleton className="h-8 w-full" />
+        <TableSkeleton rows={12} columns={6} />
         <PaginationSkeleton />
       </div>
     </div>

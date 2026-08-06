@@ -283,21 +283,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Sidebar label is "Transactions" (the unified deposits+withdrawals
-    // surface); palette label is "Deposits". Same href/pageKey.
+    // Authoritative queue for verified Whop payments awaiting balance credit.
     id: "nav.deposits",
     group: "Overview",
-    label: "Transactions",
-    paletteLabel: "Deposits",
+    label: "Fiat Reviews",
+    paletteLabel: "Fiat Deposit Reviews",
     href: "/transactions/deposits",
     pageKey: "/transactions/deposits",
-    // Base `icon` is the palette icon; `sidebarIcon` overrides it in the
-    // sidebar. The palette historically used ArrowDownToLine for Deposits;
-    // the sidebar uses Receipt for the unified Transactions entry.
     icon: "ArrowDownToLine",
     sidebarIcon: "Receipt",
-    description: "Deposit & withdrawal ledger",
-    keywords: ["crypto", "payments"],
+    description: "Approve or refund Fiat deposit credits",
+    keywords: ["fiat", "whop", "approve", "refund", "payments"],
     inSidebar: true,
     inPalette: true,
   },

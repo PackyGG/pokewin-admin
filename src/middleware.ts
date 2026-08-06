@@ -86,18 +86,6 @@ export async function middleware(request: NextRequest) {
 
   /** Serve this request, rewriting into the host's segment when it has one. */
   const serve = () => {
-    // The normal Admin app consolidated its legacy /withdrawals list into the
-    // Transactions page. Resolve the owning host too, so retired Fraud links
-    // go directly to the normal admin queue without an intermediate 404.
-    if (pathname === "/withdrawals") {
-      const target = appHost
-        ? redirectTargetForHost(appHost, "/transactions/deposits")
-        : null;
-      const url = new URL(target ?? "/transactions/deposits", request.url);
-      url.search = request.nextUrl.search;
-      url.searchParams.set("tab", "withdrawals");
-      return NextResponse.redirect(url, 308);
-    }
     if (redirectTarget) {
       const url = new URL(redirectTarget);
       url.search = request.nextUrl.search;
