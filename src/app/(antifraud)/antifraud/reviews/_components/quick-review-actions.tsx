@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { Ban, Clock3, ShieldCheck } from "lucide-react";
+import { BadgeCheck, Ban, Clock3, ShieldCheck } from "lucide-react";
 import { toast } from "sonner";
 
 import { StepUpField } from "@/components/step-up-field";
@@ -18,9 +18,21 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import {
   postponeReview,
+  requireReviewKyc,
   runQuickReviewAccountAction,
   type QuickReviewAccountAction,
 } from "../actions";
@@ -102,6 +114,12 @@ export function QuickReviewActions({
           onActionCompleted={dismissal?.completeAction}
         />
       ))}
+      <RequireKycButton
+        reviewId={reviewId}
+        account={targetUsername ?? targetUserId}
+        compact={compact}
+        onActionCompleted={dismissal?.completeAction}
+      />
       <PostponeButton
         reviewId={reviewId}
         status={status}
@@ -162,6 +180,141 @@ function PostponeButton({
       <Clock3 className="mr-1.5 size-3.5" />
       {pending ? "Postponing…" : "Postpone"}
     </Button>
+  );
+}
+
+/**
+ * Additive, not a verdict: unlike Approve/Ban this never touches the case
+ * status, so it stays available on any live case regardless of who owns it.
+ * Delegates entirely to the canonical `requireReviewKyc` action, which is
+ * gated the same as the KYC workspace (owner/admin, fresh 2FA, and the
+ * account must already have withdrawals locked) — this dialog just collects
+ * the same inputs the workspace does.
+ */
+function RequireKycButton({
+  reviewId,
+  account,
+  compact,
+  onActionCompleted,
+}: {
+  reviewId: string;
+  account: string;
+  compact: boolean;
+  onActionCompleted?: () => void;
+}) {
+  const router = useRouter();
+  const reasonId = useId();
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [credential, setCredential] = useState("");
+  const [pending, startTransition] = useTransition();
+  const idempotencyKey = useRef<string | null>(null);
+
+  function reset() {
+    setReason("");
+    setCredential("");
+  }
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    startTransition(async () => {
+      try {
+        idempotencyKey.current ??= crypto.randomUUID();
+        const result = await requireReviewKyc({
+          reviewId,
+          reason,
+          credential,
+          idempotencyKey: idempotencyKey.current,
+        });
+        if (!result.ok) {
+          toast.error(result.error);
+          return;
+        }
+        setOpen(false);
+        reset();
+        onActionCompleted?.();
+        toast.success(`${account} now requires KYC`);
+        if (!onActionCompleted) router.refresh();
+      } catch (error) {
+        toast.error(
+          error instanceof Error ? error.message : "The action failed",
+        );
+      }
+    });
+  }
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next && !pending) reset();
+      }}
+    >
+      <DialogTrigger
+        render={
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            disabled={pending}
+            className={cn(compact && "h-8 px-2.5 text-xs")}
+          />
+        }
+      >
+        <BadgeCheck className="mr-1.5 size-3.5" />
+        Require KYC
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-md">
+        <form onSubmit={handleSubmit}>
+          <DialogHeader>
+            <DialogTitle>Require KYC on this account?</DialogTitle>
+            <DialogDescription>
+              {account} keeps its current case status — this only opens a new
+              KYC cycle. Available only while balance and item withdrawals are
+              already locked.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-1.5">
+              <Label htmlFor={reasonId}>Internal reason</Label>
+              <Textarea
+                id={reasonId}
+                value={reason}
+                onChange={(event) => setReason(event.target.value)}
+                rows={3}
+                minLength={4}
+                maxLength={500}
+                placeholder="Why this account must verify"
+                required
+              />
+            </div>
+            <StepUpField
+              value={credential}
+              onChange={setCredential}
+              disabled={pending}
+              label="Fresh TOTP or passkey"
+            />
+          </div>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => setOpen(false)}
+              disabled={pending}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="submit"
+              disabled={pending || !credential || reason.trim().length < 4}
+            >
+              {pending ? "Requiring…" : "Require KYC"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

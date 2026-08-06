@@ -126,6 +126,11 @@ export const ANTIFRAUD_AUDIT_EVENTS: Record<string, EventDefinition> = {
     category: "cases",
     tone: "neutral",
   },
+  account_review_kyc_required: {
+    label: "KYC required from case review",
+    category: "cases",
+    tone: "warn",
+  },
 
   // KYC
   user_kyc_required: {

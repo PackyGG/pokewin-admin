@@ -53,7 +53,7 @@ test("Fraud review surfaces do not expose escalation controls", async () => {
   }
 });
 
-test("Account Review exposes only approve, ban, and postpone", async () => {
+test("Account Review's status-changing quick actions are only approve, ban, and postpone", async () => {
   const component = await readFile(
     new URL(
       "../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
@@ -82,4 +82,39 @@ test("Account Review exposes only approve, ban, and postpone", async () => {
   assert.match(actions, /runQuickReviewAccountAction/);
   assert.match(actions, /__can_ban_users/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
+});
+
+test("Account Review can require KYC without changing the case status", async () => {
+  const component = await readFile(
+    new URL(
+      "../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  const actions = await readFile(
+    new URL(
+      "../../src/app/(antifraud)/antifraud/reviews/actions.ts",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+
+  // The dialog reuses the KYC workspace's own gated action instead of
+  // duplicating the KYC-triggering logic.
+  assert.match(component, /<RequireKycButton/);
+  assert.match(component, /requireReviewKyc/);
+  assert.match(actions, /export async function requireReviewKyc/);
+  assert.match(actions, /requireAccountKyc\(\{/);
+  assert.match(actions, /from "\.\.\/kyc\/actions"/);
+  assert.match(actions, /account_review_kyc_required/);
+
+  // Additive, not a verdict: requireReviewKyc must never touch the review's
+  // status the way updateReviewStatus / runQuickReviewAccountAction do.
+  const requireKycBody = actions.slice(
+    actions.indexOf("export async function requireReviewKyc"),
+    actions.indexOf("const assignSchema"),
+  );
+  assert.doesNotMatch(requireKycBody, /status:\s*"(open|in_review|cleared|flagged)"/);
+  assert.doesNotMatch(requireKycBody, /antifraud_reviews\)\s*\.set\(/);
 });

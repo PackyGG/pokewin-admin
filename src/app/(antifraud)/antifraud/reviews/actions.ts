@@ -36,6 +36,7 @@ import {
 } from "@/lib/antifraud/withdrawal-release";
 import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
 import { submitAntifraudCaseDecision } from "@/lib/antifraud/monitor-api";
+import { requireAccountKyc } from "../kyc/actions";
 
 /**
  * Account-review mutations.
@@ -990,6 +991,99 @@ export async function runQuickReviewAccountAction(
   revalidatePath("/antifraud/reviews");
   revalidatePath(`/antifraud/reviews/${reviewId}`);
   return { withdrawalRelease: "not_applicable" };
+}
+
+const requireReviewKycSchema = z.object({
+  reviewId: uuid,
+  reason: z
+    .string()
+    .trim()
+    .min(4, "Say why this account needs KYC")
+    .max(500, "Keep the reason under 500 characters"),
+  credential: z
+    .string()
+    .trim()
+    .min(1, "A 2FA code or passkey is required")
+    .max(4_096),
+  idempotencyKey: z.string().uuid("Invalid idempotency key"),
+});
+
+export type RequireReviewKycResult =
+  | { ok: true }
+  | { ok: false; error: string };
+
+/**
+ * Manually require KYC on the case's account from Account Review, WITHOUT
+ * moving the case's status — unlike Approve/Ban, requiring KYC is additive
+ * evidence gathering, not a verdict, so the case stays exactly where the
+ * analyst left it.
+ *
+ * Delegates the actual state change to the canonical `requireAccountKyc`
+ * (owner/admin gate, fresh 2FA, the withdrawals-already-locked eligibility
+ * check, and the backend KYC call + its own `user_kyc_required` audit row) so
+ * Account Review and the KYC workspace can never disagree about what
+ * "require KYC" does or who is allowed to trigger it. This wrapper only adds
+ * the case-scoped trail on top: an `account_review_kyc_required` audit row
+ * and a note on the case.
+ */
+export async function requireReviewKyc(
+  input: unknown,
+): Promise<RequireReviewKycResult> {
+  const session = await requireAntifraudAccess();
+  const parsed = requireReviewKycSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const { reviewId, reason, credential, idempotencyKey } = parsed.data;
+
+  const [review] = await adminDrizzle
+    .select({
+      targetUserId: antifraud_reviews.target_user_id,
+      targetUsername: antifraud_reviews.target_username,
+    })
+    .from(antifraud_reviews)
+    .where(eq(antifraud_reviews.id, reviewId))
+    .limit(1);
+  if (!review) throw new Error("That case no longer exists");
+
+  const result = await requireAccountKyc({
+    account: review.targetUserId,
+    reason,
+    credential,
+    idempotencyKey,
+  });
+  if (!result.success) return { ok: false, error: result.error };
+
+  try {
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "account_review_kyc_required",
+      targetUserId: review.targetUserId,
+      metadata: {
+        source: "antifraud_reviews",
+        reviewId,
+        reason,
+        idempotencyKey,
+      },
+    });
+  } catch (error) {
+    console.error("[antifraud] review kyc audit failed:", error);
+  }
+
+  try {
+    await adminDrizzle.insert(antifraud_review_notes).values({
+      review_id: reviewId,
+      admin_user_id: session.userId,
+      kind: "action",
+      body: `Required KYC for ${
+        review.targetUsername ?? review.targetUserId
+      }.`,
+    });
+  } catch (error) {
+    console.error("[antifraud] review kyc note failed:", error);
+  }
+
+  revalidatePath("/antifraud/reviews");
+  revalidatePath(`/antifraud/reviews/${reviewId}`);
+  return { ok: true };
 }
 
 const assignSchema = z.object({
