@@ -153,20 +153,6 @@ export default async function FiatDepositReviewsPage({
 
   return (
     <div className="space-y-3">
-        <div className="flex justify-end">
-          <span className="text-xs text-muted-foreground">
-            {queue.total} payment{queue.total === 1 ? "" : "s"}
-          </span>
-        </div>
-
-        {queueFailed && (
-          <div className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-xs text-amber-700 dark:text-amber-300">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-            The Antifraud review queue could not be loaded safely. No deposit
-            decisions are available until both decision stores respond.
-          </div>
-        )}
-
         <div className="space-y-3 lg:hidden">
           {queue.items.length === 0 ? (
             <QueueEmpty failed={queueFailed} />
