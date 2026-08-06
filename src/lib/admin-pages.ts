@@ -119,7 +119,10 @@ export const ADMIN_PAGES: AdminPage[] = [
   // The deposits/withdrawals ledger lives in the Overview nav group (it
   // was NOT part of the Transactions→Content merge); its picker group is
   // left unchanged.
-  { group: "Transactions", label: "Fiat Deposit Reviews", key: "/transactions/deposits" },
+  // Grants the deposits + card-payments + withdrawals ledger. It does NOT
+  // grant the Fiat credit review queue — that queue moved to the Fraud
+  // workspace and is gated by Antifraud access, not by this key.
+  { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
   { group: "Navigation", label: "Fiat", key: "/fiat" },
   // Notifications — global broadcast announcements (backend /v1/admin/announcements).
   // Sits with the player-facing operational tools.

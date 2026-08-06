@@ -168,6 +168,13 @@ export async function middleware(request: NextRequest) {
     // canonical paths, so both would otherwise fall through to the in-render
     // redirect this block exists to prevent. Segment hosts are excluded: they
     // never serve /transactions/deposits in the first place.
+    //
+    // Scope: ONLY the retired tab selectors are forwarded. The bare path
+    // (and ?tab=deposits / card-payments / withdrawals) is the Admin
+    // Transactions ledger and must render here — a blanket redirect on
+    // the pathname took the whole money-flow surface off the dashboard.
+    // `fiat-deposits` stays mapped for the short-lived links minted while
+    // the Fiat credit queue briefly lived on this route.
     const retiredTransactionsTab =
       request.nextUrl.searchParams.get("tab");
     const fraudTransactionsRoute =
@@ -175,8 +182,12 @@ export async function middleware(request: NextRequest) {
         ? "fiat-fraud"
         : retiredTransactionsTab === "refunds"
           ? "refunds"
-          : "fiat-deposits";
+          : retiredTransactionsTab === "reviews" ||
+              retiredTransactionsTab === "fiat-deposits"
+            ? "fiat-deposits"
+            : null;
     if (
+      fraudTransactionsRoute !== null &&
       (!appHost || appHost.basePath === null) &&
       pathname === "/transactions/deposits"
     ) {

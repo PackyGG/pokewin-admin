@@ -27,7 +27,10 @@ const nav = read("src/lib/nav-config.ts");
 const sidebar = read(
   "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
 );
-const legacyPage = read("src/app/(admin)/transactions/deposits/page.tsx");
+// The Admin money-flow ledger. It shares the /transactions/deposits route
+// with the Fiat credit queue's short-lived stay there, so it is asserted to
+// carry NONE of the review-queue surface.
+const adminLedgerPage = read("src/app/(admin)/transactions/deposits/page.tsx");
 
 test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.match(page, /listFiatAssessments/);
@@ -84,8 +87,19 @@ test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.match(shell, /<Suspense/);
   assert.match(shell, /FiatDepositReviewsSkeleton/);
   assert.match(sidebar, /label: "Deposit reviews"/);
-  assert.doesNotMatch(nav, /id: "nav\.deposits"/);
-  assert.match(legacyPage, /redirect\("\/antifraud\/fiat-deposits"\)/);
+  // The Admin sidebar keeps its Transactions ledger entry — moving the Fiat
+  // credit queue into Fraud must not take the money-flow surface with it.
+  // What the ledger must NOT contain is any part of the review queue.
+  assert.match(nav, /id: "nav\.deposits"/);
+  assert.match(nav, /href: "\/transactions\/deposits"/);
+  assert.match(adminLedgerPage, /getDepositTransactions/);
+  assert.match(adminLedgerPage, /getCardPayments/);
+  assert.match(adminLedgerPage, /getWithdrawals/);
+  assert.doesNotMatch(adminLedgerPage, /listFiatAssessments/);
+  assert.doesNotMatch(adminLedgerPage, /getFiatCreditReviewStates/);
+  assert.doesNotMatch(adminLedgerPage, /GlobalFiatReviewCard/);
+  assert.doesNotMatch(adminLedgerPage, /FiatDepositReviewDecision/);
+  assert.doesNotMatch(adminLedgerPage, /getFiatDepositAutomaticCreditConfig/);
   assert.doesNotMatch(page, /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/);
   assert.match(retiredDetail, /redirect\("\/antifraud\/fiat-deposits"\)/);
 });
@@ -163,9 +177,61 @@ test("withdrawals remain available outside the Fiat review page", () => {
   );
 });
 
-test("the retired Admin deposits route redirects to the Fraud webapp", () => {
+test("retired Admin deposit-review deep links redirect to the Fraud webapp", () => {
   assert.match(middleware, /pathname === "\/transactions\/deposits"/);
-  assert.match(middleware, /: "fiat-deposits"/);
+  assert.match(middleware, /"fiat-deposits"/);
   assert.match(middleware, /entry\.basePath === "\/antifraud"/);
   assert.match(middleware, /NextResponse\.redirect\(url, 308\)/);
+  // …but ONLY for the retired tab selectors. A redirect keyed on the
+  // pathname alone removed the whole Transactions ledger from the
+  // dashboard; the null branch is what keeps the bare route renderable.
+  assert.match(middleware, /fraudTransactionsRoute !== null/);
+  assert.match(middleware, /: null;/);
+});
+
+test("the bare Transactions route is not redirected away from Admin", async () => {
+  process.env.SESSION_SECRET ??=
+    "admin-transactions-ledger-regression-only-secret-32";
+  const [{ NextRequest }, { encrypt }, { middleware: run }] = await Promise.all([
+    import("next/server"),
+    import("../../src/lib/session"),
+    import("../../src/middleware"),
+  ]);
+  const token = await encrypt({
+    userId: "ledger-regression",
+    role: "admin",
+    roles: ["admin"],
+    email: "ledger-regression@packy.gg",
+    username: "ledger-regression",
+    isOwner: false,
+    expiresAt: new Date(Date.now() + 60_000),
+  });
+  const requestFor = (url: string) =>
+    new NextRequest(url, {
+      headers: { cookie: `admin_session=${token}`, host: "packydash.com" },
+    });
+
+  for (const url of [
+    "https://packydash.com/transactions/deposits",
+    "https://packydash.com/transactions/deposits?tab=withdrawals",
+    "https://packydash.com/transactions/deposits?tab=card-payments",
+  ]) {
+    const response = await run(requestFor(url));
+    assert.notEqual(
+      response.status,
+      308,
+      `${url} must render the Admin ledger, not redirect to Fraud`,
+    );
+    assert.equal(response.headers.get("location"), null);
+  }
+
+  // The retired review deep link still forwards, query state intact.
+  const retired = await run(
+    requestFor("https://packydash.com/transactions/deposits?tab=reviews&page=3"),
+  );
+  assert.equal(retired.status, 308);
+  assert.equal(
+    retired.headers.get("location"),
+    "https://fraud.packydash.com/fiat-deposits?page=3",
+  );
 });

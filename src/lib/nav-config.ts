@@ -283,9 +283,32 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Withdrawals — palette-only. The standalone /withdrawals route redirects
-    // to the unified Transactions page, but the palette still advertises the
-    // legacy entry-point (key retained in ADMIN_PAGES).
+    // Sidebar label is "Transactions" (the unified deposits + card-payments +
+    // withdrawals money-flow ledger); palette label is "Deposits". Same
+    // href/pageKey. NOT the Fiat credit review queue — that queue lives in
+    // the Fraud workspace (/antifraud/fiat-deposits) and this entry must
+    // never point at it again.
+    id: "nav.deposits",
+    group: "Overview",
+    label: "Transactions",
+    paletteLabel: "Deposits",
+    href: "/transactions/deposits",
+    pageKey: "/transactions/deposits",
+    // Base `icon` is the palette icon; `sidebarIcon` overrides it in the
+    // sidebar. The palette historically used ArrowDownToLine for Deposits;
+    // the sidebar uses Receipt for the unified Transactions entry. Both
+    // strings MUST exist in the ICONS map in app-sidebar.tsx (React #130).
+    icon: "ArrowDownToLine",
+    sidebarIcon: "Receipt",
+    description: "Deposit, card payment & withdrawal ledger",
+    keywords: ["crypto", "payments", "deposits", "withdrawals", "ledger"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
+    // Withdrawals — palette-only. The standalone /withdrawals route is its own
+    // permission-gated page; the Transactions ledger above carries the same
+    // list as a tab, and the palette keeps advertising the direct entry-point.
     id: "nav.withdrawals",
     group: "Overview",
     label: "Withdrawals",
