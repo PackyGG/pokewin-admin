@@ -439,6 +439,15 @@ export type PlayerRewardSummary = {
   pendingReviewUsd: number;
   /** Approved and paid out, lifetime. */
   totalClaimedUsd: number;
+  /** Individual claims still waiting on staff review. */
+  pendingClaims: Array<{
+    id: string;
+    name: string;
+    amount: number;
+    currency: "USD";
+    requestedAt: string;
+    status: string;
+  }>;
 };
 
 /**
@@ -458,7 +467,7 @@ export async function getPlayerRewardSummary(
     return [] as Awaited<ReturnType<typeof computeAllEntitlements>>;
   });
 
-  const [userRows, entitlements, claimTotals] = await Promise.all([
+  const [userRows, entitlements, claimTotals, pendingClaims] = await Promise.all([
     getProdReadDrizzleDb()
       .select({
         username: mainUsers.username,
@@ -477,6 +486,7 @@ export async function getPlayerRewardSummary(
       .from(creator_reward_claims)
       .where(eq(creator_reward_claims.user_id, userId))
       .groupBy(creator_reward_claims.status),
+    getClaims({ status: "pending", limit: 50 }),
   ]);
   const user = userRows[0];
 
@@ -497,6 +507,14 @@ export async function getPlayerRewardSummary(
     openRewardsUsd: entitlements.reduce((sum, e) => sum + e.amountUsd, 0),
     pendingReviewUsd: sumFor("pending"),
     totalClaimedUsd: sumFor("approved"),
+    pendingClaims: pendingClaims.map((claim) => ({
+      id: claim.id,
+      name: claim.leg === "ftd_lossback" ? "FTD lossback" : "Wager milestones",
+      amount: claim.amountUsd,
+      currency: "USD" as const,
+      requestedAt: claim.requestedAt,
+      status: claim.status,
+    })),
   };
 }
 

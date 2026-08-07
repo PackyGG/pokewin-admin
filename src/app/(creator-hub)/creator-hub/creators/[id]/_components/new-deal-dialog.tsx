@@ -149,7 +149,14 @@ export function NewDealDialog({ userId }: { userId: string }) {
       toast.error(parsed.error);
       return;
     }
-    setLeaderboardPayload(parsed.payload);
+    // The leaderboard is bundled with this deal, so its window is the same
+    // validated UTC window. The API derives it server-side, but the payload
+    // schema still requires ISO values before that derivation runs.
+    setLeaderboardPayload({
+      ...parsed.payload,
+      startsAt: dealPayload?.week_start_utc ?? parsed.payload.startsAt,
+      endsAt: dealPayload?.week_end_utc ?? parsed.payload.endsAt,
+    });
     setStep("confirm");
   }
 
