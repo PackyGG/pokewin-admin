@@ -491,6 +491,8 @@ export async function getCreatorSetupStats(input: {
   const clickWindow = input.periodDays === null
     ? sql``
     : sql`AND created_at >= NOW() - (${input.periodDays} * INTERVAL '1 day')`;
+  // The default used to be INTERVAL '30 days'; keep the contract visible while
+  // allowing the caller to select a narrower or lifetime window.
   const [usageResult, depositResult, clickResult] = await Promise.all([
     db.execute<UsageStatsRow>(sql`
       SELECT
