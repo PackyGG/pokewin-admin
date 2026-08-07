@@ -58,7 +58,16 @@ test("Keno replay renders all 40 tiles and the hit state", () => {
 test("Keno replay shows the canonical exact-hit chance", () => {
   assert.match(replay, /getKenoHitProbability\(/);
   assert.match(replay, /formatKenoProbability\(hitProbability\)/);
-  assert.match(replay, /label=\{`Chance of \$\{game\.hits\} hits`\}/);
+  assert.match(replay, /Exact \{game\.hits\}-hit chance/);
+});
+
+test("Keno replay makes risk and outcome context prominent", () => {
+  assert.match(replay, /Risk profile/);
+  assert.match(replay, /Payout curve selected by the player/);
+  assert.match(replay, /Player net/);
+  assert.match(replay, /House result/);
+  assert.match(modal, /Ledger transaction details/);
+  assert.match(modal, /isKeno \? "sm:max-w-5xl"/);
 });
 
 test("Gaming shows one settled outcome row per Keno game", () => {

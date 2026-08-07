@@ -756,8 +756,8 @@ export function TransactionDetailModal({
     >
       <DialogContent
         className={cn(
-          "flex max-h-[90vh] flex-col",
-          isKeno ? "sm:max-w-3xl" : "sm:max-w-2xl",
+          "flex max-h-[92vh] flex-col",
+          isKeno ? "sm:max-w-5xl" : "sm:max-w-2xl",
         )}
       >
         <DialogHeader>
@@ -791,16 +791,38 @@ export function TransactionDetailModal({
             </div>
           )}
 
-          <div className="grid grid-cols-2 gap-x-6 gap-y-3">
-            {rows.map((row) => (
-              <div key={row.label} className="flex flex-col gap-1">
-                <span className="text-xs text-muted-foreground">
-                  {row.label}
-                </span>
-                <div className="text-sm">{row.value}</div>
+          {isKeno ? (
+            <details
+              key={t.id}
+              className="group rounded-xl border border-border/60 bg-muted/15"
+            >
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium marker:content-none">
+                Ledger transaction details
+                <ChevronDown className="size-4 text-muted-foreground transition-transform group-open:rotate-180" />
+              </summary>
+              <div className="grid grid-cols-2 gap-x-6 gap-y-3 border-t border-border/60 px-4 py-4">
+                {rows.map((row) => (
+                  <div key={row.label} className="flex flex-col gap-1">
+                    <span className="text-xs text-muted-foreground">
+                      {row.label}
+                    </span>
+                    <div className="text-sm">{row.value}</div>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
+            </details>
+          ) : (
+            <div className="grid grid-cols-2 gap-x-6 gap-y-3">
+              {rows.map((row) => (
+                <div key={row.label} className="flex flex-col gap-1">
+                  <span className="text-xs text-muted-foreground">
+                    {row.label}
+                  </span>
+                  <div className="text-sm">{row.value}</div>
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Withdrawal wager-requirement status — account-level (gates ALL
               withdrawals of this user's balance), shown on the deposit/
