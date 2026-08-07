@@ -61,7 +61,7 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
   assert.equal(result.selectedBlock, result.candidates[2]);
 });
 
-test("EOS random-block route accepts userID and returns the selection", async () => {
+test("EOS random-block route accepts userID and returns only the battle block hash", async () => {
   const source: EosRandomBlockSource = {
     async select() {
       return {
@@ -82,13 +82,7 @@ test("EOS random-block route accepts userID and returns the selection", async ()
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), {
-    userID: "test-user-123",
-    provider: "https://eos.example",
-    selectedIndex: 3,
-    selectedBlock: blocks[3],
-    candidates: blocks,
-  });
+  assert.deepEqual(response.json(), { blockHash: blocks[3]!.blockHash });
   await app.close();
 });
 

@@ -176,7 +176,10 @@ export async function registerEosRandomBlockRoutes(
           },
           "EOS random block selected",
         );
-        return { userID: parsed.data.userID, ...selection };
+        // Match the battle backend's EOS result contract: callers only receive
+        // the block hash that is fed into battle execution. Provider choice,
+        // candidate blocks, and the submitted user remain internal diagnostics.
+        return { blockHash: selection.selectedBlock.blockHash };
       } catch (error) {
         request.log.warn(
           { err: error, event: "eos_random_block.providers_failed" },
