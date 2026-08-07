@@ -8,10 +8,14 @@ import type { BattleTestConfigSource } from "../src/battle-test-config.js";
 import { serviceRequestAuthorized } from "../src/auth.js";
 import {
   EosRandomBlockService,
+  EOS_CHAIN_BLOCK_PATH,
+  EOS_CHAIN_INFO_PATH,
   EOS_RANDOM_BLOCK_CONFIG_PATH,
   EOS_RANDOM_BLOCK_PATH,
+  EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
   isUnauthenticatedEosRandomBlockRequest,
   registerEosRandomBlockRoutes,
+  selectBattleTestInstructionOutcome,
   selectBattleTestOutcome,
   type EosRandomBlockSource,
 } from "../src/eos-random-block-routes.js";
@@ -49,6 +53,18 @@ test("EOS random-block path is unauthenticated only for POST", () => {
     isUnauthenticatedEosRandomBlockRequest("GET", EOS_RANDOM_BLOCK_CONFIG_PATH),
     false,
   );
+  assert.equal(
+    isUnauthenticatedEosRandomBlockRequest("GET", EOS_CHAIN_INFO_PATH),
+    true,
+  );
+  assert.equal(
+    isUnauthenticatedEosRandomBlockRequest("POST", EOS_CHAIN_INFO_PATH),
+    true,
+  );
+  assert.equal(
+    isUnauthenticatedEosRandomBlockRequest("POST", EOS_CHAIN_BLOCK_PATH),
+    true,
+  );
 });
 
 test("EOS test config read and writes require the admin token", () => {
@@ -63,6 +79,15 @@ test("EOS test config read and writes require the admin token", () => {
       true,
     );
   }
+  assert.equal(
+    serviceRequestAuthorized(
+      "GET",
+      EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
+      config.API_TOKEN,
+      config,
+    ),
+    false,
+  );
 });
 
 test("EOS service races providers and fetches a fresh five-block window per request", async () => {
@@ -159,6 +184,120 @@ test("EOS random-block route accepts battle identity and returns only the block 
       timestamp: blocks[3]!.blockTimestamp,
       provider: "https://eos.example",
     },
+  });
+  await app.close();
+});
+
+test("EOS-compatible routes return native payloads with no testing metadata", async () => {
+  const rawBlock = {
+    timestamp: blocks[2]!.blockTimestamp,
+    producer: "eosproducer",
+    confirmed: 0,
+    id: blocks[2]!.blockHash,
+    block_num: blocks[2]!.blockNumber,
+    transactions: [],
+  };
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 2,
+        selectedBlock: blocks[2]!,
+        candidates: blocks,
+      };
+    },
+    async getBlock(blockNumOrId) {
+      assert.equal(blockNumOrId, blocks[2]!.blockNumber);
+      return rawBlock;
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source);
+
+  const info = await app.inject({ method: "GET", url: EOS_CHAIN_INFO_PATH });
+  assert.equal(info.statusCode, 200);
+  assert.deepEqual(info.json(), {
+    ...chainInfo,
+    last_irreversible_block_num: blocks[2]!.blockNumber,
+    last_irreversible_block_id: blocks[2]!.blockHash,
+    last_irreversible_block_time: blocks[2]!.blockTimestamp,
+  });
+  assert.equal(info.json().selected, undefined);
+  assert.equal(info.json().otherPossibleEndings, undefined);
+
+  const block = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_BLOCK_PATH,
+    payload: { block_num_or_id: blocks[2]!.blockNumber },
+  });
+  assert.equal(block.statusCode, 200);
+  assert.deepEqual(block.json(), rawBlock);
+  await app.close();
+});
+
+test("EOS-compatible battle request applies and consumes a personal sequence", async () => {
+  let consumedFor: string | null = null;
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomes: BattleOutcomeSource = {
+    async simulate() {
+      return {
+        battleId: "11111111-1111-4111-8111-111111111111",
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
+        outcomes: blocks.map((candidate, index) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: index < 2 ? 1 : 2,
+          creatorTeam: 1,
+          creatorWonBattle: index < 2,
+          creatorCost: 10,
+          creatorProfitLoss: [20, 5, -10, -20, -30][index]!,
+        })),
+      };
+    },
+  };
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async consumeUserInstruction(userId) {
+      consumedFor = userId;
+      return { target: "win", strategy: "lowest_profit" };
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes, config);
+
+  const response = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    payload: {
+      userID: "test-user-123",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(consumedFor, "test-user-123");
+  assert.deepEqual(response.json(), {
+    ...chainInfo,
+    last_irreversible_block_num: blocks[1]!.blockNumber,
+    last_irreversible_block_id: blocks[1]!.blockHash,
+    last_irreversible_block_time: blocks[1]!.blockTimestamp,
   });
   await app.close();
 });
@@ -335,6 +474,51 @@ test("only-loses selection chooses a loss or the lowest available profit", () =>
   assert.equal(selectBattleTestOutcome(profits, 10, true).blockNumber, 9);
 });
 
+test("personal outcome selection supports target and profit strategy fallbacks", () => {
+  const outcome = (
+    blockNumber: number,
+    creatorWonBattle: boolean,
+    creatorProfitLoss: number,
+  ) => ({
+    blockNumber,
+    winningTeam: creatorWonBattle ? 1 : 2,
+    creatorTeam: 1,
+    creatorWonBattle,
+    creatorCost: 10,
+    creatorProfitLoss,
+  });
+  const mixed = [
+    outcome(10, true, 50),
+    outcome(9, true, 5),
+    outcome(8, false, -10),
+    outcome(7, false, -30),
+  ];
+  assert.equal(
+    selectBattleTestInstructionOutcome(
+      mixed,
+      10,
+      { target: "win", strategy: "lowest_profit" },
+    ).blockNumber,
+    9,
+  );
+  assert.equal(
+    selectBattleTestInstructionOutcome(
+      mixed,
+      10,
+      { target: "loss", strategy: "highest_profit" },
+    ).blockNumber,
+    8,
+  );
+  assert.equal(
+    selectBattleTestInstructionOutcome(
+      mixed.slice(0, 2),
+      10,
+      { target: "loss", strategy: "random" },
+    ).blockNumber,
+    9,
+  );
+});
+
 test("EOS test config routes read and update the persisted setting", async () => {
   let enabled = false;
   const config: BattleTestConfigSource = {
@@ -368,6 +552,70 @@ test("EOS test config routes read and update the persisted setting", async () =>
     updatedAt: "2026-08-07T00:00:00.000Z",
     updatedBy: "motha",
   });
+  await app.close();
+});
+
+test("EOS user sequence config routes list, reset, and delete rules", async () => {
+  const saved = {
+    userId: "11111111-1111-4111-8111-111111111111",
+    username: "tester",
+    rules: [{ target: "loss" as const, strategy: "lowest_profit" as const, count: 2 }],
+    currentRuleIndex: 0,
+    remainingInRule: 2,
+    enabled: true,
+    updatedAt: "2026-08-07T00:00:00.000Z",
+    updatedBy: "motha",
+  };
+  let deleted: string | null = null;
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: false, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+    async listUsers() {
+      return [saved];
+    },
+    async setUser(userId, username, rules, enabled, actor) {
+      assert.equal(userId, saved.userId);
+      assert.equal(username, "tester");
+      assert.deepEqual(rules, saved.rules);
+      assert.equal(enabled, true);
+      assert.equal(actor, "motha");
+      return saved;
+    },
+    async deleteUser(userId) {
+      deleted = userId;
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, undefined, undefined, config);
+
+  const listed = await app.inject({
+    method: "GET",
+    url: EOS_RANDOM_BLOCK_USER_CONFIG_PATH,
+  });
+  assert.deepEqual(listed.json(), { data: [saved] });
+
+  const updated = await app.inject({
+    method: "PUT",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}`,
+    payload: {
+      username: "tester",
+      rules: saved.rules,
+      enabled: true,
+      actor: "motha",
+    },
+  });
+  assert.deepEqual(updated.json(), { data: saved });
+
+  const removed = await app.inject({
+    method: "DELETE",
+    url: `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/${saved.userId}`,
+  });
+  assert.equal(removed.statusCode, 204);
+  assert.equal(deleted, saved.userId);
   await app.close();
 });
 

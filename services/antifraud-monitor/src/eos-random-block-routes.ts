@@ -8,10 +8,17 @@ import {
   type BattleCandidateOutcome,
   type BattleOutcomeSource,
 } from "./battle-outcome-simulator.js";
-import type { BattleTestConfigSource } from "./battle-test-config.js";
+import type {
+  BattleTestConfigSource,
+  BattleTestUserInstruction,
+} from "./battle-test-config.js";
 
 export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 export const EOS_RANDOM_BLOCK_CONFIG_PATH = `${EOS_RANDOM_BLOCK_PATH}/config`;
+export const EOS_RANDOM_BLOCK_USER_CONFIG_PATH =
+  `${EOS_RANDOM_BLOCK_CONFIG_PATH}/users`;
+export const EOS_CHAIN_INFO_PATH = "/v1/chain/get_info";
+export const EOS_CHAIN_BLOCK_PATH = "/v1/chain/get_block";
 
 const EOS_ENDPOINTS = [
   "https://api.eostitan.com",
@@ -49,6 +56,7 @@ export type EosRandomBlockSelection = {
 
 export interface EosRandomBlockSource {
   select(): Promise<EosRandomBlockSelection>;
+  getBlock?(blockNumOrId: number | string): Promise<Record<string, unknown>>;
 }
 
 type Fetcher = typeof fetch;
@@ -62,6 +70,26 @@ const requestSchema = z.object({
 const configUpdateSchema = z.object({
   userOnlyLoses: z.boolean(),
   actor: z.string().trim().min(1).max(120),
+}).strict();
+
+const userRuleSchema = z.object({
+  target: z.enum(["loss", "win", "any"]),
+  strategy: z.enum(["random", "lowest_profit", "highest_profit"]),
+  count: z.number().int().min(1).max(100),
+}).strict();
+
+const userConfigUpdateSchema = z.object({
+  username: z.string().trim().min(1).max(100).nullable(),
+  rules: z.array(userRuleSchema).min(1).max(20),
+  enabled: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict();
+
+const chainBlockRequestSchema = z.object({
+  block_num_or_id: z.union([
+    z.number().int().positive(),
+    z.string().trim().min(1).max(100),
+  ]),
 }).strict();
 
 export function selectBattleTestOutcome(
@@ -82,6 +110,49 @@ export function selectBattleTestOutcome(
   return outcomes.reduce((lowest, outcome) =>
     outcome.creatorProfitLoss < lowest.creatorProfitLoss ? outcome : lowest
   );
+}
+
+export function selectBattleTestInstructionOutcome(
+  outcomes: BattleCandidateOutcome[],
+  randomBlockNumber: number,
+  instruction: BattleTestUserInstruction,
+  randomIndex: RandomIndex = randomInt,
+): BattleCandidateOutcome {
+  if (outcomes.length === 0) {
+    throw new BattleSimulationError("battle_data_incomplete", 409);
+  }
+  const matching = instruction.target === "any"
+    ? outcomes
+    : outcomes.filter((outcome) =>
+      instruction.target === "win"
+        ? outcome.creatorWonBattle
+        : !outcome.creatorWonBattle
+    );
+
+  if (matching.length === 0) {
+    return outcomes.reduce((best, outcome) => {
+      if (instruction.target === "win") {
+        return outcome.creatorProfitLoss > best.creatorProfitLoss
+          ? outcome
+          : best;
+      }
+      return outcome.creatorProfitLoss < best.creatorProfitLoss
+        ? outcome
+        : best;
+    });
+  }
+  if (instruction.strategy === "lowest_profit") {
+    return matching.reduce((lowest, outcome) =>
+      outcome.creatorProfitLoss < lowest.creatorProfitLoss ? outcome : lowest
+    );
+  }
+  if (instruction.strategy === "highest_profit") {
+    return matching.reduce((highest, outcome) =>
+      outcome.creatorProfitLoss > highest.creatorProfitLoss ? outcome : highest
+    );
+  }
+  return matching.find((outcome) => outcome.blockNumber === randomBlockNumber)
+    ?? matching[randomIndex(matching.length)]!;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -139,6 +210,49 @@ export class EosRandomBlockService implements EosRandomBlockSource {
       selectedIndex,
       selectedBlock: snapshot.candidates[selectedIndex]!,
     };
+  }
+
+  async getBlock(
+    blockNumOrId: number | string,
+  ): Promise<Record<string, unknown>> {
+    const controllers = EOS_ENDPOINTS.map(() => new AbortController());
+    const timers = controllers.map((controller) =>
+      setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
+    );
+    const attempts = EOS_ENDPOINTS.map(async (endpoint, index) => {
+      const block = await responseJson(await this.fetcher(
+        `${endpoint}/v1/chain/get_block`,
+        {
+          method: "POST",
+          signal: controllers[index]!.signal,
+          headers: {
+            accept: "application/json",
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({ block_num_or_id: blockNumOrId }),
+        },
+      ));
+      if (!isRecord(block)) {
+        throw new Error("EOS provider returned an invalid block");
+      }
+      if (
+        typeof block.id !== "string"
+        || !BLOCK_ID_PATTERN.test(block.id)
+        || !Number.isSafeInteger(block.block_num)
+        || (typeof blockNumOrId === "number" && block.block_num !== blockNumOrId)
+      ) {
+        throw new Error("EOS provider returned the wrong block");
+      }
+      return block;
+    });
+    try {
+      return await Promise.any(attempts);
+    } catch (error) {
+      throw new Error("All EOS providers failed", { cause: error });
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+      for (const controller of controllers) controller.abort();
+    }
   }
 
   private async fetchSnapshot(): Promise<
@@ -231,7 +345,10 @@ export function isUnauthenticatedEosRandomBlockRequest(
   method: string,
   pathname: string | undefined,
 ): boolean {
-  return method === "POST" && pathname === EOS_RANDOM_BLOCK_PATH;
+  return (method === "POST" && pathname === EOS_RANDOM_BLOCK_PATH)
+    || ((method === "GET" || method === "POST")
+      && pathname === EOS_CHAIN_INFO_PATH)
+    || (method === "POST" && pathname === EOS_CHAIN_BLOCK_PATH);
 }
 
 export async function registerEosRandomBlockRoutes(
@@ -240,6 +357,65 @@ export async function registerEosRandomBlockRoutes(
   battleOutcomes?: BattleOutcomeSource,
   testConfig?: BattleTestConfigSource,
 ): Promise<void> {
+  const selectForBattle = async (userID: string, battleID: string) => {
+    if (!battleOutcomes) {
+      throw new BattleSimulationError("battle_data_incomplete", 409);
+    }
+    const selection = await source.select();
+    const battle = await battleOutcomes.simulate(
+      userID,
+      battleID,
+      selection.candidates,
+    );
+    const { outcomes: simulatedOutcomes, ...battleSummary } = battle;
+    let instruction: BattleTestUserInstruction | null = null;
+    if (testConfig?.consumeUserInstruction) {
+      try {
+        instruction = await testConfig.consumeUserInstruction(userID);
+      } catch (error) {
+        app.log.warn(
+          { err: error, event: "eos_random_block.user_config_read_failed" },
+          "EOS user sequence unavailable; using global configuration",
+        );
+      }
+    }
+    let userOnlyLoses = false;
+    if (!instruction && testConfig) {
+      try {
+        userOnlyLoses = (await testConfig.get()).userOnlyLoses;
+      } catch (error) {
+        app.log.warn(
+          { err: error, event: "eos_random_block.config_read_failed" },
+          "EOS battle test config unavailable; using random selection",
+        );
+      }
+    }
+    const selected = instruction
+      ? selectBattleTestInstructionOutcome(
+          simulatedOutcomes,
+          selection.selectedBlock.blockNumber,
+          instruction,
+        )
+      : selectBattleTestOutcome(
+          simulatedOutcomes,
+          selection.selectedBlock.blockNumber,
+          userOnlyLoses,
+        );
+    const selectedBlock = selection.candidates.find(
+      (candidate) => candidate.blockNumber === selected.blockNumber,
+    );
+    if (!selectedBlock) {
+      throw new BattleSimulationError("battle_data_incomplete", 409);
+    }
+    return {
+      selection,
+      battleSummary,
+      simulatedOutcomes,
+      selected,
+      selectedBlock,
+    };
+  };
+
   if (testConfig) {
     app.get(EOS_RANDOM_BLOCK_CONFIG_PATH, async () => ({
       data: await testConfig.get(),
@@ -256,7 +432,101 @@ export async function registerEosRandomBlockRoutes(
         ),
       };
     });
+    if (testConfig.listUsers && testConfig.setUser && testConfig.deleteUser) {
+      app.get(EOS_RANDOM_BLOCK_USER_CONFIG_PATH, async () => ({
+        data: await testConfig.listUsers!(),
+      }));
+      app.put(
+        `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
+        async (request, reply) => {
+          const userId = z.uuid().safeParse(
+            (request.params as { userId?: unknown }).userId,
+          );
+          const parsed = userConfigUpdateSchema.safeParse(request.body);
+          if (!userId.success || !parsed.success) {
+            return reply.code(400).send({ error: "invalid_request" });
+          }
+          return {
+            data: await testConfig.setUser!(
+              userId.data,
+              parsed.data.username,
+              parsed.data.rules,
+              parsed.data.enabled,
+              parsed.data.actor,
+            ),
+          };
+        },
+      );
+      app.delete(
+        `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
+        async (request, reply) => {
+          const userId = z.uuid().safeParse(
+            (request.params as { userId?: unknown }).userId,
+          );
+          if (!userId.success) {
+            return reply.code(400).send({ error: "invalid_request" });
+          }
+          await testConfig.deleteUser!(userId.data);
+          return reply.code(204).send();
+        },
+      );
+    }
   }
+
+  app.get(EOS_CHAIN_INFO_PATH, async (_request, reply) => {
+    try {
+      const selection = await source.select();
+      return chainInfoForSelectedBlock(selection, selection.selectedBlock);
+    } catch {
+      return reply.code(503).send({ error: "eos_unavailable" });
+    }
+  });
+
+  app.post(EOS_CHAIN_INFO_PATH, async (request, reply) => {
+    const body = request.body;
+    if (body === undefined || (isRecord(body) && Object.keys(body).length === 0)) {
+      try {
+        const selection = await source.select();
+        return chainInfoForSelectedBlock(selection, selection.selectedBlock);
+      } catch {
+        return reply.code(503).send({ error: "eos_unavailable" });
+      }
+    }
+    const parsed = requestSchema.safeParse(body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    try {
+      const resolved = await selectForBattle(
+        parsed.data.userID,
+        parsed.data.battleID,
+      );
+      return chainInfoForSelectedBlock(
+        resolved.selection,
+        resolved.selectedBlock,
+      );
+    } catch (error) {
+      if (error instanceof BattleSimulationError) {
+        return reply.code(error.status).send({ error: error.code });
+      }
+      return reply.code(503).send({ error: "eos_unavailable" });
+    }
+  });
+
+  app.post(EOS_CHAIN_BLOCK_PATH, async (request, reply) => {
+    const parsed = chainBlockRequestSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "invalid_request" });
+    }
+    if (!source.getBlock) {
+      return reply.code(503).send({ error: "eos_unavailable" });
+    }
+    try {
+      return await source.getBlock(parsed.data.block_num_or_id);
+    } catch {
+      return reply.code(503).send({ error: "eos_unavailable" });
+    }
+  });
 
   app.post(
     EOS_RANDOM_BLOCK_PATH,
@@ -271,18 +541,18 @@ export async function registerEosRandomBlockRoutes(
       }
 
       try {
-        const selection = await source.select();
-        request.log.info(
-          {
-            event: "eos_random_block.selected",
-            requestId: request.id,
-            userId: parsed.data.userID,
-            provider: selection.provider,
-            selectedBlockNumber: selection.selectedBlock.blockNumber,
-          },
-          "EOS random block selected",
-        );
         if (!battleOutcomes) {
+          const selection = await source.select();
+          request.log.info(
+            {
+              event: "eos_random_block.selected",
+              requestId: request.id,
+              userId: parsed.data.userID,
+              provider: selection.provider,
+              selectedBlockNumber: selection.selectedBlock.blockNumber,
+            },
+            "EOS random block selected",
+          );
           return {
             ...chainInfoForSelectedBlock(selection, selection.selectedBlock),
             blockHash: selection.selectedBlock.blockHash,
@@ -294,34 +564,27 @@ export async function registerEosRandomBlockRoutes(
             },
           };
         }
-        const battle = await battleOutcomes.simulate(
+        const resolved = await selectForBattle(
           parsed.data.userID,
           parsed.data.battleID,
-          selection.candidates,
         );
-        const { outcomes: simulatedOutcomes, ...battleSummary } = battle;
-        let userOnlyLoses = false;
-        if (testConfig) {
-          try {
-            userOnlyLoses = (await testConfig.get()).userOnlyLoses;
-          } catch (error) {
-            request.log.warn(
-              { err: error, event: "eos_random_block.config_read_failed" },
-              "EOS battle test config unavailable; using random selection",
-            );
-          }
-        }
-        const selected = selectBattleTestOutcome(
+        const {
+          selection,
+          battleSummary,
           simulatedOutcomes,
-          selection.selectedBlock.blockNumber,
-          userOnlyLoses,
+          selected,
+          selectedBlock,
+        } = resolved;
+        request.log.info(
+          {
+            event: "eos_random_block.selected",
+            requestId: request.id,
+            userId: parsed.data.userID,
+            provider: selection.provider,
+            selectedBlockNumber: selection.selectedBlock.blockNumber,
+          },
+          "EOS random block selected",
         );
-        const selectedBlock = selection.candidates.find(
-          (candidate) => candidate.blockNumber === selected.blockNumber,
-        );
-        if (!selectedBlock) {
-          throw new BattleSimulationError("battle_data_incomplete", 409);
-        }
         const outcomesByBlock = new Map(
           simulatedOutcomes.map((outcome) => [outcome.blockNumber, outcome]),
         );
