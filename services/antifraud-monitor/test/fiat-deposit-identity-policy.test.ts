@@ -373,6 +373,31 @@ test("a failed identity evaluation leaves a durable record, not just a log line"
     source,
     /queueEvaluationFailure[\s\S]*INSERT INTO fiat_problem_alert_outbox/,
   );
+  assert.match(
+    source,
+    /DELETE FROM fiat_problem_alert_outbox[\s\S]*:fiat_identity_error/,
+  );
+});
+
+test("the identity schema accepts review verdicts and replays constraint failures", async () => {
+  const migration = await readFile(
+    new URL(
+      "../migrations/071_cluster_containment_hardening.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /verdict IN \('clear', 'watch', 'review', 'contain'\)/,
+  );
+  assert.match(migration, /fiat_deposit_identity_checks_verdict_check/);
+  assert.match(migration, /fiat_identity_checkout_ip_occurred_idx/);
+  assert.match(migration, /fiat_identity_checkout_device_occurred_idx/);
+  assert.match(
+    migration,
+    /UPDATE source_cursors[\s\S]*fiat-deposit-identity/,
+  );
 });
 
 test("card brand and last4 are only paired from one event", async () => {

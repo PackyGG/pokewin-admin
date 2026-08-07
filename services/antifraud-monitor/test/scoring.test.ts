@@ -53,12 +53,13 @@ const normalContext: SignupContext = {
   sameCountry15m: 1,
 };
 
-test("shared devices immediately start a monitor", () => {
+test("a second account on one device is reviewed without critical containment", () => {
   const signals = baseSignupSignals(signup, {
     ...normalContext,
     sameDeviceAllTime: 2,
   });
-  assert.equal(signals.find((signal) => signal.key === "shared_device")?.points, 70);
+  assert.equal(signals.find((signal) => signal.key === "shared_device")?.points, 50);
+  assert.equal(severity(50), "high");
 });
 
 test("normal signup has no baseline risk", () => {

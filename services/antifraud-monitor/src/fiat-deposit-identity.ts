@@ -675,6 +675,20 @@ export class FiatDepositIdentityChecks {
       if (stored && outcome.verdict !== "clear") {
         await this.queueAlert(client, intent, outcome, evidence, enforcement);
       }
+      if (stored) {
+        // A fixed build may deliberately replay a deposit that previously
+        // failed evaluation. Keep delivered alerts as audit history, but do
+        // not send a stale failure after the real check has now committed.
+        await client.query(
+          `
+            DELETE FROM fiat_problem_alert_outbox
+            WHERE source_kind = 'deposit_intent'
+              AND source_id = $1
+              AND discord_delivered_at IS NULL
+          `,
+          [`${intent.intent_id}:fiat_identity_error`],
+        );
+      }
       await client.query("COMMIT");
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});

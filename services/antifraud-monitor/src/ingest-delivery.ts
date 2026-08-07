@@ -237,6 +237,7 @@ export class IngestDelivery {
             )
           WHERE re.event_type = 'fiat_blacklisted_email_domain'
             AND match.lock_delivered_at IS NULL
+            AND re.payload ->> 'reviewOnly' IS DISTINCT FROM 'true'
           ORDER BY re.recorded_at, re.id
           LIMIT $1
         `,
@@ -250,7 +251,9 @@ export class IngestDelivery {
           DASHBOARD_CONTAINMENT_EVENT_TYPES.has(event.event_type),
         ),
         ...blacklistContainment.rows.filter(
-          (event) => event.event_type === "fiat_blacklisted_email_domain",
+          (event) =>
+            event.event_type === "fiat_blacklisted_email_domain"
+            && objectPayload(event.payload).reviewOnly !== true,
         ),
       ]
         .sort(byRecordedOrder)
@@ -353,7 +356,11 @@ export class IngestDelivery {
     events: RiskEventRow[],
   ): Promise<void> {
     const eventIds = events
-      .filter((event) => event.event_type === "fiat_blacklisted_email_domain")
+      .filter(
+        (event) =>
+          event.event_type === "fiat_blacklisted_email_domain"
+          && objectPayload(event.payload).reviewOnly !== true,
+      )
       .map((event) => event.id);
     if (eventIds.length === 0) return;
     await client.query(

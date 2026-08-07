@@ -215,6 +215,43 @@ test("successful containment delivery confirms the lock without mirror lag", asy
   );
 });
 
+test("review-only email signals cannot acknowledge cluster containment", async () => {
+  const review: RiskEventRow = {
+    ...row,
+    event_type: "fiat_blacklisted_email_domain",
+    source_ref: "blacklisted-checkout:cluster-event-1",
+    payload: {
+      emailDomain: "gmail.com",
+      emailRiskType: "gmail_dot_fragmentation",
+      matchSource: "whop_checkout",
+      reviewOnly: true,
+    },
+  };
+  const fixture = deliveryPool([review]);
+  const delivery = new IngestDelivery(
+    config,
+    fixture.pool,
+    quietLogger,
+    async () =>
+      new Response(
+        JSON.stringify({ ok: true, accepted: 1, duplicates: 0 }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      ),
+  );
+
+  assert.equal(await delivery.flushOnce(), 1);
+  assert.equal(
+    fixture.queries.some((sql) => sql.includes("WITH confirmed_matches AS")),
+    false,
+  );
+  assert.equal(
+    fixture.queries.some((sql) =>
+      sql.includes("reviewOnly") && sql.includes("IS DISTINCT FROM 'true'")
+    ),
+    true,
+  );
+});
+
 test("cluster containment retries a failed direct lock and confirms recovery", async () => {
   const containment: RiskEventRow = {
     ...row,

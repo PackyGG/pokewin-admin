@@ -154,6 +154,96 @@ test("same-amount suspicious deposits form a cluster only with distinct identiti
   );
 });
 
+test("review-only Gmail matches promote into a fresh containment delivery", async () => {
+  const calls: Array<{ sql: string; values?: unknown[] }> = [];
+  let storedMatchType: string | null = null;
+  const client = {
+    async query(sql: string, values?: unknown[]) {
+      calls.push({ sql, values });
+      if (/INSERT INTO fiat_email_domain_matches/.test(sql)) {
+        const requestedType = String(values?.[9]);
+        if (storedMatchType === null) {
+          storedMatchType = requestedType;
+          return { rows: [{ id: "match-1" }] };
+        }
+        if (
+          storedMatchType === "gmail_dot_fragmentation"
+          && requestedType === "suspicious_deposit_cluster"
+          && /ON CONFLICT[\s\S]*DO UPDATE/.test(sql)
+        ) {
+          storedMatchType = requestedType;
+          return { rows: [{ id: "match-1" }] };
+        }
+        return { rows: [] };
+      }
+      return { rows: [] };
+    },
+  };
+  const guard = new FiatEmailDomainGuard(
+    { antifraud: {} } as never,
+    { warn() {} } as never,
+  );
+  const persistMatch = (
+    guard as unknown as {
+      persistMatch(
+        client: pg.PoolClient,
+        event: Record<string, unknown>,
+        risk: Record<string, unknown>,
+      ): Promise<boolean>;
+    }
+  ).persistMatch.bind(guard);
+  const event = {
+    ...clusterMember(1, "margenebrombergguidet.t.if.i.v.z.c@gmail.com"),
+    match_source: "whop_checkout",
+  };
+
+  assert.equal(
+    await persistMatch(client as never, event, {
+      type: "gmail_dot_fragmentation",
+      domain: "gmail.com",
+      reason: "fragmented alias",
+    }),
+    true,
+  );
+  assert.equal(
+    await persistMatch(client as never, event, {
+      type: "suspicious_deposit_cluster",
+      domain: "gmail.com",
+      reason: "corroborated cluster",
+    }),
+    true,
+  );
+
+  assert.equal(storedMatchType, "suspicious_deposit_cluster");
+  const matchWrites = calls.filter(({ sql }) =>
+    /INSERT INTO fiat_email_domain_matches/.test(sql)
+  );
+  assert.equal(matchWrites.length, 2);
+  assert.match(matchWrites[1]?.sql ?? "", /lock_delivered_at = NULL/);
+  assert.match(matchWrites[1]?.sql ?? "", /attempt_count = 0/);
+
+  const riskWrites = calls.filter(({ sql }) => /INSERT INTO risk_events/.test(sql));
+  assert.equal(riskWrites.length, 2);
+  assert.equal(riskWrites[0]?.values?.[2], "whop_checkout");
+  assert.equal(riskWrites[0]?.values?.[15], true);
+  assert.equal(riskWrites[1]?.values?.[2], "whop_checkout_cluster");
+  assert.equal(riskWrites[1]?.values?.[15], false);
+
+  const repairMigration = await readFile(
+    new URL(
+      "../migrations/071_cluster_containment_hardening.sql",
+      import.meta.url,
+    ),
+    "utf8",
+  );
+  assert.match(repairMigration, /INSERT INTO risk_events/);
+  assert.match(repairMigration, /'whop_checkout_cluster'/);
+  assert.match(
+    repairMigration,
+    /UPDATE fiat_email_domain_matches[\s\S]*lock_delivered_at = NULL/,
+  );
+});
+
 test("deposit-cluster polling is bounded and conjunctive", async () => {
   const calls: Array<{ sql: string; values?: unknown[] }> = [];
   const source = {

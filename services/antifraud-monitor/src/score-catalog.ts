@@ -1,5 +1,5 @@
 export const DEFAULT_SCORE_WEIGHTS = {
-  shared_device_two_accounts: 70,
+  shared_device_two_accounts: 50,
   shared_device_three_plus_accounts: 95,
   shared_device_ten_plus_accounts: 140,
   shared_device_twenty_five_plus_accounts: 200,

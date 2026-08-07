@@ -1120,16 +1120,6 @@ export class FiatEmailDomainGuard {
               reason,
             },
           );
-          await client.query(
-            `
-              UPDATE fiat_email_domain_matches
-              SET match_type = 'suspicious_deposit_cluster',
-                  updated_at = now()
-              WHERE source_event_id = $1
-                AND match_type = 'gmail_dot_fragmentation'
-            `,
-            [member.source_event_id],
-          );
         }
         await client.query(
           `
@@ -1523,7 +1513,15 @@ export class FiatEmailDomainGuard {
           $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,
           CASE WHEN $12::boolean THEN now() ELSE NULL END
         )
-        ON CONFLICT (source_event_id) DO NOTHING
+        ON CONFLICT (source_event_id) DO UPDATE SET
+          match_type = EXCLUDED.match_type,
+          lock_delivered_at = NULL,
+          attempt_count = 0,
+          next_attempt_at = now(),
+          last_error = NULL,
+          updated_at = now()
+        WHERE fiat_email_domain_matches.match_type = 'gmail_dot_fragmentation'
+          AND EXCLUDED.match_type = 'suspicious_deposit_cluster'
         RETURNING id
       `,
       [
@@ -1544,13 +1542,20 @@ export class FiatEmailDomainGuard {
     if (inserted.rows.length === 0) return false;
 
     const isSignup = event.match_source === "signup";
+    const patternMatch = risk.type === "gmail_dot_fragmentation";
+    const clusterMatch = risk.type === "suspicious_deposit_cluster";
     const eventType = "fiat_blacklisted_email_domain";
-    const eventSource = isSignup ? "signup" : "whop_checkout";
+    // Promotion must create a new dashboard signal. Reusing the earlier
+    // review-only source/ref pair would hit risk_events' idempotency key, and
+    // the dashboard would correctly reject the replay before containment.
+    const eventSource = isSignup
+      ? "signup"
+      : clusterMatch
+        ? "whop_checkout_cluster"
+        : "whop_checkout";
     const eventRef = isSignup
       ? `blacklisted-signup:${event.source_event_id}`
       : `blacklisted-checkout:${event.source_event_id}`;
-    const patternMatch = risk.type === "gmail_dot_fragmentation";
-    const clusterMatch = risk.type === "suspicious_deposit_cluster";
     const title = clusterMatch
       ? "Suspicious Whop deposit cluster member"
       : patternMatch
