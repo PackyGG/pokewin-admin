@@ -5,6 +5,7 @@ import type pg from "pg";
 import type { EosBlockCandidate } from "./eos-random-block-routes.js";
 
 const MAX_TICKET = 1_000_000;
+const VALUE_TOLERANCE = 0.01;
 
 type BattleRow = {
   id: string;
@@ -15,6 +16,8 @@ type BattleRow = {
   bet_amount: string;
   currency: "real" | "coin";
   sponsorship_amount_paid: string;
+  teams: number;
+  players_per_team: number;
   server_seed: string;
   server_seed_hash: string;
 };
@@ -180,8 +183,12 @@ function resolveScoreWinner(
   };
 }
 
-type PulledParticipant = {
+export type PulledParticipant = {
+  id: string;
+  userId: string | null;
+  botId: string | null;
   teamNumber: number;
+  borrowPercentage: number;
   totalValue: number;
   rounds: Array<{
     cards: Array<{
@@ -202,6 +209,143 @@ function participantValue(participant: PulledParticipant): number {
   );
 }
 
+function borrowFactor(borrowPercentage: number): number {
+  return borrowPercentage > 0 ? 1 - borrowPercentage / 100 : 1;
+}
+
+function creatorSettlementValue(
+  participants: PulledParticipant[],
+  winnerTeam: number,
+  creatorUserId: string,
+): number {
+  const allWinningMembers = participants.filter(
+    (participant) => participant.teamNumber === winnerTeam,
+  );
+  const humanWinners = allWinningMembers.filter(
+    (participant) => participant.userId !== null && participant.botId === null,
+  );
+  const creator = humanWinners.find(
+    (participant) => participant.userId === creatorUserId,
+  );
+  if (!creator || allWinningMembers.length === 0) return 0;
+
+  const cards = participants.flatMap((participant) =>
+    participant.rounds.flatMap((round) => round.cards.map((card) => card.price))
+  );
+  const totalValue = cards.reduce((sum, value) => sum + value, 0);
+  const expectedPerMember = totalValue / allWinningMembers.length;
+  const expected = new Map(humanWinners.map((participant) => [
+    participant.id,
+    expectedPerMember * borrowFactor(participant.borrowPercentage),
+  ]));
+  const totals = new Map(humanWinners.map((participant) => [participant.id, 0]));
+
+  if (humanWinners.length === 1) {
+    const winner = humanWinners[0]!;
+    const winnerExpected = expected.get(winner.id)!;
+    for (const value of [...cards].sort((left, right) => right - left)) {
+      const current = totals.get(winner.id)!;
+      if (current + value <= winnerExpected + VALUE_TOLERANCE) {
+        totals.set(winner.id, current + value);
+      }
+    }
+  } else {
+    const sortedCards = cards
+      .map((value, originalIndex) => ({ value, originalIndex }))
+      .sort((left, right) => left.value - right.value);
+    const available = new Set(sortedCards.map((_, index) => index));
+    const deferred: number[] = [];
+    let currentMember = 0;
+    let roundsWithoutAssignment = 0;
+    const maxRounds = cards.length * 2;
+    let safetyCounter = 0;
+    const safetyLimit = cards.length * humanWinners.length * 10;
+
+    const assign = (cardIndex: number, participant: PulledParticipant) => {
+      const card = sortedCards[cardIndex]!;
+      totals.set(
+        participant.id,
+        totals.get(participant.id)! + card.value,
+      );
+      available.delete(cardIndex);
+    };
+
+    while (
+      available.size > 0
+      && roundsWithoutAssignment < maxRounds
+      && safetyCounter < safetyLimit
+    ) {
+      safetyCounter += 1;
+      const participant = humanWinners[currentMember]!;
+      const current = totals.get(participant.id)!;
+      const participantExpected = expected.get(participant.id)!;
+      if (participantExpected - current > VALUE_TOLERANCE) {
+        let bestIndex: number | null = null;
+        let bestScore = Number.POSITIVE_INFINITY;
+        for (const cardIndex of available) {
+          const newTotal = current + sortedCards[cardIndex]!.value;
+          if (newTotal > participantExpected + VALUE_TOLERANCE) continue;
+          const score = Math.abs(participantExpected - newTotal);
+          if (score < bestScore) {
+            bestScore = score;
+            bestIndex = cardIndex;
+          }
+        }
+        if (bestIndex !== null) {
+          assign(bestIndex, participant);
+          roundsWithoutAssignment = 0;
+        } else {
+          const smallestIndex = available.values().next().value as
+            | number
+            | undefined;
+          if (smallestIndex !== undefined) {
+            deferred.push(smallestIndex);
+            available.delete(smallestIndex);
+          }
+          roundsWithoutAssignment += 1;
+        }
+      }
+      currentMember = (currentMember + 1) % humanWinners.length;
+    }
+
+    let deferredSafety = 0;
+    const deferredSafetyLimit = deferred.length * 10;
+    while (deferred.length > 0 && deferredSafety < deferredSafetyLimit) {
+      deferredSafety += 1;
+      let assignedAny = false;
+      const orderedWinners = humanWinners
+        .map((participant) => ({
+          participant,
+          total: totals.get(participant.id)!,
+        }))
+        .sort((left, right) => left.total - right.total);
+      for (let index = deferred.length - 1; index >= 0; index -= 1) {
+        const cardIndex = deferred[index]!;
+        const card = sortedCards[cardIndex]!;
+        for (const { participant, total } of orderedWinners) {
+          if (
+            total + card.value
+            <= expected.get(participant.id)! + VALUE_TOLERANCE
+          ) {
+            assign(cardIndex, participant);
+            deferred.splice(index, 1);
+            assignedAny = true;
+            break;
+          }
+        }
+      }
+      if (!assignedAny) break;
+    }
+  }
+
+  const actualCardValue = totals.get(creator.id)!;
+  const rawDeficit = expected.get(creator.id)! - actualCardValue;
+  const voucherValue = rawDeficit > VALUE_TOLERANCE
+    ? Number(rawDeficit.toFixed(2))
+    : 0;
+  return roundedMoney(actualCardValue + voucherValue);
+}
+
 function valueScores(participants: PulledParticipant[]): Map<number, number> {
   const scores = new Map<number, number>();
   for (const participant of participants) {
@@ -213,7 +357,7 @@ function valueScores(participants: PulledParticipant[]): Map<number, number> {
   return scores;
 }
 
-function resolveMode(input: {
+export function resolveBattleMode(input: {
   mode: BattleOutcomeSimulation["mode"];
   crazyMode: boolean;
   participants: PulledParticipant[];
@@ -357,13 +501,23 @@ export function simulateBattle(input: {
   candidates: EosBlockCandidate[];
   serverSeed: string;
 }): BattleOutcomeSimulation {
-  const creatorParticipant = input.participants.find(
+  const creatorParticipants = input.participants.filter(
     (participant) => participant.user_id === input.battle.user_id,
   );
+  const creatorParticipant = creatorParticipants[0];
+  const expectedParticipants = input.battle.teams * input.battle.players_per_team;
+  const occupiedSlots = new Set(input.participants.map(
+    (participant) => `${participant.team_number}:${participant.team_position}`,
+  ));
   if (
     input.userID !== input.battle.user_id
     || !creatorParticipant
-    || input.participants.length === 0
+    || creatorParticipants.length !== 1
+    || input.participants.length !== expectedParticipants
+    || occupiedSlots.size !== expectedParticipants
+    || input.participants.some((participant) =>
+      (participant.user_id === null) === (participant.bot_id === null)
+    )
   ) {
     throw new BattleSimulationError("battle_data_incomplete", 409);
   }
@@ -399,13 +553,17 @@ export function simulateBattle(input: {
         0,
       );
       return {
+        id: participant.id,
+        userId: participant.user_id,
+        botId: participant.bot_id,
         teamNumber: participant.team_number,
-        totalValue: roundedMoney(totalValue),
+        borrowPercentage: participant.borrow_percentage,
+        totalValue,
         rounds,
       };
     });
     const values = valueScores(participants);
-    const resolved = resolveMode({
+    const resolved = resolveBattleMode({
       mode,
       crazyMode,
       participants,
@@ -415,26 +573,20 @@ export function simulateBattle(input: {
       battleId: input.battle.id,
       nonce: input.packs.length,
     });
-    const totalUnpacked = roundedMoney(
-      [...values.values()].reduce((sum, value) => sum + value, 0),
-    );
     const creatorWonBattle =
       resolved.winnerTeam === creatorParticipant.team_number;
-    const creatorBorrowFactor = creatorParticipant.borrow_percentage > 0
-      ? 1 - creatorParticipant.borrow_percentage / 100
-      : 1;
     const creatorStake = roundedMoney(
-      Number(input.battle.bet_amount) * creatorBorrowFactor,
+      Number(input.battle.bet_amount)
+        * borrowFactor(creatorParticipant.borrow_percentage),
     );
     const creatorCost = roundedMoney(
       creatorStake + Number(input.battle.sponsorship_amount_paid),
     );
-    const winningTeamSize = input.participants.filter(
-      (participant) => participant.team_number === resolved.winnerTeam,
-    ).length;
     const creatorPayout = creatorWonBattle
-      ? roundedMoney(
-          (totalUnpacked / winningTeamSize) * creatorBorrowFactor,
+      ? creatorSettlementValue(
+          participants,
+          resolved.winnerTeam,
+          input.battle.user_id,
         )
       : 0;
     const creatorProfitLoss = roundedMoney(creatorPayout - creatorCost);
@@ -473,6 +625,7 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
     const snapshots = await this.pool.query<BattleSnapshotRow>(
       `
         SELECT b.id, b.user_id, b.mode::text, b.pack_ids,
+               b.teams, b.players_per_team,
                b.additional_settings, b.bet_amount::text,
                b.currency::text, b.sponsorship_amount_paid::text,
                b.server_seed, b.server_seed_hash,

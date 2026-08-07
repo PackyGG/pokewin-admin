@@ -14,24 +14,25 @@ export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 export const EOS_RANDOM_BLOCK_CONFIG_PATH = `${EOS_RANDOM_BLOCK_PATH}/config`;
 
 const EOS_ENDPOINTS = [
-  "https://eos.api.eosnation.io",
-  "https://eos.eosusa.io",
   "https://api.eostitan.com",
   "https://mainnet.genereos.io",
+  "https://mainnet.eosamsterdam.net",
+  "https://eos.eosusa.io",
+  "https://eos.api.eosnation.io",
+  "https://api.eospglmlt.com",
+  "https://eos.newdex.one",
+  "https://api.eos.detroitledger.tech",
+  "https://api.eossupport.io",
   "https://api.main.alohaeos.com",
   "https://mainnet.eosio.sg",
   "https://api.eosrio.io",
   "https://eos.hyperion.eosrio.io",
-  "https://mainnet.eosamsterdam.net",
-  "https://eos.newdex.one",
-  "https://api.eos.detroitledger.tech",
-  "https://api.eossupport.io",
-  "https://api.eospglmlt.com",
 ] as const;
 
 const BLOCK_COUNT = 5;
 const PROVIDER_TIMEOUT_MS = 3_000;
 const TOTAL_TIMEOUT_MS = 12_000;
+const CANDIDATE_CACHE_MS = 250;
 const BLOCK_ID_PATTERN = /^[a-f0-9]{64}$/i;
 
 export type EosBlockCandidate = {
@@ -127,12 +128,49 @@ async function responseJson(response: Response): Promise<unknown> {
 }
 
 export class EosRandomBlockService implements EosRandomBlockSource {
+  private cached: {
+    value: Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">;
+    expiresAt: number;
+  } | null = null;
+  private inFlight: Promise<
+    Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
+  > | null = null;
+
   constructor(
     private readonly fetcher: Fetcher = fetch,
     private readonly randomIndex: RandomIndex = randomInt,
   ) {}
 
   async select(): Promise<EosRandomBlockSelection> {
+    const snapshot = await this.loadSnapshot();
+    const selectedIndex = this.randomIndex(snapshot.candidates.length);
+    return {
+      ...snapshot,
+      selectedIndex,
+      selectedBlock: snapshot.candidates[selectedIndex]!,
+    };
+  }
+
+  private async loadSnapshot(): Promise<
+    Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
+  > {
+    if (this.cached && this.cached.expiresAt > Date.now()) {
+      return this.cached.value;
+    }
+    if (this.inFlight) return this.inFlight;
+    this.inFlight = this.fetchSnapshot();
+    try {
+      const value = await this.inFlight;
+      this.cached = { value, expiresAt: Date.now() + CANDIDATE_CACHE_MS };
+      return value;
+    } finally {
+      this.inFlight = null;
+    }
+  }
+
+  private async fetchSnapshot(): Promise<
+    Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
+  > {
     const startedAt = Date.now();
     let lastError: unknown = new Error("No EOS provider was attempted");
 
@@ -147,12 +185,9 @@ export class EosRandomBlockService implements EosRandomBlockSource {
           endpoint,
           Math.min(PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS - elapsed),
         );
-        const selectedIndex = this.randomIndex(candidates.blocks.length);
         return {
           provider: endpoint,
           chainInfo: candidates.chainInfo,
-          selectedIndex,
-          selectedBlock: candidates.blocks[selectedIndex]!,
           candidates: candidates.blocks,
         };
       } catch (error) {
