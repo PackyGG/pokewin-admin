@@ -70,7 +70,7 @@ type GrossDashboardCashflow = Pick<
  *       – card_wd  = SUM(card_withdrawal_requests.total_value_usd) WHERE
  *                    status IN ('completed','shipped') AND
  *                    COALESCE(shipped_at, completed_at) >= cutoff, same scope.
- *       – manual_wd = |SUM(ledger amount)| of admin_balance_adjustment rows
+ *       – manual_wd = recorded gross payout (legacy fallback: |ledger amount|)
  *                    tagged 'Manual withdrawal:%' that DEBIT the balance
  *                    (balance_after < balance_before), created_at >= cutoff,
  *                    same scope. (This is the exact `manualWd` leg
@@ -134,12 +134,14 @@ async function computeCashflow(
         cutoff,
       ),
       queryRows<ManualRow[]>(db,
-        `SELECT COALESCE(SUM(ABS(lt.amount::numeric)), 0)::text AS amt,
+        `SELECT COALESCE(SUM(COALESCE(
+                  NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                  ABS(lt.amount::numeric)
+                )), 0)::text AS amt,
                 COUNT(*)::text AS cnt
          FROM ledger_transactions lt
          WHERE lt.status = 'completed'
            AND lt.type::text = 'admin_balance_adjustment'
-           AND lt.balance_after < lt.balance_before
            AND lt.description ILIKE 'Manual withdrawal:%'
            AND lt.created_at >= $1
            AND ${scopeLt}`,

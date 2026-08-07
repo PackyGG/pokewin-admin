@@ -81,9 +81,11 @@ async function main() {
       `SELECT
          COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
          COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                            AND lt.balance_after < lt.balance_before
                             AND lt.description ILIKE 'Manual withdrawal:%'
-                           THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
+                           THEN COALESCE(
+                             NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                             ABS(lt.amount::numeric)
+                           ) ELSE 0 END), 0)::float8 AS manual_wd,
          COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
        FROM ledger_transactions lt
        WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
@@ -126,12 +128,12 @@ async function main() {
   const deposits = ledger.rows[0].deposits;
   const manualWd = ledger.rows[0].manual_wd;
   const cardWd = card.rows[0].card_wd;
-  const withdrawalsGross = Math.abs(manualWd) + cardWd;
+  const withdrawalsGross = manualWd + cardWd;
   const balanceChange = ledger.rows[0].balance_change;
   const inventoryChange = inv.rows[0].obtained - inv.rows[0].disposed;
   const voucherChange = vch.rows[0].issued - vch.rows[0].claimed;
   const pnl =
-    deposits - (manualWd + cardWd) - balanceChange - inventoryChange - voucherChange;
+    deposits - withdrawalsGross - balanceChange - inventoryChange - voucherChange;
   const popoverPnl =
     deposits - withdrawalsGross - balanceChange - inventoryChange - voucherChange;
   const ok = Math.abs(popoverPnl - pnl) < 0.01;
@@ -147,9 +149,11 @@ async function main() {
         `SELECT
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                              AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
-                             THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
+                             THEN COALESCE(
+                               NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                               ABS(lt.amount::numeric)
+                             ) ELSE 0 END), 0)::float8 AS manual_wd,
            COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${excludedUserScopeLt}`,

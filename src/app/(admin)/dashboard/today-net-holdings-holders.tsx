@@ -38,6 +38,7 @@ export function TodayNetHoldingsHoldersChip({
     tone === "emerald"
       ? "text-emerald-600 dark:text-emerald-400"
       : "text-rose-600 dark:text-rose-400";
+  const sign = netHoldingsChange > 0 ? "+" : netHoldingsChange < 0 ? "−" : "";
 
   const handleToggle = () => {
     if (state.open) {
@@ -83,6 +84,7 @@ export function TodayNetHoldingsHoldersChip({
                 valueColor,
               )}
             >
+              {sign}
               <AnimatedNumber
                 value={Math.abs(netHoldingsChange)}
                 format="currency"

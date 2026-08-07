@@ -76,7 +76,7 @@ export async function getUserWindowedPnlMulti(
     const ledgerManualWdCase = windows
       .map(
         (_, i) =>
-          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.balance_after < lt.balance_before AND lt.description ILIKE 'Manual withdrawal:%' THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd_${i}`,
+          `COALESCE(SUM(CASE WHEN lt.created_at >= ${wParam(i)} AND lt.type::text = 'admin_balance_adjustment' AND lt.description ILIKE 'Manual withdrawal:%' THEN COALESCE(NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric, ABS(lt.amount::numeric)) ELSE 0 END), 0)::text AS manual_wd_${i}`,
       )
       .join(", ");
     const fiatRefundCase = windows

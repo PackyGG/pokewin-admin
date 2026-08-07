@@ -63,34 +63,28 @@ export function GgrBreakdownPopover({
   periodLabel,
   contributorScope,
   headlineGgr,
-  cashGgr,
+  netCashFlow,
   deposits,
   withdrawals,
 }: {
   breakdown: GgrBreakdown;
   periodLabel: string;
   contributorScope: GgrContributorScope;
-  /**
-   * The tile's actual headline number — dashboard-local "deposit-funded"
-   * GGR (owner request, 2026-07-02; see `dashboard-deposit-funded-ggr.ts`).
-   * Shown FIRST so the popover matches the tile. `breakdown.ggr` below is
-   * the industry definition (`wager − payouts`) and is now a REFERENCE
-   * figure, not the headline — the two can legitimately differ.
-   */
+  /** The tile's canonical industry GGR (`wager − gaming payouts`). */
   headlineGgr: number;
   /**
-   * Cash P&L (`deposits − withdrawals`) for the window. Surfaced as a
+   * Net cash flow (`deposits − withdrawals`) for the window. Surfaced as a
    * SECONDARY figure inside the popover so an operator can see net cash
    * kept (crypto-flow tracking) without leaving the tile — NOT the headline
-   * number (the tile's headline is deposit-funded GGR).
+   * number (the tile's headline is realized gaming margin).
    */
-  cashGgr: number;
+  netCashFlow: number;
   /** Window's deposit dollars — drives the secondary `deposits − withdrawals` math. */
   deposits: number;
   /** Window's withdrawal dollars — drives the secondary `deposits − withdrawals` math. */
   withdrawals: number;
 }) {
-  const cashIsProfit = cashGgr >= 0;
+  const cashIsProfit = netCashFlow >= 0;
   const headlineIsProfit = headlineGgr >= 0;
   const ggrIsProfit = breakdown.ggr >= 0;
   // Hide zero-total rows so the list stays readable on quiet windows
@@ -156,9 +150,7 @@ export function GgrBreakdownPopover({
         sideOffset={6}
         className="w-[360px] max-w-[calc(100vw-2rem)] space-y-2 p-3"
       >
-        {/* Headline — dashboard-local "deposit-funded" GGR (owner request,
-            2026-07-02). Shown FIRST so the popover matches the tile.
-            House-POV colour (positive → emerald, negative → rose). */}
+        {/* Headline — canonical industry GGR, matching the tile. */}
         <div>
           <div className="flex items-center justify-between">
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
@@ -175,22 +167,15 @@ export function GgrBreakdownPopover({
             </span>
           </div>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
-            Deposit-funded gaming margin — per real customer, traces
-            chronologically how much of their wagering in this window was
-            fundable by deposits made IN THIS SAME WINDOW (FIFO, never
-            replenished by wins); payouts are apportioned to that funded
-            share. Excludes wagering funded by balance carried over from a
-            prior window.
+            Realized gaming margin: wagers minus gaming payouts in this
+            window. This is independent of when the funding deposit occurred.
           </p>
         </div>
 
-        {/* Industry GGR — REFERENCE figure only (wager − payouts on packs,
-            battles, upgrader, double down). This is what every other GGR
-            surface (`/ggr`, insights, edge-plan) still uses; it is NOT this
-            tile's headline. */}
+        {/* Auditable wager and payout legs for the headline GGR. */}
         <div className="border-t border-border/60 pt-2">
           <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-            Industry GGR (reference)
+            GGR calculation
           </p>
           <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
             Gross gaming margin (wager − payouts on packs, battles,
@@ -222,11 +207,7 @@ export function GgrBreakdownPopover({
           tone="payout"
         />
 
-        {/* Bottom math: wagersTotal − payoutsTotal = breakdown.ggr — the
-            industry REFERENCE figure (not the tile's headline anymore).
-            House-POV colour on the final line (positive → emerald,
-            negative → rose) per CLAUDE.md. Matches the row totals above
-            by construction. */}
+        {/* Bottom math: wagersTotal − payoutsTotal = breakdown.ggr. */}
         <div className="border-t border-border/60 pt-2">
           <div className="flex items-center justify-between text-xs">
             <span className="font-semibold uppercase tracking-wider">
@@ -244,7 +225,7 @@ export function GgrBreakdownPopover({
           </div>
         </div>
 
-        {/* Secondary reference — Cash P&L (`deposits − withdrawals`).
+        {/* Secondary reference — net cash flow (`deposits − withdrawals`).
             Net cash kept after withdrawals — useful for crypto-flow
             tracking. NOT the headline (the headline above is the gaming
             margin); shown here so an operator doesn't have to leave the
@@ -252,7 +233,7 @@ export function GgrBreakdownPopover({
         <div className="space-y-1 border-t border-border/60 pt-2">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Cash P&L (deposits − withdrawals)
+              Net cash flow (deposits − withdrawals)
             </p>
             <p className="mt-0.5 text-[10px] leading-snug text-muted-foreground">
               Net cash kept after withdrawals — for crypto-flow tracking.
@@ -273,16 +254,16 @@ export function GgrBreakdownPopover({
           </div>
           <div className="flex items-center justify-between border-t border-border/60 px-1 pt-1.5 text-xs">
             <span className="font-semibold uppercase tracking-wider">
-              Cash P&L
+              Net cash flow
             </span>
             <span
               className={cn(
                 "font-bold tabular-nums",
-                houseAmountTextClass(cashGgr),
+                houseAmountTextClass(netCashFlow),
               )}
             >
               {cashIsProfit ? "+" : "−"}
-              {formatCurrency(Math.abs(cashGgr))}
+              {formatCurrency(Math.abs(netCashFlow))}
             </span>
           </div>
         </div>

@@ -66,11 +66,11 @@ import type { GgrBreakdown } from "@/lib/queries/dashboard";
  * fields the strip also carries.
  */
 export type TodayGgrPayload = {
-  /** Dashboard-local "deposit-funded" headline GGR for today. */
+  /** Canonical industry GGR (wagers − gaming payouts) for today. */
   value: number;
-  /** Cash P&L (deposits − withdrawals) — secondary figure inside the popover. */
-  cashGgr: number;
-  /** Window's deposit/withdrawal dollars — drive the popover's cash-P&L math. */
+  /** Net cash flow (deposits − withdrawals) — secondary popover figure. */
+  netCashFlow: number;
+  /** Window's deposit/withdrawal dollars — drive the cash-flow math. */
   deposits: number;
   withdrawals: number;
   /** Industry-GGR breakdown legs for the popover. */
@@ -112,7 +112,7 @@ export function TodayPnlStatCard({
       <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
         <div className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1">
           <CardTitle className="text-card-title text-muted-foreground inline-flex items-center gap-1">
-            P&amp;L Today
+            Balance-sheet P&amp;L Today
             <TodayPnlInfoPopover
               isProfit={isProfit}
               pnl={pnl}
@@ -147,8 +147,8 @@ export function TodayPnlStatCard({
             <AnimatedNumber value={Math.abs(pnl)} format="currency" />
           </span>
         </div>
-        {/* Deposits / Withdrawals / Net holdings — deposits − withdrawals
-            alone does NOT equal P&L; the third chip explains the gap. */}
+        {/* Deposits / Withdrawals / user holdings — net cash flow alone does
+            not equal balance-sheet P&L; the third chip explains the gap. */}
         <div className="grid grid-cols-2 gap-1.5 -mx-0.5">
           <TodayComponentChip
             label="Deposits"
@@ -178,10 +178,9 @@ export function TodayPnlStatCard({
             bump; 11px keeps the secondary rank vs the chip values
             above without being a smudge. */}
         <p className="text-[11px] leading-snug text-muted-foreground">
-          Full P&amp;L includes balance, inventory, and voucher movement — see
-          the{" "}
-          <span className="font-medium text-foreground/80">info</span> icon.
-          Top-right{" "}
+          Balance-sheet P&amp;L = net cash flow − change in user holdings. See
+          the <span className="font-medium text-foreground/80">info</span>{" "}
+          icon. Top-right{" "}
           <span
             className={cn(
               "font-medium",
@@ -190,15 +189,16 @@ export function TodayPnlStatCard({
               !rawCashUp && !rawCashDown && "text-foreground/80",
             )}
           >
-            Cash P&amp;L
+            net cash flow
           </span>{" "}
-          is deposits − withdrawals only (completed fiat + crypto cash flow).
+          is deposits − withdrawals. GGR below is wagers − gaming payouts;
+          deposits that remain in user holdings are not gaming revenue.
         </p>
         {/* GGR — moved down here from the KPI strip (owner request,
             2026-07-02) so the P&L Today tile fills the space the strip's
             other boxes reclaimed once they grew their full data sets back.
-            Same dashboard-local "deposit-funded" headline + the same
-            `GgrBreakdownPopover` the strip used, scoped to "today" (this
+            Same canonical GGR headline + the same `GgrBreakdownPopover` the
+            strip used, scoped to "today" (this
             tile never toggles to 24h). Omitted entirely when the fetch
             failed (`ggr` is null) rather than showing a broken section. */}
         {ggr && <TodayGgrSection ggr={ggr} />}
@@ -226,7 +226,7 @@ function TodayGgrSection({ ggr }: { ggr: TodayGgrPayload }) {
             periodLabel="Today"
             contributorScope={{ kind: "kpi", value: "today" }}
             headlineGgr={ggr.value}
-            cashGgr={ggr.cashGgr}
+            netCashFlow={ggr.netCashFlow}
             deposits={ggr.deposits}
             withdrawals={ggr.withdrawals}
           />
@@ -244,8 +244,8 @@ function TodayGgrSection({ ggr }: { ggr: TodayGgrPayload }) {
         </span>
       </div>
       <p className="mt-0.5 text-[11px] leading-snug text-muted-foreground">
-        deposit-funded gaming margin — only wagers traceable to today&apos;s
-        own deposits. Industry GGR shown in the info popover.
+        wagers − gaming payouts today. This is realized gaming margin, not
+        deposits − withdrawals.
       </p>
     </div>
   );
@@ -277,7 +277,7 @@ function RawCashPnlBadge({ pnl }: { pnl: number }) {
           "border-border/60 bg-background/40 text-muted-foreground",
       )}
     >
-      <span className="mr-px text-muted-foreground/80">Cash P&amp;L</span>
+      <span className="mr-px text-muted-foreground/80">Net cash flow</span>
       <span className="ml-1">
         {sign}
         <AnimatedNumber value={Math.abs(pnl)} format="currency" />
@@ -347,6 +347,7 @@ function TodayPnlInfoPopover({
   isProfit,
   pnl,
   deposits,
+  withdrawals,
   balanceChange,
   inventoryChange,
   voucherChange,
@@ -361,11 +362,7 @@ function TodayPnlInfoPopover({
   voucherChange: number;
   dayLabel: string;
 }) {
-  // Gross withdrawals on the chip; popover derives the signed formula term
-  // from the headline total so manual-withdrawal sign never breaks the sum.
-  const withdrawalsFormulaTerm =
-    deposits - balanceChange - inventoryChange - voucherChange - pnl;
-  const withdrawalsContribution = -withdrawalsFormulaTerm;
+  const withdrawalsContribution = -withdrawals;
   const rows: Array<{
     id: "deposits" | "withdrawals" | "balance" | "inventory" | "voucher";
     label: string;
@@ -447,7 +444,7 @@ function TodayPnlInfoPopover({
             GGR or gaming margin — the same formula as the period-P&amp;L card
             and the daily-P&amp;L chart. Real customers only (staff + excluded
             users dropped).{" "}
-            <strong>Cash P&amp;L</strong> (top-right badge) is deposits −
+            <strong>Net cash flow</strong> (top-right badge) is deposits −
             withdrawals only — completed fiat + crypto cash flow with no
             balance / inventory / voucher terms. Paid-but-uncredited payment
             attempts are excluded.{" "}

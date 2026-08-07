@@ -9,7 +9,6 @@ import {
   type GgrBreakdown,
 } from "@/lib/queries/dashboard";
 import { getDashboardCashflowFromPostgres } from "@/lib/queries/dashboard-cashflow-pg";
-import { getDepositFundedGgrForWindow } from "@/lib/queries/dashboard-deposit-funded-ggr";
 import { readDbEnv } from "@/lib/db-env";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
@@ -55,28 +54,15 @@ export type KpiWindowPayload = {
   ggrAvailable: boolean;
 
   // ---- Period-bound box values ----
-  /**
-   * HEADLINE GGR — DASHBOARD-LOCAL "deposit-funded" definition (owner
-   * request, 2026-07-02; see `dashboard-deposit-funded-ggr.ts` for the full
-   * algorithm). Per real customer, chronologically traces how much of their
-   * window wagering was fundable by money THEY deposited IN THIS SAME
-   * WINDOW (FIFO pool, never replenished by wins), then apportions their
-   * payout to that funded share proportionally. Summed across users. This
-   * intentionally EXCLUDES wagering funded by balance carried over from a
-   * prior window, so headline GGR can no longer exceed what a "just this
-   * window's money" reading would expect. Every OTHER GGR consumer
-   * reads the industry definition (`wager − payouts`) via `getWindowMetrics`
-   * — that figure is preserved in `ggrBreakdown` below as a reference.
-   * Positive → house up → emerald; negative → house down → rose.
-   */
+  /** Canonical industry GGR: wagers − gaming payouts for the window. */
   ggr: number;
   /**
-   * SECONDARY: Cash P&L (`deposits − withdrawals`) for the window. Surfaced
+   * SECONDARY: net cash flow (`deposits − withdrawals`) for the window. Surfaced
    * INSIDE the GGR popover alongside the headline so an operator can audit
    * net cash kept (fiat + crypto cash-flow tracking) without leaving the
    * tile. Not the headline number.
    */
-  cashGgr: number;
+  netCashFlow: number;
   /** Customer wager (creator-on-stream sessions excluded) for the window. */
   wager: number;
   /** Packs / Battles / Upgrader split of `wager` (sums to it). */
@@ -111,7 +97,7 @@ export type KpiWindowPayload = {
 async function computeKpiWindowPayload(
   window: DashboardKpiWindow,
 ): Promise<KpiWindowPayload> {
-  const [statsResult, ggrBreakdown, depositFundedGgr] = await Promise.all([
+  const [statsResult, ggrBreakdown] = await Promise.all([
     safeQuery(
       () => getDashboardKpiStats(window),
       null,
@@ -125,11 +111,6 @@ async function computeKpiWindowPayload(
       payoutsTotal: 0,
       ggr: 0,
     })),
-    // Dashboard-local headline override (owner request, 2026-07-02) — see
-    // dashboard-deposit-funded-ggr.ts. Falls back to the industry figure
-    // (stats.ggr, via ggrBreakdown once resolved below) if this read fails,
-    // so the tile never goes blank on a transient error.
-    getDepositFundedGgrForWindow(window).catch(() => null),
   ]);
   const stats = statsResult.data;
 
@@ -157,13 +138,12 @@ async function computeKpiWindowPayload(
   // box and P&L Today reconcile by construction — without touching the frozen
   // `calculateWindowedPnl` math or the creator-excluded wager / period-P&L
   // boxes.
-  // Owner reverted the GGR definition (2026-06-30 follow-up): the HEADLINE
-  // GGR tile reads the industry definition again (`wager − payouts`, what
-  // we won from the games today — packs, battles, upgrader). Cash P&L
-  // (`deposits − withdrawals`) is kept as a SECONDARY figure inside the
+  // The headline GGR reads the canonical industry definition (`wager −
+  // payouts`, what we won from games today — packs, battles, upgrader).
+  // Net cash flow (`deposits − withdrawals`) is a SECONDARY figure inside the
   // popover so an operator can still see net cash kept (fiat + crypto cash-flow
   // tracking) without leaving the tile, but it is no longer the headline.
-  const cashGgr = cashflow
+  const netCashFlow = cashflow
     ? cashflow.deposits - cashflow.withdrawals
     : 0;
   const capturedAtIso = new Date().toISOString();
@@ -175,9 +155,9 @@ async function computeKpiWindowPayload(
     servedAtIso: capturedAtIso,
     wagerAvailable: stats !== null,
     cashflowAvailable: cashflow !== null,
-    ggrAvailable: depositFundedGgr !== null || stats !== null,
-    ggr: depositFundedGgr ?? stats?.ggr ?? 0,
-    cashGgr,
+    ggrAvailable: stats !== null,
+    ggr: stats?.ggr ?? 0,
+    netCashFlow,
     wager: stats?.wagers ?? 0,
     wagerBreakdown: stats?.wagersBreakdown ?? {
       packs: 0,
@@ -209,7 +189,7 @@ export function emptyKpiWindowPayload(
     cashflowAvailable: false,
     ggrAvailable: false,
     ggr: 0,
-    cashGgr: 0,
+    netCashFlow: 0,
     wager: 0,
     wagerBreakdown: { packs: 0, battles: 0, upgrader: 0 },
     wagerOrganic: 0,

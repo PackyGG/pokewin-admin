@@ -454,7 +454,7 @@ async function DashboardTodayPnl() {
         ggrPayload?.ggrAvailable && ggrPayload.cashflowAvailable
           ? {
               value: ggrPayload.ggr,
-              cashGgr: ggrPayload.cashGgr,
+              netCashFlow: ggrPayload.netCashFlow,
               deposits: ggrPayload.deposits,
               withdrawals: ggrPayload.withdrawals,
               breakdown: ggrPayload.ggrBreakdown,

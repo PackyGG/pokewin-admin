@@ -1780,24 +1780,28 @@ export async function recordManualWithdrawal(data: {
       balanceDeducted = Number(updated.rows[0]!.balance_deducted);
       phantomPortion = Number(updated.rows[0]!.phantom_portion);
 
-      if (balanceDeducted > 0) {
-        const description =
-          phantomPortion > 0
-            ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
-            : `Manual withdrawal: ${parsed.reason}`;
-        await tx.execute(sql`
-          INSERT INTO ledger_transactions (
-            id, user_id, type, amount, balance_before, balance_after,
-            description, status
-          ) VALUES (
-            ${crypto.randomUUID()}::uuid, ${parsed.userId},
-            'admin_balance_adjustment',
-            ${newBalanceText}::numeric - ${currentBalanceText}::numeric,
-            ${currentBalanceText}::numeric, ${newBalanceText}::numeric,
-            ${description}, 'completed'
+      const description =
+        phantomPortion > 0
+          ? `Manual withdrawal: ${parsed.reason} (total $${parsed.amountUsd.toFixed(2)}, $${balanceDeducted.toFixed(2)} from on-site)`
+          : `Manual withdrawal: ${parsed.reason}`;
+      await tx.execute(sql`
+        INSERT INTO ledger_transactions (
+          id, user_id, type, amount, balance_before, balance_after,
+          description, status, metadata
+        ) VALUES (
+          ${crypto.randomUUID()}::uuid, ${parsed.userId},
+          'admin_balance_adjustment',
+          ${newBalanceText}::numeric - ${currentBalanceText}::numeric,
+          ${currentBalanceText}::numeric, ${newBalanceText}::numeric,
+          ${description}, 'completed',
+          jsonb_build_object(
+            'kind', 'manual_withdrawal',
+            'withdrawal_amount_usd', ${parsed.amountUsd}::numeric,
+            'balance_deducted_usd', ${balanceDeducted}::numeric,
+            'phantom_portion_usd', ${phantomPortion}::numeric
           )
-        `);
-      }
+        )
+      `);
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";

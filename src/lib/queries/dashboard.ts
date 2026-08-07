@@ -266,7 +266,7 @@ const cachedKpiWindowMetrics = unstable_cache(
   },
   // Bumped v2 → v3 alongside the GGR-revert (2026-06-30 follow-up): the
   // headline GGR tile reads the industry definition again
-  // (`wager − payouts`), and the popover now shows Cash P&L as a SECONDARY
+  // (`wager − payouts`), and the popover now shows net cash flow as a SECONDARY
   // figure instead of the headline. Forcing a fresh cache miss on the
   // rollout guarantees the new label/placement materializes on the first
   // request (no carry-over of the previous payload's wiring).
@@ -595,9 +595,11 @@ export function getPeriodAggregates(
       COALESCE(SUM(CASE
         WHEN type::text = 'admin_balance_adjustment'
              AND lt_description ILIKE 'Manual withdrawal:%'
-             AND lt_balance_after < lt_balance_before
              AND created_at >= $1
-        THEN amount ELSE 0 END), 0)::text AS manual_wd
+        THEN COALESCE(
+          NULLIF(lt_metadata->>'withdrawal_amount_usd', '')::numeric,
+          ABS(amount)
+        ) ELSE 0 END), 0)::text AS manual_wd
     FROM base
   `, cutoff);
 }

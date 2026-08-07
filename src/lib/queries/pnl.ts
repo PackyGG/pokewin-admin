@@ -339,9 +339,11 @@ function windowedPnlLegSql(scope: (col: string) => string) {
     ledger: `SELECT
          COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
          COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                            AND lt.balance_after < lt.balance_before
                             AND lt.description ILIKE 'Manual withdrawal:%'
-                           THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
+                           THEN COALESCE(
+                             NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                             ABS(lt.amount::numeric)
+                           ) ELSE 0 END), 0)::text AS manual_wd,
          COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
        FROM ledger_transactions lt
        WHERE lt.status = 'completed' AND lt.created_at >= $1 AND ${userScopeLt}`,
@@ -396,13 +398,13 @@ function combineWindowedPnlLegs(row: WindowedPnlLegRow | undefined): WindowedPnl
   const deposits = toNumber(row?.deposits) - toNumber(row?.refunds);
   const manualWd = toNumber(row?.manual_wd);
   const cardWd = toNumber(row?.card_wd);
-  const withdrawalsGross = Math.abs(manualWd) + cardWd;
+  const withdrawalsGross = manualWd + cardWd;
   const balanceChange = toNumber(row?.balance_change);
   const inventoryChange = toNumber(row?.obtained) - toNumber(row?.disposed);
   const voucherChange = toNumber(row?.issued) - toNumber(row?.claimed);
   const pnl =
     deposits -
-    (manualWd + cardWd) -
+    withdrawalsGross -
     balanceChange -
     inventoryChange -
     voucherChange;
@@ -579,9 +581,11 @@ export async function calculateUsersBoundedWindowedPnlBatch(
         `SELECT lt.user_id,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::text AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                              AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
-                             THEN lt.amount::numeric ELSE 0 END), 0)::text AS manual_wd,
+                             THEN COALESCE(
+                               NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                               ABS(lt.amount::numeric)
+                             ) ELSE 0 END), 0)::text AS manual_wd,
            COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::text AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed'
@@ -945,9 +949,11 @@ async function computeDailyPnl(
          SELECT DATE(lt.created_at) AS d,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
-                              AND lt.balance_after < lt.balance_before
                               AND lt.description ILIKE 'Manual withdrawal:%'
-                             THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
+                             THEN COALESCE(
+                               NULLIF(lt.metadata->>'withdrawal_amount_usd', '')::numeric,
+                               ABS(lt.amount::numeric)
+                             ) ELSE 0 END), 0)::float8 AS manual_wd,
            COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '${windowDays} days'
@@ -1055,8 +1061,8 @@ async function computeDailyPnl(
       const date = new Date(r.d).toISOString().slice(0, 10);
       return {
         date,
-        // Exact per-day form of the windowed formula (manualWd carries its
-        // stored sign here so the daily values sum to the windowed total).
+        // Exact per-day form of the windowed formula. Manual withdrawals
+        // are normalized to positive gross money-out in the ledger CTE.
         // Upgrader is fully covered by balanceChange (the ledger carries
         // both upgrader_bet debits and upgrader_payout credits); a prior
         // trailing upgraderWon term was based on a stale assumption that
@@ -1071,7 +1077,7 @@ async function computeDailyPnl(
         deposits: r.deposits,
         // Gross money-out for the hover (clean positive regardless of how
         // the manual-withdrawal sign is stored).
-        withdrawals: Math.abs(r.manual_wd) + r.card_wd,
+        withdrawals: r.manual_wd + r.card_wd,
         // Already-derived windowed-delta components for the hover breakdown
         // — surfaced (not recomputed) so the tooltip can show where each
         // day's net deposit inflow actually went (balance / inventory /
