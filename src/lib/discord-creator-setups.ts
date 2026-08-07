@@ -7,6 +7,7 @@ import {
   admin_audit_events,
   admin_leaderboard_sponsorship,
   creator_reward_programs,
+  discord_creator_setups,
 } from "@/lib/db-schema/admin/schema";
 import { affiliate_codes, user } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
@@ -599,6 +600,46 @@ export async function getCreatorSetupStats(input: {
         clicksByCode.get(code),
       ),
     ),
+  };
+}
+
+/** Poll-safe stream lifecycle snapshot for the Discord admin-log worker. */
+export async function getCreatorSetupStreamEvents(input: { after: string }) {
+  const parsed = new Date(input.after);
+  const cutoff = Number.isFinite(parsed.getTime())
+    ? parsed.toISOString()
+    : new Date(Date.now() - 10 * 60_000).toISOString();
+  const setups = await adminDrizzle.select({
+    guildId: discord_creator_setups.guild_id,
+    categoryId: discord_creator_setups.category_id,
+    creatorUserId: discord_creator_setups.creator_user_id,
+  }).from(discord_creator_setups).where(and(
+    eq(discord_creator_setups.status, "active"),
+    sql`${discord_creator_setups.creator_user_id} IS NOT NULL`,
+  ));
+  const linked = setups.filter((row) => row.creatorUserId && row.categoryId);
+  if (!linked.length) return { events: [], serverTime: new Date().toISOString() };
+  const ids = linked.map((row) => row.creatorUserId!);
+  const db = getProdReadDrizzleDb();
+  const result = await db.execute(sql`
+    SELECT id::text, user_id, deal_id::text, status::text, activated_at, first_bet_at,
+      ended_at, converted_at, auto_end_at, fill_loaded_usd::text, fill_spent_usd::text,
+      fill_refunded_usd::text, fill_remaining_usd::text, ending_balance_usd::text,
+      conversion_rate_bps_snapshot, converted_to_raw_usd::text, version, updated_at
+    FROM creator_stream_sessions
+    WHERE user_id = ANY(${pgArrayParam(ids)}::text[])
+      AND updated_at >= ${cutoff}::timestamptz
+    ORDER BY updated_at ASC
+    LIMIT 500
+  `);
+  const byCreator = new Map(linked.map((row) => [row.creatorUserId!, row]));
+  return {
+    serverTime: new Date().toISOString(),
+    events: result.rows.map((row: any) => ({
+      ...row,
+      guildId: byCreator.get(row.user_id)?.guildId,
+      categoryId: byCreator.get(row.user_id)?.categoryId,
+    })).filter((row) => row.guildId && row.categoryId),
   };
 }
 

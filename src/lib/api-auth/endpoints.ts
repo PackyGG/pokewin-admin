@@ -97,6 +97,12 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/stream-events",
+    summary: "Body { after }. Returns recently changed creator stream sessions mapped to their Discord creator sections for private admin-log delivery.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/user-stats",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId, username }. Exact case-insensitive lookup by the public Packy username used in chat and leaderboards. Returns wager, weighted leaderboard wager, deposits, and creator earnings only for the user's current unexpired period on a code owned by the creator linked to that Discord section.",
