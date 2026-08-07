@@ -63,11 +63,18 @@ test("Keno replay shows the canonical exact-hit chance", () => {
 
 test("Keno replay makes risk and outcome context prominent", () => {
   assert.match(replay, /Risk profile/);
-  assert.match(replay, /Payout curve selected by the player/);
   assert.match(replay, /Player net/);
   assert.match(replay, /House result/);
   assert.match(modal, /Ledger transaction details/);
+  assert.match(modal, /<details[\s\S]*open/);
+  assert.match(modal, /\{!isKeno && t\.gameSessionId && \(/);
   assert.match(modal, /isKeno \? "sm:max-w-5xl"/);
+});
+
+test("Keno replay uses blue picks, red misses, and green hits", () => {
+  assert.match(replay, /wasSelected &&[\s\S]*!wasDrawn[\s\S]*border-blue-500/);
+  assert.match(replay, /wasDrawn &&[\s\S]*!wasSelected[\s\S]*border-red-500/);
+  assert.match(replay, /wasHit &&[\s\S]*border-emerald-500/);
 });
 
 test("Gaming shows one settled outcome row per Keno game", () => {

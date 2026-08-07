@@ -2,7 +2,6 @@ import {
   CalendarClock,
   CircleDollarSign,
   Crosshair,
-  Gauge,
   Sparkles,
   Target,
   Trophy,
@@ -189,13 +188,13 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
                   className={cn(
                     "relative flex aspect-square min-w-0 items-center justify-center rounded-md border bg-background text-[11px] font-semibold tabular-nums sm:rounded-lg sm:text-sm",
                     wasHit &&
-                      "z-10 scale-[1.04] border-amber-400/70 bg-amber-500/20 text-amber-800 shadow-sm ring-2 ring-amber-500/20 dark:text-amber-200",
+                      "z-10 scale-[1.04] border-emerald-500/70 bg-emerald-500/20 text-emerald-800 shadow-sm ring-2 ring-emerald-500/20 dark:text-emerald-200",
                     wasSelected &&
                       !wasDrawn &&
-                      "border-primary/55 bg-primary/12 text-primary",
+                      "border-blue-500/60 bg-blue-500/15 text-blue-700 dark:text-blue-300",
                     wasDrawn &&
                       !wasSelected &&
-                      "border-cyan-500/50 bg-cyan-500/12 text-cyan-700 dark:text-cyan-300",
+                      "border-red-500/60 bg-red-500/15 text-red-700 dark:text-red-300",
                     !wasSelected &&
                       !wasDrawn &&
                       "border-border/55 text-muted-foreground/70",
@@ -203,7 +202,7 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
                 >
                   {number + 1}
                   {wasHit && (
-                    <Sparkles className="absolute right-0.5 top-0.5 size-2.5 text-amber-600 sm:size-3 dark:text-amber-300" />
+                    <Sparkles className="absolute right-0.5 top-0.5 size-2.5 text-emerald-600 sm:size-3 dark:text-emerald-300" />
                   )}
                 </div>
               );
@@ -212,32 +211,31 @@ export function KenoGameReplay({ game }: { game: KenoGameDetails }) {
 
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
             <span className="inline-flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm border border-primary/60 bg-primary/15" />
+              <span className="size-2.5 rounded-sm border border-blue-500/60 bg-blue-500/15" />
               Picked
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm border border-cyan-500/60 bg-cyan-500/15" />
-              Drawn
+              <span className="size-2.5 rounded-sm border border-red-500/60 bg-red-500/15" />
+              Drawn, not picked
             </span>
             <span className="inline-flex items-center gap-1.5">
-              <span className="size-2.5 rounded-sm border border-amber-500/70 bg-amber-500/20" />
+              <span className="size-2.5 rounded-sm border border-emerald-500/70 bg-emerald-500/20" />
               Picked + hit
             </span>
           </div>
         </div>
 
         <aside className="space-y-3">
-          <div className={cn("rounded-xl border p-3", risk.className)}>
-            <div className="flex items-center gap-2">
-              <Gauge className="size-4" />
-              <p className="text-[10px] font-semibold uppercase tracking-[0.14em]">
-                Risk profile
-              </p>
-            </div>
-            <p className="mt-2 text-lg font-bold capitalize">{game.risk}</p>
-            <p className="mt-0.5 text-[11px] opacity-80">
-              Payout curve selected by the player
+          <div
+            className={cn(
+              "flex items-center justify-between gap-3 rounded-lg border px-3 py-2",
+              risk.className,
+            )}
+          >
+            <p className="text-[10px] font-semibold uppercase tracking-[0.14em]">
+              Risk profile
             </p>
+            <p className="text-sm font-bold capitalize">{game.risk}</p>
           </div>
 
           <div className="grid grid-cols-2 gap-2">

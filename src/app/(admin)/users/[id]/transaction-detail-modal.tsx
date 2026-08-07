@@ -128,7 +128,8 @@ export function TransactionDetailModal({
     // fetch (and a server-seed query) for it.
     if (
       !transaction?.gameSessionId ||
-      transaction?.syntheticKind === "double_down"
+      transaction?.syntheticKind === "double_down" ||
+      kenoTxId
     ) {
       setGameSession(null);
       setSessionError(false);
@@ -167,6 +168,7 @@ export function TransactionDetailModal({
     transaction?.id,
     transaction?.gameSessionId,
     transaction?.syntheticKind,
+    kenoTxId,
     userId,
   ]);
 
@@ -794,6 +796,7 @@ export function TransactionDetailModal({
           {isKeno ? (
             <details
               key={t.id}
+              open
               className="group rounded-xl border border-border/60 bg-muted/15"
             >
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-4 py-3 text-sm font-medium marker:content-none">
@@ -830,7 +833,7 @@ export function TransactionDetailModal({
               without leaving the row. Self-hides when no data. */}
           <WagerRequirementBlock wagerRequirement={wagerRequirement} />
 
-          {t.gameSessionId && (
+          {!isKeno && t.gameSessionId && (
             <div className="border-t pt-4 space-y-3">
               {loadingSession ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
