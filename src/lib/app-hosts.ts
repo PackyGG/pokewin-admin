@@ -120,6 +120,7 @@ const APEX_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "creator-rewards",
   "creators",
   "dashboard",
+  "eos",
   "fiat",
   "insights",
   "keno",

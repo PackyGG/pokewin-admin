@@ -5,10 +5,13 @@ import { z } from "zod";
 
 import {
   BattleSimulationError,
+  type BattleCandidateOutcome,
   type BattleOutcomeSource,
 } from "./battle-outcome-simulator.js";
+import type { BattleTestConfigSource } from "./battle-test-config.js";
 
 export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
+export const EOS_RANDOM_BLOCK_CONFIG_PATH = `${EOS_RANDOM_BLOCK_PATH}/config`;
 
 const EOS_ENDPOINTS = [
   "https://mainnet.genereos.io",
@@ -54,6 +57,31 @@ const requestSchema = z.object({
   userID: z.string().trim().min(1).max(100),
   battleID: z.uuid(),
 }).strict();
+
+const configUpdateSchema = z.object({
+  userOnlyLoses: z.boolean(),
+  actor: z.string().trim().min(1).max(120),
+}).strict();
+
+export function selectBattleTestOutcome(
+  outcomes: BattleCandidateOutcome[],
+  randomBlockNumber: number,
+  userOnlyLoses: boolean,
+  randomIndex: RandomIndex = randomInt,
+): BattleCandidateOutcome {
+  if (outcomes.length === 0) {
+    throw new BattleSimulationError("battle_data_incomplete", 409);
+  }
+  if (!userOnlyLoses) {
+    return outcomes.find((outcome) => outcome.blockNumber === randomBlockNumber)
+      ?? outcomes[0]!;
+  }
+  const losses = outcomes.filter((outcome) => outcome.creatorProfitLoss < 0);
+  if (losses.length > 0) return losses[randomIndex(losses.length)]!;
+  return outcomes.reduce((lowest, outcome) =>
+    outcome.creatorProfitLoss < lowest.creatorProfitLoss ? outcome : lowest
+  );
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -157,7 +185,26 @@ export async function registerEosRandomBlockRoutes(
   app: FastifyInstance,
   source: EosRandomBlockSource = new EosRandomBlockService(),
   battleOutcomes?: BattleOutcomeSource,
+  testConfig?: BattleTestConfigSource,
 ): Promise<void> {
+  if (testConfig) {
+    app.get(EOS_RANDOM_BLOCK_CONFIG_PATH, async () => ({
+      data: await testConfig.get(),
+    }));
+    app.put(EOS_RANDOM_BLOCK_CONFIG_PATH, async (request, reply) => {
+      const parsed = configUpdateSchema.safeParse(request.body);
+      if (!parsed.success) {
+        return reply.code(400).send({ error: "invalid_request" });
+      }
+      return {
+        data: await testConfig.set(
+          parsed.data.userOnlyLoses,
+          parsed.data.actor,
+        ),
+      };
+    });
+  }
+
   app.post(
     EOS_RANDOM_BLOCK_PATH,
     { bodyLimit: 2 * 1024 },
@@ -190,7 +237,23 @@ export async function registerEosRandomBlockRoutes(
           parsed.data.battleID,
           selection.candidates,
         );
-        return battle;
+        let userOnlyLoses = false;
+        if (testConfig) {
+          try {
+            userOnlyLoses = (await testConfig.get()).userOnlyLoses;
+          } catch (error) {
+            request.log.warn(
+              { err: error, event: "eos_random_block.config_read_failed" },
+              "EOS battle test config unavailable; using random selection",
+            );
+          }
+        }
+        const selected = selectBattleTestOutcome(
+          battle.outcomes,
+          selection.selectedBlock.blockNumber,
+          userOnlyLoses,
+        );
+        return { ...battle, selectedBlockNumber: selected.blockNumber };
       } catch (error) {
         if (error instanceof BattleSimulationError) {
           request.log.warn(

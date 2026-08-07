@@ -73,6 +73,7 @@ import {
   registerEosRandomBlockRoutes,
 } from "./eos-random-block-routes.js";
 import { DevBattleOutcomeSimulator } from "./battle-outcome-simulator.js";
+import { PgBattleTestConfigStore } from "./battle-test-config.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
@@ -196,6 +197,7 @@ const app = Fastify({
   },
 });
 const db = createDatabases(config);
+const battleTestConfig = new PgBattleTestConfigStore(db.antifraud);
 const live = new LiveBus(config.REDIS_URL, app.log, {
   // Durable publish fallback: frames Redis rejects are parked in the
   // Antifraud-DB live_outbox and republished by the bus drain loop.
@@ -2276,6 +2278,7 @@ await registerEosRandomBlockRoutes(
         config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
       )
     : undefined,
+  battleTestConfig,
 );
 
 app.setErrorHandler((error, request, reply) => {

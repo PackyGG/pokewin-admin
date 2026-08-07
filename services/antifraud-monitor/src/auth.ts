@@ -54,6 +54,7 @@ export function serviceRequestAuthorized(
       pathname.startsWith("/v1/kyc/applicants/") &&
       pathname.endsWith("/review")) ||
     (pathname === "/v1/operations/signup-failures" && method === "GET") ||
+    (pathname === "/v1/testing/eos-random-block/config" && method === "GET") ||
     (method === "GET" &&
       pathname.startsWith("/v1/networks/") &&
       pathname.endsWith("/reveal"));
