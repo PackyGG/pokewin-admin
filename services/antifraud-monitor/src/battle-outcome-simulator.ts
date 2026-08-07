@@ -8,9 +8,13 @@ const MAX_TICKET = 1_000_000;
 
 type BattleRow = {
   id: string;
+  user_id: string;
   mode: string;
   pack_ids: string[];
   additional_settings: string[];
+  bet_amount: string;
+  currency: "real" | "coin";
+  sponsorship_amount_paid: string;
   server_seed: string;
   server_seed_hash: string;
 };
@@ -21,6 +25,7 @@ type ParticipantRow = {
   bot_id: string | null;
   team_number: number;
   team_position: number;
+  borrow_percentage: number;
 };
 
 type PackRow = {
@@ -45,45 +50,22 @@ type CardRow = {
 export type BattleCandidateOutcome = {
   blockNumber: number;
   blockHash: string;
-  winnerTeam: number;
-  userTeam: number;
-  userWon: boolean;
-  totalUnpacked: number;
-  scoreType: "value" | "hp" | "points" | "jackpot_value";
-  resolution: {
-    type: "score" | "tiebreaker" | "jackpot" | "group";
-    ticket: number | null;
-    tiedTeams: number[];
-  };
-  teamScores: Array<{ teamNumber: number; score: number }>;
-  participants: Array<{
-    participantId: string;
-    userID: string | null;
-    botId: string | null;
-    teamNumber: number;
-    teamPosition: number;
-    totalValue: number;
-    rounds: Array<{
-      round: number;
-      packId: string;
-      packName: string;
-      cards: Array<{
-        cardId: string;
-        name: string;
-        imageUrl: string;
-        price: number;
-        hp: number;
-        rarity: string | null;
-        ticket: number;
-      }>;
-    }>;
-  }>;
+  winningTeam: number;
+  creatorTeam: number;
+  creatorWonBattle: boolean;
+  creatorCost: number;
+  creatorPayout: number;
+  creatorProfitLoss: number;
+  creatorMoneyResult: "profit" | "loss" | "break_even";
+  creatorAmount: number;
 };
 
 export type BattleOutcomeSimulation = {
   battleId: string;
   mode: "normal" | "jackpot" | "group" | "hp_rush" | "lowest";
   crazyMode: boolean;
+  currency: "real" | "coin";
+  creatorUserID: string;
   outcomes: BattleCandidateOutcome[];
 };
 
@@ -161,8 +143,6 @@ function roundedMoney(value: number): number {
 type ModeResolution = {
   winnerTeam: number;
   scores: Map<number, number>;
-  scoreType: BattleCandidateOutcome["scoreType"];
-  resolution: BattleCandidateOutcome["resolution"];
 };
 
 function resolveScoreWinner(
@@ -188,8 +168,6 @@ function resolveScoreWinner(
     return {
       winnerTeam: tied[0]!,
       scores: teamScores,
-      scoreType: "value",
-      resolution: { type: "score", ticket: null, tiedTeams: [] },
     };
   }
   const ticket = ticketFor(
@@ -203,12 +181,31 @@ function resolveScoreWinner(
     winnerTeam:
       tied[Math.min(Math.floor((ticket - 1) / segmentSize), tied.length - 1)]!,
     scores: teamScores,
-    scoreType: "value",
-    resolution: { type: "tiebreaker", ticket, tiedTeams: tied },
   };
 }
 
-type PulledParticipant = BattleCandidateOutcome["participants"][number];
+type PulledParticipant = {
+  participantId: string;
+  userID: string | null;
+  botId: string | null;
+  teamNumber: number;
+  teamPosition: number;
+  totalValue: number;
+  rounds: Array<{
+    round: number;
+    packId: string;
+    packName: string;
+    cards: Array<{
+      cardId: string;
+      name: string;
+      imageUrl: string;
+      price: number;
+      hp: number;
+      rarity: string | null;
+      ticket: number;
+    }>;
+  }>;
+};
 
 function participantValue(participant: PulledParticipant): number {
   return participant.rounds.reduce(
@@ -245,8 +242,6 @@ function resolveMode(input: {
     return {
       winnerTeam: 1,
       scores: input.valueScores,
-      scoreType: "value",
-      resolution: { type: "group", ticket: null, tiedTeams: [] },
     };
   }
   if (input.mode === "normal") {
@@ -282,7 +277,7 @@ function resolveMode(input: {
       input.battleId,
       input.nonce,
     );
-    return { ...resolved, scoreType: "hp" };
+    return resolved;
   }
   if (input.mode === "lowest") {
     const points = new Map<number, number>();
@@ -316,7 +311,7 @@ function resolveMode(input: {
       input.battleId,
       input.nonce,
     );
-    return { ...resolved, scoreType: "points" };
+    return resolved;
   }
 
   const sortedTeams = [...input.valueScores.keys()].sort((a, b) => a - b);
@@ -365,8 +360,6 @@ function resolveMode(input: {
   return {
     winnerTeam: winner,
     scores: input.valueScores,
-    scoreType: "jackpot_value",
-    resolution: { type: "jackpot", ticket, tiedTeams: [] },
   };
 }
 
@@ -379,10 +372,14 @@ export function simulateBattle(input: {
   candidates: EosBlockCandidate[];
   serverSeed: string;
 }): BattleOutcomeSimulation {
-  const userParticipant = input.participants.find(
-    (participant) => participant.user_id === input.userID,
+  const creatorParticipant = input.participants.find(
+    (participant) => participant.user_id === input.battle.user_id,
   );
-  if (!userParticipant || input.participants.length === 0) {
+  if (
+    input.userID !== input.battle.user_id
+    || !creatorParticipant
+    || input.participants.length === 0
+  ) {
     throw new BattleSimulationError("battle_data_incomplete", 409);
   }
   const mode = input.battle.mode as BattleOutcomeSimulation["mode"];
@@ -441,30 +438,52 @@ export function simulateBattle(input: {
       battleId: input.battle.id,
       nonce: input.packs.length,
     });
-    const teamScores = [...resolved.scores.entries()]
-      .sort(([left], [right]) => left - right)
-      .map(([teamNumber, score]) => ({
-        teamNumber,
-        score: roundedMoney(score),
-      }));
+    const totalUnpacked = roundedMoney(
+      [...values.values()].reduce((sum, value) => sum + value, 0),
+    );
+    const creatorWonBattle =
+      resolved.winnerTeam === creatorParticipant.team_number;
+    const creatorBorrowFactor = creatorParticipant.borrow_percentage > 0
+      ? 1 - creatorParticipant.borrow_percentage / 100
+      : 1;
+    const creatorStake = roundedMoney(
+      Number(input.battle.bet_amount) * creatorBorrowFactor,
+    );
+    const creatorCost = roundedMoney(
+      creatorStake + Number(input.battle.sponsorship_amount_paid),
+    );
+    const winningTeamSize = input.participants.filter(
+      (participant) => participant.team_number === resolved.winnerTeam,
+    ).length;
+    const creatorPayout = creatorWonBattle
+      ? roundedMoney(
+          (totalUnpacked / winningTeamSize) * creatorBorrowFactor,
+        )
+      : 0;
+    const creatorProfitLoss = roundedMoney(creatorPayout - creatorCost);
+    const creatorMoneyResult: BattleCandidateOutcome["creatorMoneyResult"] = creatorProfitLoss > 0
+      ? "profit"
+      : creatorProfitLoss < 0
+        ? "loss"
+        : "break_even";
     return {
       ...candidate,
-      winnerTeam: resolved.winnerTeam,
-      userTeam: userParticipant.team_number,
-      userWon: resolved.winnerTeam === userParticipant.team_number,
-      totalUnpacked: roundedMoney(
-        [...values.values()].reduce((sum, value) => sum + value, 0),
-      ),
-      scoreType: resolved.scoreType,
-      resolution: resolved.resolution,
-      teamScores,
-      participants,
+      winningTeam: resolved.winnerTeam,
+      creatorTeam: creatorParticipant.team_number,
+      creatorWonBattle,
+      creatorCost,
+      creatorPayout,
+      creatorProfitLoss,
+      creatorMoneyResult,
+      creatorAmount: Math.abs(creatorProfitLoss),
     };
   });
   return {
     battleId: input.battle.id,
     mode,
     crazyMode,
+    currency: input.battle.currency,
+    creatorUserID: input.battle.user_id,
     outcomes,
   };
 }
@@ -485,11 +504,12 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
       await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
       const battles = await client.query<BattleRow>(
         `
-          SELECT b.id, b.mode::text, b.pack_ids, b.additional_settings,
+          SELECT b.id, b.user_id, b.mode::text, b.pack_ids,
+                 b.additional_settings, b.bet_amount::text,
+                 b.currency::text, b.sponsorship_amount_paid::text,
                  b.server_seed, b.server_seed_hash
           FROM battles b
-          JOIN battle_participants bp ON bp.battle_id = b.id
-          WHERE bp.user_id = $1 AND b.id = $2::uuid
+          WHERE b.user_id = $1 AND b.id = $2::uuid
           LIMIT 1
         `,
         [userID, battleID],
@@ -503,7 +523,8 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
       // calls on a busy client, and they would not gain DB parallelism anyway.
       const participantResult = await client.query<ParticipantRow>(
           `
-            SELECT id, user_id, bot_id, team_number, team_position
+            SELECT id, user_id, bot_id, team_number, team_position,
+                   borrow_percentage
             FROM battle_participants
             WHERE battle_id = $1
             ORDER BY team_number, team_position, id

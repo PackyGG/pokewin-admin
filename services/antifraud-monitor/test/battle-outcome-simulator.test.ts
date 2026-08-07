@@ -10,13 +10,22 @@ const candidates = Array.from({ length: 5 }, (_, index) => ({
   blockHash: String(index + 1).repeat(64),
 }));
 
-function simulate(mode: string, crazyMode = false) {
+function simulate(
+  mode: string,
+  crazyMode = false,
+  creatorBorrowPercentage = 0,
+  sponsorshipAmountPaid = 0,
+) {
   return simulateBattle({
     battle: {
       id: BATTLE_ID,
+      user_id: "target-user",
       mode,
       pack_ids: [PACK_ID, PACK_ID],
       additional_settings: crazyMode ? ["crazy_mode"] : [],
+      bet_amount: "20.00",
+      currency: "real",
+      sponsorship_amount_paid: sponsorshipAmountPaid.toFixed(2),
       server_seed: "unused-by-pure-simulation",
       server_seed_hash: "unused-by-pure-simulation",
     },
@@ -27,13 +36,15 @@ function simulate(mode: string, crazyMode = false) {
         bot_id: null,
         team_number: 1,
         team_position: 0,
+        borrow_percentage: creatorBorrowPercentage,
       },
       {
         id: "44444444-4444-4444-8444-444444444444",
         user_id: null,
         bot_id: "55555555-5555-4555-8555-555555555555",
-        team_number: 2,
+        team_number: mode === "group" ? 1 : 2,
         team_position: 0,
+        borrow_percentage: 0,
       },
     ],
     packs: [
@@ -83,54 +94,38 @@ test("battle simulation deterministically evaluates all five EOS candidates", ()
   );
   assert.deepEqual(simulate("normal"), simulation);
   for (const outcome of simulation.outcomes) {
-    assert.equal(outcome.participants.length, 2);
-    assert.equal(outcome.teamScores.length, 2);
-    assert.equal(outcome.userTeam, 1);
-    assert.equal(outcome.userWon, outcome.winnerTeam === 1);
-    assert.equal(outcome.scoreType, "value");
+    assert.equal(outcome.creatorTeam, 1);
+    assert.equal(outcome.creatorWonBattle, outcome.winningTeam === 1);
+    assert.equal(outcome.creatorCost, 20);
     assert.equal(
-      outcome.totalUnpacked,
-      outcome.participants.reduce(
-        (sum, participant) => sum + participant.totalValue,
-        0,
-      ),
+      outcome.creatorProfitLoss,
+      Number((outcome.creatorPayout - outcome.creatorCost).toFixed(2)),
     );
+    assert.equal(outcome.creatorAmount, Math.abs(outcome.creatorProfitLoss));
   }
 });
 
-test("all backend battle modes expose their mode-specific resolution", () => {
-  const expected = {
-    normal: "value",
-    jackpot: "jackpot_value",
-    group: "value",
-    hp_rush: "hp",
-    lowest: "points",
-  } as const;
-
-  for (const [mode, scoreType] of Object.entries(expected)) {
+test("all backend battle modes return creator-level settlement results only", () => {
+  for (const mode of ["normal", "jackpot", "group", "hp_rush", "lowest"]) {
     const simulation = simulate(mode);
     assert.equal(simulation.mode, mode);
     assert.equal(simulation.outcomes.length, 5);
     for (const outcome of simulation.outcomes) {
-      assert.equal(outcome.scoreType, scoreType);
-      assert.equal(
-        outcome.totalUnpacked,
-        outcome.participants.reduce(
-          (sum, participant) => sum + participant.totalValue,
-          0,
-        ),
-      );
+      assert.deepEqual(Object.keys(outcome).sort(), [
+        "blockHash",
+        "blockNumber",
+        "creatorAmount",
+        "creatorCost",
+        "creatorMoneyResult",
+        "creatorPayout",
+        "creatorProfitLoss",
+        "creatorTeam",
+        "creatorWonBattle",
+        "winningTeam",
+      ]);
       if (mode === "group") {
-        assert.equal(outcome.winnerTeam, 1);
-        assert.equal(outcome.resolution.type, "group");
-      } else if (mode === "jackpot") {
-        assert.equal(outcome.resolution.type, "jackpot");
-        assert.ok((outcome.resolution.ticket ?? 0) >= 1);
-      } else if (mode === "lowest") {
-        assert.equal(
-          outcome.teamScores.reduce((sum, team) => sum + team.score, 0),
-          2,
-        );
+        assert.equal(outcome.winningTeam, 1);
+        assert.equal(outcome.creatorWonBattle, true);
       }
     }
   }
@@ -140,12 +135,20 @@ test("crazy mode inverts normal score selection", () => {
   const normal = simulate("normal", false);
   const crazy = simulate("normal", true);
 
-  for (let index = 0; index < normal.outcomes.length; index += 1) {
-    const high = normal.outcomes[index]!;
-    const low = crazy.outcomes[index]!;
-    const scores = high.teamScores.map((team) => team.score);
-    if (Math.max(...scores) !== Math.min(...scores)) {
-      assert.notEqual(high.winnerTeam, low.winnerTeam);
-    }
-  }
+  assert.ok(normal.outcomes.some(
+    (outcome, index) => outcome.winningTeam !== crazy.outcomes[index]!.winningTeam,
+  ));
+});
+
+test("creator net includes borrow scaling and battle sponsorship cost", () => {
+  const simulation = simulate("group", false, 25, 7.5);
+  const outcome = simulation.outcomes[0]!;
+
+  assert.equal(outcome.creatorWonBattle, true);
+  assert.equal(outcome.creatorCost, 22.5);
+  assert.ok(outcome.creatorPayout > 0);
+  assert.equal(
+    outcome.creatorMoneyResult,
+    outcome.creatorProfitLoss > 0 ? "profit" : "loss",
+  );
 });

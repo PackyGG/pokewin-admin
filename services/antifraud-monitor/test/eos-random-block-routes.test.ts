@@ -110,6 +110,8 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
         battleId: "11111111-1111-4111-8111-111111111111",
         mode: "normal",
         crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
         outcomes: [],
       };
     },
@@ -132,6 +134,8 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
     battleId: "11111111-1111-4111-8111-111111111111",
     mode: "normal",
     crazyMode: false,
+    currency: "real",
+    creatorUserID: "test-user-123",
     outcomes: [],
   });
   await app.close();
