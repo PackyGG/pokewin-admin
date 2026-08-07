@@ -203,6 +203,19 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
       creatorCost: 10,
       creatorProfitLoss: 5,
     })),
+    otherPossibleEndings: blocks
+      .filter((candidate) => candidate.blockNumber !== blocks[1]!.blockNumber)
+      .map((candidate) => ({
+        blockNumber: candidate.blockNumber,
+        blockId: candidate.blockHash,
+        timestamp: candidate.blockTimestamp,
+        provider: "https://eos.example",
+        winningTeam: 1,
+        creatorTeam: 1,
+        creatorWonBattle: true,
+        creatorCost: 10,
+        creatorProfitLoss: 5,
+      })),
     selected: {
       blockNumber: blocks[1]!.blockNumber,
       blockId: blocks[1]!.blockHash,
@@ -276,6 +289,13 @@ test("chain info block id follows the outcome selected by only-loses mode", asyn
   assert.equal(body.last_irreversible_block_id, blocks[4]!.blockHash);
   assert.equal(body.selected.blockId, blocks[4]!.blockHash);
   assert.equal(body.selected.creatorProfitLoss, -10);
+  assert.equal(body.otherPossibleEndings.length, 4);
+  assert.deepEqual(
+    body.otherPossibleEndings.map((ending: { blockNumber: number }) =>
+      ending.blockNumber
+    ),
+    blocks.slice(0, 4).map((block) => block.blockNumber),
+  );
   await app.close();
 });
 

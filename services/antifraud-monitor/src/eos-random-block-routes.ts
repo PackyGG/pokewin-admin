@@ -101,6 +101,24 @@ function chainInfoForSelectedBlock(
   };
 }
 
+function battleEnding(
+  provider: string,
+  block: EosBlockCandidate,
+  outcome: BattleCandidateOutcome,
+): Record<string, unknown> {
+  return {
+    blockNumber: block.blockNumber,
+    blockId: block.blockHash,
+    timestamp: block.blockTimestamp,
+    provider,
+    winningTeam: outcome.winningTeam,
+    creatorTeam: outcome.creatorTeam,
+    creatorWonBattle: outcome.creatorWonBattle,
+    creatorCost: outcome.creatorCost,
+    creatorProfitLoss: outcome.creatorProfitLoss,
+  };
+}
+
 async function responseJson(response: Response): Promise<unknown> {
   if (!response.ok) {
     throw new Error(`EOS provider returned HTTP ${response.status}`);
@@ -297,21 +315,24 @@ export async function registerEosRandomBlockRoutes(
         if (!selectedBlock) {
           throw new BattleSimulationError("battle_data_incomplete", 409);
         }
+        const outcomesByBlock = new Map(
+          battle.outcomes.map((outcome) => [outcome.blockNumber, outcome]),
+        );
+        const otherPossibleEndings = selection.candidates
+          .filter((candidate) => candidate.blockNumber !== selected.blockNumber)
+          .map((candidate) => {
+            const outcome = outcomesByBlock.get(candidate.blockNumber);
+            if (!outcome) {
+              throw new BattleSimulationError("battle_data_incomplete", 409);
+            }
+            return battleEnding(selection.provider, candidate, outcome);
+          });
         return {
           ...chainInfoForSelectedBlock(selection, selectedBlock),
           ...battle,
           selectedBlockNumber: selected.blockNumber,
-          selected: {
-            blockNumber: selectedBlock.blockNumber,
-            blockId: selectedBlock.blockHash,
-            timestamp: selectedBlock.blockTimestamp,
-            provider: selection.provider,
-            winningTeam: selected.winningTeam,
-            creatorTeam: selected.creatorTeam,
-            creatorWonBattle: selected.creatorWonBattle,
-            creatorCost: selected.creatorCost,
-            creatorProfitLoss: selected.creatorProfitLoss,
-          },
+          otherPossibleEndings,
+          selected: battleEnding(selection.provider, selectedBlock, selected),
         };
       } catch (error) {
         if (error instanceof BattleSimulationError) {
