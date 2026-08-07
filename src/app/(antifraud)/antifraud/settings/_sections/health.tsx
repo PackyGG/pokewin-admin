@@ -162,39 +162,6 @@ function statusSub(health: AntifraudPollerHealth): string {
 }
 
 function PollerPanel({ health }: { health: AntifraudPollerHealth }) {
-  const rows: Array<[string, string]> = [
-    [
-      "Last tick started",
-      health.lastTickStartedAt
-        ? `${formatRelative(health.lastTickStartedAt)} · ${formatDateTime(health.lastTickStartedAt)}`
-        : "Never",
-    ],
-    [
-      "Last tick completed",
-      health.lastTickCompletedAt
-        ? `${formatRelative(health.lastTickCompletedAt)} · ${formatDateTime(health.lastTickCompletedAt)}`
-        : "Never",
-    ],
-    [
-      "Last tick duration",
-      health.lastTickDurationMs === null
-        ? "—"
-        : `${health.lastTickDurationMs.toLocaleString()} ms`,
-    ],
-    ["Skipped ticks", health.skippedTicks.toLocaleString()],
-    ["Signups processed", health.signupsProcessed.toLocaleString()],
-    ["Signups recovered", health.signupsRecovered.toLocaleString()],
-    ["Signups pending recovery", health.signupFailuresPending.toLocaleString()],
-    ["Activities processed", health.activitiesProcessed.toLocaleString()],
-    [
-      "Signup cursor lag",
-      health.signupCursorLagMs === null
-        ? "—"
-        : `${Math.round(health.signupCursorLagMs / 1000).toLocaleString()}s`,
-    ],
-    ["Backlog possible", health.signupBacklogPossible ? "Yes" : "No"],
-  ];
-
   return (
     <div className="space-y-3">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -257,21 +224,6 @@ function PollerPanel({ health }: { health: AntifraudPollerHealth }) {
         </div>
       )}
 
-      <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-        {rows.map(([label, value]) => (
-          <li
-            key={label}
-            className="flex items-center justify-between gap-3 px-4 py-2.5"
-          >
-            <span className="min-w-0 truncate text-sm text-muted-foreground">
-              {label}
-            </span>
-            <span className="shrink-0 text-sm font-medium tabular-nums">
-              {value}
-            </span>
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }
