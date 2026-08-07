@@ -15,7 +15,7 @@ export const eosUserRuleSchema = z.object({
 });
 
 const userConfigSchema = z.object({
-  userId: z.uuid(),
+  userId: z.string().min(1).max(100),
   username: z.string().nullable(),
   rules: z.array(eosUserRuleSchema),
   currentRuleIndex: z.number().int().nonnegative(),

@@ -188,7 +188,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         INSERT INTO battle_test_user_sequences (
           user_id, username, rules, current_rule_index, remaining_in_rule,
           enabled, updated_at, updated_by
-        ) VALUES ($1::uuid, $2, $3::jsonb, 0, $4, $5, now(), $6)
+        ) VALUES ($1, $2, $3::jsonb, 0, $4, $5, now(), $6)
         ON CONFLICT (user_id) DO UPDATE SET
           username = EXCLUDED.username,
           rules = EXCLUDED.rules,
@@ -214,7 +214,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
 
   async deleteUser(userId: string): Promise<void> {
     await this.pool.query(
-      "DELETE FROM battle_test_user_sequences WHERE user_id = $1::uuid",
+      "DELETE FROM battle_test_user_sequences WHERE user_id = $1",
       [userId],
     );
   }
@@ -230,7 +230,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           SELECT user_id::text, username, rules, current_rule_index,
                  remaining_in_rule, enabled, updated_at, updated_by
           FROM battle_test_user_sequences
-          WHERE user_id = $1::uuid
+          WHERE user_id = $1
           FOR UPDATE
         `,
         [userId],
@@ -246,7 +246,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         await client.query(
           `UPDATE battle_test_user_sequences
            SET enabled = false, remaining_in_rule = 0
-           WHERE user_id = $1::uuid`,
+           WHERE user_id = $1`,
           [userId],
         );
         await client.query("COMMIT");
@@ -267,7 +267,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
           SET current_rule_index = $2,
               remaining_in_rule = $3,
               enabled = $4
-          WHERE user_id = $1::uuid
+          WHERE user_id = $1
         `,
         [
           userId,

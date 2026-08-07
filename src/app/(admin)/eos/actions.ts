@@ -30,7 +30,6 @@ export async function searchEosDevUsers(input: unknown) {
   await requireEosTestAccess();
   const query = z.string().trim().min(2).max(100).parse(input);
   const db = getDevReadDrizzleDb();
-  const isUuid = z.uuid().safeParse(query).success;
   const prefix = `${escapeLikePattern(query.toLowerCase())}%`;
   const rows = await db
     .select({
@@ -40,19 +39,18 @@ export async function searchEosDevUsers(input: unknown) {
     })
     .from(user)
     .where(
-      isUuid
-        ? eq(user.id, query)
-        : or(
-            sql`LOWER(${user.username}) LIKE ${prefix} ESCAPE '\'`,
-            sql`LOWER(${user.display_username}) LIKE ${prefix} ESCAPE '\'`,
-          ),
+      or(
+        eq(user.id, query),
+        sql`LOWER(${user.username}) LIKE ${prefix} ESCAPE '\'`,
+        sql`LOWER(${user.display_username}) LIKE ${prefix} ESCAPE '\'`,
+      ),
     )
     .limit(10);
   return rows;
 }
 
 const saveUserConfigSchema = z.object({
-  userId: z.uuid(),
+  userId: z.string().trim().min(1).max(100),
   username: z.string().trim().min(1).max(100).nullable(),
   rules: z.array(eosUserRuleSchema).min(1).max(20),
   enabled: z.boolean(),
@@ -71,7 +69,7 @@ export async function saveEosUserConfig(input: unknown) {
 
 export async function removeEosUserConfig(input: unknown) {
   await requireEosTestAccess();
-  const userId = z.uuid().parse(input);
+  const userId = z.string().trim().min(1).max(100).parse(input);
   await deleteEosUserConfig(userId);
   revalidatePath("/eos");
 }

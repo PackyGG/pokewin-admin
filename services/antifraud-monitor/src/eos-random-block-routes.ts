@@ -439,7 +439,7 @@ export async function registerEosRandomBlockRoutes(
       app.put(
         `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
         async (request, reply) => {
-          const userId = z.uuid().safeParse(
+          const userId = z.string().trim().min(1).max(100).safeParse(
             (request.params as { userId?: unknown }).userId,
           );
           const parsed = userConfigUpdateSchema.safeParse(request.body);
@@ -460,7 +460,7 @@ export async function registerEosRandomBlockRoutes(
       app.delete(
         `${EOS_RANDOM_BLOCK_USER_CONFIG_PATH}/:userId`,
         async (request, reply) => {
-          const userId = z.uuid().safeParse(
+          const userId = z.string().trim().min(1).max(100).safeParse(
             (request.params as { userId?: unknown }).userId,
           );
           if (!userId.success) {

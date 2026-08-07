@@ -557,7 +557,7 @@ test("EOS test config routes read and update the persisted setting", async () =>
 
 test("EOS user sequence config routes list, reset, and delete rules", async () => {
   const saved = {
-    userId: "11111111-1111-4111-8111-111111111111",
+    userId: "cm1234567890abcdefghijklmnopqrst",
     username: "tester",
     rules: [{ target: "loss" as const, strategy: "lowest_profit" as const, count: 2 }],
     currentRuleIndex: 0,
