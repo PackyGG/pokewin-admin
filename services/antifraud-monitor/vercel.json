@@ -1,0 +1,4 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "buildCommand": "echo 'antifraud-monitor is Railway-only; deploy the repository root to Vercel' >&2 && exit 1"
+}
