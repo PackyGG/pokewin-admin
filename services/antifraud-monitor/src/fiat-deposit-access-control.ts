@@ -6,6 +6,7 @@ import { FiatDepositAccessClient } from "./fiat-deposit-access.js";
 const PAGE_SIZE = 100;
 const DRAIN_SIZE = 40;
 const WORKERS = 8;
+const ROLLOUT_CURSOR_START = new Date(0);
 
 type PolicyRow = {
   id: string;
@@ -265,7 +266,8 @@ export class FiatDepositAccessControl {
       );
       await client.query(
         `INSERT INTO fiat_deposit_access_cursors(stream, occurred_at, source_id)
-         VALUES ('new_signups', $1, '')
+         VALUES ('new_signups', $1, ''),
+                ('new_signups_reconciliation', $1, '')
          ON CONFLICT (stream) DO NOTHING`,
         [inserted.rows[0]!.effective_at],
       );
@@ -302,9 +304,13 @@ export class FiatDepositAccessControl {
       WHERE o.status = 'processing'
         AND o.updated_at < now() - interval '2 minutes'
     `);
-    await this.enqueueExistingAccounts();
+    const reconciledPolicyId = await this.enqueueExistingAccounts();
     await this.enqueueNewSignups();
     const policyIds = await this.drainOperations();
+    // A late user can be inserted behind a rollout already marked complete.
+    // Refresh it even when this tick's bounded drain was full and did not claim
+    // that new operation, so status cannot remain falsely complete meanwhile.
+    if (reconciledPolicyId) policyIds.add(reconciledPolicyId);
     const active = await this.db.antifraud.query<{ policy_id: string }>(`
       SELECT policy_id FROM fiat_deposit_access_rollouts
       WHERE status IN ('queued', 'running', 'stalled')
@@ -313,24 +319,25 @@ export class FiatDepositAccessControl {
     await Promise.all([...policyIds].map((id) => this.refreshRollout(id)));
   }
 
-  private async enqueueExistingAccounts(): Promise<void> {
+  private async enqueueExistingAccounts(): Promise<string | null> {
     const rollout = await this.db.antifraud.query<{
       policy_id: string;
       enabled: boolean;
       cutoff_at: Date;
       cursor_at: Date;
       cursor_id: string;
+      enqueue_complete: boolean;
     }>(`
-      SELECT r.policy_id, p.enabled, p.cutoff_at, r.cursor_at, r.cursor_id
+      SELECT r.policy_id, p.enabled, p.cutoff_at, r.cursor_at, r.cursor_id,
+        r.enqueue_complete
       FROM fiat_deposit_access_rollouts r
       JOIN fiat_deposit_access_policies p ON p.id = r.policy_id
-      WHERE r.status IN ('queued', 'running', 'stalled')
-        AND r.enqueue_complete = false
+      WHERE r.status IN ('queued', 'running', 'stalled', 'complete')
       ORDER BY p.generation DESC
       LIMIT 1
     `);
     const current = rollout.rows[0];
-    if (!current) return;
+    if (!current) return null;
     const users = await this.db.source.query<{ id: string; created_at: Date }>(
       `SELECT id, created_at FROM "user"
        WHERE (created_at, id) > ($1, $2)
@@ -340,31 +347,55 @@ export class FiatDepositAccessControl {
       [current.cursor_at, current.cursor_id, current.cutoff_at, PAGE_SIZE],
     );
     const client = await this.db.antifraud.connect();
+    let inserted = false;
     try {
       await client.query("BEGIN");
       for (const user of users.rows) {
-        await client.query(
+        const operation = await client.query(
           `INSERT INTO fiat_deposit_access_operations
             (policy_id, scope, user_id, desired_enabled, source_created_at)
            VALUES ($1, 'existing_accounts', $2, $3, $4)
            ON CONFLICT (policy_id, user_id) DO NOTHING`,
           [current.policy_id, user.id, current.enabled, user.created_at],
         );
+        inserted ||= (operation.rowCount ?? 0) > 0;
       }
       const last = users.rows.at(-1);
+      // A mirror can expose rows out of created_at order. An empty forward
+      // page therefore is not proof that enumeration is complete. The first
+      // empty page starts a verification pass from the beginning; only an
+      // empty page after that full pass moves the cursor to the cutoff sentinel
+      // that refreshRollout accepts as complete.
+      //
+      // Completed rollouts keep cycling through the same bounded pages. The
+      // unique operation key makes this cheap/idempotent, while a user that
+      // arrives late anywhere before the cutoff is eventually enqueued rather
+      // than being permanently stranded behind a monotonic cursor.
+      const empty = users.rows.length === 0;
+      const verifiedCycleAtCutoff =
+        current.enqueue_complete
+        && current.cursor_at >= current.cutoff_at;
+      const nextCursorAt = last?.created_at
+        ?? (
+          !current.enqueue_complete || verifiedCycleAtCutoff
+            ? ROLLOUT_CURSOR_START
+            : current.cutoff_at
+        );
+      const nextCursorId = last?.id ?? "";
       await client.query(
         `UPDATE fiat_deposit_access_rollouts
-         SET status = 'running', started_at = COALESCE(started_at, now()),
-             cursor_at = COALESCE($2, cursor_at),
-             cursor_id = COALESCE($3, cursor_id),
-             enqueue_complete = $4,
+         SET status = CASE WHEN status = 'queued' THEN 'running' ELSE status END,
+             started_at = COALESCE(started_at, now()),
+             cursor_at = $2,
+             cursor_id = $3,
+             enqueue_complete = enqueue_complete OR $4,
              updated_at = now()
          WHERE policy_id = $1 AND status <> 'superseded'`,
         [
           current.policy_id,
-          last?.created_at ?? null,
-          last?.id ?? null,
-          users.rows.length === 0,
+          nextCursorAt,
+          nextCursorId,
+          empty,
         ],
       );
       await client.query("COMMIT");
@@ -374,60 +405,93 @@ export class FiatDepositAccessControl {
     } finally {
       client.release();
     }
+    return inserted ? current.policy_id : null;
   }
 
   private async enqueueNewSignups(): Promise<void> {
-    const cursor = await this.db.antifraud.query<{
-      occurred_at: Date;
-      source_id: string;
-    }>(`SELECT occurred_at, source_id
-        FROM fiat_deposit_access_cursors WHERE stream = 'new_signups'`);
-    const current = cursor.rows[0];
-    if (!current) return;
-    const users = await this.db.source.query<{ id: string; created_at: Date }>(
-      `SELECT id, created_at FROM "user"
-       WHERE (created_at, id) > ($1, $2)
-       ORDER BY created_at, id
-       LIMIT $3`,
-      [current.occurred_at, current.source_id, PAGE_SIZE],
-    );
-    if (users.rows.length === 0) return;
     const policies = await this.db.antifraud.query<PolicyRow>(`
       SELECT id, generation, enabled, effective_at, cutoff_at, actor_id
       FROM fiat_deposit_access_policies
       WHERE scope = 'new_signups'
       ORDER BY effective_at, generation
     `);
-    const client = await this.db.antifraud.connect();
-    try {
-      await client.query("BEGIN");
-      for (const user of users.rows) {
-        const policy = policies.rows
-          .filter((item) => item.effective_at <= user.created_at)
-          .at(-1);
-        if (!policy) continue;
-        await client.query(
-          `INSERT INTO fiat_deposit_access_operations
-            (policy_id, scope, user_id, desired_enabled, source_created_at)
-           VALUES ($1, 'new_signups', $2, $3, $4)
-           ON CONFLICT (policy_id, user_id) DO NOTHING`,
-          [policy.id, user.id, policy.enabled, user.created_at],
-        );
-      }
-      const last = users.rows.at(-1)!;
-      await client.query(
-        `UPDATE fiat_deposit_access_cursors
-         SET occurred_at = $1, source_id = $2, updated_at = now()
-         WHERE stream = 'new_signups'
-           AND (occurred_at, source_id) < ($1, $2)`,
-        [last.created_at, last.id],
+    const earliestPolicy = policies.rows[0];
+    if (!earliestPolicy) return;
+    await this.db.antifraud.query(
+      `INSERT INTO fiat_deposit_access_cursors(stream, occurred_at, source_id)
+       VALUES ('new_signups_reconciliation', $1, '')
+       ON CONFLICT (stream) DO NOTHING`,
+      [earliestPolicy.effective_at],
+    );
+    const cursors = await this.db.antifraud.query<{
+      stream: "new_signups" | "new_signups_reconciliation";
+      occurred_at: Date;
+      source_id: string;
+    }>(`SELECT stream, occurred_at, source_id
+        FROM fiat_deposit_access_cursors
+        WHERE stream IN ('new_signups', 'new_signups_reconciliation')
+        ORDER BY stream`);
+
+    for (const cursor of cursors.rows) {
+      // Reconciliation deliberately trails the live stream by five minutes.
+      // Its scan therefore has a finite tip even while signups continue, so it
+      // can finish a cycle and revisit old mirror gaps instead of chasing the
+      // same moving frontier as the low-latency cursor forever.
+      const users = await this.db.source.query<{ id: string; created_at: Date }>(
+        `SELECT id, created_at FROM "user"
+         WHERE (created_at, id) > ($1, $2)
+         ${cursor.stream === "new_signups_reconciliation"
+           ? "AND created_at < now() - interval '5 minutes'"
+           : ""}
+         ORDER BY created_at, id
+         LIMIT $3`,
+        [cursor.occurred_at, cursor.source_id, PAGE_SIZE],
       );
-      await client.query("COMMIT");
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      client.release();
+      if (users.rows.length === 0) {
+        if (cursor.stream === "new_signups_reconciliation") {
+          // Cycle independently of the live cursor. This revisits every policy
+          // era without delaying current signups and catches rows the mirror
+          // exposed later with an older created_at tuple.
+          await this.db.antifraud.query(
+            `UPDATE fiat_deposit_access_cursors
+             SET occurred_at = $1, source_id = '', updated_at = now()
+             WHERE stream = 'new_signups_reconciliation'`,
+            [earliestPolicy.effective_at],
+          );
+        }
+        continue;
+      }
+      const client = await this.db.antifraud.connect();
+      try {
+        await client.query("BEGIN");
+        for (const user of users.rows) {
+          const policy = policies.rows
+            .filter((item) => item.effective_at <= user.created_at)
+            .at(-1);
+          if (!policy) continue;
+          await client.query(
+            `INSERT INTO fiat_deposit_access_operations
+              (policy_id, scope, user_id, desired_enabled, source_created_at)
+             VALUES ($1, 'new_signups', $2, $3, $4)
+             ON CONFLICT (policy_id, user_id) DO NOTHING`,
+            [policy.id, user.id, policy.enabled, user.created_at],
+          );
+        }
+        const last = users.rows.at(-1)!;
+        await client.query(
+          `UPDATE fiat_deposit_access_cursors
+           SET occurred_at = $1, source_id = $2, updated_at = now()
+           WHERE stream = $3
+             AND (occurred_at, source_id) < ($1, $2)`,
+          [last.created_at, last.id, cursor.stream],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
     }
   }
 
@@ -516,16 +580,21 @@ export class FiatDepositAccessControl {
            last_error = stats.last_error,
            status = CASE
              WHEN r.status = 'superseded' THEN 'superseded'
-             WHEN r.enqueue_complete AND stats.open = 0 THEN 'complete'
              WHEN stats.failed > 0 THEN 'stalled'
+             WHEN r.enqueue_complete
+               AND r.cursor_at >= p.cutoff_at
+               AND stats.open = 0 THEN 'complete'
              ELSE 'running'
            END,
            completed_at = CASE
-             WHEN r.enqueue_complete AND stats.open = 0 THEN COALESCE(r.completed_at, now())
+             WHEN r.enqueue_complete
+               AND r.cursor_at >= p.cutoff_at
+               AND stats.open = 0 THEN COALESCE(r.completed_at, now())
              ELSE NULL
            END,
            updated_at = now()
-       FROM (
+       FROM fiat_deposit_access_policies p,
+       (
          SELECT COUNT(*)::bigint AS processed,
            COUNT(*) FILTER (WHERE status = 'succeeded')::bigint AS succeeded,
            COUNT(*) FILTER (WHERE status = 'failed')::bigint AS failed,
@@ -534,7 +603,8 @@ export class FiatDepositAccessControl {
          FROM fiat_deposit_access_operations
          WHERE policy_id = $1
        ) stats
-       WHERE r.policy_id = $1`,
+       WHERE r.policy_id = $1
+         AND p.id = r.policy_id`,
       [policyId],
     );
   }
