@@ -66,8 +66,34 @@ export function checkDuplicatePrefixes(files: readonly string[]): void {
   }
 }
 
-export function computeChecksum(content: Buffer | string): string {
+function normalizeLineEndings(content: Buffer | string): string {
+  const text = Buffer.isBuffer(content) ? content.toString("utf8") : content;
+  return text.replaceAll("\r\n", "\n");
+}
+
+function hash(content: Buffer | string): string {
   return createHash("sha256").update(content).digest("hex");
+}
+
+/**
+ * Migration identity is independent of the checkout platform's LF/CRLF
+ * conversion. Every checksum written from now on uses LF as its canonical
+ * representation; every other byte remains significant.
+ */
+export function computeChecksum(content: Buffer | string): string {
+  return hash(normalizeLineEndings(content));
+}
+
+function legacyLineEndingChecksums(content: Buffer): Set<string> {
+  const canonical = normalizeLineEndings(content);
+  return new Set([
+    // Old releases hashed the raw bytes. Keep accepting that exact form while
+    // upgrading its metadata to the canonical checksum below.
+    hash(content),
+    // A migration first applied from a Windows checkout may have a raw CRLF
+    // checksum while the currently-deployed checkout contains LF bytes.
+    hash(canonical.replaceAll("\n", "\r\n")),
+  ]);
 }
 
 async function resolveMigrations(): Promise<{ dir: string; files: string[] }> {
@@ -166,14 +192,21 @@ export async function migrate(pool: pg.Pool): Promise<void> {
         );
         const checksum = stored.rows[0]?.checksum ?? null;
         if (checksum) {
-          const current = computeChecksum(
-            await readFile(join(migrationsDir, file)),
-          );
+          const raw = await readFile(join(migrationsDir, file));
+          const current = computeChecksum(raw);
           if (current !== checksum) {
-            throw new Error(
-              `Migration "${file}" was already applied but its file content has changed since ` +
-                `(recorded checksum ${checksum}, current ${current}). Already-applied migrations ` +
-                `must never be edited — add a new migration instead.`,
+            if (!legacyLineEndingChecksums(raw).has(checksum)) {
+              throw new Error(
+                `Migration "${file}" was already applied but its file content has changed since ` +
+                  `(recorded checksum ${checksum}, current ${current}). Already-applied migrations ` +
+                  `must never be edited — add a new migration instead.`,
+              );
+            }
+            await client.query(
+              `UPDATE schema_migrations
+               SET checksum = $1
+               WHERE version = $2 AND checksum = $3`,
+              [current, file, checksum],
             );
           }
         }

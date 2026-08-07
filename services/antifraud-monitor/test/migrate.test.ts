@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -35,7 +36,10 @@ function fakePool(options: {
         const versions = options.nullChecksumVersions ?? [];
         return { rows: versions.map((version) => ({ version })), rowCount: versions.length };
       }
-      if (text.includes("UPDATE schema_migrations SET checksum")) {
+      if (
+        text.includes("UPDATE schema_migrations") &&
+        text.includes("SET checksum")
+      ) {
         const [checksum, version] = values as [string, string];
         updates.push({ version, checksum });
         return { rows: [], rowCount: 1 };
@@ -88,6 +92,47 @@ test("checksum mismatch on an already-applied migration fails loudly", async () 
     assert.match(error.message, /checksum/i);
     return true;
   });
+});
+
+test("migration checksums are stable across LF and CRLF checkouts", () => {
+  const lf = "CREATE TABLE example (id text);\nINSERT INTO example VALUES ('one');\n";
+  const crlf = lf.replaceAll("\n", "\r\n");
+
+  assert.equal(computeChecksum(lf), computeChecksum(crlf));
+  assert.notEqual(
+    computeChecksum(lf),
+    computeChecksum(lf.replace("'one'", "'two'")),
+    "semantic edits must remain detectable",
+  );
+});
+
+test("a legacy raw CRLF checksum is accepted and upgraded to canonical LF", async () => {
+  const files = await realMigrationFiles();
+  const target = files[0];
+  assert.ok(target, "expected at least one migration file on disk");
+  const raw = await readFile(join(migrationsDir, target));
+  const lf = raw.toString("utf8").replaceAll("\r\n", "\n");
+  const legacyCrLfChecksum = createHash("sha256")
+    .update(lf.replaceAll("\n", "\r\n"))
+    .digest("hex");
+  const canonicalChecksum = computeChecksum(raw);
+  assert.notEqual(
+    legacyCrLfChecksum,
+    canonicalChecksum,
+    "fixture must exercise distinct raw line-ending checksums",
+  );
+
+  const fake = fakePool({
+    appliedVersions: new Set(files),
+    storedChecksums: new Map([[target, legacyCrLfChecksum]]),
+  });
+
+  await migrate(fake.pool);
+
+  assert.deepEqual(
+    fake.updates.find((row) => row.version === target),
+    { version: target, checksum: canonicalChecksum },
+  );
 });
 
 test("a new unapplied migration applies and its checksum is stored", async () => {
