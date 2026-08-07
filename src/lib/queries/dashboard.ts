@@ -45,6 +45,10 @@ import { safeQuery, REWARD_QUERY_TIMEOUT_MS } from "@/lib/errors/safe-query";
 // headline — "one scope, fixed once".
 import { getMetricsScope } from "@/lib/metrics/scope";
 import {
+  PAYOUT_LEG_FILTER,
+  WAGER_LEG_FILTER,
+} from "@/lib/metrics/gaming-sql";
+import {
   DASHBOARD_PERIOD_LABELS,
   DEFAULT_DASHBOARD_PERIOD,
   DEFAULT_DASHBOARD_KPI_WINDOW,
@@ -151,6 +155,7 @@ function periodToMetricWindow(
  */
 const EMPTY_WINDOW_METRICS: WindowMetrics = {
   wager: 0,
+  organicWager: 0,
   gamingPayout: 0,
   ggr: 0,
   ngr: 0,
@@ -199,7 +204,7 @@ const cachedLifetimeWindowMetrics = unstable_cache(
   // Bumped v1 → v2-dd: GGR now folds Double Down (`doubleDownLegs`) into
   // the headline wager + payout — see `getGamingLegs`. Fresh key forces a
   // re-fetch on rollout so the corrected number materializes immediately.
-  ["dashboard-window-metrics-lifetime-v2-dd"],
+  ["dashboard-window-metrics-lifetime-v4-organic-all-games"],
   { revalidate: 300, tags: ["dashboard-lifetime"] },
 );
 
@@ -210,7 +215,7 @@ const cachedLifetimeWindowMetrics = unstable_cache(
 const cachedRollingWindowMetrics = unstable_cache(
   windowMetricsForPeriodInner,
   // Bumped v1 → v2-dd: GGR now folds Double Down.
-  ["dashboard-window-metrics-rolling-v2-dd"],
+  ["dashboard-window-metrics-rolling-v4-organic-all-games"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -272,7 +277,7 @@ const cachedKpiWindowMetrics = unstable_cache(
   // request (no carry-over of the previous payload's wiring).
   // v3 → v4-dd: GGR now includes Double Down (see getGamingLegs). Bump
   // guarantees the new fold materializes on the first request after deploy.
-  ["dashboard-window-metrics-kpi-v4-dd"],
+  ["dashboard-window-metrics-kpi-v6-organic-all-games"],
   { revalidate: 60, tags: ["dashboard-activity"] },
 );
 
@@ -1770,28 +1775,34 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
     // Customer wager — the dashboard's "Total Wager" card. Ledger
     // GAMEPLAY wager (packs + battles, creator-on-stream sessions
     // EXCLUDED) PLUS upgrader wager from `upgrader_games`. The two
-    // ledger legs + the upgrader leg are the three breakdown chips
-    // below, so they sum to this hero exactly.
-    wagers: Math.abs(num(pa.wager_excl_session)) + upgraderWagerPeriod,
+    // five canonical game legs are the breakdown chips below, so they sum
+    // to this hero exactly.
+    wagers: windowMetrics.wager,
     // Per-source breakdown of the customer wager. Packs + Battles +
     // Upgrader add up to `wagers`. Packs/Battles come from the ledger
     // (NOT in_session filter, same as wager_excl_session); Upgrader
     // comes from `upgrader_games` (the canonical upgrader source — it is
     // NOT a ledger wager type).
     wagersBreakdown: {
-      packs: Math.abs(num(pa.pack_wager_excl_session)),
-      battles: Math.abs(num(pa.battle_wager_excl_session)),
-      upgrader: upgraderWagerPeriod,
+      packs:
+        windowMetrics.wagerBreakdown?.packs ??
+        Math.abs(num(pa.pack_wager_excl_session)),
+      battles:
+        windowMetrics.wagerBreakdown?.battles ??
+        Math.abs(num(pa.battle_wager_excl_session)),
+      keno: windowMetrics.wagerBreakdown?.keno ?? 0,
+      upgrader:
+        windowMetrics.wagerBreakdown?.upgrader ?? upgraderWagerPeriod,
+      doubleDown: windowMetrics.wagerBreakdown?.doubleDown ?? 0,
     },
-    // Organic wager — customer GAMEPLAY wager from users who did NOT
+    // Organic wager — canonical customer GAMEPLAY wager from users who did NOT
     // join under an official creator code (referrer null or
     // non-creator). Excludes creator on-stream play via the same NOT
     // in_session filter as `wagers`. Surfaces volume not attributed to
-    // creator marketing. Ledger gameplay only — the upgrader source
-    // can't be split by creator-code attribution, so it is not added
-    // here (this card is a distinct metric, not required to equal
-    // Total Wager).
-    wagersOrganic: Math.abs(num(pa.wager_organic)),
+    // creator marketing. It includes every source in Total Wager (ledger,
+    // Upgrader, and Double Down), so Organic + Creator-coded reconciles to
+    // Total Wager.
+    wagersOrganic: windowMetrics.organicWager,
     // Raw wager — every non-staff user, INCLUDING creators' on-stream
     // sponsored play, plus upgrader. (wagersRaw − wagers) is the creator
     // deal/stream sponsored-balance contribution on the ledger legs.
@@ -1844,7 +1855,9 @@ async function dashboardStatsInner(config: DashboardStatsConfig) {
             date,
             packs: Number(d.packs),
             battles: Number(d.battles),
+            keno: 0,
             upgrader: dailyUpgraderByDate.get(date) ?? 0,
+            doubleDown: 0,
           };
         }),
     dailyDeposits: trendSeries
@@ -2108,16 +2121,19 @@ async function ggrBreakdownForWindow(
   // rather than re-reading. The bucket totals (`wagersTotal` /
   // `payoutsTotal`) are unchanged, so GGR still reconciles with the
   // headline `getWindowMetrics.ggr` by construction.
-  const packBattleWager = legs.wager - legs.upgraderWager;
-  const battleRefundLedger = legs.battleRefund - legs.upgraderPayout;
+  const battleRefundLedger =
+    legs.battleRefund - legs.upgraderPayout - legs.kenoPayout;
 
   // Wager side — pack/battle stake + upgrader stake as separate rows so
   // the label is accurate (no longer one misleading "pack & battle"
   // row that secretly contained upgrader). Wagers are flow-IN, shown
   // neutral in the popover.
   const wagers: GgrBreakdownRow[] = [
-    { type: "Packs & battles wager", total: packBattleWager },
+    { type: "Packs wager", total: legs.packWager },
+    { type: "Battles wager", total: legs.battleWager },
+    { type: "Keno wager", total: legs.kenoWager },
     { type: "Upgrader wager", total: legs.upgraderWager },
+    { type: "Double Down wager", total: legs.ddWager },
   ];
   // Payout side — the dominant pack/battle inventory win delta, the
   // ledger cash gaming-payout legs (battle refunds + battle-excess
@@ -2126,10 +2142,13 @@ async function ggrBreakdownForWindow(
   const payouts: GgrBreakdownRow[] = [
     { type: "Packs & battles wins (inventory)", total: legs.inventoryPayout },
     { type: "Battle refunds (cash)", total: battleRefundLedger },
+    { type: "Keno payout", total: legs.kenoPayout },
     { type: "Upgrader payout", total: legs.upgraderPayout },
+    { type: "Double Down payout", total: legs.ddPayout },
   ];
   const wagersTotal = legs.wager;
-  const payoutsTotal = legs.inventoryPayout + legs.battleRefund;
+  const payoutsTotal =
+    legs.inventoryPayout + legs.battleRefund + legs.ddPayout;
 
   return {
     wagers,
@@ -2249,11 +2268,18 @@ async function ggrTopContributorsForCutoff(
   // CTE below so it degrades to an empty leg rather than throwing 42P01.
   // Mirrors the canonical `upgraderMetrics` guard so the per-user net
   // folds upgrader on the SAME DBs the headline does.
-  const upgProbe = await queryRows<{ exists: string | null }[]>(
-    db,
-    `SELECT to_regclass('public.upgrader_games')::text AS exists`,
-  );
+  const [upgProbe, ddProbe] = await Promise.all([
+    queryRows<{ exists: string | null }[]>(
+      db,
+      `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+    ),
+    queryRows<{ exists: string | null }[]>(
+      db,
+      `SELECT to_regclass('public.battle_double_down_offers')::text AS exists`,
+    ),
+  ]);
   const hasUpgrader = upgProbe[0]?.exists != null;
+  const hasDoubleDown = ddProbe[0]?.exists != null;
   // Per-user upgrader leg from `upgrader_games` (real gameplay, NOT in
   // the ledger). Folded into wager + payout BEFORE the ORDER BY/LIMIT so
   // a heavy-upgrader user can't be ranked out of the top-N by the
@@ -2300,6 +2326,31 @@ async function ggrTopContributorsForCutoff(
         SELECT NULL::text AS user_id, 0::numeric AS upg_wager, 0::numeric AS upg_payout
         WHERE false
       )`;
+  const doubleDownLegCte = hasDoubleDown
+    ? `
+      double_down_leg AS (
+        SELECT
+          o.user_id,
+          COALESCE(SUM(o.won_amount_usd::numeric), 0) AS dd_wager,
+          COALESCE(SUM(CASE WHEN o.result = 'win'
+                            THEN v.value::numeric ELSE 0 END), 0) AS dd_payout
+        FROM battle_double_down_offers o
+        LEFT JOIN vouchers v
+          ON v.id = o.won_voucher_id
+         AND v.origin = 'battle_double_down_payout'
+        WHERE o.result IS NOT NULL
+          AND o.resolved_at >= $1
+          AND o.user_id IN (
+            SELECT u.id FROM "user" u
+            WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+          )
+        GROUP BY o.user_id
+      )`
+    : `
+      double_down_leg AS (
+        SELECT NULL::text AS user_id, 0::numeric AS dd_wager, 0::numeric AS dd_payout
+        WHERE false
+      )`;
   // Reward/daily-pack session set (Fix 2) — `pack_type='reward'` opens
   // are $0-wager card giveaways tracked as a reward cost elsewhere, so
   // they are dropped from BOTH the wager leg (their game_session_id) and
@@ -2342,26 +2393,8 @@ async function ggrTopContributorsForCutoff(
       FROM "user" u
       WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
     ),
-    non_borrow_pack_sessions AS (
-      SELECT game_session_id FROM ledger_transactions
-      WHERE type::text = 'pack_opening' AND status = 'completed'
-        AND game_session_id IS NOT NULL
-        AND (description IS NULL OR description NOT ILIKE '%borrow%')
-    ),
-    non_borrow_battle_sessions AS (
-      SELECT bp.game_session_id FROM battle_participants bp
-      JOIN battles b ON b.id = bp.battle_id
-      WHERE COALESCE(b.borrow_percentage, 0) = 0
-    ),
-    reward_pack_sessions AS (
-      -- Reward/daily-pack opens (game_type='pack' → packs.pack_type=
-      -- 'reward'). Dropped from both the wager leg and the won-card
-      -- inventory leg (Fix 2). Mirrors gaming-sql.ts REWARD_PACK_SESSIONS.
-      SELECT gs.id FROM game_sessions gs
-      JOIN packs p ON p.id = gs.game_id AND p.pack_type = 'reward'
-      WHERE gs.game_type = 'pack'
-    ),
     ${upgraderLegCte},
+    ${doubleDownLegCte},
     ledger_leg AS (
       SELECT
         lt.user_id,
@@ -2374,22 +2407,7 @@ async function ggrTopContributorsForCutoff(
       WHERE lt.status = 'completed'
         AND ${notInSessionLedger}
         ${sinceLedger}
-        AND (
-          lt.type::text NOT IN ('pack_opening','battle_bet','battle_sponsorship')
-          -- pack_opening: non-borrow AND not a reward/daily pack (Fix 2).
-          -- The game_session_id IS NULL guard keeps a NULL-session open
-          -- (definitionally not a reward pack) counted instead of dropped.
-          OR (lt.type::text = 'pack_opening'
-              AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%')
-              AND (lt.game_session_id IS NULL OR lt.game_session_id NOT IN (SELECT id FROM reward_pack_sessions)))
-          -- battle_bet keeps the borrow gate (its battle may be on borrow).
-          OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-          -- battle_sponsorship counted DIRECTLY — no borrow gate (Fix 1).
-          -- Its game_session_id is NULL, so the IN-gate would drop every
-          -- sponsorship row (the headline-omits-sponsorship bug); all
-          -- sponsored battles are borrow_percentage=0 so no gate is needed.
-          OR lt.type::text = 'battle_sponsorship'
-        )
+        AND ${WAGER_LEG_FILTER}
       GROUP BY lt.user_id
     ),
     inv_leg AS (
@@ -2398,16 +2416,9 @@ async function ggrTopContributorsForCutoff(
         COALESCE(SUM(ui.value_at_obtained::numeric), 0) AS inv_payout
       FROM user_inventory ui
       JOIN real_users ru ON ru.id = ui.user_id
-      WHERE ui.source_type IN ('pack','battle')
+      WHERE ${PAYOUT_LEG_FILTER}
         AND ${notInSessionInv}
         ${sinceInv}
-        AND (
-          (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
-          OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
-        )
-        -- Reward/daily-pack won cards dropped (Fix 2), keyed on source_id
-        -- (the originating game_session_id). NULL source_id stays counted.
-        AND (ui.source_id IS NULL OR ui.source_id NOT IN (SELECT id FROM reward_pack_sessions))
       GROUP BY ui.user_id
     ),
     per_user AS (
@@ -2415,15 +2426,19 @@ async function ggrTopContributorsForCutoff(
         ru.id AS user_id,
         ru.username,
         -- wager = ledger pack/battle wager + upgrader wager.
-        COALESCE(l.wager_total, 0) + COALESCE(g.upg_wager, 0) AS wager_total,
+        COALESCE(l.wager_total, 0)
+          + COALESCE(g.upg_wager, 0)
+          + COALESCE(d.dd_wager, 0) AS wager_total,
         -- payout = inventory pack/battle wins + battle refunds + upgrader payout.
         COALESCE(i.inv_payout, 0)
           + COALESCE(l.battle_refund_total, 0)
-          + COALESCE(g.upg_payout, 0) AS payout_total
+          + COALESCE(g.upg_payout, 0)
+          + COALESCE(d.dd_payout, 0) AS payout_total
       FROM real_users ru
       LEFT JOIN ledger_leg l ON l.user_id = ru.id
       LEFT JOIN inv_leg i ON i.user_id = ru.id
       LEFT JOIN upgrader_leg g ON g.user_id = ru.id
+      LEFT JOIN double_down_leg d ON d.user_id = ru.id
       -- Keep any user with non-zero activity on ANY leg (incl. upgrader-
       -- only players) so the top-N sort sees them.
       WHERE COALESCE(l.wager_total, 0) <> 0
@@ -2431,6 +2446,8 @@ async function ggrTopContributorsForCutoff(
          OR COALESCE(l.battle_refund_total, 0) <> 0
          OR COALESCE(g.upg_wager, 0) <> 0
          OR COALESCE(g.upg_payout, 0) <> 0
+         OR COALESCE(d.dd_wager, 0) <> 0
+         OR COALESCE(d.dd_payout, 0) <> 0
     )
     SELECT
       pu.user_id::text AS user_id,

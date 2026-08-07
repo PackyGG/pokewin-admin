@@ -175,6 +175,14 @@ export type GamingLegs = {
   upgraderPayout: number;
   /** Upgrader bet count only, already INCLUDED in `bets`. */
   upgraderBets: number;
+  /** Pack wager only, already included in `wager`. */
+  packWager: number;
+  /** Battle wager only, already included in `wager`. */
+  battleWager: number;
+  /** Keno wager only, already included in `wager`. */
+  kenoWager: number;
+  /** Keno payout only, already included in `battleRefund`. */
+  kenoPayout: number;
   /**
    * Double Down wager only (Σ `battle_double_down_offers.won_amount_usd`
    * over RESOLVED rounds in window), already INCLUDED in `wager`. Do NOT
@@ -200,6 +208,8 @@ export type GamingLegs = {
    * INCLUDED in `bets`. 0 on a pre-DD DB.
    */
   ddBets: number;
+  /** Canonical wager from customers without a creator-code referrer. */
+  organicWager: number;
 };
 
 /**
@@ -213,7 +223,7 @@ export type GamingLegs = {
  * Upgrader is FOLDED IN BY DEFAULT — its wager joins `wager`, its payout
  * joins `battleRefund`, its bets join `bets` — so the canonical GGR
  * (`getWindowMetrics`) and the dashboard GGR breakdown (which both read
- * these legs) cover pack + battle + upgrader. Upgrader is sourced from
+ * these legs) cover packs, battles, Keno, Upgrader, and Double Down. Upgrader is sourced from
  * `upgrader_games` (NOT the ledger; `UPGRADER_IN_LEDGER` stays false) and
  * is `to_regclass`-guarded, contributing 0 on a pre-upgrader DB. The
  * upgrader-only slices are also returned separately (`upgraderWager` /
@@ -228,7 +238,16 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     const scope = await getMetricsScope();
     const since = window.since;
 
-    type LedgerRow = { wager: string; battle_refund: string; bets: string };
+    type LedgerRow = {
+      wager: string;
+      organic_wager: string;
+      battle_refund: string;
+      bets: string;
+      pack_wager: string;
+      battle_wager: string;
+      keno_wager: string;
+      keno_payout: string;
+    };
     type InvRow = { inv_payout: string };
 
     const [ledger, inv, upg, dd] = await Promise.all([
@@ -236,8 +255,25 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
         `WITH ${scope.sessionWindowsCte}
          SELECT
            COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS wager,
+           COALESCE(SUM(CASE
+             WHEN type::text IN ${WAGER_TYPES_SQL}
+              AND user_id IN (
+                SELECT organic_user.id
+                FROM "user" organic_user
+                WHERE organic_user.id IN ${scope.userScopeSql}
+                  AND NOT EXISTS (
+                    SELECT 1 FROM "user" ref
+                    WHERE ref.id = organic_user.referred_by
+                      AND ref.role = 'creator'
+                  )
+              )
+             THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS organic_wager,
            COALESCE(SUM(CASE WHEN type::text IN ${GAMING_PAYOUT_TYPES_SQL} THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_refund,
-           COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets
+           COALESCE(SUM(CASE WHEN type::text IN ${WAGER_TYPES_SQL} THEN 1 ELSE 0 END), 0)::text AS bets,
+           COALESCE(SUM(CASE WHEN type::text = 'pack_opening' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS pack_wager,
+           COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship') THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battle_wager,
+           COALESCE(SUM(CASE WHEN type::text = 'keno_bet' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_wager,
+           COALESCE(SUM(CASE WHEN type::text = 'keno_payout' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno_payout
          FROM ledger_transactions
          WHERE status = 'completed'
            AND user_id IN ${scope.userScopeSql}
@@ -290,15 +326,22 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     ]);
 
     const ledgerWager = toNumber(ledger[0]?.wager);
+    const ledgerOrganicWager = toNumber(ledger[0]?.organic_wager);
     const ledgerGamingPayout = toNumber(ledger[0]?.battle_refund);
     const ledgerBets = toNumber(ledger[0]?.bets);
+    const packWager = toNumber(ledger[0]?.pack_wager);
+    const battleWager = toNumber(ledger[0]?.battle_wager);
+    const kenoWager = toNumber(ledger[0]?.keno_wager);
+    const kenoPayout = toNumber(ledger[0]?.keno_payout);
     const inventoryPayout = toNumber(inv[0]?.inv_payout);
 
     const upgraderWager = upg?.wager ?? 0;
+    const upgraderOrganicWager = upg?.organicWager ?? 0;
     const upgraderPayout = upg?.payout ?? 0;
     const upgraderBets = upg?.bets ?? 0;
 
     const ddWager = dd?.wager ?? 0;
+    const ddOrganicWager = dd?.organicWager ?? 0;
     const ddPayout = dd?.payout ?? 0;
     const ddBets = dd?.bets ?? 0;
 
@@ -318,10 +361,16 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       upgraderWager,
       upgraderPayout,
       upgraderBets,
+      packWager,
+      battleWager,
+      kenoWager,
+      kenoPayout,
       // Double Down-only slices (already included above; do not re-add).
       ddWager,
       ddPayout,
       ddBets,
+      organicWager:
+        ledgerOrganicWager + upgraderOrganicWager + ddOrganicWager,
     };
   });
 }
@@ -336,6 +385,7 @@ type DoubleDownLegs = {
   payout: number;
   /** COUNT of RESOLVED offers in window. */
   bets: number;
+  organicWager: number;
 };
 
 /**
@@ -396,23 +446,36 @@ async function doubleDownLegs(
     const blacklist = blacklistNotInClause("id", excluded);
     const since = window.since;
 
-    type Row = { wager: string; payout: string; bets: string };
+    type Row = {
+      wager: string;
+      payout: string;
+      bets: string;
+      organic_wager: string;
+    };
     const rows = await queryRows<Row[]>(db,
       `WITH real_users AS (
-         SELECT id FROM "user"
+         SELECT id,
+                EXISTS (
+                  SELECT 1 FROM "user" ref
+                  WHERE ref.id = u.referred_by AND ref.role = 'creator'
+                ) AS under_creator
+         FROM "user" u
          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
        )
        SELECT
          COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS wager,
          COALESCE(SUM(CASE WHEN o.result = 'win'
                            THEN v.value::numeric ELSE 0 END), 0)::text AS payout,
-         COUNT(*)::text AS bets
+         COUNT(*)::text AS bets,
+         COALESCE(SUM(CASE WHEN NOT ru.under_creator
+                           THEN o.won_amount_usd::numeric ELSE 0 END), 0)::text
+           AS organic_wager
        FROM battle_double_down_offers o
+       JOIN real_users ru ON ru.id = o.user_id
        LEFT JOIN vouchers v
          ON v.id = o.won_voucher_id
         AND v.origin = 'battle_double_down_payout'
        WHERE o.result IS NOT NULL
-         AND o.user_id IN (SELECT id FROM real_users)
          ${sinceClause("o.resolved_at", since)}`,
     );
 
@@ -421,6 +484,7 @@ async function doubleDownLegs(
       wager: toNumber(r?.wager),
       payout: toNumber(r?.payout),
       bets: toNumber(r?.bets),
+      organicWager: toNumber(r?.organic_wager),
     };
   });
 }
@@ -520,6 +584,7 @@ export type UpgraderMetrics = {
   uniquePlayers: number;
   wins: number;
   losses: number;
+  organicWager: number;
 };
 
 /**
@@ -567,10 +632,16 @@ export async function upgraderMetrics(
       bets: string;
       players: string;
       wins: string;
+      organic_wager: string;
     };
     const rows = await queryRows<Row[]>(db,
       `WITH real_users AS (
-         SELECT id FROM "user"
+         SELECT id,
+                EXISTS (
+                  SELECT 1 FROM "user" ref
+                  WHERE ref.id = u.referred_by AND ref.role = 'creator'
+                ) AS under_creator
+         FROM "user" u
          WHERE role NOT IN ('admin', 'support', 'creator') ${blacklist}
        )
        SELECT
@@ -578,9 +649,13 @@ export async function upgraderMetrics(
          COALESCE(SUM(won_amount::numeric), 0)::text AS payout,
          COUNT(*)::text AS bets,
          COUNT(DISTINCT user_id)::text AS players,
-         COUNT(CASE WHEN won_amount::numeric > 0 THEN 1 END)::text AS wins
-       FROM upgrader_games
-       WHERE user_id IN (SELECT id FROM real_users)
+         COUNT(CASE WHEN won_amount::numeric > 0 THEN 1 END)::text AS wins,
+         COALESCE(SUM(CASE WHEN NOT ru.under_creator
+                           THEN ug.bet_amount::numeric ELSE 0 END), 0)::text
+           AS organic_wager
+       FROM upgrader_games ug
+       JOIN real_users ru ON ru.id = ug.user_id
+       WHERE true
          ${sinceClause("created_at", since)}`,
     );
 
@@ -597,6 +672,7 @@ export async function upgraderMetrics(
       uniquePlayers: toNumber(r?.players),
       wins,
       losses: Math.max(0, bets - wins),
+      organicWager: toNumber(r?.organic_wager),
     };
   });
 }
@@ -605,6 +681,8 @@ export async function upgraderMetrics(
 
 export type WindowMetrics = {
   wager: number;
+  /** Wager from customers without a creator-code referrer. */
+  organicWager: number;
   gamingPayout: number;
   ggr: number;
   ngr: number;
@@ -618,6 +696,14 @@ export type WindowMetrics = {
   rainTipTotal: number;
   /** Resolved house slice of rain that reduced NGR (net model by default). */
   rainHouseCost: number;
+  /** Canonical wager legs; these sum exactly to `wager`. */
+  wagerBreakdown?: {
+    packs: number;
+    battles: number;
+    keno: number;
+    upgrader: number;
+    doubleDown: number;
+  };
 };
 
 /**
@@ -636,7 +722,7 @@ export type WindowMetrics = {
  * Upgrader IS folded into the headline GGR by default — `getGamingLegs`
  * sources it from `upgrader_games` (real gameplay; NOT the ledger, so
  * `UPGRADER_IN_LEDGER` stays false) and merges its wager/payout/bets into
- * the legs. So headline GGR = pack + battle + upgrader. There is no
+ * the legs. So headline GGR covers all five canonical game sources. There is no
  * separate upgrader read here anymore (that would double-count what the
  * legs already include).
  */
@@ -683,6 +769,14 @@ export async function getWindowMetrics(opts: {
 
   return {
     wager,
+    organicWager: legs.organicWager,
+    wagerBreakdown: {
+      packs: legs.packWager,
+      battles: legs.battleWager,
+      keno: legs.kenoWager,
+      upgrader: legs.upgraderWager,
+      doubleDown: legs.ddWager,
+    },
     gamingPayout,
     ggr: ggrValue,
     ngr: ngrValue,
@@ -738,7 +832,7 @@ export type DailyGamingMetricPoint = {
  * Upgrader IS included here by default (mirroring `getGamingLegs` /
  * `getWindowMetrics`): per-day `upgrader_games.bet_amount` joins the day's
  * wager and `won_amount` joins the day's payout, so Σ daily GGR reconciles
- * with the headline (pack + battle + upgrader). Upgrader is sourced from
+ * with the headline across all canonical game sources. Upgrader is sourced from
  * `upgrader_games` (NOT the ledger; `UPGRADER_IN_LEDGER` stays false) and
  * is `to_regclass`-guarded — contributes 0 on a pre-upgrader DB.
  */

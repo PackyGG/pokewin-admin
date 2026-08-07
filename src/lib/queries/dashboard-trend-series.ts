@@ -32,11 +32,19 @@ import {
   fiatRefundAttributionTimestampSql,
   fiatRefundCreditUsdSql,
 } from "./fiat-refund-credits";
+import { WAGER_LEG_FILTER } from "@/lib/metrics/gaming-sql";
 
 const LIFETIME_LOOKBACK_DAYS = 365;
 
 export type DashboardTrendSeries = {
-  dailyWagers: { date: string; packs: number; battles: number; upgrader: number }[];
+  dailyWagers: {
+    date: string;
+    packs: number;
+    battles: number;
+    keno: number;
+    upgrader: number;
+    doubleDown: number;
+  }[];
   dailyDeposits: { date: string; amount: number }[];
   dailySignups: { date: string; count: number }[];
   dailyFtds: { date: string; count: number; total: number; avg: number }[];
@@ -59,12 +67,14 @@ type LedgerBucketRow = {
   bucket: Date | string;
   packs: string;
   battles: string;
+  keno: string;
   deposits: string;
   active_depositors: string;
 };
 
 type CountBucketRow = { bucket: Date | string; value: string };
 type UpgraderBucketRow = { bucket: Date | string; upgrader: string };
+type DoubleDownBucketRow = { bucket: Date | string; double_down: string };
 type AttributionBucketRow = {
   bucket: Date | string;
   organic: string;
@@ -79,6 +89,7 @@ function bucketKey(d: Date | string, period: DashboardPeriod): string {
 function mergeLedgerRows(
   rows: LedgerBucketRow[],
   upgraderRows: UpgraderBucketRow[],
+  doubleDownRows: DoubleDownBucketRow[],
   period: DashboardPeriod,
 ): Pick<
   DashboardTrendSeries,
@@ -87,6 +98,12 @@ function mergeLedgerRows(
   const upgraderByBucket = new Map(
     upgraderRows.map((r) => [bucketKey(r.bucket, period), Number(r.upgrader)]),
   );
+  const doubleDownByBucket = new Map(
+    doubleDownRows.map((r) => [
+      bucketKey(r.bucket, period),
+      Number(r.double_down),
+    ]),
+  );
 
   const wagerRows = rows.map((d) => {
     const date = bucketKey(d.bucket, period);
@@ -94,7 +111,9 @@ function mergeLedgerRows(
       date,
       packs: Number(d.packs),
       battles: Number(d.battles),
+      keno: Number(d.keno),
       upgrader: upgraderByBucket.get(date) ?? 0,
+      doubleDown: doubleDownByBucket.get(date) ?? 0,
     };
   });
 
@@ -125,26 +144,55 @@ async function fetchTrendSeriesPg(
   const db = readDrizzleForEnv(env);
   const now = new Date();
   const cutoff = dashboardChartCutoff(period, now, LIFETIME_LOOKBACK_DAYS);
+  const cutoffBind = cutoff.toISOString();
   const bucketLedger = dashboardChartBucketExpr("created_at", period);
   const bucketUpg = dashboardChartBucketExpr("upgrader_games.created_at", period);
+  const bucketDd = dashboardChartBucketExpr("o.resolved_at", period);
   const bucketUser = dashboardChartBucketExpr("created_at", period);
   const bucketFtd = dashboardChartBucketExpr("fd.created_at", period);
 
-  const upgProbe = await safeQuery(
-    () =>
-      queryRows<{ exists: string | null }[]>(
-        db,
-        `SELECT to_regclass('public.upgrader_games')::text AS exists`,
-      ),
-    [],
-    "dashboard.trends.upgraderProbe",
-    REWARD_QUERY_TIMEOUT_MS,
-  );
+  const [upgProbe, ddProbe] = await Promise.all([
+    safeQuery(
+      () =>
+        queryRows<{ exists: string | null }[]>(
+          db,
+          `SELECT to_regclass('public.upgrader_games')::text AS exists`,
+        ),
+      [],
+      "dashboard.trends.upgraderProbe",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+    safeQuery(
+      () =>
+        queryRows<{ exists: string | null }[]>(
+          db,
+          `SELECT to_regclass('public.battle_double_down_offers')::text AS exists`,
+        ),
+      [],
+      "dashboard.trends.doubleDownProbe",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+  ]);
   const hasUpgrader = upgProbe.data[0]?.exists != null;
+  const hasDoubleDown = ddProbe.data[0]?.exists != null;
+  const attributionUpgraderUnion = hasUpgrader
+    ? `UNION ALL
+       SELECT ug.user_id, ug.bet_amount::numeric AS amount, ug.created_at
+       FROM upgrader_games ug
+       WHERE ug.created_at >= $1`
+    : "";
+  const attributionDoubleDownUnion = hasDoubleDown
+    ? `UNION ALL
+       SELECT o.user_id, o.won_amount_usd::numeric AS amount,
+              o.resolved_at AS created_at
+       FROM battle_double_down_offers o
+       WHERE o.result IS NOT NULL AND o.resolved_at >= $1`
+    : "";
 
   const [
     ledgerResult,
     upgraderResult,
+    doubleDownResult,
     signupResult,
     attributionResult,
     ftdResult,
@@ -162,9 +210,10 @@ async function fetchTrendSeriesPg(
       WITH events AS (
         SELECT user_id, type::text AS type, amount::numeric AS amount, created_at
         FROM ledger_transactions
-        WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','deposit')
+        WHERE type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet','deposit')
           AND status = 'completed'
           AND created_at >= $1
+          AND ${WAGER_LEG_FILTER}
           AND user_id IN (
             SELECT id FROM "user"
             WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
@@ -186,12 +235,14 @@ async function fetchTrendSeriesPg(
                                THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS packs,
              COALESCE(SUM(CASE WHEN type::text IN ('battle_bet','battle_sponsorship')
                                THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS battles,
+             COALESCE(SUM(CASE WHEN type::text = 'keno_bet'
+                               THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS keno,
              COALESCE(SUM(CASE WHEN type::text IN ('deposit','deposit_refund')
                                THEN amount::numeric ELSE 0 END), 0)::text AS deposits,
              COUNT(DISTINCT CASE WHEN type::text = 'deposit' THEN user_id END)::text AS active_depositors
         FROM events
        GROUP BY 1
-       ORDER BY 1`, cutoff),
+       ORDER BY 1`, cutoffBind),
       [],
       "dashboard.trends.ledger",
       REWARD_QUERY_TIMEOUT_MS,
@@ -209,10 +260,30 @@ async function fetchTrendSeriesPg(
                WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
              )
            GROUP BY 1
-           ORDER BY 1`, cutoff)
+           ORDER BY 1`, cutoffBind)
         : Promise.resolve([] as UpgraderBucketRow[]),
       [],
       "dashboard.trends.upgrader",
+      REWARD_QUERY_TIMEOUT_MS,
+    ),
+
+    () => safeQuery(
+      () => hasDoubleDown
+        ? queryRows<DoubleDownBucketRow[]>(db, `
+          SELECT ${bucketDd} AS bucket,
+                 COALESCE(SUM(o.won_amount_usd::numeric), 0)::text AS double_down
+            FROM battle_double_down_offers o
+           WHERE o.result IS NOT NULL
+             AND o.resolved_at >= $1
+             AND o.user_id IN (
+               SELECT id FROM "user"
+               WHERE role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+             )
+           GROUP BY 1
+           ORDER BY 1`, cutoffBind)
+        : Promise.resolve([] as DoubleDownBucketRow[]),
+      [],
+      "dashboard.trends.doubleDown",
       REWARD_QUERY_TIMEOUT_MS,
     ),
 
@@ -228,7 +299,7 @@ async function fetchTrendSeriesPg(
          AND role NOT IN ('admin', 'support') ${blacklistIdNotIn}
          AND is_locked = false
        GROUP BY 1
-       ORDER BY 1`, cutoff),
+       ORDER BY 1`, cutoffBind),
       [],
       "dashboard.trends.signups",
       REWARD_QUERY_TIMEOUT_MS,
@@ -244,17 +315,23 @@ async function fetchTrendSeriesPg(
                ) AS under_creator
           FROM "user" u
          WHERE u.role NOT IN ('admin', 'support', 'creator') ${blacklistIdNotIn}
+      ), wager_events AS (
+        SELECT lt.user_id, ABS(lt.amount::numeric) AS amount, lt.created_at
+          FROM ledger_transactions lt
+         WHERE lt.status = 'completed'
+           AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship','keno_bet')
+           AND lt.created_at >= $1
+           AND ${WAGER_LEG_FILTER}
+        ${attributionUpgraderUnion}
+        ${attributionDoubleDownUnion}
       )
-      SELECT ${dashboardChartBucketExpr("lt.created_at", period)} AS bucket,
-             COALESCE(SUM(CASE WHEN NOT c.under_creator THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS organic,
-             COALESCE(SUM(CASE WHEN c.under_creator THEN ABS(lt.amount::numeric) ELSE 0 END), 0)::text AS creator_attributed
-        FROM ledger_transactions lt
-        JOIN customers c ON c.id = lt.user_id
-       WHERE lt.status = 'completed'
-         AND lt.type::text IN ('pack_opening','battle_bet','battle_sponsorship')
-         AND lt.created_at >= $1
+      SELECT ${dashboardChartBucketExpr("e.created_at", period)} AS bucket,
+             COALESCE(SUM(CASE WHEN NOT c.under_creator THEN e.amount ELSE 0 END), 0)::text AS organic,
+             COALESCE(SUM(CASE WHEN c.under_creator THEN e.amount ELSE 0 END), 0)::text AS creator_attributed
+        FROM wager_events e
+        JOIN customers c ON c.id = e.user_id
        GROUP BY 1
-       ORDER BY 1`, cutoff),
+       ORDER BY 1`, cutoffBind),
       [],
       "dashboard.trends.attribution",
       REWARD_QUERY_TIMEOUT_MS,
@@ -284,7 +361,7 @@ async function fetchTrendSeriesPg(
         FROM first_deposits fd
        WHERE fd.created_at >= $1
        GROUP BY 1
-       ORDER BY 1`, cutoff),
+       ORDER BY 1`, cutoffBind),
       [],
       "dashboard.trends.ftds",
       REWARD_QUERY_TIMEOUT_MS,
@@ -293,11 +370,17 @@ async function fetchTrendSeriesPg(
 
   const ledgerRows = ledgerResult.data;
   const upgraderRows = upgraderResult.data;
+  const doubleDownRows = doubleDownResult.data;
   const signupRows = signupResult.data;
   const attributionRows = attributionResult.data;
   const ftdRows = ftdResult.data;
 
-  const ledgerMerged = mergeLedgerRows(ledgerRows, upgraderRows, period);
+  const ledgerMerged = mergeLedgerRows(
+    ledgerRows,
+    upgraderRows,
+    doubleDownRows,
+    period,
+  );
 
   const dailySignups = padDashboardCountSeries(
     signupRows.map((r) => ({
@@ -342,7 +425,9 @@ async function fetchTrendSeriesPg(
       wagers:
         ledgerResult.error === null &&
         upgProbe.error === null &&
-        upgraderResult.error === null,
+        upgraderResult.error === null &&
+        ddProbe.error === null &&
+        doubleDownResult.error === null,
       deposits: ledgerResult.error === null,
       signups: signupResult.error === null,
       ftds: ftdResult.error === null,
@@ -397,7 +482,7 @@ export async function getDashboardTrendSeries(
 
   let partial: DashboardTrendSeries | null = null;
   try {
-    const key = buildCacheKey("dashboard-trends-v3-refund-attribution", [
+    const key = buildCacheKey("dashboard-trends-v5-all-games-attribution", [
       env,
       period,
       hashString(blacklistIdNotIn),

@@ -14,12 +14,12 @@ test("dashboard KPI and trend sections retain successful snapshots", () => {
   const trendSource = read("src/lib/queries/dashboard-trend-series.ts");
 
   assert.match(kpiSource, /cacheGetOrSetStale/);
-  assert.match(kpiSource, /dashboard-kpi-v3/);
+  assert.match(kpiSource, /dashboard-kpi-v5-organic-all-games/);
   assert.match(kpiSource, /24 \* 60 \* 60/);
   assert.match(kpiSource, /must never replace a complete last-known-good snapshot/);
 
   assert.match(trendSource, /cacheGetOrSetStale/);
-  assert.match(trendSource, /dashboard-trends-v3-refund-attribution/);
+  assert.match(trendSource, /dashboard-trends-v5-all-games-attribution/);
   assert.match(trendSource, /snapshot was incomplete/);
 });
 

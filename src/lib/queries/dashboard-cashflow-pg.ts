@@ -112,6 +112,7 @@ async function computeCashflow(
     type CardRow = { amt: string; cnt: string };
     type ManualRow = { amt: string; cnt: string };
     type RefundRow = { amt: string };
+    const cutoffBind = cutoff.toISOString();
 
     const [dep, card, manual, refunds] = await Promise.all([
       queryRows<DepRow[]>(db,
@@ -122,7 +123,7 @@ async function computeCashflow(
            AND lt.type::text = 'deposit'
            AND lt.created_at >= $1
            AND ${scopeLt}`,
-        cutoff,
+        cutoffBind,
       ),
       queryRows<CardRow[]>(db,
         `SELECT COALESCE(SUM(cwr.total_value_usd::numeric), 0)::text AS amt,
@@ -131,7 +132,7 @@ async function computeCashflow(
          WHERE cwr.status IN ('completed', 'shipped')
            AND COALESCE(cwr.shipped_at, cwr.completed_at) >= $1
            AND ${scopeCwr}`,
-        cutoff,
+        cutoffBind,
       ),
       queryRows<ManualRow[]>(db,
         `SELECT COALESCE(SUM(COALESCE(
@@ -145,7 +146,7 @@ async function computeCashflow(
            AND lt.description ILIKE 'Manual withdrawal:%'
            AND lt.created_at >= $1
            AND ${scopeLt}`,
-        cutoff,
+        cutoffBind,
       ),
       queryRows<RefundRow[]>(db,
         `SELECT COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::text AS amt
@@ -153,7 +154,7 @@ async function computeCashflow(
          WHERE i.status IN ('partially_refunded', 'refunded')
            AND ${fiatRefundAttributionTimestampSql("i")} >= $1
            AND ${scopeIntent}`,
-        cutoff,
+        cutoffBind,
       ),
     ]);
 

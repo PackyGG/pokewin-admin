@@ -65,8 +65,14 @@ export type KpiWindowPayload = {
   netCashFlow: number;
   /** Customer wager (creator-on-stream sessions excluded) for the window. */
   wager: number;
-  /** Packs / Battles / Upgrader split of `wager` (sums to it). */
-  wagerBreakdown: { packs: number; battles: number; upgrader: number };
+  /** Per-game split of `wager` (sums to it exactly). */
+  wagerBreakdown: {
+    packs: number;
+    battles: number;
+    keno: number;
+    upgrader: number;
+    doubleDown: number;
+  };
   /** Organic wager — users who did NOT join under a creator code. */
   wagerOrganic: number;
   /** Total deposit dollars + transaction count for the window. */
@@ -162,7 +168,9 @@ async function computeKpiWindowPayload(
     wagerBreakdown: stats?.wagersBreakdown ?? {
       packs: 0,
       battles: 0,
+      keno: 0,
       upgrader: 0,
+      doubleDown: 0,
     },
     wagerOrganic: stats?.wagersOrganic ?? 0,
     deposits: cashflow?.deposits ?? 0,
@@ -191,7 +199,13 @@ export function emptyKpiWindowPayload(
     ggr: 0,
     netCashFlow: 0,
     wager: 0,
-    wagerBreakdown: { packs: 0, battles: 0, upgrader: 0 },
+    wagerBreakdown: {
+      packs: 0,
+      battles: 0,
+      keno: 0,
+      upgrader: 0,
+      doubleDown: 0,
+    },
     wagerOrganic: 0,
     deposits: 0,
     grossDeposits: 0,
@@ -224,7 +238,11 @@ async function buildResilientKpiWindowPayload(
     }
 
     const scopeKey = hashString([...excluded].sort().join(","));
-    const key = buildCacheKey("dashboard-kpi-v3", [env, window, scopeKey]);
+    const key = buildCacheKey("dashboard-kpi-v5-organic-all-games", [
+      env,
+      window,
+      scopeKey,
+    ]);
     const payload = await cacheGetOrSetStale(
       key,
       60,

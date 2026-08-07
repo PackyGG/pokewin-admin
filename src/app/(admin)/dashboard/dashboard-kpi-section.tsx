@@ -399,7 +399,7 @@ export function DashboardKpiSection({
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-4">
         {/* Wager — MERGED box. Shows total customer wager (creator-on-stream
             sessions excluded) AND organic wager (no creator-code users) as two
-            headline figures, with the Packs/Battles/Upgrader split (of the
+            headline figures, with the five-game split (of the
             total) below. Purple identity; one today/24h toggle drives both
             figures + the breakdown. */}
         {(() => {
@@ -421,7 +421,12 @@ export function DashboardKpiSection({
                   <div className="grid grid-cols-3 gap-1.5 sm:-mx-0.5">
                     <PanelChip label="Packs" value={p.wagerBreakdown.packs} />
                     <PanelChip label="Battles" value={p.wagerBreakdown.battles} />
+                    <PanelChip label="Keno" value={p.wagerBreakdown.keno} />
                     <PanelChip label="Upgrader" value={p.wagerBreakdown.upgrader} />
+                    <PanelChip
+                      label="Double Down"
+                      value={p.wagerBreakdown.doubleDown}
+                    />
                   </div>
                 ) : undefined
               }

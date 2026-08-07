@@ -453,7 +453,13 @@ export async function calculateWindowedPnl(
       userId
         ? `${col} = $2`
         : `${col} IN (SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd})`;
-    const params: unknown[] = userId ? [since, userId] : [since];
+    // MAIN timestamps are `timestamp without time zone`. Passing a JS Date
+    // through node-postgres serializes it in the process's local timezone,
+    // which shifted UTC-midnight windows by +1/+2 hours during local Berlin
+    // testing. Bind the UTC wall-clock explicitly so local and Vercel reads
+    // use the identical boundary.
+    const sinceBind = since.toISOString();
+    const params: unknown[] = userId ? [sinceBind, userId] : [sinceBind];
     const legs = windowedPnlLegSql(scope);
 
     type LedgerRow = { deposits: string; manual_wd: string; balance_change: string };
@@ -514,7 +520,8 @@ export async function calculateWindowedPnlOneShot(
     const scopedUsersCte = userId
       ? `SELECT $2::text AS id`
       : `SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist}${populationAnd}`;
-    const params: unknown[] = userId ? [since, userId] : [since];
+    const sinceBind = since.toISOString();
+    const params: unknown[] = userId ? [sinceBind, userId] : [sinceBind];
     const legs = windowedPnlLegSql(
       (col) => `${col} IN (SELECT id FROM scoped_users)`,
     );

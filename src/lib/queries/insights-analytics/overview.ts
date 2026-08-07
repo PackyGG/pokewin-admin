@@ -138,6 +138,7 @@ const EMPTY_WINDOWS: { current: PeriodWindowRow; previous: PeriodWindowRow } = {
 /** Neutral all-zero fallback for the canonical window metrics (GGR/NGR). */
 const EMPTY_WINDOW_METRICS: WindowMetrics = {
   wager: 0,
+  organicWager: 0,
   gamingPayout: 0,
   ggr: 0,
   ngr: 0,

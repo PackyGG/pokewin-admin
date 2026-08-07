@@ -17,6 +17,9 @@ const card = read("src/app/(admin)/dashboard/today-pnl-stat-card.tsx");
 const holdings = read(
   "src/app/(admin)/dashboard/today-net-holdings-holders.tsx",
 );
+const dashboard = read("src/lib/queries/dashboard.ts");
+const metrics = read("src/lib/metrics/queries.ts");
+const trends = read("src/lib/queries/dashboard-trend-series.ts");
 
 test("manual withdrawals are positive gross cash out in every daily P&L path", () => {
   for (const source of [pnl, cashflow, userWindows]) {
@@ -44,4 +47,27 @@ test("dashboard labels cash flow honestly and uses canonical GGR", () => {
   assert.match(card, /Net cash flow/);
   assert.match(card, /wagers − gaming payouts today/);
   assert.match(holdings, /\{sign\}[\s\S]{0,100}<AnimatedNumber/);
+});
+
+test("dashboard wager, attribution, and GGR use every canonical game leg", () => {
+  assert.match(dashboard, /wagers: windowMetrics\.wager/);
+  assert.match(dashboard, /wagersOrganic: windowMetrics\.organicWager/);
+  assert.match(dashboard, /legs\.packWager/);
+  assert.match(dashboard, /legs\.battleWager/);
+  assert.match(dashboard, /legs\.kenoWager/);
+  assert.match(dashboard, /legs\.upgraderWager/);
+  assert.match(dashboard, /legs\.ddWager/);
+  assert.match(dashboard, /legs\.ddPayout/);
+
+  assert.match(metrics, /organicWager:\s*legs\.organicWager/);
+  assert.match(trends, /'keno_bet'/);
+  assert.match(trends, /FROM upgrader_games ug/);
+  assert.match(trends, /FROM battle_double_down_offers o/);
+  assert.match(trends, /dashboard-trends-v5-all-games-attribution/);
+});
+
+test("UTC dashboard windows bind identically outside a UTC process", () => {
+  assert.match(pnl, /const sinceBind = since\.toISOString\(\)/);
+  assert.match(cashflow, /const cutoffBind = cutoff\.toISOString\(\)/);
+  assert.match(trends, /const cutoffBind = cutoff\.toISOString\(\)/);
 });

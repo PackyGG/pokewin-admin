@@ -102,10 +102,23 @@ function padSeries<T extends { date: string }>(
 }
 
 export function padDashboardWagerSeries(
-  rows: { date: string; packs: number; battles: number; upgrader: number }[],
+  rows: {
+    date: string;
+    packs: number;
+    battles: number;
+    keno: number;
+    upgrader: number;
+    doubleDown: number;
+  }[],
   period: DashboardPeriod,
 ) {
-  return padSeries(rows, period, { packs: 0, battles: 0, upgrader: 0 });
+  return padSeries(rows, period, {
+    packs: 0,
+    battles: 0,
+    keno: 0,
+    upgrader: 0,
+    doubleDown: 0,
+  });
 }
 
 export function padDashboardDepositSeries(

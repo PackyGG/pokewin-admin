@@ -40,9 +40,17 @@ const wagerConfig = {
     label: "Battles",
     color: "var(--color-chart-3)",
   },
+  keno: {
+    label: "Keno",
+    color: "var(--color-chart-4)",
+  },
   upgrader: {
     label: "Upgrader",
     color: "var(--color-chart-5)",
+  },
+  doubleDown: {
+    label: "Double Down",
+    color: "var(--color-chart-1)",
   },
 } satisfies ChartConfig;
 
@@ -102,7 +110,7 @@ const PNL_DOWN = CHART_COLORS.rose;
 /**
  * Custom tooltip for the stacked Wagers chart — renders Packs + Battles
  * + Upgrader with their colors, the share of the day each contributed
- * (% of total), then a "Total" row showing all three combined. The
+ * (% of total), then a "Total" row showing all five combined. The
  * default ChartTooltipContent only lists individual stack segments
  * without proportions, so an admin had to mentally add the segments
  * AND compute the ratio.
@@ -127,7 +135,9 @@ function WagerTooltipContent({
   const labelByKey: Record<string, string> = {
     packs: "Packs",
     battles: "Battles",
+    keno: "Keno",
     upgrader: "Upgrader",
+    doubleDown: "Double Down",
   };
   const total = payload.reduce(
     (sum, item) => sum + Number(item?.value ?? 0),
@@ -199,7 +209,14 @@ export function WagerChart({
   title = "Wagers (30 days)",
   hourlyXAxis = false,
 }: {
-  data: { date: string; packs: number; battles: number; upgrader: number }[];
+  data: {
+    date: string;
+    packs: number;
+    battles: number;
+    keno?: number;
+    upgrader: number;
+    doubleDown?: number;
+  }[];
   title?: string;
   /** When true, show x-axis labels verbatim (hourly buckets). Default strips
    *  the year prefix (`MM-DD`) for daily buckets. */
@@ -251,9 +268,25 @@ export function WagerChart({
               animationEasing="ease-out"
             />
             <Bar
+              dataKey="keno"
+              stackId="wager"
+              fill="var(--color-keno)"
+              radius={[0, 0, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
               dataKey="upgrader"
               stackId="wager"
               fill="var(--color-upgrader)"
+              radius={[0, 0, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
+              dataKey="doubleDown"
+              stackId="wager"
+              fill="var(--color-doubleDown)"
               radius={[4, 4, 0, 0]}
               animationDuration={700}
               animationEasing="ease-out"

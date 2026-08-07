@@ -27,6 +27,7 @@ export type HouseMoneyKpis = {
 
 const EMPTY_WINDOW_METRICS: WindowMetrics = {
   wager: 0,
+  organicWager: 0,
   gamingPayout: 0,
   ggr: 0,
   ngr: 0,

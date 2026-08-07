@@ -462,6 +462,7 @@ async function getCategoryLedgerWager(
 /** Neutral all-zero fallback for the canonical window metrics. */
 const EMPTY_WINDOW_METRICS: WindowMetrics = {
   wager: 0,
+  organicWager: 0,
   gamingPayout: 0,
   ggr: 0,
   ngr: 0,
@@ -479,12 +480,17 @@ const EMPTY_GAMING_LEGS: GamingLegs = {
   inventoryPayout: 0,
   battleRefund: 0,
   bets: 0,
-  upgraderWager: 0,
-  upgraderPayout: 0,
-  upgraderBets: 0,
-  ddWager: 0,
-  ddPayout: 0,
-  ddBets: 0,
+      upgraderWager: 0,
+      upgraderPayout: 0,
+      upgraderBets: 0,
+      packWager: 0,
+      battleWager: 0,
+      kenoWager: 0,
+      kenoPayout: 0,
+      ddWager: 0,
+      ddPayout: 0,
+      ddBets: 0,
+      organicWager: 0,
 };
 
 /** Neutral all-zero fallback for the reward cost. */
