@@ -68,6 +68,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "trivia",
   "chat_raffle",
   "lossback",
+  "ultra_lossback",
   "leaderboard",
   "remove_locked_balance",
   "fraud_abuse",
@@ -98,6 +99,7 @@ export type BalanceAdjustmentCategory =
  * set to gate the option to the REMOVE-balance direction only.
  */
 export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = [
+  "ultra_lossback",
   "leaderboard",
   "remove_locked_balance",
   "fraud_abuse",
@@ -204,10 +206,14 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  * in GGR/NGR/cost exactly as before. Only the dropdown stops offering it.
  */
 export const SELECTABLE_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS.filter(
-  (k) => k !== "other" && k !== "creator_vip_reward" && k !== "chat_raffle",
+  (k) =>
+    k !== "other" &&
+    k !== "creator_vip_reward" &&
+    k !== "chat_raffle" &&
+    k !== "ultra_lossback",
 ) as readonly Exclude<
   BalanceAdjustmentCategory,
-  "other" | "creator_vip_reward" | "chat_raffle"
+  "other" | "creator_vip_reward" | "chat_raffle" | "ultra_lossback"
 >[];
 
 /** Type-guard: is this string one of the canonical category keys? */
@@ -328,6 +334,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     costLabel: "Lossback credits",
     why: "Loss-rebate credited back to a user (a % of their recent losses). A house-funded retention cost.",
     counted: true,
+  },
+  ultra_lossback: {
+    key: "ultra_lossback",
+    label: "Ultra Lossback",
+    costLabel: "Ultra-lossback removals (private)",
+    why: "A private available-balance removal restricted to the motha and hifoen admin accounts. It is a real liability reduction, not a reward cost.",
+    counted: false,
   },
   leaderboard: {
     key: "leaderboard",

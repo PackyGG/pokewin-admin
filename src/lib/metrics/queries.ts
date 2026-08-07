@@ -1019,6 +1019,10 @@ export async function sumLedgerTypes(opts: {
        FROM ledger_transactions
        WHERE status = 'completed'
          AND type::text IN ${list}
+         AND (
+           type::text <> 'admin_balance_adjustment'
+           OR metadata->>'adjustment_category' IS DISTINCT FROM 'ultra_lossback'
+         )
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}`,
@@ -1064,6 +1068,10 @@ export async function sumLedgerTypesGrouped(opts: {
        FROM ledger_transactions
        WHERE status = 'completed'
          AND type::text IN ${list}
+         AND (
+           type::text <> 'admin_balance_adjustment'
+           OR metadata->>'adjustment_category' IS DISTINCT FROM 'ultra_lossback'
+         )
          AND user_id IN ${scope.userScopeSql}
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", opts.window.since)}

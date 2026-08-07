@@ -21,6 +21,7 @@ import { hasCapability } from "@/app/(admin)/settings/roles/permissions-utils";
 import { canEditBalanceAdjustments } from "@/lib/balance-adjustment-edit/motha-gate";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { canViewProtectedAuditActivity } from "@/lib/audit-visibility";
+import { canUseUltraLossbackFresh } from "@/lib/ultra-lossback-access.server";
 import { UserTagsPanel } from "./user-tags-panel";
 import { AutoRefresh } from "../../dashboard/auto-refresh";
 import { UserViewModern } from "./user-view-modern";
@@ -166,6 +167,7 @@ export default async function UserDetailPage({
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const session = await requirePageAccess("/users");
+  const viewerCanSeeUltraLossback = await canUseUltraLossbackFresh(session);
   const { id: routeKey } = await params;
   // Route-key → user id resolution is the ONLY thing awaited before the
   // Suspense boundary below, so an UNGUARDED throw here (pool starvation /
@@ -262,6 +264,7 @@ export default async function UserDetailPage({
           sessionRole={session.role}
           sessionUserId={session.userId}
           canViewProtectedActors={canViewProtectedAuditActivity(session)}
+          viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
           permissions={permissions}
           initialTab={initialTab}
           backSlot={backSlot}
@@ -285,6 +288,7 @@ async function UserDetailBody({
   sessionRole,
   sessionUserId,
   canViewProtectedActors,
+  viewerCanSeeUltraLossback,
   permissions,
   initialTab,
   backSlot,
@@ -293,6 +297,7 @@ async function UserDetailBody({
   sessionRole: string;
   sessionUserId: string;
   canViewProtectedActors: boolean;
+  viewerCanSeeUltraLossback: boolean;
   // Union permission keys for non-admin viewers (null for admins), resolved
   // on the critical path and threaded down so capability gating matches the
   // tag panel's and avoids a second (cache()'d, but clearer-as-prop) read.
@@ -442,6 +447,7 @@ async function UserDetailBody({
                 10,
                 FINANCIAL_TYPES,
                 ownerRes.data,
+                viewerCanSeeUltraLossback,
               ),
             EMPTY_TX_PAGE,
             "users.detail.financialTx",
@@ -460,12 +466,12 @@ async function UserDetailBody({
   const adjustmentsTxPromise: Promise<SafeQueryResult<UserTxPage>> | null =
     initialTab === "account"
       ? viewerIsOwnerPromise.then((ownerRes) =>
-          ownerRes.data
+          ownerRes.data || viewerCanSeeUltraLossback
             ? safeQuery(
                 () =>
                   getUserTransactions(id, 1, ADJ_LIMIT, {
                     types: ADJUSTMENT_TYPES,
-                  }),
+                  }, ownerRes.data, viewerCanSeeUltraLossback),
                 EMPTY_TX_PAGE,
                 "users.detail.adjustmentsTx",
                 USER_DETAIL_QUERY_TIMEOUT_MS,
@@ -559,7 +565,11 @@ async function UserDetailBody({
   const auditPromise =
     initialTab === "audit"
       ? safeQuery(
-          () => getUserAdminAuditFeed(id, canViewProtectedActors),
+          () => getUserAdminAuditFeed(
+            id,
+            canViewProtectedActors,
+            viewerCanSeeUltraLossback,
+          ),
           EMPTY_USER_ADMIN_AUDIT,
           "users.detail.adminAudit",
           USER_DETAIL_QUERY_TIMEOUT_MS,
@@ -705,6 +715,7 @@ async function UserDetailBody({
     sessionRole === "admin"
       ? {
           canAdjustBalance: true,
+          canUseUltraLossback: viewerCanSeeUltraLossback,
           canAdjustXp: true,
           canEditIdentity: true,
           canBanUsers: true,
@@ -717,6 +728,7 @@ async function UserDetailBody({
         }
       : {
           canAdjustBalance: hasCapability(permissions ?? [], "__can_adjust_balance"),
+          canUseUltraLossback: viewerCanSeeUltraLossback,
           canAdjustXp: hasCapability(permissions ?? [], "__can_adjust_xp"),
           canEditIdentity: hasCapability(permissions ?? [], "__can_edit_identity"),
           canBanUsers: hasCapability(permissions ?? [], "__can_ban_users"),
@@ -776,6 +788,7 @@ async function UserDetailBody({
       wagerProgressPromise={wagerProgressPromise}
       balanceWeightingPromise={balanceWeightingPromise}
       viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+      viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
       initialTab={initialTab}
     />
   );

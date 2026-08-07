@@ -178,9 +178,17 @@ function cachedUserFinancialTransactions(
   perPage: number,
   types: string[],
   viewerIsOwner: boolean,
+  viewerCanSeeUltraLossback: boolean,
 ) {
   return unstable_cache(
-    () => getUserTransactions(userId, page, perPage, { types }, viewerIsOwner),
+    () => getUserTransactions(
+      userId,
+      page,
+      perPage,
+      { types },
+      viewerIsOwner,
+      viewerCanSeeUltraLossback,
+    ),
     [
       // v3 clears outage-era Overview finance values retained after 57P05.
       "users-detail-financial-tx-v3",
@@ -189,6 +197,7 @@ function cachedUserFinancialTransactions(
       String(perPage),
       types.join(","),
       viewerIsOwner ? "owner" : "non-owner",
+      viewerCanSeeUltraLossback ? "ultra" : "non-ultra",
     ],
     { revalidate: FINANCIAL_TX_REVALIDATE_SECONDS, tags: userDetailTags(userId) },
   )();
@@ -207,10 +216,18 @@ export async function getUserFinancialTransactionsCached(
   perPage: number,
   types: string[],
   viewerIsOwner: boolean,
+  viewerCanSeeUltraLossback: boolean,
 ): Promise<Awaited<ReturnType<typeof getUserTransactions>>> {
   const env = await readDbEnv();
   if (env !== "prod") {
-    return getUserTransactions(userId, page, perPage, { types }, viewerIsOwner);
+    return getUserTransactions(
+      userId,
+      page,
+      perPage,
+      { types },
+      viewerIsOwner,
+      viewerCanSeeUltraLossback,
+    );
   }
   return cachedUserFinancialTransactions(
     userId,
@@ -218,6 +235,7 @@ export async function getUserFinancialTransactionsCached(
     perPage,
     types,
     viewerIsOwner,
+    viewerCanSeeUltraLossback,
   );
 }
 

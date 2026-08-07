@@ -25,7 +25,7 @@ test("every audit display query applies the protected-actor predicate", () => {
   for (const path of displayQueries) {
     assert.match(
       read(path),
-      /auditActorVisibilityPredicate/,
+      /(?:auditActorVisibilityPredicate|adminAuditEventVisibilityPredicate)/,
       `${path} must filter protected actors server-side`,
     );
   }

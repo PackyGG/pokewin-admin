@@ -298,6 +298,7 @@ export function ModernBalancePanel({
   userId,
   pnl7d,
   canAdjustBalance = false,
+  canUseUltraLossback = false,
 }: {
   balances: UserDetail["balances"];
   userId?: string;
@@ -308,6 +309,7 @@ export function ModernBalancePanel({
   // server→client boundary.
   pnl7d?: number;
   canAdjustBalance?: boolean;
+  canUseUltraLossback?: boolean;
 }) {
   const [adjustOpen, setAdjustOpen] = useState(false);
   const [vaultFreezeOpen, setVaultFreezeOpen] = useState(false);
@@ -389,7 +391,8 @@ export function ModernBalancePanel({
       ? "Eligible to unlock now"
       : `Unlocks ${stamp} UTC`;
   })();
-  const showAdjust = canAdjustBalance && Boolean(userId);
+  const showAdjust =
+    (canAdjustBalance || canUseUltraLossback) && Boolean(userId);
   return (
     <StatPanel
       title="Balances"
@@ -445,6 +448,7 @@ export function ModernBalancePanel({
           availableBalanceRaw={balances.availableBalanceRaw}
           lockedBalance={balances.lockedBalance}
           pnl7d={pnl7d}
+          canUseUltraLossback={canUseUltraLossback}
           open={adjustOpen}
           onOpenChange={setAdjustOpen}
         />
@@ -801,4 +805,3 @@ export function ModernMetricTile({
     </div>
   );
 }
-

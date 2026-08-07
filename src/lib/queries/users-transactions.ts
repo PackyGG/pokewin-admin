@@ -14,6 +14,7 @@ import {
 import { getInstantRakebackLedgerTxIds } from "./rakeback-instant-ledger";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getMothaAdjustmentLedgerTxIdsForUser } from "@/lib/queries/users-motha-adjustments";
+import { canUseUltraLossbackFresh } from "@/lib/ultra-lossback-access.server";
 import { isMothaOnlyAdjustmentsProfile } from "@/lib/users/motha-only-adjustments-profile";
 import { isAdjustmentVisibilityOwner } from "@/lib/users/owner-adjustments-visibility";
 import { verifySession } from "@/lib/dal";
@@ -150,6 +151,7 @@ type LedgerFilter = {
   dateTo?: Date;
   hideWithdrawals: boolean;
   hideAdjustments: boolean;
+  canViewUltraLossback: boolean;
   mothaAdjustmentIds?: string[];
 };
 
@@ -185,14 +187,26 @@ function ledgerWhereSql(filter: LedgerFilter, alias = "lt"): SQL {
   }
   if (filter.hideAdjustments) {
     clauses.push(
-      sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
+      filter.canViewUltraLossback
+        ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.metadata->>'adjustment_category' = 'ultra_lossback')`
+        : sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
     );
   } else if (filter.mothaAdjustmentIds) {
     clauses.push(
       filter.mothaAdjustmentIds.length > 0
-        ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${pgArrayParam(filter.mothaAdjustmentIds)}::uuid[]))`
-        : sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
+        ? filter.canViewUltraLossback
+          ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${pgArrayParam(filter.mothaAdjustmentIds)}::uuid[]) OR ${sql.identifier(alias)}.metadata->>'adjustment_category' = 'ultra_lossback')`
+          : sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.id = ANY(${pgArrayParam(filter.mothaAdjustmentIds)}::uuid[]))`
+        : filter.canViewUltraLossback
+          ? sql`(${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type OR ${sql.identifier(alias)}.metadata->>'adjustment_category' = 'ultra_lossback')`
+          : sql`${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type`,
     );
+  }
+  if (!filter.canViewUltraLossback) {
+    clauses.push(sql`(
+      ${sql.identifier(alias)}.type <> 'admin_balance_adjustment'::ledger_transaction_type
+      OR ${sql.identifier(alias)}.metadata->>'adjustment_category' IS DISTINCT FROM 'ultra_lossback'
+    )`);
   }
   return sql.join(clauses, sql` AND `);
 }
@@ -830,6 +844,7 @@ export async function getUserTransactions(
   // cache. When `undefined` (every existing caller, incl. the
   // fetchUserTransactions action) the in-function resolution is used unchanged.
   viewerIsOwnerOverride?: boolean,
+  viewerCanSeeUltraLossbackOverride?: boolean,
 ): Promise<PaginatedTransactions> {
   const db = await getReadDrizzleDb();
   page = Math.max(1, Math.trunc(page) || 1);
@@ -838,6 +853,7 @@ export async function getUserTransactions(
     userId,
     hideWithdrawals: false,
     hideAdjustments: false,
+    canViewUltraLossback: false,
   };
   let requestedTypeFilterIsEmpty = false;
 
@@ -959,6 +975,17 @@ export async function getUserTransactions(
       // No resolvable session → fail closed (hide adjustments). This path is
       // not expected: every caller runs inside an authenticated admin request.
       viewerIsOwner = false;
+    }
+  }
+  if (viewerCanSeeUltraLossbackOverride !== undefined) {
+    filter.canViewUltraLossback = viewerCanSeeUltraLossbackOverride;
+  } else {
+    try {
+      filter.canViewUltraLossback = await canUseUltraLossbackFresh(
+        await verifySession(),
+      );
+    } catch {
+      filter.canViewUltraLossback = false;
     }
   }
   if (!viewerIsOwner) {

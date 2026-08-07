@@ -167,6 +167,7 @@ export function OverviewTab({
   wagerProgressPromise,
   isAdmin,
   viewerIsAdjustmentOwner,
+  viewerCanSeeUltraLossback,
 }: {
   data: UserDetail;
   financialTxPromise: Promise<SafeQueryResult<PaginatedTransactions>> | null;
@@ -183,6 +184,7 @@ export function OverviewTab({
   // adjustment filter option for non-owners. The server already strips the
   // rows for non-owners; this is defence-in-depth UI hygiene only.
   viewerIsAdjustmentOwner: boolean;
+  viewerCanSeeUltraLossback: boolean;
 }) {
   const { user, statistics, counts, capabilities } = data;
   // Local open/close for the collapsible Deposits & Withdrawals section.
@@ -241,6 +243,7 @@ export function OverviewTab({
               isAdmin={isAdmin}
               canEditBalanceAdjustments={capabilities.canEditBalanceAdjustments}
               viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+              viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
               wagerProgressPromise={wagerProgressPromise}
             />
           </Suspense>
@@ -279,6 +282,7 @@ function PnlFedPanelsStreamed({
         userId={user.id}
         pnl7d={r.error ? undefined : r.data.pnl7d}
         canAdjustBalance={capabilities.canAdjustBalance}
+        canUseUltraLossback={capabilities.canUseUltraLossback}
       />
       {r.error ? (
         <BandError
@@ -306,6 +310,7 @@ function DepositsWithdrawalsStreamed({
   isAdmin,
   canEditBalanceAdjustments,
   viewerIsAdjustmentOwner,
+  viewerCanSeeUltraLossback,
   wagerProgressPromise,
 }: {
   userId: string;
@@ -313,6 +318,7 @@ function DepositsWithdrawalsStreamed({
   isAdmin: boolean;
   canEditBalanceAdjustments: boolean;
   viewerIsAdjustmentOwner: boolean;
+  viewerCanSeeUltraLossback: boolean;
   // Always-kicked per-user wager-progress promise (same one the hero + Account
   // tab use). We project it to the compact serializable summary the
   // transaction-detail popup renders. null = not kicked → the popup block
@@ -327,7 +333,7 @@ function DepositsWithdrawalsStreamed({
   // carry their canonical subsets (defined in user-tabs-types.ts — no
   // invented type names). Selecting a group narrows BOTH the server query
   // and the Type dropdown; "All" restores the full feed.
-  const financialTypes = viewerIsAdjustmentOwner
+  const financialTypes = viewerIsAdjustmentOwner || viewerCanSeeUltraLossback
     ? FINANCIAL_TX_TYPES
     : FINANCIAL_TX_TYPES_NO_ADJUSTMENTS;
   return (
@@ -1938,6 +1944,7 @@ export function AccountTab({
   balanceWeightingPromise,
   adjustmentsTxPromise,
   viewerIsAdjustmentOwner,
+  viewerCanSeeUltraLossback,
 }: {
   data: UserDetail;
   pnlResultPromise: Promise<SafeQueryResult<PnlBreakdown>>;
@@ -1968,6 +1975,7 @@ export function AccountTab({
   // Owner-only flag (motha). Gates the adjustments block below so a non-owner
   // never sees it (defence-in-depth; the server already returns zero rows).
   viewerIsAdjustmentOwner: boolean;
+  viewerCanSeeUltraLossback: boolean;
 }) {
   const { user, balances, shippingAddress, vault, depositAddresses, featureLocks, battleLimits, capabilities } = data;
   // Local open/close state for each collapsible Account-tab section. Every
@@ -2045,7 +2053,8 @@ export function AccountTab({
           written as admin_balance_adjustment rows ("Inventory removed: …"), so
           they surface here + in the Deposits & Withdrawals box on Overview —
           like any other balance adjustment. */}
-      {viewerIsAdjustmentOwner && adjustmentsTxPromise && (
+      {(viewerIsAdjustmentOwner || viewerCanSeeUltraLossback) &&
+        adjustmentsTxPromise && (
         <Suspense fallback={null}>
           <AdminAdjustmentsStreamed
             userId={user.id}
@@ -2056,7 +2065,7 @@ export function AccountTab({
             onOpenChange={setAdminAdjustmentsOpen}
           />
         </Suspense>
-      )}
+        )}
 
       <CollapsibleSection
         icon={ShieldCheck}

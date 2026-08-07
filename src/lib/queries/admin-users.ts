@@ -15,7 +15,7 @@ import {
   admin_sessions,
   admin_users,
 } from "@/lib/db-schema/admin/schema";
-import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
+import { adminAuditEventVisibilityPredicate } from "@/lib/audit-visibility";
 import { getReadDrizzleDb } from "@/lib/db";
 import { getEffectiveRoles } from "@/lib/admin-roles";
 import { readAdminUserWithRoles } from "@/lib/admin-user-roles";
@@ -290,8 +290,12 @@ export async function getAdminUserSessions(
 export async function getAdminUserAuditStats(
   adminUserId: string,
   canViewProtectedActors = false,
+  canViewUltraLossback = false,
 ) {
-  const actorVisible = auditActorVisibilityPredicate(canViewProtectedActors);
+  const actorVisible = adminAuditEventVisibilityPredicate(
+    canViewProtectedActors,
+    canViewUltraLossback,
+  );
   // Previously the daily series was a `groupBy(created_at)` — which buckets
   // per unique timestamp, not per day. For an active admin that pulled
   // back one row per event (thousands) and collapsed them in JS. Pushed
@@ -377,11 +381,15 @@ export async function getAdminUserAuditEvents(
   perPage: number = 20,
   filters?: { eventType?: string; search?: string },
   canViewProtectedActors = false,
+  canViewUltraLossback = false,
 ): Promise<PaginatedResult<AdminAuditEventItem>> {
   const db = await getReadDrizzleDb();
   const conditions: SQL[] = [
     eq(admin_audit_events.admin_user_id, adminUserId),
-    auditActorVisibilityPredicate(canViewProtectedActors),
+    adminAuditEventVisibilityPredicate(
+      canViewProtectedActors,
+      canViewUltraLossback,
+    ),
   ];
   if (filters?.eventType && filters.eventType !== "all") {
     conditions.push(eq(admin_audit_events.event_type, filters.eventType));

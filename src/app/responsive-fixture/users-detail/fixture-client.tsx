@@ -370,6 +370,7 @@ const DATA: UserDetail = {
   // control cluster AND the "Role on the game platform…" helper <p>.
   capabilities: {
     canAdjustBalance: true,
+    canUseUltraLossback: false,
     canAdjustXp: true,
     canEditIdentity: true,
     canBanUsers: true,
@@ -415,6 +416,7 @@ export function UserDetailFixtureClient() {
       wagerProgressPromise={Promise.resolve(null)}
       balanceWeightingPromise={Promise.resolve(null)}
       viewerIsAdjustmentOwner
+      viewerCanSeeUltraLossback={false}
       initialTab="overview"
     />
   );

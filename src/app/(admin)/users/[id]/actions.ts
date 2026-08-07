@@ -52,6 +52,7 @@ import {
 } from "@/lib/user-site-roles";
 import { isSafeWebhookUrl } from "@/lib/security/webhook-url";
 import { postgresTimestamp, postgresTimestampIso } from "@/lib/postgres-runtime";
+import { canUseUltraLossbackFresh } from "@/lib/ultra-lossback-access.server";
 import type { KenoGameDetails } from "./user-tabs-types";
 
 /**
@@ -403,6 +404,15 @@ function validateAdjustmentCategory(
         },
       };
     }
+    case "ultra_lossback": {
+      if (amount >= 0) {
+        return {
+          ok: false,
+          error: "Ultra Lossback must remove balance (negative amount)",
+        };
+      }
+      return { ok: true, meta: base };
+    }
     case "leaderboard": {
       // Removal-only: the amount MUST remove balance (negative). A
       // positive (credit) leaderboard adjustment is rejected — this
@@ -559,6 +569,14 @@ export async function adjustBalance(data: {
     return { success: false, error: parseResult.error.issues[0]?.message ?? "Invalid input" };
   }
   const parsed = parseResult.data;
+  const isUltraLossback = parsed.category === "ultra_lossback";
+
+  // This exceptional no-step-up path belongs to exactly two canonical admin
+  // accounts. The gate is independent of owner status and capabilities, and
+  // runs server-side before any category-specific lookup or money write.
+  if (isUltraLossback && !(await canUseUltraLossbackFresh(session))) {
+    return { success: false, error: "You do not have access to Ultra Lossback" };
+  }
 
   // Per-category required-input validation (single source of truth). The
   // signed amount is passed so removal-only categories (leaderboard) can
@@ -649,7 +667,7 @@ export async function adjustBalance(data: {
   }
 
   // Admins can always adjust; non-admins need the __can_adjust_balance capability
-  if (session.role !== "admin") {
+  if (session.role !== "admin" && !isUltraLossback) {
     const perms = (await adminDrizzle.execute<{ allowed_pages: string[] }>(sql`
       SELECT allowed_pages FROM admin_users
       WHERE id = ${session.userId}::uuid LIMIT 1
@@ -659,10 +677,12 @@ export async function adjustBalance(data: {
     }
   }
 
-  try {
-    await require2FA(session.userId, data.totpCode);
-  } catch (err) {
-    return { success: false, error: err instanceof Error ? err.message : "2FA verification failed" };
+  if (!isUltraLossback) {
+    try {
+      await require2FA(session.userId, data.totpCode);
+    } catch (err) {
+      return { success: false, error: err instanceof Error ? err.message : "2FA verification failed" };
+    }
   }
 
   try {
@@ -944,57 +964,59 @@ export async function adjustBalance(data: {
   }
 
   // Fire balance_fill webhooks (non-blocking)
-  adminDrizzle
-    .execute<{ url: string; secret: string }>(sql`
+  if (!isUltraLossback) {
+    adminDrizzle
+      .execute<{ url: string; secret: string }>(sql`
       SELECT url, secret FROM creator_webhooks
       WHERE target_user_id = ${parsed.userId}
         AND type = 'balance_fill' AND enabled = TRUE
-    `)
-    .then(({ rows: webhooks }) => {
-      for (const webhook of webhooks) {
-        if (!isSafeWebhookUrl(webhook.url)) continue;
-        const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
-        const sign = parsed.amount >= 0 ? "+" : "";
+      `)
+      .then(({ rows: webhooks }) => {
+        for (const webhook of webhooks) {
+          if (!isSafeWebhookUrl(webhook.url)) continue;
+          const isDiscord = webhook.url.includes("discord.com/api/webhooks/");
+          const sign = parsed.amount >= 0 ? "+" : "";
 
-        const body = isDiscord
-          ? JSON.stringify({
-              content: `💰 Balance adjusted on Pack.ygg — ${sign}$${parsed.amount.toFixed(2)} (new balance: $${newBalance.toFixed(2)}) — Reason: ${parsed.reason}`,
-            })
-          : JSON.stringify({
-              event: "balance_fill",
-              amount: parsed.amount,
-              new_balance: newBalance,
-              reason: parsed.reason,
-              timestamp: new Date().toISOString(),
-            });
+          const body = isDiscord
+            ? JSON.stringify({
+                content: `💰 Balance adjusted on Pack.ygg — ${sign}$${parsed.amount.toFixed(2)} (new balance: $${newBalance.toFixed(2)}) — Reason: ${parsed.reason}`,
+              })
+            : JSON.stringify({
+                event: "balance_fill",
+                amount: parsed.amount,
+                new_balance: newBalance,
+                reason: parsed.reason,
+                timestamp: new Date().toISOString(),
+              });
 
-        const signature = crypto
-          .createHmac("sha256", webhook.secret)
-          .update(body)
-          .digest("hex");
+          const signature = crypto
+            .createHmac("sha256", webhook.secret)
+            .update(body)
+            .digest("hex");
 
-        fetch(webhook.url, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "X-Webhook-Signature": signature,
-          },
-          body,
-          signal: AbortSignal.timeout(10000),
-        }).catch((err) => {
-          console.error(
-            `[balance_fill_webhook] dispatch failed for ${webhook.url}:`,
-            err instanceof Error ? err.message : err
-          );
-        });
-      }
-    })
-    .catch((err) => {
-      console.error(
-        "[balance_fill_webhook] webhook query failed:",
-        err instanceof Error ? err.message : err
-      );
-    });
+          fetch(webhook.url, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-Webhook-Signature": signature,
+            },
+            body,
+            signal: AbortSignal.timeout(10000),
+          }).catch((err) => {
+            console.error(
+              `[balance_fill_webhook] dispatch failed for ${webhook.url}:`,
+              err instanceof Error ? err.message : err
+            );
+          });
+        }
+      })
+      .catch((err) => {
+        console.error(
+          "[balance_fill_webhook] webhook query failed:",
+          err instanceof Error ? err.message : err
+        );
+      });
+  }
 
   invalidateUserCaches(parsed.userId);
   // `ledgerTxId` is returned so a programmatic caller can persist the link to
@@ -1109,6 +1131,9 @@ export async function getBalanceAdjustmentForEdit(
   )
     ? metaObj.adjustment_category
     : null;
+  if (categoryFromLedger === "ultra_lossback") {
+    return { success: false, error: "Ultra Lossback entries cannot be edited" };
+  }
 
   let hasMetaRow = false;
   let reason = parsed.reason;
@@ -1207,6 +1232,13 @@ export async function updateBalanceAdjustmentMeta(data: {
     existing.kind === "admin"
       ? (parsed.category ?? previousCategory)
       : previousCategory;
+
+  if (
+    previousCategory === "ultra_lossback" ||
+    nextCategory === "ultra_lossback"
+  ) {
+    return { success: false, error: "Ultra Lossback entries cannot be edited" };
+  }
 
   if (existing.kind === "admin" && !nextCategory) {
     return { success: false, error: "Category is required" };

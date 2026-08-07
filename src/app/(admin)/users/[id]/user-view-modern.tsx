@@ -221,6 +221,7 @@ export function UserViewModern({
   wagerProgressPromise,
   balanceWeightingPromise,
   viewerIsAdjustmentOwner,
+  viewerCanSeeUltraLossback,
   initialTab,
 }: {
   data: UserDetail;
@@ -296,6 +297,7 @@ export function UserViewModern({
   // so a non-owner never even sees the category label. The real boundary is
   // server-side (getUserTransactions returns no adjustment rows for non-owners).
   viewerIsAdjustmentOwner: boolean;
+  viewerCanSeeUltraLossback: boolean;
   // Tab seeded from the ?tab= URL param. Tab clicks update BOTH the local
   // state (instant pill switch) and the URL (router.replace inside a
   // transition) — the server re-render against the new ?tab= kicks exactly
@@ -673,6 +675,7 @@ export function UserViewModern({
             wagerProgressPromise={wagerProgressPromise}
             isAdmin={isAdmin}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+            viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
           />
         )}
 
@@ -707,6 +710,7 @@ export function UserViewModern({
             balanceWeightingPromise={balanceWeightingPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}
             viewerIsAdjustmentOwner={viewerIsAdjustmentOwner}
+            viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
           />
         )}
 

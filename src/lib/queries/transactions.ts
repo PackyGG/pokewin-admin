@@ -17,6 +17,8 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   excludeStaffAndBlacklisted,
 } from "./_blacklist";
+import { verifySession } from "@/lib/dal";
+import { canUseUltraLossbackFresh } from "@/lib/ultra-lossback-access.server";
 
 // Allowlists derived from the generated Drizzle enums — used to validate
 // user-supplied filter values before they reach the query (instead of an
@@ -533,9 +535,12 @@ async function computeTransactions(
   const filters = [
     `u.role::text NOT IN ('admin', 'support')`,
     `NOT (u.id = ANY($1::text[]))`,
-    `NOT (
-      lt.type::text = 'admin_balance_adjustment'
-      AND lt.metadata->>'adjustment_category' = 'official_stream'
+    `(
+      lt.type::text <> 'admin_balance_adjustment'
+      OR (
+        lt.metadata->>'adjustment_category' IS DISTINCT FROM 'official_stream'
+        AND lt.metadata->>'adjustment_category' IS DISTINCT FROM 'ultra_lossback'
+      )
     )`,
   ];
 
@@ -1649,6 +1654,17 @@ function cachedTransactionDetail(id: string) {
  */
 export async function getTransactionDetail(id: string) {
   const env = await readDbEnv();
-  if (env !== "prod") return computeTransactionDetail(id);
-  return cachedTransactionDetail(id);
+  const detail = env !== "prod"
+    ? await computeTransactionDetail(id)
+    : await cachedTransactionDetail(id);
+  if (!detail) return null;
+  const metadata = detail.metadata as Record<string, unknown> | null;
+  if (metadata?.adjustment_category === "ultra_lossback") {
+    try {
+      if (!(await canUseUltraLossbackFresh(await verifySession()))) return null;
+    } catch {
+      return null;
+    }
+  }
+  return detail;
 }

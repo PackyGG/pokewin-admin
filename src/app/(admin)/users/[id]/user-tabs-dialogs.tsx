@@ -100,6 +100,7 @@ export function BalanceAdjustDialog({
   availableBalanceRaw,
   lockedBalance,
   pnl7d,
+  canUseUltraLossback = false,
   open,
   onOpenChange,
 }: {
@@ -124,6 +125,7 @@ export function BalanceAdjustDialog({
   // re-type it (no drift vs the Accounts tab). Optional: legacy call sites
   // that don't have the breakdown in scope fall back to a manual input.
   pnl7d?: number;
+  canUseUltraLossback?: boolean;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -132,7 +134,9 @@ export function BalanceAdjustDialog({
   // deposit_bonus, lossback only). Purely a display filter over
   // `BALANCE_ADJUST_CATEGORIES`; the underlying `category` state and every
   // conditional input below it are unchanged and rendered once.
-  const [adjustTab, setAdjustTab] = useState<"normal" | "vip">("normal");
+  const [adjustTab, setAdjustTab] = useState<
+    "normal" | "vip" | "ultra"
+  >("normal");
   // The strict category drives the conditional inputs + counting.
   const [category, setCategory] = useState<BalanceAdjustmentCategory | "">("");
   // deposit_problem
@@ -167,6 +171,7 @@ export function BalanceAdjustDialog({
   // The effective 7d-PnL string sent to the action: the derived value when
   // present, else whatever the admin typed in the manual fallback.
   const pnl7dValue = hasDerivedPnl7d ? String(pnl7d) : pnl7dManual;
+  const isUltraLossback = adjustTab === "ultra";
 
   function resetFields() {
     setAmount("");
@@ -279,7 +284,7 @@ export function BalanceAdjustDialog({
     } else if (category === "other") {
       if (reasonText.trim().length < 20) return void toast.error("Other needs a reason (min 20 chars)");
     }
-    if (!totpCode.trim()) {
+    if (!isUltraLossback && !totpCode.trim()) {
       toast.error("Please enter your 2FA code");
       return;
     }
@@ -306,7 +311,7 @@ export function BalanceAdjustDialog({
           amount: finalAmount,
           category,
           reason: resolveReason(category),
-          totpCode: totpCode.trim(),
+          totpCode: isUltraLossback ? "" : totpCode.trim(),
           details: {
             coinType: category === "deposit_problem" ? coinType.trim() : undefined,
             txHash: category === "deposit_problem" ? txHash.trim() : undefined,
@@ -587,20 +592,32 @@ export function BalanceAdjustDialog({
           <Tabs
             value={adjustTab}
             onValueChange={(v) => {
-              const next = v as "normal" | "vip";
+              const next = v as "normal" | "vip" | "ultra";
               setAdjustTab(next);
-              // An old selection from the other tab can't linger invalid.
-              setCategory("");
+              // Ultra is its own fixed, private category. Other tabs always
+              // require a fresh explicit category selection.
+              setCategory(next === "ultra" ? "ultra_lossback" : "");
             }}
           >
             <TabsList variant="line">
               <TabsTrigger value="normal">Normal</TabsTrigger>
               <TabsTrigger value="vip">VIP</TabsTrigger>
+              {canUseUltraLossback && (
+                <TabsTrigger value="ultra">Ultra Lossback</TabsTrigger>
+              )}
             </TabsList>
             <TabsContent value="normal" keepMounted />
             <TabsContent value="vip" keepMounted />
+            {canUseUltraLossback && <TabsContent value="ultra" keepMounted />}
           </Tabs>
-          <div className="space-y-1">
+          {isUltraLossback && (
+            <div className="rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              Enter the amount to remove. Ultra Lossback can only reduce the
+              available balance and does not require a 2FA code.
+            </div>
+          )}
+          {!isUltraLossback && (
+            <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Category</Label>
             <Select
               value={category}
@@ -954,12 +971,14 @@ export function BalanceAdjustDialog({
                 </p>
               </div>
             )}
-          </div>
+            </div>
+          )}
           {/* Optional persistent profile flag — applied alongside the
               adjustment. This is the SAME user-profile tag shown on the
               Tags panel + Creator Hub Wager Abusers page (not the
               balance-adjustment category). Toggle on to flag the user. */}
-          <div className="space-y-1.5">
+          {!isUltraLossback && (
+            <div className="space-y-1.5">
             <Label className="text-xs text-muted-foreground">
               Flag user (optional)
             </Label>
@@ -984,17 +1003,28 @@ export function BalanceAdjustDialog({
                 panel.
               </p>
             )}
-          </div>
-          <StepUpField value={totpCode} onChange={setTotpCode} />
+            </div>
+          )}
+          {!isUltraLossback && (
+            <StepUpField value={totpCode} onChange={setTotpCode} />
+          )}
         </div>
         <DialogFooter>
           <Button
             size="sm"
             onClick={handleAdjust}
-            disabled={isPending || !totpCode.trim() || !isAmountValid}
+            disabled={
+              isPending ||
+              (!isUltraLossback && !totpCode.trim()) ||
+              !isAmountValid
+            }
             className="w-full sm:w-auto"
           >
-            {isPending ? "Adjusting..." : "Apply Adjustment"}
+            {isPending
+              ? "Adjusting..."
+              : isUltraLossback
+                ? "Apply Ultra Lossback"
+                : "Apply Adjustment"}
           </Button>
         </DialogFooter>
       </DialogContent>

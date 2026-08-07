@@ -1,5 +1,5 @@
 import { and, count, desc, eq, sql } from "drizzle-orm";
-import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
+import { adminAuditEventVisibilityPredicate } from "@/lib/audit-visibility";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_audit_events,
@@ -94,11 +94,18 @@ type BulkAuditRow = {
 export async function getUserAdminAuditFeed(
   userId: string,
   canViewProtectedActors = false,
+  canViewUltraLossback = false,
 ): Promise<UserAdminAuditFeed> {
-  const actorVisible = auditActorVisibilityPredicate(canViewProtectedActors);
-  const aliasedActorVisible = auditActorVisibilityPredicate(
+  const actorVisible = adminAuditEventVisibilityPredicate(
     canViewProtectedActors,
+    canViewUltraLossback,
+  );
+  const aliasedActorVisible = adminAuditEventVisibilityPredicate(
+    canViewProtectedActors,
+    canViewUltraLossback,
     sql`e.admin_user_id`,
+    sql`e.event_type`,
+    sql`e.metadata`,
   );
   const [rows, total, bulkRows] = await Promise.all([
     adminDrizzle

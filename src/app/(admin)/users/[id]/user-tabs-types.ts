@@ -284,6 +284,7 @@ export type UserDetail = {
   creatorSince: string | null;
   capabilities: {
     canAdjustBalance: boolean;
+    canUseUltraLossback: boolean;
     canAdjustXp: boolean;
     canEditIdentity: boolean;
     canBanUsers: boolean;

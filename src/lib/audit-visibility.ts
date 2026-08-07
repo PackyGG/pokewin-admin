@@ -25,7 +25,6 @@ export function auditActorVisibilityPredicate(
   actorIdExpression: SQL = sql`${admin_audit_events.admin_user_id}`,
 ): SQL {
   if (canViewProtectedActors) return sql`TRUE`;
-
   return sql`NOT EXISTS (
     SELECT 1
     FROM ${admin_users} AS protected_audit_actor
@@ -34,6 +33,38 @@ export function auditActorVisibilityPredicate(
         ...PROTECTED_AUDIT_ACTOR_USERNAMES,
       ])}::text[])
   )`;
+}
+
+/**
+ * Full visibility boundary for rows sourced from admin_audit_events. Kept
+ * separate from auditActorVisibilityPredicate because that actor-only helper
+ * is also reused with unrelated audit tables that have no event/metadata
+ * columns.
+ */
+export function adminAuditEventVisibilityPredicate(
+  canViewProtectedActors: boolean,
+  canViewUltraLossback: boolean,
+  actorIdExpression: SQL = sql`${admin_audit_events.admin_user_id}`,
+  eventTypeExpression: SQL = sql`${admin_audit_events.event_type}`,
+  metadataExpression: SQL = sql`${admin_audit_events.metadata}`,
+): SQL {
+  const actorVisible = auditActorVisibilityPredicate(
+    canViewProtectedActors,
+    actorIdExpression,
+  );
+  const ultraVisible = canViewUltraLossback
+    ? sql`TRUE`
+    : sql`(
+        ${eventTypeExpression} <> 'balance_adjustment'
+        OR ${metadataExpression}->>'category' IS DISTINCT FROM 'ultra_lossback'
+      )`;
+  const actorOrAuthorizedUltraVisible = canViewUltraLossback
+    ? sql`(${actorVisible}) OR (
+        ${eventTypeExpression} = 'balance_adjustment'
+        AND ${metadataExpression}->>'category' = 'ultra_lossback'
+      )`
+    : actorVisible;
+  return sql`(${actorOrAuthorizedUltraVisible}) AND (${ultraVisible})`;
 }
 
 /** Predicate for the separate Antifraud security-audit table. */

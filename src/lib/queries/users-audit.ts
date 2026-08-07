@@ -116,6 +116,7 @@ export async function getUserAuditLog(
                   typeColumn: "lt.type",
                   metadataColumn: "lt.metadata",
                 })})
+                AND lt.metadata->>'adjustment_category' IS DISTINCT FROM 'ultra_lossback'
               ORDER BY created_at DESC
               LIMIT 200`,
             userId,
