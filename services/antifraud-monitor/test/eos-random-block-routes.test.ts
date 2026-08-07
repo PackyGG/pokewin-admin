@@ -3,6 +3,7 @@ import test from "node:test";
 
 import Fastify from "fastify";
 
+import type { BattleOutcomeSource } from "../src/battle-outcome-simulator.js";
 import {
   EosRandomBlockService,
   EOS_RANDOM_BLOCK_PATH,
@@ -61,7 +62,7 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
   assert.equal(result.selectedBlock, result.candidates[2]);
 });
 
-test("EOS random-block route accepts userID and returns only the battle block hash", async () => {
+test("EOS random-block route accepts battle identity and returns only the block hash when simulation is disabled", async () => {
   const source: EosRandomBlockSource = {
     async select() {
       return {
@@ -78,11 +79,61 @@ test("EOS random-block route accepts userID and returns only the battle block ha
   const response = await app.inject({
     method: "POST",
     url: EOS_RANDOM_BLOCK_PATH,
-    payload: { userID: "test-user-123" },
+    payload: {
+      userID: "test-user-123",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
   });
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), { blockHash: blocks[3]!.blockHash });
+  await app.close();
+});
+
+test("EOS random-block route adds five dev battle outcomes when configured", async () => {
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        selectedIndex: 1,
+        selectedBlock: blocks[1]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomes: BattleOutcomeSource = {
+    async simulate(userID, battleID, candidates) {
+      assert.equal(userID, "test-user-123");
+      assert.equal(battleID, "11111111-1111-4111-8111-111111111111");
+      assert.deepEqual(candidates, blocks);
+      return {
+        battleId: "11111111-1111-4111-8111-111111111111",
+        mode: "normal",
+        crazyMode: false,
+        outcomes: [],
+      };
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes);
+
+  const response = await app.inject({
+    method: "POST",
+    url: EOS_RANDOM_BLOCK_PATH,
+    payload: {
+      userID: "test-user-123",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), {
+    blockHash: blocks[1]!.blockHash,
+    battleId: "11111111-1111-4111-8111-111111111111",
+    mode: "normal",
+    crazyMode: false,
+    outcomes: [],
+  });
   await app.close();
 });
 
@@ -98,7 +149,7 @@ test("EOS random-block route rejects invalid input and hides provider errors", a
   const invalid = await app.inject({
     method: "POST",
     url: EOS_RANDOM_BLOCK_PATH,
-    payload: { userID: "", extra: true },
+    payload: { userID: "", battleID: "not-a-uuid", extra: true },
   });
   assert.equal(invalid.statusCode, 400);
   assert.equal(invalid.json().error, "invalid_request");
@@ -106,7 +157,10 @@ test("EOS random-block route rejects invalid input and hides provider errors", a
   const unavailable = await app.inject({
     method: "POST",
     url: EOS_RANDOM_BLOCK_PATH,
-    payload: { userID: "test-user-123" },
+    payload: {
+      userID: "test-user-123",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
   });
   assert.equal(unavailable.statusCode, 503);
   assert.deepEqual(unavailable.json(), { error: "eos_unavailable" });

@@ -29,6 +29,8 @@ const schema = z.object({
     .enum(["disable", "require"])
     .default("disable"),
   FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_CA: z.string().optional(),
+  BATTLE_TEST_DEV_DATABASE_URL: z.string().min(1).optional(),
+  BATTLE_TEST_DEV_SERVER_SEED_PEPPER: z.string().min(32).optional(),
   ANTIFRAUD_DATABASE_URL: z.string().min(1),
   ANTIFRAUD_DATABASE_SSL: z.enum(["disable", "require"]).default("disable"),
   ANTIFRAUD_DATABASE_CA: z.string().optional(),
@@ -187,6 +189,22 @@ export function loadConfig(): Config {
   ) {
     throw new Error(
       "Invalid configuration: the dev Fiat eligibility key requires a dev source database",
+    );
+  }
+  if (
+    Boolean(config.BATTLE_TEST_DEV_DATABASE_URL)
+    !== Boolean(config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER)
+  ) {
+    throw new Error(
+      "Invalid configuration: battle test dev database and pepper must be configured together",
+    );
+  }
+  if (
+    config.BATTLE_TEST_DEV_DATABASE_URL
+    && config.BATTLE_TEST_DEV_DATABASE_URL === config.SOURCE_DATABASE_URL
+  ) {
+    throw new Error(
+      "Invalid configuration: battle testing cannot use the production source database",
     );
   }
   for (const [key, allowlist] of [

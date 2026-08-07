@@ -3,6 +3,11 @@ import { randomInt } from "node:crypto";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 
+import {
+  BattleSimulationError,
+  type BattleOutcomeSource,
+} from "./battle-outcome-simulator.js";
+
 export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 
 const EOS_ENDPOINTS = [
@@ -47,6 +52,7 @@ type RandomIndex = (upperExclusive: number) => number;
 
 const requestSchema = z.object({
   userID: z.string().trim().min(1).max(100),
+  battleID: z.uuid(),
 }).strict();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -151,6 +157,7 @@ export function isUnauthenticatedEosRandomBlockRequest(
 export async function registerEosRandomBlockRoutes(
   app: FastifyInstance,
   source: EosRandomBlockSource = new EosRandomBlockService(),
+  battleOutcomes?: BattleOutcomeSource,
 ): Promise<void> {
   app.post(
     EOS_RANDOM_BLOCK_PATH,
@@ -176,11 +183,27 @@ export async function registerEosRandomBlockRoutes(
           },
           "EOS random block selected",
         );
-        // Match the battle backend's EOS result contract: callers only receive
-        // the block hash that is fed into battle execution. Provider choice,
-        // candidate blocks, and the submitted user remain internal diagnostics.
-        return { blockHash: selection.selectedBlock.blockHash };
+        if (!battleOutcomes) {
+          return { blockHash: selection.selectedBlock.blockHash };
+        }
+        const battle = await battleOutcomes.simulate(
+          parsed.data.userID,
+          parsed.data.battleID,
+          selection.candidates,
+        );
+        return { blockHash: selection.selectedBlock.blockHash, ...battle };
       } catch (error) {
+        if (error instanceof BattleSimulationError) {
+          request.log.warn(
+            {
+              event: "eos_random_block.battle_simulation_rejected",
+              reason: error.code,
+              userId: parsed.data.userID,
+            },
+            "EOS battle simulation rejected",
+          );
+          return reply.code(error.status).send({ error: error.code });
+        }
         request.log.warn(
           { err: error, event: "eos_random_block.providers_failed" },
           "EOS random block selection failed",

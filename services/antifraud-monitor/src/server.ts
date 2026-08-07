@@ -72,6 +72,7 @@ import {
   isUnauthenticatedEosRandomBlockRequest,
   registerEosRandomBlockRoutes,
 } from "./eos-random-block-routes.js";
+import { DevBattleOutcomeSimulator } from "./battle-outcome-simulator.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
@@ -137,6 +138,8 @@ const SECRET_VALUES = [
   config.FIAT_ELIGIBILITY_PROD_API_KEY,
   config.SOURCE_DATABASE_URL,
   config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
+  config.BATTLE_TEST_DEV_DATABASE_URL,
+  config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
   config.ANTIFRAUD_DATABASE_URL,
   config.REDIS_URL,
   config.ANTIFRAUD_INGEST_SECRET,
@@ -2264,7 +2267,16 @@ await registerFiatEligibilityRoutes(app, {
   access: fiatEligibilityAccess,
   service: fiatEligibility,
 });
-await registerEosRandomBlockRoutes(app);
+await registerEosRandomBlockRoutes(
+  app,
+  undefined,
+  db.battleTestDevSource && config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER
+    ? new DevBattleOutcomeSimulator(
+        db.battleTestDevSource,
+        config.BATTLE_TEST_DEV_SERVER_SEED_PEPPER,
+      )
+    : undefined,
+);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {

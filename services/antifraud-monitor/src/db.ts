@@ -68,6 +68,7 @@ export function sourceConnectionString(
 export type Databases = {
   source: pg.Pool;
   fiatDevSource: pg.Pool | null;
+  battleTestDevSource?: pg.Pool | null;
   antifraud: pg.Pool;
 };
 
@@ -119,6 +120,13 @@ export function createDatabases(config: Config): Databases {
         applicationName: "packy-antifraud-fiat-dev-reader",
       })
     : null;
+  const battleTestDevSource = config.BATTLE_TEST_DEV_DATABASE_URL
+    ? createSourcePool({
+        connectionString: config.BATTLE_TEST_DEV_DATABASE_URL,
+        mode: "disable",
+        applicationName: "packy-antifraud-battle-test-dev-reader",
+      })
+    : null;
 
   const antifraud = new Pool({
     connectionString: config.ANTIFRAUD_DATABASE_URL,
@@ -143,7 +151,7 @@ export function createDatabases(config: Config): Databases {
     });
   });
 
-  return { source, fiatDevSource, antifraud };
+  return { source, fiatDevSource, battleTestDevSource, antifraud };
 }
 
 export async function assertDatabaseConnections(db: Databases): Promise<void> {
@@ -190,6 +198,7 @@ export async function closeDatabases(db: Databases): Promise<void> {
   await Promise.all([
     db.source.end(),
     db.fiatDevSource?.end(),
+    db.battleTestDevSource?.end(),
     db.antifraud.end(),
   ]);
 }
