@@ -191,6 +191,10 @@ test("signup recovery migration repairs the contract and requeues affected rows"
   );
   assert.match(
     migration,
+    /UPDATE signup_alert_outbox[\s\S]*SET score = LEAST\(100, GREATEST\(0, score\)\)[\s\S]*WHERE score NOT BETWEEN 0 AND 100/,
+  );
+  assert.match(
+    migration,
     /ADD CONSTRAINT signup_alert_outbox_score_bounds_check[\s\S]*CHECK \(score BETWEEN 0 AND 100\) NOT VALID/,
   );
   assert.match(

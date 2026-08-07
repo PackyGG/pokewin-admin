@@ -1,4 +1,11 @@
 -- Score validity belongs in the database; alert thresholds belong in policy.
+-- Migration 043 established the public 0-100 score model but did not include
+-- this delivery outbox. Repair its older snapshots before applying the same
+-- invariant; clamping preserves their alert band while making validation safe.
+UPDATE signup_alert_outbox
+SET score = LEAST(100, GREATEST(0, score))
+WHERE score NOT BETWEEN 0 AND 100;
+
 -- Add and validate the policy-independent bound before removing the old floor
 -- so there is never a window without score validation.
 ALTER TABLE signup_alert_outbox
