@@ -81,8 +81,15 @@ export function AnalyticsTabNav() {
 
   function hrefFor(tab: AnalyticsTab): string {
     const p = new URLSearchParams(searchParams.toString());
-    p.set("tab", tab);
-    return `${pathname}?${p.toString()}`;
+    // Overview is the page's default (the one-scroll view) — its chip links
+    // to the bare canonical URL instead of carrying a redundant ?tab=.
+    if (tab === "overview") {
+      p.delete("tab");
+    } else {
+      p.set("tab", tab);
+    }
+    const qs = p.toString();
+    return qs ? `${pathname}?${qs}` : pathname;
   }
 
   return (

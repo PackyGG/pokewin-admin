@@ -150,24 +150,20 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     href: "/analytics",
     pageKey: "/analytics",
     icon: "BarChart3",
-    description: "GGR, NGR, PnL charts",
-    keywords: ["metrics", "chart", "ggr", "ngr", "pnl"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // Analytics 2 is a cleaner, additive analytics workspace. It inherits
-    // the existing /analytics grant so staff who can use Analytics do not
-    // need a second permission rollout just to reach its companion page.
-    id: "nav.analytics-2",
-    group: "Overview",
-    label: "Analytics 2",
-    href: "/analytics-2",
-    pageKey: "/analytics",
-    icon: "TrendingUp",
-    description: "Daily acquisition and depositor activity",
-    keywords: ["signups", "ftd", "depositors", "acquisition"],
-    isNew: true,
+    // The 2026-08 redesign folded /analytics-2 (daily acquisition) into this
+    // page as its top section, so its keywords live here now.
+    description: "Acquisition, money flow, GGR/NGR, P&L",
+    keywords: [
+      "metrics",
+      "chart",
+      "ggr",
+      "ngr",
+      "pnl",
+      "signups",
+      "ftd",
+      "depositors",
+      "acquisition",
+    ],
     inSidebar: true,
     inPalette: true,
   },
@@ -618,7 +614,6 @@ export function getSidebarFooterItems(): NavEntry[] {
 const PALETTE_ORDER: string[] = [
   "nav.dashboard",
   "nav.analytics",
-  "nav.analytics-2",
   "nav.map",
   "nav.users",
   "nav.vips",

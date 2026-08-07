@@ -878,7 +878,20 @@ export type DailyPnlPoint = {
 };
 
 /**
- * Daily house P&L for the last 30 days — the per-day breakdown of the same
+ * Allowed day-windows for the daily P&L series. Doubles as the SQL whitelist:
+ * the interval interpolated into `computeDailyPnl` comes from this map, never
+ * from the caller's value directly. 30 stays the default so the dashboard
+ * consumers are byte-identical to the pre-parametrized query.
+ */
+export type DailyPnlWindowDays = 7 | 30 | 90;
+const DAILY_PNL_WINDOWS: Record<DailyPnlWindowDays, number> = {
+  7: 7,
+  30: 30,
+  90: 90,
+};
+
+/**
+ * Daily house P&L for the last `days` days — the per-day breakdown of the same
  * windowed formula `calculateWindowedPnl` uses:
  *
  *   pnl = Δdeposits − Δwithdrawals − Δbalance − Δinventory − Δvouchers
@@ -894,8 +907,15 @@ export type DailyPnlPoint = {
  * blacklist dropped), matching the dashboard aggregates. Standalone (not
  * part of getDashboardStats) so it streams behind its own Suspense.
  */
-async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
+async function computeDailyPnl(
+  excluded: string[],
+  days: DailyPnlWindowDays,
+): Promise<DailyPnlPoint[]> {
   return withTiming("pnl.daily", async () => {
+    // `days` is the validated 7|30|90 union — DAILY_PNL_WINDOWS is the
+    // whitelist, so the interpolation below can never carry anything but one
+    // of those three integers into the SQL.
+    const windowDays = DAILY_PNL_WINDOWS[days];
     const blacklist = blacklistNotInClause("u.id", excluded);
     const usersScope = `(SELECT id FROM "user" u WHERE u.role NOT IN ('admin', 'support') ${blacklist})`;
     const statsExcluded = statsExcludedAdjustmentSqlPredicate({
@@ -925,7 +945,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
                              THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS manual_wd,
            COALESCE(SUM(CASE WHEN ${statsExcluded} THEN 0 ELSE (lt.balance_after - lt.balance_before)::numeric END), 0)::float8 AS balance_change
          FROM ledger_transactions lt
-         WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '30 days'
+         WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '${windowDays} days'
            AND lt.user_id IN ${usersScope}
          GROUP BY DATE(lt.created_at)`,
       ),
@@ -981,7 +1001,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
            COALESCE(SUM(cwr.total_value_usd::numeric), 0)::float8 AS card_wd
          FROM card_withdrawal_requests cwr
          WHERE cwr.status IN ('completed', 'shipped')
-           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '30 days'
+           AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '${windowDays} days'
            AND cwr.user_id IN ${usersScope}
          GROUP BY DATE(COALESCE(cwr.shipped_at, cwr.completed_at))`,
       ),
@@ -992,19 +1012,19 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
          FROM (
            SELECT DATE(ui.obtained_at) AS d, ui.value_at_obtained::numeric AS obtained, 0::numeric AS disposed
            FROM user_inventory ui
-           WHERE ui.obtained_at >= NOW() - INTERVAL '30 days' AND ui.user_id IN ${usersScope}
+           WHERE ui.obtained_at >= NOW() - INTERVAL '${windowDays} days' AND ui.user_id IN ${usersScope}
              AND ${nonCreatorOwnerSql("ui.user_id")}
            UNION ALL
            SELECT DATE(COALESCE(ui.sold_at, ui.exchanged_at)) AS d, 0::numeric AS obtained, ui.value_at_obtained::numeric AS disposed
            FROM user_inventory ui
-           WHERE (ui.sold_at >= NOW() - INTERVAL '30 days' OR ui.exchanged_at >= NOW() - INTERVAL '30 days')
+           WHERE (ui.sold_at >= NOW() - INTERVAL '${windowDays} days' OR ui.exchanged_at >= NOW() - INTERVAL '${windowDays} days')
              AND ui.user_id IN ${usersScope}
              AND ${nonCreatorOwnerSql("ui.user_id")}
            UNION ALL
            SELECT DATE(lt.created_at) AS d, 0::numeric AS obtained, ABS(lt.amount::numeric) AS disposed
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.created_at >= NOW() - INTERVAL '30 days'
+             AND lt.created_at >= NOW() - INTERVAL '${windowDays} days'
              AND lt.type::text = 'admin_balance_adjustment'
              AND lt.metadata->>'kind' = 'inventory_removal'
              AND ${ledgerUserScope}
@@ -1023,16 +1043,16 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
          FROM (
            SELECT DATE(v.created_at) AS d, v.value::numeric AS issued, 0::numeric AS claimed
            FROM vouchers v
-           WHERE v.created_at >= NOW() - INTERVAL '30 days' AND v.user_id IN ${usersScope}
+           WHERE v.created_at >= NOW() - INTERVAL '${windowDays} days' AND v.user_id IN ${usersScope}
            UNION ALL
            SELECT DATE(v.claimed_at) AS d, 0::numeric AS issued, v.value::numeric AS claimed
            FROM vouchers v
-           WHERE v.claimed_at >= NOW() - INTERVAL '30 days' AND v.user_id IN ${usersScope}
+           WHERE v.claimed_at >= NOW() - INTERVAL '${windowDays} days' AND v.user_id IN ${usersScope}
            UNION ALL
            SELECT DATE(lt.created_at) AS d, 0::numeric AS issued, ABS(lt.amount::numeric) AS claimed
            FROM ledger_transactions lt
            WHERE lt.status = 'completed'
-             AND lt.created_at >= NOW() - INTERVAL '30 days'
+             AND lt.created_at >= NOW() - INTERVAL '${windowDays} days'
              AND lt.type::text = 'admin_balance_adjustment'
              AND lt.metadata->>'kind' = 'voucher_removal'
              AND ${ledgerUserScope}
@@ -1048,7 +1068,7 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
            COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::float8 AS refunds
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
-           AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '30 days'
+           AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '${windowDays} days'
            AND i.user_id IN ${usersScope}
          GROUP BY DATE(${fiatRefundAttributionTimestampSql("i")})`,
       ),
@@ -1141,25 +1161,32 @@ async function computeDailyPnl(excluded: string[]): Promise<DailyPnlPoint[]> {
  * SQL, scope, and blacklist) — only the scan is memoized.
  */
 const cachedDailyPnl = unstable_cache(
-  async (dayKey: string, excluded: string[]): Promise<DailyPnlPoint[]> => {
-    void dayKey; // part of the cache key only
+  async (
+    dayKey: string,
+    excluded: string[],
+    days: DailyPnlWindowDays,
+  ): Promise<DailyPnlPoint[]> => {
+    void dayKey; // part of the cache key only (as is `days`, via the args)
     // (a throw degrades via the cache/safeQuery boundary, never re-runs the
     // heavy Postgres lifetime scan); `comparison` serves Postgres and logs
     // drift fire-and-forget; `off` serves Postgres. Cent/count-exact parity
     // confirmed (aligned-window harness: every field, every day Δ=0.00).
-    return computeDailyPnl(excluded);
+    return computeDailyPnl(excluded, days);
   },
   ["dashboard-daily-pnl-v3-refund-attribution"],
   { revalidate: 300, tags: ["dashboard-activity"] },
 );
 
-export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
+export async function getDailyPnl(
+  days: DailyPnlWindowDays = 30,
+): Promise<DailyPnlPoint[]> {
   const excluded = await getExcludedUserIds();
-  // YYYY-MM-DD in UTC — rolls the cache at 00:00 UTC so the 30-day window
-  // doesn't go stale; combined with the serialized blacklist arg, the key
-  // refills when an admin edits the excluded-users list.
+  // YYYY-MM-DD in UTC — rolls the cache at 00:00 UTC so the day-window
+  // doesn't go stale; combined with the serialized blacklist arg and the
+  // `days` arg (each window caches separately), the key refills when an
+  // admin edits the excluded-users list.
   const dayKey = new Date().toISOString().slice(0, 10);
-  return cachedDailyPnl(dayKey, excluded);
+  return cachedDailyPnl(dayKey, excluded, days);
 }
 
 // ─── Pack & Battle Pure P&L (24h / 3d / 7d) ──────────────────────────

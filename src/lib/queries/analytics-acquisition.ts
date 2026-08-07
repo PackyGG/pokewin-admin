@@ -4,7 +4,7 @@ import { unstable_cache } from "next/cache";
 import { queryMainRows } from "@/lib/drizzle-query";
 import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
 import { getMetricsScope } from "@/lib/metrics/scope";
-import type { Analytics2Period } from "@/app/(admin)/analytics-2/types";
+import type { AcquisitionWindow } from "@/app/(admin)/analytics/types";
 
 export type AcquisitionTrendPoint = {
   date: string;
@@ -25,7 +25,7 @@ type AcquisitionTrendRow = {
   existing_depositors: string;
 };
 
-const PERIOD_DAYS: Record<Analytics2Period, number> = {
+const PERIOD_DAYS: Record<AcquisitionWindow, number> = {
   "7d": 7,
   "30d": 30,
   "90d": 90,
@@ -41,7 +41,7 @@ const PERIOD_DAYS: Record<Analytics2Period, number> = {
  */
 const cachedAcquisitionTrend = unstable_cache(
   async (
-    period: Analytics2Period,
+    period: AcquisitionWindow,
     userScopeSql: string,
   ): Promise<AcquisitionTrendRow[]> => {
     const days = PERIOD_DAYS[period];
@@ -125,21 +125,21 @@ const cachedAcquisitionTrend = unstable_cache(
       days,
     );
   },
-  ["analytics-2-acquisition-trend-v1"],
+  ["analytics-acquisition-trend-v1"],
   {
     revalidate: 300,
-    tags: ["analytics-2", "insights-analytics", "dashboard-lifetime"],
+    tags: ["analytics", "insights-analytics", "dashboard-lifetime"],
   },
 );
 
 export async function getAcquisitionTrend(
-  period: Analytics2Period,
+  period: AcquisitionWindow,
 ): Promise<AcquisitionTrendResult> {
   const scope = await getMetricsScope();
   const result = await safeQuery(
     () => cachedAcquisitionTrend(period, scope.userScopeSql),
     [] as AcquisitionTrendRow[],
-    "analytics-2.acquisition-trend",
+    "analytics.acquisition-trend",
     REWARD_QUERY_TIMEOUT_MS,
   );
 

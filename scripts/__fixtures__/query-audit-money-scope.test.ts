@@ -41,9 +41,11 @@ test("analytics names percentile medians honestly through query and chart", () =
   assert.match(query, /PERCENTILE_CONT\(0\.5\)[\s\S]*AS median_deposit/);
   assert.match(query, /PERCENTILE_CONT\(0\.5\)[\s\S]*AS median_bet/);
   assert.doesNotMatch(query, /\bavg_(?:deposit|bet)\b/);
-  assert.match(chart, /medianDeposit: \{ label: "Median Deposit"/);
-  assert.match(chart, /medianBet: \{ label: "Median Bet"/);
+  // The median chart cards were dropped in the 2026-08 one-page redesign;
+  // the honesty contract that remains is that no chart relabels the median
+  // series (or anything else) as an "average".
   assert.doesNotMatch(chart, /dataKey="avg(?:Deposit|Bet)"/);
+  assert.doesNotMatch(chart, /label: "(?:Average|Avg)[^"]*(?:Deposit|Bet)"/);
 });
 
 test("analytics lifetime reads use the canonical bounded lookback", () => {

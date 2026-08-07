@@ -236,6 +236,14 @@ const nextConfig: NextConfig = {
         permanent: true,
       },
       {
+        // Analytics 2 folded into /analytics as its Acquisition section
+        // (2026-08-07 one-page redesign). `?period=` values survive the
+        // redirect and parse identically on the target.
+        source: "/analytics-2",
+        destination: "/analytics",
+        permanent: true,
+      },
+      {
         // Insights challenges analytics removed (the CRUD /challenges page
         // under Rewards is unaffected).
         source: "/insights/challenges",

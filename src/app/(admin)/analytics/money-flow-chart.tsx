@@ -1,10 +1,11 @@
 "use client";
 
 import {
-  Area,
+  Bar,
   CartesianGrid,
   ComposedChart,
   Line,
+  ReferenceLine,
   XAxis,
   YAxis,
 } from "recharts";
@@ -14,28 +15,33 @@ import {
   ChartContainer,
   ChartTooltip,
 } from "@/components/ui/chart";
-import type { AcquisitionTrendPoint } from "@/lib/queries/analytics-2";
+import { formatCompactUsd } from "@/lib/utils/format";
+
+/**
+ * Serializable slice of `DailyPnlPoint` the chart needs — the section passes
+ * plain data across the RSC boundary, never the query result object.
+ */
+export type MoneyFlowPoint = {
+  date: string;
+  deposits: number;
+  withdrawals: number;
+  pnl: number;
+};
+
+// House-POV (CLAUDE.md): deposits are money the house gains → emerald;
+// withdrawals are money leaving → rose. Same hexes the dashboard charts pin.
+const DEPOSITS_COLOR = "#10b981"; // emerald-500
+const WITHDRAWALS_COLOR = "#f43f5e"; // rose-500
 
 const chartConfig = {
-  signups: {
-    label: "Sign-ups",
-    color: "var(--color-chart-1)",
-  },
-  ftds: {
-    label: "FTDs",
-    color: "var(--color-chart-2)",
-  },
-  existingDepositors: {
-    label: "Existing depositors",
-    color: "var(--color-chart-3)",
-  },
+  deposits: { label: "Deposits", color: DEPOSITS_COLOR },
+  withdrawals: { label: "Withdrawals", color: WITHDRAWALS_COLOR },
+  pnl: { label: "House P&L", color: "var(--color-chart-1)" },
 } satisfies ChartConfig;
 
 type TooltipEntry = {
   dataKey?: string | number;
   value?: string | number;
-  color?: string;
-  payload?: AcquisitionTrendPoint;
 };
 
 const shortDateFormatter = new Intl.DateTimeFormat("en-US", {
@@ -55,11 +61,11 @@ function formatDate(value: string): string {
   return shortDateFormatter.format(new Date(`${value}T00:00:00Z`));
 }
 
-function formatLongDate(value: string): string {
-  return longDateFormatter.format(new Date(`${value}T00:00:00Z`));
+function formatUsd(value: number): string {
+  return `$${value.toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
-function AcquisitionTooltip({
+function MoneyFlowTooltip({
   active,
   payload,
   label,
@@ -70,28 +76,53 @@ function AcquisitionTooltip({
 }) {
   if (!active || !payload?.length || !label) return null;
 
-  const orderedKeys = ["signups", "ftds", "existingDepositors"] as const;
   const byKey = new Map(
     payload.map((entry) => [String(entry.dataKey), Number(entry.value ?? 0)]),
   );
+  const deposits = byKey.get("deposits") ?? 0;
+  const withdrawals = byKey.get("withdrawals") ?? 0;
+  const pnl = byKey.get("pnl") ?? 0;
+
+  const rows: { label: string; value: string; className: string }[] = [
+    {
+      label: "Deposits",
+      value: formatUsd(deposits),
+      className: "text-emerald-500",
+    },
+    {
+      label: "Withdrawals",
+      value: formatUsd(withdrawals),
+      className: "text-rose-500",
+    },
+    {
+      label: "Net cash",
+      value: `${deposits - withdrawals >= 0 ? "+" : ""}${formatUsd(deposits - withdrawals)}`,
+      className:
+        deposits - withdrawals >= 0 ? "text-emerald-500" : "text-rose-500",
+    },
+    {
+      label: "House P&L",
+      value: `${pnl >= 0 ? "+" : ""}${formatUsd(pnl)}`,
+      className: pnl >= 0 ? "text-emerald-500" : "text-rose-500",
+    },
+  ];
 
   return (
     <div className="min-w-52 rounded-lg border bg-popover p-3 text-xs shadow-md">
       <p className="mb-2 font-medium text-foreground">
-        {formatLongDate(label)}
+        {longDateFormatter.format(new Date(`${label}T00:00:00Z`))}
       </p>
       <div className="space-y-1.5">
-        {orderedKeys.map((key) => (
-          <div key={key} className="flex items-center justify-between gap-6">
-            <span className="flex items-center gap-2 text-muted-foreground">
-              <span
-                className="h-2.5 w-2.5 rounded-[2px]"
-                style={{ backgroundColor: chartConfig[key].color }}
-              />
-              {chartConfig[key].label}
-            </span>
-            <span className="font-mono font-medium tabular-nums text-foreground">
-              {(byKey.get(key) ?? 0).toLocaleString("en-US")}
+        {rows.map((row) => (
+          <div
+            key={row.label}
+            className="flex items-center justify-between gap-6"
+          >
+            <span className="text-muted-foreground">{row.label}</span>
+            <span
+              className={`font-mono font-medium tabular-nums ${row.className}`}
+            >
+              {row.value}
             </span>
           </div>
         ))}
@@ -100,11 +131,12 @@ function AcquisitionTooltip({
   );
 }
 
-export function AcquisitionChart({
-  data,
-}: {
-  data: AcquisitionTrendPoint[];
-}) {
+/**
+ * Daily money flow: deposits vs withdrawals as grouped bars, house P&L as a
+ * line over them. The P&L line reuses the exact `getDailyPnl` figures the
+ * dashboard's Cash & P&L chart reconciles against — same formula, same scope.
+ */
+export function MoneyFlowChart({ data }: { data: MoneyFlowPoint[] }) {
   return (
     <Card>
       <CardContent>
@@ -117,26 +149,6 @@ export function AcquisitionChart({
             accessibilityLayer
             margin={{ top: 8, right: 12, bottom: 0, left: 0 }}
           >
-            <defs>
-              <linearGradient
-                id="existingDepositorsFill"
-                x1="0"
-                y1="0"
-                x2="0"
-                y2="1"
-              >
-                <stop
-                  offset="5%"
-                  stopColor="var(--color-existingDepositors)"
-                  stopOpacity={0.28}
-                />
-                <stop
-                  offset="95%"
-                  stopColor="var(--color-existingDepositors)"
-                  stopOpacity={0.02}
-                />
-              </linearGradient>
-            </defs>
             <CartesianGrid vertical={false} />
             <XAxis
               dataKey="date"
@@ -147,41 +159,37 @@ export function AcquisitionChart({
               tickFormatter={formatDate}
             />
             <YAxis
-              allowDecimals={false}
               tickLine={false}
               axisLine={false}
               tickMargin={8}
-              width={40}
+              width={64}
+              tickFormatter={formatCompactUsd}
             />
             <ChartTooltip
               cursor={{ stroke: "var(--border)", strokeDasharray: "4 4" }}
-              content={<AcquisitionTooltip />}
+              content={<MoneyFlowTooltip />}
             />
-            <Area
-              type="monotone"
-              dataKey="existingDepositors"
-              fill="url(#existingDepositorsFill)"
-              stroke="var(--color-existingDepositors)"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
+            <ReferenceLine y={0} stroke="var(--border)" />
+            <Bar
+              dataKey="deposits"
+              fill={DEPOSITS_COLOR}
+              fillOpacity={0.75}
+              radius={[3, 3, 0, 0]}
+              animationDuration={700}
+              animationEasing="ease-out"
+            />
+            <Bar
+              dataKey="withdrawals"
+              fill={WITHDRAWALS_COLOR}
+              fillOpacity={0.75}
+              radius={[3, 3, 0, 0]}
               animationDuration={700}
               animationEasing="ease-out"
             />
             <Line
               type="monotone"
-              dataKey="signups"
-              stroke="var(--color-signups)"
-              strokeWidth={2}
-              dot={false}
-              activeDot={{ r: 4 }}
-              animationDuration={700}
-              animationEasing="ease-out"
-            />
-            <Line
-              type="monotone"
-              dataKey="ftds"
-              stroke="var(--color-ftds)"
+              dataKey="pnl"
+              stroke="var(--color-pnl)"
               strokeWidth={2}
               dot={false}
               activeDot={{ r: 4 }}
@@ -194,9 +202,9 @@ export function AcquisitionChart({
         <div className="mt-3 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-xs text-muted-foreground">
           {(
             [
-              ["signups", "Sign-ups"],
-              ["ftds", "FTDs"],
-              ["existingDepositors", "Existing depositors"],
+              ["deposits", "Deposits"],
+              ["withdrawals", "Withdrawals"],
+              ["pnl", "House P&L"],
             ] as const
           ).map(([key, label]) => (
             <span key={key} className="flex items-center gap-2">

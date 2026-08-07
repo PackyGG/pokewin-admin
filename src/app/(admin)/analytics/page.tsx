@@ -13,7 +13,9 @@ import {
   toDoubleDownPeriod,
   toInsightsPeriod,
 } from "./types";
-import { OverviewTab } from "./tab-overview";
+import { AcquisitionSection } from "./acquisition-section";
+import { CoreSections } from "./overview-page";
+import { SkeletonChart, SkeletonKpiStrip } from "@/components/ux";
 import { GamesTab, parseGameView } from "./tab-games";
 import { CrmTab } from "../insights/real-numbers/crm-tab";
 import { CostBreakdownTab } from "./tab-cost-breakdown";
@@ -137,16 +139,34 @@ export default async function AnalyticsPage({
         )}
       </div>
 
-      {/* Each tab is an independent async segment. We render only the one
-          that matches `tab` so nothing else hits the DB — important because
-          several of these tabs run heavy raw SQL. Suspense + a KPIs-over-chart
-          skeleton keeps navigation snappy between tabs without jumping the
-          layout on swap. */}
+      {/* The default view is the one-page overview (2026-08 redesign):
+          Acquisition streams first behind its own boundary so the top of the
+          page paints even when the heavy overview aggregate is slow, then the
+          core sections stream as one segment with their own nested legs.
+          The specialist deep dives keep the single-tab render below — only
+          the active tab ever hits the DB. */}
+      {tab === "overview" ? (
+        <div className="space-y-6">
+          <Suspense
+            key={`acq-${period}`}
+            fallback={
+              <div className="space-y-3">
+                <SkeletonKpiStrip count={3} className="sm:grid-cols-3" />
+                <SkeletonChart height={300} variant="area" />
+              </div>
+            }
+          >
+            <AcquisitionSection period={period} />
+          </Suspense>
+          <Suspense key={`core-${period}`} fallback={<TabSkeleton />}>
+            <CoreSections period={period} />
+          </Suspense>
+        </div>
+      ) : (
       <Suspense
         key={`${tab}-${period}-${mapMetric}-${gameView}-${kenoTab}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
         fallback={<TabSkeleton />}
       >
-        {tab === "overview" && <OverviewTab period={period} />}
         {tab === "games" && (
           <GamesTab
             view={gameView}
@@ -172,6 +192,7 @@ export default async function AnalyticsPage({
         )}
         {tab === "map" && <MapTab period={period} metric={mapMetric} />}
       </Suspense>
+      )}
     </div>
   );
 }

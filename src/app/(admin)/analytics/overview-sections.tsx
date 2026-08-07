@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -115,9 +116,7 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
               GGR · this period
             </p>
-            <p
-              className={`text-lg font-semibold tabular-nums ${houseTone(data.ggr)}`}
-            >
+            <p className="text-lg font-semibold tabular-nums text-emerald-500">
               {formatCurrency(data.ggr)}
             </p>
             <p className="text-[11px] text-muted-foreground">
@@ -128,9 +127,7 @@ export function HeadlineSection({ data }: { data: AnalyticsData }) {
             <p className="text-[11px] uppercase tracking-wider text-muted-foreground">
               NGR · this period
             </p>
-            <p
-              className={`text-lg font-semibold tabular-nums ${houseTone(data.ngr)}`}
-            >
+            <p className="text-lg font-semibold tabular-nums text-emerald-500">
               {formatCurrency(data.ngr)}
             </p>
             <p className="text-[11px] text-muted-foreground">
@@ -343,7 +340,14 @@ const COST_LEGS = [
  * affordable: a $40k rakeback bill means nothing until you know it came out
  * of $400k of deposits (10%) or $80k (50%).
  */
-export function CostStackSection({ data }: { data: AnalyticsData }) {
+export function CostStackSection({
+  data,
+  action,
+}: {
+  data: AnalyticsData;
+  /** Deep-dive links rendered on the heading (Cost Breakdown / Rewards). */
+  action?: ReactNode;
+}) {
   const deposits = periodDeposits(data);
   const legs = COST_LEGS.map((leg) => ({
     label: leg.label,
@@ -357,7 +361,7 @@ export function CostStackSection({ data }: { data: AnalyticsData }) {
 
   return (
     <div className="space-y-3">
-      <SectionHeading icon={Coins} title="Where the money leaks" />
+      <SectionHeading icon={Coins} title="Where the money leaks" action={action} />
       <div className="rounded-xl border bg-card p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-sm">
@@ -426,9 +430,12 @@ export function CostStackSection({ data }: { data: AnalyticsData }) {
 export function GameMixSection({
   data,
   pure,
+  action,
 }: {
   data: AnalyticsData;
   pure: PackBattlePnlWindows | null;
+  /** Deep-dive link rendered on the heading (Games tab). */
+  action?: ReactNode;
 }) {
   const totalWager = data.packWager + data.battleWager + data.upgraderWager;
   const modes = [
@@ -450,7 +457,7 @@ export function GameMixSection({
 
   return (
     <div className="space-y-3">
-      <SectionHeading icon={Layers} title="What they play, what we keep" />
+      <SectionHeading icon={Layers} title="What they play, what we keep" action={action} />
       <div className="grid gap-3 lg:grid-cols-2">
         {/* Wager mix for the selected period. */}
         <div className="rounded-xl border bg-card p-4">

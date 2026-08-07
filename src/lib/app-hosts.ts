@@ -113,7 +113,6 @@ const HOST_PATH_ALIASES = [
 const APEX_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "admin-users",
   "analytics",
-  "analytics-2",
   "cards",
   "challenges",
   "chat",

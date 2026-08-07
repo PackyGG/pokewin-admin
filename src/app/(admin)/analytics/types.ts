@@ -49,6 +49,21 @@ export function toDoubleDownPeriod(
   return p === "today" ? "24h" : p;
 }
 
+/**
+ * Window vocabulary for the daily series on the overview (acquisition trend,
+ * money-flow chart). Daily buckets stay bounded: `today` widens to the 7d
+ * chart (a one-bucket chart is useless) and `all` caps at 90d so neither
+ * series ever becomes an unbounded lifetime day-scan. Sections label the
+ * divergence when it happens ("showing last 90 days").
+ */
+export type AcquisitionWindow = "7d" | "30d" | "90d";
+
+export function toAcquisitionWindow(p: AnalyticsPeriod): AcquisitionWindow {
+  if (p === "today") return "7d";
+  if (p === "all") return "90d";
+  return p;
+}
+
 export function parsePeriod(value: string | undefined): AnalyticsPeriod {
   switch (value) {
     case "today":

@@ -112,8 +112,10 @@ test("dashboard and analytics surfaces stay wired to inclusive aggregates", () =
     "src/app/(admin)/dashboard/kpi-window-data.ts",
   );
   const dashboardToday = source("src/lib/queries/dashboard-today-pnl.ts");
+  // tab-overview.tsx became overview-page.tsx in the 2026-08 one-page
+  // redesign; the inclusive-aggregate wiring it guards moved with it.
   const analyticsOverview = source(
-    "src/app/(admin)/analytics/tab-overview.tsx",
+    "src/app/(admin)/analytics/overview-page.tsx",
   );
   const analyticsMap = source("src/app/(admin)/analytics/tab-map.tsx");
   const analyticsCosts = source(
