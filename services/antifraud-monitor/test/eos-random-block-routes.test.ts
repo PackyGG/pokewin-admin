@@ -47,10 +47,9 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
       id: body.block_num_or_id.toString(16).padStart(64, "0"),
     });
   }) as typeof fetch;
-  const randomValues = [0, 2];
   const service = new EosRandomBlockService(
     fetcher,
-    () => randomValues.shift() ?? 0,
+    () => 2,
   );
 
   const result = await service.select();
@@ -130,7 +129,6 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), {
-    blockHash: blocks[1]!.blockHash,
     battleId: "11111111-1111-4111-8111-111111111111",
     mode: "normal",
     crazyMode: false,

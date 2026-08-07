@@ -11,10 +11,10 @@ import {
 export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 
 const EOS_ENDPOINTS = [
+  "https://mainnet.genereos.io",
+  "https://api.eostitan.com",
   "https://eos.api.eosnation.io",
   "https://eos.eosusa.io",
-  "https://api.eostitan.com",
-  "https://mainnet.genereos.io",
   "https://api.main.alohaeos.com",
   "https://mainnet.eosio.sg",
   "https://api.eosrio.io",
@@ -74,15 +74,14 @@ export class EosRandomBlockService implements EosRandomBlockSource {
 
   async select(): Promise<EosRandomBlockSelection> {
     const startedAt = Date.now();
-    const firstProvider = this.randomIndex(EOS_ENDPOINTS.length);
     let lastError: unknown = new Error("No EOS provider was attempted");
 
-    for (let offset = 0; offset < EOS_ENDPOINTS.length; offset += 1) {
+    // Keep the fastest reliable provider first. Randomizing this previously
+    // made otherwise identical test requests wait through multiple dead
+    // provider timeouts before reaching a healthy endpoint.
+    for (const endpoint of EOS_ENDPOINTS) {
       const elapsed = Date.now() - startedAt;
       if (elapsed >= TOTAL_TIMEOUT_MS) break;
-      const endpoint = EOS_ENDPOINTS[
-        (firstProvider + offset) % EOS_ENDPOINTS.length
-      ]!;
       try {
         const candidates = await this.fetchCandidates(
           endpoint,
@@ -191,7 +190,7 @@ export async function registerEosRandomBlockRoutes(
           parsed.data.battleID,
           selection.candidates,
         );
-        return { blockHash: selection.selectedBlock.blockHash, ...battle };
+        return battle;
       } catch (error) {
         if (error instanceof BattleSimulationError) {
           request.log.warn(

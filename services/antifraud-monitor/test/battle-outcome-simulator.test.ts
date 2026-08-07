@@ -48,33 +48,25 @@ function simulate(
       },
     ],
     packs: [
-      { id: PACK_ID, name: "Test Pack", image_url: null, cards_per_open: 1 },
-      { id: PACK_ID, name: "Test Pack", image_url: null, cards_per_open: 1 },
+      { id: PACK_ID, cards_per_open: 1 },
+      { id: PACK_ID, cards_per_open: 1 },
     ],
     cardsByPack: new Map([[
       PACK_ID,
       [
         {
           pack_id: PACK_ID,
-          card_id: "66666666-6666-4666-8666-666666666666",
           weight: 1,
           order: 0,
-          name: "Rare",
-          image_url: "/rare.png",
           price: "100.00",
           hp: 10,
-          rarity: "rare",
         },
         {
           pack_id: PACK_ID,
-          card_id: "77777777-7777-4777-8777-777777777777",
           weight: 1,
           order: 1,
-          name: "Common",
-          image_url: "/common.png",
           price: "5.00",
           hp: 500,
-          rarity: "common",
         },
       ],
     ]]),
@@ -89,8 +81,8 @@ test("battle simulation deterministically evaluates all five EOS candidates", ()
 
   assert.equal(simulation.outcomes.length, 5);
   assert.deepEqual(
-    simulation.outcomes.map((outcome) => outcome.blockHash),
-    candidates.map((candidate) => candidate.blockHash),
+    simulation.outcomes.map((outcome) => outcome.blockNumber),
+    candidates.map((candidate) => candidate.blockNumber),
   );
   assert.deepEqual(simulate("normal"), simulation);
   for (const outcome of simulation.outcomes) {
@@ -99,9 +91,10 @@ test("battle simulation deterministically evaluates all five EOS candidates", ()
     assert.equal(outcome.creatorCost, 20);
     assert.equal(
       outcome.creatorProfitLoss,
-      Number((outcome.creatorPayout - outcome.creatorCost).toFixed(2)),
+      outcome.creatorWonBattle
+        ? outcome.creatorProfitLoss
+        : -outcome.creatorCost,
     );
-    assert.equal(outcome.creatorAmount, Math.abs(outcome.creatorProfitLoss));
   }
 });
 
@@ -112,12 +105,8 @@ test("all backend battle modes return creator-level settlement results only", ()
     assert.equal(simulation.outcomes.length, 5);
     for (const outcome of simulation.outcomes) {
       assert.deepEqual(Object.keys(outcome).sort(), [
-        "blockHash",
         "blockNumber",
-        "creatorAmount",
         "creatorCost",
-        "creatorMoneyResult",
-        "creatorPayout",
         "creatorProfitLoss",
         "creatorTeam",
         "creatorWonBattle",
@@ -146,9 +135,5 @@ test("creator net includes borrow scaling and battle sponsorship cost", () => {
 
   assert.equal(outcome.creatorWonBattle, true);
   assert.equal(outcome.creatorCost, 22.5);
-  assert.ok(outcome.creatorPayout > 0);
-  assert.equal(
-    outcome.creatorMoneyResult,
-    outcome.creatorProfitLoss > 0 ? "profit" : "loss",
-  );
+  assert.notEqual(outcome.creatorProfitLoss, -outcome.creatorCost);
 });

@@ -30,34 +30,30 @@ type ParticipantRow = {
 
 type PackRow = {
   id: string;
-  name: string;
-  image_url: string | null;
   cards_per_open: number;
 };
 
 type CardRow = {
   pack_id: string;
-  card_id: string;
   weight: number;
   order: number;
-  name: string;
-  image_url: string;
   price: string;
   hp: number | null;
-  rarity: string | null;
+};
+
+type BattleSnapshotRow = BattleRow & {
+  participants: ParticipantRow[];
+  packs: PackRow[];
+  cards: CardRow[];
 };
 
 export type BattleCandidateOutcome = {
   blockNumber: number;
-  blockHash: string;
   winningTeam: number;
   creatorTeam: number;
   creatorWonBattle: boolean;
   creatorCost: number;
-  creatorPayout: number;
   creatorProfitLoss: number;
-  creatorMoneyResult: "profit" | "loss" | "break_even";
-  creatorAmount: number;
 };
 
 export type BattleOutcomeSimulation = {
@@ -185,23 +181,12 @@ function resolveScoreWinner(
 }
 
 type PulledParticipant = {
-  participantId: string;
-  userID: string | null;
-  botId: string | null;
   teamNumber: number;
-  teamPosition: number;
   totalValue: number;
   rounds: Array<{
-    round: number;
-    packId: string;
-    packName: string;
     cards: Array<{
-      cardId: string;
-      name: string;
-      imageUrl: string;
       price: number;
       hp: number;
-      rarity: string | null;
       ticket: number;
     }>;
   }>;
@@ -399,16 +384,12 @@ export function simulateBattle(input: {
           const ticket = ticketFor(input.serverSeed, clientSeed, round, cursor);
           const card = selectedCard(ticket, pool);
           return {
-            cardId: card.card_id,
-            name: card.name,
-            imageUrl: card.image_url,
             price: Number(card.price),
             hp: card.hp ?? 0,
-            rarity: card.rarity,
             ticket,
           };
         });
-        return { round, packId: pack.id, packName: pack.name, cards };
+        return { cards };
       });
       const totalValue = rounds.reduce(
         (sum, round) => sum + round.cards.reduce(
@@ -418,11 +399,7 @@ export function simulateBattle(input: {
         0,
       );
       return {
-        participantId: participant.id,
-        userID: participant.user_id,
-        botId: participant.bot_id,
         teamNumber: participant.team_number,
-        teamPosition: participant.team_position,
         totalValue: roundedMoney(totalValue),
         rounds,
       };
@@ -461,21 +438,13 @@ export function simulateBattle(input: {
         )
       : 0;
     const creatorProfitLoss = roundedMoney(creatorPayout - creatorCost);
-    const creatorMoneyResult: BattleCandidateOutcome["creatorMoneyResult"] = creatorProfitLoss > 0
-      ? "profit"
-      : creatorProfitLoss < 0
-        ? "loss"
-        : "break_even";
     return {
-      ...candidate,
+      blockNumber: candidate.blockNumber,
       winningTeam: resolved.winnerTeam,
       creatorTeam: creatorParticipant.team_number,
       creatorWonBattle,
       creatorCost,
-      creatorPayout,
       creatorProfitLoss,
-      creatorMoneyResult,
-      creatorAmount: Math.abs(creatorProfitLoss),
     };
   });
   return {
@@ -499,96 +468,87 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
     battleID: string,
     candidates: EosBlockCandidate[],
   ): Promise<BattleOutcomeSimulation> {
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      const battles = await client.query<BattleRow>(
-        `
-          SELECT b.id, b.user_id, b.mode::text, b.pack_ids,
-                 b.additional_settings, b.bet_amount::text,
-                 b.currency::text, b.sponsorship_amount_paid::text,
-                 b.server_seed, b.server_seed_hash
-          FROM battles b
-          WHERE b.user_id = $1 AND b.id = $2::uuid
-          LIMIT 1
-        `,
-        [userID, battleID],
-      );
-      const battle = battles.rows[0];
-      if (!battle) {
-        throw new BattleSimulationError("battle_not_found", 404);
-      }
-      // One checked-out client owns the repeatable-read snapshot. Keep its
-      // queries sequential: node-postgres is deprecating concurrent query()
-      // calls on a busy client, and they would not gain DB parallelism anyway.
-      const participantResult = await client.query<ParticipantRow>(
-          `
-            SELECT id, user_id, bot_id, team_number, team_position,
-                   borrow_percentage
-            FROM battle_participants
-            WHERE battle_id = $1
-            ORDER BY team_number, team_position, id
-          `,
-          [battle.id],
-        );
-      const packResult = await client.query<PackRow>(
-          `
-            SELECT id, name, image_url, cards_per_open
-            FROM packs
-            WHERE id = ANY($1::uuid[])
-          `,
-          [battle.pack_ids],
-        );
-      const cardResult = await client.query<CardRow>(
-          `
-            SELECT pc.pack_id, pc.card_id, pc.weight, pc."order",
-                   c.name, c.image_url, c.price::text, c.hp, c.rarity
-            FROM pack_cards pc
-            JOIN cards c ON c.id = pc.card_id
-            WHERE pc.pack_id = ANY($1::uuid[])
-            ORDER BY pc.pack_id, pc."order", pc.id
-          `,
-          [battle.pack_ids],
-        );
-      const packMap = new Map(packResult.rows.map((pack) => [pack.id, pack]));
-      const packs = battle.pack_ids.map((id) => packMap.get(id)).filter(
-        (pack): pack is PackRow => Boolean(pack),
-      );
-      if (packs.length !== battle.pack_ids.length) {
-        throw new BattleSimulationError("battle_data_incomplete", 409);
-      }
-      const cardsByPack = new Map<string, CardRow[]>();
-      for (const card of cardResult.rows) {
-        const cards = cardsByPack.get(card.pack_id) ?? [];
-        cards.push(card);
-        cardsByPack.set(card.pack_id, cards);
-      }
-      let serverSeed: string;
-      try {
-        serverSeed = decryptServerSeed(battle.server_seed, this.pepper);
-      } catch {
-        throw new BattleSimulationError("battle_seed_invalid", 503);
-      }
-      const actualHash = createHash("sha256").update(serverSeed, "utf8").digest("hex");
-      if (actualHash !== battle.server_seed_hash) {
-        throw new BattleSimulationError("battle_seed_invalid", 503);
-      }
-      const simulation = simulateBattle({
-        battle,
-        participants: participantResult.rows,
-        packs,
-        cardsByPack,
-        userID,
-        candidates,
-        serverSeed,
-      });
-      await client.query("COMMIT");
-      return simulation;
-    } catch (error) {
-      await client.query("ROLLBACK").catch(() => undefined);
-      throw error;
-    } finally {
-      client.release();
+    // One SQL statement gives a consistent snapshot while avoiding the
+    // latency of several sequential round trips to the dev database.
+    const snapshots = await this.pool.query<BattleSnapshotRow>(
+      `
+        SELECT b.id, b.user_id, b.mode::text, b.pack_ids,
+               b.additional_settings, b.bet_amount::text,
+               b.currency::text, b.sponsorship_amount_paid::text,
+               b.server_seed, b.server_seed_hash,
+               COALESCE((
+                 SELECT jsonb_agg(jsonb_build_object(
+                   'id', bp.id,
+                   'user_id', bp.user_id,
+                   'bot_id', bp.bot_id,
+                   'team_number', bp.team_number,
+                   'team_position', bp.team_position,
+                   'borrow_percentage', bp.borrow_percentage
+                 ) ORDER BY bp.team_number, bp.team_position, bp.id)
+                 FROM battle_participants bp
+                 WHERE bp.battle_id = b.id
+               ), '[]'::jsonb) AS participants,
+               COALESCE((
+                 SELECT jsonb_agg(jsonb_build_object(
+                   'id', p.id,
+                   'cards_per_open', p.cards_per_open
+                 ))
+                 FROM packs p
+                 WHERE p.id = ANY(b.pack_ids::uuid[])
+               ), '[]'::jsonb) AS packs,
+               COALESCE((
+                 SELECT jsonb_agg(jsonb_build_object(
+                   'pack_id', pc.pack_id,
+                   'weight', pc.weight,
+                   'order', pc."order",
+                   'price', c.price::text,
+                   'hp', c.hp
+                 ) ORDER BY pc.pack_id, pc."order", pc.id)
+                 FROM pack_cards pc
+                 JOIN cards c ON c.id = pc.card_id
+                 WHERE pc.pack_id = ANY(b.pack_ids::uuid[])
+               ), '[]'::jsonb) AS cards
+        FROM battles b
+        WHERE b.user_id = $1 AND b.id = $2::uuid
+        LIMIT 1
+      `,
+      [userID, battleID],
+    );
+    const battle = snapshots.rows[0];
+    if (!battle) {
+      throw new BattleSimulationError("battle_not_found", 404);
     }
+    const packMap = new Map(battle.packs.map((pack) => [pack.id, pack]));
+    const packs = battle.pack_ids.map((id) => packMap.get(id)).filter(
+      (pack): pack is PackRow => Boolean(pack),
+    );
+    if (packs.length !== battle.pack_ids.length) {
+      throw new BattleSimulationError("battle_data_incomplete", 409);
+    }
+    const cardsByPack = new Map<string, CardRow[]>();
+    for (const card of battle.cards) {
+      const cards = cardsByPack.get(card.pack_id) ?? [];
+      cards.push(card);
+      cardsByPack.set(card.pack_id, cards);
+    }
+    let serverSeed: string;
+    try {
+      serverSeed = decryptServerSeed(battle.server_seed, this.pepper);
+    } catch {
+      throw new BattleSimulationError("battle_seed_invalid", 503);
+    }
+    const actualHash = createHash("sha256").update(serverSeed, "utf8").digest("hex");
+    if (actualHash !== battle.server_seed_hash) {
+      throw new BattleSimulationError("battle_seed_invalid", 503);
+    }
+    return simulateBattle({
+      battle,
+      participants: battle.participants,
+      packs,
+      cardsByPack,
+      userID,
+      candidates,
+      serverSeed,
+    });
   }
 }
