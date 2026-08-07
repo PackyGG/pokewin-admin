@@ -302,6 +302,53 @@ test("EOS-compatible battle request applies and consumes a personal sequence", a
   await app.close();
 });
 
+test("EOS-compatible battle request can resolve the active battle from only userID", async () => {
+  let receivedBattleId: string | undefined = "not-called";
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomes: BattleOutcomeSource = {
+    async simulate(_userID, battleID) {
+      receivedBattleId = battleID;
+      return {
+        battleId: "11111111-1111-4111-8111-111111111111",
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
+        outcomes: blocks.map((candidate) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: 1,
+          creatorTeam: 1,
+          creatorWonBattle: true,
+          creatorCost: 10,
+          creatorProfitLoss: 5,
+        })),
+      };
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes);
+
+  const response = await app.inject({
+    method: "POST",
+    url: EOS_CHAIN_INFO_PATH,
+    payload: { userID: "test-user-123" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(receivedBattleId, undefined);
+  assert.equal(response.json().last_irreversible_block_num, blocks[0]!.blockNumber);
+  await app.close();
+});
+
 test("EOS random-block route returns one selected and four alternate endings", async () => {
   const source: EosRandomBlockSource = {
     async select() {

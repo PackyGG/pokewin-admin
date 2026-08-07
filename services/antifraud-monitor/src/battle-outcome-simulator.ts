@@ -71,7 +71,7 @@ export type BattleOutcomeSimulation = {
 export interface BattleOutcomeSource {
   simulate(
     userID: string,
-    battleID: string,
+    battleID: string | undefined,
     candidates: EosBlockCandidate[],
   ): Promise<BattleOutcomeSimulation>;
 }
@@ -617,7 +617,7 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
 
   async simulate(
     userID: string,
-    battleID: string,
+    battleID: string | undefined,
     candidates: EosBlockCandidate[],
   ): Promise<BattleOutcomeSimulation> {
     // One SQL statement gives a consistent snapshot while avoiding the
@@ -662,7 +662,12 @@ export class DevBattleOutcomeSimulator implements BattleOutcomeSource {
                  WHERE pc.pack_id = ANY(b.pack_ids::uuid[])
                ), '[]'::jsonb) AS cards
         FROM battles b
-        WHERE b.user_id = $1 AND b.id = $2::uuid
+        WHERE b.user_id = $1
+          AND (
+            ($2::uuid IS NOT NULL AND b.id = $2::uuid)
+            OR ($2::uuid IS NULL AND b.status = 'in_progress')
+          )
+        ORDER BY b.created_at DESC
         LIMIT 1
       `,
       [userID, battleID],

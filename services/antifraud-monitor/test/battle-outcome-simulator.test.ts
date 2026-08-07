@@ -4,6 +4,7 @@ import test from "node:test";
 import { createHmac } from "node:crypto";
 
 import {
+  DevBattleOutcomeSimulator,
   resolveBattleMode,
   simulateBattle,
   type PulledParticipant,
@@ -301,4 +302,29 @@ test("battle simulation rejects an unfinished participant roster", () => {
       error instanceof Error
       && error.message === "battle_data_incomplete",
   );
+});
+
+test("dev simulator resolves the newest in-progress battle when battle ID is omitted", async () => {
+  let capturedSql = "";
+  let capturedParams: unknown[] = [];
+  const pool = {
+    async query(sql: string, params: unknown[]) {
+      capturedSql = sql;
+      capturedParams = params;
+      return { rows: [] };
+    },
+  };
+  const simulator = new DevBattleOutcomeSimulator(
+    pool as never,
+    "pepper",
+  );
+
+  await assert.rejects(
+    simulator.simulate("target-user", undefined, candidates),
+    (error: unknown) =>
+      error instanceof Error && error.message === "battle_not_found",
+  );
+  assert.match(capturedSql, /b\.status = 'in_progress'/);
+  assert.match(capturedSql, /ORDER BY b\.created_at DESC/);
+  assert.deepEqual(capturedParams, ["target-user", undefined]);
 });

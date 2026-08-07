@@ -64,7 +64,7 @@ type RandomIndex = (upperExclusive: number) => number;
 
 const requestSchema = z.object({
   userID: z.string().trim().min(1).max(100),
-  battleID: z.uuid(),
+  battleID: z.uuid().optional(),
 }).strict();
 
 const configUpdateSchema = z.object({
@@ -357,7 +357,10 @@ export async function registerEosRandomBlockRoutes(
   battleOutcomes?: BattleOutcomeSource,
   testConfig?: BattleTestConfigSource,
 ): Promise<void> {
-  const selectForBattle = async (userID: string, battleID: string) => {
+  const selectForBattle = async (
+    userID: string,
+    battleID: string | undefined,
+  ) => {
     if (!battleOutcomes) {
       throw new BattleSimulationError("battle_data_incomplete", 409);
     }
