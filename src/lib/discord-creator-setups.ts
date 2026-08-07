@@ -293,6 +293,27 @@ type ClickStatsRow = {
   clicks: string;
 };
 
+type CreatorStreamEventRow = {
+  id: string;
+  user_id: string;
+  deal_id: string;
+  status: string;
+  activated_at: string;
+  first_bet_at: string | null;
+  ended_at: string | null;
+  converted_at: string | null;
+  auto_end_at: string | null;
+  fill_loaded_usd: string;
+  fill_spent_usd: string;
+  fill_refunded_usd: string;
+  fill_remaining_usd: string;
+  ending_balance_usd: string | null;
+  conversion_rate_bps_snapshot: number | null;
+  converted_to_raw_usd: string | null;
+  version: number;
+  updated_at: string;
+};
+
 const money = (value: unknown): number =>
   Math.round(toNumber(value) * 100) / 100;
 
@@ -624,7 +645,7 @@ export async function getCreatorSetupStreamEvents(input: { after: string }) {
   if (!linked.length) return { events: [], serverTime: new Date().toISOString() };
   const ids = linked.map((row) => row.creatorUserId!);
   const db = getProdReadDrizzleDb();
-  const result = await db.execute(sql`
+  const result = await db.execute<CreatorStreamEventRow>(sql`
     SELECT id::text, user_id, deal_id::text, status::text, activated_at, first_bet_at,
       ended_at, converted_at, auto_end_at, fill_loaded_usd::text, fill_spent_usd::text,
       fill_refunded_usd::text, fill_remaining_usd::text, ending_balance_usd::text,
@@ -638,7 +659,7 @@ export async function getCreatorSetupStreamEvents(input: { after: string }) {
   const byCreator = new Map(linked.map((row) => [row.creatorUserId!, row]));
   return {
     serverTime: new Date().toISOString(),
-    events: result.rows.map((row: any) => ({
+    events: result.rows.map((row) => ({
       ...row,
       guildId: byCreator.get(row.user_id)?.guildId,
       categoryId: byCreator.get(row.user_id)?.categoryId,
