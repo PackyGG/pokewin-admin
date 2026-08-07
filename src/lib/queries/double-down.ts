@@ -23,13 +23,13 @@ import {
 export { doubleDownPeriodLabel } from "@/lib/queries/double-down-shared";
 export type {
   DoubleDownPeriod,
-  
+  DoubleDownResult,
   DoubleDownStats,
-  
+  DoubleDownLogRow,
   DoubleDownLog,
   DoubleDownTimeSeriesPoint,
   DoubleDownDashboardStats,
-  
+  UserDoubleDownHistory,
 } from "@/lib/queries/double-down-shared";
 
 /**

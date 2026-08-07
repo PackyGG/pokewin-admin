@@ -35,8 +35,8 @@ import { z } from "zod";
  * (the list's natural newest-first default), matching the query's own
  * `sortOrder === "asc" ? "asc" : "desc"` behaviour.
  */
-const UsersSortOrder = z.enum(["asc", "desc"]);
-type UsersSortOrder = z.infer<typeof UsersSortOrder>;
+export const UsersSortOrder = z.enum(["asc", "desc"]);
+export type UsersSortOrder = z.infer<typeof UsersSortOrder>;
 
 /**
  * Every sort key `getUsers` knows how to ORDER BY — the union of its
@@ -55,7 +55,7 @@ type UsersSortOrder = z.infer<typeof UsersSortOrder>;
  * anymore, so they're dropped from the allowlist rather than left as
  * unreachable values. The underlying computation still feeds `netHoldings`.
  */
-const UsersSortBy = z.enum([
+export const UsersSortBy = z.enum([
   // Standard column sorts
   "created_at",
   "email",
@@ -76,7 +76,7 @@ const UsersSortBy = z.enum([
   "netHoldings",
   "depositCount",
 ]);
-type UsersSortBy = z.infer<typeof UsersSortBy>;
+export type UsersSortBy = z.infer<typeof UsersSortBy>;
 
 /**
  * Status filter values surfaced in the toolbar. `getUsers` only acts on
@@ -84,8 +84,8 @@ type UsersSortBy = z.infer<typeof UsersSortBy>;
  * so the schema mirrors that: an unknown status is dropped rather than
  * passed through.
  */
-const UsersStatusFilter = z.enum(["active", "banned", "locked"]);
-type UsersStatusFilter = z.infer<typeof UsersStatusFilter>;
+export const UsersStatusFilter = z.enum(["active", "banned", "locked"]);
+export type UsersStatusFilter = z.infer<typeof UsersStatusFilter>;
 
 
 /**
@@ -95,13 +95,13 @@ type UsersStatusFilter = z.infer<typeof UsersStatusFilter>;
  * touches the where / raw-SQL branch (unknown → ignored), so this is a
  * second gate at the page boundary; an unknown role is dropped here too.
  */
-const UsersRoleFilter = z.enum([
+export const UsersRoleFilter = z.enum([
   "admin",
   "support",
   "creator",
   "user",
 ]);
-type UsersRoleFilter = z.infer<typeof UsersRoleFilter>;
+export type UsersRoleFilter = z.infer<typeof UsersRoleFilter>;
 
 /**
  * Free-form search match mode (URL param `match`).
@@ -118,8 +118,8 @@ type UsersRoleFilter = z.infer<typeof UsersRoleFilter>;
  * always take their exact-match fast path regardless. An unknown value
  * falls back to "prefix".
  */
-const UsersMatchMode = z.enum(["prefix", "contains"]);
-type UsersMatchMode = z.infer<typeof UsersMatchMode>;
+export const UsersMatchMode = z.enum(["prefix", "contains"]);
+export type UsersMatchMode = z.infer<typeof UsersMatchMode>;
 
 /**
  * `perPage` upper bound. The pagination control offers up to 200 rows

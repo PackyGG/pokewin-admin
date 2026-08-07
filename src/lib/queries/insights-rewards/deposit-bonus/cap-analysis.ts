@@ -37,7 +37,7 @@ import {
  * Staff + blacklist excluded. Read-only. Cached per window.
  */
 
-type CapAmountBucket = {
+export type CapAmountBucket = {
   /** Bucket label e.g. "$0–10". */
   label: string;
   /** Lower bound (inclusive). */
@@ -49,7 +49,7 @@ type CapAmountBucket = {
   volume: number;
 };
 
-type TopCapHitter = {
+export type TopCapHitter = {
   userId: string;
   username: string | null;
   capHits: number;
@@ -58,7 +58,7 @@ type TopCapHitter = {
   lastHitAt: string;
 };
 
-type BiggestCapDeposit = {
+export type BiggestCapDeposit = {
   userId: string;
   username: string | null;
   depositUsd: number;
@@ -363,7 +363,7 @@ async function computeCapAnalysis(
 
 // ─── Lightweight cap-hit-rate (Overview KPI strip) ─────────────────
 
-type DepositBonusCapHitRate = {
+export type DepositBonusCapHitRate = {
   /** Empirical cap = MAX(ABS(amount)) in window. */
   capValue: number;
   /** Rows whose ABS(amount) equals the cap. */
@@ -443,7 +443,7 @@ const cachedCapHitRateLifetime = unstable_cache(
   { revalidate: 300, tags: [...DEPOSIT_BONUS_CACHE_TAGS] },
 );
 
-async function getDepositBonusCapHitRate(
+export async function getDepositBonusCapHitRate(
   period: InsightsRewardsPeriod,
 ): Promise<DepositBonusCapHitRate> {
   const blacklist = await getResolvedBlacklist();

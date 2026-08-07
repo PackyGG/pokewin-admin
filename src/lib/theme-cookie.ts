@@ -46,7 +46,7 @@ export const THEME_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
  * Every theme next-themes may hand us, including "system". The seed script
  * validates against this list so a hand-edited cookie can't inject a class.
  */
-const THEME_COOKIE_VALUES = [
+export const THEME_COOKIE_VALUES = [
   "light",
   "dark",
   "grailed",

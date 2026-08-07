@@ -25,7 +25,7 @@ import { logWarn } from "@/lib/errors/logger";
  *   "https://kick.com/Trainwreckstv/"  → "trainwreckstv"
  *   "x.com/packydotgg?lang=en"         → "packydotgg"
  */
-function normalizeHandle(input: string | null | undefined): string | null {
+export function normalizeHandle(input: string | null | undefined): string | null {
   if (!input) return null;
   let h = input.trim();
   if (!h) return null;

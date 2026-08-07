@@ -10,7 +10,7 @@ import { type EntityView, resolveEntityView } from "./view";
 // module keep working. The pure pieces are DEFINED in `./view` (a
 // directive-free module) so server components can call `resolveEntityView`
 // without invoking a client function — see that file's header.
-;
+export { type EntityView, resolveEntityView };
 
 /**
  * ──────────────────────────────────────────────────────────────────────────
@@ -31,7 +31,7 @@ import { type EntityView, resolveEntityView } from "./view";
  * cards-tab-switch): a bordered `bg-muted/30` track with a raised active pill.
  */
 
-const ENTITY_VIEW_OPTIONS: ReadonlyArray<{
+export const ENTITY_VIEW_OPTIONS: ReadonlyArray<{
   value: EntityView;
   label: string;
   icon: React.ElementType;

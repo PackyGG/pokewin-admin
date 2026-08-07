@@ -909,7 +909,7 @@ export async function processNextRefund(
   }
 }
 
-async function recoverRefundedBatch(input: {
+export async function recoverRefundedBatch(input: {
   batchId: string;
   credential: string;
 }): Promise<ServerActionResult<RefundRecoveryResult>> {
@@ -955,7 +955,7 @@ export async function recoverAllRefundedAccounts(input: {
   }
 }
 
-async function getRefundBatchProgress(
+export async function getRefundBatchProgress(
   batchId: string,
 ): Promise<RefundBatchProgress> {
   await requireAntifraudManager(

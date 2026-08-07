@@ -26,7 +26,7 @@ function endsInLabel(endsAtIso: string): string {
  * The read is failure-isolated because optional header status must never take
  * down the dashboard shell. There is no card between rains.
  */
-async function HeaderRainChip() {
+export async function HeaderRainChip() {
   const { data: rain } = await safeQuery(
     () => getActiveRain(),
     null,

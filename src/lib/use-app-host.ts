@@ -48,7 +48,7 @@ export function useAppHost(): AppHostConfig | null {
  * cross-app entries become fully-qualified URLs, because a bare `/dashboard`
  * there would be rewritten into that host's own segment and 404.
  */
-function useCrossAppHrefs(): CrossAppHrefs {
+export function useCrossAppHrefs(): CrossAppHrefs {
   const config = useAppHost();
   const [hrefs, setHrefs] = useState<CrossAppHrefs>(FALLBACK);
   useEffect(() => {
@@ -73,7 +73,7 @@ export function useHostHref(path: string): string {
 }
 
 /** Batch variant of {@link useHostHref} for a whole nav list. */
-function useHostHrefs(paths: readonly string[]): string[] {
+export function useHostHrefs(paths: readonly string[]): string[] {
   const config = useAppHost();
   return paths.map((path) => (config ? hrefFrom(config, path) : path));
 }

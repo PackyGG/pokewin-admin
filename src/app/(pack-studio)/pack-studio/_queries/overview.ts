@@ -30,7 +30,7 @@ export type ComplianceAlert = {
 };
 
 /** Ramp config surfaced on the overview (from `pack_system_config`, with defaults). */
-type RampConfig = {
+export type RampConfig = {
   phase: string | null;
   reserves: number | null;
   maxWinCap: number;

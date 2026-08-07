@@ -110,7 +110,7 @@ const MOTHA_USERNAME = "motha";
  */
 
 /** One reward-cost line on the box. */
-type RewardCostLine = {
+export type RewardCostLine = {
   /** Stable key for React. */
   key: string;
   /** Operator-friendly label. */
@@ -550,7 +550,7 @@ export async function getRewardCostsToday(): Promise<RewardCostsToday> {
 // ─── Race win claimant drilldown (lazy, click-to-load) ───────────────────
 
 /** One race-prize payout credited today (one ledger row). */
-type RaceWinClaimRow = {
+export type RaceWinClaimRow = {
   userId: string;
   username: string | null;
   /** Prize amount for this claim (ABS ledger amount). */
@@ -626,7 +626,7 @@ export async function getRaceWinClaimants(): Promise<RaceWinClaimantsBreakdown> 
 // ─── Promo balance credit claimant drilldown (lazy, click-to-load) ───────
 
 /** One counted balance-adjustment CREDIT booked today (one ledger row). */
-type PromoBalanceCreditClaimRow = {
+export type PromoBalanceCreditClaimRow = {
   userId: string;
   username: string | null;
   /** Credited amount for this row (ABS ledger amount, always > 0). */

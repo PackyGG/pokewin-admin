@@ -245,7 +245,7 @@ type AdminSessionItem = {
   isActive: boolean;
 };
 
-async function getAdminUserSessions(
+export async function getAdminUserSessions(
   adminUserId: string,
   page: number = 1,
   perPage: number = 20

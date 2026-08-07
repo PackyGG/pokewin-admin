@@ -2,7 +2,7 @@ import "server-only";
 
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
-import type { PackSetFilter } from "@/lib/queries/packs";
+import type { PackSetFilter } from "@/lib/queries/pack-set";
 import {
   isPostgresError,
   postgresErrorMessages,

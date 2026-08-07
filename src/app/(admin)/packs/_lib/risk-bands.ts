@@ -23,15 +23,15 @@
  * p10–p90 span 0.85–2.27) — [0.9, 1.8] covers the designed envelope while the
  * widen-to-live guard below carries the owner's deliberate hot-runners.
  */
-const TAG_CV_K_LO = 0.9;
-const TAG_CV_K_HI = 1.8;
+export const TAG_CV_K_LO = 0.9;
+export const TAG_CV_K_HI = 1.8;
 
 /**
  * Standard (untagged) CV bands by price bracket — the live-fleet p10–p90 of CV
  * within each bracket (183 pools, 2026-07-03). The first bracket a pack's price
  * is strictly BELOW wins (so `maxPrice` is an exclusive upper edge).
  */
-const STANDARD_CV_BANDS: readonly {
+export const STANDARD_CV_BANDS: readonly {
   maxPrice: number;
   lo: number;
   hi: number;
@@ -43,7 +43,7 @@ const STANDARD_CV_BANDS: readonly {
 ];
 
 /** How much (15%) headroom the widen-to-live guard adds around the live CV. */
-const RISK_BAND_LIVE_HEADROOM = 0.15;
+export const RISK_BAND_LIVE_HEADROOM = 0.15;
 
 export type RiskBand = {
   /** Band lower edge (CV). */

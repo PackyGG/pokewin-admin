@@ -430,7 +430,7 @@ export function SessionDetailModal({
   );
 }
 
-function DetailSection({
+export function DetailSection({
   title,
   children,
 }: {
@@ -447,7 +447,7 @@ function DetailSection({
   );
 }
 
-function DetailGrid({ children }: { children: React.ReactNode }) {
+export function DetailGrid({ children }: { children: React.ReactNode }) {
   return (
     <div className="grid grid-cols-1 gap-x-6 gap-y-1.5 rounded-lg border bg-muted/30 p-3 sm:grid-cols-2">
       {children}
@@ -455,7 +455,7 @@ function DetailGrid({ children }: { children: React.ReactNode }) {
   );
 }
 
-function DetailRow({
+export function DetailRow({
   label,
   value,
   valueClass,
@@ -490,7 +490,7 @@ function DetailRow({
  * tips gifted + balance sponsored, both from house-provided fill. House-POV →
  * rose when non-zero; $0 reads muted "—".
  */
-function sessionCommunitySpendUsd(session: SessionRowBase): number {
+export function sessionCommunitySpendUsd(session: SessionRowBase): number {
   const tips = Number(session.tips_spent_this_session_usd);
   const sponsor = Number(session.sponsorship_spent_this_session_usd);
   return (
@@ -526,7 +526,7 @@ export function usd(value: string): string {
   return Number.isFinite(n) ? formatCurrency(n) : `$${value}`;
 }
 
-function fmtDateTime(value: string | null): string {
+export function fmtDateTime(value: string | null): string {
   if (!value) return "—";
   return formatDateTime(new Date(value));
 }

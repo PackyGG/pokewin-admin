@@ -126,8 +126,24 @@ const AuditTab = dynamic(
 // Re-exports — preserve the public surface so call sites that previously
 // imported from this module keep working.
 // ---------------------------------------------------------------------------
-;
-;
+export {
+  OverviewTab,
+  RewardsTab,
+  GamingTab,
+  InventoryTab,
+  AccountTab,
+  KycTab,
+} from "./user-view-modern-tabs";
+export {
+  TILE_COLORS,
+  SectionHeading,
+  StatPanel,
+  PanelRow,
+  ModernBalancePanel,
+  ModernPnlPanel,
+  ModernActivityPanel,
+  ModernMetricTile,
+} from "./user-view-modern-panels";
 
 import type { TabKey } from "./user-tabs-types";
 
@@ -1056,7 +1072,7 @@ function ScrollableTabBar({
 
 const STORAGE_KEY = "user-detail-view";
 
-function UserViewSwitcher({
+export function UserViewSwitcher({
   view,
   onChange,
 }: {
@@ -1096,7 +1112,7 @@ function UserViewSwitcher({
   );
 }
 
-function useViewPreference(): ["classic" | "modern", (v: "classic" | "modern") => void] {
+export function useViewPreference(): ["classic" | "modern", (v: "classic" | "modern") => void] {
   const [view, setView] = useState<"classic" | "modern">("classic");
 
   useEffect(() => {

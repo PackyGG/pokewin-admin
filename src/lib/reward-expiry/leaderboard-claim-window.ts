@@ -9,7 +9,7 @@
 
 const MS_PER_DAY = 86_400_000;
 
-type LeaderboardClaimWindowStatus =
+export type LeaderboardClaimWindowStatus =
   | "unavailable"
   | "never_expires"
   | "period_active"

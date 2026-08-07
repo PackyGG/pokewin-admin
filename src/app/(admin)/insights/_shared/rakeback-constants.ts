@@ -12,7 +12,7 @@
 export const RAKEBACK_ROI_LOOKBACK_DEFAULT = 14;
 
 /** Selectable lookback windows (days) offered in the ROI tab UI. */
-const RAKEBACK_ROI_LOOKBACK_OPTIONS = [3, 7, 14, 30, 60] as const;
+export const RAKEBACK_ROI_LOOKBACK_OPTIONS = [3, 7, 14, 30, 60] as const;
 
 export type RakebackRoiLookback = (typeof RAKEBACK_ROI_LOOKBACK_OPTIONS)[number];
 

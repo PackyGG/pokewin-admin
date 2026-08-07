@@ -21,7 +21,15 @@
  */
 
 import type { AdminRole } from "@/lib/admin-roles";
-import type { RoleBaseline, PermissionToken } from "@/lib/permissions/types";
+import type {
+  BaselineMap,
+  PermissionToken,
+  RoleBaseline,
+} from "@/lib/permissions/types";
+
+// Preserve the established import surface while keeping the permission model
+// independent from this concrete baseline implementation.
+export type { BaselineMap } from "@/lib/permissions/types";
 
 /**
  * An OPTIONAL override of the code-defined built-in baselines, keyed by
@@ -37,8 +45,6 @@ import type { RoleBaseline, PermissionToken } from "@/lib/permissions/types";
  * BYTE-EQUAL to `ROLE_BASELINES`, so a provided map produces IDENTICAL
  * materializer output — the foundation is behavior-neutral.
  */
-export type BaselineMap = Partial<Record<AdminRole, PermissionToken[]>>;
-
 /**
  * The full out-of-the-box permission set for `pack_creator`. This is the
  * canonical DB-free source used for new-user defaults, write-time

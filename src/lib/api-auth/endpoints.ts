@@ -13,7 +13,7 @@ import { API_SCOPES, type ApiScope } from "./scopes";
  * human-facing contract; `withApiKey` is the enforcement.
  */
 
-type ApiEndpointMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
+export type ApiEndpointMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
 export type ApiEndpoint = {
   method: ApiEndpointMethod;
@@ -317,7 +317,7 @@ export function endpointAccess(
  * signed-in browser) or a deploy secret, and exist to serve this app's own UI.
  * Listed purely so the full HTTP surface is visible in one place.
  */
-type InternalEndpointAuth = "admin session" | "cron secret";
+export type InternalEndpointAuth = "admin session" | "cron secret";
 
 export type InternalEndpoint = {
   method: ApiEndpointMethod;

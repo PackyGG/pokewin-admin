@@ -37,7 +37,7 @@
  * ever shows a "re-add this" hint on a credential that might still work, which
  * is harmless. Erring late would stay silent on one that definitely doesn't.
  */
-const PASSKEY_RP_CUTOVER_ISO = "2026-07-26T00:00:00.000Z";
+export const PASSKEY_RP_CUTOVER_ISO = "2026-07-26T00:00:00.000Z";
 
 const CUTOVER_MS = Date.parse(PASSKEY_RP_CUTOVER_ISO);
 
@@ -59,7 +59,7 @@ export function isPasskeyFromOldDomain(
 }
 
 /** Shown wherever a stale credential is listed. */
-const PASSKEY_STALE_TITLE = "Registered on the old domain";
+export const PASSKEY_STALE_TITLE = "Registered on the old domain";
 
 export const PASSKEY_STALE_BODY =
   "This passkey was created before the dashboard moved to packydash.com, so " +

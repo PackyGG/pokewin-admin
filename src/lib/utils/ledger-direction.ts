@@ -98,7 +98,7 @@ export function amountColorFor(direction: LedgerDirection): string {
 }
 
 /** Sign for the amount from the house perspective. */
-function amountSignFor(direction: LedgerDirection): "+" | "-" | "" {
+export function amountSignFor(direction: LedgerDirection): "+" | "-" | "" {
   switch (direction) {
     case "house-gain":
       return "+";

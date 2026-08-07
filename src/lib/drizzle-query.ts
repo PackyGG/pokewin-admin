@@ -28,7 +28,7 @@ export async function queryRows<T extends Record<string, unknown>[]>(
  * strings (timestamps, NUMERIC, BIGINT and JSON). Prefer this over an unchecked
  * `queryRows<T>` generic whenever a row crosses into application code.
  */
-async function queryDecodedRows<T>(
+export async function queryDecodedRows<T>(
   db: DrizzleExecutor,
   query: string,
   values: readonly unknown[],
@@ -51,7 +51,7 @@ export async function queryMainRows<T extends Record<string, unknown>[]>(
   );
 }
 
-async function queryMainDecodedRows<T>(
+export async function queryMainDecodedRows<T>(
   query: string,
   values: readonly unknown[],
   decoder: PostgresDecoder<T>,

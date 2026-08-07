@@ -44,7 +44,7 @@ function errorChainText(error: unknown): string {
   return parts.join(" ");
 }
 
-function isTransientPostgresReadError(error: unknown): boolean {
+export function isTransientPostgresReadError(error: unknown): boolean {
   return TRANSIENT_POSTGRES_READ_ERROR.test(errorChainText(error));
 }
 

@@ -136,7 +136,7 @@ export function TimezoneProvider({
  * fallback instead of throwing — this keeps the hook safe to call from
  * client bundles rendered by the login layout (pre-provider) etc.
  */
-function useTimezone(): string {
+export function useTimezone(): string {
   const ctx = React.useContext(TimezoneContext);
   if (ctx) return ctx.timezone;
   // Fallback: no provider mounted (login screen, storybook, etc.).
@@ -170,7 +170,7 @@ export function useTimezoneContext(): TimezoneContextValue {
 // import the raw helpers keep working (they get browser-local output).
 // ---------------------------------------------------------------------------
 
-function useFormatDate(): (d: Date | string | number) => string {
+export function useFormatDate(): (d: Date | string | number) => string {
   const tz = useTimezone();
   const ctx = React.useContext(TimezoneContext);
   const pattern = ctx?.dateFormat;
@@ -193,7 +193,7 @@ export function useFormatDateTime(): (d: Date | string | number) => string {
   );
 }
 
-function useFormatMonthYear(): (d: Date | string | number) => string {
+export function useFormatMonthYear(): (d: Date | string | number) => string {
   const tz = useTimezone();
   return React.useCallback((d) => formatMonthYear(d, tz), [tz]);
 }
@@ -204,6 +204,6 @@ function useFormatMonthYear(): (d: Date | string | number) => string {
  * the API shape consistent so consumers can swap between absolute and
  * relative modes without touching imports.
  */
-function useFormatRelative(): (d: Date | string | number) => string {
+export function useFormatRelative(): (d: Date | string | number) => string {
   return React.useCallback((d) => formatRelative(d), []);
 }

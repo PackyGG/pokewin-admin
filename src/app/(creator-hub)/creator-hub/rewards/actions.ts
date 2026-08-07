@@ -1282,7 +1282,7 @@ export async function approveCreatorRewardClaim(input: {
 }
 
 /** One claim's outcome inside a bulk approval pass. */
-type BulkApproveClaimResult = {
+export type BulkApproveClaimResult = {
   claimId: string;
   ok: boolean;
   /** Verbatim from the single-claim action — never summarised or swallowed. */

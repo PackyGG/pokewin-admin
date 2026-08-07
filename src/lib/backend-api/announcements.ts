@@ -29,7 +29,7 @@ import type { AnnouncementPayload } from "@/lib/announcement-payload";
 /** Matches the backend's `notification_category` enum. Create only allows
  * `news` / `system` — `transaction` / `rewards` are reserved for the
  * per-user notify() path, not broadcasts (backend-enforced). */
-type AnnouncementCategory = "transaction" | "rewards" | "system" | "news";
+export type AnnouncementCategory = "transaction" | "rewards" | "system" | "news";
 
 export type AnnouncementCreateCategory = "news" | "system";
 
@@ -38,7 +38,7 @@ export type AnnouncementAudienceRole = "user" | "support" | "admin" | "creator";
 /** `{ url, image_url, cta_label }` — shape + validation rules live in
  * `@/lib/announcement-payload` (importable from client components too, which
  * this server-only module is not). */
-;
+export type { AnnouncementPayload };
 
 export type Announcement = {
   id: string;

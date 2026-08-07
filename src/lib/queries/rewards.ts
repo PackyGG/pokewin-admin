@@ -172,7 +172,7 @@ export async function getRakebackClaims(params: {
     totalPages: Math.ceil(total / perPage),
   };
 }
-type RewardPack = {
+export type RewardPack = {
   id: string;
   name: string;
   imageUrl: string | null;

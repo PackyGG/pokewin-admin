@@ -42,7 +42,7 @@ export type ApiPrincipal = {
   scopes: ApiScope[];
 };
 
-type ApiAuthFailure = {
+export type ApiAuthFailure = {
   ok: false;
   status: 401 | 403 | 429;
   code:
@@ -55,7 +55,7 @@ type ApiAuthFailure = {
   rateLimit?: ApiRateLimitResult;
 };
 
-type ApiAuthSuccess = {
+export type ApiAuthSuccess = {
   ok: true;
   principal: ApiPrincipal;
   rateLimit: ApiRateLimitResult;
@@ -75,7 +75,7 @@ const INVALID: ApiAuthFailure = {
  * Client IP, resolved from the most-trustworthy proxy header available.
  * Re-exported for callers that already imported it from here.
  */
-function clientIpFrom(request: Request): string | null {
+export function clientIpFrom(request: Request): string | null {
   return resolveClientIp(request);
 }
 

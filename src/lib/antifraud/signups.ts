@@ -72,12 +72,12 @@ const countResponseSchema = z.object({
   }),
 });
 
-type AntifraudSignup = z.infer<typeof signupSchema>;
-type AntifraudSignupsResponse = z.infer<typeof responseSchema>;
+export type AntifraudSignup = z.infer<typeof signupSchema>;
+export type AntifraudSignupsResponse = z.infer<typeof responseSchema>;
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
-async function listAntifraudSignups(
+export async function listAntifraudSignups(
   page: number,
 ): Promise<{
   configured: boolean;

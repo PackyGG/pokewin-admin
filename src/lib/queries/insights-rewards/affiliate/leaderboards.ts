@@ -31,7 +31,7 @@ import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
 
 const TOP_LIMIT = 25;
 
-type TopAffiliateByCommission = {
+export type TopAffiliateByCommission = {
   affiliateUserId: string;
   username: string | null;
   commissionPaid: number;
@@ -207,7 +207,7 @@ const cachedTopByWagerLong = unstable_cache(
   { revalidate: 300, tags: [CACHE_TAG, "rewards-analytics"] },
 );
 
-async function getTopAffiliatesByCommission(
+export async function getTopAffiliatesByCommission(
   period: InsightsRewardsPeriod,
 ): Promise<TopAffiliateByCommission[]> {
   const blacklist = await loadBlacklist();

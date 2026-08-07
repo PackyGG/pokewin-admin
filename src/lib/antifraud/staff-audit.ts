@@ -283,7 +283,7 @@ const SHARED_EVENT_TYPES = ALL_EVENT_TYPES.filter(
   (type) => ANTIFRAUD_AUDIT_EVENTS[type].shared,
 );
 
-function antifraudAuditEventsFor(
+export function antifraudAuditEventsFor(
   category: AntifraudAuditCategory,
 ): string[] {
   return ALL_EVENT_TYPES.filter(

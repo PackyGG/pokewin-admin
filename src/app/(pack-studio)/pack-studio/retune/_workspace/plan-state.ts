@@ -98,7 +98,7 @@ export type StagedPool = {
 
 // ─── Plan entry facts ───────────────────────────────────────────────────────
 
-type PlanEntryStatus = "loading" | "ready" | "error";
+export type PlanEntryStatus = "loading" | "ready" | "error";
 
 export type PlanEntry = {
   /** The basis the plan was requested FOR (packId | arm | stagedKey). */

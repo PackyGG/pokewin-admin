@@ -51,7 +51,7 @@ export function formatSignupProvider(provider: string | null): string {
  * `providerId`; use {@link signupProviderBadgeClass} so unknown providers
  * fall back to the neutral zinc chip instead of rendering unstyled.
  */
-const SIGNUP_PROVIDER_COLORS: Record<string, string> = {
+export const SIGNUP_PROVIDER_COLORS: Record<string, string> = {
   discord: "bg-indigo-500/15 text-indigo-600 dark:text-indigo-400 border-indigo-500/30",
   google: "bg-blue-500/15 text-blue-600 dark:text-blue-400 border-blue-500/30",
   steam: "bg-cyan-500/15 text-cyan-600 dark:text-cyan-400 border-cyan-500/30",

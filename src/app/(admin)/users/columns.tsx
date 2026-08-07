@@ -17,50 +17,9 @@ import {
 } from "@/lib/utils/signup-provider";
 import { useFormatDateTime } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
+import type { UserRow } from "./_lib/user-row";
 
-export type UserRow = {
-  id: string;
-  username: string | null;
-  email: string | null;
-  image: string | null;
-  role: string;
-  status: string;
-  country: string | null;
-  countryCode: string | null;
-  /**
-   * `user.affiliate_code` — the affiliate/referral code this user signed
-   * up under, if any (null = organic signup). See users-list.ts
-   * USER_LIST_SELECT comment for why this reads the plain column rather
-   * than the fuller historical resolution users-detail.ts does.
-   *
-   * NOT rendered as a column today — the "Code / Affiliate" column was
-   * removed on the owner's request (2026-07-22, "for now"). The field stays
-   * on the row (it's a free scalar already on the fetched user row) so
-   * restoring the column is a self-contained change here.
-   */
-  affiliateCode: string | null;
-  availableBalance: number;
-  /** Cash + locked vault + open inventory — total on-site position. */
-  netHoldings: number;
-  totalDeposited: number;
-  totalWithdrawn: number;
-  totalWagered: number;
-  pnl: number;
-  createdAt: string;
-  /** Device-fingerprint alt-account signal (fingerprints.suspected_alt_triggered). */
-  suspectedAlt: boolean;
-  /** A fingerprint row exists — false means capture never happened. */
-  hasDeviceId: boolean;
-  /** Newest FingerprintJS visitor_id, null when never captured. */
-  deviceVisitorId: string | null;
-  /** Other accounts sharing this user's signup IP. 0 = unique to them. */
-  signupIpSharedCount: number;
-  /**
-   * Raw BetterAuth `account.providerId` of the earliest linked account —
-   * how the user signed up (discord / google / steam / credential = email).
-   */
-  signupProvider: string | null;
-};
+export type { UserRow } from "./_lib/user-row";
 
 function PnlCell({ value }: { value: number }) {
   // User-perspective P&L:

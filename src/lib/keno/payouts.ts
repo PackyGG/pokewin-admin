@@ -64,7 +64,7 @@ const HIGH_PAYOUTS: PayoutRows = {
   10: [0, 0, 0, 0, 3, 8.2, 13, 63, 500, 800, 1_000],
 };
 
-const KENO_PAYOUTS: Record<KenoRiskMode, PayoutRows> = {
+export const KENO_PAYOUTS: Record<KenoRiskMode, PayoutRows> = {
   low: LOW_PAYOUTS,
   medium: MEDIUM_PAYOUTS,
   high: HIGH_PAYOUTS,
@@ -77,7 +77,7 @@ export function getKenoPayoutRow(
   return KENO_PAYOUTS[risk][picks] ?? [];
 }
 
-function getKenoMultiplier(
+export function getKenoMultiplier(
   risk: KenoRiskMode,
   picks: number,
   hits: number,
@@ -85,7 +85,7 @@ function getKenoMultiplier(
   return getKenoPayoutRow(risk, picks)[hits] ?? 0;
 }
 
-function combinations(n: number, k: number): number {
+export function combinations(n: number, k: number): number {
   if (k < 0 || k > n) return 0;
   const size = Math.min(k, n - k);
   let result = 1;
@@ -125,7 +125,7 @@ export function getKenoRtp(risk: KenoRiskMode, picks: number): number {
   );
 }
 
-function getKenoHouseEdge(
+export function getKenoHouseEdge(
   risk: KenoRiskMode,
   picks: number,
 ): number {

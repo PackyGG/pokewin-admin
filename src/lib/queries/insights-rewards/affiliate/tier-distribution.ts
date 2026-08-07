@@ -49,7 +49,7 @@ import { CACHE_TAG, loadBlacklist } from "./_shared";
  * Lifetime ROI lens — tiers are a lifetime-cumulative concept.
  */
 
-type TierDistributionRow = {
+export type TierDistributionRow = {
   level: number;
   label: string;
   /** Commission rate as a fraction (e.g. 0.05 = 5%). */

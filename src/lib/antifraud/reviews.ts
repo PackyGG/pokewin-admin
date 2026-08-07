@@ -65,21 +65,21 @@ const REVIEW_QUEUE_STORAGE_STATUSES = [
 // existing server-side import keeps working unchanged.
 export {
   REVIEW_STATUSES,
-  
+  OPEN_REVIEW_STATUSES,
   REVIEW_STATUS_LABELS,
-  
-  
-  
-  
-  
-  
-  
-  
+  REVIEW_STATUS_COLORS,
+  REVIEW_SEVERITIES,
+  REVIEW_SEVERITY_LABELS,
+  REVIEW_SEVERITY_COLORS,
+  isReviewStatus,
+  isReviewSeverity,
+  type ReviewStatus,
+  type ReviewSeverity,
 } from "./constants";
 
 // ─── Shapes ───────────────────────────────────────────────────────────────
 
-type ReviewRow = {
+export type ReviewRow = {
   id: string;
   targetUserId: string;
   targetUsername: string | null;
@@ -104,7 +104,7 @@ export type ReviewListItem = ReviewRow & {
   workflow: ReviewWorkflow | null;
 };
 
-type ReviewNote = {
+export type ReviewNote = {
   id: string;
   kind: string;
   body: string;
@@ -257,7 +257,7 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
  * {@link listReviewPage} instead — a bare `limit` silently hides everything
  * past it, which is fine for a preview strip and wrong for the queue.
  */
-async function listReviews(
+export async function listReviews(
   filters: ReviewFilters = {},
 ): Promise<ReviewListItem[]> {
   const limit = Math.min(Math.max(filters.limit ?? 100, 1), 300);
@@ -539,7 +539,7 @@ export type ReviewDetailResult =
  * workspace that used to run unbounded: a hung admin-DB connection blocked the
  * segment until the platform killed the whole request instead of degrading.
  */
-const REVIEW_DETAIL_TIMEOUT_MS = 10_000;
+export const REVIEW_DETAIL_TIMEOUT_MS = 10_000;
 
 export async function getReviewDetail(
   reviewId: string,
@@ -723,7 +723,7 @@ export async function getReviewDetail(
   return { kind: "ok", detail: body.data };
 }
 
-type ReviewStats = {
+export type ReviewStats = {
   open: number;
   inReview: number;
   resolvedToday: number;
@@ -821,7 +821,7 @@ export async function getReviewQueueStats(): Promise<ReviewQueueStats> {
 }
 
 /** The dashboard KPI strip. One grouped count + three narrow counts. */
-async function getReviewStats(
+export async function getReviewStats(
   adminUserId?: string,
   excludedTargetUserIds: readonly string[] = [],
 ): Promise<ReviewStats> {
@@ -908,7 +908,7 @@ async function getReviewStats(
   }
 }
 
-type SignalRow = {
+export type SignalRow = {
   id: string;
   externalId: string | null;
   kind: string;
@@ -922,7 +922,7 @@ type SignalRow = {
 };
 
 /** The dashboard's recent-signal feed (the persisted twin of the live stream). */
-async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
+export async function listRecentSignals(limit = 25): Promise<SignalRow[]> {
   try {
     const rows = await adminDrizzle.select().from(antifraud_signals)
       .where(

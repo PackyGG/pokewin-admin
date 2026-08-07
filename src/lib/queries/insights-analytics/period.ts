@@ -12,7 +12,7 @@
  * URL token + the internal value are unified on `"all"`.
  */
 
-const INSIGHTS_PERIODS = [
+export const INSIGHTS_PERIODS = [
   "24h",
   "3d",
   "7d",
@@ -23,7 +23,7 @@ const INSIGHTS_PERIODS = [
 
 export type InsightsPeriod = (typeof INSIGHTS_PERIODS)[number];
 
-const DEFAULT_INSIGHTS_PERIOD: InsightsPeriod = "30d";
+export const DEFAULT_INSIGHTS_PERIOD: InsightsPeriod = "30d";
 
 export const INSIGHTS_PERIOD_LABELS: Record<InsightsPeriod, string> = {
   "24h": "Last 24h",
@@ -64,7 +64,7 @@ export function parseInsightsPeriod(value: string | undefined): InsightsPeriod {
  * alternatively callers can pass `new Date(0)` as the cutoff via
  * {@link periodToCutoff}.
  */
-function periodToDays(period: InsightsPeriod): number | null {
+export function periodToDays(period: InsightsPeriod): number | null {
   switch (period) {
     case "24h":
       return 1;
@@ -97,7 +97,7 @@ export function periodToCutoff(period: InsightsPeriod, now: Date = new Date()): 
  * cutoff exactly 7 days before the current 7d cutoff. Lifetime returns
  * null (no meaningful comparison window).
  */
-function previousPeriodCutoff(
+export function previousPeriodCutoff(
   period: InsightsPeriod,
   now: Date = new Date(),
 ): { start: Date; end: Date } | null {
@@ -109,7 +109,7 @@ function previousPeriodCutoff(
   return { start, end };
 }
 
-const INSIGHTS_TABS = [
+export const INSIGHTS_TABS = [
   "overview",
   "cohorts",
   "retention",
@@ -126,9 +126,9 @@ const INSIGHTS_TABS = [
   "money-flow",
 ] as const;
 
-type InsightsTab = (typeof INSIGHTS_TABS)[number];
+export type InsightsTab = (typeof INSIGHTS_TABS)[number];
 
-function parseInsightsTab(value: string | undefined): InsightsTab {
+export function parseInsightsTab(value: string | undefined): InsightsTab {
   if (!value) return "overview";
   return (INSIGHTS_TABS as readonly string[]).includes(value)
     ? (value as InsightsTab)

@@ -29,14 +29,14 @@ import { CACHE_TAG, loadBlacklist, makePeriodCtx } from "./_shared";
 
 const COUNTRY_LIMIT = 12;
 
-type AffiliateGeoRow = {
+export type AffiliateGeoRow = {
   code: string;
   affiliateCount: number;
   commission: number;
   share: number;
 };
 
-type ReferredGeoRow = {
+export type ReferredGeoRow = {
   code: string;
   referredUserCount: number;
   downstreamWager: number;

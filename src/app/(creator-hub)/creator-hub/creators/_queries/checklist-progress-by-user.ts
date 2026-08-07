@@ -36,7 +36,7 @@ import {
  * a just-toggled manual item can read stale on the roster for up to the TTL.
  */
 
-const ROSTER_CHECKLIST_CACHE_TAG = "creator-hub-roster-checklist";
+export const ROSTER_CHECKLIST_CACHE_TAG = "creator-hub-roster-checklist";
 const ROSTER_CHECKLIST_REVALIDATE_S = 120;
 
 /** Serializable per-creator progress for the roster pill. */

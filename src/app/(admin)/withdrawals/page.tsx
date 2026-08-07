@@ -12,7 +12,7 @@ import { getWithdrawals } from "@/lib/queries/withdrawals";
 import { parsePage, parsePerPage } from "@/lib/utils/pagination";
 import { columns } from "./columns";
 import { WithdrawalsDataTable } from "./data-table";
-import { ValueRangeFilter } from "./value-range-filter";
+import { ValueRangeFilter } from "@/components/value-range-filter";
 
 export const metadata = { title: "Withdrawals" };
 

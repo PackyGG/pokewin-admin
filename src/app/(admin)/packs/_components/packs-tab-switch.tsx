@@ -11,7 +11,7 @@ import { LinkPendingShell } from "@/components/ux/route-transition";
  * unknown `?set=` param falls through to Pokemon both here and
  * server-side in catalog-tab.
  */
-type PackSetSlug = "pokemon" | "onepiece" | "rewards" | "meme";
+export type PackSetSlug = "pokemon" | "onepiece" | "rewards" | "meme";
 
 type PackSetTab = {
   slug: PackSetSlug;

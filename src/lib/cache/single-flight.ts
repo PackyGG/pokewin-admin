@@ -133,7 +133,7 @@ export function singleFlight<T>(key: string, fn: () => Promise<T>): Promise<T> {
  * @param keyPrefix Stable prefix identifying the wrapped function.
  * @param fn        The async function to coalesce per unique argument tuple.
  */
-function dedupe<A extends unknown[], T>(
+export function dedupe<A extends unknown[], T>(
   keyPrefix: string,
   fn: (...args: A) => Promise<T>,
 ): (...args: A) => Promise<T> {

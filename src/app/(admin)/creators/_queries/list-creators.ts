@@ -17,7 +17,7 @@ export type CreatorsListPage = {
  * computes `totalPages` for the pagination component. The backend is the
  * single source of truth — this module does no filtering or enrichment.
  */
-async function listCreatorsForPage(
+export async function listCreatorsForPage(
   params: CreatorsSearchParams,
 ): Promise<CreatorsListPage> {
   const { page, perPage, search } = params;

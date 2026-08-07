@@ -29,7 +29,7 @@ export type LifecycleKey = "active" | "at_risk" | "dormant" | "churned";
  * ~87% of all rows (players who have barely played), so it gets its own band
  * instead of being averaged into 1–9 and hiding everything above it.
  */
-type LevelBandKey = "l0" | "l1_9" | "l10_19" | "l20_29" | "l30_49" | "l50_plus";
+export type LevelBandKey = "l0" | "l1_9" | "l10_19" | "l20_29" | "l30_49" | "l50_plus";
 
 export type CrmSegmentRow = {
   key: string;

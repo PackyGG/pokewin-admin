@@ -5,12 +5,12 @@
 // Dependency-free so it can be imported by both the toggle and the list
 // wrapper without dragging client-only modules across boundaries.
 
-const ADMINS_VIEW_MODES = ["gallery", "rows"] as const;
+export const ADMINS_VIEW_MODES = ["gallery", "rows"] as const;
 
 export type AdminsViewMode = (typeof ADMINS_VIEW_MODES)[number];
 
 /** Default view — the owner finds the card layout easier to scan. */
-const DEFAULT_ADMINS_VIEW: AdminsViewMode = "gallery";
+export const DEFAULT_ADMINS_VIEW: AdminsViewMode = "gallery";
 
 /** localStorage key mirroring the user's last-chosen view (persists across nav). */
 export const ADMINS_VIEW_STORAGE_KEY = "admins-list-view";

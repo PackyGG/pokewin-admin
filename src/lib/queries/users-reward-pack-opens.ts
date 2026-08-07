@@ -49,7 +49,7 @@ import { USERS_DETAIL_GLOBAL_TAG, userDetailTag } from "./users-detail-cache";
  */
 
 /** One card granted by a reward-pack open. */
-type RewardPackOpenCard = {
+export type RewardPackOpenCard = {
   /** user_inventory.id (stable key). */
   inventoryId: string;
   cardName: string;

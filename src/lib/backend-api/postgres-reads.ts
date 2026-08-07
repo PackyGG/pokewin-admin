@@ -25,20 +25,21 @@ import {
 
 import type {
   AdminCreatorSocial,
+  ApprovalStatus,
   CreatorDealResponse,
   CreatorListItem,
   CreatorSessionResponse,
   CreatorSocialStatus,
+  LeaderboardAdminRow,
+  LeaderboardListQuery,
+  LeaderboardListResult,
   PendingConversionResponse,
   PendingConversionStatus,
-} from "./creators";
-import type {
-  ApprovalStatus,
-  LeaderboardAdminRow,
-  ListQuery,
-  ListResult,
   TimeStatus,
-} from "./affiliate-leaderboards";
+} from "./contracts";
+
+type ListQuery = LeaderboardListQuery;
+type ListResult = LeaderboardListResult;
 
 type CreatorListQuery = {
   search?: string;

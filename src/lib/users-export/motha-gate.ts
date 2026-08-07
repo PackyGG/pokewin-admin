@@ -31,7 +31,7 @@ export async function requireUsersExportAdmin(): Promise<
  * Non-throwing owner check for conditionally rendering the button. Purely
  * cosmetic — `requireUsersExportAdmin` above is the real security boundary.
  */
-async function canExportAllUsers(userId: string): Promise<boolean> {
+export async function canExportAllUsers(userId: string): Promise<boolean> {
   return isOwnerById(userId);
 }
 
@@ -43,7 +43,7 @@ async function canExportAllUsers(userId: string): Promise<boolean> {
  * cosmetic; the throwing gate stays the real boundary. Callers must AND with
  * `is_active`.
  */
-function isUsersExportAdminUsername(username: string): boolean {
+export function isUsersExportAdminUsername(username: string): boolean {
   return isMainOwnerUsername(username);
 }
 
@@ -51,7 +51,7 @@ function isUsersExportAdminUsername(username: string): boolean {
  * Owner check from an already-fetched admin row. Returns true for the permanent
  * main owner or any flagged owner. Callers must AND with `is_active`.
  */
-function isUsersExportOwnerRow(
+export function isUsersExportOwnerRow(
   username: string | null | undefined,
   isOwner: boolean | null | undefined,
 ): boolean {

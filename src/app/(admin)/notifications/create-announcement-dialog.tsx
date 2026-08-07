@@ -74,7 +74,7 @@ import type {
   AnnouncementCreateCategory,
 } from "@/lib/backend-api/announcements";
 
-const AUDIENCE_OPTIONS: {
+export const AUDIENCE_OPTIONS: {
   value: AnnouncementAudienceRole;
   label: string;
 }[] = [

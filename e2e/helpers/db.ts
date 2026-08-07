@@ -47,7 +47,7 @@ function isLocalMainDb(): boolean {
 }
 
 /** True only when MAIN-DB writes target a local scratch database. */
-function mainDbWritesAllowed(): boolean {
+export function mainDbWritesAllowed(): boolean {
   return isLocalMainDb();
 }
 
@@ -234,7 +234,7 @@ export async function cleanupE2EAdminRoles(): Promise<number> {
  * Deletes admin ad codes created under the seeded house user whose code
  * matches the E2E prefix. Only used by the ads spec.
  */
-async function cleanupE2EAdCodes(): Promise<number> {
+export async function cleanupE2EAdCodes(): Promise<number> {
   assertMainDbWritesAllowed("cleanupE2EAdCodes (DELETE on main DB)");
   const pool = getMainPool();
   const del = await pool.query(

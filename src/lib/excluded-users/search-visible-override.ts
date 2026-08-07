@@ -9,7 +9,7 @@ import { getExcludedUserIds } from "./fetch";
  * ordinary admins (kartos / `vqsEpQYADwxZ421j2aCV87R2qyIkN6Zd` was removed
  * per owner request 2026-07-01 — must not appear anywhere in the admin).
  */
-const SEARCH_VISIBLE_DESPITE_BLACKLIST: readonly string[] = [] as const;
+export const SEARCH_VISIBLE_DESPITE_BLACKLIST: readonly string[] = [] as const;
 
 const SEARCH_VISIBLE_SET = new Set<string>(SEARCH_VISIBLE_DESPITE_BLACKLIST);
 
@@ -28,13 +28,13 @@ const SEARCH_VISIBLE_SET = new Set<string>(SEARCH_VISIBLE_DESPITE_BLACKLIST);
  *
  *   VRqlwTZCJD8wEBa1HHRnGeF8iiKlwh2e — owner request 2026-07-04.
  */
-const ALWAYS_HIDDEN_FROM_SEARCH: readonly string[] = [
+export const ALWAYS_HIDDEN_FROM_SEARCH: readonly string[] = [
   "VRqlwTZCJD8wEBa1HHRnGeF8iiKlwh2e",
 ] as const;
 
 const ALWAYS_HIDDEN_SET = new Set<string>(ALWAYS_HIDDEN_FROM_SEARCH);
 
-function filterExcludedIdsForSearch(
+export function filterExcludedIdsForSearch(
   excludedUserIds: string[],
 ): string[] {
   if (SEARCH_VISIBLE_SET.size === 0) return excludedUserIds;

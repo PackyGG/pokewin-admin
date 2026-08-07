@@ -97,9 +97,9 @@ export const ROSTER_DEFAULT_PERIOD: DashboardPeriod = "7d";
  *   • past       — canceled / ex-creators (DB-sourced).
  * Default `fill` carries no `?tab` param. Legacy `?tab=active` maps to fill.
  */
-const RosterTab = z.enum(["fill", "multiplier", "past"]);
-type RosterTab = z.infer<typeof RosterTab>;
-const ROSTER_DEFAULT_TAB: RosterTab = "fill";
+export const RosterTab = z.enum(["fill", "multiplier", "past"]);
+export type RosterTab = z.infer<typeof RosterTab>;
+export const ROSTER_DEFAULT_TAB: RosterTab = "fill";
 
 /** Active roster tabs (not past/ex-creators). */
 export type RosterActiveTab = Exclude<RosterTab, "past">;
@@ -109,15 +109,15 @@ export type RosterActiveTab = Exclude<RosterTab, "past">;
  * builds the server-rendered card set when the grid actually renders — list
  * view skips the card build entirely.
  */
-type RosterViewMode = "grid" | "list";
-const ROSTER_DEFAULT_VIEW: RosterViewMode = "grid";
+export type RosterViewMode = "grid" | "list";
+export const ROSTER_DEFAULT_VIEW: RosterViewMode = "grid";
 
 /**
  * Resolve a raw `?period=` value to a roster window. Unknown / unsupported
  * values fall back to the default. Shared by the server page parse and the
  * client period chips so the loaded window and the highlighted chip agree.
  */
-function resolveRosterPeriod(
+export function resolveRosterPeriod(
   value: string | undefined | null,
 ): DashboardPeriod {
   const v = (value ?? "") as DashboardPeriod;

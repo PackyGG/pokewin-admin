@@ -28,7 +28,7 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
  * ("every containment reason is one the dashboard will honour") reads both
  * sides from source and fails on drift.
  */
-const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
+export const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
   "new_account_checkout_ip_changed",
   "new_account_checkout_device_changed",
   "checkout_identity_changed_with_bad_reputation",

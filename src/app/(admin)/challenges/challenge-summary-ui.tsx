@@ -2,9 +2,9 @@
 
 import { formatCurrency } from "@/lib/utils/format";
 
-const PRIZE_PERCENT_OPTIONS = [3, 5, 10, 15, 20, 25, 50] as const;
+export const PRIZE_PERCENT_OPTIONS = [3, 5, 10, 15, 20, 25, 50] as const;
 
-function roundPrizeUsd(value: number): number {
+export function roundPrizeUsd(value: number): number {
   return Math.round(value * 100) / 100;
 }
 

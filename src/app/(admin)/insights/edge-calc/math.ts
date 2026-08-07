@@ -519,7 +519,7 @@ export function repriceEdgeWithinHardBand(
 
 // ─── Inverse odds from target EV ─────────────────────────────────────
 
-type ComputeOddsForTargetEvResult =
+export type ComputeOddsForTargetEvResult =
   | { odds: number[] }
   | { error: string };
 
@@ -535,7 +535,7 @@ function expectedCardValueForBeta(prices: readonly number[], beta: number): numb
 }
 
 /** Round odds to 4 decimals and nudge the largest bucket so the total is 100%. */
-function normalizeOddsTo100(rawOdds: readonly number[]): number[] {
+export function normalizeOddsTo100(rawOdds: readonly number[]): number[] {
   const rounded = rawOdds.map((o) => Math.round(o * 10000) / 10000);
   const sum = rounded.reduce((a, b) => a + b, 0);
   const diff = Math.round((100 - sum) * 10000) / 10000;
@@ -557,7 +557,7 @@ function normalizeOddsTo100(rawOdds: readonly number[]): number[] {
  * β so the normalized weights hit the target per-card EV. Feasible targets
  * lie between min(price) and max(price) per card (× cardsPerOpen per open).
  */
-function computeOddsForTargetEv(
+export function computeOddsForTargetEv(
   cards: readonly { priceUsd: number }[],
   targetEvPerOpen: number,
   cardsPerOpen: number,
@@ -638,7 +638,7 @@ function computeOddsForTargetEv(
 
 // ─── Upgrader EV ──────────────────────────────────────────────────────
 
-type UpgraderEvBreakdown = {
+export type UpgraderEvBreakdown = {
   /** Win probability the user actually has at this multiplier. */
   winProbability: number;
   /** Expected payout per $1 bet: multiplier × winProbability. */
@@ -659,7 +659,7 @@ type UpgraderEvBreakdown = {
  * Edges are passed as fractions (0.05 = 5%). Multipliers ≤ 1 short-
  * circuit to a 0-payout row (no upgrade = no game).
  */
-function computeUpgraderEv(input: {
+export function computeUpgraderEv(input: {
   multiplier: number;
   houseEdge: number;
 }): UpgraderEvBreakdown {
@@ -685,7 +685,7 @@ function computeUpgraderEv(input: {
 
 // ─── Scenario simulator ──────────────────────────────────────────────
 
-type ScenarioInput = {
+export type ScenarioInput = {
   /** Pack sticker price (USD per open). */
   packPrice: number;
   /** Theoretical RTP of the pack (0-1). */
@@ -719,7 +719,7 @@ type ScenarioInput = {
   deposit: number;
 };
 
-type ScenarioResult = {
+export type ScenarioResult = {
   /** Sticker cost across the whole scenario: repetitions × packPrice. */
   grossCost: number;
   /** User out-of-pocket cost when borrowing: (1 − borrow) × grossCost. */
@@ -755,7 +755,7 @@ type ScenarioResult = {
   breakEvenOpens: number | null;
 };
 
-function runScenario(input: ScenarioInput): ScenarioResult {
+export function runScenario(input: ScenarioInput): ScenarioResult {
   const { packPrice, packRtp, repetitions, borrowPct, depositBonusPct, rakebackPct, deposit } = input;
   const borrow = Math.max(0, Math.min(100, borrowPct)) / 100;
   const bonus = Math.max(0, depositBonusPct) / 100;
@@ -808,7 +808,7 @@ function runScenario(input: ScenarioInput): ScenarioResult {
 
 // ─── Bonus stack ROI ─────────────────────────────────────────────────
 
-type BonusStackInput = {
+export type BonusStackInput = {
   /** Deposit size, USD. */
   deposit: number;
   /** Bonus rate, 0-100. */
@@ -819,7 +819,7 @@ type BonusStackInput = {
   packRtp: number;
 };
 
-type BonusStackResult = {
+export type BonusStackResult = {
   /** Bonus given (deposit × bonusPct/100). */
   bonusGiven: number;
   /** Total wager required (wagerRequirementX × bonusGiven). */
@@ -843,7 +843,7 @@ type BonusStackResult = {
   breakEvenWagerX: number | null;
 };
 
-function runBonusStack(input: BonusStackInput): BonusStackResult {
+export function runBonusStack(input: BonusStackInput): BonusStackResult {
   const { deposit, bonusPct, wagerRequirementX, packRtp } = input;
   const bonus = Math.max(0, bonusPct) / 100;
   const bonusGiven = deposit * bonus;
@@ -865,12 +865,12 @@ function runBonusStack(input: BonusStackInput): BonusStackResult {
 // ─── Format helpers (used by client components, kept here so the same
 //     formatter is reused in tooltips / labels without an extra import) ──
 
-function formatPct(fraction: number, decimals = 2): string {
+export function formatPct(fraction: number, decimals = 2): string {
   if (!Number.isFinite(fraction)) return "—";
   return `${(fraction * 100).toFixed(decimals)}%`;
 }
 
-function formatSignedUsd(value: number): string {
+export function formatSignedUsd(value: number): string {
   if (!Number.isFinite(value)) return "—";
   const sign = value > 0 ? "+" : value < 0 ? "−" : "";
   return `${sign}${new Intl.NumberFormat("en-US", {

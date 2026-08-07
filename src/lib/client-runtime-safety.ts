@@ -55,7 +55,7 @@ export function writeBrowserStorage(
   }
 }
 
-function removeBrowserStorage(
+export function removeBrowserStorage(
   key: string,
   kind: BrowserStorageKind = "local",
 ): boolean {

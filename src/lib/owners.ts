@@ -120,7 +120,7 @@ export function isMainOwnerUsername(username: string | null | undefined): boolea
  * can only ever HIDE owner power from a non-root admin, never grant it). The
  * permanent `motha` bypass does NOT depend on this read.
  */
-async function readIsOwnerColumn(adminUserId: string): Promise<boolean> {
+export async function readIsOwnerColumn(adminUserId: string): Promise<boolean> {
   try {
     const [row] = await adminDrizzle
       .select({ is_owner: admin_users.is_owner })

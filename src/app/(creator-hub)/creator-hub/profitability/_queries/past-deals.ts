@@ -126,7 +126,7 @@ const PAST_DEALS_LEG_TIMEOUT_MS = 60_000;
  * (weekly / bi-weekly), so the duration is rounded to the nearest week and
  * floored at 1. Mirrors `frameWeeks` in `deal-profitability.ts`.
  */
-function frameWeeks(startMs: number, endMs: number): number {
+export function frameWeeks(startMs: number, endMs: number): number {
   if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) {
     return 1;
   }
@@ -188,7 +188,7 @@ export type PastDealRow = {
   conversionRate: number;
 };
 
-type PastDealsTotals = {
+export type PastDealsTotals = {
   /** Total ended frames across the FULL set (drives pagination) — NOT page-scoped. */
   totalEndedDeals: number;
   /** Σ dealCost across the CURRENT PAGE (rose house cost). */
@@ -269,7 +269,7 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
 }
 
 /** Fetch one creator's FULL deal history, paging the backend. */
-async function fetchAllDealsForCreator(
+export async function fetchAllDealsForCreator(
   userId: string,
 ): Promise<CreatorDealResponse[]> {
   return pagedWalk(

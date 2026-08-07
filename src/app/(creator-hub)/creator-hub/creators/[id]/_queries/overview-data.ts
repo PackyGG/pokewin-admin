@@ -165,4 +165,4 @@ export async function getCreatorNetData(
 
 /** Re-export the existing aggregate + P&L reads under Hub-local names so the
  *  tab components import everything creator-detail from one module. */
-export { getCreatorDetailCached,  };
+export { getCreatorDetailCached, getCreatorPnlCached };

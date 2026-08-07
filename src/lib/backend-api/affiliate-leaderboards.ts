@@ -6,60 +6,22 @@ import {
   listAffiliateLeaderboardsFromPostgres,
 } from "./postgres-reads";
 
-export type ApprovalStatus = "pending" | "approved" | "rejected";
+import type {
+  ApprovalStatus,
+  LeaderboardAdminRow,
+  LeaderboardListQuery,
+  LeaderboardListResult,
+} from "./contracts";
 
-export type TimeStatus = "upcoming" | "active" | "ended";
+export type {
+  ApprovalStatus,
+  LeaderboardAdminRow,
+  PrizeTier,
+  TimeStatus,
+} from "./contracts";
 
-type PrizeTier = {
-  position: number;
-  prize_amount_usd: string;
-};
-
-export type LeaderboardAdminRow = {
-  id: string;
-  creator_user_id: string;
-  co_creator_user_ids: string[];
-  title: string;
-  affiliate_codes: string[];
-  creator_prize_usd: string;
-  site_bonus_usd: string;
-  total_prize_usd: string;
-  is_sponsored: boolean;
-  start_date: string;
-  end_date: string;
-  created_at: string;
-  approval_status: ApprovalStatus;
-  approved_at: string | null;
-  approved_by: string | null;
-  rejection_reason: string | null;
-  cancelled_at: string | null;
-  cancelled_by: string | null;
-  refunded_at: string | null;
-  refund_amount_usd: string | null;
-  creation_ledger_tx_id: string | null;
-  refund_ledger_tx_id: string | null;
-  paid_manually: boolean;
-  payout_note: string | null;
-  time_status: TimeStatus;
-  prize_tiers: PrizeTier[];
-};
-
-export type ListQuery = {
-  status?: ApprovalStatus;
-  creator_user_id?: string;
-  // Cancelled leaderboards are excluded by default. Set true to include
-  // them in the listing (e.g. for refund history review).
-  include_cancelled?: boolean;
-  offset?: number;
-  limit?: number;
-};
-
-export type ListResult = {
-  leaderboards: LeaderboardAdminRow[];
-  total: number;
-  offset: number;
-  limit: number;
-};
+export type ListQuery = LeaderboardListQuery;
+export type ListResult = LeaderboardListResult;
 
 export type RejectInput = { rejection_reason: string };
 

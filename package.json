@@ -1,5 +1,5 @@
 {
-	"name": "packygg-temp",
+	"name": "pokewin-admin",
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
@@ -7,7 +7,11 @@
 		"prebuild": "npm run test:guardrails && node scripts/generate-changelog.mjs",
 		"build": "next build --turbopack",
 		"start": "next start",
+		"typecheck": "tsc --noEmit",
 		"lint": "eslint",
+		"analyze:dead-code": "knip",
+		"analyze:cycles": "madge --circular --extensions ts,tsx --ts-config tsconfig.json src",
+		"check:antifraud": "npm --prefix services/antifraud-monitor run check",
 		"db:pull:main": "drizzle-kit introspect --config=drizzle.main.config.ts && node scripts/normalize-drizzle-introspection.mjs main",
 		"db:pull:admin": "drizzle-kit introspect --config=drizzle.admin.config.ts && node scripts/normalize-drizzle-introspection.mjs admin",
 		"db:index:mirrors": "node scripts/apply-main-mirror-indexes.mjs",
@@ -80,7 +84,9 @@
 		"dotenv": "^17.4.2",
 		"drizzle-kit": "^0.31.10",
 		"eslint": "^9",
+		"eslint-config-next": "15.5.22",
 		"knip": "^6.32.0",
+		"madge": "^8.0.0",
 		"tailwindcss": "^4",
 		"tsx": "^4.21.0",
 		"typescript": "^5"

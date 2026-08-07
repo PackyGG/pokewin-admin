@@ -7,7 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
  * on the left, action buttons on the right, pager row at the bottom).
  */
 
-function SocialsQueueRowsSkeleton({ rows = 5 }: { rows?: number }) {
+export function SocialsQueueRowsSkeleton({ rows = 5 }: { rows?: number }) {
   return (
     <ul className="mt-4 divide-y">
       {Array.from({ length: rows }).map((_, i) => (

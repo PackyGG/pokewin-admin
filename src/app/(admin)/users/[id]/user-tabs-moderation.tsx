@@ -123,7 +123,7 @@ export function UserAdminActions({
   );
 }
 
-const ModerationSection = React.memo(function ModerationSection({
+export const ModerationSection = React.memo(function ModerationSection({
   user,
   mutes,
 }: {

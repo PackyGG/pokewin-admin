@@ -105,7 +105,7 @@ export const DASHBOARD_KPI_WINDOW_TITLE: Record<DashboardKpiWindow, string> = {
  * so every dashboard "today" figure agrees to the same calendar day no
  * matter which region the serverless function runs in.
  */
-function utcStartOfDay(now: Date): Date {
+export function utcStartOfDay(now: Date): Date {
   const d = new Date(now);
   d.setUTCHours(0, 0, 0, 0);
   return d;

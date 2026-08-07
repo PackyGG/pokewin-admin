@@ -13,7 +13,7 @@
  */
 
 /** Stable id for every checklist item (auto + manual). */
-type ChecklistItemId =
+export type ChecklistItemId =
   | "two_socials"
   | "first_deal"
   | "leaderboard"
@@ -28,7 +28,7 @@ type ChecklistItemId =
  * checkbox). MANUAL items are manager-controlled and persisted in the ADMIN-DB
  * `creator_onboarding_checklist` row.
  */
-type ChecklistItemKind = "auto" | "manual";
+export type ChecklistItemKind = "auto" | "manual";
 
 /** One resolved checklist item, ready to render. Fully serializable. */
 export type ChecklistItem = {

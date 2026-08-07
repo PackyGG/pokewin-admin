@@ -50,7 +50,7 @@ const OPERATOR_MESSAGES: RegExp[] = [
   /only owners and admins can/i,
 ];
 
-const DEFAULT_ACTION_ERROR =
+export const DEFAULT_ACTION_ERROR =
   "The operation could not be completed. No automatic retry was made.";
 
 /**

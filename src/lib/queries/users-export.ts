@@ -7,9 +7,9 @@ import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 import { neutralizeCsvFormula } from "@/lib/utils/export-csv";
 
-type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
+export type ExportDepositFilter = "any" | "has_deposited" | "no_deposit";
 
-type ExportCountryMode = "any" | "include" | "exclude";
+export type ExportCountryMode = "any" | "include" | "exclude";
 
 export type UserExportFilters = {
   countryCodes: string[]; // ISO-2 codes, upper or lower case

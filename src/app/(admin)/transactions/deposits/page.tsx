@@ -17,7 +17,7 @@ import { TransactionsDataTable } from "../data-table";
 import { columns as depositsColumns } from "./columns";
 import { WithdrawalsDataTable } from "@/app/(admin)/withdrawals/data-table";
 import { columns as withdrawalsColumns } from "@/app/(admin)/withdrawals/columns";
-import { ValueRangeFilter } from "@/app/(admin)/withdrawals/value-range-filter";
+import { ValueRangeFilter } from "@/components/value-range-filter";
 import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { Skeleton } from "@/components/ui/skeleton";

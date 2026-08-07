@@ -31,7 +31,7 @@ import {
 
 const TOP_LIMIT = 25;
 
-type RaceTopWinner = {
+export type RaceTopWinner = {
   userId: string;
   username: string | null;
   raceCount: number;

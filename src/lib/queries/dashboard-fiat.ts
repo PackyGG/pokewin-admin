@@ -18,7 +18,7 @@ import {
 } from "./fiat-refund-credits";
 
 /** Webhooks normally settle in seconds. Keep fresh paid rows out of exceptions. */
-const FIAT_SETTLEMENT_GRACE_MINUTES = 15;
+export const FIAT_SETTLEMENT_GRACE_MINUTES = 15;
 
 export type DashboardFiatException = {
   intentId: string;

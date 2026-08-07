@@ -427,7 +427,7 @@ async function doubleDownLegs(
 
 // ─── Reward cost (for NGR) ───────────────────────────────────────────
 
-type RewardCost = {
+export type RewardCost = {
   /** Σ |amount| over REWARD_PAYOUT_TYPES EXCLUDING rain_win. */
   rewardCostExclRain: number;
   /** Σ |rain_win| over the window — for the parameterised rain hook. */
@@ -469,7 +469,7 @@ type RewardCost = {
  * counted category, so they stay RESIDUAL — no double-count. The predicate
  * is the single canonical one from `@/lib/balance-adjustment-categories`.
  */
-async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
+export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
   return withTiming("metrics.rewardCost", async () => {
     const db = await getReadDrizzleDb();
     // Same canonical scope as the gaming legs so NGR is on the SAME
@@ -1003,7 +1003,7 @@ export async function getDailyGamingMetrics(
  * connected DB (the base sets are safe; for upgrader members on a lagged
  * DB use the streamers probe instead).
  */
-async function sumLedgerTypes(opts: {
+export async function sumLedgerTypes(opts: {
   types: readonly LedgerTransactionType[];
   window: MetricWindow;
 }): Promise<number> {
@@ -1088,7 +1088,7 @@ export async function sumLedgerTypesGrouped(opts: {
  * already carved out separately; this is the additional official_stream
  * slice.)
  */
-async function sumOfficialStreamAdjustments(opts: {
+export async function sumOfficialStreamAdjustments(opts: {
   window: MetricWindow;
 }): Promise<number> {
   return withTiming("metrics.sumOfficialStreamAdjustments", async () => {

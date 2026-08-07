@@ -32,12 +32,12 @@ import { safeQuery, type SafeQueryResult } from "@/lib/errors/safe-query";
 
 /** Default timeout for a primary list query — generous, since the list is the
  * thing the operator is waiting on, but still bounded so it can't hang. */
-const PRIMARY_QUERY_TIMEOUT_MS = 12_000;
+export const PRIMARY_QUERY_TIMEOUT_MS = 12_000;
 
 /** Shorter timeout for secondary/deferred data (charts, option lists). If a
  * below-the-fold scan is slow we'd rather show its fallback than make the
  * operator wait. */
-const SECONDARY_QUERY_TIMEOUT_MS = 10_000;
+export const SECONDARY_QUERY_TIMEOUT_MS = 10_000;
 
 /**
  * Run the PRIMARY query for the active view. Resolves to a {@link SafeQueryResult}
@@ -64,7 +64,7 @@ export function loadPrimary<T>(
  * the shorter secondary timeout by default. Call this INSIDE the lazy Suspense
  * boundary for the deferred region — never alongside the primary fetch.
  */
-function loadSecondary<T>(
+export function loadSecondary<T>(
   fn: () => Promise<T>,
   fallback: T,
   context: string,
@@ -89,7 +89,7 @@ function loadSecondary<T>(
  * admin's permissions or any per-request secret. The cache is shared across
  * all callers — a permission-scoped result would leak across admins.
  */
-function cachedList<T>(
+export function cachedList<T>(
   fn: () => Promise<T>,
   keyParts: readonly string[],
   revalidateSeconds = 60,

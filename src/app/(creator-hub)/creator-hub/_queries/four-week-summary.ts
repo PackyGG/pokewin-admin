@@ -132,7 +132,7 @@ async function walkAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
  * each headline tile. One row per creator with an in-window deal frame; each
  * metric summed / averaged across THAT creator's frames.
  */
-type FourWeekCreatorRow = {
+export type FourWeekCreatorRow = {
   userId: string;
   /** Resolved username (MAIN read), or null when unresolved. */
   username: string | null;

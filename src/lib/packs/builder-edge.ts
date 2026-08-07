@@ -5,7 +5,7 @@ export const PACK_BUILDER_EDGE_ERROR =
   "Pack Builder edge must be between 10.95% and 11.50%.";
 
 export const PACK_BUILDER_TICKET_TOTAL = 1_000_000;
-const PACK_BUILDER_TICKET_TOTAL_ERROR =
+export const PACK_BUILDER_TICKET_TOTAL_ERROR =
   "Pack Builder ticket weights must total exactly 100.0000%.";
 
 export function isPackBuilderEdgeInRange(edge: number): boolean {

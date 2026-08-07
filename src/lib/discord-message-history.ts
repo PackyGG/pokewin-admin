@@ -5,13 +5,13 @@ import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { logError } from "@/lib/errors/logger";
 
-const CREATOR_MESSAGE_LOG_GUILD_ID = "1402743122789929022";
-const VIP_MESSAGE_LOG_GUILD_ID = "1505650386894327919";
-const MESSAGE_LOG_GUILD_IDS = new Set([
+export const CREATOR_MESSAGE_LOG_GUILD_ID = "1402743122789929022";
+export const VIP_MESSAGE_LOG_GUILD_ID = "1505650386894327919";
+export const MESSAGE_LOG_GUILD_IDS = new Set([
   CREATOR_MESSAGE_LOG_GUILD_ID,
   VIP_MESSAGE_LOG_GUILD_ID,
 ]);
-type DiscordMessageAttachment = {
+export type DiscordMessageAttachment = {
   id: string;
   name: string;
   url: string;
@@ -41,12 +41,12 @@ export type DiscordMessageEventInput = {
   };
 };
 
-type DiscordMessageState = {
+export type DiscordMessageState = {
   content: string | null;
   attachments: DiscordMessageAttachment[];
 };
 
-type DiscordMessageEventRecord = {
+export type DiscordMessageEventRecord = {
   eventId: string;
   eventType: "create" | "update" | "delete";
   messageId: string;

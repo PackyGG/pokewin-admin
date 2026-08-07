@@ -64,7 +64,7 @@ export type SessionsData = {
  * retries once; any other failure degrades to an empty map with `degraded`
  * flagged so the caller can still render the sessions (just without VOD URLs).
  */
-async function readSessionMetaByIds(sessionIds: string[]): Promise<{
+export async function readSessionMetaByIds(sessionIds: string[]): Promise<{
   byId: Map<string, { kickVodUrl: string | null; notes: string | null }>;
   degraded: boolean;
 }> {

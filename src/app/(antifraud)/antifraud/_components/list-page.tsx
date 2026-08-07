@@ -32,7 +32,7 @@ export function parsePageParam(raw: string | undefined, max = 10_000): number {
  * selection resets pagination to page 1. Page-specific fields (search,
  * includeKycRequired, …) are carried through untouched.
  */
-function mergeFilterSelection<
+export function mergeFilterSelection<
   S extends {
     page: number;
     status?: string;
@@ -109,9 +109,9 @@ export function FilterButton({
   );
 }
 
-type ListVerdict = "good" | "review" | "bad";
+export type ListVerdict = "good" | "review" | "bad";
 
-function verdictStyle(verdict: ListVerdict): {
+export function verdictStyle(verdict: ListVerdict): {
   icon: typeof ShieldCheck;
   text: string;
   box: string;
@@ -138,7 +138,7 @@ function verdictStyle(verdict: ListVerdict): {
 }
 
 /** Inline label/value fact used inside assessment row footers. */
-function Fact({
+export function Fact({
   label,
   value,
   alert = false,
@@ -163,7 +163,7 @@ function Fact({
 }
 
 /** Boxed label/value fact for grid layouts. */
-function FactCell({
+export function FactCell({
   label,
   value,
   alert = false,
@@ -252,7 +252,7 @@ export function ListPagination({
   );
 }
 
-function ListPageSkeleton({
+export function ListPageSkeleton({
   tiles = 4,
   tileGridClassName = "grid gap-3 sm:grid-cols-2 xl:grid-cols-4",
   tileClassName = "h-24 rounded-xl",

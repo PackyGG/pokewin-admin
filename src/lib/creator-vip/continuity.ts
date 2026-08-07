@@ -37,7 +37,7 @@ export function rewardProgramsCanContinue(
     && sameNullableNumber(stored.maxRewardPerUserUsd, next.maxRewardPerUserUsd);
 }
 
-function isExactRewardBoundary(priorEndsAt: Date | string, nextStartsAt: Date | string): boolean {
+export function isExactRewardBoundary(priorEndsAt: Date | string, nextStartsAt: Date | string): boolean {
   const prior = new Date(priorEndsAt).getTime();
   const next = new Date(nextStartsAt).getTime();
   return Number.isFinite(prior) && prior === next;

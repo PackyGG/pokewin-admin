@@ -151,7 +151,7 @@ export function SkeletonCard({
  * border, icon + label row, hero value line). Render several in a grid, or use
  * `<SkeletonKpiStrip>` for a ready-made responsive row.
  */
-function SkeletonKpiTile({ className }: { className?: string }) {
+export function SkeletonKpiTile({ className }: { className?: string }) {
   return (
     <div
       className={cn(

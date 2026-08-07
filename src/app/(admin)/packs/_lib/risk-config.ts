@@ -47,28 +47,28 @@ import {
 
 // Re-export the pure auto-target API (single source of truth in ./auto-targets).
 export {
-  
+  TARGET_PACK_EDGE,
   DEFAULT_MAX_MULT_CEILING,
-  
-  
+  DEFAULT_TARGET_WIN_RATE,
+  DEFAULT_NEAR_MISS_MIN,
   TAGGED_NEAR_MISS_MIN,
-  
+  TAG_CAP_HEADROOM,
   DEFAULT_EDGE_FLOOR,
   DEFAULT_EDGE_CEILING,
   DEFAULT_EDGE_CURVE,
-  
+  autoMaxWinCap,
   autoRetuneTargets,
   autoTargetEdge,
-  
-  
+  hitRateFromTags,
+  parsePackHitRate,
   resolveIntendedHitRate,
-  
+  resolveIntendedHitRateDetailed,
   SELECTABLE_TAG_HIT_RATES,
   TAGGED_WRITE_WINRATE_TOLERANCE,
   type ResolvedAutoTargetCfg,
-  
+  type AutoRetuneTargets,
   type EdgeCurveConfig,
-  
+  type ResolvedHitRateDetail,
 };
 
 /**
@@ -91,7 +91,7 @@ export const DEFAULT_MAX_WIN_CAP = 25000;
  * Below this near-miss probability a pack is flagged `zeroNearMiss` — it offers
  * essentially no "close but no win" outcomes, which dulls the play feel.
  */
-const ZERO_NEAR_MISS_FLOOR = 0.005;
+export const ZERO_NEAR_MISS_FLOOR = 0.005;
 
 /**
  * Near-miss coverage threshold for the overview "nearMissCoverage" KPI: a pack
@@ -209,7 +209,7 @@ export type PackSystemConfig = {
 };
 
 /** ADMIN-DB settings key holding the pack-system config JSON blob. */
-const PACK_SYSTEM_CONFIG_KEY = "pack_system_config";
+export const PACK_SYSTEM_CONFIG_KEY = "pack_system_config";
 
 /**
  * Read + parse `admin_settings.pack_system_config`. Returns `null` if the key is

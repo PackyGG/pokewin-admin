@@ -33,7 +33,7 @@ import {
  */
 
 /** The action a snapshot was captured before. */
-type PackSnapshotAction =
+export type PackSnapshotAction =
   | "edit"
   | "reprice"
   | "retune"

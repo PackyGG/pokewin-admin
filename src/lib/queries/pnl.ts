@@ -1190,7 +1190,7 @@ export async function getDailyPnl(): Promise<DailyPnlPoint[]> {
 // discount surface is elsewhere. battlePayout = inventory(battle) +
 // |battle_excess_to_voucher| + |battle_refund|, matching getGamingLegs.
 
-type PackBattlePnlRow = {
+export type PackBattlePnlRow = {
   // Wager + payout per game type. Wager comes from the ledger
   // (user's actual cash stake — the borrowed portion is NOT
   // included). Payouts come from user_inventory (the net value the

@@ -3,7 +3,7 @@ export const DISCORD_BOUNDARY_MARKERS = {
   bottom: "1532206977286017154",
 } as const;
 
-const APPROVED_DISCORD_CATEGORIES = {
+export const APPROVED_DISCORD_CATEGORIES = {
   accounts: "1532207307683795026",
   transactions: "1532207461077876766",
   kyc: "1532297417339174922",
@@ -30,7 +30,7 @@ export function isSilentDiscordCategory(categoryId: string | null): boolean {
   );
 }
 
-const PLANNED_DISCORD_CHANNELS = {
+export const PLANNED_DISCORD_CHANNELS = {
   accounts: [
     "banned-accounts",
     "locked-accounts",
@@ -111,7 +111,7 @@ export function isDiscordMentionGroup(
 }
 
 /** Resolves group keys to a deduplicated, order-stable Discord user id list. */
-function discordMentionIds(
+export function discordMentionIds(
   groupKeys: readonly string[],
 ): readonly string[] {
   const ids = new Set<string>();
@@ -129,7 +129,7 @@ export const REVIEW_REMINDER_DELAYS_MS = {
   sumsubReady: 0,
 } as const;
 
-type AntifraudErrorRoute =
+export type AntifraudErrorRoute =
   | "third-party-api"
   | "discord-command-errors"
   | "general"
@@ -139,7 +139,7 @@ type AntifraudErrorRoute =
   | "timeout"
   | "webapp-errors";
 
-function antifraudErrorRoute(input: {
+export function antifraudErrorRoute(input: {
   source:
     | "provider"
     | "discord"
@@ -156,7 +156,7 @@ function antifraudErrorRoute(input: {
   if (input.source === "failed_action") return "fail";
   return input.source;
 }
-function isApprovedDiscordCategory(categoryId: string | null): boolean {
+export function isApprovedDiscordCategory(categoryId: string | null): boolean {
   return (
     categoryId !== null &&
     (APPROVED_DISCORD_CATEGORY_IDS as readonly string[]).includes(categoryId)

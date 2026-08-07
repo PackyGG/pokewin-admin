@@ -28,7 +28,7 @@ import {
 const COUNTRY_LIMIT = 12;
 const SOURCE_LIMIT = 10;
 
-type GeoSourceRow = {
+export type GeoSourceRow = {
   /** ISO-2 code or "??" for unknown. */
   key: string;
   label: string;

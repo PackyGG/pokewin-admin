@@ -25,7 +25,7 @@ const ERROR_EVENT_KEYS = {
 } as const;
 
 /** Keep every operational error on one of the four live error routes. */
-function canonicalDiscordEventKey(value: string): string {
+export function canonicalDiscordEventKey(value: string): string {
   const normalized = eventKey(value);
   if (Object.values(ERROR_EVENT_KEYS).includes(
     normalized as (typeof ERROR_EVENT_KEYS)[keyof typeof ERROR_EVENT_KEYS],

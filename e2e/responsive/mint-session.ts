@@ -101,7 +101,7 @@ async function readActiveAdmin(): Promise<MintedSession["admin"]> {
  * produces, for the given admin identity. The payload's `expiresAt` is a
  * Date 12h in the future so `src/middleware.ts` accepts it.
  */
-async function signSessionCookie(
+export async function signSessionCookie(
   admin: MintedSession["admin"],
 ): Promise<string> {
   const secret = process.env.SESSION_SECRET;
@@ -135,7 +135,7 @@ async function signSessionCookie(
 /**
  * One-call convenience: read an active admin (read-only) + sign the cookie.
  */
-async function mintAdminSession(): Promise<MintedSession> {
+export async function mintAdminSession(): Promise<MintedSession> {
   const admin = await readActiveAdmin();
   const cookieValue = await signSessionCookie(admin);
   return { cookieValue, admin };
@@ -148,7 +148,7 @@ async function mintAdminSession(): Promise<MintedSession> {
  * Returns null if the table is empty (the caller skips the detail route and
  * logs a warning rather than failing the whole sweep).
  */
-async function readSampleUserId(): Promise<string | null> {
+export async function readSampleUserId(): Promise<string | null> {
   const url = process.env.DATABASE_URL;
   if (!url) {
     throw new Error(
@@ -213,7 +213,7 @@ export async function mintCreatorHubSession(): Promise<MintedSession> {
 }
 
 /** Pick one house ad code for Hub ads detail (null → skip). Read-only. */
-async function readSampleAdCode(): Promise<string | null> {
+export async function readSampleAdCode(): Promise<string | null> {
   const adminUrl = process.env.ADMIN_DATABASE_URL;
   const mainUrl = process.env.DATABASE_URL;
   if (!adminUrl || !mainUrl) return null;

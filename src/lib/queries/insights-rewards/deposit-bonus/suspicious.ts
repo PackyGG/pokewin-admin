@@ -40,7 +40,7 @@ import {
 
 const TOP_LIMIT = 25;
 
-type SuspiciousWithdrew = {
+export type SuspiciousWithdrew = {
   userId: string;
   username: string | null;
   bonusInWindow: number;
@@ -51,7 +51,7 @@ type SuspiciousWithdrew = {
   withdrewAt: string;
 };
 
-type SuspiciousNoWager = {
+export type SuspiciousNoWager = {
   userId: string;
   username: string | null;
   bonusInWindow: number;
@@ -61,7 +61,7 @@ type SuspiciousNoWager = {
   lastBonusAt: string;
 };
 
-type SuspiciousSharedFingerprint = {
+export type SuspiciousSharedFingerprint = {
   visitorId: string;
   userCount: number;
   /** Up to 5 sample user ids in the group, for the popover. */

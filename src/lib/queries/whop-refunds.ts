@@ -75,7 +75,7 @@ export type RefundBatchItemSummary = {
   completedAt: string | null;
 };
 
-type WhopRefundState =
+export type WhopRefundState =
   | "pending"
   | "processing"
   | "succeeded"
@@ -165,7 +165,7 @@ async function existingRefundPayments(
   return new Set(rows.rows.map((row) => row.provider_payment_id));
 }
 
-async function getWhopRefundStates(
+export async function getWhopRefundStates(
   paymentIds: readonly string[],
 ): Promise<Map<string, WhopRefundState>> {
   const uniqueIds = [...new Set(paymentIds.filter(Boolean))];

@@ -48,7 +48,7 @@ import {
 // Re-export the server-safe tone vocabulary so existing importers of this
 // module keep working. The tokens are DEFINED in `./tones` (a directive-
 // free module) so the server page reads the real object — see that file.
-export {  type SemanticTone,  };
+export { SEMANTIC_TONES, type SemanticTone, type ToneTokens };
 
 // ─── MetricInfoPopover ────────────────────────────────────────────
 
@@ -224,7 +224,7 @@ export function InfoTotal({
  * Used in the story lead to make the few key figures pop inline without
  * relying on raw coloured text alone.
  */
-function ValueChip({
+export function ValueChip({
   tone = "muted",
   children,
   className,

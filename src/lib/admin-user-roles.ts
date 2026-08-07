@@ -130,7 +130,7 @@ export async function readAdminUserWithOverrides<
  * Same semantics as {@link readAdminUserWithRoles} but for arrays — each
  * fallback row is augmented with `roles: []`.
  */
-async function readAdminUsersWithRoles<
+export async function readAdminUsersWithRoles<
   TWith,
   TWithout extends object,
 >(
@@ -196,7 +196,7 @@ export async function readAdminUsersWithOverrides<
  * non-missing-column error is re-thrown unchanged so real failures
  * (unique-violation, connection issues) are not masked.
  */
-async function writeAdminUserWithRoles<T>(
+export async function writeAdminUserWithRoles<T>(
   withRoles: () => Promise<T>,
   withoutRoles: () => Promise<T>,
 ): Promise<T> {

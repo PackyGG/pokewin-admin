@@ -25,7 +25,7 @@
 export const TZ_COOKIE = "admin_tz";
 
 /** One year, in seconds — the cookie Max-Age. */
-const TZ_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
+export const TZ_COOKIE_MAX_AGE = 60 * 60 * 24 * 365;
 
 /**
  * The `document.cookie` write string for a detected zone. Centralised here

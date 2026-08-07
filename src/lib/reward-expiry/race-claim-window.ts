@@ -7,7 +7,7 @@
 
 const MS_PER_DAY = 86_400_000;
 
-type RaceClaimWindowStatus =
+export type RaceClaimWindowStatus =
   | "unavailable"
   | "never_expires"
   | "period_active"

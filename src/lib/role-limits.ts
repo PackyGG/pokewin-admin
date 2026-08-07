@@ -41,10 +41,14 @@ import {
 // `@/lib/role-limits` for both the DB resolvers and the pure helpers. The
 // pure math itself lives in `role-limits-merge.ts` (dependency-free → loads in
 // the no-DB unit test).
-;
+export {
+  mergeRoleBalanceLimits,
+  resolveEffectiveCap,
+  EMPTY_ROLE_BALANCE_LIMIT_DEFAULTS,
+} from "@/lib/role-limits-merge";
 export type {
   RoleBalanceLimitDefaults,
-  
+  RoleBalanceLimitRow,
 } from "@/lib/role-limits-merge";
 
 /**

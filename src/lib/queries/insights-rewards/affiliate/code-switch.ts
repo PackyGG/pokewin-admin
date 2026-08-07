@@ -180,4 +180,4 @@ export async function getAffiliateCodeSwitch(
     : cachedShort(period, blacklist);
 }
 
-const AFFILIATE_CODE_SWITCH_MIN_COHORT = COHORT_MIN_USERS;
+export const AFFILIATE_CODE_SWITCH_MIN_COHORT = COHORT_MIN_USERS;

@@ -13,7 +13,6 @@
  */
 
 import type { AdminRole } from "@/lib/admin-roles";
-import type { BaselineMap } from "@/lib/role-baselines";
 
 /**
  * A single permission token. Tokens live in the same flat vocabulary the
@@ -30,6 +29,9 @@ import type { BaselineMap } from "@/lib/role-baselines";
  * `src/app/(admin)/settings/roles/permissions-utils.ts`.
  */
 export type PermissionToken = string;
+
+/** Optional DB-backed overrides for code-defined built-in role baselines. */
+export type BaselineMap = Partial<Record<AdminRole, PermissionToken[]>>;
 
 /**
  * A code-defined, LOCKED baseline for one built-in system role. The owner
@@ -104,7 +106,7 @@ export const EMPTY_ROLE_LIMITS: RoleLimits = {
  * set (page routes ∪ `__can_*` flags ∪ value tokens) byte-equal to a built-in
  * row's `ROLE_BASELINES[systemKey].tokens` at migration.
  */
-type RoleDefinition = {
+export type RoleDefinition = {
   id: string;
   name: string;
   description: string | null;

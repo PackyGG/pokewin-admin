@@ -24,7 +24,7 @@ import {
 } from "./abuser-tag-toggles";
 import type { InventoryItem } from "./user-tabs-types";
 
-const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
+export const INVENTORY_DELETE_MIN_REASON_CHARS = 20;
 
 export function InventoryItemDeleteDialog({
   userId,

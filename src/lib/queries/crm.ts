@@ -17,13 +17,13 @@ import { bucketCrmSnapshot, type CrmAggregateRow, type CrmSnapshot } from "./crm
 // `@/lib/queries/crm` consumers (the /crm page) keep their import path.
 export type {
   LifecycleKey,
-  
+  LevelBandKey,
   CrmSegmentRow,
   CrmPlayerRow,
   CrmSnapshot,
-  
+  CrmAggregateRow,
 } from "./crm-types";
-;
+export { bucketCrmSnapshot } from "./crm-types";
 
 /**
  * Player CRM / segmentation snapshot for the Overview → Player CRM page.

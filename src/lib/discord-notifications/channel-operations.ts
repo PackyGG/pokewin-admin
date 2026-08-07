@@ -42,7 +42,7 @@ function guildId(value?: string): string {
   return snowflake(value ?? process.env.ADMIN_GUILD_ID ?? "", "guildId");
 }
 
-function normalizeDiscordChannelName(value: string): string {
+export function normalizeDiscordChannelName(value: string): string {
   const normalized = value
     .trim()
     .toLowerCase()

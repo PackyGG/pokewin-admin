@@ -332,7 +332,7 @@ export async function forceEndCreatorSession(
 // Creator socials (review queue)
 // ---------------------------------------------------------------------------
 
-async function listCreatorSocialQueue(
+export async function listCreatorSocialQueue(
   options: {
     status?: "pending" | "approved" | "rejected";
     offset?: number;

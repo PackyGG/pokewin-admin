@@ -46,7 +46,7 @@ const STORAGE_KEY = "pack-studio.retune.staged.v1";
  * `null` = unknown — a legacy persisted bare array, treated as drifted on
  * rehydrate because it can't be verified).
  */
-type PendingEntry = {
+export type PendingEntry = {
   baseFingerprint: string | null;
   edits: RetunePinnedOdds[];
 };

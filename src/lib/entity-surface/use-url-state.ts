@@ -147,7 +147,7 @@ export function useDebouncedSearch({
 
 // ─── useUrlFilters ──────────────────────────────────────────────────────────
 
-type ActiveFilter = {
+export type ActiveFilter = {
   /** The param key this filter writes. */
   key: string;
   /** The raw param value. */
@@ -300,7 +300,7 @@ export function useUrlSort({
  * anything else; changing `perPage` snaps back to page 1 (the offset no longer
  * lines up). Bounded by `totalPages` so the caller can disable nav buttons.
  */
-function useUrlPagination({
+export function useUrlPagination({
   pageKey = "page",
   perPageKey = "perPage",
 }: {

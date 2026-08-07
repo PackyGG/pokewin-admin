@@ -36,12 +36,12 @@ export function isAddress(value: string): boolean {
 }
 
 /** Build a mainnet Etherscan URL for an address. */
-function etherscanAddressUrl(address: string): string {
+export function etherscanAddressUrl(address: string): string {
   return `https://etherscan.io/address/${address}`;
 }
 
 /** Build a mainnet Etherscan URL for a transaction hash. */
-function etherscanTxUrl(txHash: string): string {
+export function etherscanTxUrl(txHash: string): string {
   return `https://etherscan.io/tx/${txHash}`;
 }
 

@@ -29,7 +29,7 @@ export type MultiplierDealStatus =
  * the backend's MultiplierFlagCode enum; manually-flagged reasons get a
  * `MANUAL:` prefix on the code so UI can distinguish auto vs human flags.
  */
-type MultiplierFlagEntry = {
+export type MultiplierFlagEntry = {
   code: string;
   detail: Record<string, unknown>;
   at: string;

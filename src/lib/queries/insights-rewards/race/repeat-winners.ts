@@ -23,7 +23,7 @@ import {
  * prize per race. Staff + blacklist excluded.
  */
 
-type RaceRepeatWinner = {
+export type RaceRepeatWinner = {
   userId: string;
   username: string | null;
   raceCount: number;
@@ -31,7 +31,7 @@ type RaceRepeatWinner = {
   avgPrize: number;
 };
 
-type RaceRepeatFrequencyBucket = {
+export type RaceRepeatFrequencyBucket = {
   label: string;
   userCount: number;
   totalPrize: number;

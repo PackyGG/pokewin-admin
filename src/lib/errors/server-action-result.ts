@@ -125,7 +125,7 @@ export function fail(error: string, code?: string): ServerActionResult<never> {
  * `fail`. If the action has paths that must still throw (e.g.
  * `redirect()` / `notFound()`), call those OUTSIDE the wrap.
  */
-async function tryServerAction<T>(
+export async function tryServerAction<T>(
   fn: () => Promise<T>,
   area: string,
   fallbackMessage = "Something went wrong — please try again.",

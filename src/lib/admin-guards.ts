@@ -169,13 +169,13 @@ export function isSessionRevoked(
  * settings UI) to disable it with no deploy. Fail-safe direction is debatable,
  * but ON-by-default here is the owner's explicit choice.
  */
-const MANDATORY_2FA_SETTING_KEY = "mandatory_2fa_enabled";
+export const MANDATORY_2FA_SETTING_KEY = "mandatory_2fa_enabled";
 
 /**
  * PURE: interpret a raw admin_settings value into the enforcement flag.
  * Default ON: only an explicit "false" disables it.
  */
-function mandatory2faEnabledFromValue(value: string | null): boolean {
+export function mandatory2faEnabledFromValue(value: string | null): boolean {
   if (value === null) return true; // unset → default ON
   return value.trim().toLowerCase() !== "false";
 }

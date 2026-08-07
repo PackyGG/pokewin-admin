@@ -34,7 +34,7 @@ import { isPostgresError } from "@/lib/postgres-errors";
 // layer on top, never a parallel enforcement path.
 // ---------------------------------------------------------------------------
 
-type RoleRow = {
+export type RoleRow = {
   id: string;
   name: string;
   description: string | null;
@@ -75,7 +75,7 @@ function isUniqueViolation(err: unknown): boolean {
 // Reads
 // ---------------------------------------------------------------------------
 
-async function listRoles(): Promise<RoleRow[]> {
+export async function listRoles(): Promise<RoleRow[]> {
   await requireAdmin();
   const roles = (await adminDrizzle.execute<{
     id: string; name: string; description: string | null; capabilities: string[];
@@ -120,7 +120,7 @@ export async function listAssignablePresets(): Promise<
   return rows.map((r) => ({ id: r.id, name: r.name }));
 }
 
-async function getRole(id: string): Promise<RoleRow | null> {
+export async function getRole(id: string): Promise<RoleRow | null> {
   await requireAdmin();
   const r = (await adminDrizzle.execute<{
     id: string; name: string; description: string | null; capabilities: string[];

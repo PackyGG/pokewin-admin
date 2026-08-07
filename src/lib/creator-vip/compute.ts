@@ -30,7 +30,9 @@ import {
   BASIS_HOLDING_STATUSES,
   type CreatorRewardEntitlement,
   type CreatorRewardType,
+  type ProgramForCompute,
 } from "./types";
+export type { ProgramForCompute } from "./types";
 import {
   batchLossbackHeldClaims,
   computeFtdLossback,
@@ -105,27 +107,6 @@ function utcNaive(d: Date): string {
 /** Money in whole cents — all unit math is integer to avoid float drift. */
 const toCents = (usd: number): number => Math.round(usd * 100);
 const fromCents = (cents: number): number => cents / 100;
-
-export type ProgramForCompute = {
-  id: string;
-  name: string;
-  creator_user_id: string;
-  codes: string[];
-  threshold_usd: unknown;
-  reward_usd: unknown;
-  vip_reward_usd: unknown;
-  lossback_pct: unknown;
-  min_deposit_usd: unknown;
-  is_active: boolean;
-  accrual_start_at: Date;
-  ends_at: Date | null;
-  max_reward_per_user_usd: unknown;
-  /**
-   * Live intervals, pre-loaded by the caller when available. Absent means
-   * "not fetched" (it is looked up), NOT "never live".
-   */
-  windows?: { started_at: Date; ended_at: Date | null }[];
-};
 
 /**
  * Does this player hold the `vip` tag RIGHT NOW?
@@ -289,7 +270,7 @@ function windowBounds(
   return { starts, ends };
 }
 
-type WagerPosition = {
+export type WagerPosition = {
   runStart: Date;
   currentUsd: number;
   lifetimeUsd: number;
@@ -973,7 +954,7 @@ export type UserFacts = {
   deposits: { amountUsd: number; at: Date }[];
 };
 
-async function loadUserFacts(userId: string): Promise<UserFacts> {
+export async function loadUserFacts(userId: string): Promise<UserFacts> {
   const [standing, vip, holdings, deposits] = await Promise.all([
     userStanding(userId),
     isVipNow(userId),
@@ -1170,7 +1151,7 @@ export type EntitlementBatch = {
  * wager positions have resolved the run starts, which is the same dependency
  * the per-program path has.
  */
-async function loadEntitlementBatch(
+export async function loadEntitlementBatch(
   programs: ProgramForCompute[],
   userId: string,
 ): Promise<EntitlementBatch> {

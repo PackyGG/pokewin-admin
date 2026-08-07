@@ -1,0 +1,28 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "scripts/**/*.{mjs,ts}",
+    "e2e/**/*.ts",
+    "src/**/__checks__/run.ts",
+    "src/**/*.test.{ts,tsx}"
+  ],
+  "project": [
+    "src/**/*.{ts,tsx}",
+    "scripts/**/*.{mjs,ts}",
+    "e2e/**/*.ts",
+    "*.{ts,mjs}"
+  ],
+  "ignore": [
+    "src/lib/db-schema/**",
+    "src/app/responsive-fixture/**"
+  ],
+  "ignoreDependencies": [
+    "server-only",
+    "geojson",
+    "topojson-specification",
+    "shadcn",
+    "tailwindcss",
+    "tw-animate-css",
+    "eslint-config-next"
+  ]
+}

@@ -70,7 +70,7 @@ export type StaffNotificationKind = keyof typeof STAFF_NOTIFICATION_KINDS;
 
 const MANUAL_ANNOUNCEMENT_KIND: StaffNotificationKind = "announcement";
 
-const STAFF_NOTIFICATION_KIND_LIST = Object.keys(
+export const STAFF_NOTIFICATION_KIND_LIST = Object.keys(
   STAFF_NOTIFICATION_KINDS,
 ) as StaffNotificationKind[];
 
@@ -88,7 +88,7 @@ export function isStaffNotificationKind(
  * SQL — every read degrades to empty and every write to a no-op rather than
  * 500ing a page that merely renders a bell.
  */
-function isMissingRelationError(err: unknown): boolean {
+export function isMissingRelationError(err: unknown): boolean {
   if (isPostgresError(err, "42P01", "42703")) return true;
   const message = postgresErrorMessages(err);
   return (

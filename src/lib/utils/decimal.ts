@@ -8,6 +8,6 @@ export function toNumber(value: unknown): number {
   return Number.isNaN(n) ? 0 : n;
 }
 
-function toFixed(value: unknown, decimals = 2): string {
+export function toFixed(value: unknown, decimals = 2): string {
   return toNumber(value).toFixed(decimals);
 }

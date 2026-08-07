@@ -122,7 +122,7 @@ export function isRowRestricted(
 }
 
 /** Count of individually-active restrictions, shown in the per-row summary badge. */
-function countActiveRestrictions(
+export function countActiveRestrictions(
   row: RestrictionRowData,
   ignoreFiatLock = false,
 ): number {
@@ -139,7 +139,7 @@ function countActiveRestrictions(
 
 // Exact values stored in country_restrictions and consumed by the backend's
 // deposit-address and withdrawal asset maps.
-const CRYPTO_OPTIONS = [
+export const CRYPTO_OPTIONS = [
   { value: "bitcoin", label: "Bitcoin (BTC)" },
   { value: "ethereum", label: "Ethereum (ETH)" },
   { value: "litecoin", label: "Litecoin (LTC)" },
@@ -155,7 +155,7 @@ const CRYPTO_OPTIONS = [
 
 // One switch owns the complete Whop checkout. The backend security gate uses
 // `credit_card`; the companion tokens keep the frontend wallet choices aligned.
-const FIAT_LOCK_VALUE = [...WHOP_FIAT_DEPOSIT_LOCK_TOKENS];
+export const FIAT_LOCK_VALUE = [...WHOP_FIAT_DEPOSIT_LOCK_TOKENS];
 
 const RESTRICTED_BADGE = "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30";
 const OPEN_BADGE = "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border-emerald-500/30";

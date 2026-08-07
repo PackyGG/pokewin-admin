@@ -12,7 +12,7 @@ import {
   type RaceClaimWindow,
 } from "@/lib/reward-expiry/race-claim-window";
 
-type RacePrizeTier = {
+export type RacePrizeTier = {
   id: string;
   raceType: string;
   position: number;
@@ -47,7 +47,7 @@ export type RaceClaimItem = {
   claimedAt: string;
 };
 
-type RaceClaimHoldInfo = {
+export type RaceClaimHoldInfo = {
   id: string;
   reason: string;
   createdBy: string;
@@ -456,7 +456,7 @@ export async function getRaceLeaderboard(params: {
  * the caller falls back to its empty result (this never fabricates standings
  * for an ended period that simply has no snapshots).
  */
-async function getLiveRaceLeaderboard(params: {
+export async function getLiveRaceLeaderboard(params: {
   raceType: string;
   periodStart: string;
   search?: string;

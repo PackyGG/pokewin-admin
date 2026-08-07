@@ -101,7 +101,7 @@ export function sanitizeProgramName(input: string): string {
  * whitespace tidying. Lets the create dialog warn up front instead of
  * silently rewriting their input after they hit save.
  */
-function needsSanitizing(input: string): boolean {
+export function needsSanitizing(input: string): boolean {
   const whitespaceOnly = input.replace(/\s+/g, " ").trim();
   return sanitizeProgramName(input) !== whitespaceOnly;
 }

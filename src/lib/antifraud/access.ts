@@ -41,7 +41,7 @@ import { isOwner } from "@/lib/owners";
  * gate (fail-closed). `admin` is NOT here: admins are in unconditionally (like
  * Pack Studio), so there is nothing to toggle.
  */
-const ANTIFRAUD_TOGGLE_ROLES = [
+export const ANTIFRAUD_TOGGLE_ROLES = [
   "support",
   "marketing",
   "creator_manager",
@@ -57,7 +57,7 @@ export type AntifraudToggleRole = (typeof ANTIFRAUD_TOGGLE_ROLES)[number];
 export type AntifraudAccessSettings = Record<AntifraudToggleRole, boolean>;
 
 /** The `admin_settings` key that stores a given role's toggle. */
-function antifraudToggleKey(role: AntifraudToggleRole): string {
+export function antifraudToggleKey(role: AntifraudToggleRole): string {
   return "antifraud_access_" + role + "_enabled";
 }
 
@@ -68,8 +68,8 @@ function parseBool(value: string | null): boolean {
 
 // Declared here (rather than in the allow/deny section below) so the shared
 // batched reader can name every key it fetches before its first use.
-const ANTIFRAUD_USER_ALLOWLIST_KEY = "antifraud_user_allowlist";
-const ANTIFRAUD_USER_DENYLIST_KEY = "antifraud_user_denylist";
+export const ANTIFRAUD_USER_ALLOWLIST_KEY = "antifraud_user_allowlist";
+export const ANTIFRAUD_USER_DENYLIST_KEY = "antifraud_user_denylist";
 
 /** Every `admin_settings` key the Antifraud gate consults, in one list. */
 const ANTIFRAUD_GATE_SETTING_KEYS: readonly string[] = [
@@ -118,7 +118,7 @@ export const getAntifraudAccessSettings = cache(
 );
 
 /** Persist one per-role toggle, stamping `updated_by` with the acting admin. */
-async function setAntifraudAccessSetting(
+export async function setAntifraudAccessSetting(
   role: AntifraudToggleRole,
   enabled: boolean,
   adminUserId: string,
@@ -187,7 +187,7 @@ export const getAntifraudUserAccess = cache(
 );
 
 /** Persist one per-username override list. */
-async function setAntifraudUserList(
+export async function setAntifraudUserList(
   list: "allowlist" | "denylist",
   usernames: readonly string[],
   adminUserId: string,

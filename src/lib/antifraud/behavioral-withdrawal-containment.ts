@@ -10,7 +10,7 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
  * with `containmentRequired: true`. Never mutates KYC.
  */
 
-const BEHAVIORAL_CONTAINMENT_REASONS = new Set([
+export const BEHAVIORAL_CONTAINMENT_REASONS = new Set([
   "cluster.fingerprint_third_account",
   "cluster.exact_ip_third_account",
   "promotion.third_redemption",

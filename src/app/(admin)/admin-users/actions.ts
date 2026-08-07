@@ -406,7 +406,7 @@ export async function setAdminRoles(
  * passing one role keeps working. Delegates to setAdminRoles with a
  * one-element set.
  */
-async function changeAdminRole(adminUserId: string, newRole: string, totpCode: string) {
+export async function changeAdminRole(adminUserId: string, newRole: string, totpCode: string) {
   return setAdminRoles(adminUserId, [newRole], totpCode);
 }
 

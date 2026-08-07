@@ -12,6 +12,13 @@ import { toNumber } from "@/lib/utils/decimal";
 import type { PaginatedResult } from "@/lib/types";
 import { MS_PER_DAY } from "@/lib/utils/time";
 import { getPackSetAssignmentsGrouped } from "@/lib/queries/pack-set-assignments";
+import type { PackSetFilter } from "@/lib/queries/pack-set";
+
+export {
+  PACK_POOLS,
+  parsePackSet,
+  type PackSetFilter,
+} from "@/lib/queries/pack-set";
 
 type PackTag = "pct1" | "pct5" | "pct10" | "fifty50" | "onepiece";
 
@@ -79,7 +86,7 @@ function buildPackCategoryWhere(
   }
 }
 
-type PackListCard = {
+export type PackListCard = {
   id: string;
   name: string;
   imageUrl: string | null;
@@ -118,16 +125,6 @@ export type PackListItem = {
  * src/lib/queries/pack-set-assignments.ts). A pack with no assignment defaults
  * to Pokemon until an admin sets its set explicitly.
  */
-export const PACK_POOLS = ["pokemon", "onepiece", "rewards", "meme"] as const;
-export type PackSetFilter = (typeof PACK_POOLS)[number];
-
-/** Coerce a raw `?set=` value to a known pool, defaulting to Pokemon. */
-export function parsePackSet(value: string | undefined): PackSetFilter {
-  return (PACK_POOLS as readonly string[]).includes(value ?? "")
-    ? (value as PackSetFilter)
-    : "pokemon";
-}
-
 export async function getPacks(params: {
   page?: number;
   perPage?: number;
@@ -451,7 +448,7 @@ export async function getPacksListStats(
  * it never changes card odds. Hardcoded trusted literals (no user input) — safe
  * to interpolate into SQL.
  */
-const REPRICE_INCLUDED_PACK_TYPES = ["official"] as const;
+export const REPRICE_INCLUDED_PACK_TYPES = ["official"] as const;
 
 export type PackPoolComposition = {
   id: string;

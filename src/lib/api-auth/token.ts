@@ -81,6 +81,6 @@ export function safeEqualHex(a: string, b: string): boolean {
  * Display form for the admin UI — never reveals secret material (the secret
  * isn't recoverable anyway; this just keeps the table tidy).
  */
-function maskedKeyDisplay(prefix: string): string {
+export function maskedKeyDisplay(prefix: string): string {
   return `${prefix}${SEPARATOR}${"•".repeat(12)}`;
 }

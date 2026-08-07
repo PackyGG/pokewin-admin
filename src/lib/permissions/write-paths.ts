@@ -40,8 +40,8 @@ import type { PermissionStateCore } from "@/lib/permissions/override";
 
 // Re-export the pure override helpers so callers have one import surface.
 export {
-  
-  
+  baselineUnionFor,
+  deriveOverrideFromAllowedPages,
   effectiveOverrideFor,
   rematerializeForRoleChange,
   materializeForOverride,

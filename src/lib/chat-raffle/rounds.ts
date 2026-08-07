@@ -60,7 +60,7 @@ export function scoringToColumns(s: ChatRaffleScoring): RoundConfigColumns {
   };
 }
 
-type ChatRafflePrizeView = {
+export type ChatRafflePrizeView = {
   id: string;
   position: number;
   amountUsd: number;

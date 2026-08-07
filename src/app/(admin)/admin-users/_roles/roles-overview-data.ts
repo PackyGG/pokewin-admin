@@ -31,7 +31,7 @@ import {
 // ---------------------------------------------------------------------------
 
 /** A single token rendered in the read-only baseline inspector. */
-type BaselineToken = {
+export type BaselineToken = {
   token: string;
   label: string;
   /** "page" route, "capability" flag, or a "value" token (e.g. a limit). */
@@ -39,7 +39,7 @@ type BaselineToken = {
 };
 
 /** Baseline tokens grouped by their domain label, for the inspector. */
-type BaselineGroup = {
+export type BaselineGroup = {
   group: string;
   tokens: BaselineToken[];
 };
@@ -75,7 +75,7 @@ function describeToken(token: string): BaselineToken & { group: string } {
  * follows first appearance in ADMIN_PAGES then CAPABILITIES, so the inspector
  * reads in the same order as the rest of the admin.
  */
-function groupBaselineTokens(tokens: readonly string[]): BaselineGroup[] {
+export function groupBaselineTokens(tokens: readonly string[]): BaselineGroup[] {
   const described = tokens.map(describeToken);
   const order: string[] = [];
   const byGroup = new Map<string, BaselineToken[]>();

@@ -17,12 +17,15 @@ import type {
 // Re-export the client-safe shapes + pure helpers so call sites can pull
 // everything they need from one path.
 export type {
-  
-  
+  DraftSourcePoolCard,
+  DraftSourceSnapshot,
   PendingDraftRow,
-  
+  WeightChangeRow,
 } from "./pack-retune-drafts-shared";
-;
+export {
+  topWeightChanges,
+  draftHasChanges,
+} from "./pack-retune-drafts-shared";
 
 /**
  * READ-ONLY admin-DB loaders for the Pack Studio DRAFTS page. The list view

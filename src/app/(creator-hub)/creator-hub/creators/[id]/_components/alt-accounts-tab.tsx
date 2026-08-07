@@ -476,7 +476,7 @@ function DataGapNotice({ data }: { data: AltAccountsData }) {
 
 // ─── Skeleton ──────────────────────────────────────────────────────────────
 
-function AltAccountsSkeleton() {
+export function AltAccountsSkeleton() {
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">

@@ -1777,14 +1777,14 @@ export async function getUserIdsMatchingFilters(params: {
  * the CURRENT ban rules would refuse to touch — staff, creators, and
  * ex-creators. If a ban predates those rules, this is what surfaces it.
  */
-const BULK_UNBAN_ACCOUNT_TYPES = [
+export const BULK_UNBAN_ACCOUNT_TYPES = [
   "protected",
   "creator",
   "staff",
   "player",
 ] as const;
 
-type BulkUnbanAccountType = (typeof BULK_UNBAN_ACCOUNT_TYPES)[number];
+export type BulkUnbanAccountType = (typeof BULK_UNBAN_ACCOUNT_TYPES)[number];
 
 const BULK_UNBAN_ACCOUNT_TYPE_SET = new Set<string>(BULK_UNBAN_ACCOUNT_TYPES);
 

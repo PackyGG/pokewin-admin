@@ -18,7 +18,7 @@
  * `shards` destination — the shard system is no longer used on-site, so it's
  * neither listed nor editable here and the extra field is ignored.
  */
-const MULTIPLIER_WEIGHT_DESTINATIONS = [
+export const MULTIPLIER_WEIGHT_DESTINATIONS = [
   "withdrawal",
   "rakeback",
   "leaderboard",

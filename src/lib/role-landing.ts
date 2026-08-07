@@ -23,7 +23,7 @@ const VALID_LANDING_ROUTES: ReadonlySet<string> = new Set<string>([
 ]);
 
 /** True if `route` is a known admin page key usable as a landing target. */
-function isValidLandingRoute(route: string): boolean {
+export function isValidLandingRoute(route: string): boolean {
   return VALID_LANDING_ROUTES.has(route);
 }
 

@@ -117,5 +117,17 @@ export function AdminUserTabs({ detail, auditStats, auditEvents, balanceLimits, 
 }
 
 /* ── Re-exports for backward compatibility ── */
-;
-;
+export {
+  ProfileCard,
+  Row,
+  StatsCards,
+  BalanceLimitsCard,
+  LimitRow,
+  ManagementActions,
+  LinkMainUserCard,
+  PermissionsSection,
+  AuditEventsTable,
+  EventDetails,
+  Pagination,
+};
+export type { AdminAuditEventItem, BalanceLimit };

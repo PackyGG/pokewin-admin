@@ -147,7 +147,7 @@ export type LedgerTransactionType =
  * into wager (resolves the M3 reconciliation gap where the dashboard
  * wager tile excluded the fee but the GGR wager leg included it).
  */
-const WAGER_TYPES = [
+export const WAGER_TYPES = [
   "pack_opening",
   "battle_bet",
   "battle_sponsorship",
@@ -174,7 +174,7 @@ const WAGER_TYPES = [
  * surface adds fees to the wager side is then an explicit, single
  * decision at the call site — never an accident of the type list.
  */
-const FEE_TYPES = [
+export const FEE_TYPES = [
   "withdrawal_shipping_fee",
 ] as const satisfies readonly LedgerTransactionType[];
 
@@ -216,7 +216,7 @@ const FEE_TYPES = [
  *
  * `upgrader_payout` is NOT here by default — see UPGRADER section.
  */
-const GAMING_PAYOUT_TYPES = [
+export const GAMING_PAYOUT_TYPES = [
   "battle_refund",
   "battle_excess_to_voucher",
   // Keno's win credit — the cash leg written by createKenoPayout. Pairs with
@@ -266,7 +266,7 @@ const GAMING_PAYOUT_TYPES = [
  * type bucket here is NEUTRAL (the common case); only the manual slice is
  * lifted into reward cost at the query layer.
  */
-const NEUTRAL_TYPES = [
+export const NEUTRAL_TYPES = [
   "card_sale",
   "reward_card_sale",
   "card_exchange",
@@ -444,7 +444,7 @@ export const RESIDUAL_TYPES = [
  * correction (it would then double-count). Do NOT flip without the prod
  * count above returning > 0.
  */
-const UPGRADER_IN_LEDGER = false as const;
+export const UPGRADER_IN_LEDGER = false as const;
 
 /**
  * The two upgrader ledger members, kept as named constants so the
@@ -457,7 +457,7 @@ const UPGRADER_IN_LEDGER = false as const;
  * so they are neither lost (a gap) nor double-counted in wager/payout
  * (an overlap) while isolated.
  */
-const UPGRADER_LEDGER_TYPES = [
+export const UPGRADER_LEDGER_TYPES = [
   "upgrader_bet",
   "upgrader_payout",
 ] as const satisfies readonly LedgerTransactionType[];
@@ -469,12 +469,12 @@ const UPGRADER_LEDGER_TYPES = [
  * identical to the base sets, so importing them today is safe and
  * forward-compatible.
  */
-const WAGER_TYPES_WITH_UPGRADER: readonly LedgerTransactionType[] =
+export const WAGER_TYPES_WITH_UPGRADER: readonly LedgerTransactionType[] =
   UPGRADER_IN_LEDGER
     ? [...WAGER_TYPES, "upgrader_bet"]
     : [...WAGER_TYPES];
 
-const GAMING_PAYOUT_TYPES_WITH_UPGRADER: readonly LedgerTransactionType[] =
+export const GAMING_PAYOUT_TYPES_WITH_UPGRADER: readonly LedgerTransactionType[] =
   UPGRADER_IN_LEDGER
     ? [...GAMING_PAYOUT_TYPES, "upgrader_payout"]
     : [...GAMING_PAYOUT_TYPES];
@@ -503,11 +503,11 @@ export function ledgerTypesToSqlList(
 }
 
 export const WAGER_TYPES_SQL = ledgerTypesToSqlList(WAGER_TYPES);
-const FEE_TYPES_SQL = ledgerTypesToSqlList(FEE_TYPES);
+export const FEE_TYPES_SQL = ledgerTypesToSqlList(FEE_TYPES);
 export const GAMING_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(GAMING_PAYOUT_TYPES);
-const NEUTRAL_TYPES_SQL = ledgerTypesToSqlList(NEUTRAL_TYPES);
+export const NEUTRAL_TYPES_SQL = ledgerTypesToSqlList(NEUTRAL_TYPES);
 export const REWARD_PAYOUT_TYPES_SQL = ledgerTypesToSqlList(REWARD_PAYOUT_TYPES);
-const RESIDUAL_TYPES_SQL = ledgerTypesToSqlList(RESIDUAL_TYPES);
+export const RESIDUAL_TYPES_SQL = ledgerTypesToSqlList(RESIDUAL_TYPES);
 
 // ─── Partition map + runtime/compile-time exhaustiveness ─────────────
 
@@ -520,7 +520,7 @@ const RESIDUAL_TYPES_SQL = ledgerTypesToSqlList(RESIDUAL_TYPES);
  * UPGRADER_LEDGER_TYPES is its own bucket here so the partition is a true
  * disjoint cover of all 53 members while upgrader is isolated.
  */
-const LEDGER_SET_MEMBERS = {
+export const LEDGER_SET_MEMBERS = {
   WAGER: WAGER_TYPES,
   FEE: FEE_TYPES,
   GAMING_PAYOUT: GAMING_PAYOUT_TYPES,
@@ -530,7 +530,7 @@ const LEDGER_SET_MEMBERS = {
   UPGRADER: UPGRADER_LEDGER_TYPES,
 } as const;
 
-type LedgerSetName = keyof typeof LEDGER_SET_MEMBERS;
+export type LedgerSetName = keyof typeof LEDGER_SET_MEMBERS;
 
 /**
  * Build the reverse map (type → set name) once. Throws at module load if
@@ -560,7 +560,7 @@ const TYPE_TO_SET: Record<string, LedgerSetName> = (() => {
  * Which bucket a ledger type belongs to. Returns `null` for an unknown
  * string (defensive — callers should pass a `LedgerTransactionType`).
  */
-function classifyLedgerType(
+export function classifyLedgerType(
   type: string,
 ): LedgerSetName | null {
   return TYPE_TO_SET[type] ?? null;

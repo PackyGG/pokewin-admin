@@ -2,7 +2,7 @@
 
 import * as React from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import type { UserRow } from "./columns";
+import type { UserRow } from "./_lib/user-row";
 
 type Order = "asc" | "desc";
 type Ctx = {
@@ -34,7 +34,7 @@ const STATUS_RANK: Record<string, number> = {
  * slice and the displayed metric disagree (netHoldings / PnL toolbar
  * shortcuts).
  */
-const SERVER_RANKED_SORTS = new Set([
+export const SERVER_RANKED_SORTS = new Set([
   "pnl",
   "netHoldings",
   "totalWithdrawn",
@@ -67,7 +67,7 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   // matches).
 };
 
-function sortRowsLocally(
+export function sortRowsLocally(
   rows: UserRow[],
   sortBy: string,
   sortOrder: Order,

@@ -32,7 +32,7 @@ import { isNonActionableRewardEnrollmentSignal } from "@/lib/antifraud/signal-di
 export const MONITOR_STREAM_PATH = "/api/antifraud/monitor/stream";
 
 /** Pipe states our proxy reports (never the service itself). */
-type MonitorTransportState =
+export type MonitorTransportState =
   | "connecting"
   | "open"
   | "closed"
@@ -40,7 +40,7 @@ type MonitorTransportState =
   | "error";
 
 /** Every event type the monitor service publishes. */
-const MONITOR_EVENT_TYPES = [
+export const MONITOR_EVENT_TYPES = [
   "signup.assessed",
   "monitor.started",
   "monitor.event",
@@ -50,9 +50,9 @@ const MONITOR_EVENT_TYPES = [
   "rule.created",
   "rule.updated",
 ] as const;
-type MonitorEventType = (typeof MONITOR_EVENT_TYPES)[number];
+export type MonitorEventType = (typeof MONITOR_EVENT_TYPES)[number];
 
-type MonitorSeverity = "low" | "medium" | "high" | "critical";
+export type MonitorSeverity = "low" | "medium" | "high" | "critical";
 
 /** One normalised activity frame, ready to render. */
 export type MonitorActivityEvent = {

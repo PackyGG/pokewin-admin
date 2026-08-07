@@ -5,8 +5,27 @@
  * these directly.
  */
 
+/** Database-shaped reward program input consumed by the eligibility engine. */
+export type ProgramForCompute = {
+  id: string;
+  name: string;
+  creator_user_id: string;
+  codes: string[];
+  threshold_usd: unknown;
+  reward_usd: unknown;
+  vip_reward_usd: unknown;
+  lossback_pct: unknown;
+  min_deposit_usd: unknown;
+  is_active: boolean;
+  accrual_start_at: Date;
+  ends_at: Date | null;
+  max_reward_per_user_usd: unknown;
+  /** Preloaded live intervals; absent means they have not been fetched. */
+  windows?: { started_at: Date; ended_at: Date | null }[];
+};
+
 /** Claim lifecycle. Stored as a plain string column (admin-schema convention). */
-const CREATOR_REWARD_CLAIM_STATUSES = [
+export const CREATOR_REWARD_CLAIM_STATUSES = [
   "pending",
   "approved",
   "rejected",
@@ -15,7 +34,7 @@ const CREATOR_REWARD_CLAIM_STATUSES = [
 export type CreatorRewardClaimStatus =
   (typeof CREATOR_REWARD_CLAIM_STATUSES)[number];
 
-function isCreatorRewardClaimStatus(
+export function isCreatorRewardClaimStatus(
   value: unknown,
 ): value is CreatorRewardClaimStatus {
   return (
@@ -36,7 +55,7 @@ export const BASIS_HOLDING_STATUSES: readonly CreatorRewardClaimStatus[] = [
   "approved",
 ];
 
-type CreatorRewardProgram = {
+export type CreatorRewardProgram = {
   id: string;
   name: string;
   creatorUserId: string;

@@ -1,4 +1,4 @@
-type SearchParams = {
+export type SearchParams = {
   page?: string;
   perPage?: string;
   search?: string;

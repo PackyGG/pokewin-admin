@@ -75,7 +75,7 @@ function clearStepUpFailures(adminUserId: string): void {
 
 /** Whether the current admin has at least one passkey — drives the client
  * decision to offer the "Use a passkey" control at a 2FA gate. */
-async function hasMyPasskeys(): Promise<boolean> {
+export async function hasMyPasskeys(): Promise<boolean> {
   const session = await verifySession();
   const result = await adminDrizzle.execute<{ exists: boolean }>(sql`
     SELECT EXISTS(

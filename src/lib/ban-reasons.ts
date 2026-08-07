@@ -1,4 +1,4 @@
-const FRAUD_BAN_REASON = "Fraud";
+export const FRAUD_BAN_REASON = "Fraud";
 
 export const BAN_REASON_PRESETS = [
   "Multi",

@@ -29,7 +29,7 @@ export type CreatorAgreementVersionSummary = Omit<
   "lines"
 > & { lineCount: number };
 
-function creatorAgreementChecksum(lines: readonly string[]): string {
+export function creatorAgreementChecksum(lines: readonly string[]): string {
   return createHash("sha256")
     .update(JSON.stringify(lines.map((line) => line.trim())), "utf8")
     .digest("hex");

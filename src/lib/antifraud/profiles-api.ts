@@ -25,7 +25,7 @@ const paginationSchema = z.object({
   total: z.number().int(),
   pages: z.number().int(),
 });
-type AntifraudProfileSummary = z.infer<typeof profileSummarySchema>;
+export type AntifraudProfileSummary = z.infer<typeof profileSummarySchema>;
 
 const bannedUserSchema = z.object({
   userId: z.string(),
@@ -74,7 +74,7 @@ const profileDetailSchema = z.object({
   relationships: z.array(z.record(z.string(), z.unknown())),
   blocklistMatches: z.array(z.record(z.string(), z.unknown())),
 });
-type AntifraudProfileDetail = z.infer<typeof profileDetailSchema>;
+export type AntifraudProfileDetail = z.infer<typeof profileDetailSchema>;
 
 const TIMEOUT_MS = 8_000;
 
@@ -97,7 +97,7 @@ async function get(path: string): Promise<Response> {
   });
 }
 
-async function listAntifraudProfiles(input: {
+export async function listAntifraudProfiles(input: {
   page?: number;
   search?: string;
   outcome?: string;
@@ -137,7 +137,7 @@ async function listAntifraudProfiles(input: {
   }
 }
 
-async function getAntifraudProfile(userId: string): Promise<{
+export async function getAntifraudProfile(userId: string): Promise<{
   configured: boolean;
   error: boolean;
   notFound: boolean;

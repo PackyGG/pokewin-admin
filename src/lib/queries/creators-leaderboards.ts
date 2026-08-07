@@ -45,7 +45,7 @@ export type LeaderboardStandings = {
   source: "settled" | "live";
 };
 
-type LeaderboardPageEntry = {
+export type LeaderboardPageEntry = {
   position: number;
   username: string | null;
   totalWageredUsd: number;

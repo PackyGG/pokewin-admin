@@ -60,7 +60,7 @@ export function generateDrawSeed(): string {
  * Exported so a verification script can replay a past round without pulling
  * in the whole draw.
  */
-function drawValue(seed: string, roundId: string, n: number): bigint {
+export function drawValue(seed: string, roundId: string, n: number): bigint {
   const digest = createHmac("sha256", seed).update(`${roundId}:${n}`).digest("hex");
   return BigInt(`0x${digest.slice(0, 16)}`);
 }

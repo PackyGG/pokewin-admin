@@ -342,7 +342,7 @@ function EmptyState() {
 }
 
 /** Suspense fallback — matches the heading + KPI strip + table shell. */
-function SessionsTabSkeleton() {
+export function SessionsTabSkeleton() {
   return (
     <div className="space-y-5">
       <div className="flex items-center gap-2.5">

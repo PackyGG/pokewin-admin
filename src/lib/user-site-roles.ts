@@ -49,7 +49,7 @@ const SITE_ROLE_PRIORITY: Record<SiteRole, number> = {
  * widen access. The result is never empty for a valid user: it falls back
  * to `[role]`, and if even `role` is unrecognized, to `[]`.
  */
-function getEffectiveRoles(
+export function getEffectiveRoles(
   role: string,
   roles: readonly string[] | null | undefined,
 ): SiteRole[] {
@@ -92,7 +92,7 @@ export function pickPrimaryRole(roles: readonly string[]): SiteRole {
  * Matches PostgreSQL's `undefined_column` SQLSTATE (`42703`) and defensively
  * checks the nested driver message.
  */
-function isMissingRolesColumnError(err: unknown): boolean {
+export function isMissingRolesColumnError(err: unknown): boolean {
   return (
     isPostgresError(err, "42703") ||
     /column .* does not exist/i.test(postgresErrorMessages(err))

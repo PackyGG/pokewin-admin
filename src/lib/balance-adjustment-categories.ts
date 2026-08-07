@@ -97,7 +97,7 @@ export type BalanceAdjustmentCategory =
  * and must never be summed into the reward-cost side. The dialog uses this
  * set to gate the option to the REMOVE-balance direction only.
  */
-const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = [
+export const REMOVAL_ONLY_ADJUSTMENT_CATEGORY_KEYS = [
   "leaderboard",
   "remove_locked_balance",
   "fraud_abuse",
@@ -127,7 +127,7 @@ export function isRemovalOnlyAdjustmentCategory(
  * one) so adding a creator-linked category never accidentally forces the
  * remove-balance direction.
  */
-const CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS = [
+export const CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS = [
   "leaderboard",
   "official_stream",
   "creator_vip_reward",
@@ -438,7 +438,7 @@ export function adjustmentCategorySqlPredicate(
  * reverse it cleanly, callers ALWAYS use the SIGNED NET `SUM(amount)` (NOT
  * `ABS`, NOT a positive-only clamp) when subtracting it.
  */
-const OFFICIAL_STREAM_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
+export const OFFICIAL_STREAM_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
   "official_stream";
 
 /**
@@ -448,7 +448,7 @@ const OFFICIAL_STREAM_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
  * the liability through GGR/NGR/cost or the canonical P&L formula (netted out
  * of onSiteBalance the same way as {@link OFFICIAL_STREAM_ADJUSTMENT_CATEGORY}).
  */
-const REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
+export const REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
   "remove_locked_balance";
 
 /**
@@ -456,7 +456,7 @@ const REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY: BalanceAdjustmentCategory =
  * balance-delta term, cost breakdowns, balance-adjustment insights). Both are
  * `admin_balance_adjustment` rows classified by `metadata.adjustment_category`.
  */
-const STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS = [
+export const STATS_EXCLUDED_ADJUSTMENT_CATEGORY_KEYS = [
   OFFICIAL_STREAM_ADJUSTMENT_CATEGORY,
   REMOVE_LOCKED_BALANCE_ADJUSTMENT_CATEGORY,
 ] as const;

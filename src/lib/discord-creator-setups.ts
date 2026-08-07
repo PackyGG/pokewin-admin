@@ -81,7 +81,7 @@ export type CreatorSetupUserStats = {
   };
 };
 
-type CreatorCodeStats = {
+export type CreatorCodeStats = {
   code: string | null;
   clicks: number;
   signups: number;

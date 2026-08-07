@@ -5,7 +5,7 @@
 // 0137_seed_us_state_country_restrictions.sql). Display-only: the stored key
 // the toggle actions write stays the full `US-CA` code.
 
-const US_STATE_NAMES: Record<string, string> = {
+export const US_STATE_NAMES: Record<string, string> = {
   AL: "Alabama",
   AK: "Alaska",
   AZ: "Arizona",

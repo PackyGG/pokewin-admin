@@ -71,7 +71,7 @@ import { calculateWindowedPnl } from "./pnl";
  * creator account. `EXISTS` against `"user"` (not a join) keeps it a cheap
  * semi-join the planner can satisfy with the PK index on the referrer id.
  */
-const AFFILIATE_REFERRED_POPULATION_SCOPE_SQL = `u.referred_by IS NOT NULL
+export const AFFILIATE_REFERRED_POPULATION_SCOPE_SQL = `u.referred_by IS NOT NULL
   AND EXISTS (
     SELECT 1 FROM "user" ref
     WHERE ref.id = u.referred_by

@@ -1,15 +1,15 @@
 # ONBOARDING.md — architecture & domain knowledge
 
 > **Durable facts only** — what the code and git history don't tell you: domain math, money model,
-> non-obvious contracts. Rules live in `CLAUDE.md`; live state lives in `AGENT_HANDOFF.md`.
+> non-obvious contracts. Rules live in `CLAUDE.md`; repository layout lives in `ARCHITECTURE.md`.
 >
 > **Read on demand, not on session start.** Open the section you need.
 
 | Also available (read-on-demand) | |
 |---|---|
+| Repository layout and dependency boundaries | `ARCHITECTURE.md` |
 | Query / caching / streaming mechanics | `docs/BACKEND_QUERY_SYSTEM.md` |
 | Fraud, Fiat, KYC, Discord, Whop contracts | `docs/ANTIFRAUD_CONTRACTS.md` |
-| Pre-2026-08-05 session history | `AGENT_HANDOFF_ARCHIVE.md` |
 
 ---
 

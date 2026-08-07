@@ -54,7 +54,7 @@ export function buildLeaderboardDraft(
   };
 }
 
-function leaderboardTierSum(draft: CreatorLeaderboardDraft): number {
+export function leaderboardTierSum(draft: CreatorLeaderboardDraft): number {
   return draft.tiers.reduce((total, tier) => total + (Number(tier.amount) || 0), 0);
 }
 

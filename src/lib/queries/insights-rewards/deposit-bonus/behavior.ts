@@ -236,7 +236,7 @@ export async function getDepositBonusTimeToClaim(
 
 // ─── Repeat-claimants segmentation ─────────────────────────────────
 
-type RepeatClaimantSegment = {
+export type RepeatClaimantSegment = {
   /** Segment label, e.g. "1", "2–5". */
   label: string;
   /** Lower bound inclusive. */

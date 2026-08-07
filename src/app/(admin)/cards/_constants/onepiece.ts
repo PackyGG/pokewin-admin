@@ -35,14 +35,14 @@ export const ONEPIECE_CARD_TYPE_OPTIONS = [
 ] as const;
 
 export type OnePieceRarity = (typeof ONEPIECE_RARITY_OPTIONS)[number]["value"];
-type OnePieceCardType =
+export type OnePieceCardType =
   (typeof ONEPIECE_CARD_TYPE_OPTIONS)[number]["value"];
 
 export const ONEPIECE_RARITY_VALUES = ONEPIECE_RARITY_OPTIONS.map(
   (o) => o.value,
 ) as readonly OnePieceRarity[];
 
-const ONEPIECE_CARD_TYPE_VALUES = ONEPIECE_CARD_TYPE_OPTIONS.map(
+export const ONEPIECE_CARD_TYPE_VALUES = ONEPIECE_CARD_TYPE_OPTIONS.map(
   (o) => o.value,
 ) as readonly OnePieceCardType[];
 

@@ -41,7 +41,7 @@ export type HousePolarity = "positive" | "negative" | "neutral";
  * than green. Default folds 0 into `positive` because "we didn't lose" is, from
  * the house's side, the non-alarming case.
  */
-function housePolarity(
+export function housePolarity(
   houseAmount: number,
   { zeroIsNeutral = false }: { zeroIsNeutral?: boolean } = {},
 ): HousePolarity {
@@ -98,7 +98,7 @@ export function houseAccent(
  * behind a hero number (matches the upgrader-stats panel treatment). Returns
  * the `from-…/15 via-…/5 to-transparent` triple as one string.
  */
-function houseGradientClass(polarity: HousePolarity): string {
+export function houseGradientClass(polarity: HousePolarity): string {
   switch (polarity) {
     case "positive":
       return "from-emerald-500/15 via-emerald-500/5 to-transparent";

@@ -41,7 +41,7 @@ import {
   XpAdjustDialog,
 } from "./user-tabs-dialogs";
 
-const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
+export const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
   balances,
   userId,
   canAdjustBalance,
@@ -180,7 +180,7 @@ const BalanceSummaryCard = React.memo(function BalanceSummaryCard({
  * Everything else lives in dense subsections underneath so support can
  * still answer deep questions without jumping between cards.
  */
-const PnlCard = React.memo(function PnlCard({
+export const PnlCard = React.memo(function PnlCard({
   pnlBreakdown: p,
   balances,
 }: {
@@ -299,7 +299,7 @@ const PnlCard = React.memo(function PnlCard({
   );
 });
 
-const ActivityStatsCard = React.memo(function ActivityStatsCard({
+export const ActivityStatsCard = React.memo(function ActivityStatsCard({
   statistics,
   balances,
   inventoryCount,
@@ -440,7 +440,7 @@ const ActivityStatsCard = React.memo(function ActivityStatsCard({
   );
 });
 
-const RewardsCard = React.memo(function RewardsCard({
+export const RewardsCard = React.memo(function RewardsCard({
   rewards,
 }: {
   rewards: UserRewards;
@@ -799,7 +799,7 @@ const BALANCE_RANGES = [
   { label: "All", days: 0 },
 ] as const;
 
-const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
+export const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
   data,
 }: {
   data: BalanceHistoryPoint[];
@@ -918,7 +918,7 @@ const BalanceHistoryChart = React.memo(function BalanceHistoryChart({
 });
 
 /* ── Notes Section ── */
-const NotesSection = React.memo(function NotesSection({
+export const NotesSection = React.memo(function NotesSection({
   userId,
   notes,
 }: {

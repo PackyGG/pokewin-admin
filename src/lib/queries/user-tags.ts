@@ -48,7 +48,7 @@ export async function getUserTags(userId: string): Promise<UserTagRow[]> {
   }));
 }
 
-type TaggedUserRow = {
+export type TaggedUserRow = {
   userId: string;
   username: string | null;
   email: string | null;
@@ -89,7 +89,7 @@ type TaggedUserRow = {
  * page and the financial batch stay bounded to the current page slice
  * (`limit`/`offset`), never the full tagged population.
  */
-async function getUsersWithTags(
+export async function getUsersWithTags(
   tags: readonly UserTagValue[],
   {
     limit,
@@ -177,7 +177,7 @@ async function getUsersWithTags(
   };
 }
 
-async function getUsersWithTag(
+export async function getUsersWithTag(
   tag: UserTagValue,
   paging: { limit: number; offset: number; includeFinancials?: boolean },
 ): Promise<{ items: TaggedUserRow[]; total: number }> {

@@ -31,7 +31,7 @@ import { EXCLUDED_USERS_ACCESS_ALLOWLIST } from "@/lib/excluded-users/access-sha
 
 /** Group ordering + group-level visibility metadata. Order here is the order
  *  the sidebar renders groups (and the docs page mirrors it). */
-type NavGroupKey =
+export type NavGroupKey =
   | "Overview"
   | "Players"
   | "Content"
@@ -39,7 +39,7 @@ type NavGroupKey =
   | "Test Tools"
   | "System";
 
-type NavGroupMeta = {
+export type NavGroupMeta = {
   label: NavGroupKey;
   /** Only rendered for the `creator` role (the Creator Portal group). */
   creatorOnly?: boolean;
@@ -105,7 +105,7 @@ export type NavEntry = {
 // Group order + metadata (sidebar render order)
 // ---------------------------------------------------------------------------
 
-const NAV_GROUP_META: NavGroupMeta[] = [
+export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Players" },
   // The "Insights" group is gone (owner, 2026-07-23) — every surface it held
@@ -575,7 +575,7 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 // The Insights group used to get a blanket owner-only allowlist applied here.
 // The group is gone (owner, 2026-07-23), so entries pass through untouched —
 // each one carries its own `usernameAllowlist` when it needs one.
-const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES;
+export const NAV_ENTRIES: NavEntry[] = RAW_NAV_ENTRIES;
 
 // ---------------------------------------------------------------------------
 // Derived views
@@ -648,7 +648,7 @@ const PALETTE_ORDER: string[] = [
  * out of the palette, and any id here that isn't `inPalette` is ignored. Both
  * lists are kept in lockstep (and asserted by the nav verification harness).
  */
-function getPaletteNavEntries(): NavEntry[] {
+export function getPaletteNavEntries(): NavEntry[] {
   const byId = new Map(NAV_ENTRIES.map((e) => [e.id, e]));
   return PALETTE_ORDER.map((id) => byId.get(id)).filter(
     (e): e is NavEntry => Boolean(e && e.inPalette),
@@ -659,7 +659,7 @@ function getPaletteNavEntries(): NavEntry[] {
 const DOCS_GROUP_HEADING: Partial<Record<NavGroupKey, string>> = {};
 
 /** A docs group: a display heading + the palette entries under it. */
-type DocsNavGroup = { label: string; items: NavEntry[] };
+export type DocsNavGroup = { label: string; items: NavEntry[] };
 
 /**
  * Docs grouping for `/system/commands`, fully DERIVED from `NAV_ENTRIES`.
@@ -669,7 +669,7 @@ type DocsNavGroup = { label: string; items: NavEntry[] };
  * surfaces it on the docs page automatically. This replaces the old standalone
  * `DOCS_NAV_GROUPS` array which had drifted from both sidebar and palette.
  */
-function getDocsNavGroups(): DocsNavGroup[] {
+export function getDocsNavGroups(): DocsNavGroup[] {
   const palette = getPaletteNavEntries();
   const headingFor = (g: NavGroupKey): string => DOCS_GROUP_HEADING[g] ?? g;
 

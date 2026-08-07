@@ -22,7 +22,7 @@ import { createHmac } from "node:crypto";
  */
 
 /** `sha256=<hex>` over `${timestamp}.${rawBody}`, keyed by the shared secret. */
-function signWebhook(
+export function signWebhook(
   secret: string,
   timestamp: string,
   rawBody: string,

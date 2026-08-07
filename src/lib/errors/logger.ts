@@ -157,14 +157,14 @@ export function logWarn(area: string, message: string, err?: unknown) {
 }
 
 /** Log an info-level event. Use sparingly; production-only milestones. */
-function logInfo(area: string, message: string) {
+export function logInfo(area: string, message: string) {
   emit("info", area, message);
 }
 
 /** Which read engine a degraded query was hitting. */
 export type QueryEngine = "postgres";
 
-function runTelemetrySafely(report: () => void): void {
+export function runTelemetrySafely(report: () => void): void {
   try {
     report();
   } catch {

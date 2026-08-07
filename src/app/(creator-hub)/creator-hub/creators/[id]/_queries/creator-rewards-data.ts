@@ -13,7 +13,7 @@ import {
 import { toNumber } from "@/lib/utils/decimal";
 import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
 
-type CreatorRewardsDetail = Awaited<
+export type CreatorRewardsDetail = Awaited<
   ReturnType<typeof getCreatorRewardsDetail>
 >;
 

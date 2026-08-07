@@ -103,7 +103,7 @@ export async function setCreatorHubAccessToggle(
  * (matches the mutation gate) — a non-owner never sees this card, but we
  * authorize on read too so the data can't leak via a stray import.
  */
-async function getCreatorHubAccessToggles(): Promise<CreatorHubAccessSettings> {
+export async function getCreatorHubAccessToggles(): Promise<CreatorHubAccessSettings> {
   await requireCreatorHubAccessOwner();
   return getCreatorHubAccessSettings();
 }

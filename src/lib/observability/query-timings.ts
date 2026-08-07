@@ -25,7 +25,7 @@
  * are meaningful across runs.
  */
 
-type QueryTimingEntry = {
+export type QueryTimingEntry = {
   /** Stable identifier (e.g. "dashboard.getStats", "analytics.ggr"). */
   query: string;
   /** Wall-clock duration in milliseconds. */
@@ -56,7 +56,7 @@ function getState() {
 }
 
 /** Record a single query timing. Safe to call from any server context. */
-function recordQueryTime(query: string, durationMs: number): void {
+export function recordQueryTime(query: string, durationMs: number): void {
   const state = getState();
   state.buffer[state.head] = {
     query,
@@ -142,13 +142,13 @@ function percentile(sorted: number[], p: number): number {
   return sorted[idx];
 }
 
-type QueryTimingSlowest = {
+export type QueryTimingSlowest = {
   query: string;
   durationMs: number;
   at: string;
 };
 
-type QueryTimingAggregate = {
+export type QueryTimingAggregate = {
   query: string;
   count: number;
   meanMs: number;
@@ -156,7 +156,7 @@ type QueryTimingAggregate = {
   maxMs: number;
 };
 
-type QueryTimingStats = {
+export type QueryTimingStats = {
   sampleCount: number;
   ringSize: number;
   oldestAt: string | null;
@@ -170,7 +170,7 @@ type QueryTimingStats = {
  * Summarize the current ring into slowest-N + overall percentiles + per-query
  * aggregates. Pure read — does not mutate the buffer.
  */
-function getQueryTimingStats(
+export function getQueryTimingStats(
   options: { slowestLimit?: number } = {},
 ): QueryTimingStats {
   const { slowestLimit = 10 } = options;

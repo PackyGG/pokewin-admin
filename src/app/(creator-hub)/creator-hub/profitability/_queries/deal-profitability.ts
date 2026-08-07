@@ -149,7 +149,7 @@ export type CreatorProfitabilityRow = {
   conversionRate: number;
 };
 
-type ProfitabilityTotals = {
+export type ProfitabilityTotals = {
   /** Creators whose current deal status is "active" (excludes scheduled). */
   totalActiveDeals: number;
   totalCost: number;

@@ -74,7 +74,7 @@ const fetchAllApprovedLeaderboards = unstable_cache(
  * `fetchAllApprovedLeaderboards()` walk + the SAME sponsorship map the
  * totals use, so the rows reconcile to the headline by construction.
  */
-type LeaderboardCostBoard = {
+export type LeaderboardCostBoard = {
   /** Backend leaderboard id. */
   id: string;
   /** Board title (its display name on /creators/leaderboards). */

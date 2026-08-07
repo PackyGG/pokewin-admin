@@ -141,7 +141,7 @@ export function parseUsdAmount(raw: string): ParsedAmount {
  * `17.878` request. We never trust the client's parse; the server
  * re-validates that the amount is a clean cents value.
  */
-function isCentsPrecise(n: number): boolean {
+export function isCentsPrecise(n: number): boolean {
   if (!Number.isFinite(n)) return false;
   // Scale to cents and confirm the result is (within float tolerance) an
   // integer. 1e-6 absorbs benign binary-float drift while still rejecting

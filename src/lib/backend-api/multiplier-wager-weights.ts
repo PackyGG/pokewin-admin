@@ -26,11 +26,11 @@ import { backendApi } from "./client";
 // "server-only") so the client card can import them as values; re-exported
 // here for server consumers (page + action).
 export {
-  
+  MULTIPLIER_WEIGHT_DESTINATIONS,
   MAX_MULTIPLIER_TIERS,
-  
-  
-  
+  DEFAULT_MULTIPLIER_TIERS,
+  type MultiplierWeightDestination,
+  type MultiplierTier,
 } from "./multiplier-wager-weights-shared";
 import type {
   MultiplierWeightDestination,
@@ -38,7 +38,7 @@ import type {
 } from "./multiplier-wager-weights-shared";
 
 /** Per-destination config. tiers are sorted by strictly-ascending max_x. */
-type MultiplierWeightConfig = {
+export type MultiplierWeightConfig = {
   enabled: boolean;
   tiers: MultiplierTier[];
 };

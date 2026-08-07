@@ -8,8 +8,10 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 import { postgresTimestamp } from "@/lib/postgres-runtime";
 
-import { BASIS_HOLDING_STATUSES } from "./types";
-import type { ProgramForCompute } from "./compute";
+import {
+  BASIS_HOLDING_STATUSES,
+  type ProgramForCompute,
+} from "./types";
 
 /**
  * First-time-deposit lossback: a one-off "% back on what you lost from your

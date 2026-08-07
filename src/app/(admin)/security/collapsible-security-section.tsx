@@ -28,7 +28,7 @@ import {
 import { cn } from "@/lib/utils";
 
 /** Serializable icon keys — server pages must not pass component refs. */
-const SECURITY_SECTION_ICONS = {
+export const SECURITY_SECTION_ICONS = {
   banknote: Banknote,
   trophy: Trophy,
   percent: Percent,

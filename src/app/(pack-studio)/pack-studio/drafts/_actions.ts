@@ -260,7 +260,7 @@ function poolFingerprintFromSnapshot(
 
 // ─── Public types ───────────────────────────────────────────────────────
 
-type SeedDraftResult = {
+export type SeedDraftResult = {
   draftId: string;
   /** True when a fresh draft row was created; false when an existing pending draft was returned. */
   created: boolean;
@@ -302,7 +302,7 @@ export type ApplyAutoRepriceToDraftResult = {
 
 export type DiscardDraftResult = { draftId: string };
 
-type PushDraftSummary = {
+export type PushDraftSummary = {
   edge: number;
   winRate: number;
   maxWin: number;

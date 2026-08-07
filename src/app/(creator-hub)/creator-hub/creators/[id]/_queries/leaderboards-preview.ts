@@ -31,8 +31,8 @@ import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboar
  * catch discriminates it per render.
  */
 
-type LeaderboardApprovalStatus = "pending" | "approved" | "rejected";
-type LeaderboardTimeStatus = "upcoming" | "active" | "ended";
+export type LeaderboardApprovalStatus = "pending" | "approved" | "rejected";
+export type LeaderboardTimeStatus = "upcoming" | "active" | "ended";
 
 export type LeaderboardPreviewRow = {
   id: string;
@@ -58,7 +58,7 @@ export type LeaderboardsPreview = {
   previous: LeaderboardPreviewRow[];
 };
 
-const LEADERBOARDS_PREVIEW_LIMIT = 6;
+export const LEADERBOARDS_PREVIEW_LIMIT = 6;
 
 /**
  * Boards scanned per read. Bounded so the call stays cheap; a creator with

@@ -17,7 +17,7 @@ import {
 } from "@/components/loading-skeletons";
 import { formatCurrency } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
-import { ValueRangeFilter } from "./value-range-filter";
+import { ValueRangeFilter } from "@/components/value-range-filter";
 import { VouchersTable } from "./vouchers-table";
 import {
   PageHero,

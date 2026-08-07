@@ -141,14 +141,14 @@ export type CreatorPnlData = {
   lifetime: CreatorLifetimePnl;
 };
 
-type CreatorLimits = {
+export type CreatorLimits = {
   currencyLimitAmount: number | null;
   percentageLimit: number | null;
   tipLimit: number | null;
   currencyLimitResetDays: number | null;
 };
 
-type CreatorListItem = {
+export type CreatorListItem = {
   userId: string;
   username: string | null;
   code: string;
@@ -176,7 +176,7 @@ type CreatorListItem = {
   limits: CreatorLimits;
 };
 
-type UserSearchResult = {
+export type UserSearchResult = {
   userId: string;
   username: string | null;
   email: string | null;
@@ -208,7 +208,7 @@ export type AffiliateAnalyticsData = {
   }[];
 };
 
-type CreatorTipItem = {
+export type CreatorTipItem = {
   id: string;
   rainId: string;
   amountUsd: number;

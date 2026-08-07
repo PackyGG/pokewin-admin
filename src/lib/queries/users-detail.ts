@@ -398,7 +398,7 @@ export async function resolveUserIdFromRouteKey(
   return rows[0]?.id ?? null;
 }
 
-async function getUserHeader(id: string): Promise<{
+export async function getUserHeader(id: string): Promise<{
   id: string;
   username: string | null;
   email: string | null;

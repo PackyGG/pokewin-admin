@@ -71,7 +71,7 @@
  * does not contain "borrow"). The session links the ledger wager row to
  * the `user_inventory` payout rows.
  */
-const NON_BORROW_PACK_SESSIONS = `(
+export const NON_BORROW_PACK_SESSIONS = `(
   SELECT game_session_id FROM ledger_transactions
   WHERE type::text = 'pack_opening' AND status = 'completed'
     AND game_session_id IS NOT NULL
@@ -84,7 +84,7 @@ const NON_BORROW_PACK_SESSIONS = `(
  * and applies to every participant, so the whole battle's wager rows drop
  * when it is on borrow.
  */
-const NON_BORROW_BATTLE_SESSIONS = `(
+export const NON_BORROW_BATTLE_SESSIONS = `(
   SELECT bp.game_session_id FROM battle_participants bp
   JOIN battles b ON b.id = bp.battle_id
   WHERE COALESCE(b.borrow_percentage, 0) = 0
@@ -99,7 +99,7 @@ const NON_BORROW_BATTLE_SESSIONS = `(
  * `game_session_id`) and the won-card inventory leg (their `source_id`,
  * across BOTH `source_type='pack'` AND `'reward'`). See Fix 2 above.
  */
-const REWARD_PACK_SESSIONS = `(
+export const REWARD_PACK_SESSIONS = `(
   SELECT gs.id FROM game_sessions gs
   JOIN packs p ON p.id = gs.game_id AND p.pack_type = 'reward'
   WHERE gs.game_type = 'pack'

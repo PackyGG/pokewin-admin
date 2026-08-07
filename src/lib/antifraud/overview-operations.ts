@@ -56,7 +56,7 @@ export type AntifraudCaseThroughput = {
   oldestOpenHours: number | null;
 };
 
-type DetectionKind = {
+export type DetectionKind = {
   kind: string;
   label: string;
   total30d: number;
@@ -64,7 +64,7 @@ type DetectionKind = {
   lastSeenAt: string | null;
 };
 
-type RiskBandOutcome = {
+export type RiskBandOutcome = {
   severity: ReviewSeverity;
   cases: number;
   flagged: number;
