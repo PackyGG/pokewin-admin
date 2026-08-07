@@ -16,7 +16,7 @@ export function dashboardChartHourlyBuckets(period: DashboardPeriod): boolean {
 }
 
 /** Number of x-axis buckets to pad for the active period. */
-export function dashboardChartBucketCount(period: DashboardPeriod): number {
+function dashboardChartBucketCount(period: DashboardPeriod): number {
   switch (period) {
     case "1h":
       return 1;

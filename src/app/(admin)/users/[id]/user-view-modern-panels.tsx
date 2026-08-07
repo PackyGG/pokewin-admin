@@ -66,8 +66,8 @@ import {
 // "./user-view-modern-panels" keep working without carrying a second,
 // drift-prone implementation in this file.
 
-export { TILE_COLORS, PanelRow } from "@/components/modern-panels";
-export type { AccentColor } from "@/components/modern-panels";
+export { TILE_COLORS,  } from "@/components/modern-panels";
+;
 
 /**
  * Page-local alignment wrapper around the shared SectionHeading: px-3

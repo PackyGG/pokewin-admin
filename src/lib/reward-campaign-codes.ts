@@ -38,7 +38,7 @@ const ALPHABET = "23456789ABCDEFGHJKMNPQRSTVWXYZ";
 const GROUPS = 3;
 const GROUP_LEN = 4;
 
-export const REWARD_CODE_PREFIX = "PACKY";
+const REWARD_CODE_PREFIX = "PACKY";
 
 /**
  * The pepper for the environment we are writing to.

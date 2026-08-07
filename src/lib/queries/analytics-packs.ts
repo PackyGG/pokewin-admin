@@ -206,7 +206,7 @@ function daysForPeriod(period: PacksPeriod): number {
   }
 }
 
-export type PackProfitRow = {
+type PackProfitRow = {
   id: string;
   name: string;
   opens: number;
@@ -216,7 +216,7 @@ export type PackProfitRow = {
   marginPct: number;
 };
 
-export type BattlePackProfitRow = {
+type BattlePackProfitRow = {
   id: string;
   name: string;
   battlesPlayed: number;

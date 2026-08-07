@@ -44,7 +44,7 @@ export type DiscordNotificationRoute = {
 };
 
 /** The mention groups one channel tags, as group keys from ANTIFRAUD_TEAM_IDS. */
-export type DiscordNotificationChannelMention = {
+type DiscordNotificationChannelMention = {
   channelId: string;
   groupKeys: string[];
 };

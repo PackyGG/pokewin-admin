@@ -23,7 +23,7 @@
  */
 
 export const IMAGEKIT_URL_PREFIX = "https://ik.imagekit.io/scrkflpgw/";
-export const ANNOUNCEMENT_URL_MAX = 2048;
+const ANNOUNCEMENT_URL_MAX = 2048;
 export const ANNOUNCEMENT_CTA_MAX = 60;
 export const ANNOUNCEMENT_TITLE_MAX = 200;
 export const ANNOUNCEMENT_BODY_MAX = 4000;

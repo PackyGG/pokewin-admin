@@ -19,29 +19,29 @@ export type {
   UserDetail,
   PaginatedTransactions,
   PnlBreakdown,
-  AdminNote,
+  
 } from "./user-tabs-types";
 export {
   GAMING_TX_TYPES,
   FINANCIAL_TX_TYPES,
   ADJUSTMENT_TX_TYPES,
-  CARD_SALE_TX_TYPES,
-  EXCHANGE_TX_TYPES,
+  
+  
 } from "./user-tabs-types";
 export {
-  BalanceSummaryCard,
-  PnlCard,
-  ActivityStatsCard,
-  RewardsCard,
+  
+  
+  
+  
   FeatureLocksCard,
   AccountDetailsSection,
-  BalanceHistoryChart,
-  NotesSection,
+  
+  
 } from "./user-tabs-cards";
 // Shared with the /users list column (Signup) — one display mapping for
 // `account.providerId`, not two.
 export { formatSignupProvider } from "@/lib/utils/signup-provider";
 export { CategoryTransactionsTable } from "./user-tabs-transactions";
 export { InventoryGrid, DisposedCardsTable } from "./user-tabs-inventory";
-export { CreatorSection } from "./user-tabs-creator";
-export { ModerationSection } from "./user-tabs-moderation";
+;
+;

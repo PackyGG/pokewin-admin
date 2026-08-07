@@ -35,7 +35,7 @@
  * Does NOT apply to THEORETICAL RTP/edge (computed from pool composition
  * in `math.ts`) — those are exact and need no sample guard.
  */
-export const MIN_SAMPLE = 30 as const;
+const MIN_SAMPLE = 30 as const;
 
 // ─── Gaming payout (inventory-aware) ─────────────────────────────────
 
@@ -127,7 +127,7 @@ export function ggr(input: GgrInput): number {
  * Convenience: GGR straight from the raw legs, composing
  * `gamingPayoutTotal` for you.
  */
-export function ggrFromLegs(input: {
+function ggrFromLegs(input: {
   wager: number;
   inventoryPayout: number;
   battleRefund: number;

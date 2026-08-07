@@ -192,7 +192,7 @@ export type DoubleDownDashboardStats = {
   netHousePnl: number;
 };
 
-export type UserDoubleDownHistory = {
+type UserDoubleDownHistory = {
   /** Per-user summary over ALL of this user's rounds. */
   summary: {
     totalRounds: number;

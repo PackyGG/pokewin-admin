@@ -43,7 +43,7 @@ const MAPS: Record<"status" | "role" | "userStatus", ColorMap> = {
  *   <StatusBadge map="status" value={withdrawal.status} />
  *   <StatusBadge map="role" value={user.role} />
  */
-export function StatusBadge({
+function StatusBadge({
   value,
   map = "status",
   label,

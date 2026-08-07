@@ -13,7 +13,7 @@ import { requireOwner, isOwnerById, MAIN_OWNER_USERNAME } from "@/lib/owners";
  * Export kept for backward-compat; it now reflects only the permanent root
  * owner. The live owner set is the `is_owner` flag, not this constant.
  */
-export const SALARY_ADMIN_USERNAMES = [MAIN_OWNER_USERNAME] as const;
+const SALARY_ADMIN_USERNAMES = [MAIN_OWNER_USERNAME] as const;
 
 /**
  * Server-side gate. Redirects out to /dashboard if the caller isn't an owner.
@@ -28,6 +28,6 @@ export async function requireMotha(): Promise<
 }
 
 /** Non-throwing owner check for conditionally rendering UI elsewhere. */
-export async function isMotha(userId: string): Promise<boolean> {
+async function isMotha(userId: string): Promise<boolean> {
   return isOwnerById(userId);
 }

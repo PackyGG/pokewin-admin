@@ -3,7 +3,7 @@ import { getReadDrizzleDb } from "@/lib/db";
 import { toNumber } from "@/lib/utils/decimal";
 
 /** Per-frequency rakeback slice (daily / weekly / monthly). */
-export type RakebackFrequencyStat = {
+type RakebackFrequencyStat = {
   /** USD claimed (credited) for this cadence. */
   claimedUsd: number;
   /** USD still claimable (accrued, not yet claimed) for this cadence. */

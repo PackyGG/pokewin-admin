@@ -35,7 +35,6 @@
 		"@simplewebauthn/server": "^13.3.1",
 		"@tanstack/react-table": "^8.21.3",
 		"@upstash/redis": "^1.38.0",
-		"@vercel/edge-config": "^1.4.3",
 		"@vercel/speed-insights": "^2.0.0",
 		"@whop/sdk": "^0.0.42",
 		"bcryptjs": "^3.0.3",
@@ -55,7 +54,6 @@
 		"pg": "^8.20.0",
 		"qrcode": "^1.5.4",
 		"react": "19.1.0",
-		"react-datasheet-grid": "^4.11.6",
 		"react-dom": "19.1.0",
 		"recharts": "^2.15.4",
 		"shadcn": "^4.0.6",
@@ -71,7 +69,6 @@
 		"@eslint/eslintrc": "^3",
 		"@playwright/test": "^1.59.1",
 		"@tailwindcss/postcss": "^4",
-		"@types/bcryptjs": "^2.4.6",
 		"@types/d3-geo": "^3.1.0",
 		"@types/node": "^20",
 		"@types/pg": "^8.11.11",
@@ -83,12 +80,10 @@
 		"dotenv": "^17.4.2",
 		"drizzle-kit": "^0.31.10",
 		"eslint": "^9",
-		"eslint-config-next": "15.5.22",
-		"jsrepo": "^3.6.2",
+		"knip": "^6.32.0",
 		"tailwindcss": "^4",
 		"tsx": "^4.21.0",
-		"typescript": "^5",
-		"vercel": "^54.9.1"
+		"typescript": "^5"
 	},
 	"overrides": {
 		"@hono/node-server": "2.0.12",

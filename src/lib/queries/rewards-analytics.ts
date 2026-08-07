@@ -7,7 +7,7 @@
  */
 export type RewardsPeriod = "today" | "7d" | "30d" | "all";
 
-export type RewardsDailyPoint = {
+type RewardsDailyPoint = {
   date: string;
   bonuses: number;
   rakeback: number;

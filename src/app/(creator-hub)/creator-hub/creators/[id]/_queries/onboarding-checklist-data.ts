@@ -155,7 +155,7 @@ export function isChecklistTableMissing(err: unknown): boolean {
  * by Add Creator v2) see the panel/badge. In-progress only — completed
  * creators keep the row for audit but stop rendering the widget.
  */
-export async function isCreatorChecklistEligible(
+async function isCreatorChecklistEligible(
   targetUserId: string,
 ): Promise<boolean> {
   const row = await readChecklistRow(targetUserId);

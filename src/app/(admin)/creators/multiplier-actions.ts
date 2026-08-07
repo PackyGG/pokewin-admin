@@ -269,7 +269,7 @@ export async function forceEndMultiplierStream(
 // Review actions — approve / reject / flag (settlement)
 // ---------------------------------------------------------------------------
 
-export async function approveMultiplierDeal(
+async function approveMultiplierDeal(
   userId: string,
   dealId: string,
   input: {
@@ -314,7 +314,7 @@ export async function approveMultiplierDeal(
   }
 }
 
-export async function rejectMultiplierDeal(
+async function rejectMultiplierDeal(
   userId: string,
   dealId: string,
   input: { reason: string; forfeit_deposit_usd?: number },
@@ -352,7 +352,7 @@ export async function rejectMultiplierDeal(
   }
 }
 
-export async function flagMultiplierDeal(
+async function flagMultiplierDeal(
   userId: string,
   dealId: string,
   input: { code: string; detail?: Record<string, unknown>; reason?: string },
@@ -405,7 +405,7 @@ export async function listMultiplierDealsForCreator(
   }
 }
 
-export async function getMultiplierDeal(userId: string, dealId: string) {
+async function getMultiplierDeal(userId: string, dealId: string) {
   await requirePageAccess("/creators");
   try {
     return await multiplierDealsApi.get(userId, dealId);
@@ -414,7 +414,7 @@ export async function getMultiplierDeal(userId: string, dealId: string) {
   }
 }
 
-export async function listMultiplierReviewQueue(
+async function listMultiplierReviewQueue(
   query: { offset?: number; limit?: number; flagged_only?: boolean } = {},
 ) {
   await requirePageAccess("/creators");

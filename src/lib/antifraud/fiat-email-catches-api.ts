@@ -29,9 +29,9 @@ const fiatEmailCatchListSchema = z.object({
   }),
 });
 
-export type FiatEmailCatch = z.infer<typeof fiatEmailCatchSchema>;
+type FiatEmailCatch = z.infer<typeof fiatEmailCatchSchema>;
 export type FiatEmailCatchRiskType = FiatEmailCatch["riskType"];
-export type FiatEmailCatchList = {
+type FiatEmailCatchList = {
   data: FiatEmailCatch[];
   page: number;
   limit: number;
@@ -56,7 +56,7 @@ function connection(): { baseUrl: string; token: string } | null {
   return baseUrl && token ? { baseUrl, token } : null;
 }
 
-export async function getFiatEmailCatches(
+async function getFiatEmailCatches(
   filters: FiatEmailCatchFilters,
 ): Promise<FiatEmailCatchList> {
   const configured = connection();

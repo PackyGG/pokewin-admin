@@ -45,7 +45,7 @@ function daysForPeriod(period: RewardsPeriod): number | null {
 
 // ── Race extras ───────────────────────────────────────────────────────
 
-export type RaceExtras = {
+type RaceExtras = {
   /** Distinct (race_type, race_period_start) pairs contributing prize-claim rows in the window. */
   distinctRaces: number;
   /** Average prize per race = totalVolume / distinctRaces (0 when no races). */
@@ -355,7 +355,7 @@ const cachedRaceExtras = unstable_cache(
   { revalidate: 60, tags: ["rewards-analytics"] },
 );
 
-export async function getRaceExtras(
+async function getRaceExtras(
   period: RewardsPeriod,
 ): Promise<RaceExtras> {
   const blacklist = await getExcludedUserIds();
@@ -364,7 +364,7 @@ export async function getRaceExtras(
 
 // ── Affiliate extras ──────────────────────────────────────────────────
 
-export type AffiliateExtras = {
+type AffiliateExtras = {
   /** Distinct affiliate accounts that received at least one payout. */
   distinctAffiliates: number;
   /** Average payout per affiliate = totalVolume / distinctAffiliates. */
@@ -521,7 +521,7 @@ const cachedAffiliateExtras = unstable_cache(
   { revalidate: 60, tags: ["rewards-analytics"] },
 );
 
-export async function getAffiliateExtras(
+async function getAffiliateExtras(
   period: RewardsPeriod,
 ): Promise<AffiliateExtras> {
   const blacklist = await getExcludedUserIds();
@@ -530,7 +530,7 @@ export async function getAffiliateExtras(
 
 // ── Sign Up extras ────────────────────────────────────────────────────
 
-export type SignupExtras = {
+type SignupExtras = {
   /** Total users who signed up in the window (the cohort denominator). */
   cohortSignups: number;
   /** Distinct first-time balance_reward_claim users in the window (cohort numerator). */
@@ -973,7 +973,7 @@ const cachedSignupExtras = unstable_cache(
   { revalidate: 60, tags: ["rewards-analytics"] },
 );
 
-export async function getSignupExtras(
+async function getSignupExtras(
   period: RewardsPeriod,
 ): Promise<SignupExtras> {
   const blacklist = await getExcludedUserIds();

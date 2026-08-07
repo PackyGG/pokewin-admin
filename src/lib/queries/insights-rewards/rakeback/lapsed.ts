@@ -46,9 +46,9 @@ const WAGER_TYPES_SQL = `(
 
 const TOP_LIMIT = 25;
 
-export type RakebackLapsedReason = "churned" | "less_active" | "still_active";
+type RakebackLapsedReason = "churned" | "less_active" | "still_active";
 
-export type RakebackLapsedRow = {
+type RakebackLapsedRow = {
   userId: string;
   username: string | null;
   priorRakeback: number;

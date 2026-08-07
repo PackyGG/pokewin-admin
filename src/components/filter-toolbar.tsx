@@ -74,7 +74,7 @@ import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
  * a "Clear" button that appears when any non-pagination filter is set, and
  * resets `page` to 1 on every filter change.
  */
-export const FilterToolbar = DataTableToolbar;
+const FilterToolbar = DataTableToolbar;
 
 // ---------------------------------------------------------------------------
 // Client-side filter shell (for in-memory filtering)

@@ -3,7 +3,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { officialStreamAdjustmentSqlPredicate } from "@/lib/balance-adjustment-categories";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 
-export const RELEVANT_AUDIT_EVENT_TYPES = [
+const RELEVANT_AUDIT_EVENT_TYPES = [
   "login",
   "logout",
   "register",
@@ -43,7 +43,7 @@ type AdjustmentRow = {
   created_at: Date | string;
 };
 
-export async function getUserAuditLog(
+async function getUserAuditLog(
   userId: string,
   page: number = 1,
   perPage: number = 20,

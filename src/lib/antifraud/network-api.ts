@@ -134,14 +134,14 @@ const analysisRuleSchema = z.object({
   updated_at: z.string(),
 });
 
-export type AntifraudNetworkSnapshot = z.infer<typeof snapshotSchema>;
-export type AntifraudGraphNode = z.infer<typeof graphNodeSchema>;
-export type AntifraudGraphEdge = z.infer<typeof graphEdgeSchema>;
+type AntifraudNetworkSnapshot = z.infer<typeof snapshotSchema>;
+type AntifraudGraphNode = z.infer<typeof graphNodeSchema>;
+type AntifraudGraphEdge = z.infer<typeof graphEdgeSchema>;
 export type CreatorFraudAssessment = z.infer<typeof creatorAssessmentSchema>;
 export type AntifraudAnalysisRule = z.infer<typeof analysisRuleSchema>;
 export type CreatorWindow = "7d" | "30d" | "90d" | "lifetime";
 
-export async function getAccountNetwork(userId: string): Promise<{
+async function getAccountNetwork(userId: string): Promise<{
   configured: boolean;
   data: AntifraudNetworkSnapshot | null;
   queued: boolean;
@@ -206,7 +206,7 @@ export async function getAccountNetwork(userId: string): Promise<{
   }
 }
 
-export async function getNetworkGraph(
+async function getNetworkGraph(
   snapshotId: string,
   page = 1,
 ): Promise<z.infer<typeof graphSchema> | null> {
@@ -314,7 +314,7 @@ export async function listAnalysisRules(): Promise<{
   }
 }
 
-export async function requestAccountNetworkRescan(input: {
+async function requestAccountNetworkRescan(input: {
   userId: string;
   actorId: string;
   actorUsername?: string;
@@ -360,7 +360,7 @@ export async function requestCreatorFraudRescan(input: {
   }).parse(await response.json()).data.jobId;
 }
 
-export async function createNetworkCase(input: {
+async function createNetworkCase(input: {
   snapshotId: string;
   reason: string;
   idempotencyKey: string;
@@ -378,7 +378,7 @@ export async function createNetworkCase(input: {
   }).parse(await response.json()).data.caseId;
 }
 
-export async function revealNetworkIp(input: {
+async function revealNetworkIp(input: {
   snapshotId: string;
   nodeKey: string;
 }): Promise<string> {

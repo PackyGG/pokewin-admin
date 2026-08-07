@@ -73,14 +73,14 @@ export type WeightDestinationKey =
   | "leaderboard"
   | "rakeback";
 
-export type WeightDestination = {
+type WeightDestination = {
   key: WeightDestinationKey;
   label: string;
 };
 
 /** A chunk of the user's current balance, tagged by funding source, with its
  *  per-destination weight (bps) + the resulting counted USD. */
-export type BalanceWeightRow = {
+type BalanceWeightRow = {
   key:
     | "deposit_organic"
     | "race_prize"

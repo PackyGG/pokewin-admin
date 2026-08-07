@@ -130,7 +130,7 @@ const EMPTY_DETECTION_EVIDENCE = {
   tipsAfterDepositUsd: 0,
   minutesToFirstTip: null,
 };
-export const fiatDetectionEvidenceSchema = z.object({
+const fiatDetectionEvidenceSchema = z.object({
   paymentIdentityHistoryStatus: z.enum([
     "complete", "partial", "unavailable", "not_applicable",
   ]).default("unavailable"),
@@ -279,12 +279,12 @@ const detailResponseSchema = z.object({
 export type FiatAssessment = z.infer<typeof assessmentSchema>;
 export type FiatVerdict = FiatAssessment["verdict"];
 export type FiatReviewStatus = z.infer<typeof reviewStatusSchema>;
-export type FiatReviewAction =
+type FiatReviewAction =
   | "start_review"
   | "clear"
   | "recommend_hold";
-export type FiatDetail = z.infer<typeof detailResponseSchema>["data"];
-export type FiatSummary = z.infer<typeof summarySchema>;
+type FiatDetail = z.infer<typeof detailResponseSchema>["data"];
+type FiatSummary = z.infer<typeof summarySchema>;
 
 const TIMEOUT_MS = 12_000;
 
@@ -391,7 +391,7 @@ export async function getFiatAssessment(id: string) {
   }
 }
 
-export async function updateFiatReview(input: {
+async function updateFiatReview(input: {
   depositIntentId: string;
   action: FiatReviewAction;
   actorId: string;

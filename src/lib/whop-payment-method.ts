@@ -41,7 +41,7 @@ function findValue(
   return null;
 }
 
-export function normalizeWhopPaymentMethod(value: unknown): string | null {
+function normalizeWhopPaymentMethod(value: unknown): string | null {
   const raw = scalarString(value)?.toLowerCase().replaceAll(/[\s-]+/g, "_");
   if (!raw) return null;
   if (raw === "apple" || raw === "applepay") return "apple_pay";

@@ -19,7 +19,7 @@ import { approveCreatorSocial, rejectCreatorSocial } from "./actions";
  * (`metadata->>'reason' = 'Broken link'`) instead of free-prose-only. "Other"
  * opens a free-text field.
  */
-export const REJECT_REASON_PRESETS = [
+const REJECT_REASON_PRESETS = [
   "Not the creator's account",
   "Broken link",
   "Duplicate",

@@ -68,7 +68,7 @@ import {
 
 // ─── Types (ruleset §2.3 / LAW 13) ────────────────────────────────────────────
 
-export type TuneSuggestionKind =
+type TuneSuggestionKind =
   | "price-edge-exact"
   | "price-move"
   | "add-card"
@@ -425,7 +425,7 @@ function engineAccepts(
 
 // ─── LAWFUL-LADDER fit (tag-fit verdict / shape-unfit) ────────────────────────
 
-export type MonotoneFitWindow = {
+type MonotoneFitWindow = {
   /** The lawful-ladder EV window (per open) at the given (price, cap, tag). */
   evMin: number;
   evMax: number;
@@ -456,7 +456,7 @@ export type MonotoneFitWindow = {
  * Returns `null` when NO lawful ladder satisfies the masses at all — callers
  * show evMin/evMax as 0/0. Otherwise the reachable EV window + witnesses.
  */
-export function monotoneFitWindow(args: {
+function monotoneFitWindow(args: {
   cards: readonly { value: number }[];
   currentWeights: readonly number[];
   price: number;
@@ -1464,7 +1464,7 @@ function solverRoundTrip(input: TagGuidanceInput, s: TuneSuggestion): boolean {
  * whose solved share is ~0 lands at weight 1 in ~1,000,000 = 0.0001% (the
  * gcd-reduce can't shrink a vector containing a weight of 1).
  */
-export const FLOOR_PINNED_MAX_PCT = 0.0001;
+const FLOOR_PINNED_MAX_PCT = 0.0001;
 
 /**
  * TRUE when a planned per-card probability (PERCENT units, e.g. `planned.pct`
@@ -1499,7 +1499,7 @@ const CRUSH_PLANNED_MAX = 0.00002; // 0.002% as a fraction
 const CRUSH_RATIO_MIN = 100;
 
 /** The composite score at/above which a planned ladder is DEGENERATE. */
-export const LADDER_DEGENERATE_THRESHOLD = 0.25;
+const LADDER_DEGENERATE_THRESHOLD = 0.25;
 
 export type LadderShape = {
   /** Intrinsic planned-ladder inversion (rich loss card likelier than cheaper). */
@@ -1819,7 +1819,7 @@ export function buildWidePriceProbeSuggestion(args: {
 // search invocations — each is one `searchBestPriceForCleanSnap` call, the
 // same cost class as the wide probe the arms already absorb.
 
-export type CleanRescueTier =
+type CleanRescueTier =
   | "wide-price"
   | "edge-flex"
   | "edge-flex-wide"
@@ -1859,23 +1859,23 @@ export type CleanRescue = {
 };
 
 /** Total search-call budget for one rescue sweep (≈ the wide probe ×8 worst case). */
-export const CLEAN_RESCUE_SEARCH_BUDGET = 8;
+const CLEAN_RESCUE_SEARCH_BUDGET = 8;
 /** Edge-flex grid step: 0.25pp per rung. */
-export const CLEAN_RESCUE_EDGE_STEP = 0.0025;
+const CLEAN_RESCUE_EDGE_STEP = 0.0025;
 /** Max rungs each side of the pack target (±0.75pp). */
-export const CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS = 3;
+const CLEAN_RESCUE_EDGE_FLEX_MAX_STEPS = 3;
 /** Tier P: max off-ladder rows a pin-repair will attempt (combinatorial cap). */
-export const CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS = 4;
+const CLEAN_RESCUE_PIN_REPAIR_MAX_ROWS = 4;
 /** Tier P: its OWN solve budget (rung combos, cheapest total nudge first). */
-export const CLEAN_RESCUE_PIN_REPAIR_BUDGET = 8;
+const CLEAN_RESCUE_PIN_REPAIR_BUDGET = 8;
 /**
  * Tier D (dead-card-removal): max near-zero-weight cards to try removing
  * (1 search each — cheapest removal first). Its own budget, separate from
  * the edge-flex and pin-repair budgets.
  */
-export const CLEAN_RESCUE_DEAD_CARD_BUDGET = 4;
+const CLEAN_RESCUE_DEAD_CARD_BUDGET = 4;
 /** Threshold: a landed share below this fraction is a "dead card" candidate. */
-export const CLEAN_RESCUE_DEAD_CARD_SHARE = 0.001;
+const CLEAN_RESCUE_DEAD_CARD_SHARE = 0.001;
 
 export function computeCleanRescue(input: {
   /**
@@ -3126,7 +3126,7 @@ export function computeUntaggedGuidance(
 // (walking a few grid steps when the snapped value refuses). Bounded work:
 // ≤ ~30 solver calls per pin per direction on pool sizes this advisor sees.
 
-export type PinRemedyKind =
+type PinRemedyKind =
   | "raise-pin"
   | "lower-pin"
   | "unpin-card"
@@ -3252,7 +3252,7 @@ const pctFmt = (pct: number): string => {
   return s === "" || s === "-0" ? "0" : s;
 };
 
-export function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
+function computePinRemedies(input: PinRemedyInput): PinRemedy[] {
   return computePinRemediesMeta(input).remedies;
 }
 
@@ -3756,7 +3756,7 @@ export function computePinRemediesMeta(input: PinRemedyInput): PinRemedySweep {
  * the honest "the pins interlock" verdict when the remedy search came back
  * empty-handed.
  */
-export function pinShortfallHumanCopy(args: {
+function pinShortfallHumanCopy(args: {
   price: number;
   targetEdge: number;
   /** The engine refusal's `limit.detail` ($ figures), when available. */
@@ -3807,7 +3807,7 @@ export function pinShortfallHumanCopy(args: {
 // worst-first: a refusal always outranks a quality flag, and within refusals
 // the typed engine verdicts (pins / tag-law) outrank the generic arm.
 
-export type PackTuneVerdictKind =
+type PackTuneVerdictKind =
   /** The staged pool contradicts the pack's tag (pre-solve refusal). */
   | "tag-contradiction"
   /** Owner pins make the solve impossible — carries the verified remedies. */

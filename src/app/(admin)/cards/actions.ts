@@ -81,7 +81,7 @@ function isMissingCostPowerColumnError(e: unknown): boolean {
   );
 }
 
-export async function uploadCardImage(formData: FormData): Promise<string> {
+async function uploadCardImage(formData: FormData): Promise<string> {
   const session = await requirePageAccess("/cards");
   await requireCapability(session, "__can_upload_card_image", "upload card images");
 

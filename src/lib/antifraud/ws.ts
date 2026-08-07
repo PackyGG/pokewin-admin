@@ -80,13 +80,13 @@ export function parseAntifraudEvent(raw: unknown): AntifraudSignalEvent | null {
   };
 }
 
-export function normalizeSeverity(value: unknown): AntifraudSeverity {
+function normalizeSeverity(value: unknown): AntifraudSeverity {
   return value === "low" || value === "high" || value === "critical"
     ? value
     : "medium";
 }
 
-export function normalizeScore(value: unknown): number | null {
+function normalizeScore(value: unknown): number | null {
   if (typeof value !== "number" || !Number.isFinite(value)) return null;
   return Math.max(0, Math.min(100, Math.round(value)));
 }
@@ -104,10 +104,10 @@ export const SEVERITY_RANK: Record<AntifraudSeverity, number> = {
  * (see the ingest route). Below this a signal is persisted silently and shows
  * up in the queue without waking anybody.
  */
-export const NOTIFY_SEVERITY_FLOOR: AntifraudSeverity = "high";
+const NOTIFY_SEVERITY_FLOOR: AntifraudSeverity = "high";
 
 /** Signup scores at or above this value always need an account review. */
-export const SIGNUP_REVIEW_SCORE_FLOOR = 50;
+const SIGNUP_REVIEW_SCORE_FLOOR = 50;
 
 /**
  * High- and critical-risk signup scores are explicit queue contracts aligned

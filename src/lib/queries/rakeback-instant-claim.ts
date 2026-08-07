@@ -84,7 +84,7 @@ export function instantClaimPeriodLabel(period: InstantClaimPeriod): string {
 }
 
 /** Default instant payout when config is unavailable (30% house fee → 70% paid). */
-export const DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT = 70;
+const DEFAULT_INSTANT_CLAIM_PAYOUT_PERCENT = 70;
 
 /**
  * Reverse the instant-claim discount: paid amount → full accrued rakeback
@@ -124,7 +124,7 @@ export function instantClaimPayoutPercentForType(
 }
 
 /** Per-cadence early-claim config, read from `rakeback_config`. */
-export type InstantClaimTierConfig = {
+type InstantClaimTierConfig = {
   type: string;
   displayName: string;
   enabled: boolean;

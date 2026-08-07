@@ -1,4 +1,4 @@
-export const FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND =
+const FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND =
   "fiat_deposit_withdrawal_hold";
 
 /**
@@ -37,7 +37,7 @@ export function withoutNonActionableRewardEnrollmentSignals(
  * suppressed at ingest. Supports both the old raw-kind format and the later
  * readable-label format; real reward-open entries never match.
  */
-export function isNonActionableRewardEnrollmentTrailEntry(
+function isNonActionableRewardEnrollmentTrailEntry(
   body: string,
 ): boolean {
   const normalized = body.trim().toLowerCase();

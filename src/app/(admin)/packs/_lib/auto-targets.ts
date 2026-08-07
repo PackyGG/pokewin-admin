@@ -218,7 +218,7 @@ export function parsePackHitRate(name: string): number | null {
  * (no tag → default). Passing the precomputed number lets a caller parse the name
  * ONCE and reuse it.
  */
-export function resolveTargetWinRate(
+function resolveTargetWinRate(
   nameOrHitRate: string | number | null | undefined,
 ): number {
   if (typeof nameOrHitRate === "number") {
@@ -450,8 +450,8 @@ export const TAG_CAP_HEADROOM = 1.15;
  * designed character), clamped only to a sane product band. The 20% default
  * survives ONLY for a pack with no live pool (a brand-new pack).
  */
-export const UNTAGGED_WINRATE_LIVE_MIN = 0.02;
-export const UNTAGGED_WINRATE_LIVE_MAX = 0.95;
+const UNTAGGED_WINRATE_LIVE_MIN = 0.02;
+const UNTAGGED_WINRATE_LIVE_MAX = 0.95;
 
 /**
  * UNTAGGED near-miss is SEEDED FROM LIVE (owner-lens Pattern 3 sub-pattern):
@@ -461,7 +461,7 @@ export const UNTAGGED_WINRATE_LIVE_MAX = 0.95;
  * deliberately teasy pack keeps its "almost!" band. Never LOWERS the floor
  * below the 0.1 default — only raises it toward the live design.
  */
-export const UNTAGGED_NEAR_MISS_LIVE_FACTOR = 0.8;
+const UNTAGGED_NEAR_MISS_LIVE_FACTOR = 0.8;
 
 /**
  * EDGE NEVER-BELOW-LIVE (owner-lens Pattern 7, 2026-07-03): the curve target is
@@ -473,7 +473,7 @@ export const UNTAGGED_NEAR_MISS_LIVE_FACTOR = 0.8;
  * still lifts to the curve target. The 0.05pp slack absorbs snap rounding so a
  * held-edge plan never trips a false "below live" flag.
  */
-export const EDGE_NEVER_BELOW_LIVE_SLACK = 0.0005;
+const EDGE_NEVER_BELOW_LIVE_SLACK = 0.0005;
 
 /** Resolved pack-system config the pure auto-target helpers operate on. */
 export type ResolvedAutoTargetCfg = {

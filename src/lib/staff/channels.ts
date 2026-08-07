@@ -71,7 +71,7 @@ function discordWebhookUrl(): string | undefined {
   return process.env.ANTIFRAUD_DISCORD_WEBHOOK_URL || undefined;
 }
 
-export function isDiscordChannelConfigured(): boolean {
+function isDiscordChannelConfigured(): boolean {
   return Boolean(discordWebhookUrl());
 }
 
@@ -83,7 +83,7 @@ export function isDiscordChannelConfigured(): boolean {
  * a title or body containing `@everyone` (or any other mention-looking text)
  * can never escalate into a mass ping.
  */
-export async function sendDiscordPing(params: {
+async function sendDiscordPing(params: {
   target: string;
   title: string;
   body?: string | null;
@@ -137,7 +137,7 @@ function telegramBotToken(): string | undefined {
   return process.env.ANTIFRAUD_TELEGRAM_BOT_TOKEN || undefined;
 }
 
-export function isTelegramChannelConfigured(): boolean {
+function isTelegramChannelConfigured(): boolean {
   return Boolean(telegramBotToken());
 }
 
@@ -149,7 +149,7 @@ function escapeHtml(text: string): string {
     .replace(/>/g, "&gt;");
 }
 
-export async function sendTelegramPing(params: {
+async function sendTelegramPing(params: {
   target: string;
   title: string;
   body?: string | null;
@@ -218,7 +218,7 @@ export function sendOnChannel(
 }
 
 /** Whether a given channel can deliver at all on this deployment. */
-export function isChannelConfigured(channel: ChannelKind): boolean {
+function isChannelConfigured(channel: ChannelKind): boolean {
   return channel === "telegram"
     ? isTelegramChannelConfigured()
     : isDiscordChannelConfigured();
@@ -228,7 +228,7 @@ export function isChannelConfigured(channel: ChannelKind): boolean {
  * Operator-facing config status for the profile page. Presence only — never the
  * token, never any part of the URL.
  */
-export function channelConfigStatus(): Record<ChannelKind, boolean> {
+function channelConfigStatus(): Record<ChannelKind, boolean> {
   return {
     discord: isDiscordChannelConfigured(),
     telegram: isTelegramChannelConfigured(),

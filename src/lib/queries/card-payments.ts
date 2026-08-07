@@ -7,7 +7,7 @@ import {
 } from "@/lib/queries/insights-rewards/_drizzle-query";
 import { whopPaymentMethodInfo } from "@/lib/whop-payment-method";
 
-export const CARD_PAYMENT_STATUSES = [
+const CARD_PAYMENT_STATUSES = [
   "created",
   "checkout_creating",
   "checkout_ready",
@@ -24,7 +24,7 @@ export const CARD_PAYMENT_STATUSES = [
   "disputed",
 ] as const;
 
-export type CardPaymentStatus = (typeof CARD_PAYMENT_STATUSES)[number];
+type CardPaymentStatus = (typeof CARD_PAYMENT_STATUSES)[number];
 
 export type CardPaymentListFilters = {
   page: number;
@@ -68,7 +68,7 @@ export type CardPaymentListResult = {
   totalPages: number;
 };
 
-export type CardPaymentFee = {
+type CardPaymentFee = {
   id: string;
   feeKey: string;
   feeType: string;
@@ -79,7 +79,7 @@ export type CardPaymentFee = {
   rawPayload: unknown;
 };
 
-export type CardPaymentWebhookEvent = {
+type CardPaymentWebhookEvent = {
   id: string;
   providerEventId: string;
   eventType: string;

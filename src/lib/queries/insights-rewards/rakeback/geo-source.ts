@@ -25,7 +25,7 @@ import {
 const COUNTRY_LIMIT = 12;
 const SOURCE_LIMIT = 10;
 
-export type RakebackGeoSourceRow = {
+type RakebackGeoSourceRow = {
   key: string;
   label: string;
   userCount: number;

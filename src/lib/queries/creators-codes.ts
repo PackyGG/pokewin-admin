@@ -20,7 +20,7 @@ async function safe<T>(promise: Promise<T>, fallback: T): Promise<T> {
   }
 }
 
-export async function getCodes(params: {
+async function getCodes(params: {
   page?: number;
   perPage?: number;
   search?: string;
@@ -108,7 +108,7 @@ export async function getCodes(params: {
 // uppercases new rows, but the 0068 backfill kept original casing) —
 // matching the same comparison the list query's WHERE uses.
 
-export type CreatorsCodesListStats = {
+type CreatorsCodesListStats = {
   totalCodes: number;
   activeCount: number;
   inactiveCount: number;
@@ -144,11 +144,11 @@ const cachedCreatorsCodesListStats = unstable_cache(
   { revalidate: 60, tags: ["creators-codes-list-stats"] },
 );
 
-export async function getCreatorsCodesListStats(): Promise<CreatorsCodesListStats> {
+async function getCreatorsCodesListStats(): Promise<CreatorsCodesListStats> {
   return cachedCreatorsCodesListStats();
 }
 
-export async function getCodeAnalytics(code: string) {
+async function getCodeAnalytics(code: string) {
   // Code casing history:
   //  - affiliate_clicks: always UPPERCASE (trackClick does code.toUpperCase()
   //    before insert — backend/src/routes/v1/affiliate/track.ts).
@@ -661,7 +661,7 @@ export async function getCodeAnalytics(code: string) {
   };
 }
 
-export type CodeReferral = {
+type CodeReferral = {
   referredUserId: string;
   referredUsername: string | null;
   referredEmail: string | null;
@@ -750,7 +750,7 @@ export async function getCodeReferrals(
   }
 }
 
-export type RecentWagerOnCode = {
+type RecentWagerOnCode = {
   id: string;
   userId: string;
   username: string | null;

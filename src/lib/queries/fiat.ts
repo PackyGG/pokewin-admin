@@ -482,7 +482,7 @@ export async function getFiatAccess(): Promise<FiatAccess> {
   return cachedFiatAccess(await readDbEnv());
 }
 
-export type FiatWebhookSummary = {
+type FiatWebhookSummary = {
   eventType: string;
   processingStatus: string;
   events: number;
@@ -490,7 +490,7 @@ export type FiatWebhookSummary = {
   latestAt: string | null;
 };
 
-export type FiatWebhookFailure = {
+type FiatWebhookFailure = {
   eventType: string;
   attempts: number;
   error: string;

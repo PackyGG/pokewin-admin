@@ -33,7 +33,7 @@ import type {
  * override. Admins are NOT special-cased here (their baseline is `[]`); the
  * gate-bypass short-circuit comes from `computeEffectivePermissions` itself.
  */
-export function baselineUnionFor(
+function baselineUnionFor(
   roles: readonly string[],
   customRoleTokens: readonly PermissionToken[],
   baselines?: BaselineMap,
@@ -60,7 +60,7 @@ export function baselineUnionFor(
  * Value tokens (e.g. `__balance_limit_daily:10`) are never in a baseline, so
  * they always fall into `grants` and round-trip verbatim.
  */
-export function deriveOverrideFromAllowedPages(
+function deriveOverrideFromAllowedPages(
   allowedPages: readonly string[],
   baseline: readonly PermissionToken[],
 ): PermissionOverride {

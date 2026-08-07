@@ -49,7 +49,7 @@ export const MULTIPLIER_STATUS_LABEL: Record<MultiplierDealStatus, string> = {
  * Statuses where the review-side actions (approve / reject / flag) are
  * meaningful. Live deals get force-end instead.
  */
-export const REVIEWABLE_STATUSES: MultiplierDealStatus[] = [
+const REVIEWABLE_STATUSES: MultiplierDealStatus[] = [
   "pending_review",
   "flagged",
 ];
@@ -58,7 +58,7 @@ export const REVIEWABLE_STATUSES: MultiplierDealStatus[] = [
  * Statuses where the offer-management actions (edit / cancel) are
  * meaningful — the deal hasn't yet kicked off the stream lifecycle.
  */
-export const OFFER_STATUSES: MultiplierDealStatus[] = [
+const OFFER_STATUSES: MultiplierDealStatus[] = [
   "pending_deposit",
   "funded",
 ];
@@ -66,7 +66,7 @@ export const OFFER_STATUSES: MultiplierDealStatus[] = [
 /**
  * Statuses considered "in flight" for KPI counts on the review page.
  */
-export const IN_FLIGHT_STATUSES: MultiplierDealStatus[] = [
+const IN_FLIGHT_STATUSES: MultiplierDealStatus[] = [
   "funded",
   "live",
   "pending_review",

@@ -19,7 +19,7 @@ import {
 } from "@/lib/errors/server-action-result";
 import { logError } from "@/lib/errors/logger";
 
-export async function uploadSetImage(formData: FormData): Promise<string> {
+async function uploadSetImage(formData: FormData): Promise<string> {
   const session = await requirePageAccess("/sets");
   await requireCapability(session, "__can_upload_set_image", "upload set images");
 

@@ -126,7 +126,7 @@ export async function setRoleLimits(
  * Read a role's typed limits (admin-gated wrapper for the editor's initial
  * load). Pure-read `getRoleLimits` lives in `role-limits.ts`.
  */
-export async function getRoleLimitsAction(roleId: string): Promise<RoleLimits | null> {
+async function getRoleLimitsAction(roleId: string): Promise<RoleLimits | null> {
   await requireAdmin();
   return getRoleLimits(roleId);
 }

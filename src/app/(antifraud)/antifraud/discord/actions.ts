@@ -114,7 +114,7 @@ export async function createDiscordChannelAction(
   });
 }
 
-export async function upsertRouteAction(
+async function upsertRouteAction(
   input: unknown,
 ): Promise<ServerActionResult<void>> {
   const session = await requireAntifraudManager();
@@ -171,7 +171,7 @@ export async function replaceChannelRoutesAction(
   });
 }
 
-export async function setRouteEnabledAction(
+async function setRouteEnabledAction(
   input: unknown,
 ): Promise<ServerActionResult<void>> {
   const session = await requireAntifraudManager();
@@ -199,7 +199,7 @@ export async function setRouteEnabledAction(
   });
 }
 
-export async function deleteRouteAction(
+async function deleteRouteAction(
   input: unknown,
 ): Promise<ServerActionResult<void>> {
   const session = await requireAntifraudManager();

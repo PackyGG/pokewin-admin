@@ -121,7 +121,7 @@ export type UpgraderTransactionRow = {
   targetChance: number | null;
 };
 
-export type UpgraderOutcomeFilter = "all" | "win" | "loss";
+type UpgraderOutcomeFilter = "all" | "win" | "loss";
 
 const VALID_OUTCOMES = new Set<UpgraderOutcomeFilter>(["all", "win", "loss"]);
 
@@ -142,7 +142,7 @@ const VALID_OUTCOMES = new Set<UpgraderOutcomeFilter>(["all", "win", "loss"]);
  * either button is active, with the existing LIMIT/OFFSET pagination
  * walking the sorted dataset.
  */
-export type UpgraderSortBy = "recent" | "multiplier" | "wonAmount";
+type UpgraderSortBy = "recent" | "multiplier" | "wonAmount";
 
 const VALID_SORTS = new Set<UpgraderSortBy>(["recent", "multiplier", "wonAmount"]);
 

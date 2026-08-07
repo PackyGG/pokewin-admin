@@ -242,7 +242,7 @@ const updateStatusSchema = z
  * leaving the analyst to guess. The two `*_failed` values are the ones the
  * analyst must act on: the status moved but the account did not follow.
  */
-export type WithdrawalReleaseStatus =
+type WithdrawalReleaseStatus =
   // Clearing a case.
   | "released"
   | "already_open"
@@ -257,7 +257,7 @@ export type WithdrawalReleaseStatus =
   /** Neither a clearing nor an un-clearing transition. */
   | "not_applicable";
 
-export type UpdateReviewStatusResult =
+type UpdateReviewStatusResult =
   | { ok: true; withdrawalRelease: WithdrawalReleaseStatus }
   | {
       ok: false;
@@ -464,7 +464,7 @@ async function restoreReopenedCaseWithdrawals(params: {
  * matches zero rows and is told to reload instead of silently overwriting the
  * winner's verdict.
  */
-export async function updateReviewStatus(
+async function updateReviewStatus(
   input: unknown,
 ): Promise<UpdateReviewStatusResult> {
   const session = await requireAntifraudAccess();
@@ -1235,7 +1235,7 @@ export async function startReview(input: unknown): Promise<void> {
 }
 
 /** Put a case in someone's queue (or take it yourself, or clear it). */
-export async function assignReview(input: unknown): Promise<void> {
+async function assignReview(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
   const parsed = assignSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
@@ -1513,7 +1513,7 @@ export async function postponeReview(input: unknown): Promise<void> {
 }
 
 /** Append an analyst note to a case. */
-export async function addReviewNote(input: unknown): Promise<void> {
+async function addReviewNote(input: unknown): Promise<void> {
   const session = await requireAntifraudAccess();
   const parsed = noteSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);

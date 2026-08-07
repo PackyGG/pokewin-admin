@@ -12,7 +12,7 @@
 // accepts any zone the runtime supports.
 // ---------------------------------------------------------------------------
 
-export type TimezoneEntry = {
+type TimezoneEntry = {
   /** IANA id (e.g. "Europe/Berlin") — what we persist. */
   value: string;
   /** Human-friendly city name for the dropdown. */
@@ -101,7 +101,7 @@ export const TIMEZONE_GROUPS: TimezoneGroup[] = [
 ];
 
 /** Flat list — handy for quick lookups by value. */
-export const TIMEZONE_FLAT: TimezoneEntry[] = TIMEZONE_GROUPS.flatMap(
+const TIMEZONE_FLAT: TimezoneEntry[] = TIMEZONE_GROUPS.flatMap(
   (g) => g.zones,
 );
 

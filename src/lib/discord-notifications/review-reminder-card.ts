@@ -1,4 +1,4 @@
-export const REVIEW_REMINDER_FIELD_NAMES = {
+const REVIEW_REMINDER_FIELD_NAMES = {
   username: "\u{1F464} Username",
   userId: "\u{1F194} User ID",
   caseId: "\u{1F4C1} Case ID",

@@ -219,7 +219,7 @@ export async function updateCountryRestrictionArray(
  * codes to reach ~301), swap the source here; the insert stays idempotent. Operator-triggered
  * (a button on the page) + audited, since it WRITES the prod game DB.
  */
-export async function seedMissingCountryRestrictions(): Promise<{
+async function seedMissingCountryRestrictions(): Promise<{
   seeded: number;
   total: number;
 }> {

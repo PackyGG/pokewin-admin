@@ -104,7 +104,7 @@ export const EMPTY_ROLE_LIMITS: RoleLimits = {
  * set (page routes ∪ `__can_*` flags ∪ value tokens) byte-equal to a built-in
  * row's `ROLE_BASELINES[systemKey].tokens` at migration.
  */
-export type RoleDefinition = {
+type RoleDefinition = {
   id: string;
   name: string;
   description: string | null;

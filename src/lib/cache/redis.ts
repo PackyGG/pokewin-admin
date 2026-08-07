@@ -53,7 +53,7 @@ let resolvedClient: Redis | null | undefined;
  * Never throws at module load and never throws here — a malformed env that
  * makes the constructor throw is treated as "no client" (dormant).
  */
-export function getRedis(): Redis | null {
+function getRedis(): Redis | null {
   if (resolvedClient !== undefined) return resolvedClient;
 
   // The Vercel "Upstash for Redis" Marketplace integration injects the
@@ -84,7 +84,7 @@ export function getRedis(): Redis | null {
 }
 
 /** True only when a usable Upstash client is configured. */
-export function isCacheEnabled(): boolean {
+function isCacheEnabled(): boolean {
   return getRedis() !== null;
 }
 
@@ -333,7 +333,7 @@ export async function rateLimit(
  * error is swallowed. Safe to call from mutation paths that want to bust a
  * cached entry without risking a throw.
  */
-export async function cacheInvalidate(key: string): Promise<void> {
+async function cacheInvalidate(key: string): Promise<void> {
   const r = getRedis();
   if (!r) return;
   try {

@@ -7,54 +7,54 @@ const oid = customType<{ data: number }>({
 	},
 });
 
-export const affiliate_leaderboard_approval_status = pgEnum("affiliate_leaderboard_approval_status", ['pending', 'approved', 'rejected', 'awaiting_funding'])
-export const affiliate_payout_status = pgEnum("affiliate_payout_status", ['pending', 'processing', 'paid', 'failed'])
-export const affiliate_usage_type = pgEnum("affiliate_usage_type", ['signup', 'deposit', 'wager'])
-export const audit_event_type = pgEnum("audit_event_type", ['login', 'login_failed', 'logout', 'register', 'register_failed', 'session_started', 'session_expired', 'kill_all_sessions', 'rate_limited', 'two_factor_enabled', 'two_factor_disabled', 'email_verification_sent', 'forgot_password_request', 'password_changed', 'password_reset', 'username_changed', 'email_updated', 'settings_changed', 'account_locked', 'account_unlocked', 'account_banned', 'account_unbanned', 'alt_account_detected', 'chat_muted', 'chat_unmuted', 'chat_banned', 'chat_unbanned', 'chat_message_deleted', 'chat_message_pinned', 'chat_message_unpinned', 'country_blocked', 'locked_deposits_crypto', 'locked_deposits_fiat', 'withdrawals_crypto_locked', 'withdrawals_crypto_unlocked', 'withdrawals_items_locked', 'withdrawals_items_unlocked', 'inventory_sales_locked', 'inventory_sales_unlocked', 'exchanges_locked', 'exchanges_unlocked', 'openings_locked', 'openings_unlocked', 'crypto_withdrawal_processed', 'error', 'admin_withdrawal_cancelled', 'admin_withdrawal_completed', 'admin_withdrawal_failed', 'affiliate_leaderboard_submitted', 'affiliate_leaderboard_approved', 'affiliate_leaderboard_rejected', 'affiliate_leaderboard_edited', 'affiliate_leaderboard_sponsored', 'affiliate_leaderboard_cancelled', 'affiliate_leaderboard_prize_claimed', 'creator_social_submitted', 'creator_social_approved', 'creator_social_rejected', 'creator_social_removed', 'role_changed', 'self_excluded', 'affiliate_leaderboard_hard_deleted', 'affiliate_leaderboard_claim_frozen', 'affiliate_leaderboard_claim_unfrozen', 'kyc_required', 'kyc_admin_reviewed', 'kyc_provider_result_received'])
-export const balance_currency = pgEnum("balance_currency", ['real', 'coin'])
-export const battle_double_down_result = pgEnum("battle_double_down_result", ['win', 'lose'])
-export const battle_double_down_status = pgEnum("battle_double_down_status", ['offered', 'accepted', 'resolved', 'expired'])
-export const battle_mode = pgEnum("battle_mode", ['normal', 'jackpot', 'group', 'hp_rush', 'lowest'])
-export const battle_status = pgEnum("battle_status", ['waiting', 'in_progress', 'animating', 'completed', 'cancelled'])
+const affiliate_leaderboard_approval_status = pgEnum("affiliate_leaderboard_approval_status", ['pending', 'approved', 'rejected', 'awaiting_funding'])
+const affiliate_payout_status = pgEnum("affiliate_payout_status", ['pending', 'processing', 'paid', 'failed'])
+const affiliate_usage_type = pgEnum("affiliate_usage_type", ['signup', 'deposit', 'wager'])
+const audit_event_type = pgEnum("audit_event_type", ['login', 'login_failed', 'logout', 'register', 'register_failed', 'session_started', 'session_expired', 'kill_all_sessions', 'rate_limited', 'two_factor_enabled', 'two_factor_disabled', 'email_verification_sent', 'forgot_password_request', 'password_changed', 'password_reset', 'username_changed', 'email_updated', 'settings_changed', 'account_locked', 'account_unlocked', 'account_banned', 'account_unbanned', 'alt_account_detected', 'chat_muted', 'chat_unmuted', 'chat_banned', 'chat_unbanned', 'chat_message_deleted', 'chat_message_pinned', 'chat_message_unpinned', 'country_blocked', 'locked_deposits_crypto', 'locked_deposits_fiat', 'withdrawals_crypto_locked', 'withdrawals_crypto_unlocked', 'withdrawals_items_locked', 'withdrawals_items_unlocked', 'inventory_sales_locked', 'inventory_sales_unlocked', 'exchanges_locked', 'exchanges_unlocked', 'openings_locked', 'openings_unlocked', 'crypto_withdrawal_processed', 'error', 'admin_withdrawal_cancelled', 'admin_withdrawal_completed', 'admin_withdrawal_failed', 'affiliate_leaderboard_submitted', 'affiliate_leaderboard_approved', 'affiliate_leaderboard_rejected', 'affiliate_leaderboard_edited', 'affiliate_leaderboard_sponsored', 'affiliate_leaderboard_cancelled', 'affiliate_leaderboard_prize_claimed', 'creator_social_submitted', 'creator_social_approved', 'creator_social_rejected', 'creator_social_removed', 'role_changed', 'self_excluded', 'affiliate_leaderboard_hard_deleted', 'affiliate_leaderboard_claim_frozen', 'affiliate_leaderboard_claim_unfrozen', 'kyc_required', 'kyc_admin_reviewed', 'kyc_provider_result_received'])
+const balance_currency = pgEnum("balance_currency", ['real', 'coin'])
+const battle_double_down_result = pgEnum("battle_double_down_result", ['win', 'lose'])
+const battle_double_down_status = pgEnum("battle_double_down_status", ['offered', 'accepted', 'resolved', 'expired'])
+const battle_mode = pgEnum("battle_mode", ['normal', 'jackpot', 'group', 'hp_rush', 'lowest'])
+const battle_status = pgEnum("battle_status", ['waiting', 'in_progress', 'animating', 'completed', 'cancelled'])
 export const card_withdrawal_method = pgEnum("card_withdrawal_method", ['physical', 'crypto', 'balance'])
 export const card_withdrawal_status = pgEnum("card_withdrawal_status", ['pending', 'processing', 'shipped', 'completed', 'failed', 'cancelled'])
-export const challenge_claim_status = pgEnum("challenge_claim_status", ['eligible', 'claimed'])
-export const challenge_percent_op = pgEnum("challenge_percent_op", ['lte', 'gte', 'eq'])
-export const challenge_requirement_kind = pgEnum("challenge_requirement_kind", ['pack_pull', 'upgrader'])
-export const challenge_status = pgEnum("challenge_status", ['active', 'inactive', 'archived'])
-export const challenge_type = pgEnum("challenge_type", ['pack_pull', 'upgrader'])
-export const chat_message_embed_type = pgEnum("chat_message_embed_type", ['battle'])
-export const coin_transaction_type = pgEnum("coin_transaction_type", ['coin_deposit_grant', 'coin_pack_bet', 'coin_pack_payout', 'coin_battle_bet', 'coin_battle_payout', 'coin_battle_refund', 'coin_upgrader_bet', 'coin_upgrader_payout', 'coin_admin_adjustment', 'coin_rain_tip', 'coin_rain_win', 'coin_keno_bet', 'coin_keno_payout'])
-export const creator_deal_status = pgEnum("creator_deal_status", ['scheduled', 'active', 'completed', 'terminated'])
-export const creator_multiplier_deal_status = pgEnum("creator_multiplier_deal_status", ['pending_deposit', 'funded', 'live', 'pending_review', 'flagged', 'approved', 'rejected', 'cancelled', 'completed'])
-export const creator_pending_conversion_source = pgEnum("creator_pending_conversion_source", ['battle_win', 'battle_refund'])
-export const creator_pending_conversion_status = pgEnum("creator_pending_conversion_status", ['pending', 'claimed'])
-export const creator_social_platform = pgEnum("creator_social_platform", ['twitch', 'kick', 'youtube', 'x', 'instagram', 'tiktok', 'discord'])
-export const creator_social_status = pgEnum("creator_social_status", ['pending', 'approved', 'rejected'])
-export const creator_stream_session_status = pgEnum("creator_stream_session_status", ['active', 'ended', 'converted'])
-export const fingerprint_event_type = pgEnum("fingerprint_event_type", ['login', 'signup'])
-export const game_session_result = pgEnum("game_session_result", ['win', 'lose', 'draw'])
-export const game_type = pgEnum("game_type", ['pack', 'battle', 'upgrader', 'battle_double_down', 'keno'])
-export const gift_card_region = pgEnum("gift_card_region", ['NA', 'EU'])
-export const keno_risk = pgEnum("keno_risk", ['low', 'medium', 'high'])
-export const kyc_admin_decision = pgEnum("kyc_admin_decision", ['pending', 'safe', 'rejected'])
-export const kyc_status = pgEnum("kyc_status", ['none', 'pending', 'on_hold', 'approved', 'rejected'])
+const challenge_claim_status = pgEnum("challenge_claim_status", ['eligible', 'claimed'])
+const challenge_percent_op = pgEnum("challenge_percent_op", ['lte', 'gte', 'eq'])
+const challenge_requirement_kind = pgEnum("challenge_requirement_kind", ['pack_pull', 'upgrader'])
+const challenge_status = pgEnum("challenge_status", ['active', 'inactive', 'archived'])
+const challenge_type = pgEnum("challenge_type", ['pack_pull', 'upgrader'])
+const chat_message_embed_type = pgEnum("chat_message_embed_type", ['battle'])
+const coin_transaction_type = pgEnum("coin_transaction_type", ['coin_deposit_grant', 'coin_pack_bet', 'coin_pack_payout', 'coin_battle_bet', 'coin_battle_payout', 'coin_battle_refund', 'coin_upgrader_bet', 'coin_upgrader_payout', 'coin_admin_adjustment', 'coin_rain_tip', 'coin_rain_win', 'coin_keno_bet', 'coin_keno_payout'])
+const creator_deal_status = pgEnum("creator_deal_status", ['scheduled', 'active', 'completed', 'terminated'])
+const creator_multiplier_deal_status = pgEnum("creator_multiplier_deal_status", ['pending_deposit', 'funded', 'live', 'pending_review', 'flagged', 'approved', 'rejected', 'cancelled', 'completed'])
+const creator_pending_conversion_source = pgEnum("creator_pending_conversion_source", ['battle_win', 'battle_refund'])
+const creator_pending_conversion_status = pgEnum("creator_pending_conversion_status", ['pending', 'claimed'])
+const creator_social_platform = pgEnum("creator_social_platform", ['twitch', 'kick', 'youtube', 'x', 'instagram', 'tiktok', 'discord'])
+const creator_social_status = pgEnum("creator_social_status", ['pending', 'approved', 'rejected'])
+const creator_stream_session_status = pgEnum("creator_stream_session_status", ['active', 'ended', 'converted'])
+const fingerprint_event_type = pgEnum("fingerprint_event_type", ['login', 'signup'])
+const game_session_result = pgEnum("game_session_result", ['win', 'lose', 'draw'])
+const game_type = pgEnum("game_type", ['pack', 'battle', 'upgrader', 'battle_double_down', 'keno'])
+const gift_card_region = pgEnum("gift_card_region", ['NA', 'EU'])
+const keno_risk = pgEnum("keno_risk", ['low', 'medium', 'high'])
+const kyc_admin_decision = pgEnum("kyc_admin_decision", ['pending', 'safe', 'rejected'])
+const kyc_status = pgEnum("kyc_status", ['none', 'pending', 'on_hold', 'approved', 'rejected'])
 export const ledger_transaction_status = pgEnum("ledger_transaction_status", ['pending', 'completed', 'failed'])
 export const ledger_transaction_type = pgEnum("ledger_transaction_type", ['deposit', 'pack_opening', 'battle_bet', 'battle_sponsorship', 'battle_refund', 'card_sale', 'reward_card_sale', 'card_exchange', 'exchange_excess_to_voucher', 'exchange_excess_credit', 'battle_excess_to_voucher', 'voucher_redeemed', 'voucher_exchange', 'deposit_bonus', 'vault_lock', 'vault_unlock', 'race_prize', 'gift_card_redeemed', 'promo_code_redeemed', 'rakeback_claim', 'balance_reward_claim', 'affiliate_claim', 'withdrawal_shipping_fee', 'admin_balance_adjustment', 'rain_tip', 'rain_win', 'creator_tip', 'waitlist_prize', 'pack_borrow_to_voucher', 'card_withdrawal', 'creator_deal_fill_grant', 'creator_fill_activation', 'creator_fill_spend_tip', 'creator_fill_spend_battle', 'creator_fill_refund', 'creator_fill_conversion', 'creator_fill_forfeiture', 'affiliate_leaderboard_creation', 'affiliate_leaderboard_refund', 'affiliate_leaderboard_prize', 'creator_multiplier_deposit_lock', 'creator_multiplier_deposit_topup', 'creator_multiplier_platform_credit', 'creator_multiplier_spend_wager', 'creator_multiplier_spend_tip', 'creator_multiplier_spend_battle', 'creator_multiplier_refund', 'creator_multiplier_settlement_payout', 'creator_multiplier_settlement_deposit_return', 'creator_multiplier_forfeiture', 'creator_lb_deposit', 'upgrader_bet', 'upgrader_payout', 'balance_withdrawal', 'challenge_prize', 'xp_purchase', 'keno_bet', 'keno_payout'])
-export const notification_category = pgEnum("notification_category", ['transaction', 'rewards', 'system', 'news'])
-export const pack_tag = pgEnum("pack_tag", ['%1', '%5', '%10', '50/50', 'onepiece'])
-export const race_type = pgEnum("race_type", ['daily', 'weekly', 'monthly'])
-export const raffle_status = pgEnum("raffle_status", ['active', 'completed', 'cancelled'])
-export const rain_status = pgEnum("rain_status", ['active', 'drawing', 'completed', 'cancelled'])
-export const rakeback_type = pgEnum("rakeback_type", ['daily', 'weekly', 'monthly'])
-export const region_code = pgEnum("region_code", ['NA', 'EU'])
-export const reward_type = pgEnum("reward_type", ['one_time', 'daily', 'balance'])
-export const source_type = pgEnum("source_type", ['pack', 'reward', 'battle', 'exchange', 'raffle', 'upgrader'])
-export const user_role = pgEnum("user_role", ['user', 'support', 'admin', 'creator'])
+const notification_category = pgEnum("notification_category", ['transaction', 'rewards', 'system', 'news'])
+const pack_tag = pgEnum("pack_tag", ['%1', '%5', '%10', '50/50', 'onepiece'])
+const race_type = pgEnum("race_type", ['daily', 'weekly', 'monthly'])
+const raffle_status = pgEnum("raffle_status", ['active', 'completed', 'cancelled'])
+const rain_status = pgEnum("rain_status", ['active', 'drawing', 'completed', 'cancelled'])
+const rakeback_type = pgEnum("rakeback_type", ['daily', 'weekly', 'monthly'])
+const region_code = pgEnum("region_code", ['NA', 'EU'])
+const reward_type = pgEnum("reward_type", ['one_time', 'daily', 'balance'])
+const source_type = pgEnum("source_type", ['pack', 'reward', 'battle', 'exchange', 'raffle', 'upgrader'])
+const user_role = pgEnum("user_role", ['user', 'support', 'admin', 'creator'])
 export const voucher_origin = pgEnum("voucher_origin", ['exchange_excess_to_voucher', 'battle_excess_to_voucher', 'pack_borrow_to_voucher', 'creator_fill_conversion', 'creator_multiplier_payout', 'upgrader_excess_to_voucher', 'battle_double_down_payout'])
 
 
-export const affiliate_code_queue = pgTable("affiliate_code_queue", {
+const affiliate_code_queue = pgTable("affiliate_code_queue", {
 	user_id: text().primaryKey().notNull(),
 	code: text().notNull(),
 	expires_at: timestamp({ mode: 'string' }).notNull(),
@@ -106,7 +106,7 @@ export const battles = pgTable("battles", {
 		}).onDelete("cascade"),
 ]);
 
-export const battle_backgrounds = pgTable("battle_backgrounds", {
+const battle_backgrounds = pgTable("battle_backgrounds", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 100 }).notNull(),
 	image_url: text().notNull(),
@@ -169,7 +169,7 @@ export const rewards = pgTable("rewards", {
 	unique("rewards_slug_unique").on(table.slug),
 ]);
 
-export const provably_fair_results = pgTable("provably_fair_results", {
+const provably_fair_results = pgTable("provably_fair_results", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	game_session_id: uuid().notNull(),
 	battle_id: uuid(),
@@ -231,7 +231,7 @@ export const shipping_addresses = pgTable("shipping_addresses", {
 	unique("shipping_addresses_user_id_unique").on(table.user_id),
 ]);
 
-export const verification = pgTable("verification", {
+const verification = pgTable("verification", {
 	id: text().primaryKey().notNull(),
 	identifier: text().notNull(),
 	value: text().notNull(),
@@ -361,7 +361,7 @@ export const creator_deals = pgTable("creator_deals", {
 	check("creator_deals_withdraw_cap_used_within_total", sql`(total_withdraw_cap_usd IS NULL) OR (withdraw_cap_used_usd <= total_withdraw_cap_usd)`),
 ]);
 
-export const pinned_chat_messages = pgTable("pinned_chat_messages", {
+const pinned_chat_messages = pgTable("pinned_chat_messages", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	message_id: uuid().notNull(),
 	pinned_by: text().notNull(),
@@ -380,12 +380,12 @@ export const pinned_chat_messages = pgTable("pinned_chat_messages", {
 	unique("pinned_chat_messages_message_id_unique").on(table.message_id),
 ]);
 
-export const _affiliate_migrations = pgTable("_affiliate_migrations", {
+const _affiliate_migrations = pgTable("_affiliate_migrations", {
 	name: text().primaryKey().notNull(),
 	applied_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
 
-export const creator_multiplier_deals = pgTable("creator_multiplier_deals", {
+const creator_multiplier_deals = pgTable("creator_multiplier_deals", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	status: creator_multiplier_deal_status().default('pending_deposit').notNull(),
@@ -479,7 +479,7 @@ export const creator_multiplier_deals = pgTable("creator_multiplier_deals", {
 	check("creator_multiplier_deals_bet_count_non_neg", sql`bet_count >= 0`),
 ]);
 
-export const upgrader_games = pgTable("upgrader_games", {
+const upgrader_games = pgTable("upgrader_games", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	bet_amount: numeric({ precision: 20, scale:  2 }).notNull(),
@@ -508,7 +508,7 @@ export const upgrader_games = pgTable("upgrader_games", {
 		}).onDelete("set null"),
 ]);
 
-export const user_wager_requirements = pgTable("user_wager_requirements", {
+const user_wager_requirements = pgTable("user_wager_requirements", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	wager_requirement_bps: integer().notNull(),
@@ -530,7 +530,7 @@ export const user_wager_requirements = pgTable("user_wager_requirements", {
 	unique("user_wager_requirements_user_id_key").on(table.user_id),
 ]);
 
-export const game_sessions = pgTable("game_sessions", {
+const game_sessions = pgTable("game_sessions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text(),
 	bot_id: uuid(),
@@ -580,7 +580,7 @@ export const affiliate_codes = pgTable("affiliate_codes", {
 	unique("affiliate_codes_code_unique").on(table.code),
 ]);
 
-export const challenge_claims = pgTable("challenge_claims", {
+const challenge_claims = pgTable("challenge_claims", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	challenge_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -628,7 +628,7 @@ export const affiliate_payouts = pgTable("affiliate_payouts", {
 		}).onDelete("cascade"),
 ]);
 
-export const challenge_requirements = pgTable("challenge_requirements", {
+const challenge_requirements = pgTable("challenge_requirements", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	challenge_id: uuid().notNull(),
 	kind: challenge_requirement_kind().notNull(),
@@ -712,7 +712,7 @@ export const affiliate_level_configs = pgTable("affiliate_level_configs", {
 	threshold: numeric({ precision: 20, scale:  2 }).default('0').notNull(),
 });
 
-export const affiliate_clicks = pgTable("affiliate_clicks", {
+const affiliate_clicks = pgTable("affiliate_clicks", {
 	id: serial().primaryKey().notNull(),
 	code: varchar({ length: 20 }).notNull(),
 	user_agent: text(),
@@ -786,7 +786,7 @@ export const affiliate_accounts = pgTable("affiliate_accounts", {
 		}).onDelete("cascade"),
 ]);
 
-export const audit_events = pgTable("audit_events", {
+const audit_events = pgTable("audit_events", {
 	id: text().primaryKey().notNull(),
 	user_id: text(),
 	event_type: audit_event_type().notNull(),
@@ -828,7 +828,7 @@ export const account = pgTable("account", {
 	unique("account_accountId_unique").on(table.accountId),
 ]);
 
-export const bots = pgTable("bots", {
+const bots = pgTable("bots", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	username: varchar({ length: 50 }).notNull(),
 	image_url: text(),
@@ -930,7 +930,7 @@ export const packs = pgTable("packs", {
 	unique("packs_slug_unique").on(table.slug),
 ]);
 
-export const fingerprints = pgTable("fingerprints", {
+const fingerprints = pgTable("fingerprints", {
 	id: text().primaryKey().notNull(),
 	user_id: text(),
 	visitor_id: text().notNull(),
@@ -952,7 +952,7 @@ export const fingerprints = pgTable("fingerprints", {
 		}).onDelete("set null"),
 ]);
 
-export const gift_cards = pgTable("gift_cards", {
+const gift_cards = pgTable("gift_cards", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	code: varchar({ length: 32 }),
 	code_hash: varchar({ length: 64 }),
@@ -1070,7 +1070,7 @@ export const creator_withdrawal_limits = pgTable("creator_withdrawal_limits", {
 	unique("creator_withdrawal_limits_user_id_unique").on(table.user_id),
 ]);
 
-export const pack_favorites = pgTable("pack_favorites", {
+const pack_favorites = pgTable("pack_favorites", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	pack_id: uuid().notNull(),
@@ -1119,7 +1119,7 @@ export const rains = pgTable("rains", {
 		}).onDelete("set null"),
 ]);
 
-export const race_leaderboard_snapshots = pgTable("race_leaderboard_snapshots", {
+const race_leaderboard_snapshots = pgTable("race_leaderboard_snapshots", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	race_type: race_type().notNull(),
@@ -1202,7 +1202,7 @@ export const rakeback_config = pgTable("rakeback_config", {
 	unique("rakeback_config_type_unique").on(table.type),
 ]);
 
-export const raffles = pgTable("raffles", {
+const raffles = pgTable("raffles", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: varchar({ length: 100 }).notNull(),
 	description: text(),
@@ -1239,7 +1239,7 @@ export const race_prize_tiers = pgTable("race_prize_tiers", {
 	unique("race_prize_tiers_race_type_position_unique").on(table.position, table.race_type),
 ]);
 
-export const rain_entries = pgTable("rain_entries", {
+const rain_entries = pgTable("rain_entries", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	rain_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -1260,7 +1260,7 @@ export const rain_entries = pgTable("rain_entries", {
 	unique("rain_entries_rain_id_user_id_unique").on(table.rain_id, table.user_id),
 ]);
 
-export const rain_tips = pgTable("rain_tips", {
+const rain_tips = pgTable("rain_tips", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	rain_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -1310,7 +1310,7 @@ export const promo_code_redemptions = pgTable("promo_code_redemptions", {
 	unique("promo_code_redemptions_user_unique").on(table.promo_code_id, table.user_id),
 ]);
 
-export const sets = pgTable("sets", {
+const sets = pgTable("sets", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: text().notNull(),
 	series: text().notNull(),
@@ -1324,7 +1324,7 @@ export const sets = pgTable("sets", {
 	unique("sets_tcgplayer_id_unique").on(table.tcgplayer_id),
 ]);
 
-export const two_factor = pgTable("two_factor", {
+const two_factor = pgTable("two_factor", {
 	id: text().primaryKey().notNull(),
 	secret: text().notNull(),
 	backup_codes: text().notNull(),
@@ -1456,7 +1456,7 @@ export const user_mutes = pgTable("user_mutes", {
 		}).onDelete("cascade"),
 ]);
 
-export const seed_rotation_history = pgTable("seed_rotation_history", {
+const seed_rotation_history = pgTable("seed_rotation_history", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	old_client_seed: text().notNull(),
@@ -1476,7 +1476,7 @@ export const seed_rotation_history = pgTable("seed_rotation_history", {
 		}).onDelete("cascade"),
 ]);
 
-export const user_packs = pgTable("user_packs", {
+const user_packs = pgTable("user_packs", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	pack_id: uuid().notNull(),
@@ -1533,7 +1533,7 @@ export const vault_lock_times = pgTable("vault_lock_times", {
 	unique("vault_lock_times_hours_unique").on(table.hours),
 ]);
 
-export const session = pgTable("session", {
+const session = pgTable("session", {
 	id: text().primaryKey().notNull(),
 	userId: text().notNull(),
 	token: text().notNull(),
@@ -1555,7 +1555,7 @@ export const session = pgTable("session", {
 	unique("session_token_unique").on(table.token),
 ]);
 
-export const wager_period_snapshots = pgTable("wager_period_snapshots", {
+const wager_period_snapshots = pgTable("wager_period_snapshots", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	period_type: rakeback_type().notNull(),
@@ -1679,7 +1679,7 @@ export const affiliate_leaderboards = pgTable("affiliate_leaderboards", {
 		}).onDelete("cascade"),
 ]);
 
-export const raffle_entries = pgTable("raffle_entries", {
+const raffle_entries = pgTable("raffle_entries", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	raffle_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -1700,7 +1700,7 @@ export const raffle_entries = pgTable("raffle_entries", {
 	unique("raffle_entries_raffle_id_user_id_unique").on(table.raffle_id, table.user_id),
 ]);
 
-export const vouchers = pgTable("vouchers", {
+const vouchers = pgTable("vouchers", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	value: numeric({ precision: 20, scale:  2 }).notNull(),
@@ -1723,7 +1723,7 @@ export const vouchers = pgTable("vouchers", {
 		}).onDelete("cascade"),
 ]);
 
-export const battle_participants = pgTable("battle_participants", {
+const battle_participants = pgTable("battle_participants", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	battle_id: uuid().notNull(),
 	game_session_id: uuid().notNull(),
@@ -1768,7 +1768,7 @@ export const battle_participants = pgTable("battle_participants", {
 	unique("battle_participants_game_session_id_unique").on(table.game_session_id),
 ]);
 
-export const affiliate_leaderboard_claims = pgTable("affiliate_leaderboard_claims", {
+const affiliate_leaderboard_claims = pgTable("affiliate_leaderboard_claims", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	leaderboard_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -1829,7 +1829,7 @@ export const creator_socials = pgTable("creator_socials", {
 	unique("creator_socials_user_platform_unique").on(table.platform, table.user_id),
 ]);
 
-export const leaderboard_funding_addresses = pgTable("leaderboard_funding_addresses", {
+const leaderboard_funding_addresses = pgTable("leaderboard_funding_addresses", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	leaderboard_id: uuid().notNull(),
 	creator_user_id: text().notNull(),
@@ -1864,7 +1864,7 @@ export const leaderboard_funding_addresses = pgTable("leaderboard_funding_addres
 		}).onDelete("cascade"),
 ]);
 
-export const chat_messages = pgTable("chat_messages", {
+const chat_messages = pgTable("chat_messages", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	content: text().notNull(),
@@ -1903,7 +1903,7 @@ export const chat_messages = pgTable("chat_messages", {
 		}).onDelete("cascade"),
 ]);
 
-export const user_inventory = pgTable("user_inventory", {
+const user_inventory = pgTable("user_inventory", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	card_id: uuid().notNull(),
@@ -1994,7 +1994,7 @@ export const upgrader_output_cards = pgTable("upgrader_output_cards", {
 		}).onDelete("cascade"),
 ]);
 
-export const affiliate_leaderboard_claim_holds = pgTable("affiliate_leaderboard_claim_holds", {
+const affiliate_leaderboard_claim_holds = pgTable("affiliate_leaderboard_claim_holds", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	leaderboard_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -2089,7 +2089,7 @@ export const race_claim_holds = pgTable("race_claim_holds", {
 		}).onDelete("cascade"),
 ]);
 
-export const coin_transactions = pgTable("coin_transactions", {
+const coin_transactions = pgTable("coin_transactions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	type: coin_transaction_type().notNull(),
@@ -2115,7 +2115,7 @@ export const coin_transactions = pgTable("coin_transactions", {
 		}).onDelete("set null"),
 ]);
 
-export const affiliate_code_usages = pgTable("affiliate_code_usages", {
+const affiliate_code_usages = pgTable("affiliate_code_usages", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	affiliate_user_id: text().notNull(),
 	code: text().notNull(),
@@ -2152,7 +2152,7 @@ export const affiliate_code_usages = pgTable("affiliate_code_usages", {
 		}).onDelete("cascade"),
 ]);
 
-export const challenges = pgTable("challenges", {
+const challenges = pgTable("challenges", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: text().notNull(),
 	description: text(),
@@ -2178,13 +2178,13 @@ export const challenges = pgTable("challenges", {
 	check("challenges_max_claims_ceiling", sql`(max_claims > 0) AND (max_claims <= 100000)`),
 ]);
 
-export const monitor_event_settings = pgTable("monitor_event_settings", {
+const monitor_event_settings = pgTable("monitor_event_settings", {
 	event_name: text().primaryKey().notNull(),
 	enabled: boolean().default(true).notNull(),
 	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 });
 
-export const battle_double_down_offers = pgTable("battle_double_down_offers", {
+const battle_double_down_offers = pgTable("battle_double_down_offers", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	battle_id: uuid().notNull(),
 	user_id: text().notNull(),
@@ -2277,7 +2277,7 @@ export const user = pgTable("user", {
 	unique("user_username_unique").on(table.username),
 ]);
 
-export const notifications = pgTable("notifications", {
+const notifications = pgTable("notifications", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	category: notification_category().notNull(),
@@ -2314,7 +2314,7 @@ export const announcements = pgTable("announcements", {
 	index("announcements_active_idx").using("btree", table.starts_at.asc().nullsLast().op("timestamp_ops")).where(sql`(revoked_at IS NULL)`),
 ]);
 
-export const keno_games = pgTable("keno_games", {
+const keno_games = pgTable("keno_games", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	risk: keno_risk().notNull(),
@@ -2381,7 +2381,7 @@ export const sumsub_webhook_events = pgTable("sumsub_webhook_events", {
 	index("idx_sumsub_webhook_events_external_user_created").using("btree", table.external_user_id.asc().nullsLast().op("timestamp_ops"), table.provider_created_at.asc().nullsLast().op("timestamp_ops")),
 ]);
 
-export const payment_provider_fees = pgTable("payment_provider_fees", {
+const payment_provider_fees = pgTable("payment_provider_fees", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	deposit_intent_id: uuid().notNull(),
 	provider_payment_id: text().notNull(),
@@ -2403,7 +2403,7 @@ export const payment_provider_fees = pgTable("payment_provider_fees", {
 	check("payment_provider_fee_non_negative", sql`amount_cents >= 0`),
 ]);
 
-export const fiat_deposit_intents = pgTable("fiat_deposit_intents", {
+const fiat_deposit_intents = pgTable("fiat_deposit_intents", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: text().notNull(),
 	provider: text().notNull(),
@@ -2448,7 +2448,7 @@ export const fiat_deposit_intents = pgTable("fiat_deposit_intents", {
 	check("fiat_deposit_requested_amount_positive", sql`requested_amount_cents > 0`),
 ]);
 
-export const payment_webhook_events = pgTable("payment_webhook_events", {
+const payment_webhook_events = pgTable("payment_webhook_events", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	provider: text().notNull(),
 	provider_event_id: text().notNull(),
@@ -2486,12 +2486,12 @@ export const announcement_reads = pgTable("announcement_reads", {
 		}).onDelete("cascade"),
 	primaryKey({ columns: [table.announcement_id, table.user_id], name: "announcement_reads_pkey"}),
 ]);
-export const pg_stat_statements_info = pgView("pg_stat_statements_info", {	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+const pg_stat_statements_info = pgView("pg_stat_statements_info", {	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
 	dealloc: bigint({ mode: "number" }),
 	stats_reset: timestamp({ withTimezone: true, mode: 'string' }),
 }).as(sql`SELECT dealloc, stats_reset FROM pg_stat_statements_info() pg_stat_statements_info(dealloc, stats_reset)`);
 
-export const pg_stat_statements = pgView("pg_stat_statements", {
+const pg_stat_statements = pgView("pg_stat_statements", {
 	userid: oid("userid"),
 	dbid: oid("dbid"),
 	toplevel: boolean(),

@@ -33,7 +33,7 @@ export type CreatorTipsSponsorRow = {
   sessionsWithSpend: number;
 };
 
-export type TipsSponsorWindowStats = {
+type TipsSponsorWindowStats = {
   tipsUsd: number;
   sponsorUsd: number;
   totalUsd: number;
@@ -41,7 +41,7 @@ export type TipsSponsorWindowStats = {
   sponsorTxnCount: number;
 };
 
-export type TipsSponsorSessionStats = {
+type TipsSponsorSessionStats = {
   tipsUsd: number;
   sponsorUsd: number;
   totalUsd: number;

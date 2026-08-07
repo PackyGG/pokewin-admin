@@ -14,7 +14,7 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
-export type AutomationLink = {
+type AutomationLink = {
   label: string;
   href: string;
 };

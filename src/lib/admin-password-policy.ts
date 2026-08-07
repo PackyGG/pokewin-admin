@@ -1,7 +1,7 @@
 import { z } from "zod";
 
-export const ADMIN_PASSWORD_MIN_LENGTH = 10;
-export const ADMIN_PASSWORD_MAX_BYTES = 72;
+const ADMIN_PASSWORD_MIN_LENGTH = 10;
+const ADMIN_PASSWORD_MAX_BYTES = 72;
 export const ADMIN_PASSWORD_BCRYPT_COST = 12;
 
 export const adminPasswordSchema = z

@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { InlineError } from "@/components/entity-surface/inline-error";
 
 /** Compact amber "unavailable" pill — hero badge slots. */
-export function ErrorPill({
+function ErrorPill({
   label,
   title,
   className,

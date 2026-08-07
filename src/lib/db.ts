@@ -196,7 +196,7 @@ export function getProdPrimaryDrizzleDb(): MainDrizzleDb {
 }
 
 /** Primary MAIN access pinned to development for mutation flows. */
-export function getDevPrimaryDrizzleDb(): MainDrizzleDb {
+function getDevPrimaryDrizzleDb(): MainDrizzleDb {
   return getDrizzleClient("dev", "primary");
 }
 
@@ -206,6 +206,6 @@ export async function getPrimaryDrizzleDb(): Promise<MainDrizzleDb> {
 }
 
 /** Sync primary MAIN access when the environment is already resolved. */
-export function primaryDrizzleForEnv(env: DbEnv): MainDrizzleDb {
+function primaryDrizzleForEnv(env: DbEnv): MainDrizzleDb {
   return getDrizzleClient(env, "primary");
 }

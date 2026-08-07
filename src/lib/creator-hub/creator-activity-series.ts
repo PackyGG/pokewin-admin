@@ -36,7 +36,7 @@ export const CREATOR_ACTIVITY_PERIODS = ["7d", "30d", "90d"] as const;
 export type CreatorActivityPeriod = (typeof CREATOR_ACTIVITY_PERIODS)[number];
 export const DEFAULT_CREATOR_ACTIVITY_PERIOD: CreatorActivityPeriod = "30d";
 
-export const CREATOR_ACTIVITY_PERIOD_LABELS: Record<
+const CREATOR_ACTIVITY_PERIOD_LABELS: Record<
   CreatorActivityPeriod,
   string
 > = {
@@ -54,7 +54,7 @@ export function parseCreatorActivityPeriod(
     : DEFAULT_CREATOR_ACTIVITY_PERIOD;
 }
 
-export type CreatorActivityPoint = {
+type CreatorActivityPoint = {
   /** Short x-axis label (e.g. "Jun 4"). */
   label: string;
   /** ISO date key (YYYY-MM-DD) for sorting / fill. */

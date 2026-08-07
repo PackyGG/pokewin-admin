@@ -58,7 +58,7 @@ export type UserAdminAuditFeed = {
  * whole tab — filtering + paging happen client-side on this slice, and
  * the tab states plainly when older rows exist beyond it.
  */
-export const USER_ADMIN_AUDIT_MAX = 200;
+const USER_ADMIN_AUDIT_MAX = 200;
 
 export const EMPTY_USER_ADMIN_AUDIT: UserAdminAuditFeed = {
   events: [],

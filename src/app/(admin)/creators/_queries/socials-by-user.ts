@@ -129,7 +129,7 @@ function profileUrlForPlatform(
  * the Creator Hub Creator tab). This is the Hub's source of truth; the
  * backend approval queue only covers creator-submitted socials.
  */
-export async function getAdminDbLinkedSocialsByUser(
+async function getAdminDbLinkedSocialsByUser(
   userIds: string[],
 ): Promise<Map<string, CreatorSocialSummary[]>> {
   const result = new Map<string, CreatorSocialSummary[]>();
@@ -168,7 +168,7 @@ export async function getAdminDbLinkedSocialsByUser(
 }
 
 /** Merge admin-DB + backend-approved socials; admin wins per platform. */
-export function mergeCreatorSocialMaps(
+function mergeCreatorSocialMaps(
   admin: Map<string, CreatorSocialSummary[]>,
   backend: Map<string, CreatorSocialSummary[]>,
   userIds: string[],
@@ -221,7 +221,7 @@ export async function getRosterSocialsByUser(
  * {@link getCreatorLinkedSocialsCached} so repeat renders serve the warmed
  * entry instead of re-walking the roster.
  */
-export async function getCreatorLinkedSocials(
+async function getCreatorLinkedSocials(
   userId: string,
 ): Promise<CreatorSocialSummary[]> {
   const map = await getRosterSocialsByUser([userId]);
@@ -268,7 +268,7 @@ export async function getCreatorLinkedSocialsCached(
  * username through {@link resolveLinkedHandle}, which strips `@`, extracts the
  * first path segment from pasted `kick.com/…` URLs, and lowercases.
  */
-export async function getMergedLinkedHandle(
+async function getMergedLinkedHandle(
   userId: string,
   platform: "kick" | "twitter",
 ): Promise<string | null> {

@@ -22,7 +22,7 @@ export async function requireExcludedUsersAccess(): Promise<
 }
 
 /** DB-fresh, fail-closed access check for conditional UI. */
-export async function canManageExcludedUsers(
+async function canManageExcludedUsers(
   userId: string,
 ): Promise<boolean> {
   try {

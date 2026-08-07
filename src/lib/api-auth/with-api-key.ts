@@ -26,7 +26,7 @@ import type { ApiScope } from "./scopes";
  * this surface — see `src/lib/api-auth/scopes.ts`.
  */
 
-export type ApiHandlerContext<P = unknown> = {
+type ApiHandlerContext<P = unknown> = {
   principal: ApiPrincipal;
   /** Route params for dynamic segments, already awaited. */
   params: P;

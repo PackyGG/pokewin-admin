@@ -112,7 +112,7 @@ type RiskGame = keyof typeof RISK_EDGE_BY_GAME;
 // Default shortfall threshold: flag when actual house PnL is ≥50% BELOW
 // the expected GGR (owner: "default threshold ~50%"). I.e. shortfall%
 // (= gap / expectedGgr) ≥ 0.5 on a user with a material expected GGR.
-export const RISK_DEFAULT_SHORTFALL_THRESHOLD = 0.5;
+const RISK_DEFAULT_SHORTFALL_THRESHOLD = 0.5;
 
 // A user needs a minimum expected GGR before a shortfall % is meaningful
 // — on $5 of expected GGR a $5 gap is noise, not abuse. Mirrors the
@@ -264,7 +264,7 @@ export type RiskData = {
 };
 
 /** Behavioural low-variance upgrader signal (data-gap-aware). */
-export type UpgraderBehaviorSignal = {
+type UpgraderBehaviorSignal = {
   /** Whether per-bet upgrader target/chance data is readable at all. */
   available: boolean;
   /** Human reason when unavailable (shown in the UI, never fabricated). */

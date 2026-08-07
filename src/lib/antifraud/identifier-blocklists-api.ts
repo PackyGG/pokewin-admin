@@ -6,7 +6,7 @@ export const identifierBlocklistKindSchema = z.enum(["ip", "fingerprint"]);
 export type IdentifierBlocklistKind = z.infer<
   typeof identifierBlocklistKindSchema
 >;
-export const identifierBlocklistEffectSchema = z.enum(["block", "known_vpn"]);
+const identifierBlocklistEffectSchema = z.enum(["block", "known_vpn"]);
 export type IdentifierBlocklistEffect = z.infer<
   typeof identifierBlocklistEffectSchema
 >;

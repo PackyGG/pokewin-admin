@@ -53,7 +53,7 @@ export const GGR_LIFETIME_LOOKBACK_DAYS = 365;
  * one place. Kept as a single helper so the page, the export, and the
  * contributor query agree on the window.
  */
-export function ggrWindowToMetricWindow(
+function ggrWindowToMetricWindow(
   window: DashboardPeriod,
   now: Date = new Date(),
 ): MetricWindow {

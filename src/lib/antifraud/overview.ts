@@ -17,7 +17,7 @@ import { NON_ACTIONABLE_REWARD_ENROLLMENT_SIGNAL_KINDS } from "@/lib/antifraud/s
 const LIVE_REVIEW_STATUSES = ["open", "in_review"] as const;
 const THIRTY_DAY_BUCKETS = 30;
 
-export type AntifraudOverviewMetrics = {
+type AntifraudOverviewMetrics = {
   legitimateFiatDepositCents: number;
   fraudulentFiatDepositCents: number;
   manualKycLocks: number;

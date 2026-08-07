@@ -36,7 +36,7 @@ export type AdminRole = (typeof ALL_ADMIN_ROLES)[number];
  * (sidebar gating, `requireRole`, landing routes) use the full
  * `ALL_ADMIN_ROLES` / `isAdminRole` set and are unaffected.
  */
-export const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = ALL_ADMIN_ROLES;
+const PERSISTABLE_ADMIN_ROLES: readonly AdminRole[] = ALL_ADMIN_ROLES;
 
 const PERSISTABLE_ADMIN_ROLE_SET: ReadonlySet<string> = new Set(
   PERSISTABLE_ADMIN_ROLES,
@@ -202,7 +202,7 @@ export function isDedicatedPackBuilder(
  * Pack Studio remains their primary workspace; these are the three Content
  * catalog surfaces needed to manage the same packs, cards, and sets.
  */
-export const PACK_BUILDER_CONTENT_PATHS = [
+const PACK_BUILDER_CONTENT_PATHS = [
   "/packs",
   "/cards",
   "/sets",

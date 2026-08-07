@@ -1,4 +1,4 @@
-export class PostgresResultError extends TypeError {
+class PostgresResultError extends TypeError {
   constructor(
     readonly path: string,
     message: string,
@@ -61,7 +61,7 @@ export function postgresTimestampIso(
 }
 
 /** Preserve PostgreSQL NUMERIC exactly. Convert to number only at a display boundary. */
-export function postgresNumeric(
+function postgresNumeric(
   value: unknown,
   path = "value",
 ): string {
@@ -75,7 +75,7 @@ export function postgresNumeric(
 }
 
 /** Parse PostgreSQL integer/count values without silently losing precision. */
-export function postgresSafeInteger(
+function postgresSafeInteger(
   value: unknown,
   path = "value",
 ): number {
@@ -100,7 +100,7 @@ export function postgresSafeInteger(
   return numberValue;
 }
 
-export function postgresBigInt(
+function postgresBigInt(
   value: unknown,
   path = "value",
 ): bigint {
@@ -114,7 +114,7 @@ export function postgresBigInt(
   return fail(path, "an integer", value);
 }
 
-export function postgresJson<T>(
+function postgresJson<T>(
   value: unknown,
   decoder: PostgresDecoder<T>,
   path = "value",
@@ -130,21 +130,21 @@ export function postgresJson<T>(
   return decoder(parsed, path);
 }
 
-export function nullable<T>(
+function nullable<T>(
   decoder: PostgresDecoder<T>,
 ): PostgresDecoder<T | null> {
   return (value, path) => (value == null ? null : decoder(value, path));
 }
 
-export function postgresString(value: unknown, path = "value"): string {
+function postgresString(value: unknown, path = "value"): string {
   return typeof value === "string" ? value : fail(path, "a string", value);
 }
 
-export function postgresBoolean(value: unknown, path = "value"): boolean {
+function postgresBoolean(value: unknown, path = "value"): boolean {
   return typeof value === "boolean" ? value : fail(path, "a boolean", value);
 }
 
-export function postgresArray<T>(
+function postgresArray<T>(
   itemDecoder: PostgresDecoder<T>,
 ): PostgresDecoder<T[]> {
   return (value, path) => {
@@ -153,7 +153,7 @@ export function postgresArray<T>(
   };
 }
 
-export function postgresObject<T extends Record<string, unknown>>(
+function postgresObject<T extends Record<string, unknown>>(
   shape: DecodedShape<T>,
 ): PostgresDecoder<T> {
   return (value, path) => {

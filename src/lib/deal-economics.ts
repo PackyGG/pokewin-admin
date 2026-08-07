@@ -69,7 +69,7 @@ export function leaderboardHouseCost(
  *
  *   full withdraw cap + (tip/stream + sponsor/stream) × fills_allowed
  */
-export function weeklyDealTermCost(deal: CreatorDealResponse): number {
+function weeklyDealTermCost(deal: CreatorDealResponse): number {
   const cap = toFiniteNumber(deal.total_withdraw_cap_usd);
   const tip = toFiniteNumber(deal.max_tip_per_stream_usd);
   const sponsor = toFiniteNumber(deal.max_sponsorship_per_stream_usd);

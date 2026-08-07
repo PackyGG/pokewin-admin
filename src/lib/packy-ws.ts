@@ -14,7 +14,7 @@
 
 // ─── Types ────────────────────────────────────────────────────────
 
-export type ChatMessage = {
+type ChatMessage = {
   id: string;
   user_id: string;
   username: string | null;
@@ -59,7 +59,7 @@ const SSE_PATH = "/api/packy-live";
 
 type Handler = (evt: PackyEvent) => void;
 const handlers = new Map<string, Set<Handler>>();
-export type PackyConnectionState =
+type PackyConnectionState =
   | "connecting"
   | "live"
   | "reconnecting"
@@ -362,7 +362,7 @@ export function subscribePackyWs<T extends PackyEvent>(
   };
 }
 
-export function subscribePackyWsConnectionState(
+function subscribePackyWsConnectionState(
   handler: ConnectionStateHandler,
 ): () => void {
   if (typeof window === "undefined") return () => {};

@@ -8,7 +8,7 @@ import { isOwner } from "@/lib/owners";
 import type { SessionPayload } from "@/lib/session";
 
 /** Operators whose audit activity is visible only to owners/superowners. */
-export const PROTECTED_AUDIT_ACTOR_USERNAMES = ["hifoen"] as const;
+const PROTECTED_AUDIT_ACTOR_USERNAMES = ["hifoen"] as const;
 
 export function canViewProtectedAuditActivity(
   session: Pick<SessionPayload, "username" | "isOwner">,

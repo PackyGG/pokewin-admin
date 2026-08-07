@@ -15,12 +15,12 @@ import { isOwnerById, isMainOwnerUsername } from "@/lib/owners";
  * row-aware callers (see users/_lib/admin-gates.ts) compute owner from the row
  * via {@link isExcludedSearchOwnerRow}.
  */
-export function canIncludeExcludedUsersInSearch(username: string): boolean {
+function canIncludeExcludedUsersInSearch(username: string): boolean {
   return isMainOwnerUsername(username);
 }
 
 /** Non-throwing OWNER check for the current admin session user id. */
-export async function canCurrentAdminIncludeExcludedInSearch(
+async function canCurrentAdminIncludeExcludedInSearch(
   adminUserId: string,
 ): Promise<boolean> {
   return isOwnerById(adminUserId);

@@ -59,12 +59,12 @@
 
 export {
   EntityTable,
-  rangeSelectKeys,
+  
   type EntityColumn,
-  type EntityTableProps,
+  
 } from "./entity-table";
 
-export { EntityViewToggle, ENTITY_VIEW_OPTIONS } from "./view-toggle";
+export { EntityViewToggle,  } from "./view-toggle";
 
 // `resolveEntityView` + `EntityView` come from the directive-free `./view`
 // module (NOT `./view-toggle`, which is "use client") so server components
@@ -74,7 +74,7 @@ export { resolveEntityView, type EntityView } from "./view";
 
 export {
   FilterBar,
-  type FilterBarProps,
+  
   type FilterSelectSpec,
 } from "./filter-bar";
 
@@ -85,7 +85,7 @@ export {
 
 export { InspectorSheet } from "./inspector-sheet";
 
-export { StatusBadge, ActiveBadge, MetaChip } from "./status-badge";
+export {  ActiveBadge, MetaChip } from "./status-badge";
 
 export { InlineError } from "./inline-error";
 
@@ -101,4 +101,4 @@ export {
 // Re-exports of the existing shared primitives so the rebuild can import its
 // whole surface vocabulary from one place.
 export { EmptyState } from "@/components/empty-state";
-export { TileErrorFallback } from "@/components/tile-error-fallback";
+;

@@ -70,7 +70,7 @@ import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 // ─── Public shapes ──────────────────────────────────────────────────────
 
 /** One referred user inside a suspected-alt cluster. */
-export type AltClusterMember = {
+type AltClusterMember = {
   userId: string;
   username: string | null;
   /** Email is masked for display (`jo•••@gmail.com`). */
@@ -126,7 +126,7 @@ export type AltSignalSummary = {
 };
 
 /** A signal whose backing field could not be read (degraded coverage). */
-export type AltDataGap = {
+type AltDataGap = {
   kind: AltSignalKind | "fingerprints_table";
   label: string;
   reason: string;
@@ -707,7 +707,7 @@ function scoreCluster(
 
 // ─── Orchestration ────────────────────────────────────────────────────────
 
-export async function computeAltAccounts(
+async function computeAltAccounts(
   creatorUserId: string,
 ): Promise<AltAccountsData> {
   const { codes, userIds } = await resolveCohort(creatorUserId);

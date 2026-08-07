@@ -62,9 +62,9 @@ export type PackRisk = {
  * A boundary value lands in the HIGHER tier (e.g. CV 1.4 → T2) so the bounds
  * read as "T1 is everything strictly below 1.4".
  */
-export const CV_TIER_BOUNDS = [1.4, 3, 6, 12] as const;
+const CV_TIER_BOUNDS = [1.4, 3, 6, 12] as const;
 
-export function riskTier(cv: number): RiskTier {
+function riskTier(cv: number): RiskTier {
   if (!Number.isFinite(cv) || cv < CV_TIER_BOUNDS[0]) return "T1";
   if (cv < CV_TIER_BOUNDS[1]) return "T2";
   if (cv < CV_TIER_BOUNDS[2]) return "T3";
@@ -442,7 +442,7 @@ export type ShapeWeightsRelaxation = {
   reason: string;
 };
 
-export type ShapeWeightsSuccess = {
+type ShapeWeightsSuccess = {
   weights: number[];
   risk: PackRisk;
   ev: number;
@@ -552,7 +552,7 @@ export type ShapeWeightsSuccess = {
  *                             fits at all), so the verdict is actionable:
  *                             retag, untag, or edit the pool.
  */
-export type ShapeWeightsLimitKind =
+type ShapeWeightsLimitKind =
   | "invalid-price"
   | "invalid-target-edge"
   | "invalid-target-win-rate"
@@ -606,7 +606,7 @@ export type ShapeWeightsLimit = {
   priceIndependent?: boolean;
 };
 
-export type ShapeWeightsError = {
+type ShapeWeightsError = {
   error: string;
   feasibility?: Record<string, unknown>;
   /** What hard limit was hit + how to resolve it. */
@@ -718,7 +718,7 @@ export const ONE_SIDED_EDGE_EXCESS_TOL = 0.0025;
  * ev-unreachable limit (the pool-edit / retag path). TAGGED packs are untouched
  * (`winRateIsHard` already pins the win-rate to the tag exactly).
  */
-export const WINRATE_HOLD_BAND = 0.05;
+const WINRATE_HOLD_BAND = 0.05;
 
 /**
  * Water-fill a probability MASS over a band's values by a `value^(−beta)`
@@ -732,7 +732,7 @@ export const WINRATE_HOLD_BAND = 0.05;
  * tag-guidance engine can rebuild the solver's exact feasibility interval —
  * one implementation, no drift).
  */
-export function waterFillBandProbs(
+function waterFillBandProbs(
   values: readonly number[],
   caps: readonly number[],
   mass: number,
@@ -871,7 +871,7 @@ function bandWeights(values: readonly number[], beta: number, mass: number): num
  * no room to disperse (< 2 distinct values, degenerate variance, or no
  * improvement).
  */
-export function disperseLossBand(
+function disperseLossBand(
   values: readonly number[],
   weights: readonly number[],
   mass: number,
@@ -1043,7 +1043,7 @@ const LOSS_FLATTEN_DIP_TOL = 0.02;
  * flatten ladder sandwiches (win-bottom 15% → dust 5% → 20% → 34.5% reads
  * as a hole; the uniform 8% / 8% / 43.5% is the physics ceiling for the 5%).
  */
-export function preserveNearMissLossLayout(input: {
+function preserveNearMissLossLayout(input: {
   /** Loss-band card values (parallel to `weights`). */
   values: readonly number[];
   /** PRE-dispersal loss-band weights — the mass/EV/near-miss source of truth. */
@@ -1264,7 +1264,7 @@ function gcd(a: number, b: number): number {
  * Returns `changed: false` (weights byte-identical) when the chain is already
  * monotone — so a healthy plan is never perturbed.
  */
-export function enforceLossMonotone(input: {
+function enforceLossMonotone(input: {
   values: readonly number[];
   weights: readonly number[];
   price: number;
@@ -1445,7 +1445,7 @@ export type MonotoneEvWindow = {
 };
 
 /** One forbidden zigzag: a pricier FREE card likelier than a cheaper one. */
-export type MonotoneViolation = {
+type MonotoneViolation = {
   /** Index (caller order) of the pricier card carrying the higher share. */
   richIdx: number;
   /** Index of the cheaper card it out-weighs (the tightest witness below). */
@@ -1458,7 +1458,7 @@ export type MonotoneViolation = {
  * LAW M verifier: every zigzag among FREE rows (pins exempt, zero-share rows
  * exempt, equal-value rows unordered). Empty result = the ladder is lawful.
  */
-export function findMonotoneViolations(args: {
+function findMonotoneViolations(args: {
   values: readonly number[];
   shares: readonly number[];
   pinnedIdx?: ReadonlySet<number>;
@@ -1799,7 +1799,7 @@ export function monotoneEvWindow(args: {
  * interpolation between the window's witnesses — feasible by convexity of the
  * constraint set, EV-exact by linearity.
  */
-export function monotoneLayoutForEv(
+function monotoneLayoutForEv(
   window: MonotoneEvWindow,
   evTarget: number,
 ): number[] {
@@ -1993,7 +1993,7 @@ function lawfulLadderInWindow(args: {
   return { units, risk, window: win };
 }
 
-export function enforceMonotoneLadderLawM(input: {
+function enforceMonotoneLadderLawM(input: {
   cards: { value: number }[];
   weights: readonly number[];
   price: number;
@@ -2189,7 +2189,7 @@ export function enforceMonotoneLadderLawM(input: {
  *   • totalWeight ≤ 0 / price ≤ 0 (degenerate inputs)
  *   • totalGrailMass ≤ 0 (no grail mass — solver gave it all elsewhere)
  */
-export function applyLotterySkew(input: {
+function applyLotterySkew(input: {
   cards: { value: number }[];
   weights: number[];
   price: number;
@@ -2411,7 +2411,7 @@ export function isOnCleanLadderPct(pct: number): boolean {
  * {@link isOnCleanLadderPct} are unreachable without breaking the 0.01pp tag.
  * Tolerant of float division noise from reconstructed integer weights.
  */
-export function isOnPer100kGridPct(pct: number): boolean {
+function isOnPer100kGridPct(pct: number): boolean {
   if (!Number.isFinite(pct) || !(pct > 0) || pct > 100) return false;
   const units = pct * 1000; // 0.001% rungs
   return Math.abs(units - Math.round(units)) <= 1e-6 * Math.max(1, units);
@@ -2559,7 +2559,7 @@ export function countOffNicePct(
  * weights are returned unchanged. The caller's accept/reject pass then keeps
  * the precise weights — no regression possible from the snap itself.
  */
-export function snapWeightsToCleanLadder(input: {
+function snapWeightsToCleanLadder(input: {
   weights: number[];
   price: number;
   /**
@@ -3247,7 +3247,7 @@ const TAGGED_PLAN_NODE_BUDGET_FLOOR = 1_000_000;
  * the `plan-quality.ts` permanent perf gate can assert every fleet pack's
  * `snapNodesSpent` stays within it (the incident bound) and pin the constant.
  */
-export function taggedPlanNodeBudget(maxPriceChangePct: number): number {
+function taggedPlanNodeBudget(maxPriceChangePct: number): number {
   const band = Number.isFinite(maxPriceChangePct) && maxPriceChangePct > 0
     ? maxPriceChangePct
     : RETUNE_PRICE_BUDGET_DEFAULT_PCT;
@@ -3264,7 +3264,7 @@ export function taggedPlanNodeBudget(maxPriceChangePct: number): number {
  * {@link searchBestPriceForCleanSnap} in tagged mode; threaded through
  * {@link shapeWeights} into {@link snapTaggedPer100k}.
  */
-export type SnapNodeBudget = { remaining: number };
+type SnapNodeBudget = { remaining: number };
 
 /**
  * NICE-GRID POST-PASS (Retune V3 wave 7 — the dust-chain nice-grid item):
@@ -3352,7 +3352,7 @@ export type SnapNodeBudget = { remaining: number };
  * lawful improving move exists. Total mass and the win-band sum are invariant
  * by construction — the caller re-derives risk/`allNice` from the result.
  */
-export function polishTaggedNiceGrid(input: {
+function polishTaggedNiceGrid(input: {
   units: readonly number[];
   values: readonly number[];
   price: number;
@@ -7722,7 +7722,7 @@ function hardFeasibleSomewhere(result: SearchBestPriceResultCore): boolean {
  * capped spend keeps the most-relevant seeds — deterministic by construction.
  * Exported for the `packs/__checks__` harness (boundary-math contract).
  */
-export function segmentBoundaryCents(args: {
+function segmentBoundaryCents(args: {
   cards: readonly { value: number }[];
   maxWinCap: number | undefined;
   loCents: number;

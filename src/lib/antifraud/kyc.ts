@@ -23,7 +23,7 @@ import {
   type KycCountryReview,
 } from "@/lib/antifraud/sumsub-review-api";
 
-export const KYC_FILTERS = ["active", "waiting", "history"] as const;
+const KYC_FILTERS = ["active", "waiting", "history"] as const;
 
 export type KycFilter = (typeof KYC_FILTERS)[number];
 
@@ -64,7 +64,7 @@ export type KycAccount = {
   countryReview: KycCountryReview | null;
 };
 
-export type SumsubEventSummary = {
+type SumsubEventSummary = {
   digest: string;
   applicantId: string | null;
   externalUserId: string | null;
@@ -86,7 +86,7 @@ export type KycDashboardStats = {
   usedLevels: string[];
 };
 
-export type KycOperationalConfig = {
+type KycOperationalConfig = {
   env: DbEnv;
   backendUrlConfigured: boolean;
   backendKeyConfigured: boolean;
@@ -124,7 +124,7 @@ export const KYC_ACCOUNT_LIMIT = 200;
  * `user_kyc` is a tiny one-row-per-enrolled-user relation and the full read
  * completed in under 1 ms during the production-mirror EXPLAIN check.
  */
-export async function listKycRequiredUserIds(): Promise<string[]> {
+async function listKycRequiredUserIds(): Promise<string[]> {
   const db = await getReadDrizzleDb();
   const rows = await db
     .select({ userId: user_kyc.user_id })

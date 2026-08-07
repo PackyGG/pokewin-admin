@@ -91,7 +91,7 @@ export function daysForInsightsPeriod(
  * aligned. Covers effectively all currently-relevant reward activity while
  * keeping the cold/first cache fill tractable.
  */
-export const INSIGHTS_LIFETIME_LOOKBACK_DAYS = 365;
+const INSIGHTS_LIFETIME_LOOKBACK_DAYS = 365;
 
 /**
  * Like {@link daysForInsightsPeriod}, but the lifetime (`all`) window

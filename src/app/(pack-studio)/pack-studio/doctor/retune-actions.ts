@@ -152,7 +152,7 @@ async function requireRetuneOwner() {
   return session;
 }
 
-export type CustomRepinRow = {
+type CustomRepinRow = {
   packId: string;
   name: string;
   slug: string;
@@ -555,7 +555,7 @@ export type EditPoolInputCard = {
   order: number;
 };
 
-export type EditPoolInput = {
+type EditPoolInput = {
   cards: EditPoolInputCard[];
   /** Optional new pack price (USD). When omitted, the price is left unchanged. */
   price?: number;
@@ -1012,7 +1012,7 @@ async function refreshEditedPackRiskScore(
 //      this safe path from the verbatim `pack_edited_via_retune` calls.
 
 /** One staged pool card the OWNER picked. No weight — the SERVER shapes it. */
-export type StagedPoolInputCard = {
+type StagedPoolInputCard = {
   cardId: string;
   color?: string;
   animation?: boolean;

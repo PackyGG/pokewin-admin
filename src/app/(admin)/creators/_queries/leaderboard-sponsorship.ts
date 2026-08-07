@@ -39,7 +39,7 @@ export async function getLeaderboardSponsorshipMap(
 }
 
 /** One leaderboard-prize bucket: a board id (or null) + its prize magnitude. */
-export type LeaderboardPrizeBucket = {
+type LeaderboardPrizeBucket = {
   /** Backend leaderboard id from the prize row's `metadata.leaderboard_id`. */
   leaderboardId: string | null;
   /** Σ |amount| of the prize rows in this bucket (house magnitude, ≥ 0). */
@@ -47,7 +47,7 @@ export type LeaderboardPrizeBucket = {
 };
 
 /** The house-share split of a set of leaderboard prize buckets. */
-export type LeaderboardPrizeSplit = {
+type LeaderboardPrizeSplit = {
   /** Full prize pool paid out (100%, no weighting) — Σ bucket.prize. */
   full: number;
   /**
@@ -78,7 +78,7 @@ export type LeaderboardPrizeSplit = {
  * `sponsorship` is retained for signature compatibility with the callers but
  * is no longer read — the split is a flat 50%.
  */
-export function splitLeaderboardPrizesBySponsorship(
+function splitLeaderboardPrizesBySponsorship(
   buckets: LeaderboardPrizeBucket[],
   _sponsorship: Map<string, number>,
 ): LeaderboardPrizeSplit {

@@ -21,7 +21,7 @@ import { getAntifraudMonitorOverview } from "@/lib/antifraud/monitor-api";
 
 const UPSTREAM_TIMEOUT_MS = 8_000;
 
-export type AntifraudMonitorSnapshotSummary = {
+type AntifraudMonitorSnapshotSummary = {
   signupReviewsLeft: number;
   fiatReviewsLeft: number;
   activeDomainBlacklist: number;

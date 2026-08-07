@@ -12,7 +12,7 @@ import {
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { withoutNonActionableRewardEnrollmentSignals } from "./signal-display";
 
-export const REVIEW_QUEUE_STATES = [
+const REVIEW_QUEUE_STATES = [
   "priority",
   "normal",
   "waiting_kyc",
@@ -20,20 +20,20 @@ export const REVIEW_QUEUE_STATES = [
 ] as const;
 
 export type ReviewQueueState = (typeof REVIEW_QUEUE_STATES)[number];
-export type PersistedReviewQueueState = Exclude<ReviewQueueState, "postponed">;
+type PersistedReviewQueueState = Exclude<ReviewQueueState, "postponed">;
 
-export const REVIEW_QUEUE_LABELS: Record<ReviewQueueState, string> = {
+const REVIEW_QUEUE_LABELS: Record<ReviewQueueState, string> = {
   priority: "High priority",
   normal: "Normal reviews",
   waiting_kyc: "Waiting KYC",
   postponed: "Postponed",
 };
 
-export const ULTRA_HIGH_REVIEW_SCORE = 70;
+const ULTRA_HIGH_REVIEW_SCORE = 70;
 const SYNC_BATCH_SIZE = 500;
 const SYNC_FRESHNESS_MS = 5 * 60 * 1_000;
 
-export type ReviewWorkflowEvidence = {
+type ReviewWorkflowEvidence = {
   withdrawalsLocked: boolean;
   fullyLocked: boolean;
   cryptoWithdrawalsLocked: boolean;

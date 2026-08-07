@@ -38,9 +38,9 @@ import "server-only";
  * page.
  */
 
-export type GamesPeriod = "24h" | "3d" | "7d" | "30d" | "90d" | "all";
+type GamesPeriod = "24h" | "3d" | "7d" | "30d" | "90d" | "all";
 
-export function parseGamesPeriod(value: string | undefined): GamesPeriod {
+function parseGamesPeriod(value: string | undefined): GamesPeriod {
   switch (value) {
     case "24h":
     case "3d":
@@ -59,7 +59,7 @@ export function parseGamesPeriod(value: string | undefined): GamesPeriod {
  * bound). Returned as hours not days so the 24h window fits naturally
  * alongside the multi-day options.
  */
-export function hoursForPeriod(period: GamesPeriod): number | null {
+function hoursForPeriod(period: GamesPeriod): number | null {
   switch (period) {
     case "24h":
       return 24;
@@ -85,7 +85,7 @@ export function hoursForPeriod(period: GamesPeriod): number | null {
  * identifiers (`lt.created_at`, `ui.obtained_at`, etc.). The interval
  * value is a hardcoded number, never user-supplied.
  */
-export function periodCutoffSql(
+function periodCutoffSql(
   column: string,
   period: GamesPeriod,
 ): string {
@@ -106,7 +106,7 @@ export function periodCutoffSql(
  * gaming activity. Mirrors `deposit-bonus/_shared.ts`
  * `LIFETIME_PAIRING_LOOKBACK_DAYS` (365d).
  */
-export const GAMES_LIFETIME_LOOKBACK_HOURS = 365 * 24;
+const GAMES_LIFETIME_LOOKBACK_HOURS = 365 * 24;
 
 /**
  * Like {@link periodCutoffSql}, but on the lifetime (`all`) window the
@@ -119,7 +119,7 @@ export const GAMES_LIFETIME_LOOKBACK_HOURS = 365 * 24;
  * (`lt.created_at`, `ui.obtained_at`, `ug.created_at`). The interval value
  * is a hardcoded number, never user-supplied.
  */
-export function periodCutoffSqlCapped(
+function periodCutoffSqlCapped(
   column: string,
   period: GamesPeriod,
 ): string {
@@ -131,7 +131,7 @@ export function periodCutoffSqlCapped(
  * Pretty label for the selected period — used in UI captions and
  * tooltips so the figures always read with their scope attached.
  */
-export function labelForPeriod(period: GamesPeriod): string {
+function labelForPeriod(period: GamesPeriod): string {
   switch (period) {
     case "24h":
       return "past 24h";
@@ -185,7 +185,7 @@ export async function realCustomersScopeSql(): Promise<string> {
  * `userCol` and `tsCol` are inlined verbatim — pass only hardcoded
  * identifiers.
  */
-export function notInCreatorSessionSql(
+function notInCreatorSessionSql(
   userCol: string,
   tsCol: string,
 ): string {
@@ -232,7 +232,7 @@ export function notInCreatorSessionSql(
  *
  * Returns the AND-clause to append to WHERE.
  */
-export const WAGER_NON_BORROW_FILTER = `
+const WAGER_NON_BORROW_FILTER = `
   AND (
     (lt.type::text = 'pack_opening' AND (lt.description IS NULL OR lt.description NOT ILIKE '%borrow%'))
     OR (lt.type::text = 'battle_bet' AND lt.game_session_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
@@ -250,7 +250,7 @@ export const WAGER_NON_BORROW_FILTER = `
  * `non_borrow_pack_sessions` + `non_borrow_battle_sessions` CTEs must
  * be in scope.
  */
-export const PAYOUT_NON_BORROW_FILTER = `
+const PAYOUT_NON_BORROW_FILTER = `
   AND (
     (ui.source_type = 'pack' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_pack_sessions))
     OR (ui.source_type = 'battle' AND ui.source_id IN (SELECT game_session_id FROM non_borrow_battle_sessions))
@@ -269,7 +269,7 @@ export const PAYOUT_NON_BORROW_FILTER = `
  *   • non_borrow_battle_sessions: every battle_participant's
  *     game_session_id whose battle has borrow_percentage = 0.
  */
-export const BORROW_FILTER_CTES = `
+const BORROW_FILTER_CTES = `
   non_borrow_pack_sessions AS (
     SELECT game_session_id
     FROM ledger_transactions

@@ -95,7 +95,7 @@ import { getDailyPacksGiveaway } from "./daily-packs";
 
 // ─── Program identity ───────────────────────────────────────────────
 
-export const REWARD_PROGRAM_KEYS = [
+const REWARD_PROGRAM_KEYS = [
   "depositBonus",
   "rakeback",
   "dailyPacks",
@@ -109,7 +109,7 @@ export const REWARD_PROGRAM_KEYS = [
 export type RewardProgramKey = (typeof REWARD_PROGRAM_KEYS)[number];
 
 /** The seven programs the owner named — `other` is the residual, not one. */
-export const NAMED_REWARD_PROGRAM_KEYS = REWARD_PROGRAM_KEYS.filter(
+const NAMED_REWARD_PROGRAM_KEYS = REWARD_PROGRAM_KEYS.filter(
   (k) => k !== "other",
 ) as readonly Exclude<RewardProgramKey, "other">[];
 
@@ -125,7 +125,7 @@ export const REWARD_PROGRAM_LABELS: Record<RewardProgramKey, string> = {
 };
 
 /** One line of plain-English "what this program actually pays for". */
-export const REWARD_PROGRAM_BLURBS: Record<RewardProgramKey, string> = {
+const REWARD_PROGRAM_BLURBS: Record<RewardProgramKey, string> = {
   depositBonus: "% bonus credited on qualifying deposits, plus manual top-ups.",
   rakeback: "Wager-based rakeback players claim back from their own play.",
   dailyPacks: "Free reward packs — the value of cards handed out for ~$0 wager.",
@@ -266,7 +266,7 @@ const CREATOR_POOL_TYPES_SQL = `('creator_fill_spend_tip','creator_fill_spend_ba
 
 // ─── Result shape ───────────────────────────────────────────────────
 
-export type RewardProgramComponent = {
+type RewardProgramComponent = {
   label: string;
   total: number;
   count: number;

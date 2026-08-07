@@ -55,7 +55,7 @@ import { EmptyState } from "@/components/empty-state";
 
 /* ── Creator Section ── */
 
-export const CreatorSection = React.memo(function CreatorSection({
+const CreatorSection = React.memo(function CreatorSection({
   user,
   creatorData,
   affiliate,

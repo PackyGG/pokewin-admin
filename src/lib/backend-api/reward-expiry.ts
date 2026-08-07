@@ -31,7 +31,7 @@ import { backendApi } from "./client";
  */
 
 /** Per-rakeback-type claim windows, in whole days after the period ends. */
-export type RakebackExpiry = {
+type RakebackExpiry = {
   daily_days: number;
   weekly_days: number;
   monthly_days: number;

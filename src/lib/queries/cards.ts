@@ -507,7 +507,7 @@ export type SetForMoveDialog = {
  * `getSets()` so the existing thin call sites (filter dropdowns, card
  * create-form) don't pay for the extra columns.
  */
-export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
+async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
   const db = await getReadDrizzleDb();
   const result = await db.execute<{
     id: string;
@@ -535,7 +535,7 @@ export async function getSetsForMoveDialog(): Promise<SetForMoveDialog[]> {
  * inside the create-new-set sub-form on the bulk-move dialog. Sorted so
  * the dropdown reads alphabetically.
  */
-export async function getDistinctSeries(): Promise<string[]> {
+async function getDistinctSeries(): Promise<string[]> {
   const db = await getReadDrizzleDb();
   const result = await db.execute<{ series: string }>(sql`
     SELECT DISTINCT series FROM sets

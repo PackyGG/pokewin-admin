@@ -424,7 +424,7 @@ export function EntityTable<T>({
  * This lets `/cards` implement persistent, cross-page selection with shift-
  * range without re-deriving the span math.
  */
-export function rangeSelectKeys(
+function rangeSelectKeys(
   orderedKeys: string[],
   anchorKey: string | null,
   clickedKey: string,

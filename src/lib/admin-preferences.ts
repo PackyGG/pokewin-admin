@@ -10,7 +10,7 @@ import {
 // the browser bundle. Re-exported here for backward compat with
 // server-side callers.
 export {
-  DEFAULT_PREFERENCES,
+  
   THEME_VALUES,
   DATE_FORMAT_VALUES,
   isValidTimezone,

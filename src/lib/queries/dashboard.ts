@@ -68,16 +68,16 @@ import {
 // actual definitions live in dashboard-period.ts (no DB imports) so
 // the <DashboardPeriodSelector> client component can pull them too.
 export {
-  DASHBOARD_PERIODS,
-  DASHBOARD_PERIOD_LABELS,
-  DEFAULT_DASHBOARD_PERIOD,
+  
+  
+  
   parseDashboardPeriod,
-  periodToCutoff,
-  DASHBOARD_KPI_WINDOWS,
-  DASHBOARD_KPI_WINDOW_LABELS,
-  DASHBOARD_KPI_WINDOW_TITLE,
-  DEFAULT_DASHBOARD_KPI_WINDOW,
-  kpiWindowToCutoff,
+  
+  
+  
+  
+  
+  
   parseDashboardKpiWindow,
 } from "./dashboard-period";
 export type { DashboardKpiWindow } from "./dashboard-period";
@@ -323,7 +323,7 @@ const cachedKpiWindowMetrics = unstable_cache(
  * (it is a FEE, not a stake) — so this tile and the canonical GGR wager
  * leg now agree on the fee (closes M3).
  */
-export function getPeriodAggregates(
+function getPeriodAggregates(
   db: MainDrizzleDb,
   // Single rolling cutoff for the selected period. `new Date(0)` for
   // the "all" period.

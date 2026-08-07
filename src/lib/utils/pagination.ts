@@ -22,7 +22,7 @@
  */
 
 /** Rows per page when `?perPage=` is absent or unusable. */
-export const DEFAULT_PER_PAGE = 20;
+const DEFAULT_PER_PAGE = 20;
 
 /**
  * Hard ceiling on rows per request. Above this a single admin page load
@@ -30,7 +30,7 @@ export const DEFAULT_PER_PAGE = 20;
  * problem. Chosen to sit well above the largest real page-size control in
  * the UI (100) while staying far below "the whole table".
  */
-export const MAX_PER_PAGE = 200;
+const MAX_PER_PAGE = 200;
 
 /**
  * Coerce a query-string value to a positive integer, or `null` if it is

@@ -80,7 +80,7 @@ export async function loadAdminIdentities(
  * A stable label for an id that may not resolve. Falls back to a short id stub
  * so a row never renders a blank actor column.
  */
-export function identityLabel(
+function identityLabel(
   identities: ReadonlyMap<string, AdminIdentity>,
   id: string | null | undefined,
   fallback = "System",

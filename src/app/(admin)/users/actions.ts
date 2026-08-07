@@ -50,7 +50,7 @@ const SNAPSHOT_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
  * render to zero for the common path of admins listing users without
  * exporting.
  */
-export async function fetchDistinctUserCountries() {
+async function fetchDistinctUserCountries() {
   await requirePageAccess("/users");
   return getDistinctUserCountries();
 }
@@ -367,7 +367,7 @@ export async function unlockUser(userId: string) {
  * never the emails/amounts themselves (no row PII in the audit log,
  * per CLAUDE.md).
  */
-export async function exportAllUsersCsv(): Promise<{
+async function exportAllUsersCsv(): Promise<{
   csv: string;
   filename: string;
 }> {

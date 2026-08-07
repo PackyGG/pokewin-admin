@@ -5,7 +5,7 @@ type RoleSortableAdmin = {
   roles: readonly AdminRole[];
 };
 
-export type AdminUserGroupKey =
+type AdminUserGroupKey =
   | "owners"
   | "admins"
   | "marketing"
@@ -63,7 +63,7 @@ export function compareAdminUsersByRole(
   return rankAdminUser(left) - rankAdminUser(right);
 }
 
-export function getAdminUserGroup(
+function getAdminUserGroup(
   user: RoleSortableAdmin,
 ): AdminUserGroupKey {
   if (user.isOwner) return "owners";

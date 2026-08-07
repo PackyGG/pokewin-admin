@@ -566,7 +566,7 @@ export type PaginatedTransactions = {
   totalPages: number;
 };
 
-export type AuditEvent = {
+type AuditEvent = {
   id: string;
   eventType: string;
   ip: string | null;
@@ -575,7 +575,7 @@ export type AuditEvent = {
   metadata: unknown;
 };
 
-export type PaginatedAuditLog = {
+type PaginatedAuditLog = {
   data: AuditEvent[];
   total: number;
   page: number;
@@ -690,7 +690,7 @@ export type AdminNote = {
   updatedAt: string;
 };
 
-export type CreatorClick = {
+type CreatorClick = {
   id: number;
   code: string;
   userAgent: string | null;
@@ -701,7 +701,7 @@ export type CreatorClick = {
   createdAt: string | null;
 };
 
-export type CreatorCodeUsage = {
+type CreatorCodeUsage = {
   id: string;
   referredUserId: string;
   referredUsername: string | null;
@@ -902,7 +902,7 @@ export const ADJUSTMENT_TX_TYPES = ["admin_balance_adjustment"] as const;
 // balance, OR cashing a won voucher back to balance (voucher_redeemed). All
 // realize a held item into cash (voucher == card per house rules), so they sit
 // next to the items they came from. Keep in sync with CARD_SALE_TYPES in page.tsx.
-export const CARD_SALE_TX_TYPES = [
+const CARD_SALE_TX_TYPES = [
   "card_sale",
   "reward_card_sale",
   "voucher_redeemed",
@@ -914,8 +914,8 @@ export const CARD_SALE_TX_TYPES = [
 // section rather than diluting the sales-only "Card & Voucher Sales" meaning.
 // Moved off Gaming per owner (the paired battle_bet row already carries the
 // full win P&L). Keep in sync with BATTLE_VOUCHER_TYPES in page.tsx.
-export const BATTLE_VOUCHER_TX_TYPES = ["battle_excess_to_voucher"] as const;
-export const EXCHANGE_TX_TYPES = [
+const BATTLE_VOUCHER_TX_TYPES = ["battle_excess_to_voucher"] as const;
+const EXCHANGE_TX_TYPES = [
   "card_exchange",
   "exchange_excess_to_voucher",
   "exchange_excess_credit",
@@ -932,7 +932,7 @@ export type TabKey =
   | "kyc"
   | "audit";
 
-export const TAB_KEYS = new Set<TabKey>([
+const TAB_KEYS = new Set<TabKey>([
   "overview",
   "rewards",
   "gaming",

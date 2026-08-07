@@ -71,7 +71,7 @@ export function neutralizeCsvFormula(str: string): string {
  * Formula neutralization runs FIRST (see {@link neutralizeCsvFormula}), so
  * the quoting below wraps the already-safe value.
  */
-export function escapeCsvField(value: ExportCell): string {
+function escapeCsvField(value: ExportCell): string {
   if (value === null || value === undefined) return "";
   // A `number` came from our own aggregates, never from user input, and
   // String() can't produce a formula — skip the sanitizer so negative

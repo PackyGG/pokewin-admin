@@ -27,7 +27,7 @@ import { calculateUsersPnlBatch } from "./pnl";
  * to the current page slice, exactly like `/users` and `getUsersWithTags`.
  */
 
-export type VipDiscordLink = {
+type VipDiscordLink = {
   guildId: string;
   channelId: string;
   memberDiscordUserId: string | null;
@@ -63,7 +63,7 @@ export type VipRosterRow = {
 
 export type VipRosterFilter = "all" | "linked" | "unlinked";
 
-export type VipLinkOperationStatus = "linked" | "updated" | "already_linked";
+type VipLinkOperationStatus = "linked" | "updated" | "already_linked";
 
 export type VipLinkOperationRow = {
   interactionId: string;

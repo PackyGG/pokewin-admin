@@ -236,7 +236,7 @@ export function PayoutTile({
   );
 }
 
-export function RewardsSummarySection({
+function RewardsSummarySection({
   rewards,
   tips,
 }: {

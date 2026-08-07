@@ -6,7 +6,7 @@
  */
 
 /** Claim lifecycle. Stored as a plain string column (admin-schema convention). */
-export const CREATOR_REWARD_CLAIM_STATUSES = [
+const CREATOR_REWARD_CLAIM_STATUSES = [
   "pending",
   "approved",
   "rejected",
@@ -15,7 +15,7 @@ export const CREATOR_REWARD_CLAIM_STATUSES = [
 export type CreatorRewardClaimStatus =
   (typeof CREATOR_REWARD_CLAIM_STATUSES)[number];
 
-export function isCreatorRewardClaimStatus(
+function isCreatorRewardClaimStatus(
   value: unknown,
 ): value is CreatorRewardClaimStatus {
   return (
@@ -36,7 +36,7 @@ export const BASIS_HOLDING_STATUSES: readonly CreatorRewardClaimStatus[] = [
   "approved",
 ];
 
-export type CreatorRewardProgram = {
+type CreatorRewardProgram = {
   id: string;
   name: string;
   creatorUserId: string;

@@ -41,7 +41,7 @@ import { isRootOwnerUsername } from "@/lib/owners-shared";
 /** The registrable domain every dashboard host sits under. */
 export const ROOT_DOMAIN = "packydash.com";
 
-export type AppHostKind = "segment" | "landing";
+type AppHostKind = "segment" | "landing";
 
 export type AppHostConfig = {
   /** Hostname, lowercase, no port. */
@@ -84,7 +84,7 @@ export type AppHostConfig = {
  * Every sub-app that owns a route segment. Used both for the host map below and
  * for the middleware's wrong-host redirect, so the two can never disagree.
  */
-export const SEGMENT_BASE_PATHS = [
+const SEGMENT_BASE_PATHS = [
   "/pack-studio",
   "/antifraud",
   "/creator-hub",
@@ -277,7 +277,7 @@ const PASSTHROUGH_PREFIXES = [
 const PASSTHROUGH_EXACT = new Set(["/favicon.ico", "/robots.txt"]);
 
 /** Strip the port and normalize, so `fraud.localhost:3000` matches cleanly. */
-export function normalizeHost(host: string | null | undefined): string {
+function normalizeHost(host: string | null | undefined): string {
   if (!host) return "";
   return host.split(":")[0].trim().toLowerCase();
 }
@@ -324,7 +324,7 @@ export function resolveAppHost(
 }
 
 /** The config that owns a given route segment, if any. */
-export function hostForBasePath(basePath: string): AppHostConfig | null {
+function hostForBasePath(basePath: string): AppHostConfig | null {
   return APP_HOSTS.find((h) => h.basePath === basePath) ?? null;
 }
 
@@ -577,7 +577,7 @@ export function crossAppHrefs(current: AppHostConfig | null): CrossAppHrefs {
  * (Discord / Telegram pings). Falls back to the configured public URL, then
  * to null so callers can degrade to a bare path.
  */
-export function absoluteOriginForBasePath(basePath: string): string | null {
+function absoluteOriginForBasePath(basePath: string): string | null {
   const owner = hostForBasePath(basePath);
   return owner ? `https://${owner.host}` : null;
 }

@@ -1,7 +1,7 @@
 export const ROLES = ["user", "support", "admin", "creator"] as const;
-export type Role = (typeof ROLES)[number];
+type Role = (typeof ROLES)[number];
 
-export const WITHDRAWAL_STATUSES = [
+const WITHDRAWAL_STATUSES = [
   "pending",
   "processing",
   "shipped",
@@ -9,7 +9,7 @@ export const WITHDRAWAL_STATUSES = [
   "failed",
   "cancelled",
 ] as const;
-export type WithdrawalStatus = (typeof WITHDRAWAL_STATUSES)[number];
+type WithdrawalStatus = (typeof WITHDRAWAL_STATUSES)[number];
 
 export const ROLE_COLORS: Record<string, string> = {
   admin: "bg-rose-500/15 text-rose-600 dark:text-rose-400 border-rose-500/30",

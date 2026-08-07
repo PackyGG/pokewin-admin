@@ -7,7 +7,7 @@ import {
   type BackendErrorPayload,
 } from "./errors";
 
-export type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export type RequestOptions = {
   method?: HttpMethod;

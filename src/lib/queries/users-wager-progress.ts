@@ -91,14 +91,14 @@ function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
   ]).finally(() => clearTimeout(timer));
 }
 
-export type WagerProgressSourceKey =
+type WagerProgressSourceKey =
   | "deposit"
   | "bonus"
   | "affiliate"
   | "rakeback"
   | "tips";
 
-export type WagerProgressSource = {
+type WagerProgressSource = {
   key: WagerProgressSourceKey;
   label: string;
   /** Lifetime total earned/deposited for this source (backend truth). */

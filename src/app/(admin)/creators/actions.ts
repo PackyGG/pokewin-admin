@@ -141,7 +141,7 @@ const updateDealSchema = z.object({
   minStreamMinutes: optionalCount,
 });
 
-export async function makeCreator(userId: string) {
+async function makeCreator(userId: string) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_make_creator", "promote a user to creator");
@@ -307,7 +307,7 @@ export async function removeAffiliateCode(codeId: string) {
 // The only real activation switch is the account-wide
 // `user.affiliate_code_active` flag — see toggleCodeActive below.
 
-export async function updateCreatorLimits(
+async function updateCreatorLimits(
   userId: string,
   limits: {
     currencyLimitAmount?: number | null;
@@ -373,7 +373,7 @@ export async function updateCreatorLimits(
   revalidatePath(`/creators/${userId}`);
 }
 
-export async function processCreatorPayout(affiliateUserId: string) {
+async function processCreatorPayout(affiliateUserId: string) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_approve_creator_payout", "approve creator payouts");
@@ -583,7 +583,7 @@ export async function updateAffiliateCutExpiration(
   return { success: true };
 }
 
-export async function toggleCodeActive(userId: string, isActive: boolean) {
+async function toggleCodeActive(userId: string, isActive: boolean) {
   const db = await getPrimaryDrizzleDb();
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_toggle_creator_code", "toggle creator codes");
@@ -609,7 +609,7 @@ export async function toggleCodeActive(userId: string, isActive: boolean) {
 
 // --- Webhooks ---
 
-export async function createWebhook(
+async function createWebhook(
   targetUserId: string,
   data: { url: string }
 ) {
@@ -646,7 +646,7 @@ export async function createWebhook(
   return { id: webhook.id, secret };
 }
 
-export async function updateWebhook(
+async function updateWebhook(
   webhookId: string,
   data: { url?: string; enabled?: boolean }
 ) {
@@ -686,7 +686,7 @@ export async function updateWebhook(
   revalidatePath(`/creators/${webhook.target_user_id}`);
 }
 
-export async function deleteWebhook(webhookId: string) {
+async function deleteWebhook(webhookId: string) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_delete_creator_webhook", "delete creator webhooks");
 
@@ -713,7 +713,7 @@ export async function deleteWebhook(webhookId: string) {
   revalidatePath(`/creators/${webhook.target_user_id}`);
 }
 
-export async function testWebhook(webhookId: string) {
+async function testWebhook(webhookId: string) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_test_creator_webhook", "test creator webhooks");
 
@@ -778,7 +778,7 @@ export async function testWebhook(webhookId: string) {
 
 // --- Deals ---
 
-export async function createDeal(
+async function createDeal(
   targetUserId: string,
   data: z.infer<typeof createDealSchema>
 ) {
@@ -850,7 +850,7 @@ export async function createDeal(
   revalidatePath(`/creators/${targetUserId}`);
 }
 
-export async function updateDeal(
+async function updateDeal(
   dealId: string,
   data: z.infer<typeof updateDealSchema>
 ) {
@@ -1042,7 +1042,7 @@ function calculateMaxExposure(data: {
   return monthlyCashout + leaderboardCostPerMonth;
 }
 
-export async function deleteDeal(dealId: string) {
+async function deleteDeal(dealId: string) {
   const session = await requirePageAccess("/creators");
   await requireCapability(session, "__can_delete_creator_deal", "delete creator deals");
 

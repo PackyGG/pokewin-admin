@@ -60,7 +60,7 @@ export async function readTzCookie(): Promise<string | null> {
  * Memoized per render via `cache()` so multiple query helpers in one page
  * pay the cookie read once (same shape as `readDbEnv`).
  */
-export const getServerTimeZone = cache(
+const getServerTimeZone = cache(
   async (explicitPref: string | null): Promise<string> => {
     // Fast path: a valid explicit preference needs no cookie read.
     if (explicitPref && isValidTimeZone(explicitPref)) return explicitPref;

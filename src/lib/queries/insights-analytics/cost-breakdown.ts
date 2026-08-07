@@ -98,7 +98,7 @@ import { INSIGHTS_HUB_WAGER_LOOKBACK_DAYS } from "@/lib/queries/insights-analyti
  */
 
 /** Sign of a waterfall line relative to the running total. */
-export type CostLineKind =
+type CostLineKind =
   /** Adds to the running total (the starting wager). */
   | "base"
   /** A gameplay payout — the user's own winnings paid back. */
@@ -136,7 +136,7 @@ export type CostLine = {
   ledgerType?: string;
 };
 
-export type CostMarginHealth = {
+type CostMarginHealth = {
   /** Return-to-player — gaming payouts / wager. null when no wager. */
   rtp: number | null;
   /** House edge — GGR / wager. null when no wager. */
@@ -153,7 +153,7 @@ export type CostMarginHealth = {
   pnlPctOfGgr: number | null;
 };
 
-export type CostBreakdownContributor = {
+type CostBreakdownContributor = {
   userId: string;
   username: string | null;
   /**
@@ -189,7 +189,7 @@ export type CostBreakdownContributor = {
 // Affiliate LEADERBOARD prizes are CREATOR costs per the house model —
 // they are the block's footnote figure, never a program row.
 
-export type RewardProgramSpendKey =
+type RewardProgramSpendKey =
   | "rakeback"
   | "affiliate_commission"
   | "deposit_bonus"
@@ -203,7 +203,7 @@ export type RewardProgramSpendKey =
   | "promo_codes"
   | "other";
 
-export type RewardProgramSpend = {
+type RewardProgramSpend = {
   key: RewardProgramSpendKey;
   label: string;
   /**
@@ -216,7 +216,7 @@ export type RewardProgramSpend = {
   note: string;
 };
 
-export type RewardProgramSpendBlock = {
+type RewardProgramSpendBlock = {
   /** Program rows in the owner's dropdown order (incl. the trailing "other"). */
   programs: RewardProgramSpend[];
   /** Σ of the itemized (non-null) program rows, incl. "other". */
@@ -1399,7 +1399,7 @@ export async function getCostBreakdownCached(
 // no new scope — a pure cached projection of the owner-trusted assembly.
 
 /** The three cost-breakdown figures the top bar renders (30d window). */
-export type CostBreakdownTopbar30d = {
+type CostBreakdownTopbar30d = {
   /** Canonical 30d GGR — the same `ggr` the edge-plan 30d recon row + /insights cost-breakdown show. */
   ggr: number;
   /** Real cash deposited in the window — the waterfall's "Deposits (cash in)" bridge row (`residual:deposit`). */
@@ -1437,7 +1437,7 @@ const cachedCostBreakdownTopbar30d = unstable_cache(
  * `safeQuery` wrapper degrades it to "—" pills and the next render
  * retries.
  */
-export async function getCostBreakdownTopbar30d(): Promise<CostBreakdownTopbar30d> {
+async function getCostBreakdownTopbar30d(): Promise<CostBreakdownTopbar30d> {
   return cachedCostBreakdownTopbar30d();
 }
 

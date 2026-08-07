@@ -5,7 +5,7 @@
 
 export const TOP_CREATORS_PERIODS = ["3d", "7d", "14d"] as const;
 export type TopCreatorsPeriod = (typeof TOP_CREATORS_PERIODS)[number];
-export const DEFAULT_TOP_CREATORS_PERIOD: TopCreatorsPeriod = "3d";
+const DEFAULT_TOP_CREATORS_PERIOD: TopCreatorsPeriod = "3d";
 
 export const TOP_CREATORS_PERIOD_LABELS: Record<TopCreatorsPeriod, string> = {
   "3d": "3d",
@@ -22,7 +22,7 @@ export function parseTopCreatorsPeriod(
     : DEFAULT_TOP_CREATORS_PERIOD;
 }
 
-export function topCreatorsPeriodToInterval(period: TopCreatorsPeriod): string {
+function topCreatorsPeriodToInterval(period: TopCreatorsPeriod): string {
   switch (period) {
     case "3d":
       return "3 days";

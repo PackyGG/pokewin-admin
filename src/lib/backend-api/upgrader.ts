@@ -10,7 +10,7 @@ import {
 import { backendApi } from "./client";
 import type { UpgraderOutputColor } from "@/app/(admin)/upgrader/colors";
 
-export type { UpgraderOutputColor };
+;
 
 export type UpgraderOutputCard = {
   id: string;

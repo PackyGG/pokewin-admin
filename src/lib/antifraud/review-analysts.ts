@@ -53,7 +53,7 @@ export function isAssignableAnalyst(
 }
 
 /** Assignable analysts — active admin or support accounts. */
-export async function listAssignableAnalysts(): Promise<
+async function listAssignableAnalysts(): Promise<
   { id: string; label: string }[]
 > {
   await requireAntifraudReadAccess();

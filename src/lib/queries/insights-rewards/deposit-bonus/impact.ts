@@ -76,7 +76,7 @@ const CAP_HITTER_LIMIT = 100;
 
 // ─── 1. Deposit-frequency distribution (per-user-per-day) ───────────
 
-export type DepositFrequencyBucket = {
+type DepositFrequencyBucket = {
   /** "1×" / "2×" / "3×" / "4+×" */
   label: string;
   /** Inclusive lower bound of deposits-in-a-day. */
@@ -221,7 +221,7 @@ async function computeDepositFrequency(
 
 // ─── 2. Deposit-size distribution ──────────────────────────────────
 
-export type DepositSizeBucket = {
+type DepositSizeBucket = {
   /** "<$10" / "$10–50" / … / "$2K+" */
   label: string;
   /** Inclusive lower bound (USD). */
@@ -363,7 +363,7 @@ async function computeDepositSizeDistribution(
 
 // ─── 3. Cap-hitters with value contribution ────────────────────────
 
-export type CapHitterRow = {
+type CapHitterRow = {
   userId: string;
   username: string | null;
   /** Cap-equal bonus rows in window. */
@@ -621,7 +621,7 @@ async function computeCapHitters(
 
 // ─── 4. Time-between-deposits (LAG window) ──────────────────────────
 
-export type TimeGapBucket = {
+type TimeGapBucket = {
   /** "<30min" / "30min–2h" / "2–6h" / "6–24h" / ">24h" */
   label: string;
   /** Inclusive lower bound (minutes). */
@@ -774,7 +774,7 @@ async function computeTimeBetween(
 
 // ─── 5. Bonus-to-wager ratio per deposit-size segment (nice-to-have) ─
 
-export type BonusWagerSegment = {
+type BonusWagerSegment = {
   /** Deposit-size band label. */
   label: string;
   /** Users whose window deposit total falls in this band. */
@@ -1021,7 +1021,7 @@ async function computePostCapBehavior(
 
 // ─── 8. New vs returning cap triggers (nice-to-have) ────────────────
 
-export type CapHitterCohortSide = {
+type CapHitterCohortSide = {
   /** Distinct cap-hitters in this cohort. */
   users: number;
   /** Their combined cap hits. */

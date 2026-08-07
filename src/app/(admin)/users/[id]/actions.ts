@@ -1145,7 +1145,7 @@ export async function getBalanceAdjustmentForEdit(
   };
 }
 
-export { canEditBalanceAdjustments };
+;
 
 export async function updateBalanceAdjustmentMeta(data: {
   ledgerTxId: string;
@@ -1351,7 +1351,7 @@ export async function updateBalanceAdjustmentMeta(data: {
 //
 // Total balance is unchanged. Reversible: admins can adjust back via
 // the existing balance-adjust flow if needed.
-export async function moveBalanceToVault(
+async function moveBalanceToVault(
   userId: string,
 ): Promise<
   | { success: true; movedAmount: number }
@@ -2329,7 +2329,7 @@ export async function getUserJoinedSponsoredBattles(
   });
 }
 
-export type InventorySaleBatch = {
+type InventorySaleBatch = {
   /** First ledger-row id in the batch (stable React key). */
   id: string;
   at: string;
@@ -2347,7 +2347,7 @@ export type InventorySaleBatch = {
  * (which don't always exist). This guarantees every sold card the inventory
  * tab shows also appears here. Newest batch first.
  */
-export async function getUserInventorySaleBatches(
+async function getUserInventorySaleBatches(
   userId: string,
 ): Promise<InventorySaleBatch[]> {
   await requirePageAccess("/users");
@@ -4008,7 +4008,7 @@ export async function refreshUserDetailCache(userId?: string): Promise<void> {
   }
 }
 
-export async function fetchProvablyFairResults(
+async function fetchProvablyFairResults(
   userId: string,
   page: number,
   perPage: number,
@@ -4018,7 +4018,7 @@ export async function fetchProvablyFairResults(
   return getProvablyFairResults(userId, page, perPage, filters);
 }
 
-export async function fetchSeedRotationHistory(
+async function fetchSeedRotationHistory(
   userId: string,
   page: number,
   perPage: number
@@ -4027,12 +4027,12 @@ export async function fetchSeedRotationHistory(
   return getSeedRotationHistory(userId, page, perPage);
 }
 
-export async function fetchBalanceHistory(userId: string) {
+async function fetchBalanceHistory(userId: string) {
   await requirePageAccess("/users");
   return getUserBalanceHistory(userId);
 }
 
-export async function fetchCreatorWithdrawalLimits(userId: string) {
+async function fetchCreatorWithdrawalLimits(userId: string) {
   await requirePageAccess("/users");
   return getCreatorWithdrawalLimits(userId);
 }

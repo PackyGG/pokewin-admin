@@ -96,7 +96,7 @@ function cacheTtlForPeriod(p: XpSalesPeriod): number {
 // ─── Result shapes ────────────────────────────────────────────────────
 
 /** One recent XP sale for the recent-sales list. */
-export type XpSaleRow = {
+type XpSaleRow = {
   id: string;
   userId: string;
   username: string | null;

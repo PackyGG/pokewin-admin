@@ -39,7 +39,7 @@ const matchSchema = z.object({
 });
 
 export type FiatEmailDomainRule = z.infer<typeof ruleSchema>;
-export type FiatEmailDomainMatch = z.infer<typeof matchSchema>;
+type FiatEmailDomainMatch = z.infer<typeof matchSchema>;
 
 const TIMEOUT_MS = 8_000;
 
@@ -175,7 +175,7 @@ export async function updateFiatEmailDomain(input: {
     .parse(payload).data;
 }
 
-export async function getFiatEmailDomainMatches(
+async function getFiatEmailDomainMatches(
   intentIds: string[],
 ): Promise<FiatEmailDomainMatch[]> {
   if (intentIds.length === 0 || !connection(false)) return [];

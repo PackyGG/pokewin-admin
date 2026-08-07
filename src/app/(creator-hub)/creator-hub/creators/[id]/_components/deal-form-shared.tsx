@@ -169,20 +169,20 @@ export function parseUtcInput(value: string): string | null {
 }
 
 /** A date input value rendered in UTC, never the browser's local timezone. */
-export function toUtcDateInputValue(value: Date | string): string {
+function toUtcDateInputValue(value: Date | string): string {
   const d = value instanceof Date ? value : new Date(value);
   return Number.isNaN(d.getTime()) ? "" : d.toISOString().slice(0, 10);
 }
 
 /** Inclusive start plus N complete UTC days; the returned end is exclusive. */
-export function endDateForDuration(startDate: string, days: number): string {
+function endDateForDuration(startDate: string, days: number): string {
   const start = parseUtcInput(startDate);
   if (!start || !Number.isInteger(days) || days < 1) return "";
   return new Date(new Date(start).getTime() + days * 86_400_000).toISOString();
 }
 
 /** Date/ISO → the UTC-rendered `datetime-local` input value. */
-export function toUtcLocalInputValue(value: Date | string): string {
+function toUtcLocalInputValue(value: Date | string): string {
   const d = value instanceof Date ? value : new Date(value);
   if (Number.isNaN(d.getTime())) return "";
   const pad = (n: number) => String(n).padStart(2, "0");
@@ -313,7 +313,7 @@ export function toDealPayload(
 
 // ── Form primitives ──────────────────────────────────────────────────
 
-export function DealFormSection({
+function DealFormSection({
   title,
   description,
   children,
@@ -339,7 +339,7 @@ export function DealFormSection({
   );
 }
 
-export function DealFormField({
+function DealFormField({
   label,
   htmlFor,
   suffix,

@@ -35,7 +35,7 @@ import { realCustomerIdsSubquery } from "@/lib/queries/_blacklist";
 export const DEPOSIT_BONUS_RATE_PCT = 5;
 
 /** Trailing window (days) used to measure the OLD regime's effective rate. */
-export const OLD_BASELINE_LOOKBACK_DAYS = 30;
+const OLD_BASELINE_LOOKBACK_DAYS = 30;
 
 /** Fallback go-live timestamp if the site_config row is ever missing. */
 const CUTOVER_FALLBACK = "2026-06-17 19:36:40";

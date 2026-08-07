@@ -15,7 +15,7 @@ import { requireCapability } from "@/lib/require-capability";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { reloadPacksInternal } from "@/lib/packs/reload-packs";
 
-export async function reloadPacks() {
+async function reloadPacks() {
   // A Server Action is a callable POST endpoint, so it carries its OWN
   // authorization — the middleware only proves a session exists, it never
   // checks role, and Next explicitly does not treat it as an action guard.

@@ -40,7 +40,7 @@ import { logError } from "@/lib/errors/logger";
  * real admin user (`motha`). Changing this to an id that does not exist in the
  * admin table would make the backend reject every automated requirement.
  */
-export const FIAT_IDENTITY_AUTOMATION_ADMIN_ID =
+const FIAT_IDENTITY_AUTOMATION_ADMIN_ID =
   "1336a279-971c-4089-a305-60f0313bf7cd";
 
 /**
@@ -51,7 +51,7 @@ export const FIAT_IDENTITY_AUTOMATION_ADMIN_ID =
  * lock an account and force KYC. Mirrors
  * `FIAT_IDENTITY_CONTAINMENT_REASONS` in the monitor's policy module.
  */
-export const FIAT_IDENTITY_CONTAINMENT_REASONS = new Set([
+const FIAT_IDENTITY_CONTAINMENT_REASONS = new Set([
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",

@@ -31,7 +31,7 @@ import {
  * it barely moves; shorter windows get the 60s TTL.
  */
 
-export type RacePrizeDailyPoint = {
+type RacePrizeDailyPoint = {
   date: string;
   total: number;
   count: number;

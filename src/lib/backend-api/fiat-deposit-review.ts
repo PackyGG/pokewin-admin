@@ -13,7 +13,7 @@ const ResponseSchema = z.object({
   data: FiatDepositAutomaticCreditConfigSchema,
 });
 
-export const FiatDepositReviewStatusSchema = z.enum([
+const FiatDepositReviewStatusSchema = z.enum([
   "created",
   "checkout_creating",
   "checkout_ready",
@@ -72,10 +72,10 @@ const FiatDepositReviewItemResponseSchema = z.object({
 export type FiatDepositAutomaticCreditConfig = z.infer<
   typeof FiatDepositAutomaticCreditConfigSchema
 >;
-export type FiatDepositReviewStatus = z.infer<
+type FiatDepositReviewStatus = z.infer<
   typeof FiatDepositReviewStatusSchema
 >;
-export type FiatDepositReviewItem = z.infer<
+type FiatDepositReviewItem = z.infer<
   typeof FiatDepositReviewItemSchema
 >;
 
@@ -106,7 +106,7 @@ export async function updateFiatDepositAutomaticCreditConfig(
   return parseResponse(response);
 }
 
-export async function getFiatDepositReviewQueue(input: {
+async function getFiatDepositReviewQueue(input: {
   status?: FiatDepositReviewStatus;
   limit: number;
   offset: number;
@@ -126,7 +126,7 @@ export async function getFiatDepositReviewQueue(input: {
   return parsed.data.data;
 }
 
-export async function getFiatDepositReview(
+async function getFiatDepositReview(
   intentId: string,
 ): Promise<FiatDepositReviewItem> {
   const response = await backendApi.get<unknown>(
@@ -139,7 +139,7 @@ export async function getFiatDepositReview(
   return parsed.data.data;
 }
 
-export async function decideFiatDepositReview(input: {
+async function decideFiatDepositReview(input: {
   intentId: string;
   decision: "approve" | "reject";
   reason: string;

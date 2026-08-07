@@ -50,7 +50,7 @@ const LOG_PER_PAGE = 25;
  * Performers tab and restored the same day — they are the two biggest modes
  * on the site, so a "Games" tab without them answered almost nothing.
  */
-export const GAME_VIEWS = [
+const GAME_VIEWS = [
   "packs",
   "battles",
   "upgrader",
@@ -372,7 +372,7 @@ function DoubleDownSection({
 }
 
 /** Kept so the tab file owns its own loading shape. */
-export function GamesTabSkeleton() {
+function GamesTabSkeleton() {
   return (
     <div className="space-y-6">
       <Skeleton className="h-10 w-full rounded-lg" />

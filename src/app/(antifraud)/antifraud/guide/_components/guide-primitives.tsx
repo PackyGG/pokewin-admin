@@ -44,7 +44,7 @@ const GUIDE_ACCENTS = {
 
 export type GuideAccent = keyof typeof GUIDE_ACCENTS;
 
-export function guideAccentClass(accent: GuideAccent = "muted"): string {
+function guideAccentClass(accent: GuideAccent = "muted"): string {
   return GUIDE_ACCENTS[accent];
 }
 

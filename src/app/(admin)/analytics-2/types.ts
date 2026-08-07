@@ -1,4 +1,4 @@
-export const ANALYTICS_2_PERIODS = ["7d", "30d", "90d"] as const;
+const ANALYTICS_2_PERIODS = ["7d", "30d", "90d"] as const;
 
 export type Analytics2Period = (typeof ANALYTICS_2_PERIODS)[number];
 

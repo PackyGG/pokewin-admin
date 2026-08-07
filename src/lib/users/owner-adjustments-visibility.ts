@@ -29,7 +29,7 @@ import { isOwnerById, isMainOwnerUsername } from "@/lib/owners";
  */
 
 /** Capability key that grants admin-balance-adjustment view visibility. */
-export const VIEW_BALANCE_ADJUSTMENTS_CAPABILITY =
+const VIEW_BALANCE_ADJUSTMENTS_CAPABILITY =
   "__can_view_balance_adjustments";
 
 /**
@@ -37,7 +37,7 @@ export const VIEW_BALANCE_ADJUSTMENTS_CAPABILITY =
  * username (full owner status otherwise needs the DB `is_owner` flag). Kept for
  * callers that hold only a username.
  */
-export function isAdjustmentVisibilityOwnerUsername(
+function isAdjustmentVisibilityOwnerUsername(
   username: string | null | undefined,
 ): boolean {
   return isMainOwnerUsername(username);

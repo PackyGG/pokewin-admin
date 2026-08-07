@@ -371,7 +371,7 @@ class PackEditRefusal extends Error {
   }
 }
 
-export type UpdatePackResult = ServerActionResult<{
+type UpdatePackResult = ServerActionResult<{
   updatedAt: string;
   liveCacheReloaded: boolean;
 }>;
@@ -462,7 +462,7 @@ export async function createPack(data: {
   return pack.id;
 }
 
-export async function updatePack(
+async function updatePack(
   id: string,
   data: {
     expectedUpdatedAt: string;
@@ -923,7 +923,7 @@ export type PackFullDetail = {
  * derived classification on /packs. Passing the pack's current derived pool
  * is fine — it just persists that choice explicitly.
  */
-export async function setPackSet(
+async function setPackSet(
   packId: string,
   set: string,
 ): Promise<{ set: PackSetFilter }> {
@@ -970,7 +970,7 @@ export async function setPackSet(
 }
 
 /** The pack's explicit set override (null = none → card-derived). */
-export async function getPackSetForEdit(
+async function getPackSetForEdit(
   packId: string,
 ): Promise<PackSetFilter | null> {
   await requirePageAccess("/packs");

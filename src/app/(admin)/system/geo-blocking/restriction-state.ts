@@ -24,7 +24,7 @@ export type ConfirmedRestrictionOverrides = Record<
 
 export const CONFIRMED_RESTRICTIONS_STORAGE_KEY =
   "geo-blocking:primary-confirmed:v1";
-export const CONFIRMED_RESTRICTIONS_MAX_AGE_MS = 10 * 60 * 1000;
+const CONFIRMED_RESTRICTIONS_MAX_AGE_MS = 10 * 60 * 1000;
 
 const ARRAY_RESTRICTION_PROPERTIES = new Set<RestrictionProperty>([
   "lockedDepositsCrypto",
@@ -41,7 +41,7 @@ const RESTRICTION_PROPERTIES = new Set<RestrictionProperty>([
   ...ARRAY_RESTRICTION_PROPERTIES,
 ]);
 
-export function restrictionOverrideKey(
+function restrictionOverrideKey(
   countryCode: string,
   property: RestrictionProperty,
 ): string {

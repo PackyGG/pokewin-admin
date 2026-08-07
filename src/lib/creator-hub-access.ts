@@ -49,7 +49,7 @@ export type CreatorHubToggleRole = (typeof CREATOR_HUB_TOGGLE_ROLES)[number];
 export type CreatorHubAccessSettings = Record<CreatorHubToggleRole, boolean>;
 
 /** The `admin_settings` key that stores a given role's toggle. */
-export function creatorHubToggleKey(role: CreatorHubToggleRole): string {
+function creatorHubToggleKey(role: CreatorHubToggleRole): string {
   return SETTINGS_KEYS.CREATOR_HUB_ACCESS_PREFIX + role + "_enabled";
 }
 

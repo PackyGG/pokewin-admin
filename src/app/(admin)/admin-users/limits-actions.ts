@@ -53,12 +53,12 @@ async function assertTargetExists(adminUserId: string): Promise<void> {
   }
 }
 
-export async function getAdminLimits() {
+async function getAdminLimits() {
   await requireAdmin();
   return getAllLimits();
 }
 
-export async function getAdminUserLimits(adminUserId: string) {
+async function getAdminUserLimits(adminUserId: string) {
   await requireAdmin();
   return getLimitsForAdmin(adminUserId);
 }

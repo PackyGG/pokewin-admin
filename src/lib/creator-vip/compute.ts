@@ -289,7 +289,7 @@ function windowBounds(
   return { starts, ends };
 }
 
-export type WagerPosition = {
+type WagerPosition = {
   runStart: Date;
   currentUsd: number;
   lifetimeUsd: number;
@@ -973,7 +973,7 @@ export type UserFacts = {
   deposits: { amountUsd: number; at: Date }[];
 };
 
-export async function loadUserFacts(userId: string): Promise<UserFacts> {
+async function loadUserFacts(userId: string): Promise<UserFacts> {
   const [standing, vip, holdings, deposits] = await Promise.all([
     userStanding(userId),
     isVipNow(userId),
@@ -1170,7 +1170,7 @@ export type EntitlementBatch = {
  * wager positions have resolved the run starts, which is the same dependency
  * the per-program path has.
  */
-export async function loadEntitlementBatch(
+async function loadEntitlementBatch(
   programs: ProgramForCompute[],
   userId: string,
 ): Promise<EntitlementBatch> {

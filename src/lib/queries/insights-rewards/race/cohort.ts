@@ -27,7 +27,7 @@ import {
 const COUNTRY_LIMIT = 8;
 const SOURCE_LIMIT = 8;
 
-export type RaceCohortRow = {
+type RaceCohortRow = {
   key: string;
   label: string;
   winnerCount: number;

@@ -20,11 +20,7 @@ import {
 // `_constants.ts` (no server imports) so the `"use client"` lookback
 // filter can use them without pulling this server-only module into the
 // client bundle.
-export {
-  RAKEBACK_ROI_LOOKBACK_DEFAULT,
-  RAKEBACK_ROI_LOOKBACK_OPTIONS,
-  parseRakebackRoiLookback,
-} from "@/app/(admin)/insights/_shared/rakeback-constants";
+;
 export type { RakebackRoiLookback } from "@/app/(admin)/insights/_shared/rakeback-constants";
 
 /**

@@ -26,7 +26,7 @@ import { backendApi } from "./client";
 // consumers (page + action).
 export {
   CRYPTO_FEE_ASSETS,
-  type CryptoFeeAsset,
+  
 } from "./crypto-fees-assets";
 import type { CryptoFeeAsset } from "./crypto-fees-assets";
 

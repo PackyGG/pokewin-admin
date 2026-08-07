@@ -6,7 +6,7 @@
 import { ADMIN_PAGES } from "@/lib/admin-pages";
 import { CAPABILITIES } from "@/app/(admin)/settings/roles/permissions-utils";
 
-export type TokenKind = "page" | "capability" | "value";
+type TokenKind = "page" | "capability" | "value";
 
 export type DescribedToken = {
   token: string;

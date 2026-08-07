@@ -96,12 +96,12 @@ export const FIAT_JURISDICTION_POLICY = [
   },
 ] as const;
 
-export type MandatoryFiatJurisdiction = {
+type MandatoryFiatJurisdiction = {
   code: string;
   name: string;
 };
 
-export const MANDATORY_FIAT_JURISDICTIONS =
+const MANDATORY_FIAT_JURISDICTIONS =
   FIAT_JURISDICTION_POLICY.reduce<MandatoryFiatJurisdiction[]>(
     (all, group) => [...all, ...group.jurisdictions],
     [],
@@ -152,7 +152,7 @@ export function withWhopFiatDepositLocks(
   ];
 }
 
-export function isCreditCardDepositLocked(
+function isCreditCardDepositLocked(
   methods: readonly string[],
 ): boolean {
   return (
@@ -242,7 +242,7 @@ export function isMandatoryJurisdictionPolicyEnforced(
   );
 }
 
-export function applyGlobalFiatPolicy(
+function applyGlobalFiatPolicy(
   rows: readonly CountryRestrictionRow[],
   allowed: boolean,
 ): CountryRestrictionRow[] {

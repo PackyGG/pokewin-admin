@@ -10,7 +10,7 @@ export type ApprovalStatus = "pending" | "approved" | "rejected";
 
 export type TimeStatus = "upcoming" | "active" | "ended";
 
-export type PrizeTier = {
+type PrizeTier = {
   position: number;
   prize_amount_usd: string;
 };

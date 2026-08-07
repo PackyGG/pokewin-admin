@@ -7,8 +7,8 @@ import { antifraudSecurityAuditActorVisibilityPredicate } from "@/lib/audit-visi
 
 import { adminDrizzle } from "@/lib/admin-db";
 
-export type AntifraudAuditKind = "view" | "search" | "export" | "action";
-export type AntifraudAuditOutcome =
+type AntifraudAuditKind = "view" | "search" | "export" | "action";
+type AntifraudAuditOutcome =
   | "allowed"
   | "denied"
   | "succeeded"
@@ -316,7 +316,7 @@ export async function finishAntifraudAction(input: {
   });
 }
 
-export type AntifraudSecurityAuditEvent = {
+type AntifraudSecurityAuditEvent = {
   id: string;
   correlationId: string;
   actorUsername: string | null;
@@ -348,7 +348,7 @@ const AUDIT_OUTCOMES = new Set<AntifraudAuditOutcome>([
   "rate_limited",
 ]);
 
-export async function listAntifraudSecurityAuditEvents(input: {
+async function listAntifraudSecurityAuditEvents(input: {
   action?: string;
   kind?: string;
   outcome?: string;

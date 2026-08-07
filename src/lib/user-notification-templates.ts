@@ -41,7 +41,7 @@ export type NotificationPreview = {
 };
 
 /** Types the site renders with real copy, and the payload keys each reads. */
-export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
+const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   deposit_pending: ["amount_usd"],
   deposit_completed: ["amount_usd"],
   reward_credited: ["amount_usd"],

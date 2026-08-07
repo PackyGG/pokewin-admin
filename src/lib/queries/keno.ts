@@ -27,15 +27,15 @@ export type KenoMetricSlice = {
   latestAt: string | null;
 };
 
-export type KenoRiskBreakdown = KenoMetricSlice & {
+type KenoRiskBreakdown = KenoMetricSlice & {
   risk: "low" | "medium" | "high";
 };
 
-export type KenoPickBreakdown = KenoMetricSlice & {
+type KenoPickBreakdown = KenoMetricSlice & {
   picks: number;
 };
 
-export type KenoDailyPoint = {
+type KenoDailyPoint = {
   day: string;
   games: number;
   wager: number;
@@ -52,7 +52,7 @@ export type KenoPayoutObservation = {
   observedGames: number;
 };
 
-export type KenoRecentGame = {
+type KenoRecentGame = {
   id: string;
   userId: string;
   risk: "low" | "medium" | "high";

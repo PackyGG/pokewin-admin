@@ -62,7 +62,7 @@ function stableOptsKey(opts: Intl.DateTimeFormatOptions): string {
  * runtime, so a bad IANA string degrades to UTC rendering instead of
  * throwing in a render path.
  */
-export function getFormatter(
+function getFormatter(
   tz: string,
   locale: string,
   opts: Intl.DateTimeFormatOptions,
@@ -193,7 +193,7 @@ function fmtZone(opts?: FmtOpts): string {
 }
 
 /** "Jun 3, 2026 14:00" in `tz` (defaults to UTC when tz omitted/invalid). */
-export function formatDateTime(date: DateInput, opts?: FmtOpts): string {
+function formatDateTime(date: DateInput, opts?: FmtOpts): string {
   const fmt = getFormatter(fmtZone(opts), opts?.locale ?? DEFAULT_LOCALE, {
     year: "numeric",
     month: "short",
@@ -206,7 +206,7 @@ export function formatDateTime(date: DateInput, opts?: FmtOpts): string {
 }
 
 /** "Jun 3, 2026" in `tz`. */
-export function formatDate(date: DateInput, opts?: FmtOpts): string {
+function formatDate(date: DateInput, opts?: FmtOpts): string {
   const fmt = getFormatter(fmtZone(opts), opts?.locale ?? DEFAULT_LOCALE, {
     year: "numeric",
     month: "short",
@@ -231,7 +231,7 @@ export function formatTime(date: DateInput, opts?: FmtOpts): string {
  * vault unlock, voucher/promo expiry, payout windows) where the zone must
  * be unambiguous on the face of the value. `tz` defaults to UTC → "...UTC".
  */
-export function formatDateTimeWithZone(date: DateInput, opts?: FmtOpts): string {
+function formatDateTimeWithZone(date: DateInput, opts?: FmtOpts): string {
   const fmt = getFormatter(fmtZone(opts), opts?.locale ?? DEFAULT_LOCALE, {
     year: "numeric",
     month: "short",
@@ -247,12 +247,12 @@ export function formatDateTimeWithZone(date: DateInput, opts?: FmtOpts): string 
 // ── instant ↔ wall-clock conversion ────────────────────────────────────────
 
 /** Date|ISO|epoch → canonical UTC ISO string (the storage form). */
-export function toUtcIso(date: DateInput): string {
+function toUtcIso(date: DateInput): string {
   return resolveDate(date).toISOString();
 }
 
 /** UTC ISO → Date instant. Pairs with `toUtcIso` for round-trips. */
-export function fromUtcIso(iso: string): Date {
+function fromUtcIso(iso: string): Date {
   return new Date(iso);
 }
 
@@ -269,7 +269,7 @@ export function fromUtcIso(iso: string): Date {
  * `month` is 1-based (January = 1) to match human/SQL conventions and the
  * `getLocalDayBounds` caller below.
  */
-export function zonedWallClockToUtc(
+function zonedWallClockToUtc(
   year: number,
   month: number,
   day: number,
@@ -333,7 +333,7 @@ export function getLocalDayBounds(date: DateInput, tz: string): { start: Date; e
  * (not rolling instants). For "Today" pass `days = 1` (equals
  * getLocalDayBounds).
  */
-export function getLocalRangeBounds(
+function getLocalRangeBounds(
   date: DateInput,
   tz: string,
   days: number,
@@ -360,7 +360,7 @@ export function getLocalRangeBounds(
  * causes the daily-bucket off-by-one when the DB already grouped by local
  * day. `en-CA` yields ISO `YYYY-MM-DD` directly.
  */
-export function getLocalDayString(date: DateInput, tz: string): string {
+function getLocalDayString(date: DateInput, tz: string): string {
   const fmt = getFormatter(tz && isValidTimeZone(tz) ? tz : UTC, "en-CA", {
     year: "numeric",
     month: "2-digit",
@@ -385,7 +385,7 @@ export function registerCuratedLabels(fn: (tz: string) => string | null): void {
   curatedLabelLookup = fn;
 }
 
-export function getTimeZoneLabel(tz: string, locale: string = DEFAULT_LOCALE): string {
+function getTimeZoneLabel(tz: string, locale: string = DEFAULT_LOCALE): string {
   const curated = curatedLabelLookup?.(tz);
   if (curated) return curated;
   if (tz === UTC) return "UTC (Coordinated Universal Time)";
@@ -425,7 +425,7 @@ export function formatClockInZone(date: DateInput, tz: string): string {
  * Falls back to the instant's UTC HH:mm on a bad zone, matching prior
  * behaviour (shift editor pre-population).
  */
-export function toZonedHhMm(instant: DateInput, tz: string): string {
+function toZonedHhMm(instant: DateInput, tz: string): string {
   const d = resolveDate(instant);
   if (!isValidTimeZone(tz)) return d.toISOString().slice(11, 16);
   return formatTime(d, { tz });

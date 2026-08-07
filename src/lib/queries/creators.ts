@@ -1,30 +1,21 @@
 // Barrel re-exports — creators queries were split into domain-specific files.
 // Consumers should keep importing from "@/lib/queries/creators".
-export type {
-  CreatorPnlPeriod,
-  CreatorPnlData,
-  CreatorLimits,
-  CreatorListItem,
-  UserSearchResult,
-  CodeListItem,
-  AffiliateAnalyticsData,
-  CreatorTipItem,
-} from "./creators-types";
+;
 
-export { getCreatorPnl } from "./creators-pnl";
+;
 export {
-  getCreatorDetail,
+  
   getCreatorDetailCached,
   getCreatorHeader,
 } from "./creators-detail";
 export {
-  getCodes,
-  getCodeAnalytics,
+  
+  
   getCodeReferrals,
   getRecentWagersOnCode,
-  getCreatorsCodesListStats,
+  
 } from "./creators-codes";
 export { getAffiliateLeaderboardRankings, getAffiliateLeaderboardClaims } from "./creators-leaderboards";
-export type { LeaderboardRanking, LeaderboardClaim } from "./creators-leaderboards";
+;
 export { getAffiliateAnalytics, getAffiliateLevelConfigs } from "./creators-analytics";
 export { refreshStaleSocials } from "./creators-social";

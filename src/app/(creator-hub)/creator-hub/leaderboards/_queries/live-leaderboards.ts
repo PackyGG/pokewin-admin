@@ -59,12 +59,12 @@ const BACKEND_PAGE_SIZE = 100;
 const FETCH_CAP = 500;
 
 /** Run-window bucket for a board, relative to NOW. */
-export type BoardLifecycle = "active" | "upcoming" | "ended";
+type BoardLifecycle = "active" | "upcoming" | "ended";
 
 /** Which lifecycle slice the ranklist shows. */
 export type LiveLeaderboardView = "active" | "upcoming" | "ended" | "all";
 
-export const LIVE_LB_VIEWS: readonly LiveLeaderboardView[] = [
+const LIVE_LB_VIEWS: readonly LiveLeaderboardView[] = [
   "active",
   "upcoming",
   "ended",
@@ -91,7 +91,7 @@ export type LiveLeaderboardRank =
   | "starting_soon"
   | "recently_ended";
 
-export const LIVE_LB_RANKS: readonly LiveLeaderboardRank[] = [
+const LIVE_LB_RANKS: readonly LiveLeaderboardRank[] = [
   "house_cost",
   "house_cost_asc",
   "prize_pool",
@@ -184,7 +184,7 @@ export type LiveLeaderboardsResult = {
  * exported from there to avoid editing that shared cost module).
  */
 /** Paginated approved-board walk (backend caps `limit` at 100 per page). */
-export async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
+async function fetchAllApprovedLeaderboards(): Promise<LeaderboardAdminRow[]> {
   return pagedWalk(
     (offset, limit) =>
       affiliateLeaderboardsApi

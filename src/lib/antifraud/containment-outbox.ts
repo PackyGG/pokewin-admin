@@ -55,7 +55,7 @@ import {
  * what the original `INSERT` already committed.
  */
 
-export const CONTAINMENT_OUTBOX_KINDS = [
+const CONTAINMENT_OUTBOX_KINDS = [
   "fiat_eligibility_containment",
   "fiat_deposit_identity_containment",
   "fiat_blacklisted_email_domain",
@@ -75,7 +75,7 @@ export function isContainmentOutboxKind(
 }
 
 /** Cap on retry attempts before a `failed` row is left for manual investigation. */
-export const CONTAINMENT_OUTBOX_MAX_ATTEMPTS = 20;
+const CONTAINMENT_OUTBOX_MAX_ATTEMPTS = 20;
 
 export type DeferredContainmentSignal = {
   kind: ContainmentOutboxKind;

@@ -85,7 +85,7 @@ export function DelayedSpinnerFallback({
  * Shared by the delay-gated components above. Exported for callers that need
  * the same "don't flash" timing in bespoke UI.
  */
-export function useDelayedFlag(delayMs = SPINNER_DELAY_MS): boolean {
+function useDelayedFlag(delayMs = SPINNER_DELAY_MS): boolean {
   const [ready, setReady] = React.useState(delayMs <= 0);
   React.useEffect(() => {
     if (delayMs <= 0) {

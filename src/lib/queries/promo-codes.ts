@@ -211,7 +211,7 @@ export async function getPromoCodeDetail(id: string) {
   };
 }
 
-export type PromoCodeRedemptionRow = {
+type PromoCodeRedemptionRow = {
   id: string;
   userId: string;
   username: string | null;
@@ -299,7 +299,7 @@ export async function getPromoCodeRedemptionRows(
 
 const CLAIMS_LIMIT = 200;
 
-export type PromoCodeClaim = {
+type PromoCodeClaim = {
   id: string;
   userId: string;
   username: string | null;

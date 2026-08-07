@@ -68,7 +68,7 @@ export type UpgraderMetadata = {
 };
 
 /** Top-level + nested JSON object keys the backend may tuck config under. */
-export const UPGRADER_NESTED_OBJECT_KEYS = [
+const UPGRADER_NESTED_OBJECT_KEYS = [
   "config",
   "upgrader",
   "play",
@@ -79,7 +79,7 @@ export const UPGRADER_NESTED_OBJECT_KEYS = [
   "spin",
 ] as const;
 
-export const UPGRADER_MULTIPLIER_KEYS = [
+const UPGRADER_MULTIPLIER_KEYS = [
   "target_multiplier",
   "targetMultiplier",
   "selected_multiplier",
@@ -111,7 +111,7 @@ export const UPGRADER_MULTIPLIER_KEYS = [
 const MULTIPLIER_KEY_HINT =
   /multiplier|^mult$|^x$|target.*mult|upgrade.*mult|cashout|payout/i;
 
-export const UPGRADER_CHANCE_KEYS = [
+const UPGRADER_CHANCE_KEYS = [
   "target_chance",
   "targetChance",
   "win_chance",
@@ -122,13 +122,13 @@ export const UPGRADER_CHANCE_KEYS = [
   "winProbability",
 ] as const;
 
-export const UPGRADER_HOUSE_EDGE_KEYS = [
+const UPGRADER_HOUSE_EDGE_KEYS = [
   "house_edge",
   "houseEdge",
   "edge",
 ] as const;
 
-export const UPGRADER_ROLL_KEYS = [
+const UPGRADER_ROLL_KEYS = [
   "roll",
   "result",
   "random",
@@ -160,7 +160,7 @@ export function upgraderTargetMultiplierSql(metadataJsonExpr: string): string {
 }
 
 /** SQL COALESCE for explicit win-chance keys (0-1 fraction or 0-100 %). */
-export function upgraderTargetChanceSql(metadataJsonExpr: string): string {
+function upgraderTargetChanceSql(metadataJsonExpr: string): string {
   const parts: string[] = [];
   for (const key of UPGRADER_CHANCE_KEYS) {
     parts.push(

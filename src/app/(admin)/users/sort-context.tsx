@@ -34,7 +34,7 @@ const STATUS_RANK: Record<string, number> = {
  * slice and the displayed metric disagree (netHoldings / PnL toolbar
  * shortcuts).
  */
-export const SERVER_RANKED_SORTS = new Set([
+const SERVER_RANKED_SORTS = new Set([
   "pnl",
   "netHoldings",
   "totalWithdrawn",
@@ -67,7 +67,7 @@ const COMPARATORS: Record<string, (a: UserRow, b: UserRow) => number> = {
   // matches).
 };
 
-export function sortRowsLocally(
+function sortRowsLocally(
   rows: UserRow[],
   sortBy: string,
   sortOrder: Order,

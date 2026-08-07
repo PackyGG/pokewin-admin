@@ -5,7 +5,7 @@ import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 
 /** Active admin_users.id for username `motha` (case-insensitive). */
-export const getMothaAdminUserId = cache(async (): Promise<string | null> => {
+const getMothaAdminUserId = cache(async (): Promise<string | null> => {
   const result = await adminDrizzle.execute<{ id: string }>(sql`
     SELECT id
     FROM admin_users

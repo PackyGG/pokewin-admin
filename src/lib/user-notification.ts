@@ -39,14 +39,14 @@ import {
 } from "@/lib/announcement-payload";
 
 /** Backend `notification_category` values this admin surface may write. */
-export const USER_NOTIFICATION_CATEGORIES = ["rewards", "system"] as const;
+const USER_NOTIFICATION_CATEGORIES = ["rewards", "system"] as const;
 export type UserNotificationCategory =
   (typeof USER_NOTIFICATION_CATEGORIES)[number];
 
 export const NOTIFICATION_TYPE_MAX = 64;
 export const NOTIFICATION_DEDUPE_KEY_MAX = 200;
 export const NOTIFICATION_PAYLOAD_MAX_BYTES = 4096;
-export const NOTIFICATION_URL_MAX = 2048;
+const NOTIFICATION_URL_MAX = 2048;
 
 /** Hard per-request item cap. */
 export const BULK_MAX_ITEMS = 1000;
@@ -56,13 +56,13 @@ export const BULK_MAX_ITEMS = 1000;
  * A typical item (better-auth id + code + `campaign:user_id` key) is ~150
  * bytes so 1000 items ≈ 147 KB, but kilobyte-scale payloads hit bytes first.
  */
-export const BULK_MAX_BODY_BYTES = 1_000_000;
+const BULK_MAX_BODY_BYTES = 1_000_000;
 /**
  * What we actually chunk against. Deliberately below the real cap so the
  * request envelope (`category` / `type` / JSON scaffolding) plus any
  * transport overhead can never push a chunk over the line.
  */
-export const BULK_BODY_BUDGET_BYTES = 900_000;
+const BULK_BODY_BUDGET_BYTES = 900_000;
 
 /**
  * Hard ceiling on a reward-campaign code's value (owner rule, 2026-07-23:

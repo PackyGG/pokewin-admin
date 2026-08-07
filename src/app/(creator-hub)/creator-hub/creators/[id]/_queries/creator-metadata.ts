@@ -42,7 +42,7 @@ import {
  */
 
 /** A single editable/linked social handle. */
-export type CreatorSocialRow = {
+type CreatorSocialRow = {
   id: string;
   /** `creator_socials.platform` enum: twitter | youtube | kick | discord | instagram. */
   platform: string;
@@ -53,7 +53,7 @@ export type CreatorSocialRow = {
 };
 
 /** Who performed the initial creator onboarding (from the audit trail). */
-export type OnboardedBy = {
+type OnboardedBy = {
   /** Manager's display label (display_username → username), or null if the
    *  acting admin row no longer exists / the event had no actor. */
   managerName: string | null;

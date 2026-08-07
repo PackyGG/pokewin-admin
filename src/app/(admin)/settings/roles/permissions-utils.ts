@@ -943,7 +943,7 @@ export function canUserAdjustBalance(allowedPages: string[]): boolean {
 }
 
 /** Parse a numeric limit value, e.g. "__balance_limit_daily:500" → { period: "daily", amount: 500 } */
-export function parseLimit(
+function parseLimit(
   pages: string[],
   capKey: string,
 ): { period: "daily" | "weekly"; amount: number } | null {
@@ -962,7 +962,7 @@ export function parseLimit(
 }
 
 // Backwards compat — old format was "__balance_limit_daily:500"
-export function parseBalanceLimit(pages: string[]): { period: "daily" | "weekly"; amount: number } | null {
+function parseBalanceLimit(pages: string[]): { period: "daily" | "weekly"; amount: number } | null {
   // Try new format first
   const newFormat = parseLimit(pages, "__can_adjust_balance");
   if (newFormat) return newFormat;
@@ -984,14 +984,14 @@ export function parseBalanceLimit(pages: string[]): { period: "daily" | "weekly"
 // Write helpers — build allowed_pages entries for capabilities
 // ---------------------------------------------------------------------------
 
-export type CapabilityState = {
+type CapabilityState = {
   enabled: boolean;
   limitPeriod?: "daily" | "weekly";
   limitAmount?: number | null;
 };
 
 /** Build the special keys for a set of capability states. */
-export function buildCapabilityKeys(
+function buildCapabilityKeys(
   capabilities: Record<string, CapabilityState>,
 ): string[] {
   const keys: string[] = [];
@@ -1008,7 +1008,7 @@ export function buildCapabilityKeys(
 }
 
 /** Extract capability states from allowed_pages. */
-export function extractCapabilityStates(
+function extractCapabilityStates(
   allowedPages: string[],
 ): Record<string, CapabilityState> {
   const states: Record<string, CapabilityState> = {};
@@ -1052,7 +1052,7 @@ export const ALL_PERMISSION_KEYS: readonly string[] = [
 const PERMISSION_KEY_SET: ReadonlySet<string> = new Set(ALL_PERMISSION_KEYS);
 
 /** True for a recognized page route or `__can_*` capability key. */
-export function isPermissionKey(key: string): boolean {
+function isPermissionKey(key: string): boolean {
   return PERMISSION_KEY_SET.has(key);
 }
 
@@ -1105,7 +1105,7 @@ const VALUE_TOKEN_BASES: ReadonlySet<string> = new Set<string>([
  * `parseLimit` / `parseBalanceLimit`). Unknown bases or non-numeric / ≤0
  * values are rejected so a stale or malformed token is still dropped.
  */
-export function isValueToken(token: string): boolean {
+function isValueToken(token: string): boolean {
   const colon = token.indexOf(":");
   if (colon === -1) return false;
   const base = token.slice(0, colon);

@@ -69,7 +69,7 @@ import { EMPTY_CREATOR_SESSION_WINDOWS_CTE } from "@/lib/queries/creator-session
  * Staff roles dropped wholesale from the canonical scope. Kept as the
  * "staff" concept (used by callers that mean strictly admin/support).
  */
-export const STAFF_ROLES = ["admin", "support"] as const;
+const STAFF_ROLES = ["admin", "support"] as const;
 
 /**
  * Roles dropped wholesale from the CUSTOMER scope = staff PLUS `creator`.

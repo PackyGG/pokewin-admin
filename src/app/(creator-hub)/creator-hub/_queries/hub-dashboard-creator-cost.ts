@@ -26,7 +26,7 @@ import {
  * via `NOW() - INTERVAL` (same cache-key pattern as net GGR scans).
  */
 
-export type HubCreatorCostLine = {
+type HubCreatorCostLine = {
   key: string;
   label: string;
   amount: number;

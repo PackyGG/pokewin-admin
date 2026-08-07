@@ -42,7 +42,7 @@ export function decryptActiveServerSeed(
   ]).toString("utf8");
 }
 
-export function hashServerSeed(serverSeed: string): string {
+function hashServerSeed(serverSeed: string): string {
   return createHash("sha256").update(serverSeed).digest("hex");
 }
 

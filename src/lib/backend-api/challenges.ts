@@ -16,14 +16,14 @@ import { backendApi } from "./client";
  */
 
 export type ChallengeGameType = "pack" | "battle" | "upgrader";
-export type ChallengeType = "pack_pull" | "upgrader";
+type ChallengeType = "pack_pull" | "upgrader";
 export type ChallengeStatus = "active" | "inactive" | "archived";
 
-export type ChallengeRequirementKind = "pack_pull" | "upgrader";
-export type ChallengePercentOp = "lte" | "gte" | "eq";
+type ChallengeRequirementKind = "pack_pull" | "upgrader";
+type ChallengePercentOp = "lte" | "gte" | "eq";
 
 /** A single requirement attached to a challenge (returned by get-one). */
-export type ChallengeRequirement = {
+type ChallengeRequirement = {
   id: string;
   kind: ChallengeRequirementKind;
   pack_id: string | null;
@@ -57,7 +57,7 @@ export type ChallengeWithRequirements = Challenge & {
   requirements: ChallengeRequirement[];
 };
 
-export type CreateChallengeRequirementInput = {
+type CreateChallengeRequirementInput = {
   kind: ChallengeRequirementKind;
   // pack_pull REQUIRES pack_id + card_id.
   pack_id?: string;

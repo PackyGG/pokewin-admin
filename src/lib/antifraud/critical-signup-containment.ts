@@ -14,7 +14,7 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
  * lock via the backend reward-lock API. Never mutates KYC.
  */
 
-export const CRITICAL_SIGNUP_ACTIONS = [
+const CRITICAL_SIGNUP_ACTIONS = [
   "lock_fiat_deposits",
   "lock_withdrawals",
   "lock_tips",

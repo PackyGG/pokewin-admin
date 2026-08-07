@@ -27,7 +27,7 @@ import { blacklistNotInClause } from "./_blacklist";
  */
 export type WithdrawalsPeriod = "today" | "7d" | "30d" | "90d" | "all";
 
-export type WithdrawnAsset = {
+type WithdrawnAsset = {
   /** Asset symbol from the schema, e.g. "SOL", "ETH", "USDT_ERC20". */
   asset: string;
   /** Number of completed/shipped withdrawals of this asset. */
