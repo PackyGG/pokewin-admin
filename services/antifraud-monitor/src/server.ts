@@ -68,6 +68,10 @@ import {
 import { FiatEligibilityService } from "./fiat-eligibility.js";
 import { FiatDepositAccessClient } from "./fiat-deposit-access.js";
 import { FiatDepositAccessControl } from "./fiat-deposit-access-control.js";
+import {
+  isUnauthenticatedEosRandomBlockRequest,
+  registerEosRandomBlockRoutes,
+} from "./eos-random-block-routes.js";
 import { IngestDelivery } from "./ingest-delivery.js";
 import {
   activityScoreDefinitions,
@@ -533,6 +537,11 @@ app.addHook("onRequest", async (request, reply) => {
 
   const pathname = requestPathname;
   if (request.method === "GET" && pathname === "/v1/live") {
+    return;
+  }
+  // Deliberately unauthenticated testing endpoint. It only reads public EOS
+  // chain data and remains covered by the service-wide rate limiter.
+  if (isUnauthenticatedEosRandomBlockRequest(request.method, pathname)) {
     return;
   }
   const authorization = request.headers.authorization ?? "";
@@ -2255,6 +2264,7 @@ await registerFiatEligibilityRoutes(app, {
   access: fiatEligibilityAccess,
   service: fiatEligibility,
 });
+await registerEosRandomBlockRoutes(app);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof z.ZodError) {
