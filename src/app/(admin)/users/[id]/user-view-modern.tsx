@@ -205,6 +205,7 @@ export function UserViewModern({
   data,
   backSlot,
   tagsSlot,
+  testingBattleOutcomeSlot,
   pnlResultPromise,
   gamingTxPromise,
   financialTxPromise,
@@ -231,6 +232,7 @@ export function UserViewModern({
   // standalone top identity strip + full-width tag row.
   backSlot: React.ReactNode;
   tagsSlot: React.ReactNode;
+  testingBattleOutcomeSlot: React.ReactNode;
   // ── Streamed-band contract (reliability remake) ──────────────────────
   // Every band promise resolves to a WHOLE SafeQueryResult ({ data, error })
   // — nothing is unwrapped server-side anymore, so each band can render
@@ -621,6 +623,7 @@ export function UserViewModern({
             isAdmin={isAdmin}
             capabilities={capabilities}
           />
+          {testingBattleOutcomeSlot}
           {/* VIP tags dropdown — pre-rendered in page.tsx and threaded in as
               a serializable ReactNode. */}
           {tagsSlot}
