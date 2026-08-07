@@ -50,9 +50,8 @@ const TONE_TEXT: Record<PulseTone, string> = {
 };
 
 /**
- * Health verdict for the ingestion loop, mirroring the ranking in
- * `automation/_lib/system-issues.ts` so the dashboard and the Automation
- * defect list never disagree about what "degraded" means.
+ * Health verdict for the ingestion loop, matching the monitor's public health
+ * contract so the dashboard does not invent a second status vocabulary.
  */
 function pollerVerdict(
   poller: AntifraudPollerHealth | null,
@@ -101,7 +100,7 @@ export function PulseBar({
 
   return (
     <HostLink
-      href="/antifraud/settings?tab=health"
+      href="/antifraud/settings"
       className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-muted/40 sm:px-4"
     >
       <span className="flex min-w-0 items-center gap-2">

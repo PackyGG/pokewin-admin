@@ -54,7 +54,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     ],
     controls: [
       { label: "Edit risk points", href: "/antifraud/settings?tab=scoring" },
-      { label: "Provider status", href: "/antifraud/settings?tab=integrations" },
+      { label: "Engine health", href: "/antifraud/settings" },
       { label: "Review queue", href: "/antifraud/reviews" },
     ],
     mode: "mixed",
@@ -271,7 +271,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     ],
     controls: [
       { label: "Edit error routing", href: "/antifraud/discord" },
-      { label: "Inspect integrations", href: "/antifraud/settings?tab=integrations" },
+      { label: "Engine health", href: "/antifraud/settings" },
     ],
     mode: "mixed",
     icon: CircleAlert,

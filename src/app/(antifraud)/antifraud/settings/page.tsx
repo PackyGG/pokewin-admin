@@ -4,22 +4,19 @@ import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { Skeleton } from "@/components/ui/skeleton";
 import { TabChips } from "@/components/ux";
 import { requireAntifraudManagerPage } from "@/lib/require-antifraud-access";
-import { AlertsSection } from "./_sections/alerts";
 import { AutomationSection } from "./_sections/automation";
 import { EventsSection } from "./_sections/events";
 import { FlowsSection } from "./_sections/flows";
 import { EngineHealthSection } from "./_sections/health";
-import { IntegrationsSection } from "./_sections/integrations";
-import { OverviewSection } from "./_sections/overview";
 import { ScoringSection } from "./_sections/scoring";
 
 export const metadata = { title: "Settings · Antifraud" };
 
 /**
- * FRAUD SETTINGS — one page, one tab switcher, every System section.
+ * FRAUD SETTINGS — one page for the monitor's operator-facing controls.
  *
  * The System group used to be a nav entry per surface (Automation, Rules &
- * scoring, Event catalog, Integrations, Config, Flows), each its own route with
+ * scoring, Event catalog, Config, Flows), each its own route with
  * its own tabs — the same handful of settings scattered across six places. It
  * is all one page now: the sidebar carries "Settings" and the sections are tabs
  * on it. The old routes redirect to their tab so existing links and bookmarks
@@ -32,14 +29,11 @@ export const metadata = { title: "Settings · Antifraud" };
  */
 
 const SETTINGS_TABS = [
-  { value: "overview", label: "Overview" },
+  { value: "health", label: "Engine health" },
   { value: "automation", label: "Automation" },
   { value: "scoring", label: "Scoring" },
   { value: "flows", label: "Point flows" },
   { value: "events", label: "Events" },
-  { value: "alerts", label: "Alerts" },
-  { value: "integrations", label: "Integrations" },
-  { value: "health", label: "Engine health" },
 ] as const;
 
 type SettingsTab = (typeof SETTINGS_TABS)[number]["value"];
@@ -47,7 +41,7 @@ type SettingsTab = (typeof SETTINGS_TABS)[number]["value"];
 const TAB_VALUES = new Set<string>(SETTINGS_TABS.map((tab) => tab.value));
 
 function resolveTab(value: string | undefined): SettingsTab {
-  return value && TAB_VALUES.has(value) ? (value as SettingsTab) : "overview";
+  return value && TAB_VALUES.has(value) ? (value as SettingsTab) : "health";
 }
 
 export default async function AntifraudSettingsPage({
@@ -72,26 +66,20 @@ export default async function AntifraudSettingsPage({
         items={SETTINGS_TABS}
         current={tab}
         paramKey="tab"
-        defaultValue="overview"
+        defaultValue="health"
       />
 
       <Suspense key={tab} fallback={<TabSkeleton tab={tab} />}>
-        {tab === "automation" ? (
+        {tab === "health" ? (
+          <EngineHealthSection />
+        ) : tab === "automation" ? (
           <AutomationSection />
         ) : tab === "scoring" ? (
           <ScoringSection />
         ) : tab === "flows" ? (
           <FlowsSection />
-        ) : tab === "events" ? (
-          <EventsSection />
-        ) : tab === "alerts" ? (
-          <AlertsSection />
-        ) : tab === "integrations" ? (
-          <IntegrationsSection />
-        ) : tab === "health" ? (
-          <EngineHealthSection />
         ) : (
-          <OverviewSection />
+          <EventsSection />
         )}
       </Suspense>
     </div>
@@ -112,10 +100,6 @@ function TabSkeleton({ tab }: { tab: SettingsTab }) {
     );
   }
 
-  if (tab === "integrations") {
-    return <Skeleton className="h-[520px] w-full rounded-xl" />;
-  }
-
   if (tab === "automation") {
     return (
       <div className="space-y-6">
@@ -126,7 +110,7 @@ function TabSkeleton({ tab }: { tab: SettingsTab }) {
     );
   }
 
-  // Overview, scoring, events, alerts and health all open on a KPI strip.
+  // Scoring, events and health all open on a KPI strip.
   return (
     <div className="space-y-6">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">

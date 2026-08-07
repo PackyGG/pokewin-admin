@@ -16,18 +16,20 @@ test("Fraud Settings is one page with a tab per System section", () => {
   // Every section is a URL-addressable tab on ONE page, so a deep link and a
   // refresh land on the same view an operator was sent.
   for (const tab of [
-    "overview",
+    "health",
     "automation",
     "scoring",
     "flows",
     "events",
-    "alerts",
-    "integrations",
-    "health",
   ]) {
     assert.match(page, new RegExp(`\\{ value: "${tab}", label: `));
   }
   assert.match(page, /paramKey="tab"/);
+  assert.match(page, /defaultValue="health"/);
+  assert.match(page, /: "health";/);
+  for (const removed of ["overview", "alerts", "integrations"]) {
+    assert.doesNotMatch(page, new RegExp(`\\{ value: "${removed}", label: `));
+  }
   // No eyebrow, page title or blurb: the sidebar names the page, the tab bar
   // names the section.
   assert.doesNotMatch(page, /Control center/);
@@ -81,15 +83,13 @@ test("the retired section routes redirect to their tab", () => {
 
 test("each tab owns its own reads and the page body awaits none of them", () => {
   const page = read(`${SETTINGS}/page.tsx`);
-  const overview = read(`${SETTINGS}/_sections/overview.tsx`);
   const automation = read(`${SETTINGS}/_sections/automation.tsx`);
   const scoring = read(`${SETTINGS}/_sections/scoring.tsx`);
   const flows = read(`${SETTINGS}/_sections/flows.tsx`);
   const events = read(`${SETTINGS}/_sections/events.tsx`);
-  const alerts = read(`${SETTINGS}/_sections/alerts.tsx`);
+  const health = read(`${SETTINGS}/_sections/health.tsx`);
 
-  assert.match(overview, /getAntifraudPollerHealth\(\)/);
-  assert.match(overview, /collectSystemIssues\(/);
+  assert.match(health, /getAntifraudPollerHealth\(\)/);
   assert.match(automation, /getAntifraudScoringConfig\(\)/);
   // The Fiat auto-credit switch is NOT a tab: it credits real player deposits
   // and keeps its own /antifraud/config destination.
@@ -97,8 +97,6 @@ test("each tab owns its own reads and the page body awaits none of them", () => 
   assert.match(scoring, /listAnalysisRules\(\)/);
   assert.match(flows, /<FlowBuilder/);
   assert.match(events, /<EventCatalog/);
-  assert.match(alerts, /readDiscordConfig\(\)/);
-  assert.match(alerts, /No channel assigned/);
 
   // Shell-first + active-tab-only: no read in the page body, and `key={tab}`
   // re-suspends on a switch so the skeleton matches the incoming tab.
@@ -161,33 +159,6 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
   }
 });
 
-test("a degraded poller only escalates on the faults the monitor itself gates on", () => {
-  const issues = read(`${SETTINGS}/_lib/system-issues.ts`);
-  const server = read("services/antifraud-monitor/src/server.ts");
-
-  // The monitor's `status: "degraded"` is a COMPOSITE flag — stale tick, tick
-  // failures, possible backlog, OR signups pending recovery. Its own /ready
-  // handler stays ready through the last two ("an operator queue item, not an
-  // infrastructure fault"), so a raw `status === "degraded"` → critical rule
-  // reports an outage while the loop ticks cleanly. That regression shipped
-  // once; this pins the corrected shape.
-  assert.doesNotMatch(
-    issues,
-    /status === "degraded"[\s\S]{0,120}severity: "critical"/,
-    "a raw degraded flag must not be reported as a critical outage",
-  );
-  assert.match(issues, /POLLER_STALE_MS/);
-  assert.match(issues, /poller\.status === "starting" \|\| \(tickStale && poller\.leader\)/);
-
-  // The dashboard threshold must track the service's readiness threshold.
-  assert.match(server, /5 \* 60_000/);
-  assert.match(issues, /const POLLER_STALE_MS = 5 \* 60_000;/);
-
-  // The genuinely actionable queue conditions keep their own warning rows.
-  assert.match(issues, /id: "signup-failures-pending"/);
-  assert.match(issues, /id: "signup-backlog"/);
-});
-
 test("signup recovery controls stay sanitized, verified, and explicit", () => {
   const health = read(`${SETTINGS}/_sections/health.tsx`);
   const manager = read(`${SETTINGS}/_components/signup-failure-manager.tsx`);
@@ -220,22 +191,4 @@ test("signup recovery controls stay sanitized, verified, and explicit", () => {
   assert.match(actions, /antifraud_signup_ingestion_retried/);
   assert.match(actions, /antifraud_signup_ingestion_resolved/);
   assert.match(actions, /revalidatePath\("\/antifraud\/settings"\)/);
-});
-
-test("system issues rank criticals first and always carry a fix link", () => {
-  const issues = read(`${SETTINGS}/_lib/system-issues.ts`);
-
-  // The board exists to be actionable: an issue with no destination is just a
-  // complaint, and warnings must never outrank criticals.
-  assert.match(
-    issues,
-    /SEVERITY_ORDER\[a\.severity\] - SEVERITY_ORDER\[b\.severity\]/,
-  );
-  assert.match(issues, /actionLabel: string/);
-  const issueBlocks = issues.match(/issues\.push\(\{[\s\S]*?\}\);/g) ?? [];
-  assert.ok(issueBlocks.length >= 10, "expected the full defect vocabulary");
-  for (const block of issueBlocks) {
-    assert.match(block, /href: "\/antifraud\//);
-    assert.match(block, /severity: "(critical|warning)"/);
-  }
 });
