@@ -12,6 +12,10 @@ const migration = readFileSync(
   "drizzle/admin/migrations/20260730_antifraud_security_audit.sql",
   "utf8",
 );
+const auditIndexMigration = readFileSync(
+  "drizzle/admin/migrations/20260807_audit_query_indexes.sql",
+  "utf8",
+);
 const accessSource = readFileSync("src/lib/antifraud/access.ts", "utf8");
 const gateSource = readFileSync("src/lib/require-antifraud-access.ts", "utf8");
 const stepUpSource = readFileSync("src/lib/require-2fa.ts", "utf8");
@@ -56,6 +60,17 @@ test("security audit tables reject update, delete, and truncate", () => {
   assert.match(migration, /BEFORE UPDATE OR DELETE/);
   assert.match(migration, /BEFORE TRUNCATE/);
   assert.match(migration, /append-only/);
+});
+
+test("security audit pagination follows its keyset index", () => {
+  assert.match(
+    auditSource,
+    /ORDER BY created_at DESC, id DESC[\s\S]*LIMIT \$\{limit \+ 1\}/,
+  );
+  assert.match(
+    auditIndexMigration,
+    /antifraud_security_audit_events \(created_at DESC, id DESC\)/,
+  );
 });
 
 test("dashboard authorization is role based and never uses Discord ids", () => {

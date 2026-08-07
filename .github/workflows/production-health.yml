@@ -1,0 +1,117 @@
+name: Production health
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: production-health
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    permissions:
+      contents: read
+      issues: write
+    env:
+      # GitHub secret CRON_SECRET reuses the existing Vercel CRON_SECRET value.
+      # The optional repository variables override the canonical public URLs.
+      PRODUCTION_BASE_URL: ${{ vars.PRODUCTION_BASE_URL || 'https://packydash.com' }}
+      RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL || 'https://grand-cooperation-production-ffe1.up.railway.app/health' }}
+      CRON_SECRET: ${{ secrets.CRON_SECRET }}
+      ANTIFRAUD_DISCORD_WEBHOOK_URL: ${{ secrets.ANTIFRAUD_DISCORD_WEBHOOK_URL }}
+      PRODUCTION_HEALTH_REPORT_PATH: ${{ runner.temp }}/production-health.json
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Probe Vercel, PostgreSQL, and Railway
+        id: health
+        continue-on-error: true
+        run: node scripts/production-health-check.mjs
+
+      - name: Open, close, and notify the production incident
+        if: always()
+        uses: actions/github-script@v8
+        env:
+          HEALTH_FAILED: ${{ steps.health.outcome != 'success' }}
+        with:
+          script: |
+            const fs = require('node:fs');
+            const failed = process.env.HEALTH_FAILED === 'true';
+            let report;
+            try {
+              report = JSON.parse(fs.readFileSync(process.env.PRODUCTION_HEALTH_REPORT_PATH, 'utf8'));
+            } catch (error) {
+              report = {
+                ok: false,
+                checkedAt: new Date().toISOString(),
+                checks: [{ name: 'monitor runner', ok: false, error: error.message }],
+              };
+            }
+
+            const title = '[production-health] Production service degradation';
+            const lines = report.checks.map((check) => {
+              const state = check.ok ? 'OK' : 'FAIL';
+              const status = check.status == null ? 'no response' : `HTTP ${check.status}`;
+              return `- **${state} ${check.name}** — ${status}, ${check.latencyMs ?? 0}ms${check.error ? ` — ${check.error}` : ''}`;
+            });
+            const runUrl = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
+            const body = [`Checked: ${report.checkedAt}`, ...lines, '', `[Workflow run](${runUrl})`].join('\n');
+
+            const { data: issues } = await github.rest.issues.listForRepo({
+              ...context.repo,
+              state: 'all',
+              per_page: 100,
+            });
+            const incident = issues.find((issue) => !issue.pull_request && issue.title === title);
+            const openIncident = incident?.state === 'open' ? incident : null;
+
+            async function notify(content) {
+              const url = process.env.ANTIFRAUD_DISCORD_WEBHOOK_URL;
+              if (!url) return;
+              try {
+                const response = await fetch(url, {
+                  method: 'POST',
+                  headers: { 'content-type': 'application/json' },
+                  body: JSON.stringify({
+                    content: content.slice(0, 1800),
+                    allowed_mentions: { parse: [] },
+                  }),
+                });
+                if (!response.ok) core.warning(`Discord alert returned HTTP ${response.status}`);
+              } catch (error) {
+                // The durable GitHub issue is the primary alert. A Discord
+                // outage must not prevent incident creation or recovery.
+                core.warning(`Discord alert failed: ${error.message}`);
+              }
+            }
+
+            if (failed && !openIncident) {
+              const created = await github.rest.issues.create({
+                ...context.repo,
+                title,
+                body,
+              });
+              await notify(`**Production health alert**\n${lines.join('\n')}\n${created.data.html_url}`);
+            } else if (!failed && openIncident) {
+              await github.rest.issues.createComment({
+                ...context.repo,
+                issue_number: openIncident.number,
+                body: `Recovered at ${report.checkedAt}.\n\n${body}`,
+              });
+              await github.rest.issues.update({
+                ...context.repo,
+                issue_number: openIncident.number,
+                state: 'closed',
+                state_reason: 'completed',
+              });
+              await notify(`**Production health recovered**\nAll synthetic checks are healthy.\n${openIncident.html_url}`);
+            }
+
+      - name: Fail unhealthy run
+        if: steps.health.outcome != 'success'
+        run: exit 1
