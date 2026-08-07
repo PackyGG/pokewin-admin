@@ -167,8 +167,13 @@ test("signup recovery controls stay sanitized, verified, and explicit", () => {
 
   assert.match(health, /getSignupIngestionFailures\(\)/);
   assert.match(health, /<SignupFailureManager failures=\{signupFailures\.data\}/);
+  assert.match(manager, /id="signup-recovery"/);
   assert.match(manager, /errorSummary/);
   assert.match(manager, /errorCode/);
+  assert.match(manager, /Automatic retry/);
+  assert.match(manager, /Action required/);
+  assert.match(manager, /failure\.nextRetryAt/);
+  assert.match(manager, /recoveryInstruction\(failure\.failureKind\)/);
   assert.match(manager, /Type RESOLVE to confirm/);
   assert.match(manager, /confirmation !== "RESOLVE"/);
   const failureSchema = api.slice(
@@ -178,6 +183,8 @@ test("signup recovery controls stay sanitized, verified, and explicit", () => {
   assert.doesNotMatch(failureSchema, /\berror:\s*z\.string\(\)/);
   assert.match(api, /errorCode: z\.string\(\)/);
   assert.match(api, /errorSummary: z\.string\(\)/);
+  assert.match(api, /failureKind: z\.enum\(\[/);
+  assert.match(api, /nextRetryAt: z\.string\(\)\.nullable\(\)/);
 
   assert.match(actions, /requireAntifraudManager\(/);
   assert.match(actions, /createAdminAuditEventDurable/);
@@ -191,4 +198,22 @@ test("signup recovery controls stay sanitized, verified, and explicit", () => {
   assert.match(actions, /antifraud_signup_ingestion_retried/);
   assert.match(actions, /antifraud_signup_ingestion_resolved/);
   assert.match(actions, /revalidatePath\("\/antifraud\/settings"\)/);
+});
+
+test("Engine health stays quiet when healthy and sends every fault to an action", () => {
+  const health = read(`${SETTINGS}/_sections/health.tsx`);
+
+  assert.match(health, /title="Engine healthy"/);
+  assert.doesNotMatch(health, /Last tick started/);
+  assert.doesNotMatch(health, /Skipped ticks/);
+  assert.doesNotMatch(health, /Alert families/);
+  assert.doesNotMatch(health, /title="Fiat eligibility gate"/);
+
+  assert.match(health, /href: "\/antifraud\/settings#signup-recovery"/);
+  assert.match(health, /href="\/antifraud\/discord"/);
+  assert.match(health, /href="\/antifraud\/config"/);
+  assert.match(health, /href="\/antifraud\/guide\/troubleshooting"/);
+  assert.match(health, /Review recovery queue/);
+  assert.match(health, /Open Discord routing/);
+  assert.match(health, /Open Fiat config/);
 });

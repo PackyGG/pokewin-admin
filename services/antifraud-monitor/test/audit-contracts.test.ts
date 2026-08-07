@@ -1250,8 +1250,9 @@ test("runtime workers recover cleanly from provider, pool, and process failures"
   assert.match(monitor, /Provider enrichment unavailable/);
   assert.match(
     monitor,
-    /error_text LIKE 'Provider enrichment unavailable:%'/,
+    /next_retry_at IS NOT NULL[\s\S]*next_retry_at <= now\(\)/,
   );
+  assert.doesNotMatch(monitor, /error_text LIKE 'Provider enrichment unavailable:%'/);
 
   assert.match(network, /void this\.runWorker\(\)/);
   assert.match(network, /Recovered after stale worker lease/);

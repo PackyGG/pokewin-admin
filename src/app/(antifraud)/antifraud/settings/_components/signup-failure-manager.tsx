@@ -33,55 +33,91 @@ export function SignupFailureManager({
   if (failures.length === 0) return null;
 
   return (
-    <section className="space-y-3">
+    <section id="signup-recovery" className="scroll-mt-24 space-y-3">
       <div className="flex items-start gap-3 rounded-xl border border-amber-500/25 bg-amber-500/5 px-4 py-3">
         <AlertTriangle className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div>
           <p className="text-sm font-semibold">Signup recovery queue</p>
           <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-            These accounts did not finish automated assessment. Retry after the
-            underlying issue is fixed. Resolve only when no assessment should
-            be created; both actions require fresh verification and are audited.
+            These accounts did not finish automated assessment. Transient
+            failures retry on their displayed schedule; act only when a row
+            says it needs attention. Resolve only when no assessment should be
+            created. Manual actions require fresh verification and are audited.
           </p>
         </div>
       </div>
 
       <ul className="divide-y divide-border/60 overflow-hidden rounded-xl border border-border/60 bg-card">
-        {failures.map((failure) => (
-          <li
-            key={failure.userId}
-            className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center"
-          >
-            <div className="min-w-0 flex-1">
-              <div className="flex flex-wrap items-center gap-2">
-                <Link
-                  href={`/users/${encodeURIComponent(failure.userId)}`}
-                  className="break-all font-mono text-xs font-medium hover:underline"
-                >
-                  {failure.userId}
-                </Link>
-                <Badge variant="outline">
-                  {failure.failureCount.toLocaleString()} attempts
-                </Badge>
-                <code className="text-[10px] text-muted-foreground">
-                  {failure.errorCode}
-                </code>
+        {failures.map((failure) => {
+          const automaticRetryScheduled = failure.nextRetryAt !== null;
+          return (
+            <li
+              key={failure.userId}
+              className="flex flex-col gap-3 px-4 py-3 lg:flex-row lg:items-center"
+            >
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Link
+                    href={`/users/${encodeURIComponent(failure.userId)}`}
+                    className="break-all font-mono text-xs font-medium hover:underline"
+                  >
+                    {failure.userId}
+                  </Link>
+                  <Badge variant="outline">
+                    {failure.failureCount.toLocaleString()} attempts
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={
+                      automaticRetryScheduled
+                        ? "border-cyan-500/30 bg-cyan-500/5 text-cyan-700 dark:text-cyan-300"
+                        : "border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-300"
+                    }
+                  >
+                    {automaticRetryScheduled
+                      ? "Automatic retry"
+                      : "Action required"}
+                  </Badge>
+                  <code className="text-[10px] text-muted-foreground">
+                    {failure.errorCode}
+                  </code>
+                </div>
+                <p className="mt-1 text-sm">{failure.errorSummary}</p>
+                <p className="mt-1 text-[11px] text-muted-foreground">
+                  First failed {formatRelative(failure.firstFailedAt)} · Last
+                  tried {formatRelative(failure.lastFailedAt)} (
+                  {formatDateTime(failure.lastFailedAt)})
+                </p>
+                <p className="mt-1 text-[11px] font-medium text-muted-foreground">
+                  {failure.nextRetryAt
+                    ? `Next automatic retry ${formatRelative(failure.nextRetryAt)} (${formatDateTime(failure.nextRetryAt)})`
+                    : recoveryInstruction(failure.failureKind)}
+                </p>
               </div>
-              <p className="mt-1 text-sm">{failure.errorSummary}</p>
-              <p className="mt-1 text-[11px] text-muted-foreground">
-                First failed {formatRelative(failure.firstFailedAt)} · Last tried{" "}
-                {formatRelative(failure.lastFailedAt)} ({formatDateTime(failure.lastFailedAt)})
-              </p>
-            </div>
-            <div className="flex shrink-0 gap-2">
-              <FailureAction failure={failure} action="retry" />
-              <FailureAction failure={failure} action="resolve" />
-            </div>
-          </li>
-        ))}
+              <div className="flex shrink-0 gap-2">
+                {!automaticRetryScheduled && (
+                  <FailureAction failure={failure} action="retry" />
+                )}
+                <FailureAction failure={failure} action="resolve" />
+              </div>
+            </li>
+          );
+        })}
       </ul>
     </section>
   );
+}
+
+function recoveryInstruction(
+  kind: SignupIngestionFailure["failureKind"],
+): string {
+  if (kind === "provider_configuration") {
+    return "Automatic retries paused · fix the provider configuration, then retry.";
+  }
+  if (kind === "invalid_payload") {
+    return "Automatic retries paused · inspect the account before retrying or resolving.";
+  }
+  return "Automatic retries exhausted · verify the dependency is healthy, then retry.";
 }
 
 function FailureAction({

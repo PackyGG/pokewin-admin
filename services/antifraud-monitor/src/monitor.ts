@@ -59,6 +59,13 @@ import {
 } from "./signup-alerts.js";
 import { parseFailedSignup } from "./signup-failure.js";
 import {
+  classifySignupFailure,
+  providerSignupFailureKind,
+  signupRetryDelaySeconds,
+  signupRetryPolicy,
+  SignupRecoveryError,
+} from "./signup-recovery-policy.js";
+import {
   fetchActivity,
   fetchNewLoginFingerprints,
   fetchNewSignups,
@@ -371,8 +378,6 @@ const SEQUENCE_RULES_LIMIT = 500;
 const SIGNUP_CONCURRENCY = 4;
 /** Old failures retry in small, leader-only batches without blocking new input. */
 const FAILED_SIGNUP_REPLAY_BATCH_SIZE = 20;
-const FAILED_SIGNUP_REPLAY_DELAY_SECONDS = 60;
-const FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS = 5;
 const CONTEXT_RISK_COUNTRIES = new Set(["CZ", "SK", "SI", "IN"]);
 /**
  * Hard cap on the per-session event history fed to `sequenceMatches`, which is
@@ -972,19 +977,12 @@ export class MonitorEngine {
         SELECT user_id, payload
         FROM signup_ingestion_failures
         WHERE resolved_at IS NULL
-          AND (
-            failure_count < $1
-            OR error_text LIKE 'Provider enrichment unavailable:%'
-          )
-          AND last_failed_at <= now() - ($2::text || ' seconds')::interval
-        ORDER BY last_failed_at, user_id
-        LIMIT $3
+          AND next_retry_at IS NOT NULL
+          AND next_retry_at <= now()
+        ORDER BY next_retry_at, user_id
+        LIMIT $1
       `,
-      [
-        FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS,
-        FAILED_SIGNUP_REPLAY_DELAY_SECONDS,
-        FAILED_SIGNUP_REPLAY_BATCH_SIZE,
-      ],
+      [FAILED_SIGNUP_REPLAY_BATCH_SIZE],
     );
 
     let recovered = 0;
@@ -994,12 +992,14 @@ export class MonitorEngine {
         await this.db.antifraud.query(
           `
             UPDATE signup_ingestion_failures
-            SET failure_count = $2,
+            SET failure_kind = 'invalid_payload',
                 error_text = 'Stored signup payload is invalid',
-                last_failed_at = now()
+                last_failed_at = now(),
+                next_retry_at = NULL
             WHERE user_id = $1
+              AND resolved_at IS NULL
           `,
-          [failure.user_id, FAILED_SIGNUP_REPLAY_MAX_ATTEMPTS],
+          [failure.user_id],
         );
         this.log.error(
           { userId: failure.user_id },
@@ -1109,16 +1109,14 @@ export class MonitorEngine {
       this.saveProviderCheck(signup.id, abstractEmail, signup.created_at),
       this.saveProviderCheck(signup.id, maxmind, signup.created_at),
     ]);
-    const unavailable = [
+    const failedProviders = [
       fingerprint,
       proxycheck,
       abstractIp,
       abstractEmail,
       maxmind,
-    ]
-      .filter((result) => result.status === "failed")
-      .map((result) => result.provider);
-    if (unavailable.length > 0) {
+    ].filter((result) => result.status === "failed");
+    if (failedProviders.length > 0) {
       const signals = [
         ...baseSignupSignals(signup, context, weights),
         ...identifierBlocklistSignals,
@@ -1168,8 +1166,9 @@ export class MonitorEngine {
         abstractEmail,
         maxmind,
       ]);
-      throw new Error(
-        `Provider enrichment unavailable: ${unavailable.join(",")}`,
+      throw new SignupRecoveryError(
+        `Provider enrichment unavailable: ${failedProviders.map((result) => result.provider).join(",")}`,
+        providerSignupFailureKind(failedProviders),
       );
     }
     return {
@@ -2142,20 +2141,43 @@ export class MonitorEngine {
     error: unknown,
   ): Promise<void> {
     const safe = this.safeError(error);
+    const failureKind = classifySignupFailure(error);
+    const retryPolicy = signupRetryPolicy(failureKind);
+    const firstRetryDelaySeconds = signupRetryDelaySeconds(failureKind, 1);
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
       const deadLettered = await client.query(
         `
           INSERT INTO signup_ingestion_failures(
-            user_id, source_created_at, payload, error_text
-          ) VALUES ($1,$2,$3,$4)
+            user_id, source_created_at, payload, error_text, failure_kind,
+            next_retry_at
+          ) VALUES (
+            $1,$2,$3,$4,$5,
+            CASE WHEN $6::int IS NULL THEN NULL
+                 ELSE now() + ($6::text || ' seconds')::interval END
+          )
           ON CONFLICT (user_id) DO UPDATE SET
             source_created_at = EXCLUDED.source_created_at,
             payload = EXCLUDED.payload,
             error_text = EXCLUDED.error_text,
+            failure_kind = EXCLUDED.failure_kind,
             failure_count = signup_ingestion_failures.failure_count + 1,
             last_failed_at = now(),
+            next_retry_at = CASE
+              WHEN $7::int IS NULL
+                OR signup_ingestion_failures.failure_count + 1 >= $7
+                THEN NULL
+              ELSE now() + (
+                LEAST(
+                  $9::int,
+                  $8::int * power(
+                    2,
+                    GREATEST(0, signup_ingestion_failures.failure_count)
+                  )
+                )::text || ' seconds'
+              )::interval
+            END,
             resolved_at = NULL,
             resolved_by = NULL,
             resolution_note = NULL
@@ -2166,6 +2188,11 @@ export class MonitorEngine {
           signup.created_at,
           JSON.stringify(signup),
           safe.message.slice(0, 1_000),
+          failureKind,
+          firstRetryDelaySeconds,
+          retryPolicy?.maxAttempts ?? null,
+          retryPolicy?.baseDelaySeconds ?? 0,
+          retryPolicy?.maxDelaySeconds ?? 0,
         ],
       );
       await this.advanceSignupCursor(client, signup);

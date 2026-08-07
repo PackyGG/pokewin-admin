@@ -54,12 +54,13 @@ test("all five signup providers are required and failures enter recovery", async
   assert.match(prepare, /Provider enrichment unavailable:/);
   assert.match(
     monitor,
-    /error_text LIKE 'Provider enrichment unavailable:%'/,
-    "provider failures must remain eligible for dead-letter replay",
+    /next_retry_at IS NOT NULL[\s\S]*next_retry_at <= now\(\)/,
+    "scheduled failures must remain eligible for dead-letter replay",
   );
+  assert.doesNotMatch(monitor, /error_text LIKE 'Provider enrichment unavailable:%'/);
   assert.match(
     prepare,
-    /persistAbstractCatchallContainment[\s\S]*?throw new Error/,
+    /persistAbstractCatchallContainment[\s\S]*?throw new SignupRecoveryError/,
     "confirmed catch-all containment must commit before another provider failure is raised",
   );
 });

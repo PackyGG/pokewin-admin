@@ -17,7 +17,9 @@ const config = {
 const failure = {
   user_id: "user-1",
   error_text: "Provider enrichment unavailable: timeout",
+  failure_kind: "provider_transient",
   failure_count: 6,
+  next_retry_at: new Date("2026-07-29T22:00:00Z"),
   first_failed_at: new Date("2026-07-29T20:00:00Z"),
   last_failed_at: new Date("2026-07-29T21:00:00Z"),
   resolved_at: null,
@@ -66,7 +68,9 @@ test("signup failure list exposes bounded operator evidence", async () => {
         userId: "user-1",
         errorCode: "provider_enrichment_unavailable",
         errorSummary: "A signup enrichment provider was unavailable.",
+        failureKind: "provider_transient",
         failureCount: 6,
+        nextRetryAt: "2026-07-29T22:00:00.000Z",
         firstFailedAt: "2026-07-29T20:00:00.000Z",
         lastFailedAt: "2026-07-29T21:00:00.000Z",
         status: "pending",
@@ -97,11 +101,14 @@ test("signup failure list maps internal errors to allowlisted operator summaries
             ...failure,
             user_id: "payload-user",
             error_text: "Stored signup payload is invalid",
+            failure_kind: "invalid_payload",
+            next_retry_at: null,
           },
           {
             ...failure,
             user_id: "unknown-user",
             error_text: "database error containing private@example.com",
+            failure_kind: "transient",
           },
         ],
         rowCount: 3,
@@ -133,6 +140,7 @@ test("retry requeues one failure and records the exact staff action", async () =
     ...failure,
     failure_count: 0,
     last_failed_at: new Date(0),
+    next_retry_at: new Date("2026-07-29T23:00:00Z"),
   };
   const client = {
     query: async (sql: string, params?: unknown[]) => {
@@ -170,7 +178,7 @@ test("retry requeues one failure and records the exact staff action", async () =
   assert.match(
     queries.find((query) => query.sql.includes("UPDATE signup_ingestion_failures"))
       ?.sql ?? "",
-    /failure_count=0[\s\S]*last_failed_at=to_timestamp\(0\)/,
+    /failure_count=0[\s\S]*last_failed_at=to_timestamp\(0\)[\s\S]*next_retry_at=now\(\)/,
   );
   assert.ok(
     queries.some((query) => query.sql.includes("pg_advisory_xact_lock")),
@@ -212,6 +220,23 @@ test("signup recovery migration repairs the contract and requeues affected rows"
   assert.doesNotMatch(migration, /CHECK \(score >= (?:21|50|60)\)/);
 });
 
+test("signup retry migration backfills typed, scheduled recovery", async () => {
+  const migration = await readFile(
+    new URL("../migrations/069_signup_failure_retry_policy.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(migration, /ADD COLUMN failure_kind text/);
+  assert.match(migration, /ADD COLUMN next_retry_at timestamptz/);
+  assert.match(
+    migration,
+    /CHECK \(failure_kind IN \([\s\S]*'provider_transient'[\s\S]*'provider_configuration'[\s\S]*'transient'[\s\S]*'invalid_payload'/,
+  );
+  assert.match(
+    migration,
+    /CREATE INDEX signup_ingestion_failures_retry_idx[\s\S]*next_retry_at, user_id[\s\S]*resolved_at IS NULL AND next_retry_at IS NOT NULL/,
+  );
+});
+
 test("resolved failures win races with automatic recovery", async () => {
   const migration = await readFile(
     new URL("../migrations/033_signup_failure_operations.sql", import.meta.url),
@@ -225,6 +250,14 @@ test("resolved failures win races with automatic recovery", async () => {
   assert.match(
     monitor,
     /FROM signup_ingestion_failures[\s\S]*WHERE resolved_at IS NULL/,
+  );
+  assert.match(
+    monitor,
+    /next_retry_at IS NOT NULL[\s\S]*next_retry_at <= now\(\)/,
+  );
+  assert.doesNotMatch(
+    monitor,
+    /error_text LIKE 'Provider enrichment unavailable:%'/,
   );
   assert.match(
     monitor,

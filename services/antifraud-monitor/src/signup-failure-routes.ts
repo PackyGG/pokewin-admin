@@ -24,7 +24,9 @@ const paramsSchema = z.object({
 type FailureRow = {
   user_id: string;
   error_text: string;
+  failure_kind: string;
   failure_count: number;
+  next_retry_at: Date | string | null;
   first_failed_at: Date | string;
   last_failed_at: Date | string;
   resolved_at: Date | string | null;
@@ -47,7 +49,7 @@ function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
-function publicFailure(errorText: string): {
+function publicFailure(failureKind: string, errorText: string): {
   errorCode: string;
   errorSummary: string;
 } {
@@ -57,13 +59,19 @@ function publicFailure(errorText: string): {
       errorSummary: "The signup alert score was rejected by its data contract.",
     };
   }
-  if (errorText.startsWith("Provider enrichment unavailable:")) {
+  if (failureKind === "provider_transient") {
     return {
       errorCode: "provider_enrichment_unavailable",
       errorSummary: "A signup enrichment provider was unavailable.",
     };
   }
-  if (errorText === "Stored signup payload is invalid") {
+  if (failureKind === "provider_configuration") {
+    return {
+      errorCode: "provider_configuration_required",
+      errorSummary: "A signup enrichment provider needs operator attention.",
+    };
+  }
+  if (failureKind === "invalid_payload") {
     return {
       errorCode: "invalid_stored_payload",
       errorSummary: "The stored signup payload could not be replayed.",
@@ -78,8 +86,10 @@ function publicFailure(errorText: string): {
 function serialize(row: FailureRow) {
   return {
     userId: row.user_id,
-    ...publicFailure(row.error_text),
+    ...publicFailure(row.failure_kind, row.error_text),
+    failureKind: row.failure_kind,
     failureCount: row.failure_count,
+    nextRetryAt: row.next_retry_at ? iso(row.next_retry_at) : null,
     firstFailedAt: iso(row.first_failed_at),
     lastFailedAt: iso(row.last_failed_at),
     status: row.resolved_at ? "resolved" as const : "pending" as const,
@@ -114,7 +124,8 @@ function isExactReplay(
 }
 
 const selectColumns = `
-  user_id, error_text, failure_count, first_failed_at, last_failed_at,
+  user_id, error_text, failure_kind, failure_count, next_retry_at,
+  first_failed_at, last_failed_at,
   resolved_at, resolved_by, resolution_note
 `;
 
@@ -222,6 +233,7 @@ export async function registerSignupFailureRoutes(
                   UPDATE signup_ingestion_failures
                   SET failure_count=0,
                       last_failed_at=to_timestamp(0),
+                      next_retry_at=now(),
                       resolved_at=NULL,
                       resolved_by=NULL,
                       resolution_note=NULL
@@ -232,7 +244,8 @@ export async function registerSignupFailureRoutes(
                   UPDATE signup_ingestion_failures
                   SET resolved_at=now(),
                       resolved_by=$2,
-                      resolution_note=$3
+                      resolution_note=$3,
+                      next_retry_at=NULL
                   WHERE user_id=$1
                   RETURNING ${selectColumns}
                 `,
