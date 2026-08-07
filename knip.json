@@ -1,28 +1,35 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "entry": [
+    "drizzle.*.config.ts",
+    "playwright*.config.ts",
     "scripts/**/*.{mjs,ts}",
     "e2e/**/*.ts",
-    "src/**/__checks__/run.ts",
+    "src/**/__checks__/*.ts",
     "src/**/*.test.{ts,tsx}"
   ],
   "project": [
-    "src/**/*.{ts,tsx}",
+    "src/**/*.{ts,tsx,css}",
     "scripts/**/*.{mjs,ts}",
     "e2e/**/*.ts",
     "*.{ts,mjs}"
   ],
   "ignore": [
-    "src/lib/db-schema/**",
-    "src/app/responsive-fixture/**"
+    "src/lib/db-schema/**"
+  ],
+  "include": [
+    "files",
+    "dependencies",
+    "devDependencies",
+    "optionalPeerDependencies",
+    "unlisted",
+    "binaries",
+    "unresolved"
   ],
   "ignoreDependencies": [
     "server-only",
     "geojson",
     "topojson-specification",
-    "shadcn",
-    "tailwindcss",
-    "tw-animate-css",
     "eslint-config-next"
   ]
 }

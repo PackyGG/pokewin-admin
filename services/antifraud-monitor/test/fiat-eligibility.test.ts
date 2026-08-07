@@ -1358,7 +1358,6 @@ test("concurrent identical requests share one automatic provider review", async 
       release: () => undefined,
     }),
   };
-  const admin = { query: async () => ({ rows: [{ active: false }] }) };
   const enrichment = {
     fingerprintCheck: async () => {
       fingerprintCalls += 1;

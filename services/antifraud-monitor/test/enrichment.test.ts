@@ -4,7 +4,6 @@ import test from "node:test";
 import {
   parseAbstractEmailResponse,
   parseAbstractIpResponse,
-  EnrichmentService,
   parseFingerprintResponse,
   parseProxycheckResponse,
   sanitizeAbstractEmailResponse,
@@ -12,7 +11,6 @@ import {
   sanitizeFingerprintResponse,
   sanitizeProxycheckResponse,
 } from "../src/enrichment.js";
-import type { Config } from "../src/config.js";
 import { defaultScoreWeights } from "../src/score-catalog.js";
 import type { Signup } from "../src/types.js";
 
