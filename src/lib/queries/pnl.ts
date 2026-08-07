@@ -924,20 +924,25 @@ async function computeDailyPnl(
     });
     const ledgerUserScope = `lt.user_id IN ${usersScope}`;
 
-    type LedgerRow = {
-      d: Date;
+    type DailyLegRow = {
+      d: Date | string;
       deposits: number;
       manual_wd: number;
+      card_wd: number;
       balance_change: number;
+      inventory_change: number;
+      voucher_change: number;
     };
-    type RefundRow = { d: Date; refunds: number };
-    type CardRow = { d: Date; card_wd: number };
-    type InvRow = { d: Date; obtained: number; disposed: number };
-    type VchRow = { d: Date; issued: number; claimed: number };
 
-    const [ledger, card, inv, vch, refunds] = await Promise.all([
-      queryMainRows<LedgerRow[]>(
-        `SELECT DATE(lt.created_at) AS d,
+    // One statement / one pool slot. The old implementation launched these
+    // five legs through Promise.all, but the MAIN mirror pool intentionally
+    // has only two slots. A cold cache fill therefore queued three statements
+    // behind the first two and could hit the pool acquisition timeout while
+    // the mirror was busy. Keeping the legs as CTEs preserves their exact SQL
+    // and arithmetic while making a cold fill consume one connection.
+    const rows = await queryMainRows<DailyLegRow[]>(
+      `WITH ledger AS (
+         SELECT DATE(lt.created_at) AS d,
            COALESCE(SUM(CASE WHEN lt.type::text = 'deposit' THEN lt.amount::numeric ELSE 0 END), 0)::float8 AS deposits,
            COALESCE(SUM(CASE WHEN lt.type::text = 'admin_balance_adjustment'
                               AND lt.balance_after < lt.balance_before
@@ -947,66 +952,17 @@ async function computeDailyPnl(
          FROM ledger_transactions lt
          WHERE lt.status = 'completed' AND lt.created_at >= NOW() - INTERVAL '${windowDays} days'
            AND lt.user_id IN ${usersScope}
-         GROUP BY DATE(lt.created_at)`,
-      ),
-      queryMainRows<CardRow[]>(
-        // CLOSED-DAY FINALITY — the withdrawal term is the ONLY one that can
-        // retroactively flip a CLOSED day green→loss, so it is bucketed by
-        // the realized money-out timestamp (NOT requested_at/created_at) and
-        // kept consistent with the rest of the P&L family.
-        //
-        // Why only THIS term moves a closed day:
-        // • deposits self-cancel: a late-completing deposit adds +amount to
-        //   `deposits` AND +amount to `balance_change` (it credits the user's
-        //   balance), so net 0 on that day's P&L — a closed day can't move.
-        // • admin balance adjustments are written atomically as
-        //   status='completed' (users/[id]/actions.ts), so they never appear
-        //   in a past day after the fact.
-        // • inventory (obtained_at / sold_at / exchanged_at) and voucher
-        //   (created_at / claimed_at) legs are stamped at the event instant,
-        //   so a next-day sell/redeem carries a next-day stamp.
-        // • a card withdrawal writes NO offsetting ledger row (there is no
-        //   `card_withdrawal` ledger type and `total_withdrawn` is not moved
-        //   — see WITHDRAWAL_LIABILITY_STATUSES). So its `total_value_usd`
-        //   lands with no counterweight: if it slips into a closed day after
-        //   the fact, that day drops by the FULL amount.
-        //
-        // Bucketing key: COALESCE(shipped_at, completed_at) — the same key
-        // the windowed P&L (calculateWindowedPnl) and the "P&L Today" tile
-        // (getTodayPnl) use, so the daily bar reconciles with them.
-        //   • shipped_at is stamped new Date() the instant the admin ships
-        //     (withdrawals/actions.ts:shipWithdrawal) — immutable + never
-        //     backdated — so a PHYSICAL withdrawal is pinned to its ship-day
-        //     and never drifts to the later complete-day (that is why this
-        //     order, not completed-first, is the finality-correct one: a
-        //     shipped row already counts on its ship-day and must stay there).
-        //   • a CRYPTO withdrawal has shipped_at = NULL, so it is bucketed by
-        //     completed_at.
-        //
-        // KNOWN RESIDUAL — backend-owned, NOT fixable in this main-DB query:
-        // a CRYPTO withdrawal whose `completed_at` the backend records as the
-        // ON-CHAIN SETTLEMENT instant (which can fall LATE inside a day D)
-        // while the row is only transitioned to status='completed' AFTER D
-        // has closed will still attribute to D — and the dashboard's 60s
-        // auto-refresh then re-renders the (now-closed) D bar with it
-        // included, flipping it. The row carries NO timestamp recording the
-        // later status transition (the panel does not stamp completion;
-        // completeWithdrawal delegates to the remote `/admin/complete`), and
-        // the only panel-stamped record of the transition lives in the ADMIN
-        // DB audit log, which this main-DB query cannot join (dual-DB rule).
-        // Closing this fully requires the backend to either set
-        // completed_at = now() at completion, or add a separate
-        // completion-recorded-at column to bucket on. Flagged to the owner.
-        `SELECT DATE(COALESCE(cwr.shipped_at, cwr.completed_at)) AS d,
+         GROUP BY DATE(lt.created_at)
+       ), card AS (
+         SELECT DATE(COALESCE(cwr.shipped_at, cwr.completed_at)) AS d,
            COALESCE(SUM(cwr.total_value_usd::numeric), 0)::float8 AS card_wd
          FROM card_withdrawal_requests cwr
          WHERE cwr.status IN ('completed', 'shipped')
            AND COALESCE(cwr.shipped_at, cwr.completed_at) >= NOW() - INTERVAL '${windowDays} days'
            AND cwr.user_id IN ${usersScope}
-         GROUP BY DATE(COALESCE(cwr.shipped_at, cwr.completed_at))`,
-      ),
-      queryMainRows<InvRow[]>(
-        `SELECT d,
+         GROUP BY DATE(COALESCE(cwr.shipped_at, cwr.completed_at))
+       ), inventory AS (
+         SELECT d,
            COALESCE(SUM(obtained), 0)::float8 AS obtained,
            COALESCE(SUM(disposed), 0)::float8 AS disposed
          FROM (
@@ -1034,10 +990,9 @@ async function computeDailyPnl(
                WHERE ui2.id::text = lt.metadata->>'inventory_item_id'
              )
          ) x
-         GROUP BY d`,
-      ),
-      queryMainRows<VchRow[]>(
-        `SELECT d,
+         GROUP BY d
+       ), voucher AS (
+         SELECT d,
            COALESCE(SUM(issued), 0)::float8 AS issued,
            COALESCE(SUM(claimed), 0)::float8 AS claimed
          FROM (
@@ -1061,60 +1016,44 @@ async function computeDailyPnl(
                WHERE v2.id::text = lt.metadata->>'voucher_id'
              )
          ) x
-         GROUP BY d`,
-      ),
-      queryMainRows<RefundRow[]>(
-        `SELECT DATE(${fiatRefundAttributionTimestampSql("i")}) AS d,
+         GROUP BY d
+       ), refunds AS (
+         SELECT DATE(${fiatRefundAttributionTimestampSql("i")}) AS d,
            COALESCE(SUM(${fiatRefundCreditUsdSql("i")}), 0)::float8 AS refunds
          FROM fiat_deposit_intents i
          WHERE i.status IN ('partially_refunded', 'refunded')
            AND ${fiatRefundAttributionTimestampSql("i")} >= NOW() - INTERVAL '${windowDays} days'
            AND i.user_id IN ${usersScope}
-         GROUP BY DATE(${fiatRefundAttributionTimestampSql("i")})`,
-      ),
-    ]);
+         GROUP BY DATE(${fiatRefundAttributionTimestampSql("i")})
+       ), legs AS (
+         SELECT d, deposits, manual_wd, 0::float8 AS card_wd,
+                balance_change, 0::float8 AS inventory_change,
+                0::float8 AS voucher_change, 0::float8 AS refunds
+         FROM ledger
+         UNION ALL
+         SELECT d, 0, 0, card_wd, 0, 0, 0, 0 FROM card
+         UNION ALL
+         SELECT d, 0, 0, 0, 0, obtained - disposed, 0, 0 FROM inventory
+         UNION ALL
+         SELECT d, 0, 0, 0, 0, 0, issued - claimed, 0 FROM voucher
+         UNION ALL
+         SELECT d, 0, 0, 0, 0, 0, 0, refunds FROM refunds
+       )
+       SELECT d,
+              (SUM(deposits) - SUM(refunds))::float8 AS deposits,
+              SUM(manual_wd)::float8 AS manual_wd,
+              SUM(card_wd)::float8 AS card_wd,
+              SUM(balance_change)::float8 AS balance_change,
+              SUM(inventory_change)::float8 AS inventory_change,
+              SUM(voucher_change)::float8 AS voucher_change
+       FROM legs
+       GROUP BY d
+       ORDER BY d`,
+    );
 
-    type Acc = {
-      deposits: number;
-      manualWd: number;
-      cardWd: number;
-      balanceChange: number;
-      inventoryChange: number;
-      voucherChange: number;
-    };
-    const byDay = new Map<string, Acc>();
-    const dayKey = (d: Date) => new Date(d).toISOString().slice(0, 10);
-    const acc = (k: string): Acc => {
-      let a = byDay.get(k);
-      if (!a) {
-        a = {
-          deposits: 0,
-          manualWd: 0,
-          cardWd: 0,
-          balanceChange: 0,
-          inventoryChange: 0,
-          voucherChange: 0,
-        };
-        byDay.set(k, a);
-      }
-      return a;
-    };
-
-    for (const r of ledger) {
-      const a = acc(dayKey(r.d));
-      a.deposits += r.deposits;
-      a.manualWd += r.manual_wd;
-      a.balanceChange += r.balance_change;
-    }
-    for (const r of refunds) acc(dayKey(r.d)).deposits -= r.refunds;
-    for (const r of card) acc(dayKey(r.d)).cardWd += r.card_wd;
-    for (const r of inv)
-      acc(dayKey(r.d)).inventoryChange += r.obtained - r.disposed;
-    for (const r of vch)
-      acc(dayKey(r.d)).voucherChange += r.issued - r.claimed;
-
-    return [...byDay.entries()]
-      .map(([date, a]) => ({
+    return rows.map((r) => {
+      const date = new Date(r.d).toISOString().slice(0, 10);
+      return {
         date,
         // Exact per-day form of the windowed formula (manualWd carries its
         // stored sign here so the daily values sum to the windowed total).
@@ -1124,25 +1063,25 @@ async function computeDailyPnl(
         // the backend skipped upgrader_payout rows, which double-counted
         // every upgrader payout and produced ~$100k phantom loss bars.
         pnl:
-          a.deposits -
-          (a.manualWd + a.cardWd) -
-          a.balanceChange -
-          a.inventoryChange -
-          a.voucherChange,
-        deposits: a.deposits,
+          r.deposits -
+          (r.manual_wd + r.card_wd) -
+          r.balance_change -
+          r.inventory_change -
+          r.voucher_change,
+        deposits: r.deposits,
         // Gross money-out for the hover (clean positive regardless of how
         // the manual-withdrawal sign is stored).
-        withdrawals: Math.abs(a.manualWd) + a.cardWd,
+        withdrawals: Math.abs(r.manual_wd) + r.card_wd,
         // Already-derived windowed-delta components for the hover breakdown
         // — surfaced (not recomputed) so the tooltip can show where each
         // day's net deposit inflow actually went (balance / inventory /
         // voucher liability growth). These four terms + deposits −
         // withdrawals reconcile to `pnl` above by construction.
-        balanceChange: a.balanceChange,
-        inventoryChange: a.inventoryChange,
-        voucherChange: a.voucherChange,
-      }))
-      .sort((x, y) => x.date.localeCompare(y.date));
+        balanceChange: r.balance_change,
+        inventoryChange: r.inventory_change,
+        voucherChange: r.voucher_change,
+      };
+    });
   });
 }
 
@@ -1173,7 +1112,7 @@ const cachedDailyPnl = unstable_cache(
     // confirmed (aligned-window harness: every field, every day Δ=0.00).
     return computeDailyPnl(excluded, days);
   },
-  ["dashboard-daily-pnl-v3-refund-attribution"],
+  ["dashboard-daily-pnl-v4-one-shot"],
   { revalidate: 300, tags: ["dashboard-activity"] },
 );
 

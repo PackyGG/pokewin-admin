@@ -33,3 +33,13 @@ test("canonical metrics scope keeps only the documented inert window stub", () =
     /CUSTOMER_EXCLUDED_ROLES = \["admin", "support", "creator"\]/,
   );
 });
+
+test("creator session windows use one mirror query, never a per-creator API fan-out", () => {
+  const source = readFileSync(
+    path.join(root, "src/lib/queries/creator-session-windows.ts"),
+    "utf8",
+  );
+
+  assert.match(source, /\.from\(creator_stream_sessions\)/);
+  assert.doesNotMatch(source, /creatorsApi|listSessions|Promise\.allSettled/);
+});
