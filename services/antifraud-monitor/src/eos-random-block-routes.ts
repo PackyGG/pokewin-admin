@@ -293,6 +293,7 @@ export async function registerEosRandomBlockRoutes(
           parsed.data.battleID,
           selection.candidates,
         );
+        const { outcomes: simulatedOutcomes, ...battleSummary } = battle;
         let userOnlyLoses = false;
         if (testConfig) {
           try {
@@ -305,7 +306,7 @@ export async function registerEosRandomBlockRoutes(
           }
         }
         const selected = selectBattleTestOutcome(
-          battle.outcomes,
+          simulatedOutcomes,
           selection.selectedBlock.blockNumber,
           userOnlyLoses,
         );
@@ -316,7 +317,7 @@ export async function registerEosRandomBlockRoutes(
           throw new BattleSimulationError("battle_data_incomplete", 409);
         }
         const outcomesByBlock = new Map(
-          battle.outcomes.map((outcome) => [outcome.blockNumber, outcome]),
+          simulatedOutcomes.map((outcome) => [outcome.blockNumber, outcome]),
         );
         const otherPossibleEndings = selection.candidates
           .filter((candidate) => candidate.blockNumber !== selected.blockNumber)
@@ -329,7 +330,7 @@ export async function registerEosRandomBlockRoutes(
           });
         return {
           ...chainInfoForSelectedBlock(selection, selectedBlock),
-          ...battle,
+          ...battleSummary,
           selectedBlockNumber: selected.blockNumber,
           otherPossibleEndings,
           selected: battleEnding(selection.provider, selectedBlock, selected),
