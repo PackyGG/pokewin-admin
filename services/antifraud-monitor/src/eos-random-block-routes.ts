@@ -31,8 +31,6 @@ const EOS_ENDPOINTS = [
 
 const BLOCK_COUNT = 5;
 const PROVIDER_TIMEOUT_MS = 3_000;
-const TOTAL_TIMEOUT_MS = 12_000;
-const CANDIDATE_CACHE_MS = 250;
 const BLOCK_ID_PATTERN = /^[a-f0-9]{64}$/i;
 
 export type EosBlockCandidate = {
@@ -128,21 +126,13 @@ async function responseJson(response: Response): Promise<unknown> {
 }
 
 export class EosRandomBlockService implements EosRandomBlockSource {
-  private cached: {
-    value: Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">;
-    expiresAt: number;
-  } | null = null;
-  private inFlight: Promise<
-    Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
-  > | null = null;
-
   constructor(
     private readonly fetcher: Fetcher = fetch,
     private readonly randomIndex: RandomIndex = randomInt,
   ) {}
 
   async select(): Promise<EosRandomBlockSelection> {
-    const snapshot = await this.loadSnapshot();
+    const snapshot = await this.fetchSnapshot();
     const selectedIndex = this.randomIndex(snapshot.candidates.length);
     return {
       ...snapshot,
@@ -151,61 +141,42 @@ export class EosRandomBlockService implements EosRandomBlockSource {
     };
   }
 
-  private async loadSnapshot(): Promise<
-    Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
-  > {
-    if (this.cached && this.cached.expiresAt > Date.now()) {
-      return this.cached.value;
-    }
-    if (this.inFlight) return this.inFlight;
-    this.inFlight = this.fetchSnapshot();
-    try {
-      const value = await this.inFlight;
-      this.cached = { value, expiresAt: Date.now() + CANDIDATE_CACHE_MS };
-      return value;
-    } finally {
-      this.inFlight = null;
-    }
-  }
-
   private async fetchSnapshot(): Promise<
     Omit<EosRandomBlockSelection, "selectedIndex" | "selectedBlock">
   > {
-    const startedAt = Date.now();
-    let lastError: unknown = new Error("No EOS provider was attempted");
+    const controllers = EOS_ENDPOINTS.map(() => new AbortController());
+    const timers = controllers.map((controller) =>
+      setTimeout(() => controller.abort(), PROVIDER_TIMEOUT_MS)
+    );
+    const attempts = EOS_ENDPOINTS.map(async (endpoint, index) => {
+      const candidates = await this.fetchCandidates(
+        endpoint,
+        controllers[index]!.signal,
+      );
+      return {
+        provider: endpoint,
+        chainInfo: candidates.chainInfo,
+        candidates: candidates.blocks,
+      };
+    });
 
-    // Keep the fastest reliable provider first. Randomizing this previously
-    // made otherwise identical test requests wait through multiple dead
-    // provider timeouts before reaching a healthy endpoint.
-    for (const endpoint of EOS_ENDPOINTS) {
-      const elapsed = Date.now() - startedAt;
-      if (elapsed >= TOTAL_TIMEOUT_MS) break;
-      try {
-        const candidates = await this.fetchCandidates(
-          endpoint,
-          Math.min(PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS - elapsed),
-        );
-        return {
-          provider: endpoint,
-          chainInfo: candidates.chainInfo,
-          candidates: candidates.blocks,
-        };
-      } catch (error) {
-        lastError = error;
-      }
+    try {
+      return await Promise.any(attempts);
+    } catch (error) {
+      throw new Error("All EOS providers failed", { cause: error });
+    } finally {
+      for (const timer of timers) clearTimeout(timer);
+      for (const controller of controllers) controller.abort();
     }
-
-    throw new Error("All EOS providers failed", { cause: lastError });
   }
 
   private async fetchCandidates(
     endpoint: string,
-    timeoutMs: number,
+    signal: AbortSignal,
   ): Promise<{
     chainInfo: Record<string, unknown>;
     blocks: EosBlockCandidate[];
   }> {
-    const signal = AbortSignal.timeout(Math.max(1, timeoutMs));
     const info = await responseJson(await this.fetcher(
       `${endpoint}/v1/chain/get_info`,
       { signal, headers: { accept: "application/json" } },

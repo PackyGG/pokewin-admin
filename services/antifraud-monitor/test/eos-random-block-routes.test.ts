@@ -65,13 +65,25 @@ test("EOS test config read and writes require the admin token", () => {
   }
 });
 
-test("EOS service fetches the latest five irreversible blocks and selects one", async () => {
+test("EOS service races providers and fetches a fresh five-block window per request", async () => {
   const requestedBlocks: number[] = [];
   let infoRequests = 0;
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/chain/get_info")) {
       infoRequests += 1;
+      if (url.startsWith("https://api.eostitan.com")) {
+        return await new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener(
+            "abort",
+            () => reject(init.signal?.reason),
+            { once: true },
+          );
+        });
+      }
+      if (!url.startsWith("https://mainnet.genereos.io")) {
+        return new Response(null, { status: 503 });
+      }
       return Response.json({ ...chainInfo, last_irreversible_block_num: 500 });
     }
     assert.ok(url.endsWith("/v1/chain/get_block"));
@@ -88,21 +100,26 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
     () => 2,
   );
 
-  const [result, coalescedResult] = await Promise.all([
+  const [result, concurrentResult] = await Promise.all([
     service.select(),
     service.select(),
   ]);
-  const cachedResult = await service.select();
+  const freshResult = await service.select();
 
-  assert.equal(infoRequests, 1);
-  assert.deepEqual(requestedBlocks, [500, 499, 498, 497, 496]);
+  assert.equal(infoRequests, 39);
+  assert.deepEqual(requestedBlocks, [
+    500, 499, 498, 497, 496,
+    500, 499, 498, 497, 496,
+    500, 499, 498, 497, 496,
+  ]);
+  assert.equal(result.provider, "https://mainnet.genereos.io");
   assert.equal(result.candidates.length, 5);
   assert.equal(result.selectedIndex, 2);
   assert.equal(result.selectedBlock.blockNumber, 498);
   assert.equal(result.selectedBlock, result.candidates[2]);
   assert.equal(result.chainInfo.head_block_num, 102);
-  assert.deepEqual(coalescedResult, result);
-  assert.deepEqual(cachedResult, result);
+  assert.deepEqual(concurrentResult, result);
+  assert.deepEqual(freshResult, result);
 });
 
 test("EOS random-block route accepts battle identity and returns only the block hash when simulation is disabled", async () => {
