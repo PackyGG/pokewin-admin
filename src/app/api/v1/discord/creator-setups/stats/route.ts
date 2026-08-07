@@ -17,6 +17,7 @@ const BodySchema = z.object({
   categoryId: DiscordIdSchema,
   channelId: DiscordIdSchema,
   actorDiscordUserId: DiscordIdSchema,
+  periodDays: z.union([z.literal(7), z.literal(14), z.literal(30)]).nullable().default(7),
 });
 
 export const POST = withApiKey(

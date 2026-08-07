@@ -92,7 +92,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-setups/stats",
     summary:
-      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns rolling 30-day combined totals and a per-code breakdown for every affiliate code owned by the Packy creator linked to that private Discord section. Deposit volume includes every completed fiat or crypto deposit attributed in the window.",
+      "Body { guildId, categoryId, channelId, actorDiscordUserId, periodDays }. periodDays is 7, 14, 30, or null for lifetime (default 7). Returns combined totals and a per-code breakdown for every affiliate code owned by the Packy creator linked to that private Discord section.",
     scopes: ["discord:creator:setup"],
   },
   {

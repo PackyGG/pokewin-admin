@@ -53,7 +53,7 @@ export type CreatorSetup = {
 };
 
 export type CreatorSetupStats = {
-  periodDays: 30;
+  periodDays: 7 | 14 | 30 | null;
   generatedAt: string;
   creator: {
     userId: string;
@@ -441,6 +441,7 @@ export async function getCreatorSetupStats(input: {
   categoryId: string;
   channelId: string;
   actorDiscordUserId: string;
+  periodDays: 7 | 14 | 30 | null;
 }): Promise<CreatorSetupStats> {
   const setup = await requireLinkedSetupActor(input);
 
@@ -464,7 +465,7 @@ export async function getCreatorSetupStats(input: {
 
   if (codes.length === 0) {
     return {
-      periodDays: 30,
+      periodDays: input.periodDays,
       generatedAt: new Date().toISOString(),
       creator: { userId: creator.id, username: creator.username, codes },
       totals: emptyCodeStats(null),
@@ -480,6 +481,15 @@ export async function getCreatorSetupStats(input: {
     excludedUserIds.length > 0
       ? sql`AND lt.user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
       : sql``;
+  const usageWindow = input.periodDays === null
+    ? sql``
+    : sql`AND acu.created_at >= NOW() - (${input.periodDays} * INTERVAL '1 day')`;
+  const depositWindow = input.periodDays === null
+    ? sql``
+    : sql`AND lt.created_at >= NOW() - (${input.periodDays} * INTERVAL '1 day')`;
+  const clickWindow = input.periodDays === null
+    ? sql``
+    : sql`AND created_at >= NOW() - (${input.periodDays} * INTERVAL '1 day')`;
   const [usageResult, depositResult, clickResult] = await Promise.all([
     db.execute<UsageStatsRow>(sql`
       SELECT
@@ -502,7 +512,7 @@ export async function getCreatorSetupStats(input: {
         AND UPPER(acu.code) = ANY(${pgArrayParam(codes)}::text[])
         AND acu.status::text = 'completed'
         AND acu.referred_user_id <> acu.affiliate_user_id
-        AND acu.created_at >= NOW() - INTERVAL '30 days'
+        ${usageWindow}
         AND referred.role::text NOT IN ('admin', 'support', 'creator')
         ${excludedFilter}
       GROUP BY GROUPING SETS ((UPPER(acu.code)), ())
@@ -525,7 +535,7 @@ export async function getCreatorSetupStats(input: {
           AND acu.referred_user_id <> acu.affiliate_user_id
         WHERE lt.type = 'deposit'
           AND lt.status = 'completed'
-          AND lt.created_at >= NOW() - INTERVAL '30 days'
+        ${depositWindow}
           AND referred.role::text NOT IN ('admin', 'support', 'creator')
           ${excludedDepositFilter}
         ORDER BY lt.id, acu.created_at DESC, acu.id DESC
@@ -548,7 +558,7 @@ export async function getCreatorSetupStats(input: {
         COUNT(*)::text AS clicks
       FROM affiliate_clicks
       WHERE UPPER(code) = ANY(${pgArrayParam(codes)}::text[])
-        AND created_at >= NOW() - INTERVAL '30 days'
+        ${clickWindow}
       GROUP BY GROUPING SETS ((UPPER(code)), ())
     `),
   ]);
@@ -573,7 +583,7 @@ export async function getCreatorSetupStats(input: {
   const totalClicks = clickResult.rows.find((row) => row.code === null);
 
   return {
-    periodDays: 30,
+    periodDays: input.periodDays,
     generatedAt: new Date().toISOString(),
     creator: {
       userId: creator.id,
