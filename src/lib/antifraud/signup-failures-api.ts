@@ -4,7 +4,8 @@ import { z } from "zod";
 
 const failureSchema = z.object({
   userId: z.string(),
-  error: z.string(),
+  errorCode: z.string(),
+  errorSummary: z.string(),
   failureCount: z.number().int().nonnegative(),
   firstFailedAt: z.string(),
   lastFailedAt: z.string(),

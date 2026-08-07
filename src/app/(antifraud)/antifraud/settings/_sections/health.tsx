@@ -16,8 +16,10 @@ import {
   getAntifraudRuntimeConfig,
   type AntifraudPollerHealth,
 } from "@/lib/antifraud/monitor-api";
+import { getSignupIngestionFailures } from "@/lib/antifraud/signup-failures-api";
 import { cn } from "@/lib/utils";
 import { formatDateTime, formatRelative } from "@/lib/utils/format";
+import { SignupFailureManager } from "../_components/signup-failure-manager";
 
 /**
  * ENGINE HEALTH — the monitor's own runtime state.
@@ -29,10 +31,11 @@ import { formatDateTime, formatRelative } from "@/lib/utils/format";
  * folds the same reads into its ranked issue list.
  */
 export async function EngineHealthSection() {
-  const [poller, runtime, routes] = await Promise.all([
+  const [poller, runtime, routes, signupFailures] = await Promise.all([
     getAntifraudPollerHealth(),
     getAntifraudRuntimeConfig(),
     getAntifraudNotificationRoutes(),
+    getSignupIngestionFailures(),
   ]);
 
   if (!poller.configured) {
@@ -51,6 +54,10 @@ export async function EngineHealthSection() {
           <PollerPanel health={poller.data} />
         )}
       </section>
+
+      {signupFailures.configured && !signupFailures.error && (
+        <SignupFailureManager failures={signupFailures.data} />
+      )}
 
       <section className="space-y-3">
         <SectionHeading icon={BellRing} title="Alert families" />

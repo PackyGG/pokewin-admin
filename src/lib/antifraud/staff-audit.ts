@@ -126,6 +126,16 @@ export const ANTIFRAUD_AUDIT_EVENTS: Record<string, EventDefinition> = {
     category: "cases",
     tone: "neutral",
   },
+  antifraud_signup_ingestion_retried: {
+    label: "Signup assessment retried",
+    category: "cases",
+    tone: "neutral",
+  },
+  antifraud_signup_ingestion_resolved: {
+    label: "Signup failure resolved",
+    category: "cases",
+    tone: "warn",
+  },
   account_review_kyc_required: {
     label: "KYC required from case review",
     category: "cases",

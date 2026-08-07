@@ -188,6 +188,40 @@ test("a degraded poller only escalates on the faults the monitor itself gates on
   assert.match(issues, /id: "signup-backlog"/);
 });
 
+test("signup recovery controls stay sanitized, verified, and explicit", () => {
+  const health = read(`${SETTINGS}/_sections/health.tsx`);
+  const manager = read(`${SETTINGS}/_components/signup-failure-manager.tsx`);
+  const actions = read(`${SETTINGS}/signup-failure-actions.ts`);
+  const api = read("src/lib/antifraud/signup-failures-api.ts");
+
+  assert.match(health, /getSignupIngestionFailures\(\)/);
+  assert.match(health, /<SignupFailureManager failures=\{signupFailures\.data\}/);
+  assert.match(manager, /errorSummary/);
+  assert.match(manager, /errorCode/);
+  assert.match(manager, /Type RESOLVE to confirm/);
+  assert.match(manager, /confirmation !== "RESOLVE"/);
+  const failureSchema = api.slice(
+    api.indexOf("const failureSchema"),
+    api.indexOf("const mutationResultSchema"),
+  );
+  assert.doesNotMatch(failureSchema, /\berror:\s*z\.string\(\)/);
+  assert.match(api, /errorCode: z\.string\(\)/);
+  assert.match(api, /errorSummary: z\.string\(\)/);
+
+  assert.match(actions, /requireAntifraudManager\(/);
+  assert.match(actions, /createAdminAuditEventDurable/);
+  assert.equal(
+    actions.match(/require2FA\(session\.userId, parsed\.data\.credential\)/g)
+      ?.length,
+    2,
+  );
+  assert.match(actions, /confirmation: z\.literal\("RESOLVE"\)/);
+  assert.match(actions, /idempotencyKey: z\.string\(\)\.uuid\(\)/);
+  assert.match(actions, /antifraud_signup_ingestion_retried/);
+  assert.match(actions, /antifraud_signup_ingestion_resolved/);
+  assert.match(actions, /revalidatePath\("\/antifraud\/settings"\)/);
+});
+
 test("system issues rank criticals first and always carry a fix link", () => {
   const issues = read(`${SETTINGS}/_lib/system-issues.ts`);
 

@@ -64,7 +64,8 @@ test("signup failure list exposes bounded operator evidence", async () => {
     data: [
       {
         userId: "user-1",
-        error: failure.error_text,
+        errorCode: "provider_enrichment_unavailable",
+        errorSummary: "A signup enrichment provider was unavailable.",
         failureCount: 6,
         firstFailedAt: "2026-07-29T20:00:00.000Z",
         lastFailedAt: "2026-07-29T21:00:00.000Z",
@@ -76,6 +77,53 @@ test("signup failure list exposes bounded operator evidence", async () => {
     ],
   });
   assert.match(queries[0] ?? "", /WHERE resolved_at IS NULL/);
+  assert.doesNotMatch(response.body, /timeout/);
+  await app.close();
+});
+
+test("signup failure list maps internal errors to allowlisted operator summaries", async () => {
+  const app = Fastify();
+  await registerSignupFailureRoutes(app, {
+    antifraud: {
+      query: async () => ({
+        rows: [
+          {
+            ...failure,
+            user_id: "constraint-user",
+            error_text:
+              'new row violates check constraint "signup_alert_outbox_score_check"',
+          },
+          {
+            ...failure,
+            user_id: "payload-user",
+            error_text: "Stored signup payload is invalid",
+          },
+          {
+            ...failure,
+            user_id: "unknown-user",
+            error_text: "database error containing private@example.com",
+          },
+        ],
+        rowCount: 3,
+      }),
+    },
+  } as unknown as Databases);
+
+  const response = await app.inject({
+    method: "GET",
+    url: "/v1/operations/signup-failures",
+  });
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.deepEqual(
+    body.data.map((item: { errorCode: string }) => item.errorCode),
+    [
+      "signup_alert_score_contract",
+      "invalid_stored_payload",
+      "signup_assessment_failed",
+    ],
+  );
+  assert.doesNotMatch(response.body, /private@example\.com|check constraint/);
   await app.close();
 });
 
@@ -124,6 +172,10 @@ test("retry requeues one failure and records the exact staff action", async () =
       ?.sql ?? "",
     /failure_count=0[\s\S]*last_failed_at=to_timestamp\(0\)/,
   );
+  assert.ok(
+    queries.some((query) => query.sql.includes("pg_advisory_xact_lock")),
+    "the idempotency key must be locked before the audit lookup",
+  );
   const audit = queries.find((query) =>
     query.sql.includes("INSERT INTO service_audit_events")
   );
@@ -132,7 +184,31 @@ test("retry requeues one failure and records the exact staff action", async () =
   await app.close();
 });
 
-test("resolved failures leave the retry queue and new failures reopen them", async () => {
+test("signup recovery migration repairs the contract and requeues affected rows", async () => {
+  const migration = await readFile(
+    new URL("../migrations/068_signup_recovery_hardening.sql", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    migration,
+    /ADD CONSTRAINT signup_alert_outbox_score_bounds_check[\s\S]*CHECK \(score BETWEEN 0 AND 100\) NOT VALID/,
+  );
+  assert.match(
+    migration,
+    /VALIDATE CONSTRAINT signup_alert_outbox_score_bounds_check[\s\S]*DROP CONSTRAINT IF EXISTS signup_alert_outbox_score_check/,
+  );
+  assert.match(
+    migration,
+    /UPDATE signup_ingestion_failures[\s\S]*failure_count = 0[\s\S]*last_failed_at = to_timestamp\(0\)/,
+  );
+  assert.match(
+    migration,
+    /WHERE resolved_at IS NULL[\s\S]*error_text LIKE '%signup_alert_outbox_score_check%'/,
+  );
+  assert.doesNotMatch(migration, /CHECK \(score >= (?:21|50|60)\)/);
+});
+
+test("resolved failures win races with automatic recovery", async () => {
   const migration = await readFile(
     new URL("../migrations/033_signup_failure_operations.sql", import.meta.url),
     "utf8",
@@ -148,6 +224,21 @@ test("resolved failures leave the retry queue and new failures reopen them", asy
   );
   assert.match(
     monitor,
-    /last_failed_at = now\(\),[\s\S]*resolved_at = NULL,[\s\S]*resolved_by = NULL,[\s\S]*resolution_note = NULL/,
+    /DELETE FROM signup_ingestion_failures[\s\S]*WHERE user_id = \$1[\s\S]*AND resolved_at IS NULL/,
+  );
+  assert.match(
+    monitor,
+    /ON CONFLICT \(user_id\) DO UPDATE SET[\s\S]*resolution_note = NULL[\s\S]*WHERE signup_ingestion_failures\.resolved_at IS NULL/,
+  );
+});
+
+test("post-commit signup rule failures cannot dead-letter committed ingestion", async () => {
+  const monitor = await readFile(
+    new URL("../src/monitor.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    monitor,
+    /try \{[\s\S]*await this\.evaluateRules\(\{[\s\S]*Signup committed but its rules could not be evaluated/,
   );
 });

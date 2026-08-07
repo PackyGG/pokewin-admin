@@ -1012,7 +1012,9 @@ export class MonitorEngine {
         const prepared = await this.prepareSignup(signup);
         await this.persistSignup(signup, prepared);
         const deleted = await this.db.antifraud.query(
-          "DELETE FROM signup_ingestion_failures WHERE user_id = $1",
+          `DELETE FROM signup_ingestion_failures
+           WHERE user_id = $1
+             AND resolved_at IS NULL`,
           [signup.id],
         );
         if ((deleted.rowCount ?? 0) > 0) {
@@ -1622,13 +1624,31 @@ export class MonitorEngine {
       durationSeconds: opened.durationSeconds,
       signals: assessment.signals,
     });
-    await this.evaluateRules({
-      id: opened.sessionId,
-      case_id: opened.caseId,
-      user_id: signup.id,
-      current_score: score,
-      initial_score: score,
-    });
+    try {
+      await this.evaluateRules({
+        id: opened.sessionId,
+        case_id: opened.caseId,
+        user_id: signup.id,
+        current_score: score,
+        initial_score: score,
+      });
+    } catch (error) {
+      // The assessment, case and source cursor are already committed. Rule
+      // evaluation is a post-commit side effect and must not misclassify the
+      // signup as an ingestion failure or attempt to persist it a second time.
+      // It still marks this tick failed so the missed side effect is visible
+      // in health and alerting instead of being silently reported as healthy.
+      this.recordTickFailure("signup_rule_evaluation", error);
+      this.log.error(
+        {
+          err: this.safeError(error),
+          userId: signup.id,
+          caseId: opened.caseId,
+          sessionId: opened.sessionId,
+        },
+        "Signup committed but its rules could not be evaluated",
+      );
+    }
   }
 
   private async deliverPendingSignupAlerts(): Promise<void> {
@@ -2125,7 +2145,7 @@ export class MonitorEngine {
     const client = await this.db.antifraud.connect();
     try {
       await client.query("BEGIN");
-      await client.query(
+      const deadLettered = await client.query(
         `
           INSERT INTO signup_ingestion_failures(
             user_id, source_created_at, payload, error_text
@@ -2139,6 +2159,7 @@ export class MonitorEngine {
             resolved_at = NULL,
             resolved_by = NULL,
             resolution_note = NULL
+          WHERE signup_ingestion_failures.resolved_at IS NULL
         `,
         [
           signup.id,
@@ -2149,6 +2170,13 @@ export class MonitorEngine {
       );
       await this.advanceSignupCursor(client, signup);
       await client.query("COMMIT");
+      if ((deadLettered.rowCount ?? 0) === 0) {
+        this.log.warn(
+          { userId: signup.id },
+          "Antifraud signup failure was not reopened after operator resolution",
+        );
+        return;
+      }
     } catch (deadLetterError) {
       await client.query("ROLLBACK");
       throw deadLetterError;

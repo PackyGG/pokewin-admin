@@ -47,10 +47,38 @@ function iso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
+function publicFailure(errorText: string): {
+  errorCode: string;
+  errorSummary: string;
+} {
+  if (errorText.includes("signup_alert_outbox_score_check")) {
+    return {
+      errorCode: "signup_alert_score_contract",
+      errorSummary: "The signup alert score was rejected by its data contract.",
+    };
+  }
+  if (errorText.startsWith("Provider enrichment unavailable:")) {
+    return {
+      errorCode: "provider_enrichment_unavailable",
+      errorSummary: "A signup enrichment provider was unavailable.",
+    };
+  }
+  if (errorText === "Stored signup payload is invalid") {
+    return {
+      errorCode: "invalid_stored_payload",
+      errorSummary: "The stored signup payload could not be replayed.",
+    };
+  }
+  return {
+    errorCode: "signup_assessment_failed",
+    errorSummary: "The signup assessment could not be completed.",
+  };
+}
+
 function serialize(row: FailureRow) {
   return {
     userId: row.user_id,
-    error: row.error_text,
+    ...publicFailure(row.error_text),
     failureCount: row.failure_count,
     firstFailedAt: iso(row.first_failed_at),
     lastFailedAt: iso(row.last_failed_at),
@@ -137,6 +165,13 @@ export async function registerSignupFailureRoutes(
         const client = await db.antifraud.connect();
         try {
           await client.query("BEGIN");
+          // Serialize requests sharing a key before reading the audit row. A
+          // unique constraint alone turns simultaneous identical requests into
+          // a 500 for the loser instead of an idempotent replay response.
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+            [body.data.idempotencyKey],
+          );
           const prior = await client.query<AuditRow>(
             `
               SELECT
