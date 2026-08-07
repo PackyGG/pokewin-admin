@@ -18,9 +18,10 @@ import { severity } from "./scoring.js";
 /**
  * Post-authorization Fiat deposit identity checks.
  *
- * Every deposit Whop authorizes is compared against the identity the account
- * established on its FIRST authorized deposit. A containment verdict requires
- * KYC and locks the money rails; a watch verdict is recorded and alerted only.
+ * Every deposit Whop authorizes is compared against the immediately previous
+ * authorized deposit. Review findings open Account Review without locks;
+ * containment findings apply only their approved rail locks. Neither path
+ * changes KYC automatically.
  *
  * Shape follows `fiat-email-domains.ts`: a cursor over the source mirror, one
  * durable row per evaluated deposit, and containment expressed as a
@@ -335,57 +336,68 @@ export class FiatDepositIdentityChecks {
     return output;
   }
 
-  /**
-   * The account's first authorized deposit, with its checkout facts rebuilt.
-   *
-   * Deliberately sourced from the mirror rather than from this service's own
-   * table: the baseline is whatever the player actually did first, which is
-   * usually long before this check existed. Returns null when the deposit being
-   * evaluated IS that first one.
-   */
+  /** The immediately previous authorized deposit, with checkout facts rebuilt. */
   private async baselineFor(
     intent: AuthorizedIntentRow,
   ): Promise<FiatIdentityBaseline | null> {
-    const earliest = await this.db.source.query<{
+    const previous = await this.db.source.query<{
       intent_id: string;
       provider_checkout_id: string | null;
       provider_payment_id: string | null;
       intent_created_at: Date;
+      baseline_occurred_at: Date;
     }>(
       `
         SELECT
           fdi.id::text AS intent_id,
           fdi.provider_checkout_id,
           fdi.provider_payment_id,
-          (fdi.created_at ${UTC}) AS intent_created_at
+          (fdi.created_at ${UTC}) AS intent_created_at,
+          (fdi.paid_at ${UTC}) AS baseline_occurred_at
         FROM fiat_deposit_intents fdi
         WHERE fdi.user_id = $1
           AND fdi.paid_at IS NOT NULL
-        ORDER BY (fdi.paid_at ${UTC}), fdi.id
+          AND (
+            (fdi.paid_at ${UTC}) < $2::timestamptz
+            OR (
+              (fdi.paid_at ${UTC}) = $2::timestamptz
+              AND fdi.id < $3::uuid
+            )
+          )
+        ORDER BY (fdi.paid_at ${UTC}) DESC, fdi.id DESC
         LIMIT 1
       `,
-      [intent.user_id],
+      [intent.user_id, intent.paid_at, intent.intent_id],
     );
-    const first = earliest.rows[0];
-    if (!first || first.intent_id === intent.intent_id) return null;
+    const previousDeposit = previous.rows[0];
+    if (!previousDeposit) return null;
 
     const resourceToIntent = new Map<string, string>();
-    if (first.provider_checkout_id) {
-      resourceToIntent.set(first.provider_checkout_id, first.intent_id);
+    if (previousDeposit.provider_checkout_id) {
+      resourceToIntent.set(
+        previousDeposit.provider_checkout_id,
+        previousDeposit.intent_id,
+      );
     }
-    if (first.provider_payment_id) {
-      resourceToIntent.set(first.provider_payment_id, first.intent_id);
+    if (previousDeposit.provider_payment_id) {
+      resourceToIntent.set(
+        previousDeposit.provider_payment_id,
+        previousDeposit.intent_id,
+      );
     }
     const facts =
-      (await this.factsForResources(resourceToIntent)).get(first.intent_id)
+      (await this.factsForResources(resourceToIntent)).get(
+        previousDeposit.intent_id,
+      )
       ?? EMPTY_FACTS;
     const network = await this.checkoutNetwork(
       intent.user_id,
-      first.intent_created_at,
+      previousDeposit.intent_created_at,
     );
 
     return {
-      intentId: first.intent_id,
+      intentId: previousDeposit.intent_id,
+      occurredAt: previousDeposit.baseline_occurred_at,
       cardBrand: facts.cardBrand,
       cardLast4: facts.cardLast4,
       checkoutEmail: facts.checkoutEmail,
@@ -624,6 +636,7 @@ export class FiatDepositIdentityChecks {
 
     const evidence = {
       baselineIntentId: baseline?.intentId ?? null,
+      baselineOccurredAt: baseline?.occurredAt ?? null,
       priorCleanDeposits: priorClean,
       amountUsd: intent.credited_amount_cents / 100,
       currency: intent.currency,
@@ -651,11 +664,13 @@ export class FiatDepositIdentityChecks {
         enforcement,
         evidence,
       });
-      // A repeat delivery of the same intent must not re-lock an account staff
-      // already released, so containment is queued only the first time the row
-      // is written.
-      if (stored && contain) {
-        await this.queueContainment(client, intent, outcome, evidence);
+      // A repeat delivery must not reopen review or re-lock an account staff
+      // already released, so the event is queued only with the first insert.
+      if (
+        stored
+        && (outcome.verdict === "review" || outcome.verdict === "contain")
+      ) {
+        await this.queueReviewEvent(client, intent, outcome, evidence, contain);
       }
       if (stored && outcome.verdict !== "clear") {
         await this.queueAlert(client, intent, outcome, evidence, enforcement);
@@ -723,16 +738,15 @@ export class FiatDepositIdentityChecks {
     return inserted.rows.length > 0;
   }
 
-  /**
-   * Queue KYC + lock for the dashboard. Runs inside the caller's transaction so
-   * the durable check row and the containment command commit together.
-   */
-  private async queueContainment(
+  /** Queue review, plus the approved lock when enforcement is enabled. */
+  private async queueReviewEvent(
     client: pg.PoolClient,
     intent: AuthorizedIntentRow,
     outcome: FiatIdentityOutcome,
     evidence: Record<string, unknown>,
+    enforceContainment: boolean,
   ): Promise<void> {
+    const score = outcome.verdict === "contain" ? CONTAINMENT_SCORE : 50;
     await client.query(
       `
         INSERT INTO subjects (
@@ -780,7 +794,7 @@ export class FiatDepositIdentityChecks {
           user_id, subject_type, status, severity, score, peak_score, summary
         ) VALUES (
           $1, 'account', 'open', $2, $3, $3,
-          'Fiat deposit identity containment'
+          'Fiat deposit identity review'
         )
         ON CONFLICT (user_id) WHERE subject_type = 'account'
           AND status IN ('open','monitoring','in_review','escalated')
@@ -794,15 +808,19 @@ export class FiatDepositIdentityChecks {
           updated_at = now()
         RETURNING id
       `,
-      [intent.user_id, severity(CONTAINMENT_SCORE), CONTAINMENT_SCORE],
+      [intent.user_id, severity(score), score],
     );
     const caseId = caseResult.rows[0]?.id;
     if (!caseId) throw new Error("fiat_identity_case_not_created");
 
     const detail = (
-      "An authorized Fiat deposit disagreed with the identity this account "
-      + `established on its first one (${outcome.reasonCodes.join(", ")}). `
-      + "KYC is required and the deposit and withdrawal rails are locked."
+      "An authorized Fiat deposit needs identity review "
+      + `(${[...outcome.reasonCodes, ...outcome.reviewCodes].join(", ")}). `
+      + (enforceContainment
+        ? outcome.containmentAction === "fiat_and_withdrawals"
+          ? "Fiat deposits and withdrawals are locked pending review."
+          : "Withdrawals are locked pending review."
+        : "No automatic account action was taken.")
     ).slice(0, 1000);
 
     await client.query(
@@ -823,14 +841,16 @@ export class FiatDepositIdentityChecks {
         FIAT_DEPOSIT_IDENTITY_CONTAINMENT_EVENT,
         CONTAINMENT_SOURCE,
         `fiat-identity-containment:${intent.intent_id}`,
-        CONTAINMENT_SCORE,
+        score,
         detail,
         JSON.stringify({
-          containmentRequired: true,
-          requireKyc: true,
+          containmentRequired: enforceContainment,
+          containmentAction: outcome.containmentAction,
+          reviewOnly: !enforceContainment,
           environment: "prod",
           intentId: intent.intent_id,
           reasonCodes: outcome.reasonCodes,
+          reviewCodes: outcome.reviewCodes,
           ...evidence,
         }),
         intent.paid_at,
@@ -863,7 +883,9 @@ export class FiatDepositIdentityChecks {
           intent_id: intent.intent_id,
           verdict: outcome.verdict,
           enforcement,
+          containment_action: outcome.containmentAction,
           reason_codes: outcome.reasonCodes,
+          review_codes: outcome.reviewCodes,
           watch_codes: outcome.watchCodes,
           ...evidence,
         }),

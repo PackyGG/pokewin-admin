@@ -73,9 +73,7 @@ test("automatic containment bans confirmed catch-all accounts without forcing KY
     "../../../src/lib/antifraud/abstract-catchall-containment.ts",
   );
 
-  // The route itself still never calls the KYC API. The single owner-approved
-  // automated requirement (2026-07-30, post-authorization Fiat identity drift)
-  // is isolated in its own module — see the test below.
+  // Automated antifraud never calls the KYC API; staff decide from review.
   assert.doesNotMatch(ingest, /await requireUserKyc\(/);
   assert.match(catchall, /is_banned = TRUE/);
   assert.match(catchall, /DELETE FROM session/);
@@ -88,7 +86,7 @@ test("automatic containment bans confirmed catch-all accounts without forcing KY
   );
 });
 
-test("only Fiat identity drift may require KYC automatically", async () => {
+test("Fiat identity drift opens review and applies only approved locks", async () => {
   const containment = await source(
     "../../../src/lib/antifraud/fiat-identity-containment.ts",
   );
@@ -96,21 +94,10 @@ test("only Fiat identity drift may require KYC automatically", async () => {
   const service = await source("../src/fiat-deposit-identity.ts");
   const migrations = await migrationCorpus();
 
-  // Attributed to a real admin id — the backend rejects an unknown admin_id.
-  assert.match(
-    containment,
-    /FIAT_IDENTITY_AUTOMATION_ADMIN_ID\s*=\s*\n?\s*"[0-9a-f-]{36}"/,
-  );
-  // Lock before KYC: the rails must not wait on a third-party API, and the
-  // manual path refuses KYC unless withdrawals are already locked.
-  assert.match(
-    containment,
-    /locked_withdrawals_items = TRUE[\s\S]*?requireKycForContainment/,
-  );
-  // Re-requiring would open a second verification cycle.
-  assert.match(containment, /if \(current\.kycRequired\) return "already_required"/);
-  // A KYC outage must never roll back a committed lock.
-  assert.match(containment, /Never throws/);
+  assert.doesNotMatch(containment, /requireUserKyc|getUserKyc|requireKyc/i);
+  assert.match(containment, /"withdrawals" \| "fiat_and_withdrawals"/);
+  assert.match(containment, /locked_withdrawals_items = TRUE/);
+  assert.match(containment, /locked_deposits_fiat = ARRAY\['all'\]/);
 
   // The dashboard re-checks the reason it was handed; the monitor's containment
   // set and the dashboard's allowlist must not drift apart.
@@ -118,10 +105,8 @@ test("only Fiat identity drift may require KYC automatically", async () => {
     "checkout_email_domain_blacklisted",
     "checkout_ip_blocklisted",
     "checkout_fingerprint_blocklisted",
-    "checkout_email_catchall",
-    "checkout_email_undeliverable",
-    "checkout_email_changed",
-    "checkout_card_changed",
+    "checkout_refunded_amount_cluster",
+    "checkout_card_changed_recent",
     "checkout_ip_and_device_changed",
   ]) {
     assert.match(policy, new RegExp(`"${reason}"`));
@@ -132,7 +117,11 @@ test("only Fiat identity drift may require KYC automatically", async () => {
   // contains.
   assert.match(policy, /"checkout_ip_changed"/);
   assert.match(policy, /"checkout_device_changed"/);
-  assert.match(policy, /CARD_CHANGE_TRUST_DEPOSITS = 3/);
+  assert.match(policy, /CARD_CHANGE_LOCK_WINDOW_MS = 2 \* 60 \* 60 \* 1000/);
+  assert.match(policy, /CARD_CHANGE_REVIEW_WINDOW_MS = 24 \* 60 \* 60 \* 1000/);
+  assert.match(policy, /"checkout_email_changed"/);
+  assert.match(policy, /"checkout_email_undeliverable"/);
+  assert.match(policy, /action: "review"/);
 
   // History is never walked: the cursor is seeded at deploy time.
   assert.match(
@@ -140,6 +129,7 @@ test("only Fiat identity drift may require KYC automatically", async () => {
     /INSERT INTO source_cursors[\s\S]*?'fiat-deposit-identity', now\(\)/,
   );
   assert.match(service, /ON CONFLICT \(intent_id\) DO NOTHING/);
+  assert.match(service, /ORDER BY \(fdi\.paid_at \$\{UTC\}\) DESC, fdi\.id DESC/);
 });
 
 test("operator IP and fingerprint blocklists are durable and enforced at signup", async () => {

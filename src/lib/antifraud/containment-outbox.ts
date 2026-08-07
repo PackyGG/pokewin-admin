@@ -189,8 +189,6 @@ async function applyContainmentForKind(
       const target = fiatIdentityContainmentTarget(signal);
       if (!target) return "skipped";
       const result = await applyFiatIdentityContainment(target);
-      // KYC leg never throws (degrades without rolling back the lock); a KYC
-      // failure is logged by that module and does not change the outbox outcome.
       return result.locked ? "locked" : "skipped";
     }
     case "fiat_blacklisted_email_domain": {

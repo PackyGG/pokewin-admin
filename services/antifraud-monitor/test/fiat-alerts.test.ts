@@ -217,7 +217,7 @@ test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
     },
   );
 
-  assert.equal(payload.embeds[0]?.title, "Suspicious checkout email blocked");
+  assert.equal(payload.embeds[0]?.title, "Suspicious checkout email review");
   assert.match(payload.embeds[0]?.description ?? "", /dot-fragmentation/);
   assert.equal(
     payload.embeds[0]?.fields.find((field) => field.name === "Email provider")

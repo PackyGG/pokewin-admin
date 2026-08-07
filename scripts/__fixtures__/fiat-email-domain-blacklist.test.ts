@@ -38,7 +38,7 @@ test("verified Fraud users edit durable email blacklist rules", () => {
   assert.match(client, /setInterval\(\(\) => router\.refresh\(\), 3_000\)/);
 });
 
-test("blacklisted domains ban while patterns and clusters lock without automatic KYC", () => {
+test("blacklisted domains ban, patterns review, and clusters lock without KYC", () => {
   const monitor = read(
     "services/antifraud-monitor/src/fiat-email-domains.ts",
   );
@@ -72,6 +72,7 @@ test("blacklisted domains ban while patterns and clusters lock without automatic
   assert.match(containment, /ARRAY\['all'\]::text\[\]/);
   assert.match(containment, /locked_withdrawals_items = TRUE/);
   assert.match(containment, /signal\.riskScore !== 100/);
+  assert.match(containment, /\|\| patternMatch/);
   assert.match(containment, /suspicious dot-fragmented Gmail address/);
   assert.match(containment, /suspicious coordinated deposit cluster/);
   assert.match(containment, /emailRiskType === "blacklisted_domain"/);
@@ -89,15 +90,16 @@ test("blacklisted domains ban while patterns and clusters lock without automatic
   );
 });
 
-test("Fraud Fiat deposits force blacklist matches to the critical score", () => {
+test("Fiat email matches separate review-only patterns from critical blocks", () => {
   const risk = read("services/antifraud-monitor/src/fiat-risk.ts");
 
   assert.match(risk, /blacklisted_checkout_email_domain/);
   assert.match(risk, /suspicious_checkout_email_pattern/);
   assert.match(risk, /suspicious_deposit_cluster/);
-  assert.match(risk, /riskScore: 100/);
-  assert.match(risk, /verdict: "bad"/);
+  assert.match(risk, /const forcedScore = patternMatch \? 50 : 100/);
+  assert.match(risk, /verdict: patternMatch \? "review" : "bad"/);
   assert.match(risk, /Keep crypto and item withdrawals locked/);
+  assert.match(risk, /no automatic lock is recommended/);
 });
 
 test("email blacklist alerts have a dedicated bot event destination", () => {

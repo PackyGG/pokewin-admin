@@ -803,6 +803,7 @@ export function applyBlacklistedCheckoutEmail(
 ): ReturnType<typeof scoreFiatDeposit> {
   const patternMatch = match.match_type === "gmail_dot_fragmentation";
   const clusterMatch = match.match_type === "suspicious_deposit_cluster";
+  const forcedScore = patternMatch ? 50 : 100;
   const signal: FiatSignal = {
     key: clusterMatch
       ? "suspicious_deposit_cluster"
@@ -819,20 +820,22 @@ export function applyBlacklistedCheckoutEmail(
       : patternMatch
       ? `Whop checkout used ${match.checkout_email}; its Gmail local part is heavily dot-fragmented.`
       : `Whop checkout used ${match.checkout_email}; ${match.domain} is on the active email-domain blacklist.`,
-    points: 100,
-    tone: "bad",
+    points: forcedScore,
+    tone: patternMatch ? "warning" : "bad",
     category: "provider",
   };
   return {
     ...scored,
-    riskScore: 100,
-    verdict: "bad",
+    riskScore: forcedScore,
+    verdict: patternMatch ? "review" : "bad",
     recommendation:
-      "Keep crypto and item withdrawals locked and review the checkout identity.",
+      patternMatch
+        ? "Review the checkout identity; no automatic lock is recommended."
+        : "Keep crypto and item withdrawals locked and review the checkout identity.",
     summary: clusterMatch
       ? "Critical: the Whop checkout belongs to a suspicious coordinated deposit cluster."
       : patternMatch
-      ? "Critical: the Whop checkout email matched the dot-fragmentation fraud pattern."
+      ? "Review: the Whop checkout email matched the dot-fragmentation fraud pattern."
       : "Critical: the Whop checkout email matched an active blocked domain.",
     signals: [
       signal,
@@ -840,23 +843,25 @@ export function applyBlacklistedCheckoutEmail(
     ],
     scoreBreakdown: {
       ...scored.scoreBreakdown,
-      provider: 100,
+      provider: forcedScore,
     },
     flowChecks: scored.flowChecks.map((check) =>
       check.key === "provider"
         ? {
             ...check,
-            status: "block" as const,
-            score: 100,
+            status: patternMatch ? "review" as const : "block" as const,
+            score: forcedScore,
             evidence: [
               clusterMatch
                 ? "Blocked deposit cluster: same amount, distinct accounts and payment identities, corroborated by email-pattern or refund concentration evidence"
                 : patternMatch
-                ? "Blocked checkout pattern: dot-fragmented Gmail"
+                ? "Review checkout pattern: dot-fragmented Gmail"
                 : `Blocked checkout domain: ${match.domain}`,
-              match.lock_delivered_at
-                ? "Crypto and item withdrawal lock confirmed"
-                : "Automatic withdrawal lock is pending confirmation",
+              patternMatch
+                ? "No automatic account action"
+                : match.lock_delivered_at
+                  ? "Crypto and item withdrawal lock confirmed"
+                  : "Automatic withdrawal lock is pending confirmation",
               ...check.evidence,
             ],
           }

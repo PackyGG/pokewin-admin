@@ -1509,7 +1509,10 @@ export class FiatEmailDomainGuard {
     risk: CheckoutEmailRisk,
     options: { reviewOnly?: boolean } = {},
   ): Promise<boolean> {
-    const reviewOnly = options.reviewOnly === true;
+    // A fragmented Gmail address alone warrants review, not an account lock.
+    // A corroborated cross-account cluster remains automatic containment.
+    const reviewOnly =
+      options.reviewOnly === true || risk.type === "gmail_dot_fragmentation";
     const inserted = await client.query<{ id: string }>(
       `
         INSERT INTO fiat_email_domain_matches (
@@ -1562,7 +1565,7 @@ export class FiatEmailDomainGuard {
       : clusterMatch
       ? "Whop checkout belongs to a corroborated same-amount cluster with distinct accounts and payment identities. Crypto and item withdrawals must be locked automatically."
       : patternMatch
-      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Crypto and item withdrawals must be locked automatically for staff review.`
+      ? `${isSignup ? "Signup" : "Whop checkout"} used a suspicious dot-fragmented Gmail address. Staff review is required; no automatic account action was taken.`
       : `${isSignup ? "Signup" : "Whop checkout"} used active blocked email domain ${risk.domain}. The account must be banned automatically and reviewed by staff.`;
     const alertSource = isSignup ? "signup" : "payment_webhook";
 

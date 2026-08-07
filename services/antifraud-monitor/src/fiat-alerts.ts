@@ -382,16 +382,20 @@ export function buildFiatDiscordPayload(
         : "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
       : problem.problem_code === "blacklisted_email_domain"
       ? patternMatch
-        ? "The email matched the Gmail dot-fragmentation fraud pattern. Crypto and item withdrawals are locked."
+        ? "The email matched the Gmail dot-fragmentation fraud pattern. Staff review is required; no automatic account action was taken."
         : problem.source_kind === "signup"
         ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
         : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
       : problem.problem_code === "fiat_identity_drift"
       ? details.verdict === "contain"
         ? details.enforcement === "contained"
-          ? "An authorized Fiat deposit disagreed with the identity this account established on its first one. Fiat deposits and all withdrawals are locked and KYC is required."
+          ? details.containment_action === "fiat_and_withdrawals"
+            ? "An authorized Fiat deposit hit a high-confidence identity rule. Fiat deposits and all withdrawals are locked pending staff review; KYC was not changed."
+            : "An authorized Fiat deposit hit a high-confidence identity rule. Crypto and item withdrawals are locked pending staff review; KYC was not changed."
           : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
-        : "An authorized Fiat deposit drifted from the account's first one, but not enough to lock on its own. Recorded for review only."
+        : details.verdict === "review"
+          ? "An authorized Fiat deposit matched an identity review rule. Account Review was opened; no automatic lock or KYC action was taken."
+          : "An authorized Fiat deposit produced watch-only identity evidence. No automatic account action was taken."
       : problem.problem_code === "high_risk"
       ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
       : problem.problem_code === "fiat_locked_account"
@@ -405,7 +409,7 @@ export function buildFiatDiscordPayload(
     embeds: [
       {
         title: patternMatch
-          ? "Suspicious checkout email blocked"
+          ? "Suspicious checkout email review"
           : fiatProblemTitle(problem.problem_code),
         description,
         url,

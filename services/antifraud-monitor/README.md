@@ -179,6 +179,21 @@ three accounts were refunded and refunds are at least 50% of all settled
 payments for that amount inside seven days. Refunded members are contained, and
 the next authorized matching payment is contained while the campaign is active.
 
+Post-authorization identity checks compare with the immediately previous
+authorized Fiat deposit. A changed payer email, catch-all/undeliverable payer
+email, or card change two to 24 hours later opens review without a lock. A card
+change inside two hours locks crypto and item withdrawals; a card change after
+24 hours is evidence only. A simultaneous IP and device change, or a hard IP /
+fingerprint blocklist match, disables Fiat and locks withdrawals. Refunded
+amount campaigns lock withdrawals. None of these automated paths starts KYC.
+`FIAT_DEPOSIT_IDENTITY_CONTAINMENT_ENABLED=false` keeps every hard identity
+finding in review-only mode while preserving evidence and alerts.
+
+Heavy Gmail dot fragmentation alone opens review without locking. A global
+same-amount cluster requires at least three distinct accounts, payments, and
+emails inside 30 minutes and locks crypto and item withdrawals. Active blocked
+checkout-email domains retain their separate automatic ban contract.
+
 It also stores evidence-only payer-email, disposable-domain, billing-country,
 hashed customer/payment-method, IP/device, exact-amount, and rapid-tipping
 correlations. These observations add zero points and trigger no action. Whop's

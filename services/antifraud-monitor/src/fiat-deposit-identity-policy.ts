@@ -3,8 +3,8 @@
  *
  * IO-free and deterministic so the whole rule surface is unit-testable: the
  * service gathers evidence, this module decides. It answers one question —
- * *did the payer's identity drift from the one this account established on its
- * first authorized Fiat deposit?*
+ * *did the payer's identity drift from its immediately previous authorized
+ * Fiat deposit?*
  *
  * Why this exists next to `fiat-eligibility-policy.ts` rather than inside it:
  * that module runs BEFORE the checkout and can only compare against signup.
@@ -23,11 +23,13 @@
  *     of the comparison are actually known. Missing evidence never contains.
  */
 
-/** Authorized, never-reversed deposits after which a new card is accepted. */
-export const CARD_CHANGE_TRUST_DEPOSITS = 3;
+/** A card swap this soon after the previous payment locks withdrawals. */
+export const CARD_CHANGE_LOCK_WINDOW_MS = 2 * 60 * 60 * 1000;
+/** A same-day card swap still opens review, but does not lock the account. */
+export const CARD_CHANGE_REVIEW_WINDOW_MS = 24 * 60 * 60 * 1000;
 
 /**
- * Rules that require KYC and lock the money rails.
+ * Rules that lock an approved subset of the money rails and open review.
  *
  * Mirrored as an allowlist in the dashboard's ingest route: the monitor
  * decides, the dashboard independently re-checks the reason it was given, so a
@@ -39,10 +41,7 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = [
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
   "checkout_refunded_amount_cluster",
-  "checkout_email_catchall",
-  "checkout_email_undeliverable",
-  "checkout_email_changed",
-  "checkout_card_changed",
+  "checkout_card_changed_recent",
   "checkout_ip_and_device_changed",
 ] as const;
 
@@ -62,7 +61,7 @@ export const FIAT_IDENTITY_WATCH_REASONS = [
   "checkout_known_vpn_ip",
   "checkout_ip_changed",
   "checkout_device_changed",
-  "checkout_card_changed_trusted",
+  "checkout_card_changed_late",
   "checkout_email_deliverability_unknown",
   "checkout_identity_evidence_missing",
 ] as const;
@@ -70,9 +69,24 @@ export const FIAT_IDENTITY_WATCH_REASONS = [
 export type FiatIdentityWatchReason =
   (typeof FIAT_IDENTITY_WATCH_REASONS)[number];
 
-/** The identity the account established on its first authorized deposit. */
+export const FIAT_IDENTITY_REVIEW_REASONS = [
+  "checkout_email_catchall",
+  "checkout_email_undeliverable",
+  "checkout_email_changed",
+  "checkout_card_changed_same_day",
+] as const;
+
+export type FiatIdentityReviewReason =
+  (typeof FIAT_IDENTITY_REVIEW_REASONS)[number];
+
+export type FiatIdentityContainmentAction =
+  | "withdrawals"
+  | "fiat_and_withdrawals";
+
+/** The identity observed on the immediately previous authorized deposit. */
 export type FiatIdentityBaseline = {
   intentId: string;
+  occurredAt: Date;
   cardBrand: string | null;
   cardLast4: string | null;
   checkoutEmail: string | null;
@@ -119,22 +133,27 @@ export type FiatIdentityObservation = {
 
 export type FiatIdentityPolicyInput = {
   observation: FiatIdentityObservation;
-  /** Null when this deposit IS the account's first authorized one. */
+  /** Null when this deposit has no previous authorized Fiat payment. */
   baseline: FiatIdentityBaseline | null;
 };
 
 export type FiatIdentitySignal = {
-  key: FiatIdentityContainmentReason | FiatIdentityWatchReason;
+  key:
+    | FiatIdentityContainmentReason
+    | FiatIdentityReviewReason
+    | FiatIdentityWatchReason;
   detail: string;
-  containing: boolean;
+  action: "watch" | "review" | FiatIdentityContainmentAction;
 };
 
 export type FiatIdentityOutcome = {
-  verdict: "clear" | "watch" | "contain";
+  verdict: "clear" | "watch" | "review" | "contain";
   /** Containment rules that fired, in evaluation order. */
   reasonCodes: FiatIdentityContainmentReason[];
+  reviewCodes: FiatIdentityReviewReason[];
   /** Non-containing observations, in evaluation order. */
   watchCodes: FiatIdentityWatchReason[];
+  containmentAction: FiatIdentityContainmentAction | null;
   signals: FiatIdentitySignal[];
 };
 
@@ -142,9 +161,8 @@ export type FiatIdentityOutcome = {
  * Card comparison is brand + last4: a *known* different brand is a different
  * card. Brand and last4 are discovered independently from webhook payloads, so
  * one side can carry a last4 with no brand at all. Treating that absence as a
- * mismatch turned the same physical card into a card change — and a card change
- * on an account with fewer than three clean deposits contains: KYC plus deposit
- * and withdrawal locks. A missing brand is missing evidence, not evidence of a
+ * mismatch turned the same physical card into a card change and an unnecessary
+ * withdrawal lock. A missing brand is missing evidence, not evidence of a
  * second card, so it does not contradict a matching last4.
  */
 function sameCard(
@@ -191,7 +209,7 @@ export function evaluateFiatDepositIdentity(
     detail:
       "The payer email domain "
       + `${seen.blacklistedEmailDomain ?? ""} is on the active blacklist.`,
-    containing: true,
+    action: "withdrawals",
   });
 
   add(seen.refundedAmountClusterReason !== null, {
@@ -199,7 +217,7 @@ export function evaluateFiatDepositIdentity(
     detail:
       "This exact payment amount is part of an active refunded-payment "
       + `campaign: ${seen.refundedAmountClusterReason ?? "unknown"}`,
-    containing: true,
+    action: "withdrawals",
   });
 
   for (const match of seen.blocklistMatches) {
@@ -207,7 +225,7 @@ export function evaluateFiatDepositIdentity(
       add(true, {
         key: "checkout_known_vpn_ip",
         detail: `The checkout IP matches a known shared VPN: ${match.reason}`,
-        containing: false,
+        action: "watch",
       });
       continue;
     }
@@ -218,7 +236,7 @@ export function evaluateFiatDepositIdentity(
       detail:
         `The checkout ${match.kind === "ip" ? "IP" : "device"} matches an `
         + `active operator blocklist rule: ${match.reason}`,
-      containing: true,
+      action: "fiat_and_withdrawals",
     });
   }
 
@@ -227,15 +245,16 @@ export function evaluateFiatDepositIdentity(
     detail:
       "Abstract confirmed the payer email sits on a catch-all domain, so the "
       + "address proves nothing about who controls it.",
-    containing: true,
+    action: "review",
   });
 
-  // Only an explicit "undeliverable" contains. "unknown" means the provider
-  // could not decide, and a provider shrug is not evidence against a player.
+  // Only an explicit "undeliverable" opens review. "unknown" means the
+  // provider could not decide, and a provider shrug is not evidence against a
+  // player.
   add(seen.email.deliverability === "undeliverable", {
     key: "checkout_email_undeliverable",
     detail: "Abstract reports the payer email as undeliverable.",
-    containing: true,
+    action: "review",
   });
   add(
     seen.email.deliverability !== null
@@ -246,13 +265,12 @@ export function evaluateFiatDepositIdentity(
       detail:
         "Abstract could not confirm payer email deliverability "
         + `(${seen.email.deliverability ?? "unknown"}).`,
-      containing: false,
+      action: "watch",
     },
   );
 
   // ── Drift rules ──────────────────────────────────────────────────────────
-  // Nothing below can fire on the account's first authorized deposit: there is
-  // no baseline to disagree with yet.
+  // Nothing below can fire without a previous authorized deposit.
   if (!baseline) {
     return finalize(signals);
   }
@@ -265,34 +283,47 @@ export function evaluateFiatDepositIdentity(
   add(emailChanged, {
     key: "checkout_email_changed",
     detail:
-      "The payer email differs from the one used on the account's first "
-      + "authorized Fiat deposit.",
-    containing: true,
+      "The payer email differs from the immediately previous authorized "
+      + "Fiat deposit.",
+    action: "review",
   });
 
   const cardChanged =
     baseline.cardLast4 !== null
     && seen.cardLast4 !== null
     && !sameCard(baseline, seen);
-  // The ONLY rule the trust grace applies to. A customer who has funded three
-  // times without a single dispute or refund has earned the right to pay with
-  // a different card; every other drift signal still contains.
-  const cardTrusted = seen.priorCleanDeposits >= CARD_CHANGE_TRUST_DEPOSITS;
-  add(cardChanged && !cardTrusted, {
-    key: "checkout_card_changed",
+  const cardChangeAgeMs = Math.max(
+    0,
+    seen.occurredAt.getTime() - baseline.occurredAt.getTime(),
+  );
+  add(cardChanged && cardChangeAgeMs < CARD_CHANGE_LOCK_WINDOW_MS, {
+    key: "checkout_card_changed_recent",
     detail:
       `The card changed to ${seen.cardBrand ?? "unknown"} ••••`
-      + `${seen.cardLast4 ?? "????"} after only ${seen.priorCleanDeposits} `
-      + "clean authorized deposit(s).",
-    containing: true,
+      + `${seen.cardLast4 ?? "????"} within two hours of the previous `
+      + "authorized deposit.",
+    action: "withdrawals",
   });
-  add(cardChanged && cardTrusted, {
-    key: "checkout_card_changed_trusted",
+  add(
+    cardChanged
+      && cardChangeAgeMs >= CARD_CHANGE_LOCK_WINDOW_MS
+      && cardChangeAgeMs < CARD_CHANGE_REVIEW_WINDOW_MS,
+    {
+      key: "checkout_card_changed_same_day",
+      detail:
+        `The card changed to ${seen.cardBrand ?? "unknown"} ••••`
+        + `${seen.cardLast4 ?? "????"} within 24 hours of the previous `
+        + "authorized deposit.",
+      action: "review",
+    },
+  );
+  add(cardChanged && cardChangeAgeMs >= CARD_CHANGE_REVIEW_WINDOW_MS, {
+    key: "checkout_card_changed_late",
     detail:
       `The card changed to ${seen.cardBrand ?? "unknown"} ••••`
-      + `${seen.cardLast4 ?? "????"}, accepted on ${seen.priorCleanDeposits} `
-      + "clean authorized deposits.",
-    containing: false,
+      + `${seen.cardLast4 ?? "????"} more than 24 hours after the previous `
+      + "authorized deposit.",
+    action: "watch",
   });
 
   const ipChanged =
@@ -308,18 +339,18 @@ export function evaluateFiatDepositIdentity(
     key: "checkout_ip_and_device_changed",
     detail:
       "Both the checkout IP and the checkout device differ from the account's "
-      + "first authorized Fiat deposit.",
-    containing: true,
+      + "previous authorized Fiat deposit.",
+    action: "fiat_and_withdrawals",
   });
   add(ipChanged && !deviceChanged, {
     key: "checkout_ip_changed",
-    detail: "The checkout IP differs from the first authorized deposit.",
-    containing: false,
+    detail: "The checkout IP differs from the previous authorized deposit.",
+    action: "watch",
   });
   add(deviceChanged && !ipChanged, {
     key: "checkout_device_changed",
-    detail: "The checkout device differs from the first authorized deposit.",
-    containing: false,
+    detail: "The checkout device differs from the previous authorized deposit.",
+    action: "watch",
   });
 
   // A baseline we cannot compare against is worth surfacing: it means the
@@ -334,7 +365,7 @@ export function evaluateFiatDepositIdentity(
       detail:
         "No checkout IP or device evidence could be compared for this "
         + "deposit, so the drift rules did not run.",
-      containing: false,
+      action: "watch",
     },
   );
 
@@ -347,20 +378,37 @@ function finalize(signals: FiatIdentitySignal[]): FiatIdentityOutcome {
     ...new Map(signals.map((signal) => [signal.key, signal])).values(),
   ];
   const reasonCodes = deduped
-    .filter((signal) => signal.containing)
+    .filter(
+      (signal) => signal.action === "withdrawals"
+        || signal.action === "fiat_and_withdrawals",
+    )
     .map((signal) => signal.key as FiatIdentityContainmentReason);
+  const reviewCodes = deduped
+    .filter((signal) => signal.action === "review")
+    .map((signal) => signal.key as FiatIdentityReviewReason);
   const watchCodes = deduped
-    .filter((signal) => !signal.containing)
+    .filter((signal) => signal.action === "watch")
     .map((signal) => signal.key as FiatIdentityWatchReason);
+  const containmentAction = deduped.some(
+    (signal) => signal.action === "fiat_and_withdrawals",
+  )
+    ? "fiat_and_withdrawals"
+    : deduped.some((signal) => signal.action === "withdrawals")
+      ? "withdrawals"
+      : null;
   return {
     verdict:
       reasonCodes.length > 0
         ? "contain"
+        : reviewCodes.length > 0
+          ? "review"
         : watchCodes.length > 0
           ? "watch"
           : "clear",
     reasonCodes,
+    reviewCodes,
     watchCodes,
+    containmentAction,
     signals: deduped,
   };
 }

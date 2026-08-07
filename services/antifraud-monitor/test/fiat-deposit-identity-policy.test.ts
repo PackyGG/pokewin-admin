@@ -3,7 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
-  CARD_CHANGE_TRUST_DEPOSITS,
+  CARD_CHANGE_LOCK_WINDOW_MS,
+  CARD_CHANGE_REVIEW_WINDOW_MS,
   emailDomain,
   evaluateFiatDepositIdentity,
   type FiatIdentityBaseline,
@@ -17,6 +18,7 @@ function baseline(
 ): FiatIdentityBaseline {
   return {
     intentId: "intent-first",
+    occurredAt: new Date("2026-07-30T11:00:00.000Z"),
     cardBrand: "visa",
     cardLast4: "4242",
     checkoutEmail: "payer@example.com",
@@ -118,26 +120,27 @@ test("a known VPN IP only watches and never contains", () => {
   assert.deepEqual(outcome.watchCodes, ["checkout_known_vpn_ip"]);
 });
 
-test("a catch-all payer email contains", () => {
+test("a catch-all payer email opens review without containment", () => {
   const outcome = evaluateFiatDepositIdentity({
     baseline: null,
     observation: observation({
       email: { catchall: true, deliverability: "deliverable" },
     }),
   });
-  assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, ["checkout_email_catchall"]);
+  assert.equal(outcome.verdict, "review");
+  assert.deepEqual(outcome.reasonCodes, []);
+  assert.deepEqual(outcome.reviewCodes, ["checkout_email_catchall"]);
 });
 
-test("an undeliverable payer email contains, an unknown one only watches", () => {
+test("an undeliverable payer email opens review, an unknown one only watches", () => {
   const undeliverable = evaluateFiatDepositIdentity({
     baseline: null,
     observation: observation({
       email: { catchall: false, deliverability: "undeliverable" },
     }),
   });
-  assert.equal(undeliverable.verdict, "contain");
-  assert.deepEqual(undeliverable.reasonCodes, [
+  assert.equal(undeliverable.verdict, "review");
+  assert.deepEqual(undeliverable.reviewCodes, [
     "checkout_email_undeliverable",
   ]);
 
@@ -163,7 +166,7 @@ test("a missing provider answer never contains", () => {
   assert.equal(outcome.verdict, "clear");
 });
 
-test("a changed payer email contains regardless of history", () => {
+test("a changed payer email opens review without containment", () => {
   const outcome = evaluateFiatDepositIdentity({
     baseline: baseline(),
     observation: observation({
@@ -171,46 +174,51 @@ test("a changed payer email contains regardless of history", () => {
       priorCleanDeposits: 99,
     }),
   });
-  assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, ["checkout_email_changed"]);
+  assert.equal(outcome.verdict, "review");
+  assert.deepEqual(outcome.reasonCodes, []);
+  assert.deepEqual(outcome.reviewCodes, ["checkout_email_changed"]);
 });
 
-test("a changed card contains below the trust threshold", () => {
+test("a card changed within two hours locks withdrawals", () => {
   const outcome = evaluateFiatDepositIdentity({
     baseline: baseline(),
     observation: observation({
       cardLast4: "1881",
-      priorCleanDeposits: CARD_CHANGE_TRUST_DEPOSITS - 1,
     }),
   });
   assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, ["checkout_card_changed"]);
+  assert.equal(outcome.containmentAction, "withdrawals");
+  assert.deepEqual(outcome.reasonCodes, ["checkout_card_changed_recent"]);
 });
 
-test("a changed card is accepted at or above the trust threshold", () => {
+test("a card changed later the same day opens review without a lock", () => {
   const outcome = evaluateFiatDepositIdentity({
-    baseline: baseline(),
+    baseline: baseline({
+      occurredAt: new Date(
+        OCCURRED_AT.getTime() - CARD_CHANGE_LOCK_WINDOW_MS - 1,
+      ),
+    }),
     observation: observation({
       cardLast4: "1881",
-      priorCleanDeposits: CARD_CHANGE_TRUST_DEPOSITS,
+    }),
+  });
+  assert.equal(outcome.verdict, "review");
+  assert.deepEqual(outcome.reviewCodes, ["checkout_card_changed_same_day"]);
+});
+
+test("a card changed after 24 hours is evidence only", () => {
+  const outcome = evaluateFiatDepositIdentity({
+    baseline: baseline({
+      occurredAt: new Date(
+        OCCURRED_AT.getTime() - CARD_CHANGE_REVIEW_WINDOW_MS - 1,
+      ),
+    }),
+    observation: observation({
+      cardLast4: "1881",
     }),
   });
   assert.equal(outcome.verdict, "watch");
-  assert.deepEqual(outcome.watchCodes, ["checkout_card_changed_trusted"]);
-});
-
-test("the trust grace covers the card only, never the email", () => {
-  const outcome = evaluateFiatDepositIdentity({
-    baseline: baseline(),
-    observation: observation({
-      cardLast4: "1881",
-      checkoutEmail: "someone.else@example.com",
-      priorCleanDeposits: 50,
-    }),
-  });
-  assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, ["checkout_email_changed"]);
-  assert.deepEqual(outcome.watchCodes, ["checkout_card_changed_trusted"]);
+  assert.deepEqual(outcome.watchCodes, ["checkout_card_changed_late"]);
 });
 
 test("a same-number card on a different brand is a different card", () => {
@@ -219,7 +227,7 @@ test("a same-number card on a different brand is a different card", () => {
     observation: observation({ cardBrand: "mastercard", priorCleanDeposits: 0 }),
   });
   assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, ["checkout_card_changed"]);
+  assert.deepEqual(outcome.reasonCodes, ["checkout_card_changed_recent"]);
 });
 
 test("IP alone watches, device alone watches, both together contain", () => {
@@ -321,7 +329,7 @@ test("a missing card brand on either side is not a card change", () => {
     observation: observation({ cardLast4: "1881", priorCleanDeposits: 0 }),
   });
   assert.equal(differentNumber.verdict, "contain");
-  assert.deepEqual(differentNumber.reasonCodes, ["checkout_card_changed"]);
+  assert.deepEqual(differentNumber.reasonCodes, ["checkout_card_changed_recent"]);
 });
 
 async function pollerSource(): Promise<string> {

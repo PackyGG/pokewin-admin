@@ -72,13 +72,8 @@ import {
  * locks tips. Crashes between commit and apply are retried by
  * `/api/cron/antifraud-containment-retry`.
  *
- * KYC: automated signals do NOT mutate KYC state, with exactly one owner-
- * approved exception — `fiat_deposit_identity_containment` also requires KYC,
- * because a payer whose card/email/device stopped matching the identity the
- * account established on its first authorized deposit must re-verify before the
- * money moves again. That exception lives entirely in
- * `@/lib/antifraud/fiat-identity-containment` and is unreachable from the other
- * kinds.
+ * Automated signals never mutate KYC state. Identity findings open Account
+ * Review so staff can require KYC when the complete evidence warrants it.
  * Re-sent duplicates deliberately do NOT re-apply containment —
  * staff may have reviewed and unlocked the account in between.
  */

@@ -577,7 +577,9 @@ test("a dot-fragmented Gmail match uses explicit pattern evidence", () => {
     lock_delivered_at: null,
   });
 
-  assert.equal(result.riskScore, 100);
+  assert.equal(result.riskScore, 50);
+  assert.equal(result.verdict, "review");
+  assert.equal(result.flowChecks[0]?.status, "review");
   assert.equal(result.signals[0]?.key, "suspicious_checkout_email_pattern");
   assert.match(result.summary, /dot-fragmentation/);
   assert.doesNotMatch(result.summary, /blocked domain/);

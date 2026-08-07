@@ -6,8 +6,9 @@ import { getProdPrimaryDrizzleDb } from "@/lib/db";
 
 /**
  * Deterministic MAIN containment for `fiat_blacklisted_email_domain`.
- * Active blocked domains ban; Gmail dot-fragment and coordinated cluster
- * signals lock withdrawals only. Automated signals never mutate KYC.
+ * Active blocked domains ban and coordinated clusters lock withdrawals.
+ * Gmail dot-fragment signals alone are review-only. Automated signals never
+ * mutate KYC.
  *
  * Split into a pure validator (`emailDomainContainmentTarget`) and the MAIN
  * write (`applyEmailDomainContainment`) so admission can run inside the ADMIN
@@ -45,13 +46,14 @@ export function emailDomainContainmentTarget(signal: {
 }): EmailDomainContainmentTarget | null {
   const userId = signal.userId;
   const domain = blacklistDomainFromPayload(signal.payload);
-  if (!userId || !domain || signal.riskScore !== 100) {
+  const patternMatch =
+    signal.payload?.emailRiskType === "gmail_dot_fragmentation";
+  if (!userId || !domain || signal.riskScore !== 100 || patternMatch) {
     return null;
   }
 
   const payload = signal.payload ?? {};
   const source = payload.matchSource === "signup" ? "signup" : "Whop checkout";
-  const patternMatch = payload.emailRiskType === "gmail_dot_fragmentation";
   const clusterMatch = payload.emailRiskType === "suspicious_deposit_cluster";
   const blockedDomainMatch = payload.emailRiskType === "blacklisted_domain";
   const reason = (
