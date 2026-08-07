@@ -23,7 +23,7 @@ jobs:
       RAILWAY_HEALTH_URL: ${{ vars.RAILWAY_HEALTH_URL || 'https://grand-cooperation-production-ffe1.up.railway.app/health' }}
       CRON_SECRET: ${{ secrets.CRON_SECRET }}
       ANTIFRAUD_DISCORD_WEBHOOK_URL: ${{ secrets.ANTIFRAUD_DISCORD_WEBHOOK_URL }}
-      PRODUCTION_HEALTH_REPORT_PATH: ${{ runner.temp }}/production-health.json
+      PRODUCTION_HEALTH_REPORT_PATH: /tmp/production-health.json
 
     steps:
       - uses: actions/checkout@v6
