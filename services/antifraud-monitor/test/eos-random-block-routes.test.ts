@@ -19,7 +19,18 @@ import {
 const blocks = Array.from({ length: 5 }, (_, index) => ({
   blockNumber: 100 - index,
   blockHash: String(index + 1).repeat(64),
+  blockTimestamp: `2026-08-07T21:29:${String(42 - index).padStart(2, "0")}.000`,
 }));
+
+const chainInfo = {
+  server_version: "42b514a1",
+  chain_id: "aca376f206b8fc25a6ed44dbdc66547c36c6c33e3a119ffbeaef943642f0e906",
+  head_block_num: 102,
+  last_irreversible_block_num: 100,
+  last_irreversible_block_id: "f".repeat(64),
+  head_block_id: "e".repeat(64),
+  head_block_time: "2026-08-07T21:29:43.000",
+};
 
 test("EOS random-block path is unauthenticated only for POST", () => {
   assert.equal(
@@ -59,7 +70,7 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
   const fetcher = (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     if (url.endsWith("/v1/chain/get_info")) {
-      return Response.json({ last_irreversible_block_num: 500 });
+      return Response.json({ ...chainInfo, last_irreversible_block_num: 500 });
     }
     assert.ok(url.endsWith("/v1/chain/get_block"));
     const body = JSON.parse(String(init?.body)) as { block_num_or_id: number };
@@ -67,6 +78,7 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
     return Response.json({
       block_num: body.block_num_or_id,
       id: body.block_num_or_id.toString(16).padStart(64, "0"),
+      timestamp: "2026-08-07T21:29:42.000",
     });
   }) as typeof fetch;
   const service = new EosRandomBlockService(
@@ -81,6 +93,7 @@ test("EOS service fetches the latest five irreversible blocks and selects one", 
   assert.equal(result.selectedIndex, 2);
   assert.equal(result.selectedBlock.blockNumber, 498);
   assert.equal(result.selectedBlock, result.candidates[2]);
+  assert.equal(result.chainInfo.head_block_num, 102);
 });
 
 test("EOS random-block route accepts battle identity and returns only the block hash when simulation is disabled", async () => {
@@ -88,6 +101,7 @@ test("EOS random-block route accepts battle identity and returns only the block 
     async select() {
       return {
         provider: "https://eos.example",
+        chainInfo,
         selectedIndex: 3,
         selectedBlock: blocks[3]!,
         candidates: blocks,
@@ -107,7 +121,19 @@ test("EOS random-block route accepts battle identity and returns only the block 
   });
 
   assert.equal(response.statusCode, 200);
-  assert.deepEqual(response.json(), { blockHash: blocks[3]!.blockHash });
+  assert.deepEqual(response.json(), {
+    ...chainInfo,
+    last_irreversible_block_num: blocks[3]!.blockNumber,
+    last_irreversible_block_id: blocks[3]!.blockHash,
+    last_irreversible_block_time: blocks[3]!.blockTimestamp,
+    blockHash: blocks[3]!.blockHash,
+    selected: {
+      blockNumber: blocks[3]!.blockNumber,
+      blockId: blocks[3]!.blockHash,
+      timestamp: blocks[3]!.blockTimestamp,
+      provider: "https://eos.example",
+    },
+  });
   await app.close();
 });
 
@@ -116,6 +142,7 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
     async select() {
       return {
         provider: "https://eos.example",
+        chainInfo,
         selectedIndex: 1,
         selectedBlock: blocks[1]!,
         candidates: blocks,
@@ -158,6 +185,10 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
 
   assert.equal(response.statusCode, 200);
   assert.deepEqual(response.json(), {
+    ...chainInfo,
+    last_irreversible_block_num: blocks[1]!.blockNumber,
+    last_irreversible_block_id: blocks[1]!.blockHash,
+    last_irreversible_block_time: blocks[1]!.blockTimestamp,
     selectedBlockNumber: blocks[1]!.blockNumber,
     battleId: "11111111-1111-4111-8111-111111111111",
     mode: "normal",
@@ -172,7 +203,79 @@ test("EOS random-block route adds five dev battle outcomes when configured", asy
       creatorCost: 10,
       creatorProfitLoss: 5,
     })),
+    selected: {
+      blockNumber: blocks[1]!.blockNumber,
+      blockId: blocks[1]!.blockHash,
+      timestamp: blocks[1]!.blockTimestamp,
+      provider: "https://eos.example",
+      winningTeam: 1,
+      creatorTeam: 1,
+      creatorWonBattle: true,
+      creatorCost: 10,
+      creatorProfitLoss: 5,
+    },
   });
+  await app.close();
+});
+
+test("chain info block id follows the outcome selected by only-loses mode", async () => {
+  const source: EosRandomBlockSource = {
+    async select() {
+      return {
+        provider: "https://eos.example",
+        chainInfo,
+        selectedIndex: 0,
+        selectedBlock: blocks[0]!,
+        candidates: blocks,
+      };
+    },
+  };
+  const outcomes: BattleOutcomeSource = {
+    async simulate() {
+      return {
+        battleId: "11111111-1111-4111-8111-111111111111",
+        mode: "normal",
+        crazyMode: false,
+        currency: "real",
+        creatorUserID: "test-user-123",
+        outcomes: blocks.map((candidate, index) => ({
+          blockNumber: candidate.blockNumber,
+          winningTeam: index === 4 ? 2 : 1,
+          creatorTeam: 1,
+          creatorWonBattle: index !== 4,
+          creatorCost: 10,
+          creatorProfitLoss: index === 4 ? -10 : 5,
+        })),
+      };
+    },
+  };
+  const config: BattleTestConfigSource = {
+    async get() {
+      return { userOnlyLoses: true, updatedAt: null, updatedBy: null };
+    },
+    async set() {
+      throw new Error("not used");
+    },
+  };
+  const app = Fastify({ logger: false });
+  await registerEosRandomBlockRoutes(app, source, outcomes, config);
+
+  const response = await app.inject({
+    method: "POST",
+    url: EOS_RANDOM_BLOCK_PATH,
+    payload: {
+      userID: "test-user-123",
+      battleID: "11111111-1111-4111-8111-111111111111",
+    },
+  });
+  const body = response.json();
+
+  assert.equal(response.statusCode, 200);
+  assert.equal(body.selectedBlockNumber, blocks[4]!.blockNumber);
+  assert.equal(body.last_irreversible_block_num, blocks[4]!.blockNumber);
+  assert.equal(body.last_irreversible_block_id, blocks[4]!.blockHash);
+  assert.equal(body.selected.blockId, blocks[4]!.blockHash);
+  assert.equal(body.selected.creatorProfitLoss, -10);
   await app.close();
 });
 

@@ -14,10 +14,10 @@ export const EOS_RANDOM_BLOCK_PATH = "/v1/testing/eos-random-block";
 export const EOS_RANDOM_BLOCK_CONFIG_PATH = `${EOS_RANDOM_BLOCK_PATH}/config`;
 
 const EOS_ENDPOINTS = [
-  "https://mainnet.genereos.io",
-  "https://api.eostitan.com",
   "https://eos.api.eosnation.io",
   "https://eos.eosusa.io",
+  "https://api.eostitan.com",
+  "https://mainnet.genereos.io",
   "https://api.main.alohaeos.com",
   "https://mainnet.eosio.sg",
   "https://api.eosrio.io",
@@ -37,10 +37,12 @@ const BLOCK_ID_PATTERN = /^[a-f0-9]{64}$/i;
 export type EosBlockCandidate = {
   blockNumber: number;
   blockHash: string;
+  blockTimestamp: string;
 };
 
 export type EosRandomBlockSelection = {
   provider: string;
+  chainInfo: Record<string, unknown>;
   selectedIndex: number;
   selectedBlock: EosBlockCandidate;
   candidates: EosBlockCandidate[];
@@ -87,6 +89,18 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
+function chainInfoForSelectedBlock(
+  selection: EosRandomBlockSelection,
+  selectedBlock: EosBlockCandidate,
+): Record<string, unknown> {
+  return {
+    ...selection.chainInfo,
+    last_irreversible_block_num: selectedBlock.blockNumber,
+    last_irreversible_block_id: selectedBlock.blockHash,
+    last_irreversible_block_time: selectedBlock.blockTimestamp,
+  };
+}
+
 async function responseJson(response: Response): Promise<unknown> {
   if (!response.ok) {
     throw new Error(`EOS provider returned HTTP ${response.status}`);
@@ -115,12 +129,13 @@ export class EosRandomBlockService implements EosRandomBlockSource {
           endpoint,
           Math.min(PROVIDER_TIMEOUT_MS, TOTAL_TIMEOUT_MS - elapsed),
         );
-        const selectedIndex = this.randomIndex(candidates.length);
+        const selectedIndex = this.randomIndex(candidates.blocks.length);
         return {
           provider: endpoint,
+          chainInfo: candidates.chainInfo,
           selectedIndex,
-          selectedBlock: candidates[selectedIndex]!,
-          candidates,
+          selectedBlock: candidates.blocks[selectedIndex]!,
+          candidates: candidates.blocks,
         };
       } catch (error) {
         lastError = error;
@@ -133,18 +148,24 @@ export class EosRandomBlockService implements EosRandomBlockSource {
   private async fetchCandidates(
     endpoint: string,
     timeoutMs: number,
-  ): Promise<EosBlockCandidate[]> {
+  ): Promise<{
+    chainInfo: Record<string, unknown>;
+    blocks: EosBlockCandidate[];
+  }> {
     const signal = AbortSignal.timeout(Math.max(1, timeoutMs));
     const info = await responseJson(await this.fetcher(
       `${endpoint}/v1/chain/get_info`,
       { signal, headers: { accept: "application/json" } },
     ));
-    const latest = isRecord(info) ? info.last_irreversible_block_num : null;
+    if (!isRecord(info)) {
+      throw new Error("EOS provider returned invalid chain info");
+    }
+    const latest = info.last_irreversible_block_num;
     if (!Number.isSafeInteger(latest) || (latest as number) < BLOCK_COUNT) {
       throw new Error("EOS provider returned an invalid irreversible block");
     }
 
-    return Promise.all(
+    const blocks = await Promise.all(
       Array.from({ length: BLOCK_COUNT }, async (_, index) => {
         const blockNumber = (latest as number) - index;
         const block = await responseJson(await this.fetcher(
@@ -161,16 +182,24 @@ export class EosRandomBlockService implements EosRandomBlockSource {
         ));
         const returnedNumber = isRecord(block) ? block.block_num : null;
         const blockHash = isRecord(block) ? block.id : null;
+        const blockTimestamp = isRecord(block) ? block.timestamp : null;
         if (
           returnedNumber !== blockNumber
           || typeof blockHash !== "string"
           || !BLOCK_ID_PATTERN.test(blockHash)
+          || typeof blockTimestamp !== "string"
+          || blockTimestamp.length === 0
         ) {
           throw new Error("EOS provider returned an invalid block");
         }
-        return { blockNumber, blockHash: blockHash.toLowerCase() };
+        return {
+          blockNumber,
+          blockHash: blockHash.toLowerCase(),
+          blockTimestamp,
+        };
       }),
     );
+    return { chainInfo: info, blocks };
   }
 }
 
@@ -230,7 +259,16 @@ export async function registerEosRandomBlockRoutes(
           "EOS random block selected",
         );
         if (!battleOutcomes) {
-          return { blockHash: selection.selectedBlock.blockHash };
+          return {
+            ...chainInfoForSelectedBlock(selection, selection.selectedBlock),
+            blockHash: selection.selectedBlock.blockHash,
+            selected: {
+              blockNumber: selection.selectedBlock.blockNumber,
+              blockId: selection.selectedBlock.blockHash,
+              timestamp: selection.selectedBlock.blockTimestamp,
+              provider: selection.provider,
+            },
+          };
         }
         const battle = await battleOutcomes.simulate(
           parsed.data.userID,
@@ -253,7 +291,28 @@ export async function registerEosRandomBlockRoutes(
           selection.selectedBlock.blockNumber,
           userOnlyLoses,
         );
-        return { ...battle, selectedBlockNumber: selected.blockNumber };
+        const selectedBlock = selection.candidates.find(
+          (candidate) => candidate.blockNumber === selected.blockNumber,
+        );
+        if (!selectedBlock) {
+          throw new BattleSimulationError("battle_data_incomplete", 409);
+        }
+        return {
+          ...chainInfoForSelectedBlock(selection, selectedBlock),
+          ...battle,
+          selectedBlockNumber: selected.blockNumber,
+          selected: {
+            blockNumber: selectedBlock.blockNumber,
+            blockId: selectedBlock.blockHash,
+            timestamp: selectedBlock.blockTimestamp,
+            provider: selection.provider,
+            winningTeam: selected.winningTeam,
+            creatorTeam: selected.creatorTeam,
+            creatorWonBattle: selected.creatorWonBattle,
+            creatorCost: selected.creatorCost,
+            creatorProfitLoss: selected.creatorProfitLoss,
+          },
+        };
       } catch (error) {
         if (error instanceof BattleSimulationError) {
           request.log.warn(

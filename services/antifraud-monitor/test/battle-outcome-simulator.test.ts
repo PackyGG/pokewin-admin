@@ -8,6 +8,7 @@ const PACK_ID = "22222222-2222-4222-8222-222222222222";
 const candidates = Array.from({ length: 5 }, (_, index) => ({
   blockNumber: 100 - index,
   blockHash: String(index + 1).repeat(64),
+  blockTimestamp: `2026-08-07T21:29:${String(42 - index).padStart(2, "0")}.000`,
 }));
 
 function simulate(
