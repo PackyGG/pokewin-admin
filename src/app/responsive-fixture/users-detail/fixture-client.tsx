@@ -444,6 +444,7 @@ export function UserDetailFixtureClient({
       data={DATA}
       backSlot={null}
       tagsSlot={null}
+      testingBattleOutcomeSlot={null}
       pnlResultPromise={ok(PNL)}
       gamingTxPromise={ok<PaginatedTransactions>(EMPTY_TX)}
       financialTxPromise={ok<PaginatedTransactions>(FINANCIAL_TX)}

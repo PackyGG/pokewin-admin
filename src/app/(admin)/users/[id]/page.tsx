@@ -49,6 +49,11 @@ import {
   TabBarSkeleton,
 } from "@/components/loading-skeletons";
 import { readFreshUserBalances } from "./fresh-balances";
+import { readDbEnv } from "@/lib/db-env";
+import { testingApi } from "@/lib/backend-api/testing";
+import { resolveBackendApiConfig } from "@/lib/backend-api/config";
+import { canManageTestingBattleOutcomes } from "@/lib/testing-battle-outcome-access";
+import { TestingBattleOutcomeDialog } from "./testing-battle-outcome-dialog";
 
 export const metadata = { title: "User Detail" };
 
@@ -183,6 +188,15 @@ export default async function UserDetailPage({
   // server component re-renders and kicks exactly the new tab's reads.
   // Deep-links and back/forward resolve correctly by construction.
   const initialTab = coerceTab(sp.tab);
+  let canManageTestingBattleOutcome = false;
+  if (canManageTestingBattleOutcomes(session.username)) {
+    const [activeDbEnv, backendConfig] = await Promise.all([
+      readDbEnv(),
+      resolveBackendApiConfig().catch(() => null),
+    ]);
+    canManageTestingBattleOutcome =
+      activeDbEnv === "dev" && backendConfig?.env === "dev";
+  }
 
   // ── CRITICAL PATH — keep it tiny so first paint is instant ─────────
   //
@@ -250,6 +264,7 @@ export default async function UserDetailPage({
           id={id}
           sessionRole={session.role}
           sessionUserId={session.userId}
+          canManageTestingBattleOutcome={canManageTestingBattleOutcome}
           canViewProtectedActors={canViewProtectedAuditActivity(session)}
           viewerCanSeeUltraLossback={viewerCanSeeUltraLossback}
           permissions={permissions}
@@ -274,6 +289,7 @@ async function UserDetailBody({
   id,
   sessionRole,
   sessionUserId,
+  canManageTestingBattleOutcome,
   canViewProtectedActors,
   viewerCanSeeUltraLossback,
   permissions,
@@ -283,6 +299,7 @@ async function UserDetailBody({
   id: string;
   sessionRole: string;
   sessionUserId: string;
+  canManageTestingBattleOutcome: boolean;
   canViewProtectedActors: boolean;
   viewerCanSeeUltraLossback: boolean;
   // Union permission keys for non-admin viewers (null for admins), resolved
@@ -547,6 +564,14 @@ async function UserDetailBody({
     USER_DETAIL_QUERY_TIMEOUT_MS,
   ).then((r) => r.data);
 
+  const testingBattleOutcomePromise = canManageTestingBattleOutcome
+    ? safeQuery(
+        () => testingApi.getBattleOutcomeRule(id),
+        { user_id: id, rule: "force_loss" as const, remaining_battles: 0 },
+        "users.detail.testingBattleOutcome",
+      )
+    : null;
+
   // ── AWAITED BODY GATE ──────────────────────────────────────────────
   //
   // Only what EVERYTHING in UserViewModern needs before any band can
@@ -716,12 +741,21 @@ async function UserDetailBody({
       canManage={canManageUserTags}
     />
   );
+  const testingBattleOutcomeSlot = testingBattleOutcomePromise ? (
+    <TestingBattleOutcomeDialog
+      userId={id}
+      initialRemainingBattles={
+        (await testingBattleOutcomePromise).data.remaining_battles
+      }
+    />
+  ) : null;
 
   return (
     <UserViewModern
       data={detailWithSession}
       backSlot={backSlot}
       tagsSlot={tagsSlot}
+      testingBattleOutcomeSlot={testingBattleOutcomeSlot}
       pnlResultPromise={pnlResultPromise}
       gamingTxPromise={gamingTxPromise}
       financialTxPromise={financialTxPromise}
