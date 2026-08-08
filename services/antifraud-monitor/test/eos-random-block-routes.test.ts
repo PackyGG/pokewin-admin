@@ -609,6 +609,7 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     rules: [{ target: "loss" as const, strategy: "lowest_profit" as const, count: 2 }],
     currentRuleIndex: 0,
     remainingInRule: 2,
+    persistent: true,
     enabled: true,
     updatedAt: "2026-08-07T00:00:00.000Z",
     updatedBy: "motha",
@@ -624,10 +625,11 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     async listUsers() {
       return [saved];
     },
-    async setUser(userId, username, rules, enabled, actor) {
+    async setUser(userId, username, rules, persistent, enabled, actor) {
       assert.equal(userId, saved.userId);
       assert.equal(username, "tester");
       assert.deepEqual(rules, saved.rules);
+      assert.equal(persistent, true);
       assert.equal(enabled, true);
       assert.equal(actor, "motha");
       return saved;
@@ -651,6 +653,7 @@ test("EOS user sequence config routes list, reset, and delete rules", async () =
     payload: {
       username: "tester",
       rules: saved.rules,
+      persistent: true,
       enabled: true,
       actor: "motha",
     },

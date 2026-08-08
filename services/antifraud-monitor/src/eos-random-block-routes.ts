@@ -81,6 +81,7 @@ const userRuleSchema = z.object({
 const userConfigUpdateSchema = z.object({
   username: z.string().trim().min(1).max(100).nullable(),
   rules: z.array(userRuleSchema).min(1).max(20),
+  persistent: z.boolean().default(false),
   enabled: z.boolean(),
   actor: z.string().trim().min(1).max(120),
 }).strict();
@@ -454,6 +455,7 @@ export async function registerEosRandomBlockRoutes(
               userId.data,
               parsed.data.username,
               parsed.data.rules,
+              parsed.data.persistent,
               parsed.data.enabled,
               parsed.data.actor,
             ),

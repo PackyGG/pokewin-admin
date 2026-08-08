@@ -18,6 +18,7 @@ export type BattleTestUserConfig = {
   rules: BattleTestUserRule[];
   currentRuleIndex: number;
   remainingInRule: number;
+  persistent: boolean;
   enabled: boolean;
   updatedAt: string;
   updatedBy: string | null;
@@ -42,6 +43,7 @@ export interface BattleTestConfigSource {
     userId: string,
     username: string | null,
     rules: BattleTestUserRule[],
+    persistent: boolean,
     enabled: boolean,
     actor: string,
   ): Promise<BattleTestUserConfig>;
@@ -63,6 +65,7 @@ type UserConfigRow = {
   rules: unknown;
   current_rule_index: number;
   remaining_in_rule: number;
+  persistent: boolean;
   enabled: boolean;
   updated_at: Date | string;
   updated_by: string | null;
@@ -114,6 +117,7 @@ function mapUserRow(row: UserConfigRow): BattleTestUserConfig {
     rules: parseRules(row.rules),
     currentRuleIndex: row.current_rule_index,
     remainingInRule: row.remaining_in_rule,
+    persistent: row.persistent,
     enabled: row.enabled,
     updatedAt: new Date(row.updated_at).toISOString(),
     updatedBy: row.updated_by,
@@ -164,7 +168,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
   async listUsers(): Promise<BattleTestUserConfig[]> {
     const result = await this.pool.query<UserConfigRow>(`
       SELECT user_id::text, username, rules, current_rule_index,
-             remaining_in_rule, enabled, updated_at, updated_by
+             remaining_in_rule, persistent, enabled, updated_at, updated_by
       FROM battle_test_user_sequences
       ORDER BY updated_at DESC
       LIMIT 200
@@ -176,6 +180,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
     userId: string,
     username: string | null,
     rules: BattleTestUserRule[],
+    persistent: boolean,
     enabled: boolean,
     actor: string,
   ): Promise<BattleTestUserConfig> {
@@ -187,24 +192,26 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       `
         INSERT INTO battle_test_user_sequences (
           user_id, username, rules, current_rule_index, remaining_in_rule,
-          enabled, updated_at, updated_by
-        ) VALUES ($1, $2, $3::jsonb, 0, $4, $5, now(), $6)
+          persistent, enabled, updated_at, updated_by
+        ) VALUES ($1, $2, $3::jsonb, 0, $4, $5, $6, now(), $7)
         ON CONFLICT (user_id) DO UPDATE SET
           username = EXCLUDED.username,
           rules = EXCLUDED.rules,
           current_rule_index = 0,
           remaining_in_rule = EXCLUDED.remaining_in_rule,
+          persistent = EXCLUDED.persistent,
           enabled = EXCLUDED.enabled,
           updated_at = now(),
           updated_by = EXCLUDED.updated_by
         RETURNING user_id::text, username, rules, current_rule_index,
-                  remaining_in_rule, enabled, updated_at, updated_by
+                  remaining_in_rule, persistent, enabled, updated_at, updated_by
       `,
       [
         userId,
         username,
         JSON.stringify(normalizedRules),
         normalizedRules[0]!.count,
+        persistent,
         enabled,
         actor,
       ],
@@ -228,7 +235,7 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
       const result = await client.query<UserConfigRow>(
         `
           SELECT user_id::text, username, rules, current_rule_index,
-                 remaining_in_rule, enabled, updated_at, updated_by
+                 remaining_in_rule, persistent, enabled, updated_at, updated_by
           FROM battle_test_user_sequences
           WHERE user_id = $1
           FOR UPDATE
@@ -251,6 +258,11 @@ export class PgBattleTestConfigStore implements BattleTestConfigSource {
         );
         await client.query("COMMIT");
         return null;
+      }
+
+      if (row.persistent) {
+        await client.query("COMMIT");
+        return { target: rule.target, strategy: rule.strategy };
       }
 
       const remaining = row.remaining_in_rule > 0

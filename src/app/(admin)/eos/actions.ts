@@ -53,6 +53,7 @@ const saveUserConfigSchema = z.object({
   userId: z.string().trim().min(1).max(100),
   username: z.string().trim().min(1).max(100).nullable(),
   rules: z.array(eosUserRuleSchema).min(1).max(20),
+  persistent: z.boolean(),
   enabled: z.boolean(),
 });
 

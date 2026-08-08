@@ -20,6 +20,7 @@ const userConfigSchema = z.object({
   rules: z.array(eosUserRuleSchema),
   currentRuleIndex: z.number().int().nonnegative(),
   remainingInRule: z.number().int().nonnegative(),
+  persistent: z.boolean().default(false),
   enabled: z.boolean(),
   updatedAt: z.string(),
   updatedBy: z.string().nullable(),
@@ -115,6 +116,7 @@ export async function updateEosUserConfig(input: {
   userId: string;
   username: string | null;
   rules: EosUserRule[];
+  persistent: boolean;
   enabled: boolean;
   actor: string;
 }): Promise<EosUserConfig> {
@@ -126,6 +128,7 @@ export async function updateEosUserConfig(input: {
       body: JSON.stringify({
         username: input.username,
         rules: input.rules,
+        persistent: input.persistent,
         enabled: input.enabled,
         actor: input.actor,
       }),
