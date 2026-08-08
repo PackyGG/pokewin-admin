@@ -10,7 +10,7 @@ import {
   updateEosTestConfig,
   updateEosUserConfig,
 } from "@/lib/antifraud/eos-test-config-api";
-import { getDevReadDrizzleDb } from "@/lib/db";
+import { getBattleTestDevReadDrizzleDb } from "@/lib/battle-test-dev-db";
 import { user } from "@/lib/db-schema/main/schema";
 import { requireEosTestAccess } from "@/lib/eos-test-access";
 import { escapeLikePattern } from "@/lib/utils/sql-like";
@@ -29,7 +29,7 @@ export async function setUserOnlyLoses(input: unknown) {
 export async function searchEosDevUsers(input: unknown) {
   await requireEosTestAccess();
   const query = z.string().trim().min(2).max(100).parse(input);
-  const db = getDevReadDrizzleDb();
+  const db = getBattleTestDevReadDrizzleDb();
   const prefix = `${escapeLikePattern(query.toLowerCase())}%`;
   const rows = await db
     .select({
