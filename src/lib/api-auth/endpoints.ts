@@ -303,6 +303,20 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
       "Body { discordUserId, claimableId }. Files a claim request for a creator VIP wager reward (the `vip_*` ids returned by /discord/rewards). Eligibility is recomputed server-side — the caller never supplies an amount. Creates a PENDING row for staff review; no balance moves until a human approves.",
     scopes: ["discord:rewards:claim"],
   },
+  {
+    method: "POST",
+    path: "/api/v1/discord/rains/jobs/claim",
+    summary:
+      "Body { workerId, limit }. Discovers active real-money rains whose pool is strictly above $20, durably deduplicates by rain id, and leases pending Discord deliveries.",
+    scopes: ["discord:rains"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/rains/jobs/[id]/ack",
+    summary:
+      "Body { leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Acknowledges a leased rain notification as delivered or schedules a bounded retry.",
+    scopes: ["discord:rains"],
+  },
 ];
 
 /** What a given endpoint touches, derived from its scopes (for the UI badge). */

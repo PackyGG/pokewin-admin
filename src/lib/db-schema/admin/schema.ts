@@ -15,6 +15,38 @@ export const roadmap_status = pgEnum("roadmap_status", ['planned', 'in_progress'
 export const social_platform = pgEnum("social_platform", ['twitter', 'youtube', 'kick', 'discord', 'instagram'])
 export const webhook_type = pgEnum("webhook_type", ['balance_fill', 'deal_data'])
 
+export const discord_rain_notification_jobs = pgTable("discord_rain_notification_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	rain_id: uuid().notNull(),
+	pool_usd_cents: integer().notNull(),
+	participant_count: integer().notNull(),
+	starts_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	ends_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(10).notNull(),
+	available_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	delivered_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_rain_notification_jobs_claim_idx").on(table.available_at, table.created_at, table.id).where(sql`status = ANY (ARRAY['pending'::text, 'leased'::text])`),
+	unique("discord_rain_notification_jobs_rain_id_key").on(table.rain_id),
+	check("discord_rain_notification_jobs_attempt_check", sql`attempt_count >= 0 AND max_attempts BETWEEN 1 AND 25`),
+	check("discord_rain_notification_jobs_lease_shape_check", sql`(status = 'leased' AND lease_token IS NOT NULL AND lease_owner IS NOT NULL AND leased_until IS NOT NULL) OR (status <> 'leased' AND lease_token IS NULL AND lease_owner IS NULL AND leased_until IS NULL)`),
+	check("discord_rain_notification_jobs_message_id_check", sql`discord_message_id IS NULL OR discord_message_id ~ '^[0-9]{17,20}$'`),
+	check("discord_rain_notification_jobs_participants_check", sql`participant_count >= 0`),
+	check("discord_rain_notification_jobs_pool_check", sql`pool_usd_cents > 2000`),
+	check("discord_rain_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+	check("discord_rain_notification_jobs_window_check", sql`ends_at > starts_at`),
+]);
+
 
 export const _prisma_migrations = pgTable("_prisma_migrations", {
 	id: varchar({ length: 36 }).primaryKey().notNull(),

@@ -71,6 +71,12 @@ export const API_SCOPES = {
       "Create and deliver durable one-hour reminders for the fixed Creator and VIP destinations. Writes only reminder delivery state to the admin database.",
     access: "admin-write",
   },
+  "discord:rains": {
+    label: "Deliver rain notifications",
+    description:
+      "Discover active real-money rains above $20 from the production mirror and manage their durable Discord delivery state in the admin database.",
+    access: "admin-write",
+  },
   "discord:message-events": {
     label: "Store Discord message history",
     description:
