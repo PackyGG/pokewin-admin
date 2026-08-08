@@ -50,6 +50,15 @@ export function GlobalFiatAvailabilityCard({
               <p className="text-amber-600/80 dark:text-amber-400/80">
                 The authoritative Fiat lock state could not be loaded, so the switch is disabled.
               </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => router.refresh()}
+              >
+                Retry
+              </Button>
             </div>
           </div>
         </CardContent>
@@ -134,7 +143,7 @@ export function GlobalFiatAvailabilityCard({
             </AlertDialogTitle>
             <AlertDialogDescription>
               {requestedAllowed
-                ? "Fiat deposit methods will become available site-wide."
+                ? "Fiat deposit methods will become available for eligible accounts outside mandatory restricted jurisdictions."
                 : "Card and wallet Fiat deposit methods will be blocked for every user until this switch is enabled again."}
             </AlertDialogDescription>
           </AlertDialogHeader>

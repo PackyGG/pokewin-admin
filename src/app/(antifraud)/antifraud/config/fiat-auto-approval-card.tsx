@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useTransition } from "react";
 import { AlertTriangle, BadgeDollarSign, Loader2 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import {
@@ -30,6 +31,7 @@ export function GlobalFiatReviewCard({
 }: {
   initialEnabled: boolean | null;
 }) {
+  const router = useRouter();
   const [isPending, startTransition] = useTransition();
   const [enabled, setEnabled] = useState(initialEnabled ?? false);
   const [requestedEnabled, setRequestedEnabled] = useState<boolean | null>(null);
@@ -66,6 +68,15 @@ export function GlobalFiatReviewCard({
                 The authoritative automatic-credit state could not be loaded,
                 so the switch is disabled.
               </p>
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                className="mt-2"
+                onClick={() => router.refresh()}
+              >
+                Retry
+              </Button>
             </div>
           </div>
         </CardContent>

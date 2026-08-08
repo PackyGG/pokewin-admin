@@ -176,6 +176,12 @@ test("the fiat guide does not resurrect the 60-second allow", () => {
   const page = read(
     "src/app/(antifraud)/antifraud/guide/fiat-deposits/page.tsx",
   );
+  const policy = read(
+    "services/antifraud-monitor/src/fiat-deposit-identity-policy.ts",
+  );
+  const automation = read(
+    "src/app/(antifraud)/antifraud/settings/_lib/automation-catalog.ts",
+  );
 
   // DECISION_TTL_MS is "never a reusable grant" and is not returned by the
   // API — the response is only {decisionId, allowed, timestamp}.
@@ -184,6 +190,14 @@ test("the fiat guide does not resurrect the 60-second allow", () => {
   // Deny (50) and contain (70) are different thresholds.
   assert.match(page, /Deny floor/);
   assert.match(page, /Contain floor/);
+  // Post-payment identity copy must mirror the live time-based policy.
+  assert.match(policy, /CARD_CHANGE_LOCK_WINDOW_MS = 2 \* 60 \* 60 \* 1000/);
+  assert.match(policy, /CARD_CHANGE_REVIEW_WINDOW_MS = 24 \* 60 \* 60 \* 1000/);
+  assert.match(policy, /key: "checkout_email_changed"[\s\S]{0,250}action: "review"/);
+  assert.match(page, /2h \/ 24h/);
+  assert.match(page, /different payer email opens staff review/i);
+  assert.doesNotMatch(page, /Card grace|3 deposits|three authorized/);
+  assert.doesNotMatch(automation, /short-lived allow or deny decision/);
 });
 
 test("deposit credit reviews keep staff on the active decision queue", () => {

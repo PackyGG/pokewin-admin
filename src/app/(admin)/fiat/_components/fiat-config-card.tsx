@@ -73,6 +73,7 @@ export function FiatConfigCard({
   const [restrictionRows, setRestrictionRows] = useState(restrictions);
   const [isPending, startTransition] = useTransition();
   const [globalPending, setGlobalPending] = useState(false);
+  const [globalCacheStale, setGlobalCacheStale] = useState(false);
 
   useEffect(() => {
     setCardMax(byKey.get("card_deposit_max_usd")?.value ?? "");
@@ -115,12 +116,14 @@ export function FiatConfigCard({
         const result = await setGlobalFiatDeposits(allowed);
         setLockedMethods(result.lockedMethods);
         if (result.siteConfigCacheReloaded) {
+          setGlobalCacheStale(false);
           toast.success(
             allowed
               ? "Whop fiat enabled globally"
               : "Whop fiat disabled site-wide",
           );
         } else {
+          setGlobalCacheStale(true);
           toast.warning(
             "The global fiat gate was saved, but the backend cache did not reload. Open Geo Blocking and use Reload cache before treating the change as live.",
             { duration: 12000 },
@@ -154,9 +157,8 @@ export function FiatConfigCard({
         }
         toast.success(successMessage);
       } catch (error) {
-        toast.error(
-          error instanceof Error ? error.message : "Fiat setting update failed",
-        );
+        console.error("[fiat-config] setting update failed", error);
+        toast.error("Fiat setting update failed. Check the value and try again.");
       }
     });
   }
@@ -269,7 +271,9 @@ export function FiatConfigCard({
                     Accept Whop fiat deposits
                   </div>
                   <div className="text-xs text-muted-foreground">
-                    {globalCardDepositsEnabled
+                    {globalCacheStale
+                      ? "Saved, but backend cache activation is unconfirmed"
+                      : globalCardDepositsEnabled
                       ? `Live globally; ${policyRowsLocked} policy jurisdictions stay locked`
                       : "Disabled or location policy is not fully applied"}
                   </div>
@@ -286,6 +290,16 @@ export function FiatConfigCard({
                   />
                 </div>
               </div>
+
+              {globalCacheStale && (
+                <div
+                  role="status"
+                  className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300"
+                >
+                  The setting was saved, but the backend cache did not reload.
+                  Use Geo Blocking → Reload cache before treating it as active.
+                </div>
+              )}
 
               <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
                 {FIAT_JURISDICTION_POLICY.map((group) => (

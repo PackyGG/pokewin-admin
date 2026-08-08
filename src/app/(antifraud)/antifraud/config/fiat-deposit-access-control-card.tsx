@@ -61,6 +61,17 @@ export function FiatDepositAccessControlCard({
           <CardTitle className="text-sm font-medium">Backend Fiat access</CardTitle>
           <CardDescription>The per-account Fiat controller is unavailable, so both switches are disabled.</CardDescription>
         </CardHeader>
+        <CardContent>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={() => router.refresh()}
+          >
+            <RefreshCw className="size-3.5" />
+            Retry
+          </Button>
+        </CardContent>
       </Card>
     );
   }
@@ -139,8 +150,7 @@ export function FiatDepositAccessControlCard({
             )}
             {existingStalled && (
               <p className="text-xs text-muted-foreground">
-                This rollout is retrying at least one account and will not finish on its own.
-                Confirming a new value supersedes it and cancels the outstanding retries.
+                This rollout is still retrying at least one account. You can wait for recovery or confirm a new value to supersede it and cancel the outstanding retries.
                 {existing.lastError ? ` Last error: ${existing.lastError}` : ""}
               </p>
             )}
@@ -171,6 +181,17 @@ export function FiatDepositAccessControlCard({
             <p className="text-xs text-muted-foreground">
               Automatically sets the same backend controller for every account created after this switch changes.
             </p>
+            {signup.generation > 0 && (
+              <p className="text-xs text-muted-foreground">
+                {signup.processed.toLocaleString()} signup accounts processed
+                {signup.failed > 0
+                  ? ` · ${signup.failed.toLocaleString()} failed`
+                  : " · no failures"}
+                {signup.effectiveAt
+                  ? ` · Effective ${new Date(signup.effectiveAt).toLocaleString()}`
+                  : ""}
+              </p>
+            )}
           </div>
           <Switch
             aria-label="Fiat access for new signups"
