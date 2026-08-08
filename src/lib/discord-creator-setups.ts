@@ -314,6 +314,49 @@ type CreatorStreamEventRow = {
   updated_at: string;
 };
 
+type CreatorCommunityEvent = {
+  id: string;
+  type: "tip" | "sponsored-battle";
+  creatorUserId: string;
+  recipientUserId: string;
+  recipientUsername: string;
+  amountUsd: number;
+  recipientEventCount: number;
+  recipientTotalUsd: number;
+  occurredAt: string;
+  sessionId: string | null;
+  battleId: string | null;
+  sponsorshipPercentage: number | null;
+  guildId: string;
+  categoryId: string;
+};
+
+type CreatorTipEventRow = {
+  id: string;
+  creator_user_id: string;
+  recipient_user_id: string;
+  recipient_username: string;
+  amount_usd: string;
+  recipient_event_count: string;
+  recipient_total_usd: string;
+  occurred_at: string;
+  session_id: string | null;
+};
+
+type CreatorSponsoredBattleEventRow = {
+  id: string;
+  creator_user_id: string;
+  recipient_user_id: string;
+  recipient_username: string;
+  amount_usd: string;
+  recipient_event_count: string;
+  recipient_total_usd: string;
+  occurred_at: string;
+  battle_id: string;
+  session_id: string | null;
+  sponsorship_percentage: number;
+};
+
 const money = (value: unknown): number =>
   Math.round(toNumber(value) * 100) / 100;
 
@@ -642,21 +685,145 @@ export async function getCreatorSetupStreamEvents(input: { after: string }) {
     sql`${discord_creator_setups.creator_user_id} IS NOT NULL`,
   ));
   const linked = setups.filter((row) => row.creatorUserId && row.categoryId);
-  if (!linked.length) return { events: [], serverTime: new Date().toISOString() };
+  if (!linked.length) {
+    return {
+      events: [],
+      activityEvents: [] as CreatorCommunityEvent[],
+      serverTime: new Date().toISOString(),
+    };
+  }
   const ids = linked.map((row) => row.creatorUserId!);
   const db = getProdReadDrizzleDb();
-  const result = await db.execute<CreatorStreamEventRow>(sql`
-    SELECT id::text, user_id, deal_id::text, status::text, activated_at, first_bet_at,
-      ended_at, converted_at, auto_end_at, fill_loaded_usd::text, fill_spent_usd::text,
-      fill_refunded_usd::text, fill_remaining_usd::text, ending_balance_usd::text,
-      conversion_rate_bps_snapshot, converted_to_raw_usd::text, version, updated_at
-    FROM creator_stream_sessions
-    WHERE user_id = ANY(${pgArrayParam(ids)}::text[])
-      AND updated_at >= ${cutoff}::timestamptz
-    ORDER BY updated_at ASC
-    LIMIT 500
-  `);
+  const [result, tipResult, battleResult] = await Promise.all([
+    db.execute<CreatorStreamEventRow>(sql`
+      SELECT id::text, user_id, deal_id::text, status::text, activated_at, first_bet_at,
+        ended_at, converted_at, auto_end_at, fill_loaded_usd::text, fill_spent_usd::text,
+        fill_refunded_usd::text, fill_remaining_usd::text, ending_balance_usd::text,
+        conversion_rate_bps_snapshot, converted_to_raw_usd::text, version, updated_at
+      FROM creator_stream_sessions
+      WHERE user_id = ANY(${pgArrayParam(ids)}::text[])
+        AND updated_at >= ${cutoff}::timestamptz
+      ORDER BY updated_at ASC
+      LIMIT 500
+    `),
+    db.execute<CreatorTipEventRow>(sql`
+      WITH all_tip_actions AS MATERIALIZED (
+        SELECT lt.id::text AS id,
+          lt.user_id AS creator_user_id,
+          NULLIF(lt.metadata->>'recipient_user_id', '') AS recipient_user_id,
+          ABS(lt.amount::numeric) AS amount_usd,
+          lt.created_at AS occurred_at,
+          NULLIF(lt.metadata->>'session_id', '') AS session_id
+        FROM ledger_transactions lt
+        WHERE lt.user_id = ANY(${pgArrayParam(ids)}::text[])
+          AND lt.status::text = 'completed'
+          AND lt.type::text IN (
+            'creator_tip',
+            'creator_fill_spend_tip',
+            'creator_multiplier_spend_tip'
+          )
+          AND lt.metadata->>'direction' = 'sent'
+          AND NULLIF(lt.metadata->>'recipient_user_id', '') IS NOT NULL
+      ), ranked AS (
+        SELECT action.*,
+          COUNT(*) OVER (
+            PARTITION BY creator_user_id, recipient_user_id
+            ORDER BY occurred_at, id
+          ) AS recipient_event_count,
+          SUM(amount_usd) OVER (
+            PARTITION BY creator_user_id, recipient_user_id
+            ORDER BY occurred_at, id
+          ) AS recipient_total_usd
+        FROM all_tip_actions action
+      )
+      SELECT ranked.id, ranked.creator_user_id, ranked.recipient_user_id,
+        COALESCE(recipient.display_username, recipient.username, recipient.name, recipient.id)
+          AS recipient_username,
+        ranked.amount_usd::text, ranked.recipient_event_count::text,
+        ranked.recipient_total_usd::text, ranked.occurred_at, ranked.session_id
+      FROM ranked
+      JOIN "user" recipient ON recipient.id = ranked.recipient_user_id
+      WHERE ranked.occurred_at >= ${cutoff}::timestamptz
+      ORDER BY ranked.occurred_at ASC, ranked.id ASC
+      LIMIT 500
+    `),
+    db.execute<CreatorSponsoredBattleEventRow>(sql`
+      WITH all_sponsored_recipients AS MATERIALIZED (
+        SELECT bp.id::text AS id,
+          b.user_id AS creator_user_id,
+          bp.user_id AS recipient_user_id,
+          ROUND(
+            b.bet_amount::numeric * b.sponsorship_percentage::numeric / 100,
+            2
+          ) AS amount_usd,
+          bp.created_at AS occurred_at,
+          b.id::text AS battle_id,
+          bp.source_session_id::text AS session_id,
+          b.sponsorship_percentage
+        FROM battle_participants bp
+        JOIN battles b ON b.id = bp.battle_id
+        WHERE b.user_id = ANY(${pgArrayParam(ids)}::text[])
+          AND b.sponsorship_percentage > 0
+          AND bp.user_id IS NOT NULL
+          AND bp.user_id <> b.user_id
+      ), ranked AS (
+        SELECT action.*,
+          COUNT(*) OVER (
+            PARTITION BY creator_user_id, recipient_user_id
+            ORDER BY occurred_at, id
+          ) AS recipient_event_count,
+          SUM(amount_usd) OVER (
+            PARTITION BY creator_user_id, recipient_user_id
+            ORDER BY occurred_at, id
+          ) AS recipient_total_usd
+        FROM all_sponsored_recipients action
+      )
+      SELECT ranked.id, ranked.creator_user_id, ranked.recipient_user_id,
+        COALESCE(recipient.display_username, recipient.username, recipient.name, recipient.id)
+          AS recipient_username,
+        ranked.amount_usd::text, ranked.recipient_event_count::text,
+        ranked.recipient_total_usd::text, ranked.occurred_at, ranked.battle_id,
+        ranked.session_id, ranked.sponsorship_percentage
+      FROM ranked
+      JOIN "user" recipient ON recipient.id = ranked.recipient_user_id
+      WHERE ranked.occurred_at >= ${cutoff}::timestamptz
+      ORDER BY ranked.occurred_at ASC, ranked.id ASC
+      LIMIT 500
+    `),
+  ]);
   const byCreator = new Map(linked.map((row) => [row.creatorUserId!, row]));
+  const routeCommunityEvent = (
+    row: CreatorTipEventRow | CreatorSponsoredBattleEventRow,
+    type: CreatorCommunityEvent["type"],
+  ): CreatorCommunityEvent | null => {
+    const setup = byCreator.get(row.creator_user_id);
+    if (!setup?.guildId || !setup.categoryId) return null;
+    return {
+      id: row.id,
+      type,
+      creatorUserId: row.creator_user_id,
+      recipientUserId: row.recipient_user_id,
+      recipientUsername: row.recipient_username,
+      amountUsd: money(row.amount_usd),
+      recipientEventCount: Number(row.recipient_event_count),
+      recipientTotalUsd: money(row.recipient_total_usd),
+      occurredAt: new Date(row.occurred_at).toISOString(),
+      sessionId: row.session_id,
+      battleId: "battle_id" in row ? row.battle_id : null,
+      sponsorshipPercentage:
+        "sponsorship_percentage" in row ? row.sponsorship_percentage : null,
+      guildId: setup.guildId,
+      categoryId: setup.categoryId,
+    };
+  };
+  const activityEvents = [
+    ...tipResult.rows.map((row) => routeCommunityEvent(row, "tip")),
+    ...battleResult.rows.map((row) =>
+      routeCommunityEvent(row, "sponsored-battle"),
+    ),
+  ].filter((row): row is CreatorCommunityEvent => row !== null)
+    .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt))
+    .slice(0, 500);
   return {
     serverTime: new Date().toISOString(),
     events: result.rows.map((row) => ({
@@ -664,6 +831,7 @@ export async function getCreatorSetupStreamEvents(input: { after: string }) {
       guildId: byCreator.get(row.user_id)?.guildId,
       categoryId: byCreator.get(row.user_id)?.categoryId,
     })).filter((row) => row.guildId && row.categoryId),
+    activityEvents,
   };
 }
 
