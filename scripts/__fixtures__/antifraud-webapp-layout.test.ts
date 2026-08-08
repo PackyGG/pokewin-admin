@@ -160,6 +160,25 @@ test("the guide primitives stay flat — no hue-filled surfaces", () => {
   assert.doesNotMatch(primitives, /violet/);
 });
 
+test("the operator guide uses the available canvas instead of stacked section cards", () => {
+  const primitives = read(
+    "src/app/(antifraud)/antifraud/guide/_components/guide-primitives.tsx",
+  );
+
+  assert.match(primitives, /max-w-\[1600px\]/);
+  assert.match(
+    primitives,
+    /lg:grid-cols-\[minmax\(220px,0\.7fr\)_minmax\(0,1\.3fr\)\]/,
+  );
+  assert.match(primitives, /lg:sticky lg:top-5 lg:self-start/);
+  assert.match(primitives, /sm:grid-cols-2/);
+  assert.match(primitives, /<aside className=/);
+  assert.doesNotMatch(
+    primitives,
+    /<section className="[^"]*rounded-xl[^"]*border/,
+  );
+});
+
 test("the signup guide reconciles the band name with the badge an operator sees", () => {
   const page = read("src/app/(antifraud)/antifraud/guide/sign-up/page.tsx");
 

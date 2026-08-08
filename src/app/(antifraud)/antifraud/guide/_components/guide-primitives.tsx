@@ -51,8 +51,10 @@ export function guideAccentClass(accent: GuideAccent = "muted"): string {
 // ─── GuidePage ────────────────────────────────────────────────────
 
 /**
- * Page frame: `PageHero` first (house rule), the page's own visible title
- * inside it, then the content stack at the house-majority `space-y-4`.
+ * Editorial page frame. The title and summary share the header width on large
+ * screens, then sections use the same label-column/content-column rhythm.
+ * This keeps long operator guides readable without turning the whole page
+ * into a narrow stack of cards surrounded by unused space.
  */
 export function GuidePage({
   eyebrow,
@@ -66,28 +68,32 @@ export function GuidePage({
   children: React.ReactNode;
 }) {
   return (
-    <div className="space-y-4">
-      <PageHero>
-        <div className="max-w-3xl">
+    <div className="mx-auto w-full max-w-[1600px]">
+      <PageHero className="grid gap-4 border-b border-border/60 pb-6 lg:grid-cols-[minmax(240px,0.7fr)_minmax(0,1.3fr)] lg:items-end lg:gap-10 xl:gap-16">
+        <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground">
             {eyebrow}
           </p>
-          <h1 className="mt-1.5 text-2xl font-semibold tracking-tight">
+          <h1 className="mt-2 max-w-xl text-2xl font-semibold tracking-tight sm:text-3xl">
             {title}
           </h1>
-          <p className="mt-2 text-sm leading-6 text-muted-foreground">
-            {intro}
-          </p>
         </div>
+        <p className="max-w-4xl text-sm leading-6 text-muted-foreground sm:text-[15px] sm:leading-7">
+          {intro}
+        </p>
       </PageHero>
-      {children}
+      <div className="divide-y divide-border/60">{children}</div>
     </div>
   );
 }
 
 // ─── GuideSection ─────────────────────────────────────────────────
 
-/** Flat panel: hairline border, solid card surface, no hue fill, no glow. */
+/**
+ * One stable editorial row: section identity on the left, working content on
+ * the right. A divider supplies structure without nesting every section in a
+ * large rounded card.
+ */
 export function GuideSection({
   icon,
   title,
@@ -100,14 +106,16 @@ export function GuideSection({
   children: React.ReactNode;
 }) {
   return (
-    <section className="rounded-xl border border-border/60 bg-card p-4 sm:p-5">
-      <SectionHeading icon={icon} title={title} />
-      {description && (
-        <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
-          {description}
-        </p>
-      )}
-      <div className="mt-4 space-y-3">{children}</div>
+    <section className="grid gap-5 py-7 first:pt-6 sm:py-8 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)] lg:gap-10 xl:gap-16">
+      <header className="min-w-0 lg:sticky lg:top-5 lg:self-start">
+        <SectionHeading icon={icon} title={title} />
+        {description && (
+          <p className="mt-2 max-w-md text-sm leading-6 text-muted-foreground">
+            {description}
+          </p>
+        )}
+      </header>
+      <div className="min-w-0 space-y-4">{children}</div>
     </section>
   );
 }
@@ -121,8 +129,8 @@ export function GuideSubHeading({
   hint?: React.ReactNode;
 }) {
   return (
-    <div className="pt-1">
-      <h3 className="text-sm font-semibold tracking-tight">{title}</h3>
+    <div className="border-t border-border/50 pt-4 first:border-t-0 first:pt-0">
+      <h3 className="text-sm font-semibold tracking-tight sm:text-[15px]">{title}</h3>
       {hint && (
         <p className="mt-1 text-xs leading-5 text-muted-foreground">{hint}</p>
       )}
@@ -138,9 +146,9 @@ export type GuideStep = {
 };
 
 /**
- * Ordered stages. Rendered as a real `<ol>` with a hairline rail so the order
- * survives screen readers and narrow viewports (the old arrow-between-cards
- * grid lost its ordering entirely below `md`).
+ * Ordered stages. The numbered grid uses the available width on desktop and
+ * remains a real `<ol>`, so the workflow order survives every viewport and
+ * assistive technology.
  */
 export function GuideSteps({
   steps,
@@ -150,20 +158,20 @@ export function GuideSteps({
   accent?: GuideAccent;
 }) {
   return (
-    <ol className="relative space-y-3 border-l border-border/60 pl-5">
+    <ol className="grid gap-px overflow-hidden rounded-xl border border-border/60 bg-border/60 sm:grid-cols-2">
       {steps.map((step, index) => (
-        <li key={step.title} className="relative">
+        <li key={step.title} className="min-w-0 bg-card p-4 sm:p-5">
           <span
             aria-hidden
             className={cn(
-              "absolute -left-[27px] flex size-5 items-center justify-center rounded-full border border-border/60 bg-card text-[10px] font-bold tabular-nums",
+              "flex size-7 items-center justify-center rounded-full border border-border/60 text-xs font-bold tabular-nums",
               guideAccentClass(accent),
             )}
           >
             {index + 1}
           </span>
-          <p className="text-sm font-semibold leading-5">{step.title}</p>
-          <p className="mt-1 text-sm leading-6 text-muted-foreground">
+          <p className="mt-3 text-sm font-semibold leading-5">{step.title}</p>
+          <p className="mt-1.5 text-sm leading-6 text-muted-foreground">
             {step.detail}
           </p>
         </li>
@@ -193,21 +201,21 @@ export function GuideTable({
   caption?: React.ReactNode;
 }) {
   return (
-    <div className="overflow-hidden rounded-lg border border-border/60">
+    <div className="overflow-hidden rounded-xl border border-border/60 bg-card">
       <div className="overflow-x-auto">
         <table className="w-full min-w-[520px] border-collapse text-left text-sm">
           {caption && (
-            <caption className="border-b border-border/60 bg-muted/20 px-3 py-2 text-left text-xs text-muted-foreground">
+            <caption className="border-b border-border/60 px-4 py-3 text-left text-xs text-muted-foreground">
               {caption}
             </caption>
           )}
           <thead>
-            <tr className="border-b border-border/60 bg-muted/20">
+            <tr className="border-b border-border/60 bg-muted/30">
               {columns.map((column) => (
                 <th
                   key={column}
                   scope="col"
-                  className="px-3 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
+                  className="px-4 py-2.5 text-[11px] font-semibold uppercase tracking-[0.12em] text-muted-foreground"
                 >
                   {column}
                 </th>
@@ -218,13 +226,13 @@ export function GuideTable({
             {rows.map((row) => (
               <tr
                 key={row.key}
-                className="border-b border-border/40 last:border-b-0"
+                className="border-b border-border/40 odd:bg-muted/10 last:border-b-0"
               >
                 {row.cells.map((cell, i) => (
                   <td
                     key={i}
                     className={cn(
-                      "px-3 py-2.5 align-top text-sm leading-6",
+                      "px-4 py-3 align-top text-sm leading-6",
                       i === 0
                         ? "font-medium text-foreground"
                         : "text-muted-foreground",
@@ -254,8 +262,8 @@ const CALLOUT_TONES: Record<
 };
 
 /**
- * Flat callout. The tone is carried by the icon glyph and the label only —
- * the surface stays `bg-card`, matching every other tile in the app.
+ * Editorial margin callout. The tone is carried by the icon glyph and label;
+ * a single rule separates it from the surrounding reference content.
  */
 export function GuideCallout({
   tone = "note",
@@ -270,7 +278,7 @@ export function GuideCallout({
 }) {
   const { accent, label } = CALLOUT_TONES[tone];
   return (
-    <div className="flex gap-3 rounded-lg border border-border/60 bg-card p-3.5">
+    <aside className="flex gap-3 border-l-2 border-border pl-3.5 py-1">
       <Icon
         className={cn("mt-0.5 size-4 shrink-0", guideAccentClass(accent))}
         aria-hidden
@@ -288,7 +296,7 @@ export function GuideCallout({
           {children}
         </div>
       </div>
-    </div>
+    </aside>
   );
 }
 
@@ -299,17 +307,17 @@ export type GuideDefItem = {
   detail: React.ReactNode;
 };
 
-/** Term → meaning pairs. Stacks on phones, two columns from `sm`. */
+/** Term → meaning pairs in one coherent reference block, not a tile cloud. */
 export function GuideDefList({ items }: { items: readonly GuideDefItem[] }) {
   return (
-    <dl className="grid gap-2 sm:grid-cols-2">
+    <dl className="overflow-hidden rounded-xl border border-border/60 bg-card">
       {items.map((item, i) => (
         <div
           key={i}
-          className="rounded-lg border border-border/60 bg-card p-3"
+          className="grid gap-1 border-b border-border/50 px-4 py-3.5 last:border-b-0 sm:grid-cols-[minmax(160px,0.7fr)_minmax(0,1.3fr)] sm:gap-5"
         >
           <dt className="text-sm font-semibold leading-5">{item.term}</dt>
-          <dd className="mt-1 text-sm leading-6 text-muted-foreground">
+          <dd className="text-sm leading-6 text-muted-foreground">
             {item.detail}
           </dd>
         </div>
@@ -334,14 +342,14 @@ export type GuideFact = {
  */
 export function GuideFacts({ facts }: { facts: readonly GuideFact[] }) {
   return (
-    <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+    <div className="grid gap-px overflow-hidden rounded-xl border border-border/60 bg-border/60 sm:grid-cols-2 xl:grid-cols-4">
       {facts.map((fact) => {
         const Icon = fact.icon;
         const accent = guideAccentClass(fact.accent ?? "cyan");
         return (
           <div
             key={fact.label}
-            className="rounded-lg border border-border/60 bg-card p-3"
+            className="min-w-0 bg-card p-4"
           >
             <div className="flex items-center gap-2">
               <Icon className={cn("size-4 shrink-0", accent)} aria-hidden />
@@ -378,7 +386,7 @@ export function GuideBullets({
   accent?: GuideAccent;
 }) {
   return (
-    <ul className="space-y-1.5">
+    <ul className="grid gap-x-8 gap-y-2 xl:grid-cols-2">
       {items.map((item, i) => (
         <li key={i} className="flex gap-2.5 text-sm leading-6">
           <span
@@ -429,19 +437,36 @@ export function GuideBadge({
  * WHY: without a route-local `loading.tsx` the guide inherits the Antifraud
  * DASHBOARD skeleton (queue tiles + six KPI cards + two 30-day charts), so a
  * prose page flashes a chart grid before it renders. This mirrors the real
- * guide shape instead: title block, then stacked prose panels.
+ * guide shape instead: split title block, then two-column editorial rows.
  */
 export function GuideLoading({ panels = 4 }: { panels?: number }) {
   return (
-    <div className="space-y-4">
-      <div className="max-w-3xl space-y-2">
-        <Skeleton className="h-3 w-24" />
-        <Skeleton className="h-7 w-72 max-w-full" />
-        <Skeleton className="h-4 w-full" />
+    <div className="mx-auto w-full max-w-[1600px]">
+      <div className="grid gap-4 border-b border-border/60 pb-6 lg:grid-cols-[minmax(240px,0.7fr)_minmax(0,1.3fr)] lg:items-end lg:gap-10 xl:gap-16">
+        <div className="space-y-2">
+          <Skeleton className="h-3 w-24" />
+          <Skeleton className="h-8 w-72 max-w-full" />
+        </div>
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-4/5" />
+        </div>
       </div>
-      {Array.from({ length: panels }).map((_, i) => (
-        <Skeleton key={i} className="h-44 w-full rounded-xl" />
-      ))}
+      <div className="divide-y divide-border/60">
+        {Array.from({ length: panels }).map((_, i) => (
+          <div
+            key={i}
+            className="grid gap-5 py-8 lg:grid-cols-[minmax(220px,0.7fr)_minmax(0,1.3fr)] lg:gap-10 xl:gap-16"
+          >
+            <div className="space-y-2">
+              <Skeleton className="h-5 w-44" />
+              <Skeleton className="h-4 w-full" />
+              <Skeleton className="h-4 w-3/4" />
+            </div>
+            <Skeleton className="h-40 w-full rounded-xl" />
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
