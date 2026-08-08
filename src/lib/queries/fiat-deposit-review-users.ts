@@ -11,6 +11,8 @@ export type FiatDepositReviewUser = {
   username: string | null;
   email: string | null;
   countryCode: string | null;
+  fiatDepositsLocked: boolean;
+  withdrawalsLocked: boolean;
 };
 
 export async function getFiatDepositReviewUsers(
@@ -25,10 +27,21 @@ export async function getFiatDepositReviewUsers(
     username: string | null;
     email: string | null;
     country_code: string | null;
+    locked_deposits_fiat: boolean | null;
+    locked_withdrawals_crypto: boolean | null;
+    locked_withdrawals_items: boolean | null;
   }>(sql`
-    SELECT id AS user_id, username, email, country_code
-    FROM "user"
-    WHERE id = ANY(${pgArrayParam(uniqueIds)}::text[])
+    SELECT
+      u.id AS user_id,
+      u.username,
+      u.email,
+      u.country_code,
+      locks.locked_deposits_fiat,
+      locks.locked_withdrawals_crypto,
+      locks.locked_withdrawals_items
+    FROM "user" u
+    LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
+    WHERE u.id = ANY(${pgArrayParam(uniqueIds)}::text[])
   `);
 
   return new Map(
@@ -39,6 +52,10 @@ export async function getFiatDepositReviewUsers(
         username: row.username,
         email: row.email,
         countryCode: row.country_code,
+        fiatDepositsLocked: row.locked_deposits_fiat === true,
+        withdrawalsLocked:
+          row.locked_withdrawals_crypto === true
+          || row.locked_withdrawals_items === true,
       },
     ]),
   );

@@ -5,7 +5,9 @@ import {
   CreditCard,
   Fingerprint,
   Gauge,
+  ListChecks,
   Lock,
+  Search,
   ShieldCheck,
   Users,
   Wallet,
@@ -20,6 +22,7 @@ import {
   GuideFacts,
   GuidePage,
   GuideSection,
+  GuideSteps,
   GuideSubHeading,
   GuideTable,
   type GuideFact,
@@ -155,6 +158,41 @@ const driftRows = [
   },
 ] as const;
 
+const postPaymentActionRows = [
+  {
+    key: "review",
+    cells: [
+      "Email changed, catch-all or undeliverable; card changed within 2–24 hours",
+      <GuideBadge key="r" accent="amber">Review</GuideBadge>,
+      "No automatic KYC and no automatic lock from this reason alone.",
+    ],
+  },
+  {
+    key: "withdrawals",
+    cells: [
+      "Card changed within 2 hours; blacklisted email domain; refunded-amount campaign",
+      <GuideBadge key="w" accent="rose">Lock withdrawals</GuideBadge>,
+      "Fiat access stays unchanged unless another rule also locks it.",
+    ],
+  },
+  {
+    key: "all-money",
+    cells: [
+      "IP and device both changed; checkout IP or device matches an active blocklist",
+      <GuideBadge key="a" accent="rose">Lock Fiat + withdrawals</GuideBadge>,
+      "The account remains usable, but its money rails are contained for staff review.",
+    ],
+  },
+  {
+    key: "watch",
+    cells: [
+      "IP alone, device alone, known VPN, card change after 24 hours, or missing evidence",
+      <GuideBadge key="o" accent="slate">Watch only</GuideBadge>,
+      "Stored as context. It does not lock, ban, or require KYC.",
+    ],
+  },
+] as const;
+
 // fiat-observations.ts:184-232 — six cross-account reuse rules, tiered by how
 // exact the match is. Scored for staff only; nothing here locks or bans.
 const reuseItems = [
@@ -185,22 +223,56 @@ export default async function AntifraudFiatDepositsGuidePage() {
 
   return (
     <GuidePage
-      eyebrow="Guide"
-      title="Fiat deposits, end to end"
-      intro="A card deposit passes three separate checks: one before the player can open checkout, one after the payment authorizes, and one human decision before the money becomes balance. They use different thresholds and do different things — treating them as one system is how people misread a case."
+      eyebrow="Staff playbook"
+      title="How to review a Fiat deposit"
+      intro="Start with the action already taken, then read the score and its strongest triggers. Approve only when the payment evidence is coherent; decline when the evidence points to another payer, coordinated abuse, or an unsafe payment. Decline is not a refund."
     >
       <GuideSection
+        icon={ListChecks}
+        title="The staff workflow"
+        description="Use this order for every deposit. It prevents a high score, an automatic lock, or one unusual detail from being mistaken for a final verdict."
+      >
+        <GuideSteps
+          accent="cyan"
+          steps={[
+            {
+              title: "Read the current safeguards",
+              detail: "Check whether the system only requested review, locked withdrawals, or locked Fiat plus withdrawals. A lock protects funds while you investigate; it is not proof of fraud.",
+            },
+            {
+              title: "Read score → strongest triggers → missing evidence",
+              detail: "The total tells you urgency. The trigger details explain why. Missing payer email, 3DS, IP/device history, or payment identity history lowers confidence and must stay visible.",
+            },
+            {
+              title: "Compare the payment with the account",
+              detail: "Look at checkout email, card brand and last four, 3DS, account age, previous Fiat history, and whether the identity is reused by other accounts.",
+            },
+            {
+              title: "Approve or decline this payment",
+              detail: "Approve credits only this deposit. Decline locks money movement and sends the charged-but-uncredited payment to Admin Deposits for a separate refund and/or ban decision.",
+            },
+          ]}
+        />
+        <GuideCallout icon={Search} tone="note" title="What deserves the closest look">
+          A platform-wide same-amount cluster across distinct accounts and
+          payment identities, a rapidly changed card, combined IP and device
+          drift, a blocklist hit, failed 3DS, or several independent signals
+          pointing in the same direction.
+        </GuideCallout>
+      </GuideSection>
+
+      <GuideSection
         icon={Gauge}
-        title="The four thresholds"
-        description="Deny and contain are not the same number. That is the single most useful thing to know about this pipeline."
+        title="The numbers staff will see"
+        description="A score prioritizes investigation. It does not replace the trigger details and it does not tell you whether an account was automatically locked."
       >
         <GuideFacts facts={gateFacts} />
       </GuideSection>
 
       <GuideSection
         icon={ShieldCheck}
-        title="Stage 1 — the pre-payment gate"
-        description="Runs when the player tries to open a Whop checkout. It answers one question: should this person be allowed to pay right now."
+        title="Before payment — can checkout open?"
+        description="This gate runs before Whop receives money. A denial here means the player was not allowed to continue with this checkout attempt."
       >
         <GuideSubHeading
           title="Hard blockers — deny regardless of score"
@@ -215,8 +287,8 @@ export default async function AntifraudFiatDepositsGuidePage() {
         <GuideBullets accent="orange" items={requestBlockers} />
 
         <GuideSubHeading
-          title="Everything else is scored, and good history earns credit"
-          hint="Account age, settled crypto history, previous funded fiat deposits and normal paid play all subtract points."
+          title="Everything else is scored"
+          hint="Account age, shared identity, velocity and provider risk add points. Clean established funding history can subtract points."
         />
         <GuideCallout icon={AlertTriangle} tone="warning" title="Credits are all-or-nothing">
           The credits are capped at 30 combined, and they are only granted when
@@ -228,7 +300,7 @@ export default async function AntifraudFiatDepositsGuidePage() {
 
       <GuideSection
         icon={BadgeCheck}
-        title="Every checkout is assessed fresh"
+        title="A pass cannot be reused"
         description="There is no allow that a client can hold on to and reuse."
       >
         <GuideBullets
@@ -239,9 +311,8 @@ export default async function AntifraudFiatDepositsGuidePage() {
             "A new checkout means a new fingerprint event, which means a new assessment. Replaying the same event with different parameters is rejected as a conflict.",
           ]}
         />
-        <GuideCallout icon={AlertTriangle} tone="note" title="If you read otherwise, it was wrong">
-          An earlier version of this guide claimed the allow was &ldquo;valid
-          for 60 seconds&rdquo;. It never was. New call, new check.
+        <GuideCallout icon={AlertTriangle} tone="note">
+          New checkout, new Fingerprint event, new decision.
         </GuideCallout>
       </GuideSection>
 
@@ -271,9 +342,19 @@ export default async function AntifraudFiatDepositsGuidePage() {
 
       <GuideSection
         icon={Fingerprint}
-        title="Stage 2 — post-authorization identity"
-        description="After a payment authorizes, we compare it against the identity the account established on its FIRST authorized deposit. There is no baseline on the first deposit, so no drift rule can fire on it."
+        title="After payment — did the payer identity change?"
+        description="After authorization, the system compares the payment with the immediately previous authorized Fiat deposit. The first deposit has no previous baseline, so drift rules cannot run yet. Absolute blocklist, email-reputation, and refunded-campaign rules can still run on the first deposit."
       >
+        <GuideSubHeading
+          title="Exact automatic action by trigger"
+          hint="Use this when you need to know what the system already did before staff opened the review."
+        />
+        <GuideTable
+          columns={["Trigger", "Automatic action", "Meaning"]}
+          rows={postPaymentActionRows}
+        />
+
+        <GuideSubHeading title="How identity drift is timed" />
         <GuideTable
           columns={["What moved", "Result", "Detail"]}
           rows={driftRows}
@@ -284,30 +365,23 @@ export default async function AntifraudFiatDepositsGuidePage() {
           rather than treated as a match.
         </GuideCallout>
 
-        <GuideSubHeading
-          title="This is the only automation in the system that requires KYC"
-          hint="Everywhere else, automated signals are forbidden from touching KYC state. The owner lifted that rule for this one path."
-        />
-        <GuideBullets
-          accent="amber"
-          items={[
-            "Order matters: the account is locked first, KYC is required second. The lock is what stops money leaving, so it must not wait on the KYC service.",
-            "It only runs in production, on a score of 70 or above, with an allowlisted reason and the require-KYC flag set.",
-            "The KYC call tolerates a backend that is down — it never throws. The lock is already in place either way.",
-          ]}
-        />
+        <GuideCallout icon={BadgeCheck} tone="note" title="KYC is always a staff decision">
+          No email change, card change, IP/device change, deliverability result,
+          or deposit cluster automatically requires KYC. Staff may require KYC
+          separately when the complete account evidence justifies it.
+        </GuideCallout>
 
         <GuideSubHeading
-          title="Cross-account reuse is scored here too"
-          hint="Six detections, tiered by how exact the match is. They raise the score and the recommendation you see on the deposit queue — they lock nothing and require nothing."
+          title="Cross-account and platform-wide clusters"
+          hint="These checks run across deposits from all users, not only the current player's history. Reuse evidence raises the score and recommendation; it does not automatically require KYC."
         />
         <GuideDefList items={reuseItems} />
       </GuideSection>
 
       <GuideSection
         icon={Wallet}
-        title="Stage 3 — the credit review"
-        description="Nothing above credits the deposit. A human does, on Deposit reviews, with a 2FA step-up."
+        title="Staff decision — credit or contain"
+        description="Deposit reviews puts the score, strongest triggers, missing evidence, identity facts, platform-wide cluster counts, and recommendation beside the decision. Expand All risk evidence before deciding a close case."
       >
         <GuideSubHeading
           title="Approve"
@@ -342,14 +416,16 @@ export default async function AntifraudFiatDepositsGuidePage() {
 
       <GuideSection
         icon={Users}
-        title="Reading a case without getting it wrong"
-        description="The three most common misreadings, in one place."
+        title="Do not make these mistakes"
+        description="These are the most common ways a correct signal becomes a wrong staff decision."
       >
         <GuideBullets
           items={[
             "Denied is not restricted. Most denials leave the account completely untouched.",
-            "Contained is not banned and not KYC-gated. Only the identity stage requires KYC, and nothing here bans.",
+            "Contained is not banned and not automatically KYC-gated. Containment protects money rails while staff review the account.",
             "An assessment score is not a signup score. They are separate engines with separate versions, separate weights and separate thresholds.",
+            "A shared IP is weak evidence on its own. A shared payment identity or a coordinated same-amount cluster across distinct users deserves more weight.",
+            "Decline is not refund. Always resolve the charged payment afterwards in Admin Deposits.",
           ]}
         />
       </GuideSection>

@@ -186,7 +186,7 @@ test("the fiat guide does not resurrect the 60-second allow", () => {
   // DECISION_TTL_MS is "never a reusable grant" and is not returned by the
   // API — the response is only {decisionId, allowed, timestamp}.
   assert.doesNotMatch(page, /valid for 60 seconds|allow is valid/);
-  assert.match(page, /Every checkout is assessed fresh/);
+  assert.match(page, /A pass cannot be reused/);
   // Deny (50) and contain (70) are different thresholds.
   assert.match(page, /Deny floor/);
   assert.match(page, /Contain floor/);
@@ -197,6 +197,9 @@ test("the fiat guide does not resurrect the 60-second allow", () => {
   assert.match(page, /2h \/ 24h/);
   assert.match(page, /different payer email opens staff review/i);
   assert.doesNotMatch(page, /Card grace|3 deposits|three authorized/);
+  assert.match(page, /KYC is always a staff decision/);
+  assert.doesNotMatch(page, /only automation in the system that requires KYC/i);
+  assert.match(page, /immediately previous authorized Fiat deposit/);
   assert.doesNotMatch(automation, /short-lived allow or deny decision/);
 });
 
@@ -212,7 +215,7 @@ test("deposit credit reviews keep staff on the active decision queue", () => {
     deposits,
     /fiat-deposits\/\$\{encodeURIComponent\(item\.id\)\}/,
   );
-  assert.doesNotMatch(deposits, /Risk evidence/);
+  assert.match(deposits, /FiatReviewEvidence/);
   assert.match(retiredDetail, /redirect\("\/antifraud\/fiat-deposits"\)/);
 });
 

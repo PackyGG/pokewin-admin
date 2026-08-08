@@ -16,6 +16,10 @@ const actions = read(
 const controls = read(
   "src/app/(antifraud)/antifraud/fiat-deposits/review-decision.tsx",
 );
+const evidence = read(
+  "src/app/(antifraud)/antifraud/fiat-deposits/review-evidence.tsx",
+);
+const reviewUsers = read("src/lib/queries/fiat-deposit-review-users.ts");
 const workflow = read("src/lib/antifraud/fiat-credit-review.ts");
 const adminPage = read("src/app/(antifraud)/antifraud/admin/deposits/page.tsx");
 const adminActions = read("src/app/(antifraud)/antifraud/admin/deposits/actions.ts");
@@ -143,6 +147,25 @@ test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit"
   assert.match(controls, /Future Fiat deposits will still require their own review/);
   assert.doesNotMatch(controls, /Reject and refund|Retry refund/);
   assert.match(controls, /StepUpField/);
+});
+
+test("staff see the score, triggers, evidence gaps, and global cluster context before deciding", () => {
+  assert.match(page, /<FiatReviewEvidence[\s\S]*?assessment=\{item\.assessment\}/);
+  assert.match(evidence, /Risk \{assessment\.risk_score\}\/100/);
+  assert.match(evidence, /assessment\.recommendation/);
+  assert.match(evidence, /Current safeguards/);
+  assert.match(evidence, /Fiat deposits locked/);
+  assert.match(evidence, /Withdrawals locked/);
+  assert.match(reviewUsers, /LEFT JOIN user_feature_locks/);
+  assert.match(reviewUsers, /locked_deposits_fiat/);
+  assert.match(reviewUsers, /locked_withdrawals_crypto/);
+  assert.match(evidence, /Every scored trigger/);
+  assert.match(evidence, /Evidence incomplete/);
+  assert.match(evidence, /payment identity history/);
+  assert.match(evidence, /exactAmountDistinctUsers30m/);
+  assert.match(evidence, /Identity and platform-wide clusters/);
+  assert.match(evidence, /Approve credits only this payment/);
+  assert.match(evidence, /Decline does not refund it/);
 });
 
 test("Admin Deposits is manager-only and supports independent refund and ban decisions", () => {

@@ -33,6 +33,7 @@ import {
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { RequireKycAction } from "./require-kyc-action";
 import { FiatDepositReviewDecision } from "./review-decision";
+import { FiatReviewEvidence } from "./review-evidence";
 
 function money(cents: number): string {
   return formatCurrency(cents / 100);
@@ -60,6 +61,7 @@ type ReviewItem = {
   review_requested_at: string | null;
   paid_at: string | null;
   created_at: string;
+  assessment: FiatAssessment;
 };
 
 function toReviewItem(item: FiatAssessment): ReviewItem {
@@ -78,6 +80,7 @@ function toReviewItem(item: FiatAssessment): ReviewItem {
     review_requested_at: item.occurred_at,
     paid_at: item.occurred_at,
     created_at: item.occurred_at,
+    assessment: item,
   };
 }
 
@@ -117,8 +120,9 @@ const UPSTREAM_PAGE_SIZE = 100;
  * EVERY upstream page (unbounded: the monitor keeps declined intents in
  * `status='review'` forever, so that list only ever grows).
  *
- * This bounds the walk at 5 × 100 = 500 review rows, fetched as ONE parallel
- * wave, and reports the shortfall LOUDLY when the upstream queue is bigger.
+ * This bounds the walk at 5 × 100 = 500 review rows, fetched serially to avoid
+ * multiplying monitor refresh work, and reports the shortfall LOUDLY when the
+ * upstream queue is bigger.
  * A money queue must never quietly hide rows.
  */
 const MAX_UPSTREAM_PAGES = 5;
@@ -311,6 +315,13 @@ export async function FiatDepositReviewQueue({
                   </CardHeader>
                   <CardContent className="space-y-3">
                     <ReviewFacts item={item} countryCode={user?.countryCode ?? null} />
+                    <FiatReviewEvidence
+                      assessment={item.assessment}
+                      safeguards={user ? {
+                        fiatDepositsLocked: user.fiatDepositsLocked,
+                        withdrawalsLocked: user.withdrawalsLocked,
+                      } : undefined}
+                    />
                     <ReviewLinks item={item} />
                     <div className="flex flex-wrap gap-2">
                       <FiatDepositReviewDecision
@@ -339,7 +350,7 @@ export async function FiatDepositReviewQueue({
                 <TableHead>Player</TableHead>
                 <TableHead>Payment</TableHead>
                 <TableHead>Amount</TableHead>
-                <TableHead>Status</TableHead>
+                <TableHead className="min-w-80">Risk evidence</TableHead>
                 <TableHead>Received</TableHead>
                 <TableHead className="min-w-64">Decision</TableHead>
               </TableRow>
@@ -387,14 +398,13 @@ export async function FiatDepositReviewQueue({
                         </p>
                       </TableCell>
                       <TableCell>
-                        <div className="space-y-1">
-                          {statusBadge()}
-                          {item.failure_reason && (
-                            <p className="max-w-52 text-[10px] text-red-600 dark:text-red-400">
-                              {item.failure_reason}
-                            </p>
-                          )}
-                        </div>
+                        <FiatReviewEvidence
+                          assessment={item.assessment}
+                          safeguards={user ? {
+                            fiatDepositsLocked: user.fiatDepositsLocked,
+                            withdrawalsLocked: user.withdrawalsLocked,
+                          } : undefined}
+                        />
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {formatRelative(item.review_requested_at ?? item.paid_at ?? item.created_at)}
