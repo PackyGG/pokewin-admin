@@ -504,20 +504,32 @@ test("chain info block id follows the outcome selected by only-loses mode", asyn
   await app.close();
 });
 
-test("only-loses selection chooses a loss or the lowest available profit", () => {
-  const outcome = (blockNumber: number, creatorProfitLoss: number) => ({
+test("only-loses selection chooses a battle loss or the lowest available profit", () => {
+  const outcome = (
+    blockNumber: number,
+    creatorWonBattle: boolean,
+    creatorProfitLoss: number,
+  ) => ({
     blockNumber,
-    winningTeam: 1,
+    winningTeam: creatorWonBattle ? 1 : 2,
     creatorTeam: 1,
-    creatorWonBattle: creatorProfitLoss >= 0,
+    creatorWonBattle,
     creatorCost: 10,
     creatorProfitLoss,
   });
-  const mixed = [outcome(10, 50), outcome(9, -10), outcome(8, -30)];
+  const mixed = [
+    outcome(10, true, 50),
+    outcome(9, true, -30),
+    outcome(8, false, -10),
+  ];
   assert.equal(selectBattleTestOutcome(mixed, 10, false).blockNumber, 10);
-  assert.equal(selectBattleTestOutcome(mixed, 10, true, () => 1).blockNumber, 8);
+  assert.equal(selectBattleTestOutcome(mixed, 10, true).blockNumber, 8);
 
-  const profits = [outcome(10, 50), outcome(9, 5), outcome(8, 20)];
+  const profits = [
+    outcome(10, true, 50),
+    outcome(9, true, 5),
+    outcome(8, true, 20),
+  ];
   assert.equal(selectBattleTestOutcome(profits, 10, true).blockNumber, 9);
 });
 

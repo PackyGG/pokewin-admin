@@ -106,7 +106,7 @@ export function selectBattleTestOutcome(
     return outcomes.find((outcome) => outcome.blockNumber === randomBlockNumber)
       ?? outcomes[0]!;
   }
-  const losses = outcomes.filter((outcome) => outcome.creatorProfitLoss < 0);
+  const losses = outcomes.filter((outcome) => !outcome.creatorWonBattle);
   if (losses.length > 0) return losses[randomIndex(losses.length)]!;
   return outcomes.reduce((lowest, outcome) =>
     outcome.creatorProfitLoss < lowest.creatorProfitLoss ? outcome : lowest
