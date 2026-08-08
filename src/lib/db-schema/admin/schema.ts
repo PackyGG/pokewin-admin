@@ -1,4 +1,4 @@
-import { pgTable, varchar, timestamp, text, integer, index, uuid, boolean, numeric, foreignKey, unique, bigint, jsonb, uniqueIndex, date, smallint, check, primaryKey, pgEnum, customType } from "drizzle-orm/pg-core"
+import { pgTable, varchar, timestamp, text, integer, index, uuid, boolean, foreignKey, unique, check, numeric, bigint, jsonb, uniqueIndex, date, smallint, primaryKey, pgEnum, customType } from "drizzle-orm/pg-core"
 import { sql } from "drizzle-orm"
 
 const bytea = customType<{ data: Buffer }>({
@@ -14,38 +14,6 @@ export const limit_period_type = pgEnum("limit_period_type", ['daily', 'weekly',
 export const roadmap_status = pgEnum("roadmap_status", ['planned', 'in_progress', 'shipped', 'blocked', 'cancelled'])
 export const social_platform = pgEnum("social_platform", ['twitter', 'youtube', 'kick', 'discord', 'instagram'])
 export const webhook_type = pgEnum("webhook_type", ['balance_fill', 'deal_data'])
-
-export const discord_rain_notification_jobs = pgTable("discord_rain_notification_jobs", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	rain_id: uuid().notNull(),
-	pool_usd_cents: integer().notNull(),
-	participant_count: integer().notNull(),
-	starts_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
-	ends_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
-	status: text().default('pending').notNull(),
-	attempt_count: integer().default(0).notNull(),
-	max_attempts: integer().default(10).notNull(),
-	available_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	lease_token: uuid(),
-	lease_owner: text(),
-	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
-	discord_message_id: text(),
-	last_error_code: text(),
-	last_error_message: text(),
-	delivered_at: timestamp({ withTimezone: true, mode: 'string' }),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_rain_notification_jobs_claim_idx").on(table.available_at, table.created_at, table.id).where(sql`status = ANY (ARRAY['pending'::text, 'leased'::text])`),
-	unique("discord_rain_notification_jobs_rain_id_key").on(table.rain_id),
-	check("discord_rain_notification_jobs_attempt_check", sql`attempt_count >= 0 AND max_attempts BETWEEN 1 AND 25`),
-	check("discord_rain_notification_jobs_lease_shape_check", sql`(status = 'leased' AND lease_token IS NOT NULL AND lease_owner IS NOT NULL AND leased_until IS NOT NULL) OR (status <> 'leased' AND lease_token IS NULL AND lease_owner IS NULL AND leased_until IS NULL)`),
-	check("discord_rain_notification_jobs_message_id_check", sql`discord_message_id IS NULL OR discord_message_id ~ '^[0-9]{17,20}$'`),
-	check("discord_rain_notification_jobs_participants_check", sql`participant_count >= 0`),
-	check("discord_rain_notification_jobs_pool_check", sql`pool_usd_cents > 2000`),
-	check("discord_rain_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
-	check("discord_rain_notification_jobs_window_check", sql`ends_at > starts_at`),
-]);
 
 
 export const _prisma_migrations = pgTable("_prisma_migrations", {
@@ -70,6 +38,46 @@ export const creator_webhooks = pgTable("creator_webhooks", {
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("creator_webhooks_target_user_id_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
+]);
+
+export const discord_creator_reward_claim_jobs = pgTable("discord_creator_reward_claim_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	setup_id: uuid().notNull(),
+	source_claim_id: uuid().notNull(),
+	creator_user_id: text().notNull(),
+	referred_user_id: text().notNull(),
+	referred_username: text(),
+	leg: text().notNull(),
+	program_name: text().notNull(),
+	amount_usd: numeric({ precision: 20, scale:  2 }).notNull(),
+	units: integer().default(0).notNull(),
+	occurred_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(8).notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_creator_reward_claim_jobs_claim_idx").using("btree", table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_creator_reward_claim_jobs_setup_history_idx").using("btree", table.setup_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.setup_id],
+			foreignColumns: [discord_creator_setups.id],
+			name: "discord_creator_reward_claim_jobs_setup_id_fkey"
+		}).onDelete("cascade"),
+	unique("discord_creator_reward_claim_jobs_source_unique").on(table.source_claim_id),
+	check("discord_creator_reward_claim_jobs_amount_check", sql`(amount_usd > (0)::numeric) AND (units >= 0)`),
+	check("discord_creator_reward_claim_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_creator_reward_claim_jobs_leg_check", sql`leg <> ''::text`),
+	check("discord_creator_reward_claim_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
 ]);
 
 export const admin_settings = pgTable("admin_settings", {
@@ -192,6 +200,38 @@ export const admin_users = pgTable("admin_users", {
 		}).onUpdate("cascade").onDelete("set null"),
 ]);
 
+export const discord_rain_notification_jobs = pgTable("discord_rain_notification_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	rain_id: uuid().notNull(),
+	pool_usd_cents: integer().notNull(),
+	participant_count: integer().notNull(),
+	starts_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	ends_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(10).notNull(),
+	available_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	delivered_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_rain_notification_jobs_claim_idx").using("btree", table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	unique("discord_rain_notification_jobs_rain_id_key").on(table.rain_id),
+	check("discord_rain_notification_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_rain_notification_jobs_lease_shape_check", sql`((status = 'leased'::text) AND (lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (leased_until IS NOT NULL)) OR ((status <> 'leased'::text) AND (lease_token IS NULL) AND (lease_owner IS NULL) AND (leased_until IS NULL))`),
+	check("discord_rain_notification_jobs_message_id_check", sql`(discord_message_id IS NULL) OR (discord_message_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_rain_notification_jobs_participants_check", sql`participant_count >= 0`),
+	check("discord_rain_notification_jobs_pool_check", sql`pool_usd_cents > 2000`),
+	check("discord_rain_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+	check("discord_rain_notification_jobs_window_check", sql`ends_at > starts_at`),
+]);
+
 export const admin_sessions = pgTable("admin_sessions", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	admin_user_id: uuid().notNull(),
@@ -235,31 +275,18 @@ export const admin_audit_events = pgTable("admin_audit_events", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 }, (table) => [
 	uniqueIndex("admin_audit_antifraud_idempotency_idx").using("btree", sql`((metadata ->> 'idempotencyKey'::text))`).where(sql`((event_type = ANY (ARRAY['antifraud_monitor_case_decision'::text, 'antifraud_review_status_changed'::text])) AND (metadata ? 'idempotencyKey'::text))`),
+	index("admin_audit_events_admin_user_created_idx").using("btree", table.admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("admin_audit_events_admin_user_id_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops")),
 	index("admin_audit_events_created_at_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("admin_audit_events_event_type_created_idx").using("btree", table.event_type.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	index("admin_audit_events_event_type_idx").using("btree", table.event_type.asc().nullsLast().op("text_ops")),
 	index("admin_audit_events_target_user_id_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
+	uniqueIndex("admin_audit_review_postponed_idempotency_idx").using("btree", sql`((metadata ->> 'idempotencyKey'::text))`).where(sql`((event_type = 'antifraud_review_postponed'::text) AND (metadata ? 'idempotencyKey'::text))`),
 	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
 			name: "admin_audit_events_admin_user_id_fkey"
 		}).onUpdate("cascade").onDelete("set null"),
-]);
-
-export const admin_audit_write_failures = pgTable("admin_audit_write_failures", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	admin_user_id: uuid(),
-	event_type: text().notNull(),
-	target_user_id: text(),
-	ip: text(),
-	metadata: jsonb(),
-	error_message: text(),
-	attempt_count: integer().default(0).notNull(),
-	resolved_at: timestamp({ withTimezone: true, mode: 'string' }),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("admin_audit_write_failures_unresolved_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(resolved_at IS NULL)`),
-	check("admin_audit_write_failures_attempt_count_check", sql`attempt_count >= 0`),
 ]);
 
 export const admin_gift_card_actions = pgTable("admin_gift_card_actions", {
@@ -388,7 +415,7 @@ export const admin_shifts = pgTable("admin_shifts", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 }, (table) => [
-	uniqueIndex("admin_shifts_week_start_day_of_week_shift_slot_key").using("btree", table.week_start.asc().nullsLast().op("int4_ops"), table.day_of_week.asc().nullsLast().op("int4_ops"), table.shift_slot.asc().nullsLast().op("int4_ops")),
+	uniqueIndex("admin_shifts_week_start_day_of_week_shift_slot_key").using("btree", table.week_start.asc().nullsLast().op("int4_ops"), table.day_of_week.asc().nullsLast().op("timestamptz_ops"), table.shift_slot.asc().nullsLast().op("int4_ops")),
 	index("admin_shifts_week_start_idx").using("btree", table.week_start.asc().nullsLast().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.created_by_id],
@@ -605,6 +632,83 @@ export const admin_user_tags = pgTable("admin_user_tags", {
 	check("admin_user_tags_tag_value_check", sql`tag = ANY (ARRAY['vip'::text, 'wager_abuser'::text])`),
 ]);
 
+export const discord_partnership_tickets = pgTable("discord_partnership_tickets", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	source_channel_id: text().notNull(),
+	applicant_discord_user_id: text().notNull(),
+	applicant_username: text().notNull(),
+	applicant_display_name: text().notNull(),
+	submit_interaction_id: text().notNull(),
+	social_media_links: text().notNull(),
+	current_past_partner_sites: text().notNull(),
+	stats_expectations: text().notNull(),
+	additional_notes: text(),
+	status: text().default('provisioning').notNull(),
+	ticket_channel_id: text(),
+	current_category_id: text(),
+	initial_message_id: text(),
+	version: integer().default(0).notNull(),
+	last_error_step: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	last_error_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	last_reconciled_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	provisioned_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	offered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	close_requested_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	cancelled_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	closed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	closed_by_discord_user_id: text(),
+}, (table) => [
+	uniqueIndex("discord_partnership_tickets_channel_unique").using("btree", table.ticket_channel_id.asc().nullsLast().op("text_ops")).where(sql`(ticket_channel_id IS NOT NULL)`),
+	uniqueIndex("discord_partnership_tickets_one_active_applicant").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.applicant_discord_user_id.asc().nullsLast().op("text_ops")).where(sql`(status <> ALL (ARRAY['closed'::text, 'cancelled'::text]))`),
+	index("discord_partnership_tickets_recovery_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("uuid_ops"), table.updated_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("text_ops")).where(sql`(status <> ALL (ARRAY['closed'::text, 'cancelled'::text]))`),
+	unique("discord_partnership_tickets_submit_interaction_id_key").on(table.submit_interaction_id),
+	check("discord_partnership_tickets_closed_shape_check", sql`((status = 'closed'::text) = (closed_at IS NOT NULL)) AND ((status = 'cancelled'::text) = (cancelled_at IS NOT NULL))`),
+	check("discord_partnership_tickets_fixed_guild_check", sql`guild_id = '1438216946318442683'::text`),
+	check("discord_partnership_tickets_fixed_source_check", sql`source_channel_id = '1447322856818999337'::text`),
+	check("discord_partnership_tickets_ids_check", sql`(applicant_discord_user_id ~ '^[0-9]{17,20}$'::text) AND (submit_interaction_id ~ '^[0-9]{17,20}$'::text) AND ((ticket_channel_id IS NULL) OR (ticket_channel_id ~ '^[0-9]{17,20}$'::text)) AND ((current_category_id IS NULL) OR (current_category_id ~ '^[0-9]{17,20}$'::text)) AND ((initial_message_id IS NULL) OR (initial_message_id ~ '^[0-9]{17,20}$'::text)) AND ((closed_by_discord_user_id IS NULL) OR (closed_by_discord_user_id ~ '^[0-9]{17,20}$'::text))`),
+	check("discord_partnership_tickets_shape_check", sql`((status = ANY (ARRAY['provisioning'::text, 'cancelled'::text])) AND (ticket_channel_id IS NULL) AND (current_category_id IS NULL) AND (initial_message_id IS NULL) AND (provisioned_at IS NULL)) OR ((status = ANY (ARRAY['open'::text, 'offer_pending'::text, 'offered'::text, 'close_pending'::text, 'closed'::text])) AND (ticket_channel_id IS NOT NULL) AND (current_category_id IS NOT NULL) AND (initial_message_id IS NOT NULL) AND (provisioned_at IS NOT NULL))`),
+	check("discord_partnership_tickets_status_check", sql`status = ANY (ARRAY['provisioning'::text, 'open'::text, 'offer_pending'::text, 'offered'::text, 'close_pending'::text, 'cancelled'::text, 'closed'::text])`),
+	check("discord_partnership_tickets_text_check", sql`((length(applicant_username) >= 1) AND (length(applicant_username) <= 100)) AND ((length(applicant_display_name) >= 1) AND (length(applicant_display_name) <= 100)) AND ((length(social_media_links) >= 1) AND (length(social_media_links) <= 1000)) AND ((length(current_past_partner_sites) >= 1) AND (length(current_past_partner_sites) <= 1000)) AND ((length(stats_expectations) >= 1) AND (length(stats_expectations) <= 2000)) AND ((additional_notes IS NULL) OR ((length(additional_notes) >= 1) AND (length(additional_notes) <= 1000))) AND ((last_error_code IS NULL) OR (length(last_error_code) <= 80)) AND ((last_error_message IS NULL) OR (length(last_error_message) <= 1000))`),
+	check("discord_partnership_tickets_version_check", sql`version >= 0`),
+]);
+
+export const discord_partnership_ticket_operations = pgTable("discord_partnership_ticket_operations", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	ticket_id: uuid().notNull(),
+	operation_type: text().notNull(),
+	interaction_id: text().notNull(),
+	actor_discord_user_id: text().notNull(),
+	status: text().default('pending').notNull(),
+	from_status: text().notNull(),
+	target_category_id: text(),
+	observed_channel_id: text(),
+	observed_category_id: text(),
+	error_code: text(),
+	error_message: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	failed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_partnership_ticket_operations_history_idx").using("btree", table.ticket_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("timestamptz_ops")),
+	uniqueIndex("discord_partnership_ticket_operations_one_pending").using("btree", table.ticket_id.asc().nullsLast().op("uuid_ops"), table.operation_type.asc().nullsLast().op("text_ops")).where(sql`(status = 'pending'::text)`),
+	foreignKey({
+			columns: [table.ticket_id],
+			foreignColumns: [discord_partnership_tickets.id],
+			name: "discord_partnership_ticket_operations_ticket_id_fkey"
+		}).onDelete("restrict"),
+	unique("discord_partnership_ticket_operations_interaction_id_key").on(table.interaction_id),
+	check("discord_partnership_ticket_operations_error_check", sql`((error_code IS NULL) OR (length(error_code) <= 80)) AND ((error_message IS NULL) OR (length(error_message) <= 1000))`),
+	check("discord_partnership_ticket_operations_ids_check", sql`(interaction_id ~ '^[0-9]{17,20}$'::text) AND (actor_discord_user_id ~ '^[0-9]{17,20}$'::text) AND ((target_category_id IS NULL) OR (target_category_id ~ '^[0-9]{17,20}$'::text)) AND ((observed_channel_id IS NULL) OR (observed_channel_id ~ '^[0-9]{17,20}$'::text)) AND ((observed_category_id IS NULL) OR (observed_category_id ~ '^[0-9]{17,20}$'::text))`),
+	check("discord_partnership_ticket_operations_status_check", sql`status = ANY (ARRAY['pending'::text, 'completed'::text, 'failed'::text])`),
+	check("discord_partnership_ticket_operations_type_check", sql`operation_type = ANY (ARRAY['offer'::text, 'close'::text])`),
+]);
+
 export const admin_balance_adjustment_wipes = pgTable("admin_balance_adjustment_wipes", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	user_id: varchar({ length: 36 }).notNull(),
@@ -729,7 +833,7 @@ export const kick_streams = pgTable("kick_streams", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("kick_streams_username_started_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("kick_streams_username_started_idx").using("btree", table.username.asc().nullsLast().op("timestamptz_ops"), table.started_at.desc().nullsFirst().op("text_ops")),
 	uniqueIndex("kick_streams_username_stream_unique").using("btree", table.username.asc().nullsLast().op("text_ops"), table.kick_stream_id.asc().nullsLast().op("text_ops")),
 ]);
 
@@ -770,8 +874,8 @@ export const tweets = pgTable("tweets", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("tweets_username_mentions_posted_idx").using("btree", table.username.asc().nullsLast().op("bool_ops"), table.mentions_us.asc().nullsLast().op("text_ops"), table.posted_at.desc().nullsFirst().op("bool_ops")),
-	index("tweets_username_posted_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.posted_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("tweets_username_mentions_posted_idx").using("btree", table.username.asc().nullsLast().op("text_ops"), table.mentions_us.asc().nullsLast().op("bool_ops"), table.posted_at.desc().nullsFirst().op("text_ops")),
+	index("tweets_username_posted_idx").using("btree", table.username.asc().nullsLast().op("timestamptz_ops"), table.posted_at.desc().nullsFirst().op("text_ops")),
 	uniqueIndex("tweets_username_tweet_id_key").using("btree", table.username.asc().nullsLast().op("text_ops"), table.tweet_id.asc().nullsLast().op("text_ops")),
 	uniqueIndex("tweets_username_tweet_unique").using("btree", table.username.asc().nullsLast().op("text_ops"), table.tweet_id.asc().nullsLast().op("text_ops")),
 ]);
@@ -812,6 +916,42 @@ export const creator_onboarding_checklist = pgTable("creator_onboarding_checklis
 	uniqueIndex("creator_onboarding_checklist_target_user_id_key").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
 ]);
 
+export const discord_partnership_transcripts = pgTable("discord_partnership_transcripts", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	ticket_id: uuid().notNull(),
+	close_operation_id: uuid().notNull(),
+	status: text().default('building').notNull(),
+	message_count: integer().default(0).notNull(),
+	content_sha256: text(),
+	first_message_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	last_message_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	log_channel_id: text(),
+	log_message_id: text(),
+	attachment_id: text(),
+	attachment_url: text(),
+	finalized_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.close_operation_id],
+			foreignColumns: [discord_partnership_ticket_operations.id],
+			name: "discord_partnership_transcripts_close_operation_id_fkey"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.ticket_id],
+			foreignColumns: [discord_partnership_tickets.id],
+			name: "discord_partnership_transcripts_ticket_id_fkey"
+		}).onDelete("restrict"),
+	unique("discord_partnership_transcripts_close_operation_id_key").on(table.close_operation_id),
+	unique("discord_partnership_transcripts_ticket_id_key").on(table.ticket_id),
+	check("discord_partnership_transcripts_checksum_check", sql`(content_sha256 IS NULL) OR (content_sha256 ~ '^[a-f0-9]{64}$'::text)`),
+	check("discord_partnership_transcripts_count_check", sql`message_count >= 0`),
+	check("discord_partnership_transcripts_ids_check", sql`((log_channel_id IS NULL) OR (log_channel_id ~ '^[0-9]{17,20}$'::text)) AND ((log_message_id IS NULL) OR (log_message_id ~ '^[0-9]{17,20}$'::text)) AND ((attachment_id IS NULL) OR (attachment_id ~ '^[0-9]{17,20}$'::text))`),
+	check("discord_partnership_transcripts_status_check", sql`status = ANY (ARRAY['building'::text, 'finalized'::text, 'delivered'::text])`),
+]);
+
 export const creator_crm = pgTable("creator_crm", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	target_user_id: text().notNull(),
@@ -843,7 +983,7 @@ export const creator_alerts = pgTable("creator_alerts", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("creator_alerts_active_idx").using("btree", table.dismissed_at.asc().nullsLast().op("timestamptz_ops"), table.severity.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	index("creator_alerts_active_idx").using("btree", table.dismissed_at.asc().nullsLast().op("timestamptz_ops"), table.severity.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	uniqueIndex("creator_alerts_dedupe_key_key").using("btree", table.dedupe_key.asc().nullsLast().op("text_ops")),
 	index("creator_alerts_target_user_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
 ]);
@@ -875,6 +1015,21 @@ export const admin_deleted_users = pgTable("admin_deleted_users", {
 }, (table) => [
 	index("admin_deleted_users_deleted_at_idx").using("btree", table.deleted_at.desc().nullsFirst().op("timestamp_ops")),
 	index("admin_deleted_users_expires_at_idx").using("btree", table.expires_at.asc().nullsLast().op("timestamp_ops")),
+]);
+
+export const discord_partnership_transcript_batches = pgTable("discord_partnership_transcript_batches", {
+	batch_id: uuid().primaryKey().notNull(),
+	transcript_id: uuid().notNull(),
+	payload_sha256: text().notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_partnership_transcript_batches_transcript_idx").using("btree", table.transcript_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.batch_id.asc().nullsLast().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.transcript_id],
+			foreignColumns: [discord_partnership_transcripts.id],
+			name: "discord_partnership_transcript_batches_transcript_id_fkey"
+		}).onDelete("restrict"),
+	check("discord_partnership_transcript_batches_checksum_check", sql`payload_sha256 ~ '^[a-f0-9]{64}$'::text`),
 ]);
 
 export const crypto_fee_profit_counter = pgTable("crypto_fee_profit_counter", {
@@ -1122,35 +1277,6 @@ export const discord_verifications = pgTable("discord_verifications", {
 	index("discord_verifications_user_id_idx").using("btree", table.user_id.asc().nullsLast().op("text_ops")),
 ]);
 
-export const creator_reward_programs = pgTable("creator_reward_programs", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	name: text().notNull(),
-	creator_user_id: text().notNull(),
-	codes: text().array().default(sql`'{}'::text[]`),
-	threshold_usd: numeric({ precision: 20, scale:  2 }),
-	reward_usd: numeric({ precision: 20, scale:  2 }),
-	is_active: boolean().default(true).notNull(),
-	accrual_start_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
-	ends_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-	max_reward_per_user_usd: numeric({ precision: 20, scale:  2 }),
-	created_by: uuid().notNull(),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
-	vip_reward_usd: numeric({ precision: 20, scale:  2 }),
-	lossback_pct: numeric({ precision: 6, scale:  2 }),
-	min_deposit_usd: numeric({ precision: 20, scale:  2 }),
-	archived_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-	archived_by: uuid(),
-	source_approval_request_id: uuid(),
-}, (table) => [
-	index("creator_reward_programs_creator_idx").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops")),
-	index("creator_reward_programs_is_active_idx").using("btree", table.is_active.asc().nullsLast().op("bool_ops")),
-	index("creator_reward_programs_live_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(archived_at IS NULL)`),
-	check("creator_reward_programs_archived_not_active", sql`(archived_at IS NULL) OR (is_active = false)`),
-	check("creator_reward_programs_end_after_start", sql`(ends_at IS NULL) OR (ends_at > accrual_start_at)`),
-	uniqueIndex("creator_reward_programs_source_approval_unique").using("btree", table.source_approval_request_id.asc().nullsLast().op("uuid_ops")).where(sql`(source_approval_request_id IS NOT NULL)`),
-]);
-
 export const creator_reward_program_windows = pgTable("creator_reward_program_windows", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	program_id: uuid().notNull(),
@@ -1194,8 +1320,8 @@ export const creator_reward_claims = pgTable("creator_reward_claims", {
 	bot_notified_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	bot_notify_error: text(),
 }, (table) => [
-	uniqueIndex("creator_reward_claims_one_pending_per_user").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("uuid_ops"), table.leg.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'pending'::text)`),
-	index("creator_reward_claims_program_user_idx").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("text_ops")),
+	uniqueIndex("creator_reward_claims_one_pending_per_user").using("btree", table.program_id.asc().nullsLast().op("uuid_ops"), table.user_id.asc().nullsLast().op("text_ops"), table.leg.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'pending'::text)`),
+	index("creator_reward_claims_program_user_idx").using("btree", table.program_id.asc().nullsLast().op("uuid_ops"), table.user_id.asc().nullsLast().op("uuid_ops")),
 	index("creator_reward_claims_status_requested_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.requested_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("creator_reward_claims_user_idx").using("btree", table.user_id.asc().nullsLast().op("text_ops")),
 	foreignKey({
@@ -1203,6 +1329,40 @@ export const creator_reward_claims = pgTable("creator_reward_claims", {
 			foreignColumns: [creator_reward_programs.id],
 			name: "creator_reward_claims_program_id_fkey"
 		}).onUpdate("cascade").onDelete("restrict"),
+]);
+
+export const creator_reward_programs = pgTable("creator_reward_programs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	name: text().notNull(),
+	creator_user_id: text().notNull(),
+	codes: text().array().default(sql`'{}'::text[]`),
+	threshold_usd: numeric({ precision: 20, scale:  2 }),
+	reward_usd: numeric({ precision: 20, scale:  2 }),
+	is_active: boolean().default(true).notNull(),
+	accrual_start_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	max_reward_per_user_usd: numeric({ precision: 20, scale:  2 }),
+	created_by: uuid().notNull(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).default(sql`CURRENT_TIMESTAMP`).notNull(),
+	vip_reward_usd: numeric({ precision: 20, scale:  2 }),
+	lossback_pct: numeric({ precision: 6, scale:  2 }),
+	min_deposit_usd: numeric({ precision: 20, scale:  2 }),
+	archived_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	archived_by: uuid(),
+	ends_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	source_approval_request_id: uuid(),
+}, (table) => [
+	index("creator_reward_programs_creator_idx").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops")),
+	index("creator_reward_programs_is_active_idx").using("btree", table.is_active.asc().nullsLast().op("bool_ops")),
+	index("creator_reward_programs_live_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(archived_at IS NULL)`),
+	uniqueIndex("creator_reward_programs_source_approval_unique").using("btree", table.source_approval_request_id.asc().nullsLast().op("uuid_ops")).where(sql`(source_approval_request_id IS NOT NULL)`),
+	foreignKey({
+			columns: [table.source_approval_request_id],
+			foreignColumns: [creator_deal_approval_requests.id],
+			name: "creator_reward_programs_source_approval_fkey"
+		}).onDelete("restrict"),
+	check("creator_reward_programs_archived_not_active", sql`(archived_at IS NULL) OR (is_active = false)`),
+	check("creator_reward_programs_end_after_start", sql`(ends_at IS NULL) OR (ends_at > accrual_start_at)`),
 ]);
 
 export const chat_raffle_rounds = pgTable("chat_raffle_rounds", {
@@ -1283,7 +1443,7 @@ export const chat_raffle_entries = pgTable("chat_raffle_entries", {
 	position: integer().default(0).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("chat_raffle_entries_round_position_idx").using("btree", table.round_id.asc().nullsLast().op("int4_ops"), table.position.asc().nullsLast().op("uuid_ops")),
+	index("chat_raffle_entries_round_position_idx").using("btree", table.round_id.asc().nullsLast().op("uuid_ops"), table.position.asc().nullsLast().op("uuid_ops")),
 	foreignKey({
 			columns: [table.round_id],
 			foreignColumns: [chat_raffle_rounds.id],
@@ -1356,8 +1516,8 @@ export const staff_point_events = pgTable("staff_point_events", {
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("staff_point_events_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	uniqueIndex("staff_point_events_source_uniq").using("btree", table.source_kind.asc().nullsLast().op("text_ops"), table.source_id.asc().nullsLast().op("uuid_ops")).where(sql`((source_id IS NOT NULL) AND (source_kind <> 'manual'::text))`),
-	index("staff_point_events_user_created_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
+	uniqueIndex("staff_point_events_source_uniq").using("btree", table.source_kind.asc().nullsLast().op("text_ops"), table.source_id.asc().nullsLast().op("text_ops")).where(sql`((source_id IS NOT NULL) AND (source_kind <> 'manual'::text))`),
+	index("staff_point_events_user_created_idx").using("btree", table.admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
@@ -1493,8 +1653,8 @@ export const staff_quiz_attempts = pgTable("staff_quiz_attempts", {
 	submitted_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 }, (table) => [
 	uniqueIndex("staff_quiz_attempts_open_uniq").using("btree", table.quiz_id.asc().nullsLast().op("uuid_ops"), table.admin_user_id.asc().nullsLast().op("uuid_ops")).where(sql`(status = 'in_progress'::text)`),
-	index("staff_quiz_attempts_quiz_idx").using("btree", table.quiz_id.asc().nullsLast().op("timestamptz_ops"), table.submitted_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("staff_quiz_attempts_user_started_idx").using("btree", table.admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("staff_quiz_attempts_quiz_idx").using("btree", table.quiz_id.asc().nullsLast().op("uuid_ops"), table.submitted_at.desc().nullsFirst().op("uuid_ops")),
+	index("staff_quiz_attempts_user_started_idx").using("btree", table.admin_user_id.asc().nullsLast().op("uuid_ops"), table.started_at.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.admin_user_id],
 			foreignColumns: [admin_users.id],
@@ -1549,11 +1709,11 @@ export const antifraud_reviews = pgTable("antifraud_reviews", {
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	index("antifraud_reviews_assigned_idx").using("btree", table.assigned_to.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("antifraud_reviews_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
+	index("antifraud_reviews_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_reviews_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	uniqueIndex("antifraud_reviews_open_target_uniq").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['open'::text, 'in_review'::text]))`),
 	index("antifraud_reviews_reason_trgm_idx").using("gin", table.reason.asc().nullsLast().op("gin_trgm_ops")),
-	index("antifraud_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("antifraud_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_reviews_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
 	index("antifraud_reviews_target_user_trgm_idx").using("gin", table.target_user_id.asc().nullsLast().op("gin_trgm_ops")),
 	index("antifraud_reviews_username_trgm_idx").using("gin", table.target_username.asc().nullsLast().op("gin_trgm_ops")),
@@ -1589,9 +1749,9 @@ export const creator_reward_offer_windows = pgTable("creator_reward_offer_window
 	claim_id: uuid(),
 }, (table) => [
 	index("creator_reward_offer_windows_claim_idx").using("btree", table.claim_id.asc().nullsLast().op("uuid_ops")).where(sql`(claim_id IS NOT NULL)`),
-	index("creator_reward_offer_windows_lookup_idx").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("timestamptz_ops"), table.leg.asc().nullsLast().op("uuid_ops"), table.expires_at.asc().nullsLast().op("uuid_ops")),
+	index("creator_reward_offer_windows_lookup_idx").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("text_ops"), table.leg.asc().nullsLast().op("uuid_ops"), table.expires_at.asc().nullsLast().op("uuid_ops")),
 	index("creator_reward_offer_windows_open_expiry_idx").using("btree", table.expires_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(claimed_at IS NULL)`),
-	uniqueIndex("creator_reward_offer_windows_unit_key").using("btree", table.program_id.asc().nullsLast().op("numeric_ops"), table.user_id.asc().nullsLast().op("timestamptz_ops"), table.leg.asc().nullsLast().op("text_ops"), table.run_started_at.asc().nullsLast().op("text_ops"), table.basis_position_usd.asc().nullsLast().op("text_ops")),
+	uniqueIndex("creator_reward_offer_windows_unit_key").using("btree", table.program_id.asc().nullsLast().op("text_ops"), table.user_id.asc().nullsLast().op("uuid_ops"), table.leg.asc().nullsLast().op("text_ops"), table.run_started_at.asc().nullsLast().op("timestamptz_ops"), table.basis_position_usd.asc().nullsLast().op("numeric_ops")),
 	foreignKey({
 			columns: [table.claim_id],
 			foreignColumns: [creator_reward_claims.id],
@@ -1605,34 +1765,45 @@ export const creator_reward_offer_windows = pgTable("creator_reward_offer_window
 	check("creator_reward_offer_windows_claim_link_chk", sql`(claimed_at IS NULL) = (claim_id IS NULL)`),
 ]);
 
-export const antifraud_signals = pgTable("antifraud_signals", {
+export const discord_notification_jobs = pgTable("discord_notification_jobs", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
-	external_id: text(),
-	kind: text().notNull(),
-	severity: text().default('medium').notNull(),
-	risk_score: integer(),
-	target_user_id: text(),
-	target_username: text(),
-	summary: text().notNull(),
-	payload: jsonb(),
-	review_id: uuid(),
-	received_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	containment_outbox_status: text(),
-	containment_outbox_error: text(),
-	containment_outbox_attempts: integer().default(0).notNull(),
-	containment_applied_at: timestamp({ withTimezone: true, mode: 'string' }),
+	guild_id: text().notNull(),
+	event_key: text().notNull(),
+	channel_id: text().notNull(),
+	dedupe_key: text().notNull(),
+	content: text(),
+	embed: jsonb().notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(10).notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	components: jsonb().default([]).notNull(),
+	allowed_mentions: jsonb(),
 }, (table) => [
-	uniqueIndex("antifraud_signals_external_uniq").using("btree", table.external_id.asc().nullsLast().op("text_ops")).where(sql`(external_id IS NOT NULL)`),
-	index("antifraud_signals_received_idx").using("btree", table.received_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("antifraud_signals_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
-	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+	index("discord_notification_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("text_ops"), table.created_at.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	uniqueIndex("discord_notification_jobs_dedupe_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.event_key.asc().nullsLast().op("text_ops"), table.dedupe_key.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops")),
+	index("discord_notification_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	foreignKey({
-			columns: [table.review_id],
-			foreignColumns: [antifraud_reviews.id],
-			name: "antifraud_signals_review_id_fkey"
-		}).onDelete("set null"),
-	check("antifraud_signals_containment_outbox_attempts_check", sql`containment_outbox_attempts >= 0`),
-	check("antifraud_signals_containment_outbox_status_check", sql`(containment_outbox_status IS NULL) OR (containment_outbox_status = ANY (ARRAY['pending'::text, 'applied'::text, 'skipped'::text, 'failed'::text]))`),
+			columns: [table.guild_id, table.channel_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_jobs_channel_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.event_key],
+			foreignColumns: [discord_notification_events.event_key],
+			name: "discord_notification_jobs_event_key_fkey"
+		}).onDelete("restrict"),
+	check("discord_notification_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
 ]);
 
 export const pack_creation_requests = pgTable("pack_creation_requests", {
@@ -1655,8 +1826,8 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
 	uniqueIndex("pack_creation_requests_pending_slug_key").using("btree", sql`lower(slug)`).where(sql`(status = ANY (ARRAY['pending'::text, 'processing'::text]))`),
-	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
-	index("pack_creation_requests_status_created_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	index("pack_creation_requests_requested_by_created_idx").using("btree", table.requested_by.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("pack_creation_requests_status_created_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
 	foreignKey({
 			columns: [table.requested_by],
 			foreignColumns: [admin_users.id],
@@ -1671,27 +1842,6 @@ export const pack_creation_requests = pgTable("pack_creation_requests", {
 	check("pack_creation_requests_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'approved'::text, 'declined'::text])`),
 ]);
 
-export const pack_build_draft_revisions = pgTable("pack_build_draft_revisions", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	request_id: uuid().notNull(),
-	revision: integer().notNull(),
-	changed_by: uuid(),
-	change_kind: text().default('saved').notNull(),
-	name: text().notNull(),
-	slug: text().notNull(),
-	request_payload: jsonb().notNull(),
-	preview_edge: numeric({ precision: 8, scale: 6 }).notNull(),
-	preview_win_rate: numeric({ precision: 8, scale: 6 }).notNull(),
-	preview_max_win: numeric({ precision: 14, scale: 2 }),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("pack_build_draft_revisions_request_created_idx").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	uniqueIndex("pack_build_draft_revisions_request_revision_key").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.revision.asc().nullsLast().op("int4_ops")),
-	foreignKey({ columns: [table.request_id], foreignColumns: [pack_creation_requests.id], name: "pack_build_draft_revisions_request_id_fkey" }).onUpdate("cascade").onDelete("cascade"),
-	foreignKey({ columns: [table.changed_by], foreignColumns: [admin_users.id], name: "pack_build_draft_revisions_changed_by_fkey" }).onUpdate("cascade").onDelete("set null"),
-	check("pack_build_draft_revisions_payload_object_check", sql`jsonb_typeof(request_payload) = 'object'::text`),
-]);
-
 export const discord_notification_guilds = pgTable("discord_notification_guilds", {
 	guild_id: text().primaryKey().notNull(),
 	name: text().notNull(),
@@ -1699,7 +1849,7 @@ export const discord_notification_guilds = pgTable("discord_notification_guilds"
 	last_synced_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (_table) => [
+}, (table) => [
 	check("discord_notification_guilds_id_check", sql`guild_id ~ '^[0-9]{15,21}$'::text`),
 ]);
 
@@ -1751,45 +1901,6 @@ export const discord_notification_routes = pgTable("discord_notification_routes"
 		}).onDelete("cascade"),
 ]);
 
-export const discord_notification_jobs = pgTable("discord_notification_jobs", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	guild_id: text().notNull(),
-	event_key: text().notNull(),
-	channel_id: text().notNull(),
-	dedupe_key: text().notNull(),
-	content: text(),
-	embed: jsonb().notNull(),
-	status: text().default('pending').notNull(),
-	attempt_count: integer().default(0).notNull(),
-	max_attempts: integer().default(10).notNull(),
-	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	lease_token: uuid(),
-	lease_owner: text(),
-	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-	discord_message_id: text(),
-	last_error_code: text(),
-	last_error_message: text(),
-	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_notification_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
-	uniqueIndex("discord_notification_jobs_dedupe_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.event_key.asc().nullsLast().op("text_ops"), table.dedupe_key.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops")),
-	index("discord_notification_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	foreignKey({
-			columns: [table.guild_id, table.channel_id],
-			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
-			name: "discord_notification_jobs_channel_fk"
-		}).onDelete("restrict"),
-	foreignKey({
-			columns: [table.event_key],
-			foreignColumns: [discord_notification_events.event_key],
-			name: "discord_notification_jobs_event_key_fkey"
-		}).onDelete("restrict"),
-	check("discord_notification_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
-	check("discord_notification_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
-]);
-
 export const discord_creator_setups = pgTable("discord_creator_setups", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	guild_id: text().notNull(),
@@ -1807,10 +1918,17 @@ export const discord_creator_setups = pgTable("discord_creator_setups", {
 	linked_by_discord_user_id: text(),
 	link_interaction_id: text(),
 	linked_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	deposit_notifications_enabled: boolean().default(true).notNull(),
+	deposit_notifications_enabled_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow(),
+	deposit_notifications_updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	signup_notifications_enabled: boolean().default(true).notNull(),
+	signup_notifications_enabled_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow(),
 }, (table) => [
+	index("discord_creator_setups_deposit_notifications_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.creator_user_id.asc().nullsLast().op("text_ops")).where(sql`((status = 'active'::text) AND (creator_user_id IS NOT NULL) AND (deposit_notifications_enabled = true))`),
 	uniqueIndex("discord_creator_setups_guild_creator_user_unique").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.creator_user_id.asc().nullsLast().op("text_ops")).where(sql`(creator_user_id IS NOT NULL)`),
 	uniqueIndex("discord_creator_setups_link_interaction_unique").using("btree", table.link_interaction_id.asc().nullsLast().op("text_ops")).where(sql`(link_interaction_id IS NOT NULL)`),
 	index("discord_creator_setups_pending_created_idx").using("btree", table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = 'pending'::text)`),
+	index("discord_creator_setups_signup_notifications_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.creator_user_id.asc().nullsLast().op("text_ops")).where(sql`((status = 'active'::text) AND (creator_user_id IS NOT NULL) AND (signup_notifications_enabled = true))`),
 	unique("discord_creator_setups_creator_unique").on(table.creator_discord_user_id, table.guild_id),
 	unique("discord_creator_setups_interaction_id_key").on(table.interaction_id),
 	check("discord_creator_setups_active_shape_check", sql`(status = 'pending'::text) OR ((category_id ~ '^[0-9]{15,21}$'::text) AND (chat_channel_id ~ '^[0-9]{15,21}$'::text) AND (logs_channel_id ~ '^[0-9]{15,21}$'::text) AND ((length(category_name) >= 1) AND (length(category_name) <= 100)) AND (completed_at IS NOT NULL))`),
@@ -1825,6 +1943,598 @@ export const discord_creator_setups = pgTable("discord_creator_setups", {
 	check("discord_creator_setups_status_check", sql`status = ANY (ARRAY['pending'::text, 'active'::text])`),
 ]);
 
+export const admin_whop_refund_batches = pgTable("admin_whop_refund_batches", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	requested_by: uuid(),
+	selection_mode: text().notNull(),
+	reason: text().notNull(),
+	status: text().default('pending').notNull(),
+	requested_count: integer().default(0).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("admin_whop_refund_batches_requested_created_idx").using("btree", table.requested_by.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("admin_whop_refund_batches_status_updated_idx").using("btree", table.status.asc().nullsLast().op("timestamptz_ops"), table.updated_at.desc().nullsFirst().op("text_ops")),
+	foreignKey({
+			columns: [table.requested_by],
+			foreignColumns: [admin_users.id],
+			name: "admin_whop_refund_batches_requested_by_fkey"
+		}).onDelete("set null"),
+	check("admin_whop_refund_batches_requested_count_check", sql`requested_count >= 0`),
+	check("admin_whop_refund_batches_selection_mode_check", sql`selection_mode = ANY (ARRAY['payments'::text, 'users'::text, 'all'::text])`),
+	check("admin_whop_refund_batches_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'completed_with_issues'::text])`),
+]);
+
+export const admin_whop_refund_items = pgTable("admin_whop_refund_items", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	batch_id: uuid().notNull(),
+	user_id: text().notNull(),
+	deposit_intent_id: uuid().notNull(),
+	provider_payment_id: text().notNull(),
+	currency: text().notNull(),
+	original_amount_cents: integer().notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	lease_token: uuid(),
+	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
+	provider_status: text(),
+	provider_substatus: text(),
+	refunded_amount: numeric({ precision: 20, scale:  2 }),
+	error_code: text(),
+	error_message: text(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("admin_whop_refund_items_batch_status_idx").using("btree", table.batch_id.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("text_ops"), table.created_at.asc().nullsLast().op("text_ops")),
+	index("admin_whop_refund_items_user_created_idx").using("btree", table.user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.batch_id],
+			foreignColumns: [admin_whop_refund_batches.id],
+			name: "admin_whop_refund_items_batch_id_fkey"
+		}).onDelete("restrict"),
+	unique("admin_whop_refund_items_payment_unique").on(table.provider_payment_id),
+	check("admin_whop_refund_items_amount_check", sql`original_amount_cents > 0`),
+	check("admin_whop_refund_items_attempt_count_check", sql`attempt_count >= 0`),
+	check("admin_whop_refund_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'succeeded'::text, 'already_refunded'::text, 'not_refundable'::text, 'failed'::text, 'unknown'::text])`),
+]);
+
+export const discord_notification_channel_settings = pgTable("discord_notification_channel_settings", {
+	guild_id: text().primaryKey().notNull(),
+	default_parent_id: text(),
+	updated_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({
+			columns: [table.guild_id],
+			foreignColumns: [discord_notification_guilds.guild_id],
+			name: "discord_notification_channel_settings_guild_id_fkey"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.guild_id, table.default_parent_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_channel_settings_parent_fk"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.updated_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_channel_settings_updated_by_fkey"
+		}).onDelete("set null"),
+]);
+
+export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	user_id: text().notNull(),
+	channel_id: text().notNull(),
+	linked_by_discord_user_id: text().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	member_discord_user_id: text(),
+}, (table) => [
+	uniqueIndex("discord_vip_channel_links_guild_member_unique").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.member_discord_user_id.asc().nullsLast().op("text_ops")).where(sql`(member_discord_user_id IS NOT NULL)`),
+	index("discord_vip_channel_links_updated_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.updated_at.desc().nullsFirst().op("text_ops")),
+	unique("discord_vip_channel_links_guild_channel_unique").on(table.channel_id, table.guild_id),
+	unique("discord_vip_channel_links_guild_user_unique").on(table.guild_id, table.user_id),
+	check("discord_vip_channel_links_actor_id_check", sql`linked_by_discord_user_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_links_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_vip_channel_links_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
+]);
+
+export const discord_notification_channel_jobs = pgTable("discord_notification_channel_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	parent_id: text().notNull(),
+	requested_name: text().notNull(),
+	status: text().default('pending').notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(5).notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	created_channel_id: text(),
+	created_channel_name: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_notification_channel_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("text_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_notification_channel_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_channel_jobs_created_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.guild_id, table.parent_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_channel_jobs_parent_fk"
+		}).onDelete("restrict"),
+	check("discord_notification_channel_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_notification_channel_jobs_created_id_check", sql`(created_channel_id IS NULL) OR (created_channel_id ~ '^[0-9]{15,21}$'::text)`),
+	check("discord_notification_channel_jobs_name_check", sql`((char_length(requested_name) >= 1) AND (char_length(requested_name) <= 100)) AND (requested_name ~ '^[a-z0-9][a-z0-9-]*$'::text)`),
+	check("discord_notification_channel_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'created'::text, 'dead'::text])`),
+]);
+
+export const discord_creator_deposit_scan_state = pgTable("discord_creator_deposit_scan_state", {
+	singleton_id: smallint().default(1).primaryKey().notNull(),
+	scan_through_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	check("discord_creator_deposit_scan_lease_shape_check", sql`((lease_token IS NULL) AND (lease_owner IS NULL) AND (leased_until IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (leased_until IS NOT NULL))`),
+	check("discord_creator_deposit_scan_singleton_check", sql`singleton_id = 1`),
+]);
+
+export const discord_creator_deposit_jobs = pgTable("discord_creator_deposit_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	setup_id: uuid().notNull(),
+	source_deposit_id: uuid().notNull(),
+	creator_user_id: text().notNull(),
+	depositor_user_id: text().notNull(),
+	depositor_username: text(),
+	deposit_amount_usd: numeric({ precision: 20, scale:  2 }).notNull(),
+	creator_total_deposits_usd: numeric({ precision: 20, scale:  2 }).notNull(),
+	creator_30d_deposits_usd: numeric({ precision: 20, scale:  2 }).notNull(),
+	occurred_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(8).notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_creator_deposit_jobs_claim_idx").using("btree", table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_creator_deposit_jobs_setup_history_idx").using("btree", table.setup_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.setup_id],
+			foreignColumns: [discord_creator_setups.id],
+			name: "discord_creator_deposit_jobs_setup_id_fkey"
+		}).onDelete("cascade"),
+	unique("discord_creator_deposit_jobs_source_unique").on(table.source_deposit_id),
+	check("discord_creator_deposit_jobs_amount_check", sql`(deposit_amount_usd > (0)::numeric) AND (creator_total_deposits_usd >= (0)::numeric) AND (creator_30d_deposits_usd >= (0)::numeric)`),
+	check("discord_creator_deposit_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_creator_deposit_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+]);
+
+export const antifraud_security_audit_events = pgTable("antifraud_security_audit_events", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	correlation_id: uuid().notNull(),
+	actor_admin_user_id: uuid(),
+	actor_username: text(),
+	actor_roles: text().array().default(sql`'{}'::text[]`).notNull(),
+	session_hash: text(),
+	model_version: text().default('security-boundary-v1').notNull(),
+	event_kind: text().notNull(),
+	action: text().notNull(),
+	outcome: text().notNull(),
+	target_type: text(),
+	target_id: text(),
+	reason_code: text(),
+	request_path: text(),
+	request_method: text(),
+	ip_hash: text(),
+	user_agent_hash: text(),
+	idempotency_key_hash: text(),
+	metadata: jsonb().default({}).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("antifraud_security_audit_action_time_idx").using("btree", table.action.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("antifraud_security_audit_actor_time_idx").using("btree", table.actor_admin_user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
+	index("antifraud_security_audit_correlation_idx").using("btree", table.correlation_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops")),
+	index("antifraud_security_audit_created_id_idx").using("btree", table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("timestamptz_ops")),
+	uniqueIndex("antifraud_security_audit_outcome_idempotency_idx").using("btree", table.action.asc().nullsLast().op("text_ops"), table.outcome.asc().nullsLast().op("text_ops"), table.idempotency_key_hash.asc().nullsLast().op("text_ops")).where(sql`((idempotency_key_hash IS NOT NULL) AND (outcome = ANY (ARRAY['succeeded'::text, 'failed'::text])))`),
+	foreignKey({
+			columns: [table.actor_admin_user_id],
+			foreignColumns: [admin_users.id],
+			name: "antifraud_security_audit_events_actor_admin_user_id_fkey"
+		}).onDelete("set null"),
+	check("antifraud_security_audit_events_action_check", sql`(length(action) >= 1) AND (length(action) <= 160)`),
+	check("antifraud_security_audit_events_event_kind_check", sql`event_kind = ANY (ARRAY['view'::text, 'search'::text, 'export'::text, 'action'::text])`),
+	check("antifraud_security_audit_events_outcome_check", sql`outcome = ANY (ARRAY['allowed'::text, 'denied'::text, 'succeeded'::text, 'failed'::text, 'rate_limited'::text])`),
+	check("antifraud_security_audit_events_reason_code_check", sql`(reason_code IS NULL) OR (length(reason_code) <= 100)`),
+	check("antifraud_security_audit_events_request_method_check", sql`(request_method IS NULL) OR (length(request_method) <= 12)`),
+	check("antifraud_security_audit_events_request_path_check", sql`(request_path IS NULL) OR (length(request_path) <= 500)`),
+	check("antifraud_security_audit_events_target_id_check", sql`(target_id IS NULL) OR (length(target_id) <= 200)`),
+	check("antifraud_security_audit_events_target_type_check", sql`(target_type IS NULL) OR (length(target_type) <= 80)`),
+]);
+
+export const antifraud_review_reminder_state = pgTable("antifraud_review_reminder_state", {
+	review_id: uuid().primaryKey().notNull(),
+	reminder_kind: text().notNull(),
+	next_reminder_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	last_sent_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	sent_count: integer().default(0).notNull(),
+	lease_token: uuid(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("antifraud_review_reminder_due_idx").using("btree", table.next_reminder_at.asc().nullsLast().op("timestamptz_ops"), table.review_id.asc().nullsLast().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.review_id],
+			foreignColumns: [antifraud_reviews.id],
+			name: "antifraud_review_reminder_state_review_id_fkey"
+		}).onDelete("cascade"),
+	check("antifraud_review_reminder_kind_check", sql`reminder_kind = ANY (ARRAY['normal'::text, 'urgent'::text, 'postponed'::text])`),
+	check("antifraud_review_reminder_sent_count_check", sql`sent_count >= 0`),
+]);
+
+export const antifraud_review_workflow = pgTable("antifraud_review_workflow", {
+	review_id: uuid().primaryKey().notNull(),
+	queue_state: text().default('normal').notNull(),
+	evidence: jsonb().default({}).notNull(),
+	postponed_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	postponed_by: uuid(),
+	state_updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("antifraud_review_workflow_postponed_idx").using("btree", table.postponed_until.asc().nullsLast().op("timestamptz_ops"), table.review_id.asc().nullsLast().op("timestamptz_ops")).where(sql`(postponed_until IS NOT NULL)`),
+	index("antifraud_review_workflow_queue_idx").using("btree", table.queue_state.asc().nullsLast().op("text_ops"), table.review_id.asc().nullsLast().op("uuid_ops")),
+	foreignKey({
+			columns: [table.postponed_by],
+			foreignColumns: [admin_users.id],
+			name: "antifraud_review_workflow_postponed_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.review_id],
+			foreignColumns: [antifraud_reviews.id],
+			name: "antifraud_review_workflow_review_id_fkey"
+		}).onDelete("cascade"),
+	check("antifraud_review_workflow_state_check", sql`queue_state = ANY (ARRAY['priority'::text, 'normal'::text, 'waiting_kyc'::text])`),
+]);
+
+export const discord_vip_channel_link_operations = pgTable("discord_vip_channel_link_operations", {
+	interaction_id: text().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	user_id: text().notNull(),
+	channel_id: text().notNull(),
+	actor_discord_user_id: text().notNull(),
+	status: text().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	member_discord_user_id: text(),
+	vip_tag_added: boolean().default(false).notNull(),
+}, (table) => [
+	index("discord_vip_channel_link_operations_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	check("discord_vip_channel_link_operations_actor_id_check", sql`actor_discord_user_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_interaction_id_check", sql`interaction_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_vip_channel_link_operations_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_vip_channel_link_operations_status_check", sql`status = ANY (ARRAY['linked'::text, 'updated'::text, 'already_linked'::text])`),
+	check("discord_vip_channel_link_operations_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
+]);
+
+export const pack_build_draft_revisions = pgTable("pack_build_draft_revisions", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	request_id: uuid().notNull(),
+	revision: integer().notNull(),
+	changed_by: uuid(),
+	change_kind: text().default('saved').notNull(),
+	name: text().notNull(),
+	slug: text().notNull(),
+	request_payload: jsonb().notNull(),
+	preview_edge: numeric({ precision: 8, scale:  6 }).notNull(),
+	preview_win_rate: numeric({ precision: 8, scale:  6 }).notNull(),
+	preview_max_win: numeric({ precision: 14, scale:  2 }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("pack_build_draft_revisions_request_created_idx").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops")),
+	foreignKey({
+			columns: [table.changed_by],
+			foreignColumns: [admin_users.id],
+			name: "pack_build_draft_revisions_changed_by_fkey"
+		}).onUpdate("cascade").onDelete("set null"),
+	foreignKey({
+			columns: [table.request_id],
+			foreignColumns: [pack_creation_requests.id],
+			name: "pack_build_draft_revisions_request_id_fkey"
+		}).onUpdate("cascade").onDelete("cascade"),
+	unique("pack_build_draft_revisions_request_revision_key").on(table.request_id, table.revision),
+	check("pack_build_draft_revisions_payload_object_check", sql`jsonb_typeof(request_payload) = 'object'::text`),
+]);
+
+export const discord_reminder_jobs = pgTable("discord_reminder_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	interaction_id: text().notNull(),
+	guild_id: text().notNull(),
+	source_channel_id: text().notNull(),
+	target_channel_id: text().notNull(),
+	user_id: text().notNull(),
+	due_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	available_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(10).notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	delivered_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_reminder_jobs_claim_idx").using("btree", table.available_at.asc().nullsLast().op("uuid_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_reminder_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
+	unique("discord_reminder_jobs_interaction_unique").on(table.interaction_id),
+	check("discord_reminder_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_reminder_jobs_guild_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_reminder_jobs_interaction_check", sql`interaction_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_reminder_jobs_source_channel_check", sql`source_channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_reminder_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+	check("discord_reminder_jobs_target_channel_check", sql`target_channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_reminder_jobs_user_check", sql`user_id ~ '^[0-9]{17,20}$'::text`),
+]);
+
+export const discord_creator_signup_scan_state = pgTable("discord_creator_signup_scan_state", {
+	singleton_id: smallint().default(1).primaryKey().notNull(),
+	scan_through_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	check("discord_creator_signup_scan_lease_shape_check", sql`((lease_token IS NULL) AND (lease_owner IS NULL) AND (leased_until IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (leased_until IS NOT NULL))`),
+	check("discord_creator_signup_scan_singleton_check", sql`singleton_id = 1`),
+]);
+
+export const discord_creator_signup_jobs = pgTable("discord_creator_signup_jobs", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	setup_id: uuid().notNull(),
+	source_signup_id: uuid().notNull(),
+	creator_user_id: text().notNull(),
+	referred_user_id: text().notNull(),
+	referred_username: text(),
+	affiliate_code: text().notNull(),
+	occurred_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	status: text().default('pending').notNull(),
+	attempt_count: integer().default(0).notNull(),
+	max_attempts: integer().default(8).notNull(),
+	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	lease_token: uuid(),
+	lease_owner: text(),
+	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	discord_message_id: text(),
+	last_error_code: text(),
+	last_error_message: text(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	delivered_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("discord_creator_signup_jobs_claim_idx").using("btree", table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("uuid_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
+	index("discord_creator_signup_jobs_setup_history_idx").using("btree", table.setup_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.setup_id],
+			foreignColumns: [discord_creator_setups.id],
+			name: "discord_creator_signup_jobs_setup_id_fkey"
+		}).onDelete("cascade"),
+	unique("discord_creator_signup_jobs_source_unique").on(table.source_signup_id),
+	check("discord_creator_signup_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
+	check("discord_creator_signup_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'delivered'::text, 'dead'::text])`),
+]);
+
+export const discord_message_snapshots = pgTable("discord_message_snapshots", {
+	message_id: text().primaryKey().notNull(),
+	guild_id: text().notNull(),
+	channel_id: text().notNull(),
+	author_id: text(),
+	author_username: text(),
+	author_display_name: text(),
+	author_is_bot: boolean(),
+	webhook_id: text(),
+	content: text(),
+	attachments: jsonb().default([]).notNull(),
+	referenced_message_id: text(),
+	discord_created_at: timestamp({ withTimezone: true, mode: 'string' }),
+	discord_edited_at: timestamp({ withTimezone: true, mode: 'string' }),
+	deleted_at: timestamp({ withTimezone: true, mode: 'string' }),
+	first_observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	last_observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	excluded_from_logging: boolean().default(false).notNull(),
+}, (table) => [
+	index("discord_message_snapshots_author_observed_idx").using("btree", table.author_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(author_id IS NOT NULL)`),
+	index("discord_message_snapshots_channel_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.channel_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("discord_message_snapshots_guild_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")),
+	check("discord_message_snapshots_attachments_array_check", sql`jsonb_typeof(attachments) = 'array'::text`),
+	check("discord_message_snapshots_author_id_check", sql`(author_id IS NULL) OR (author_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_message_snapshots_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_snapshots_content_length_check", sql`(content IS NULL) OR (char_length(content) <= 4000)`),
+	check("discord_message_snapshots_display_name_length_check", sql`(author_display_name IS NULL) OR (char_length(author_display_name) <= 100)`),
+	check("discord_message_snapshots_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_snapshots_message_id_check", sql`message_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_snapshots_reference_id_check", sql`(referenced_message_id IS NULL) OR (referenced_message_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_message_snapshots_username_length_check", sql`(author_username IS NULL) OR (char_length(author_username) <= 100)`),
+	check("discord_message_snapshots_webhook_id_check", sql`(webhook_id IS NULL) OR (webhook_id ~ '^[0-9]{17,20}$'::text)`),
+]);
+
+export const discord_message_events = pgTable("discord_message_events", {
+	event_id: uuid().primaryKey().notNull(),
+	event_type: text().notNull(),
+	message_id: text().notNull(),
+	guild_id: text().notNull(),
+	channel_id: text().notNull(),
+	author_id: text(),
+	author_username: text(),
+	author_display_name: text(),
+	before_state: jsonb().notNull(),
+	after_state: jsonb(),
+	discord_created_at: timestamp({ withTimezone: true, mode: 'string' }),
+	observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_message_events_author_observed_idx").using("btree", table.author_id.asc().nullsLast().op("timestamptz_ops"), table.observed_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(author_id IS NOT NULL)`),
+	index("discord_message_events_guild_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.observed_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("discord_message_events_message_observed_idx").using("btree", table.message_id.asc().nullsLast().op("timestamptz_ops"), table.observed_at.asc().nullsLast().op("timestamptz_ops")),
+	check("discord_message_events_after_object_check", sql`(after_state IS NULL) OR (jsonb_typeof(after_state) = 'object'::text)`),
+	check("discord_message_events_author_id_check", sql`(author_id IS NULL) OR (author_id ~ '^[0-9]{17,20}$'::text)`),
+	check("discord_message_events_before_object_check", sql`jsonb_typeof(before_state) = 'object'::text`),
+	check("discord_message_events_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_events_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_events_message_id_check", sql`message_id ~ '^[0-9]{17,20}$'::text`),
+	check("discord_message_events_type_check", sql`event_type = ANY (ARRAY['create'::text, 'update'::text, 'delete'::text])`),
+]);
+
+export const admin_fiat_credit_reviews = pgTable("admin_fiat_credit_reviews", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	deposit_intent_id: uuid().notNull(),
+	user_id: text().notNull(),
+	provider: text().default('whop').notNull(),
+	provider_payment_id: text().notNull(),
+	currency: text().notNull(),
+	amount_cents: integer().notNull(),
+	customer_total_cents: integer(),
+	status: text().default('active').notNull(),
+	staff_decision: text(),
+	decision_reason: text(),
+	decided_by: uuid(),
+	decision_idempotency_key: uuid(),
+	decided_at: timestamp({ withTimezone: true, mode: 'string' }),
+	containment_error: text(),
+	contained_at: timestamp({ withTimezone: true, mode: 'string' }),
+	resolution_action: text(),
+	resolution_reason: text(),
+	resolution_idempotency_key: uuid(),
+	resolution_requested_by: uuid(),
+	resolution_requested_at: timestamp({ withTimezone: true, mode: 'string' }),
+	refund_status: text().default('not_requested').notNull(),
+	provider_status: text(),
+	provider_substatus: text(),
+	refunded_amount: numeric({ precision: 20, scale:  2 }),
+	refund_error_code: text(),
+	refund_error_message: text(),
+	refund_completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	ban_status: text().default('not_requested').notNull(),
+	ban_error_message: text(),
+	ban_completed_at: timestamp({ withTimezone: true, mode: 'string' }),
+	attempt_count: integer().default(0).notNull(),
+	version: integer().default(0).notNull(),
+	resolved_by: uuid(),
+	resolved_at: timestamp({ withTimezone: true, mode: 'string' }),
+	last_error: text(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("admin_fiat_credit_reviews_declined_idx").using("btree", table.decided_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("uuid_ops")).where(sql`(staff_decision = 'decline'::text)`),
+	index("admin_fiat_credit_reviews_status_created_idx").using("btree", table.status.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("uuid_ops")),
+	index("admin_fiat_credit_reviews_user_created_idx").using("btree", table.user_id.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.decided_by],
+			foreignColumns: [admin_users.id],
+			name: "admin_fiat_credit_reviews_decided_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.resolution_requested_by],
+			foreignColumns: [admin_users.id],
+			name: "admin_fiat_credit_reviews_resolution_requested_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.resolved_by],
+			foreignColumns: [admin_users.id],
+			name: "admin_fiat_credit_reviews_resolved_by_fkey"
+		}).onDelete("set null"),
+	unique("admin_fiat_credit_reviews_decision_idempotency_key_key").on(table.decision_idempotency_key),
+	unique("admin_fiat_credit_reviews_deposit_intent_id_key").on(table.deposit_intent_id),
+	unique("admin_fiat_credit_reviews_provider_payment_id_key").on(table.provider_payment_id),
+	unique("admin_fiat_credit_reviews_resolution_idempotency_key_key").on(table.resolution_idempotency_key),
+	check("admin_fiat_credit_reviews_amount_check", sql`(amount_cents > 0) AND ((customer_total_cents IS NULL) OR (customer_total_cents > 0))`),
+	check("admin_fiat_credit_reviews_attempt_count_check", sql`attempt_count >= 0`),
+	check("admin_fiat_credit_reviews_ban_status_check", sql`ban_status = ANY (ARRAY['not_requested'::text, 'processing'::text, 'succeeded'::text, 'already_banned'::text, 'failed'::text])`),
+	check("admin_fiat_credit_reviews_decision_reason_check", sql`(decision_reason IS NULL) OR ((char_length(decision_reason) >= 3) AND (char_length(decision_reason) <= 500))`),
+	check("admin_fiat_credit_reviews_provider_check", sql`provider = 'whop'::text`),
+	check("admin_fiat_credit_reviews_refund_status_check", sql`refund_status = ANY (ARRAY['not_requested'::text, 'processing'::text, 'succeeded'::text, 'already_refunded'::text, 'not_refundable'::text, 'failed'::text, 'unknown'::text])`),
+	check("admin_fiat_credit_reviews_resolution_action_check", sql`(resolution_action IS NULL) OR (resolution_action = ANY (ARRAY['refund'::text, 'ban'::text, 'refund_and_ban'::text]))`),
+	check("admin_fiat_credit_reviews_resolution_reason_check", sql`(resolution_reason IS NULL) OR ((char_length(resolution_reason) >= 3) AND (char_length(resolution_reason) <= 500))`),
+	check("admin_fiat_credit_reviews_staff_decision_check", sql`(staff_decision IS NULL) OR (staff_decision = ANY (ARRAY['approve'::text, 'decline'::text]))`),
+	check("admin_fiat_credit_reviews_status_check", sql`status = ANY (ARRAY['active'::text, 'approving'::text, 'approval_failed'::text, 'approved'::text, 'containing'::text, 'containment_failed'::text, 'declined'::text, 'resolving'::text, 'resolution_failed'::text, 'resolved'::text])`),
+	check("admin_fiat_credit_reviews_version_check", sql`version >= 0`),
+]);
+
+export const antifraud_signals = pgTable("antifraud_signals", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	external_id: text(),
+	kind: text().notNull(),
+	severity: text().default('medium').notNull(),
+	risk_score: integer(),
+	target_user_id: text(),
+	target_username: text(),
+	summary: text().notNull(),
+	payload: jsonb(),
+	review_id: uuid(),
+	received_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	containment_outbox_status: text(),
+	containment_outbox_error: text(),
+	containment_outbox_attempts: integer().default(0).notNull(),
+	containment_applied_at: timestamp({ withTimezone: true, mode: 'string' }),
+}, (table) => [
+	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+	uniqueIndex("antifraud_signals_external_uniq").using("btree", table.external_id.asc().nullsLast().op("text_ops")).where(sql`(external_id IS NOT NULL)`),
+	index("antifraud_signals_received_idx").using("btree", table.received_at.desc().nullsFirst().op("timestamptz_ops")),
+	index("antifraud_signals_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.review_id],
+			foreignColumns: [antifraud_reviews.id],
+			name: "antifraud_signals_review_id_fkey"
+		}).onDelete("set null"),
+	check("antifraud_signals_containment_outbox_attempts_check", sql`containment_outbox_attempts >= 0`),
+	check("antifraud_signals_containment_outbox_status_check", sql`(containment_outbox_status IS NULL) OR (containment_outbox_status = ANY (ARRAY['pending'::text, 'applied'::text, 'skipped'::text, 'failed'::text]))`),
+]);
+
+export const admin_audit_write_failures = pgTable("admin_audit_write_failures", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	admin_user_id: uuid(),
+	event_type: text().notNull(),
+	target_user_id: text(),
+	ip: text(),
+	metadata: jsonb(),
+	error_message: text(),
+	attempt_count: integer().default(0).notNull(),
+	resolved_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("admin_audit_write_failures_unresolved_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(resolved_at IS NULL)`),
+	check("admin_audit_write_failures_attempt_count_check", sql`attempt_count >= 0`),
+]);
+
 export const creator_agreement_documents = pgTable("creator_agreement_documents", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	version: integer().notNull(),
@@ -1834,23 +2544,47 @@ export const creator_agreement_documents = pgTable("creator_agreement_documents"
 	published_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
+	index("creator_agreement_documents_published_idx").using("btree", table.published_at.desc().nullsFirst().op("int4_ops"), table.version.desc().nullsFirst().op("int4_ops")),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "creator_agreement_documents_created_by_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.published_by],
+			foreignColumns: [admin_users.id],
+			name: "creator_agreement_documents_published_by_fkey"
+		}).onDelete("set null"),
 	unique("creator_agreement_documents_version_key").on(table.version),
-	index("creator_agreement_documents_published_idx").on(table.published_at.desc(), table.version.desc()),
-	foreignKey({ columns: [table.created_by], foreignColumns: [admin_users.id], name: "creator_agreement_documents_created_by_fkey" }).onDelete("set null"),
-	foreignKey({ columns: [table.published_by], foreignColumns: [admin_users.id], name: "creator_agreement_documents_published_by_fkey" }).onDelete("set null"),
-	check("creator_agreement_documents_version_check", sql`version > 0`),
 	check("creator_agreement_documents_checksum_check", sql`checksum ~ '^[a-f0-9]{64}$'::text`),
+	check("creator_agreement_documents_version_check", sql`version > 0`),
 ]);
 
-export const creator_agreement_lines = pgTable("creator_agreement_lines", {
-	document_id: uuid().notNull(),
-	line_number: integer().notNull(),
-	text: text().notNull(),
+export const creator_deal_approval_events = pgTable("creator_deal_approval_events", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	request_id: uuid().notNull(),
+	event_type: text().notNull(),
+	actor_kind: text().notNull(),
+	actor_admin_user_id: uuid(),
+	actor_discord_user_id: text(),
+	interaction_id: text(),
+	metadata: jsonb(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	primaryKey({ columns: [table.document_id, table.line_number] }),
-	foreignKey({ columns: [table.document_id], foreignColumns: [creator_agreement_documents.id], name: "creator_agreement_lines_document_id_fkey" }).onDelete("restrict"),
-	check("creator_agreement_lines_number_check", sql`line_number > 0`),
-	check("creator_agreement_lines_text_check", sql`length(btrim(text)) BETWEEN 1 AND 1000`),
+	uniqueIndex("creator_deal_approval_events_interaction_unique").using("btree", table.interaction_id.asc().nullsLast().op("text_ops")).where(sql`(interaction_id IS NOT NULL)`),
+	index("creator_deal_approval_events_request_idx").using("btree", table.request_id.asc().nullsLast().op("uuid_ops"), table.created_at.asc().nullsLast().op("uuid_ops"), table.id.asc().nullsLast().op("timestamptz_ops")),
+	foreignKey({
+			columns: [table.actor_admin_user_id],
+			foreignColumns: [admin_users.id],
+			name: "creator_deal_approval_events_actor_admin_user_id_fkey"
+		}).onDelete("set null"),
+	foreignKey({
+			columns: [table.request_id],
+			foreignColumns: [creator_deal_approval_requests.id],
+			name: "creator_deal_approval_events_request_id_fkey"
+		}).onDelete("restrict"),
+	check("creator_deal_approval_events_actor_check", sql`actor_kind = ANY (ARRAY['admin'::text, 'creator'::text, 'bot'::text, 'system'::text])`),
+	check("creator_deal_approval_events_discord_actor_check", sql`(actor_discord_user_id IS NULL) OR (actor_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
 ]);
 
 export const creator_deal_approval_requests = pgTable("creator_deal_approval_requests", {
@@ -1899,241 +2633,71 @@ export const creator_deal_approval_requests = pgTable("creator_deal_approval_req
 	window_start_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	window_end_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 }, (table) => [
-	foreignKey({ columns: [table.discord_setup_id], foreignColumns: [discord_creator_setups.id], name: "creator_deal_approval_requests_setup_fkey" }).onDelete("restrict"),
-	foreignKey({ columns: [table.agreement_document_id], foreignColumns: [creator_agreement_documents.id], name: "creator_deal_approval_requests_agreement_fkey" }).onDelete("restrict"),
-	foreignKey({ columns: [table.submitted_by], foreignColumns: [admin_users.id], name: "creator_deal_approval_requests_submitted_by_fkey" }).onDelete("restrict"),
-	uniqueIndex("creator_deal_approval_one_unresolved_creator").on(table.creator_user_id, table.request_kind).where(sql`status IN ('pending_delivery','awaiting_continue','awaiting_decision','approved_provisioning','provisioning_failed','delivery_failed')`),
-	index("creator_deal_approval_creator_history_idx").on(table.creator_user_id, table.created_at.desc(), table.id.desc()),
-	index("creator_deal_approval_delivery_claim_idx").on(table.guild_id, table.delivery_available_at, table.created_at).where(sql`status = 'pending_delivery'`),
-]);
-
-export const creator_deal_approval_events = pgTable("creator_deal_approval_events", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	request_id: uuid().notNull(),
-	event_type: text().notNull(),
-	actor_kind: text().notNull(),
-	actor_admin_user_id: uuid(),
-	actor_discord_user_id: text(),
-	interaction_id: text(),
-	metadata: jsonb(),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	foreignKey({ columns: [table.request_id], foreignColumns: [creator_deal_approval_requests.id], name: "creator_deal_approval_events_request_fkey" }).onDelete("restrict"),
-	foreignKey({ columns: [table.actor_admin_user_id], foreignColumns: [admin_users.id], name: "creator_deal_approval_events_admin_actor_fkey" }).onDelete("set null"),
-	index("creator_deal_approval_events_request_idx").on(table.request_id, table.created_at, table.id),
-	uniqueIndex("creator_deal_approval_events_interaction_unique").on(table.interaction_id).where(sql`interaction_id IS NOT NULL`),
-]);
-
-export const discord_vip_channel_links = pgTable("discord_vip_channel_links", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	guild_id: text().notNull(),
-	user_id: text().notNull(),
-	channel_id: text().notNull(),
-	member_discord_user_id: text(),
-	linked_by_discord_user_id: text().notNull(),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_vip_channel_links_updated_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.updated_at.desc().nullsFirst().op("timestamptz_ops")),
-	unique("discord_vip_channel_links_guild_channel_unique").on(table.guild_id, table.channel_id),
-	unique("discord_vip_channel_links_guild_user_unique").on(table.guild_id, table.user_id),
-	uniqueIndex("discord_vip_channel_links_guild_member_unique").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.member_discord_user_id.asc().nullsLast().op("text_ops")).where(sql`member_discord_user_id IS NOT NULL`),
-	check("discord_vip_channel_links_actor_id_check", sql`linked_by_discord_user_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_links_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_links_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_links_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
-	check("discord_vip_channel_links_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
-]);
-
-export const discord_vip_channel_link_operations = pgTable("discord_vip_channel_link_operations", {
-	interaction_id: text().primaryKey().notNull(),
-	guild_id: text().notNull(),
-	user_id: text().notNull(),
-	channel_id: text().notNull(),
-	member_discord_user_id: text(),
-	actor_discord_user_id: text().notNull(),
-	status: text().notNull(),
-	vip_tag_added: boolean().default(false).notNull(),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_vip_channel_link_operations_created_idx").using("btree", table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	check("discord_vip_channel_link_operations_actor_id_check", sql`actor_discord_user_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_link_operations_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_link_operations_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_link_operations_interaction_id_check", sql`interaction_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_vip_channel_link_operations_member_id_check", sql`(member_discord_user_id IS NULL) OR (member_discord_user_id ~ '^[0-9]{17,20}$'::text)`),
-	check("discord_vip_channel_link_operations_status_check", sql`status = ANY (ARRAY['linked'::text, 'updated'::text, 'already_linked'::text])`),
-	check("discord_vip_channel_link_operations_user_id_check", sql`((length(user_id) >= 8) AND (length(user_id) <= 64)) AND (user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
-]);
-
-export const discord_message_snapshots = pgTable("discord_message_snapshots", {
-	message_id: text().primaryKey().notNull(),
-	guild_id: text().notNull(),
-	channel_id: text().notNull(),
-	author_id: text(),
-	author_username: text(),
-	author_display_name: text(),
-	author_is_bot: boolean(),
-	webhook_id: text(),
-	content: text(),
-	attachments: jsonb().default([]).notNull(),
-	referenced_message_id: text(),
-	discord_created_at: timestamp({ withTimezone: true, mode: 'string' }),
-	discord_edited_at: timestamp({ withTimezone: true, mode: 'string' }),
-	deleted_at: timestamp({ withTimezone: true, mode: 'string' }),
-	first_observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
-	last_observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_message_snapshots_author_observed_idx").using("btree", table.author_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`author_id IS NOT NULL`),
-	index("discord_message_snapshots_channel_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("discord_message_snapshots_guild_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.last_observed_at.desc().nullsFirst().op("timestamptz_ops")),
-	check("discord_message_snapshots_attachments_array_check", sql`jsonb_typeof(attachments) = 'array'::text`),
-	check("discord_message_snapshots_author_id_check", sql`(author_id IS NULL) OR (author_id ~ '^[0-9]{17,20}$'::text)`),
-	check("discord_message_snapshots_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_snapshots_content_length_check", sql`(content IS NULL) OR (char_length(content) <= 4000)`),
-	check("discord_message_snapshots_display_name_length_check", sql`(author_display_name IS NULL) OR (char_length(author_display_name) <= 100)`),
-	check("discord_message_snapshots_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_snapshots_message_id_check", sql`message_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_snapshots_reference_id_check", sql`(referenced_message_id IS NULL) OR (referenced_message_id ~ '^[0-9]{17,20}$'::text)`),
-	check("discord_message_snapshots_username_length_check", sql`(author_username IS NULL) OR (char_length(author_username) <= 100)`),
-	check("discord_message_snapshots_webhook_id_check", sql`(webhook_id IS NULL) OR (webhook_id ~ '^[0-9]{17,20}$'::text)`),
-]);
-
-export const discord_message_events = pgTable("discord_message_events", {
-	event_id: uuid().primaryKey().notNull(),
-	event_type: text().notNull(),
-	message_id: text().notNull(),
-	guild_id: text().notNull(),
-	channel_id: text().notNull(),
-	author_id: text(),
-	author_username: text(),
-	author_display_name: text(),
-	before_state: jsonb().notNull(),
-	after_state: jsonb(),
-	discord_created_at: timestamp({ withTimezone: true, mode: 'string' }),
-	observed_at: timestamp({ withTimezone: true, mode: 'string' }).notNull(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
-	index("discord_message_events_author_observed_idx").using("btree", table.author_id.asc().nullsLast().op("text_ops"), table.observed_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`author_id IS NOT NULL`),
-	index("discord_message_events_guild_observed_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.observed_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("discord_message_events_message_observed_idx").using("btree", table.message_id.asc().nullsLast().op("text_ops"), table.observed_at.asc().nullsLast().op("timestamptz_ops")),
-	check("discord_message_events_after_object_check", sql`(after_state IS NULL) OR (jsonb_typeof(after_state) = 'object'::text)`),
-	check("discord_message_events_author_id_check", sql`(author_id IS NULL) OR (author_id ~ '^[0-9]{17,20}$'::text)`),
-	check("discord_message_events_before_object_check", sql`jsonb_typeof(before_state) = 'object'::text`),
-	check("discord_message_events_channel_id_check", sql`channel_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_events_guild_id_check", sql`guild_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_events_message_id_check", sql`message_id ~ '^[0-9]{17,20}$'::text`),
-	check("discord_message_events_type_check", sql`event_type = ANY (ARRAY['create'::text, 'update'::text, 'delete'::text])`),
-]);
-
-export const admin_whop_refund_batches = pgTable("admin_whop_refund_batches", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	requested_by: uuid(),
-	selection_mode: text().notNull(),
-	reason: text().notNull(),
-	status: text().default('pending').notNull(),
-	requested_count: integer().default(0).notNull(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
-}, (table) => [
-	index("admin_whop_refund_batches_requested_created_idx").using("btree", table.requested_by.asc().nullsLast().op("timestamptz_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	index("admin_whop_refund_batches_status_updated_idx").using("btree", table.status.asc().nullsLast().op("text_ops"), table.updated_at.desc().nullsFirst().op("text_ops")),
+	index("creator_deal_approval_creator_history_idx").using("btree", table.creator_user_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("text_ops")),
+	index("creator_deal_approval_delivery_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.delivery_available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("text_ops")).where(sql`(status = 'pending_delivery'::text)`),
+	uniqueIndex("creator_deal_approval_one_unresolved_creator").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops"), table.request_kind.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['pending_delivery'::text, 'awaiting_continue'::text, 'awaiting_decision'::text, 'approved_provisioning'::text, 'provisioning_failed'::text, 'delivery_failed'::text]))`),
 	foreignKey({
-			columns: [table.requested_by],
-			foreignColumns: [admin_users.id],
-			name: "admin_whop_refund_batches_requested_by_fkey"
-		}).onDelete("set null"),
-	check("admin_whop_refund_batches_requested_count_check", sql`requested_count >= 0`),
-	check("admin_whop_refund_batches_selection_mode_check", sql`selection_mode = ANY (ARRAY['payments'::text, 'users'::text, 'all'::text])`),
-	check("admin_whop_refund_batches_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'completed'::text, 'completed_with_issues'::text])`),
-]);
-
-export const admin_whop_refund_items = pgTable("admin_whop_refund_items", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	batch_id: uuid().notNull(),
-	user_id: text().notNull(),
-	deposit_intent_id: uuid().notNull(),
-	provider_payment_id: text().notNull(),
-	currency: text().notNull(),
-	original_amount_cents: integer().notNull(),
-	status: text().default('pending').notNull(),
-	attempt_count: integer().default(0).notNull(),
-	lease_token: uuid(),
-	leased_until: timestamp({ withTimezone: true, mode: 'string' }),
-	provider_status: text(),
-	provider_substatus: text(),
-	refunded_amount: numeric({ precision: 20, scale:  2 }),
-	error_code: text(),
-	error_message: text(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	completed_at: timestamp({ withTimezone: true, mode: 'string' }),
-}, (table) => [
-	index("admin_whop_refund_items_batch_status_idx").using("btree", table.batch_id.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")),
-	index("admin_whop_refund_items_user_created_idx").using("btree", table.user_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("text_ops")),
-	foreignKey({
-			columns: [table.batch_id],
-			foreignColumns: [admin_whop_refund_batches.id],
-			name: "admin_whop_refund_items_batch_id_fkey"
+			columns: [table.agreement_document_id],
+			foreignColumns: [creator_agreement_documents.id],
+			name: "creator_deal_approval_requests_agreement_document_id_fkey"
 		}).onDelete("restrict"),
-	unique("admin_whop_refund_items_payment_unique").on(table.provider_payment_id),
-	check("admin_whop_refund_items_amount_check", sql`original_amount_cents > 0`),
-	check("admin_whop_refund_items_attempt_count_check", sql`attempt_count >= 0`),
-	check("admin_whop_refund_items_status_check", sql`status = ANY (ARRAY['pending'::text, 'processing'::text, 'succeeded'::text, 'already_refunded'::text, 'not_refundable'::text, 'failed'::text, 'unknown'::text])`),
+	foreignKey({
+			columns: [table.discord_setup_id],
+			foreignColumns: [discord_creator_setups.id],
+			name: "creator_deal_approval_requests_discord_setup_id_fkey"
+		}).onDelete("restrict"),
+	foreignKey({
+			columns: [table.submitted_by],
+			foreignColumns: [admin_users.id],
+			name: "creator_deal_approval_requests_submitted_by_fkey"
+		}).onDelete("restrict"),
+	check("creator_deal_approval_checksum_check", sql`agreement_checksum ~ '^[a-f0-9]{64}$'::text`),
+	check("creator_deal_approval_creator_user_check", sql`((length(creator_user_id) >= 8) AND (length(creator_user_id) <= 64)) AND (creator_user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
+	check("creator_deal_approval_delivery_attempt_check", sql`(delivery_attempt_count >= 0) AND ((delivery_max_attempts >= 1) AND (delivery_max_attempts <= 25))`),
+	check("creator_deal_approval_discord_ids_check", sql`(creator_discord_user_id ~ '^[0-9]{17,20}$'::text) AND (guild_id ~ '^[0-9]{17,20}$'::text) AND (category_id ~ '^[0-9]{17,20}$'::text) AND (chat_channel_id ~ '^[0-9]{17,20}$'::text)`),
+	check("creator_deal_approval_kind_payload_check", sql`((request_kind = 'deal'::text) AND (deal_payload IS NOT NULL)) OR ((request_kind = 'leaderboard_only'::text) AND (leaderboard_payload IS NOT NULL) AND (deal_payload IS NULL) AND (reward_payload IS NULL)) OR ((request_kind = 'rewards_only'::text) AND (reward_payload IS NOT NULL) AND (deal_payload IS NULL) AND (leaderboard_payload IS NULL))`),
+	check("creator_deal_approval_payload_check", sql`((deal_payload IS NULL) OR (jsonb_typeof(deal_payload) = 'object'::text)) AND ((reward_payload IS NULL) OR (jsonb_typeof(reward_payload) = 'object'::text)) AND ((leaderboard_payload IS NULL) OR (jsonb_typeof(leaderboard_payload) = 'object'::text)) AND (jsonb_typeof(agreement_lines) = 'array'::text) AND (jsonb_array_length(agreement_lines) > 0)`),
+	check("creator_deal_approval_provision_attempt_check", sql`provisioning_attempt_count >= 0`),
+	check("creator_deal_approval_request_kind_check", sql`request_kind = ANY (ARRAY['deal'::text, 'leaderboard_only'::text, 'rewards_only'::text])`),
+	check("creator_deal_approval_status_check", sql`status = ANY (ARRAY['pending_delivery'::text, 'awaiting_continue'::text, 'awaiting_decision'::text, 'approved_provisioning'::text, 'provisioning_failed'::text, 'completed'::text, 'declined'::text, 'delivery_failed'::text, 'cancelled'::text, 'expired'::text])`),
+	check("creator_deal_approval_window_check", sql`window_end_at > window_start_at`),
 ]);
 
-export const admin_fiat_credit_reviews = pgTable("admin_fiat_credit_reviews", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	deposit_intent_id: uuid().notNull(),
-	user_id: text().notNull(),
-	provider: text().default('whop').notNull(),
-	provider_payment_id: text().notNull(),
-	currency: text().notNull(),
-	amount_cents: integer().notNull(),
-	customer_total_cents: integer(),
-	status: text().default('active').notNull(),
-	staff_decision: text(),
-	decision_reason: text(),
-	decided_by: uuid(),
-	decision_idempotency_key: uuid(),
-	decided_at: timestamp({ withTimezone: true, mode: 'string' }),
-	containment_error: text(),
-	contained_at: timestamp({ withTimezone: true, mode: 'string' }),
-	resolution_action: text(),
-	resolution_reason: text(),
-	resolution_idempotency_key: uuid(),
-	resolution_requested_by: uuid(),
-	resolution_requested_at: timestamp({ withTimezone: true, mode: 'string' }),
-	refund_status: text().default('not_requested').notNull(),
-	provider_status: text(),
-	provider_substatus: text(),
-	refunded_amount: numeric({ precision: 20, scale: 2 }),
-	refund_error_code: text(),
-	refund_error_message: text(),
-	refund_completed_at: timestamp({ withTimezone: true, mode: 'string' }),
-	ban_status: text().default('not_requested').notNull(),
-	ban_error_message: text(),
-	ban_completed_at: timestamp({ withTimezone: true, mode: 'string' }),
-	attempt_count: integer().default(0).notNull(),
-	version: integer().default(0).notNull(),
-	resolved_by: uuid(),
-	resolved_at: timestamp({ withTimezone: true, mode: 'string' }),
-	last_error: text(),
-	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+export const creator_agreement_lines = pgTable("creator_agreement_lines", {
+	document_id: uuid().notNull(),
+	line_number: integer().notNull(),
+	text: text().notNull(),
 }, (table) => [
-	unique("admin_fiat_credit_reviews_intent_unique").on(table.deposit_intent_id),
-	unique("admin_fiat_credit_reviews_payment_unique").on(table.provider_payment_id),
-	unique("admin_fiat_credit_reviews_decision_key_unique").on(table.decision_idempotency_key),
-	unique("admin_fiat_credit_reviews_resolution_key_unique").on(table.resolution_idempotency_key),
-	index("admin_fiat_credit_reviews_status_created_idx").using("btree", table.status.asc().nullsLast(), table.created_at.desc().nullsFirst()),
-	index("admin_fiat_credit_reviews_user_created_idx").using("btree", table.user_id.asc().nullsLast(), table.created_at.desc().nullsFirst()),
-	foreignKey({ columns: [table.decided_by], foreignColumns: [admin_users.id], name: "admin_fiat_credit_reviews_decided_by_fkey" }).onDelete("set null"),
-	foreignKey({ columns: [table.resolution_requested_by], foreignColumns: [admin_users.id], name: "admin_fiat_credit_reviews_resolution_requested_by_fkey" }).onDelete("set null"),
-	foreignKey({ columns: [table.resolved_by], foreignColumns: [admin_users.id], name: "admin_fiat_credit_reviews_resolved_by_fkey" }).onDelete("set null"),
+	foreignKey({
+			columns: [table.document_id],
+			foreignColumns: [creator_agreement_documents.id],
+			name: "creator_agreement_lines_document_id_fkey"
+		}).onDelete("restrict"),
+	primaryKey({ columns: [table.document_id, table.line_number], name: "creator_agreement_lines_pkey"}),
+	check("creator_agreement_lines_number_check", sql`line_number > 0`),
+	check("creator_agreement_lines_text_check", sql`(length(btrim(text)) >= 1) AND (length(btrim(text)) <= 1000)`),
+]);
+
+export const discord_notification_channel_mentions = pgTable("discord_notification_channel_mentions", {
+	guild_id: text().notNull(),
+	channel_id: text().notNull(),
+	group_key: text().notNull(),
+	created_by: uuid(),
+	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("discord_notification_channel_mentions_channel_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.channel_id.asc().nullsLast().op("text_ops")),
+	foreignKey({
+			columns: [table.guild_id, table.channel_id],
+			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
+			name: "discord_notification_channel_mentions_channel_fk"
+		}).onDelete("cascade"),
+	foreignKey({
+			columns: [table.created_by],
+			foreignColumns: [admin_users.id],
+			name: "discord_notification_channel_mentions_created_by_fkey"
+		}).onDelete("set null"),
+	primaryKey({ columns: [table.channel_id, table.group_key, table.guild_id], name: "discord_notification_channel_mentions_pkey"}),
+	check("discord_notification_channel_mentions_group_check", sql`group_key = ANY (ARRAY['owner'::text, 'managers'::text, 'dev'::text, 'support'::text])`),
 ]);
 
 export const discord_notification_channels = pgTable("discord_notification_channels", {
@@ -2152,7 +2716,7 @@ export const discord_notification_channels = pgTable("discord_notification_chann
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
-	index("discord_notification_channels_guild_position_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available.asc().nullsLast().op("bool_ops"), table.position.asc().nullsLast().op("int4_ops"), table.name.asc().nullsLast().op("text_ops")),
+	index("discord_notification_channels_guild_position_idx").using("btree", table.guild_id.asc().nullsLast().op("int4_ops"), table.available.asc().nullsLast().op("bool_ops"), table.position.asc().nullsLast().op("text_ops"), table.name.asc().nullsLast().op("int4_ops")),
 	foreignKey({
 			columns: [table.guild_id],
 			foreignColumns: [discord_notification_guilds.guild_id],
@@ -2162,65 +2726,33 @@ export const discord_notification_channels = pgTable("discord_notification_chann
 	check("discord_notification_channels_id_check", sql`channel_id ~ '^[0-9]{15,21}$'::text`),
 ]);
 
-export const discord_notification_channel_settings = pgTable("discord_notification_channel_settings", {
-	guild_id: text().primaryKey().notNull(),
-	default_parent_id: text(),
-	updated_by: uuid(),
+export const discord_partnership_transcript_messages = pgTable("discord_partnership_transcript_messages", {
+	transcript_id: uuid().notNull(),
+	message_id: text().notNull(),
+	// You can use { mode: "bigint" } if numbers are exceeding js number limitations
+	ordinal: bigint({ mode: "number" }).notNull(),
+	author_id: text(),
+	author_username: text(),
+	author_display_name: text(),
+	author_avatar_url: text(),
+	content: text(),
+	discord_created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
+	discord_edited_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
+	referenced_message_id: text(),
+	attachments: jsonb().default([]).notNull(),
+	embeds: jsonb().default([]).notNull(),
+	stickers: jsonb().default([]).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 }, (table) => [
+	index("discord_partnership_transcript_messages_order_idx").using("btree", table.transcript_id.asc().nullsLast().op("uuid_ops"), table.ordinal.asc().nullsLast().op("int8_ops")),
 	foreignKey({
-			columns: [table.guild_id],
-			foreignColumns: [discord_notification_guilds.guild_id],
-			name: "discord_notification_channel_settings_guild_id_fkey"
-		}).onDelete("cascade"),
-	foreignKey({
-			columns: [table.guild_id, table.default_parent_id],
-			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
-			name: "discord_notification_channel_settings_parent_fk"
+			columns: [table.transcript_id],
+			foreignColumns: [discord_partnership_transcripts.id],
+			name: "discord_partnership_transcript_messages_transcript_id_fkey"
 		}).onDelete("restrict"),
-	foreignKey({
-			columns: [table.updated_by],
-			foreignColumns: [admin_users.id],
-			name: "discord_notification_channel_settings_updated_by_fkey"
-		}).onDelete("set null"),
-]);
-
-export const discord_notification_channel_jobs = pgTable("discord_notification_channel_jobs", {
-	id: uuid().defaultRandom().primaryKey().notNull(),
-	guild_id: text().notNull(),
-	parent_id: text().notNull(),
-	requested_name: text().notNull(),
-	status: text().default('pending').notNull(),
-	available_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	attempt_count: integer().default(0).notNull(),
-	max_attempts: integer().default(5).notNull(),
-	lease_token: uuid(),
-	lease_owner: text(),
-	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-	created_channel_id: text(),
-	created_channel_name: text(),
-	last_error_code: text(),
-	last_error_message: text(),
-	created_by: uuid(),
-	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-	completed_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
-}, (table) => [
-	index("discord_notification_channel_jobs_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'leased'::text]))`),
-	index("discord_notification_channel_jobs_history_idx").using("btree", table.guild_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
-	foreignKey({
-			columns: [table.created_by],
-			foreignColumns: [admin_users.id],
-			name: "discord_notification_channel_jobs_created_by_fkey"
-		}).onDelete("set null"),
-	foreignKey({
-			columns: [table.guild_id, table.parent_id],
-			foreignColumns: [discord_notification_channels.guild_id, discord_notification_channels.channel_id],
-			name: "discord_notification_channel_jobs_parent_fk"
-		}).onDelete("restrict"),
-	check("discord_notification_channel_jobs_attempt_check", sql`(attempt_count >= 0) AND ((max_attempts >= 1) AND (max_attempts <= 25))`),
-	check("discord_notification_channel_jobs_created_id_check", sql`(created_channel_id IS NULL) OR (created_channel_id ~ '^[0-9]{15,21}$'::text)`),
-	check("discord_notification_channel_jobs_name_check", sql`((char_length(requested_name) >= 1) AND (char_length(requested_name) <= 100)) AND (requested_name ~ '^[a-z0-9][a-z0-9-]*$'::text)`),
-	check("discord_notification_channel_jobs_status_check", sql`status = ANY (ARRAY['pending'::text, 'leased'::text, 'created'::text, 'dead'::text])`),
+	primaryKey({ columns: [table.message_id, table.transcript_id], name: "discord_partnership_transcript_messages_pkey"}),
+	unique("discord_partnership_transcript_messages_ordinal_unique").on(table.ordinal, table.transcript_id),
+	check("discord_partnership_transcript_messages_ids_check", sql`(message_id ~ '^[0-9]{17,20}$'::text) AND ((author_id IS NULL) OR (author_id ~ '^[0-9]{17,20}$'::text)) AND ((referenced_message_id IS NULL) OR (referenced_message_id ~ '^[0-9]{17,20}$'::text))`),
+	check("discord_partnership_transcript_messages_json_check", sql`(jsonb_typeof(attachments) = 'array'::text) AND (jsonb_array_length(attachments) <= 10) AND (jsonb_typeof(embeds) = 'array'::text) AND (jsonb_array_length(embeds) <= 10) AND (jsonb_typeof(stickers) = 'array'::text) AND (jsonb_array_length(stickers) <= 3)`),
+	check("discord_partnership_transcript_messages_text_check", sql`((author_username IS NULL) OR (length(author_username) <= 100)) AND ((author_display_name IS NULL) OR (length(author_display_name) <= 100)) AND ((content IS NULL) OR (length(content) <= 4000))`),
 ]);

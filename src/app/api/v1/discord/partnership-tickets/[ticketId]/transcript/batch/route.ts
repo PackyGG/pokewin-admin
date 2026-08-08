@@ -1,0 +1,12 @@
+import { z } from "zod";
+import { apiError, withApiKey } from "@/lib/api-auth/with-api-key";
+import { storePartnershipTranscriptBatch } from "@/lib/discord-partnership-tickets";
+import { partnershipError, Snowflake, strictJson, Uuid } from "../../../_shared";
+export const runtime="nodejs"; export const dynamic="force-dynamic";
+const HttpsUrl=z.string().url().max(2000).refine(value=>value.startsWith("https://"));
+const Attachment=z.object({id:Snowflake,name:z.string().min(1).max(255),url:HttpsUrl,contentType:z.string().max(120).nullable(),size:z.number().int().min(0).max(1_000_000_000).nullable()}).strict();
+const Embed=z.record(z.string(),z.unknown()).refine(value=>JSON.stringify(value).length<=20_000,"Embed is too large");
+const Sticker=z.object({id:Snowflake,name:z.string().min(1).max(100),format:z.string().max(30).nullable(),url:HttpsUrl.nullable()}).strict();
+const Message=z.object({messageId:Snowflake,ordinal:z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),authorId:Snowflake.nullable(),authorUsername:z.string().max(100).nullable(),authorDisplayName:z.string().max(100).nullable(),authorAvatarUrl:HttpsUrl.nullable(),content:z.string().max(4000).nullable(),createdAt:z.string().datetime({offset:true}),editedAt:z.string().datetime({offset:true}).nullable(),referencedMessageId:Snowflake.nullable(),attachments:z.array(Attachment).max(10),embeds:z.array(Embed).max(10),stickers:z.array(Sticker).max(3)}).strict();
+const Params=z.object({ticketId:Uuid}).strict(); const Body=z.object({closeOperationId:Uuid,batchId:Uuid,messages:z.array(Message).min(1).max(50)}).strict().superRefine((value,ctx)=>{const ids=new Set<string>();const ordinals=new Set<number>();for(const message of value.messages){if(ids.has(message.messageId)||ordinals.has(message.ordinal)){ctx.addIssue({code:"custom",message:"Message IDs and ordinals must be unique within a batch"});return;}ids.add(message.messageId);ordinals.add(message.ordinal);}});
+export const POST=withApiKey<{ticketId:string}>({scopes:["discord:partnership-tickets"]},async(request,{params})=>{const p=Params.safeParse(params);const raw=await strictJson(request);if(raw instanceof Response)return raw;const b=Body.safeParse(raw);if(!p.success||!b.success)return apiError(400,"invalid_request","Invalid transcript batch.");try{return await storePartnershipTranscriptBatch({ticketId:p.data.ticketId,...b.data});}catch(error){return partnershipError(error);}});

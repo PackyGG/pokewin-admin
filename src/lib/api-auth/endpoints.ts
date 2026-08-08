@@ -220,6 +220,56 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     scopes: ["discord:message-events"],
   },
   {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/prepare",
+    summary: "Idempotently reserve one active official-server partnership application before creating its Discord channel.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/complete",
+    summary: "Idempotently bind a reserved application to its newly-created ticket channel and initial message.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/cancel",
+    summary: "Cancel only an unprovisioned application reservation while preserving its durable lifecycle record.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/actions/prepare",
+    summary: "Reserve an idempotent Offer or Close button operation and move the ticket into its pending state.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/actions/[operationId]/complete",
+    summary: "Complete an Offer after the category move, or Close only after transcript delivery and channel deletion.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/actions/[operationId]/fail",
+    summary: "Record a bounded Discord operation error and safely restore the ticket's previous stable state.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/transcript/batch",
+    summary: "Idempotently persist a bounded batch of normalized Discord transcript messages and rich metadata.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/transcript/finalize",
+    summary: "Finalize a complete transcript only when the declared and stored message counts match.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/[ticketId]/transcript/delivered",
+    summary: "Record the transcript attachment message after delivery to the fixed official transcript channel.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/partnership-tickets/recovery",
+    summary: "List every nonterminal ticket with form, pending-operation, and transcript state needed for startup repair.",
+    scopes: ["discord:partnership-tickets"],
+  },
+  {
     method: "POST",
     path: "/api/v1/discord/creator-setups/deposit-settings",
     summary:

@@ -83,6 +83,12 @@ export const API_SCOPES = {
       "Persist bounded message snapshots, edits, and deletions from the Creator and VIP servers in the admin database. Excludes bot, webhook, and configured admin-group messages.",
     access: "admin-write",
   },
+  "discord:partnership-tickets": {
+    label: "Manage partnership tickets",
+    description:
+      "Create, move, close, recover, and durably archive official-server partnership applications and transcripts in the admin database.",
+    access: "admin-write",
+  },
   "discord:antifraud": {
     label: "Deliver Antifraud notifications",
     description:
