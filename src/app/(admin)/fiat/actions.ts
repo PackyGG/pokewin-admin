@@ -4,7 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { getPrimaryDrizzleDb } from "@/lib/db";
 import { site_config } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
@@ -121,7 +121,7 @@ export async function updateFiatConfigAction(input: unknown): Promise<{
 
   if (!updated[0]) throw new Error("Fiat setting was not updated");
 
-  await createAdminAuditEvent({
+  await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "fiat_config_updated",
     metadata: {

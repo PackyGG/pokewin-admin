@@ -99,6 +99,7 @@ test("global Fiat switch uses the backend-owned automatic-credit contract", () =
   assert.match(fiatConfigApi, /ResponseSchema\.safeParse/);
   assert.match(fraudConfigActions, /requireAntifraudManager\(/);
   assert.match(fraudConfigActions, /fiat_deposit_automatic_credit_updated/);
+  assert.match(fraudConfigActions, /createAdminAuditEventDurable/);
   assert.match(fraudConfigActions, /revalidatePath\("\/antifraud\/config"\)/);
 });
 
@@ -136,6 +137,7 @@ test("Fraud Config owns all four Fiat controls and hides raw Security config", (
   assert.match(fraudAccessCard, /Not configured/);
   assert.match(fraudAccessActions, /requireAntifraudManager\(/);
   assert.match(fraudAccessActions, /fiat_deposit_access_policy_updated/);
+  assert.match(fraudAccessActions, /createAdminAuditEventDurable/);
   assert.doesNotMatch(fraudAccessCard, /Country, KYC, fraud, payment/);
   assert.doesNotMatch(fraudAvailabilityCard, /updateFiatAccessControl/);
   assert.doesNotMatch(fraudAccessActions, /setGlobalFiatDeposits/);

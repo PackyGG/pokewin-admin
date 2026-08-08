@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import { resolveBackendApiConfig } from "@/lib/backend-api/config";
 import {
@@ -104,7 +104,7 @@ export async function updateFiatAutomaticCreditAction(input: {
     };
   }
 
-  await createAdminAuditEvent({
+  await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "fiat_deposit_automatic_credit_updated",
     metadata: {

@@ -29,6 +29,7 @@ export function GlobalFiatAvailabilityCard({
   const [isPending, startTransition] = useTransition();
   const [allowed, setAllowed] = useState(initialAllowed ?? false);
   const [requestedAllowed, setRequestedAllowed] = useState<boolean | null>(null);
+  const [cacheStale, setCacheStale] = useState(false);
 
   useEffect(() => {
     if (initialAllowed !== null) setAllowed(initialAllowed);
@@ -65,8 +66,10 @@ export function GlobalFiatAvailabilityCard({
         setAllowed(nextAllowed);
         setRequestedAllowed(null);
         if (result.siteConfigCacheReloaded) {
+          setCacheStale(false);
           toast.success(nextAllowed ? "Fiat deposits enabled globally" : "Fiat deposits disabled globally");
         } else {
+          setCacheStale(true);
           toast.warning(
             "The global Fiat gate was saved, but the backend cache did not reload. Reload the site-config cache before treating the change as live.",
             { duration: 12000 },
@@ -74,7 +77,8 @@ export function GlobalFiatAvailabilityCard({
         }
         router.refresh();
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : "Global Fiat update failed");
+        console.error("[fiat-availability] update failed", error);
+        toast.error("Global Fiat update failed. Refresh and try again.");
       }
     });
   }
@@ -96,7 +100,7 @@ export function GlobalFiatAvailabilityCard({
                   : "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
               }
             >
-              {allowed ? "Allowed" : "Disabled"}
+              {cacheStale ? "Saved · cache stale" : allowed ? "Allowed" : "Disabled"}
             </Badge>
             <Switch
               aria-label="Global Fiat deposits"
@@ -107,7 +111,14 @@ export function GlobalFiatAvailabilityCard({
           </div>
           <CardDescription>
             When disabled, card and wallet Fiat deposit methods are blocked site-wide.
+            Mandatory jurisdiction restrictions still apply when enabled.
           </CardDescription>
+          {cacheStale && (
+            <div role="status" className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-xs text-amber-700 dark:text-amber-300">
+              The database setting was saved, but the backend cache did not reload.
+              The displayed value is not confirmed active yet. Use Geo Blocking → Reload cache, then refresh this page.
+            </div>
+          )}
         </div>
       </CardHeader>
       <AlertDialog

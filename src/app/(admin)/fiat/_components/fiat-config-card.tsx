@@ -75,6 +75,10 @@ export function FiatConfigCard({
   const [globalPending, setGlobalPending] = useState(false);
 
   useEffect(() => {
+    setCardMax(byKey.get("card_deposit_max_usd")?.value ?? "");
+    setHoldThreshold(
+      byKey.get("deposit_withdrawal_hold_threshold_usd")?.value ?? "",
+    );
     setLockedMethods(
       parseMethods(byKey.get("locked_deposits_fiat")?.value),
     );
@@ -125,11 +129,8 @@ export function FiatConfigCard({
         router.refresh();
       } catch (error) {
         setLockedMethods(previousMethods);
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : "Global card-deposit update failed",
-        );
+        console.error("[fiat-config] global availability update failed", error);
+        toast.error("Global card-deposit update failed. Refresh and try again.");
       } finally {
         setGlobalPending(false);
       }
@@ -278,6 +279,7 @@ export function FiatConfigCard({
                     {globalCardDepositsEnabled ? "Enabled" : "Disabled"}
                   </span>
                   <Switch
+                    aria-label="Accept Whop fiat deposits"
                     checked={globalCardDepositsEnabled}
                     disabled={!canEdit || globalPending}
                     onCheckedChange={handleGlobalCardDeposits}

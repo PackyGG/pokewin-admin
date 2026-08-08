@@ -12,7 +12,10 @@ import {
 } from "@/lib/db-schema/main/schema";
 import { requireAdmin } from "@/lib/dal";
 import { requireCapability } from "@/lib/require-capability";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import {
+  createAdminAuditEvent,
+  createAdminAuditEventDurable,
+} from "@/lib/admin-audit";
 import { invalidateCountryRestrictionsCache } from "@/lib/invalidate-country-restrictions-cache";
 import { GEO_BLOCKING_CACHE_TAG } from "@/lib/queries/geo-blocking";
 import { FIAT_CACHE_TAG } from "@/lib/queries/fiat";
@@ -438,7 +441,7 @@ export async function setGlobalFiatDeposits(
     return { lockedMethods: nextSiteLocks };
   });
 
-  await createAdminAuditEvent({
+  await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: "country_restriction_updated",
     metadata: {

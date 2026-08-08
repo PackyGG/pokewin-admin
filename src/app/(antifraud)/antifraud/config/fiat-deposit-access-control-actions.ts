@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { actionErrorMessage } from "@/lib/antifraud/action-error-message";
 import {
   updateFiatAccessControl,
@@ -33,7 +33,7 @@ export async function updateFiatDepositAccessControlAction(input: {
       ...parsed.data,
       actorId: session.userId,
     });
-    await createAdminAuditEvent({
+    await createAdminAuditEventDurable({
       adminUserId: session.userId,
       eventType: "fiat_deposit_access_policy_updated",
       metadata: {

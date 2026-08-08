@@ -1,7 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { Loader2, Users } from "lucide-react";
+import { useEffect, useState, useTransition } from "react";
+import { Loader2, RefreshCw, Users } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
 import {
@@ -27,6 +28,7 @@ export function FiatDepositAccessControlCard({
 }: {
   initialStatus: FiatAccessControlStatus | null;
 }) {
+  const router = useRouter();
   const [status, setStatus] = useState(initialStatus);
   const [requested, setRequested] = useState<{ scope: Scope; enabled: boolean } | null>(null);
   // Staged position of the existing-accounts switch while no policy has ever
@@ -38,6 +40,19 @@ export function FiatDepositAccessControlCard({
   // before confirming. Once generation > 0 this is ignored entirely.
   const [pendingExisting, setPendingExisting] = useState(false);
   const [isPending, startTransition] = useTransition();
+
+  useEffect(() => {
+    if (!isPending) setStatus(initialStatus);
+  }, [initialStatus, isPending]);
+
+  const rolloutActive = status
+    ? ["queued", "running"].includes(status.existingAccounts.status)
+    : false;
+  useEffect(() => {
+    if (!rolloutActive) return;
+    const timer = window.setInterval(() => router.refresh(), 5_000);
+    return () => window.clearInterval(timer);
+  }, [rolloutActive, router]);
 
   if (!status || !status.configured) {
     return (
@@ -105,12 +120,23 @@ export function FiatDepositAccessControlCard({
             </div>
             <p className="text-xs text-muted-foreground">
               Applies the selected controller value to every account registered before confirmation.
-              {existing.generation > 0 && ` ${existing.succeeded.toLocaleString()} confirmed`}
+              {existing.generation > 0 &&
+                ` ${existing.processed.toLocaleString()} processed · ${existing.succeeded.toLocaleString()} confirmed`}
               {existing.failed > 0 && ` · ${existing.failed.toLocaleString()} retrying`}.
               {existingRolloutActive && " Wait for this rollout to finish before changing it again."}
               {existingUnconfigured &&
                 " No rollout has ever been applied, so this switch shows the value you are about to apply — not a value read from the backend."}
             </p>
+            {existing.cutoffAt && (
+              <p className="text-xs text-muted-foreground">
+                Scope frozen {new Date(existing.cutoffAt).toLocaleString()}
+                {existing.completedAt
+                  ? ` · Completed ${new Date(existing.completedAt).toLocaleString()}`
+                  : existingRolloutActive
+                    ? " · Refreshing automatically"
+                    : ""}
+              </p>
+            )}
             {existingStalled && (
               <p className="text-xs text-muted-foreground">
                 This rollout is retrying at least one account and will not finish on its own.
@@ -153,6 +179,17 @@ export function FiatDepositAccessControlCard({
             onCheckedChange={(enabled) => setRequested({ scope: "new-signups", enabled })}
           />
         </div>
+
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          disabled={isPending}
+          onClick={() => router.refresh()}
+        >
+          <RefreshCw className="size-3.5" />
+          Refresh status
+        </Button>
 
       </CardContent>
 

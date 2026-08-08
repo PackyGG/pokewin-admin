@@ -185,7 +185,7 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     trigger:
       "The environment-bound gate evaluates account state, current device/network evidence, risk policy, and the master switch.",
     actions: [
-      "Return a short-lived allow or deny decision",
+      "Return a fresh allow or deny decision for this exact checkout request",
       "Persist the full internal decision evidence",
       "Queue containment only for explicit containing rules",
     ],

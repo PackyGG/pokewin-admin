@@ -39,7 +39,8 @@ export const metadata = { title: "Fiat Deposits Guide · Antifraud" };
 // fiat-eligibility-policy.ts:46-47 MAX_TRUST_CREDIT = 30, granted only inside
 // the `if (!blocked)` block at :896-906.
 // Containment floor 70: src/lib/antifraud/fiat-eligibility-containment.ts:72.
-// fiat-deposit-identity-policy.ts:26-27 CARD_CHANGE_TRUST_DEPOSITS = 3.
+// fiat-deposit-identity-policy.ts:26-29 — card changes are time-sensitive:
+// withdrawal lock below 2h, review below 24h, watch-only afterwards.
 const gateFacts: readonly GuideFact[] = [
   {
     icon: Gauge,
@@ -64,9 +65,9 @@ const gateFacts: readonly GuideFact[] = [
   },
   {
     icon: CreditCard,
-    label: "Card grace",
-    value: "3 deposits",
-    detail: "Clean funded deposits after which a new card stops containing.",
+    label: "Card-change clock",
+    value: "2h / 24h",
+    detail: "Lock below 2h, review below 24h, watch after one day.",
     accent: "cyan",
   },
 ];
@@ -98,28 +99,28 @@ const requestBlockers = [
   "A disposable email domain, or a hit on the IP, fingerprint or email-domain blocklist",
 ] as const;
 
-// fiat-deposit-identity-policy.ts:249-251 (no baseline = no drift rules),
-// :253-264 email, :266-281 card + trust grace, :291-316 IP/device pairing,
+// fiat-deposit-identity-policy.ts (no baseline = no drift rules; email review;
+// time-sensitive card handling; IP/device pairing),
 // :23 "Missing evidence never contains."
 const driftRows = [
   {
     key: "email",
     cells: [
       "Checkout email changed",
-      <GuideBadge key="e" accent="rose">
-        Contains
+      <GuideBadge key="e" accent="amber">
+        Review
       </GuideBadge>,
-      "No grace. A different email on the same account is the strongest single drift signal.",
+      "A different payer email opens staff review. It never locks the account or requires KYC by itself.",
     ],
   },
   {
     key: "card",
     cells: [
-      "Card changed",
-      <GuideBadge key="e" accent="rose">
-        Contains
+      "Card changed (brand + last four)",
+      <GuideBadge key="e" accent="amber">
+        Time-based
       </GuideBadge>,
-      "Matched on brand plus last four. Suppressed once the account has three authorized, never-reversed deposits behind it — the only rule the grace applies to.",
+      "Within 2 hours: lock withdrawals and review. From 2–24 hours: review only. After 24 hours: watch only.",
     ],
   },
   {
