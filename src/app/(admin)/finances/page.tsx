@@ -82,9 +82,9 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
       REWARD_QUERY_TIMEOUT_MS,
     ),
     safeQuery(
-      () => getSalaryExpenseSummary(),
+      () => getSalaryExpenseSummary(period),
       null,
-      "finances.salaryExpenses",
+      `finances.salaryExpenses.${period}`,
       REWARD_QUERY_TIMEOUT_MS,
     ),
   ]);
@@ -183,21 +183,21 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             <>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Monthly expense
+                  Last {label}
                 </p>
                 <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
-                  −<AnimatedNumber value={salaries.monthly} format="currency" />
+                  −<AnimatedNumber value={salaries.periodExpense} format="currency" />
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  USDT salary commitments
+                  Projected USDT salary expense
                 </p>
               </div>
 
               <div className="grid grid-cols-3 gap-2">
                 <SalaryDetail
                   icon={CalendarDays}
-                  label="Weekly"
-                  value={formatCurrency(salaries.weekly)}
+                  label="Monthly"
+                  value={formatCurrency(salaries.monthly)}
                 />
                 <SalaryDetail
                   icon={Receipt}
@@ -212,8 +212,8 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
               </div>
 
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Based on active salary records. Weekly run rate is monthly
-                expense ÷ 4; annual run rate is monthly expense × 12.
+                Based on active salary records and prorated from a 30-day
+                operating month to match the selected profit period.
               </p>
             </>
           ) : (

@@ -36,13 +36,15 @@ export async function getFinanceProfit(
 
 export type SalaryExpenseSummary = {
   activeEmployees: number;
+  periodExpense: number;
   monthly: number;
-  weekly: number;
   annual: number;
 };
 
-/** Active salary commitments from the Admin database. */
-export async function getSalaryExpenseSummary(): Promise<SalaryExpenseSummary> {
+/** Active salary commitments, including the run rate for the selected window. */
+export async function getSalaryExpenseSummary(
+  period: FinancePeriod,
+): Promise<SalaryExpenseSummary> {
   const [row] = await adminDrizzle
     .select({
       activeEmployees: sql<number>`COUNT(*)::int`,
@@ -52,10 +54,15 @@ export async function getSalaryExpenseSummary(): Promise<SalaryExpenseSummary> {
     .where(eq(salary_employees.active, true));
 
   const monthly = toNumber(row?.monthly);
+  const definition = FINANCE_PERIODS.find((item) => item.value === period);
+  const hours = definition?.hours ?? 24;
   return {
     activeEmployees: Number(row?.activeEmployees ?? 0),
+    // Salary records are monthly commitments. A 30-day operating month keeps
+    // the finance chips intuitive: 24h is 1/30, 3d is 1/10, and 30d is the
+    // full monthly commitment.
+    periodExpense: monthly * (hours / (30 * 24)),
     monthly,
-    weekly: monthly / 4,
     annual: monthly * 12,
   };
 }
