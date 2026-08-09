@@ -84,9 +84,9 @@ export const API_SCOPES = {
     access: "admin-write",
   },
   "discord:message-events": {
-    label: "Store Discord message history",
+    label: "Manage Discord message moderation data",
     description:
-      "Persist bounded message snapshots, edits, and deletions from the Creator and VIP servers in the admin database. Excludes bot, webhook, and configured admin-group messages.",
+      "Persist bounded message snapshots, edits, and deletions and read the PackyGG moderation policy. Excludes bot and webhook messages.",
     access: "admin-write",
   },
   "discord:partnership-tickets": {

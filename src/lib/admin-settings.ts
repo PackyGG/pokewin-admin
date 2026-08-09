@@ -22,6 +22,8 @@ export const SETTINGS_KEYS = {
    * helper rather than concatenating the string by hand.
    */
   CREATOR_HUB_ACCESS_PREFIX: "creator_hub_access_",
+  /** PackyGG-only Discord word and invite moderation policy (versioned JSON). */
+  PACKY_DISCORD_MODERATION: "packy_discord_moderation",
 } as const;
 
 /** Marker thrown when the admin_settings table hasn't been migrated yet. */

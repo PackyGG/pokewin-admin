@@ -216,6 +216,11 @@ export const ADMIN_PAGES: AdminPage[] = [
   // page). The page + actions enforce requireAdmin server-side; listed here
   // so the key is known to the permission system.
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
+  {
+    group: "System",
+    label: "Discord Moderation",
+    key: "/system/discord-moderation",
+  },
   // motha-only — the page + actions enforce the gate server-side;
   // listing here just makes the key known to the permission system
   // so it doesn't fall through as "unknown page".

@@ -216,6 +216,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     scopes: ["discord:message-events"],
   },
   {
+    method: "POST",
+    path: "/api/v1/discord/moderation-settings",
+    summary:
+      "Body { guildId }. Returns the PackyGG-only word and Discord invite moderation policy consumed by the bot.",
+    scopes: ["discord:message-events"],
+  },
+  {
     method: "POST", path: "/api/v1/discord/partnership-tickets/prepare",
     summary: "Idempotently reserve one active official-server partnership application before creating its Discord channel.",
     scopes: ["discord:partnership-tickets"],

@@ -526,6 +526,18 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
+    id: "nav.system.discord-moderation",
+    group: "System",
+    label: "Discord Moderation",
+    href: "/system/discord-moderation",
+    pageKey: "/system/discord-moderation",
+    icon: "ShieldCheck",
+    description: "PackyGG word and Discord invite filtering",
+    keywords: ["discord", "moderation", "filter", "words", "invites", "mee6"],
+    inSidebar: true,
+    inPalette: true,
+  },
+  {
     // Excluded Users — sidebar-only, explicit username allowlist. Not in ADMIN_PAGES
     // as the security boundary (page + actions enforce requireExcludedUsersAccess);
     // listed in ADMIN_PAGES only so the key
