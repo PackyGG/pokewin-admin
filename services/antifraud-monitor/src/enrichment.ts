@@ -41,7 +41,11 @@ type ProviderProvenance = {
  * AbortSignal, so a blackholed load balancer would otherwise hang
  * `processSignup` forever while the engine's tick stays marked running.
  */
-const FINGERPRINT_TIMEOUT_MS = 5_000;
+// Keep checkout enrichments comfortably inside the backend's end-to-end
+// eligibility budget. Slow providers degrade the assessment instead of
+// holding it open until the caller gives up.
+const FINGERPRINT_TIMEOUT_MS = 4_000;
+const PROXYCHECK_TIMEOUT_MS = 4_000;
 
 class TimeoutError extends Error {
   constructor(message: string) {
@@ -1701,7 +1705,7 @@ export class EnrichmentService {
 
     try {
       const response = await fetch(url, {
-        signal: AbortSignal.timeout(5_000),
+        signal: AbortSignal.timeout(PROXYCHECK_TIMEOUT_MS),
         headers: { accept: "application/json" },
       });
       if (!response.ok) throw new Error(`http_${response.status}`);

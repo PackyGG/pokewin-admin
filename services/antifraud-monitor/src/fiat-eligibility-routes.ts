@@ -16,6 +16,47 @@ import {
 
 export const FIAT_ELIGIBILITY_PATH = "/v1/fiat-eligibility/check";
 const MAX_LOGGED_VALIDATION_ISSUES = 5;
+const RATE_LIMIT_WINDOW_MS = 60_000;
+
+type RateLimitEntry = { count: number; startedAt: number };
+
+export function createFiatEligibilityUserRateLimiter(
+  max: number,
+  windowMs = RATE_LIMIT_WINDOW_MS,
+): {
+  consume(
+    key: string,
+    now?: number,
+  ): { allowed: boolean; retryAfterSeconds: number };
+} {
+  const entries = new Map<string, RateLimitEntry>();
+  let lastSweepAt = 0;
+
+  return {
+    consume(key, now = Date.now()) {
+      if (now - lastSweepAt >= windowMs) {
+        for (const [candidate, entry] of entries) {
+          if (now - entry.startedAt >= windowMs) entries.delete(candidate);
+        }
+        lastSweepAt = now;
+      }
+
+      const existing = entries.get(key);
+      const entry = !existing || now - existing.startedAt >= windowMs
+        ? { count: 0, startedAt: now }
+        : existing;
+      entry.count += 1;
+      entries.set(key, entry);
+      return {
+        allowed: entry.count <= max,
+        retryAfterSeconds: Math.max(
+          1,
+          Math.ceil((entry.startedAt + windowMs - now) / 1_000),
+        ),
+      };
+    },
+  };
+}
 
 export type FiatEligibilityResponse = Pick<
   FiatEligibilityDecision,
@@ -125,13 +166,22 @@ export async function registerFiatEligibilityRoutes(
     service: FiatEligibilityService;
   },
 ): Promise<void> {
+  const userRateLimiter = createFiatEligibilityUserRateLimiter(
+    input.config.FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE,
+  );
   app.post(
     FIAT_ELIGIBILITY_PATH,
     {
       bodyLimit: 4 * 1024,
       config: {
         rateLimit: {
-          max: input.config.FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE,
+          // The outer limit only protects the network edge. Business traffic
+          // arrives from one backend egress IP, so the real quota is applied
+          // per authenticated environment + user below.
+          max: Math.max(
+            10_000,
+            input.config.FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE * 100,
+          ),
           timeWindow: "1 minute",
           keyGenerator: (request) => request.ip,
           onExceeded: (request) => {
@@ -187,6 +237,26 @@ export async function registerFiatEligibilityRoutes(
         return reply
           .code(authentication.status)
           .send({ error: authentication.error });
+      }
+      const userLimit = userRateLimiter.consume(
+        `${authentication.environment}:${parsed.data.userID}`,
+      );
+      if (!userLimit.allowed) {
+        request.log.warn(
+          {
+            event: "fiat_eligibility.user_rate_limited",
+            requestId: request.id,
+            environment: authentication.environment,
+            userId: parsed.data.userID,
+            statusCode: 429,
+            durationMs: elapsedMs(startedAt),
+          },
+          "Fiat eligibility user rate limited",
+        );
+        return reply
+          .header("retry-after", String(userLimit.retryAfterSeconds))
+          .code(429)
+          .send({ error: "rate_limit_exceeded" });
       }
       request.log.info(
         {

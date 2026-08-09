@@ -571,10 +571,10 @@ export function evaluateFiatEligibility(
     },
   );
 
-  // ── Fail closed on provider gaps ─────────────────────────────────────────
-  // Fingerprint and proxycheck are mandatory: the identity binding and the
-  // independent IP opinion come from them. Abstract is corroborating, so a
-  // failure there costs points instead of the checkout.
+  // Provider availability: technical failures reduce visibility, not proof of
+  // fraud.
+  // Score the gap so other risk can still cross the threshold, but never make
+  // a single vendor outage a hard checkout denial.
   const byName = new Map(
     input.providers.map((provider) => [provider.provider, provider]),
   );
@@ -582,16 +582,16 @@ export function evaluateFiatEligibility(
   const proxycheck = byName.get("proxycheck");
   add(fingerprint?.status !== "success", {
     key: "fingerprint_check_unavailable",
-    detail: "The full Fingerprint event check did not succeed.",
-    points: 100,
-    blocking: true,
+    detail:
+      "The live Fingerprint event check was unavailable, reducing visibility.",
+    points: 20,
     source: "fingerprint",
   });
   add(proxycheck?.status !== "success", {
     key: "ip_check_unavailable",
-    detail: "The full independent IP check did not succeed.",
-    points: 100,
-    blocking: true,
+    detail:
+      "The independent IP reputation check was unavailable, reducing visibility.",
+    points: 10,
     source: "ip",
   });
   for (const name of ["abstract_ip"] as const) {
@@ -866,7 +866,12 @@ export function evaluateFiatEligibility(
     detail:
       `${input.network.sharedCheckoutVisitorUsers} other account(s) use the `
       + "checkout device.",
-    points: input.network.sharedCheckoutVisitorUsers >= 3 ? 70 : 40,
+    points:
+      input.network.sharedCheckoutVisitorUsers >= 3
+        ? 70
+        : input.network.sharedCheckoutVisitorUsers === 2
+          ? 40
+          : 15,
     source: "network",
   });
   add(input.network.sharedCurrentIpUsers >= 3, {
@@ -907,7 +912,8 @@ export function evaluateFiatEligibility(
     detail:
       `${input.deniedAttempts24h} Fiat eligibility attempts were denied in 24 `
       + "hours.",
-    points: input.deniedAttempts24h >= 6 ? 60 : 25,
+    points: 0,
+    evidenceOnly: true,
     source: "history",
   });
 

@@ -62,7 +62,6 @@ const decisionFacts: readonly GuideFact[] = [
 const immediateDenials = [
   "The account is banned, locked, self-excluded, blocked from Fiat, in a blocked country, or has required KYC that is not cleared.",
   "The request or Fingerprint event is stale, replayed, linked to another user, or the Fingerprint event IP does not match the submitted checkout IP.",
-  "Fingerprint or proxycheck.io fails. Both are mandatory, so the check fails closed instead of guessing.",
   "An active IP, device, or email-domain blocklist matches; the email is disposable; or a new checkout follows a paid Fiat deposit within 60 seconds.",
   "The checkout IP and device both disagree with a recent verified login, or both changed and the new identity has bad reputation.",
 ] as const;
@@ -86,7 +85,7 @@ const scoreRows = [
     key: "history",
     cells: [
       "Account history",
-      "Account age, suspected-alt state, signup risk, active high-risk cases, repeated attempts, and previous denials.",
+      "Account age, suspected-alt state, signup risk, active high-risk cases, and repeated attempts. Previous denials stay visible but do not add more risk.",
     ],
   },
   {
@@ -176,7 +175,7 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
             },
             {
               title: "Check independent IP reputation",
-              detail: "proxycheck.io checks the same IP for proxy, VPN, Tor, hosting, abuse, and risk. Fingerprint and proxycheck.io are mandatory.",
+              detail: "proxycheck.io checks the same IP for proxy, VPN, Tor, hosting, abuse, and risk.",
             },
             {
               title: "Add a second opinion",
@@ -195,6 +194,16 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
           login fingerprint by logging in after that rollout. Missing historical
           fingerprints add 0 points and cannot deny a checkout; comparisons use
           whichever verified baselines actually exist.
+        </GuideCallout>
+        <GuideCallout
+          icon={ShieldAlert}
+          tone="warning"
+          title="Provider outage is not fraud"
+        >
+          If Fingerprint or an IP-reputation provider is temporarily
+          unavailable, the missing visibility adds a small amount of risk but
+          does not deny by itself. Real identity mismatches and confirmed bad
+          reputation still score or block normally.
         </GuideCallout>
       </GuideSection>
 
@@ -219,6 +228,15 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
         <GuideCallout icon={Gauge} tone="warning" title="A shared IP is not enough">
           Shared IP and cross-account reuse are context, not automatic proof of
           fraud. Strong action needs the total score or a specific hard rule.
+        </GuideCallout>
+        <GuideCallout
+          icon={Fingerprint}
+          tone="note"
+          title="Shared-device evidence is recent and strong"
+        >
+          Device sharing only counts Fingerprint records from the last 30 days
+          with at least 0.90 confidence. One other account adds 15 points; it
+          is context, not an automatic denial.
         </GuideCallout>
       </GuideSection>
 

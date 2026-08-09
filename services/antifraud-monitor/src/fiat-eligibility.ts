@@ -495,6 +495,8 @@ async function loadNetworkEvidence(
           WHERE f.visitor_id = $3
             AND f.user_id IS NOT NULL
             AND f.user_id <> $1
+            AND f.created_at >= now() - interval '30 days'
+            AND f.confidence >= 0.9
         ) END AS shared_checkout_visitor_users,
         (
           SELECT COUNT(*)::int
@@ -1446,6 +1448,7 @@ export class FiatEligibilityService {
 export const fiatEligibilityInternals = {
   automaticReview: evaluateFiatEligibility,
   loadSourceSubject,
+  loadNetworkEvidence,
   loadBlocklistMatches,
   loadAdditionalBlocklists,
   loadPrePaymentObservations,

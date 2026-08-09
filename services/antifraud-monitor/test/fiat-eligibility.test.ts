@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import Fastify from "fastify";
+import type { Pool } from "pg";
 
 import type { Config } from "../src/config.js";
 import {
@@ -14,6 +15,7 @@ import { parseFiatEligibilityGloballyEnabled } from "../src/config.js";
 import { FiatEligibilityAccess } from "../src/fiat-eligibility-auth.js";
 import {
   authenticateFiatEligibilityRequest,
+  createFiatEligibilityUserRateLimiter,
   fiatEligibilityRequestSchema,
   registerFiatEligibilityRoutes,
 } from "../src/fiat-eligibility-routes.js";
@@ -225,6 +227,44 @@ test("Fiat request contract accepts only the exact dev/prod payload", () => {
     }).success,
     false,
   );
+});
+
+test("Fiat eligibility quotas are isolated per environment and user", () => {
+  const limiter = createFiatEligibilityUserRateLimiter(2, 60_000);
+  assert.equal(limiter.consume("prod:user-1", 1_000).allowed, true);
+  assert.equal(limiter.consume("prod:user-1", 2_000).allowed, true);
+  assert.equal(limiter.consume("prod:user-1", 3_000).allowed, false);
+  assert.equal(limiter.consume("prod:user-2", 3_000).allowed, true);
+  assert.equal(limiter.consume("dev:user-1", 3_000).allowed, true);
+  assert.equal(limiter.consume("prod:user-1", 61_000).allowed, true);
+});
+
+test("shared checkout devices use only recent high-confidence evidence", async () => {
+  let query = "";
+  const source = {
+    query: async (sql: string) => {
+      query = sql;
+      return {
+        rows: [{
+          shared_checkout_visitor_users: 1,
+          shared_current_ip_users: 0,
+        }],
+      };
+    },
+  } as unknown as Pool;
+
+  const evidence = await fiatEligibilityInternals.loadNetworkEvidence(source, {
+    userId: "user-1",
+    requestIp: "203.0.113.20",
+    checkoutVisitorId: "visitor-1",
+  });
+
+  assert.deepEqual(evidence, {
+    sharedCheckoutVisitorUsers: 1,
+    sharedCurrentIpUsers: 0,
+  });
+  assert.match(query, /f\.created_at >= now\(\) - interval '30 days'/);
+  assert.match(query, /f\.confidence >= 0\.9/);
 });
 
 test("Fiat endpoint rejects oversized bodies before automatic review", async () => {
@@ -987,7 +1027,7 @@ test("behaviour rewards self-funded play and punishes reward farming", () => {
   assert.equal(blocked.riskScore, 100);
 });
 
-test("manual Fiat-off controller and provider failures fail closed", () => {
+test("manual Fiat-off controller blocks while provider failures only degrade", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -1007,7 +1047,53 @@ test("manual Fiat-off controller and provider failures fail closed", () => {
   assert.equal(
     reviewed.signals.find((signal) => signal.key === "ip_check_unavailable")
       ?.blocking,
-    true,
+    false,
+  );
+  assert.equal(
+    reviewed.signals.find((signal) => signal.key === "ip_check_unavailable")
+      ?.points,
+    10,
+  );
+});
+
+test("provider outages and previous denials cannot deny a clean checkout", () => {
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    deniedAttempts24h: 8,
+    providers: [
+      provider("fingerprint", { status: "failed", errorCode: "timeout" }),
+      provider("proxycheck", { status: "failed", errorCode: "timeout" }),
+    ],
+  });
+
+  assert.equal(reviewed.decision, "allow");
+  assert.equal(
+    reviewed.signals.find(
+      (signal) => signal.key === "fingerprint_check_unavailable",
+    )?.points,
+    20,
+  );
+  const previousDenials = reviewed.signals.find(
+    (signal) => signal.key === "repeated_fiat_denials",
+  );
+  assert.equal(previousDenials?.points, 0);
+  assert.equal(previousDenials?.evidenceOnly, true);
+});
+
+test("one shared checkout device is context rather than an automatic denial", () => {
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({
+      created_at: new Date("2026-07-28T12:00:00.000Z"),
+    }),
+    network: { sharedCheckoutVisitorUsers: 1, sharedCurrentIpUsers: 0 },
+  });
+
+  assert.equal(reviewed.decision, "allow");
+  assert.equal(
+    reviewed.signals.find((signal) => signal.key === "checkout_device_shared")
+      ?.points,
+    15,
   );
 });
 
