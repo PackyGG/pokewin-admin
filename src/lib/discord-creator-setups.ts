@@ -33,7 +33,7 @@ type SetupRow = {
   creator_discord_user_id: string;
   created_by_discord_user_id: string;
   interaction_id: string;
-  status: "pending" | "active";
+  status: "pending" | "active" | "deleted";
   category_id: string | null;
   chat_channel_id: string | null;
   logs_channel_id: string | null;
@@ -191,7 +191,7 @@ async function findPackyUser(
   return creator ? { ...creator, roles: creator.roles ?? [] } : null;
 }
 
-async function requireActiveCreator(
+export async function requireActiveCreator(
   creatorUserId: string,
 ): Promise<{ id: string; username: string | null }> {
   const creator = await findPackyUser(creatorUserId);
@@ -1577,6 +1577,7 @@ export async function prepareCreatorSetup(input: {
         category_name
       FROM discord_creator_setups
       WHERE interaction_id = ${input.interactionId}
+        AND status IN ('pending', 'active')
       FOR UPDATE
     `);
     const interactionSetup = interactionResult.rows[0];
@@ -1619,6 +1620,7 @@ export async function prepareCreatorSetup(input: {
       FROM discord_creator_setups
       WHERE guild_id = ${input.guildId}
         AND creator_discord_user_id = ${input.creatorDiscordUserId}
+        AND status IN ('pending', 'active')
       FOR UPDATE
     `);
     const existing = existingResult.rows[0];
@@ -1909,4 +1911,230 @@ export async function cancelCreatorSetup(
       AND status = 'pending'
   `);
   return { cancelled: true };
+}
+
+function requireCreatorSetupDeleteActor(actorDiscordUserId: string): void {
+  if (!isDiscordDashboardOperator(actorDiscordUserId)) {
+    throw new CreatorSetupError(
+      403,
+      "setup_actor_forbidden",
+      "Only authorized Packy staff can delete creator sections.",
+    );
+  }
+}
+
+/**
+ * Resolves the exact active Discord resources before the bot asks an admin to
+ * confirm their deletion. Authorization happens before the lookup so this
+ * endpoint cannot be used to enumerate creator sections.
+ */
+export async function previewCreatorSetupDelete(input: {
+  guildId: string;
+  creatorDiscordUserId: string;
+  actorDiscordUserId: string;
+}): Promise<{ setup: CreatorSetup }> {
+  requireCreatorSetupDeleteActor(input.actorDiscordUserId);
+
+  const result = await adminDrizzle.execute<SetupRow>(sql`
+    SELECT
+      id,
+      guild_id,
+      creator_discord_user_id,
+      created_by_discord_user_id,
+      interaction_id,
+      status,
+      category_id,
+      chat_channel_id,
+      logs_channel_id,
+      category_name,
+      creator_user_id,
+      linked_by_discord_user_id,
+      link_interaction_id
+    FROM discord_creator_setups
+    WHERE guild_id = ${input.guildId}
+      AND creator_discord_user_id = ${input.creatorDiscordUserId}
+      AND status = 'active'
+    LIMIT 1
+  `);
+  const setup = result.rows[0];
+  if (!setup) {
+    throw new CreatorSetupError(
+      404,
+      "setup_not_found",
+      "That creator does not have an active setup to delete.",
+    );
+  }
+
+  return { setup: activeSetup(setup) };
+}
+
+/**
+ * Soft-deletes and unlinks only the active row whose Discord resource IDs
+ * still match the confirmed preview. The retained row is historical evidence;
+ * deleted rows no longer block a future /setup for the same Discord member.
+ */
+export async function deleteCreatorSetup(input: {
+  guildId: string;
+  creatorDiscordUserId: string;
+  categoryId: string;
+  chatChannelId: string;
+  logsChannelId: string;
+  actorDiscordUserId: string;
+  interactionId: string;
+  apiKeyId: string;
+  apiKeyPrefix: string;
+}): Promise<{ deleted: true }> {
+  requireCreatorSetupDeleteActor(input.actorDiscordUserId);
+
+  return adminDrizzle.transaction(async (tx) => {
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(
+          ${`discord-creator-setup:${input.guildId}:${input.creatorDiscordUserId}`},
+          0
+        )
+      )
+    `);
+    await tx.execute(sql`
+      SELECT pg_advisory_xact_lock(
+        hashtextextended(
+          ${`discord-creator-delete-interaction:${input.interactionId}`},
+          0
+        )
+      )
+    `);
+
+    const priorResult = await tx.execute<
+      SetupRow & { deleted_by_discord_user_id: string | null }
+    >(sql`
+      SELECT
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id,
+        deleted_by_discord_user_id
+      FROM discord_creator_setups
+      WHERE delete_interaction_id = ${input.interactionId}
+      FOR UPDATE
+    `);
+    const prior = priorResult.rows[0];
+    if (prior) {
+      if (
+        prior.guild_id !== input.guildId ||
+        prior.creator_discord_user_id !== input.creatorDiscordUserId ||
+        prior.deleted_by_discord_user_id !== input.actorDiscordUserId ||
+        prior.category_id !== input.categoryId ||
+        prior.chat_channel_id !== input.chatChannelId ||
+        prior.logs_channel_id !== input.logsChannelId
+      ) {
+        throw new CreatorSetupError(
+          409,
+          "idempotency_conflict",
+          "That Discord interaction is already bound to another creator deletion.",
+        );
+      }
+      return { deleted: true as const };
+    }
+
+    const result = await tx.execute<SetupRow>(sql`
+      SELECT
+        id,
+        guild_id,
+        creator_discord_user_id,
+        created_by_discord_user_id,
+        interaction_id,
+        status,
+        category_id,
+        chat_channel_id,
+        logs_channel_id,
+        category_name,
+        creator_user_id,
+        linked_by_discord_user_id,
+        link_interaction_id
+      FROM discord_creator_setups
+      WHERE guild_id = ${input.guildId}
+        AND creator_discord_user_id = ${input.creatorDiscordUserId}
+        AND status = 'active'
+      FOR UPDATE
+    `);
+    const setup = result.rows[0];
+    if (!setup) {
+      throw new CreatorSetupError(
+        404,
+        "setup_not_found",
+        "That creator does not have an active setup to delete.",
+      );
+    }
+
+    if (
+      setup.category_id !== input.categoryId ||
+      setup.chat_channel_id !== input.chatChannelId ||
+      setup.logs_channel_id !== input.logsChannelId
+    ) {
+      throw new CreatorSetupError(
+        409,
+        "setup_conflict",
+        "That creator setup changed after the deletion was confirmed.",
+      );
+    }
+
+    const deleted = await tx.execute<{ id: string }>(sql`
+      UPDATE discord_creator_setups
+      SET status = 'deleted',
+          creator_user_id = NULL,
+          linked_by_discord_user_id = NULL,
+          link_interaction_id = NULL,
+          linked_at = NULL,
+          signup_notifications_enabled = false,
+          signup_notifications_enabled_at = NULL,
+          deposit_notifications_enabled = false,
+          deposit_notifications_enabled_at = NULL,
+          deleted_at = now(),
+          deleted_by_discord_user_id = ${input.actorDiscordUserId},
+          delete_interaction_id = ${input.interactionId}
+      WHERE id = ${setup.id}::uuid
+        AND status = 'active'
+        AND category_id = ${input.categoryId}
+        AND chat_channel_id = ${input.chatChannelId}
+        AND logs_channel_id = ${input.logsChannelId}
+      RETURNING id
+    `);
+    if (!deleted.rows[0]) {
+      throw new CreatorSetupError(
+        409,
+        "setup_conflict",
+        "That creator setup changed after the deletion was confirmed.",
+      );
+    }
+
+    await tx.insert(admin_audit_events).values({
+      admin_user_id: null,
+      event_type: "discord_creator_setup_deleted",
+      target_user_id: setup.creator_user_id,
+      metadata: {
+        apiKeyId: input.apiKeyId,
+        apiKeyPrefix: input.apiKeyPrefix,
+        setupId: setup.id,
+        guildId: input.guildId,
+        creatorDiscordUserId: input.creatorDiscordUserId,
+        creatorUserId: setup.creator_user_id,
+        categoryId: input.categoryId,
+        chatChannelId: input.chatChannelId,
+        logsChannelId: input.logsChannelId,
+        actorDiscordUserId: input.actorDiscordUserId,
+        interactionId: input.interactionId,
+      },
+    });
+
+    return { deleted: true as const };
+  });
 }

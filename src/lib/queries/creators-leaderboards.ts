@@ -54,6 +54,8 @@ export type LeaderboardPageEntry = {
 
 export type LeaderboardPage = {
   totalEntries: number;
+  /** Sum of every entry's canonical leaderboard-weighted wager. */
+  totalWageredUsd: number;
   entries: LeaderboardPageEntry[];
 };
 
@@ -87,12 +89,14 @@ export async function getAffiliateLeaderboardPage(opts: {
     total_wagered_usd: string;
     prize_amount_usd: string;
     total_entries: string;
+    leaderboard_wagered_usd: string;
   }[]>(
     `SELECT als.position::text AS position,
             u.username,
             als.total_wagered_usd::text AS total_wagered_usd,
             als.prize_amount_usd::text AS prize_amount_usd,
-            COUNT(*) OVER()::text AS total_entries
+            COUNT(*) OVER()::text AS total_entries,
+            SUM(als.total_wagered_usd) OVER()::text AS leaderboard_wagered_usd
      FROM affiliate_leaderboard_snapshots als
      LEFT JOIN "user" u ON u.id = als.user_id
      WHERE als.leaderboard_id = $1
@@ -105,6 +109,7 @@ export async function getAffiliateLeaderboardPage(opts: {
   if (snapshots.length > 0) {
     return {
       totalEntries: Number(snapshots[0]!.total_entries),
+      totalWageredUsd: toNumber(snapshots[0]!.leaderboard_wagered_usd),
       entries: snapshots.map((row) => {
         const position = Number(row.position);
         const frozenPrize = toNumber(row.prize_amount_usd);
@@ -124,14 +129,24 @@ export async function getAffiliateLeaderboardPage(opts: {
   // An empty later page can still belong to a settled board. Check before
   // falling through to live computation so snapshots remain authoritative.
   if (offset > 0) {
-    const [snapshotCount] = await queryMainRows<{ total_entries: string }[]>(
-      `SELECT COUNT(*)::text AS total_entries
+    const [snapshotCount] = await queryMainRows<{
+      total_entries: string;
+      leaderboard_wagered_usd: string;
+    }[]>(
+      `SELECT COUNT(*)::text AS total_entries,
+              COALESCE(SUM(total_wagered_usd), 0)::text AS leaderboard_wagered_usd
        FROM affiliate_leaderboard_snapshots
        WHERE leaderboard_id = $1`,
       opts.leaderboardId,
     );
     const totalEntries = Number(snapshotCount?.total_entries ?? 0);
-    if (totalEntries > 0) return { totalEntries, entries: [] };
+    if (totalEntries > 0) {
+      return {
+        totalEntries,
+        totalWageredUsd: toNumber(snapshotCount?.leaderboard_wagered_usd),
+        entries: [],
+      };
+    }
   }
 
   const coCreatorUserIds = (opts.coCreatorUserIds ?? []).filter(
@@ -150,7 +165,9 @@ export async function getAffiliateLeaderboardPage(opts: {
   const upperCodes = Array.from(
     new Set(codes.map((code) => code.trim().toUpperCase()).filter(Boolean)),
   );
-  if (upperCodes.length === 0) return { totalEntries: 0, entries: [] };
+  if (upperCodes.length === 0) {
+    return { totalEntries: 0, totalWageredUsd: 0, entries: [] };
+  }
 
   const params: unknown[] = [upperCodes, opts.startDate, opts.endDate];
   const creatorFilter = codeFallback
@@ -166,6 +183,7 @@ export async function getAffiliateLeaderboardPage(opts: {
     username: string | null;
     total_wagered_usd: string;
     total_entries: string;
+    leaderboard_wagered_usd: string;
   }[]>(
     `WITH ranked AS (
        SELECT
@@ -176,7 +194,9 @@ export async function getAffiliateLeaderboardPage(opts: {
          u.username,
          SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric)::text
            AS total_wagered_usd,
-         COUNT(*) OVER()::text AS total_entries
+         COUNT(*) OVER()::text AS total_entries,
+         SUM(SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric))
+           OVER()::text AS leaderboard_wagered_usd
        FROM affiliate_code_usages acu
        JOIN "user" u ON u.id = acu.referred_user_id
        WHERE acu.usage_type::text = 'wager'
@@ -188,7 +208,8 @@ export async function getAffiliateLeaderboardPage(opts: {
        GROUP BY acu.referred_user_id, u.username
        HAVING SUM(COALESCE(acu.weighted_wager_amount_usd, acu.wager_amount_usd)::numeric) > 0
      )
-     SELECT position, username, total_wagered_usd, total_entries
+     SELECT position, username, total_wagered_usd, total_entries,
+            leaderboard_wagered_usd
      FROM ranked
      ORDER BY position::bigint ASC
      LIMIT $${limitParameter} OFFSET $${offsetParameter}`,
@@ -197,6 +218,7 @@ export async function getAffiliateLeaderboardPage(opts: {
 
   return {
     totalEntries: Number(rows[0]?.total_entries ?? 0),
+    totalWageredUsd: toNumber(rows[0]?.leaderboard_wagered_usd),
     entries: rows.map((row) => {
       const position = Number(row.position);
       return {

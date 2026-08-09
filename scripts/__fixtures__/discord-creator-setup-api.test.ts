@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator setup API is guild-pinned, scoped, and transactionally idempotent", async () => {
-  const [service, standings, superusers, operators, prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, leaderboard, rewards, migration, linkMigration, scopes, endpoints] =
+  const [service, standings, superusers, operators, prepare, complete, repair, cancel, deletePreview, deleteSetup, link, stats, userStats, dashboardContext, deal, leaderboard, rewards, migration, linkMigration, deleteMigration, scopes, endpoints] =
     await Promise.all([
       read("src/lib/discord-creator-setups.ts"),
       read("src/lib/queries/creators-leaderboards.ts"),
@@ -15,6 +15,8 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       read("src/app/api/v1/discord/creator-setups/complete/route.ts"),
       read("src/app/api/v1/discord/creator-setups/repair/route.ts"),
       read("src/app/api/v1/discord/creator-setups/cancel/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/delete-preview/route.ts"),
+      read("src/app/api/v1/discord/creator-setups/delete/route.ts"),
       read("src/app/api/v1/discord/creator-setups/link/route.ts"),
       read("src/app/api/v1/discord/creator-setups/stats/route.ts"),
       read("src/app/api/v1/discord/creator-setups/user-stats/route.ts"),
@@ -27,6 +29,9 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
       ),
       read(
         "drizzle/admin/migrations/20260729_link_discord_creator_setups.sql",
+      ),
+      read(
+        "drizzle/admin/migrations/20260809_discord_creator_setup_deletion.sql",
       ),
       read("src/lib/api-auth/scopes.ts"),
       read("src/lib/api-auth/endpoints.ts"),
@@ -50,7 +55,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(service, /status = 'active'/);
   assert.match(service, /status = 'pending'/);
 
-  for (const route of [prepare, complete, repair, cancel, link, stats, userStats, dashboardContext, deal, leaderboard, rewards]) {
+  for (const route of [prepare, complete, repair, cancel, deletePreview, deleteSetup, link, stats, userStats, dashboardContext, deal, leaderboard, rewards]) {
     assert.match(route, /scopes: \["discord:creator:setup"\]/);
   }
   assert.match(prepare, /rejectWrongGuild/);
@@ -59,6 +64,22 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(repair, /principal\.keyId/);
   assert.match(repair, /previousCategoryId: DiscordIdSchema/);
   assert.match(cancel, /cancelCreatorSetup/);
+  assert.match(deletePreview, /previewCreatorSetupDelete/);
+  assert.match(deletePreview, /rejectWrongGuild/);
+  assert.match(deleteSetup, /deleteCreatorSetup/);
+  assert.match(deleteSetup, /rejectWrongGuild/);
+  assert.match(deleteSetup, /principal\.keyId/);
+  assert.match(service, /export async function previewCreatorSetupDelete/);
+  assert.match(service, /export async function deleteCreatorSetup/);
+  assert.match(service, /requireCreatorSetupDeleteActor/);
+  assert.match(service, /isDiscordDashboardOperator\(actorDiscordUserId\)/);
+  assert.match(service, /delete_interaction_id = \$\{input\.interactionId\}/);
+  assert.match(service, /status = 'deleted'/);
+  assert.match(service, /creator_user_id = NULL/);
+  assert.match(service, /category_id = \$\{input\.categoryId\}/);
+  assert.match(service, /chat_channel_id = \$\{input\.chatChannelId\}/);
+  assert.match(service, /logs_channel_id = \$\{input\.logsChannelId\}/);
+  assert.match(service, /event_type: "discord_creator_setup_deleted"/);
   assert.match(link, /rejectWrongGuild/);
   assert.match(link, /creatorUserId[\s\S]*\^\[A-Za-z0-9_-\]\+\$/);
   assert.match(link, /actorDiscordUserId: DiscordIdSchema/);
@@ -165,6 +186,12 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
     linkMigration,
     /discord_creator_setups_link_interaction_unique/,
   );
+  assert.match(deleteMigration, /'pending', 'active', 'deleted'/);
+  assert.match(deleteMigration, /discord_creator_setups_live_creator_unique/);
+  assert.match(deleteMigration, /WHERE "status" IN \('pending', 'active'\)/);
+  assert.match(deleteMigration, /discord_creator_setups_deletion_shape_check/);
+  assert.match(deleteMigration, /"creator_user_id" IS NULL/);
+  assert.doesNotMatch(deleteMigration, /ON DELETE CASCADE/);
   assert.match(service, /chat_channel_id = \$\{input\.channelId\}/);
   assert.match(service, /logs_channel_id = \$\{input\.channelId\}/);
   assert.match(service, /input\.actorDiscordUserId !== setup\.creator_discord_user_id/);
@@ -216,6 +243,8 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/complete/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/repair/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/cancel/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/delete-preview/);
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/delete/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/link/);
   assert.match(endpoints, /does not require or change the account's on-site Discord OAuth link/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/stats/);
@@ -224,6 +253,54 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/deal/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/leaderboard/);
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
+});
+
+test("creator last-deals API is creator/admin-only and uses canonical bounded attribution", async () => {
+  const [route, service, standings, endpoints] = await Promise.all([
+    read("src/app/api/v1/discord/creator-setups/last-deals/route.ts"),
+    read("src/lib/discord-creator-last-deals.ts"),
+    read("src/lib/queries/creators-leaderboards.ts"),
+    read("src/lib/api-auth/endpoints.ts"),
+  ]);
+
+  assert.match(route, /scopes: \["discord:creator:setup"\]/);
+  assert.match(route, /rejectWrongGuild/);
+  assert.match(route, /Response\.json\(\{ data: await getCreatorLastDeals/);
+  assert.match(service, /requireLinkedSetupActor\(input, \{\s*allowDashboardOperator: true/);
+  assert.match(service, /setup\.creator_discord_user_id/);
+  assert.match(service, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);
+  assert.match(service, /week_start_utc\} <= NOW\(\)/);
+  assert.match(service, /\.limit\(DEAL_LIMIT\)/);
+  assert.match(
+    service,
+    /COUNT\(DISTINCT usage\.referred_user_id\)::text AS signups/,
+  );
+  assert.match(service, /usage\.usage_type::text = 'deposit'/);
+  assert.match(
+    service,
+    /SUM\(usage\.weighted_wager_amount_usd::numeric\)/,
+  );
+  assert.doesNotMatch(
+    service,
+    /COALESCE\(usage\.weighted_wager_amount_usd, usage\.wager_amount_usd\)/,
+  );
+  assert.match(service, /usage\.status::text = 'completed'/);
+  assert.match(service, /deposit\.status = 'completed'/);
+  assert.match(service, /deposit\.created_at - INTERVAL '7 days'/);
+  assert.match(service, /ORDER BY usage\.created_at DESC, usage\.id DESC/);
+  assert.match(service, /referred\.role::text NOT IN \('admin', 'support', 'creator'\)/);
+  assert.match(service, /getExcludedUserIds\(\)/);
+  assert.match(service, /status: "approved"/);
+  assert.match(service, /include_cancelled: false/);
+  assert.match(service, /getAffiliateLeaderboardPage/);
+  assert.match(service, /pageSize: TOP_ENTRY_LIMIT/);
+  assert.match(standings, /SUM\(als\.total_wagered_usd\) OVER\(\)/);
+  assert.match(
+    standings,
+    /SUM\(SUM\(COALESCE\(acu\.weighted_wager_amount_usd, acu\.wager_amount_usd\)::numeric\)\)/,
+  );
+  assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/last-deals/);
+  assert.match(endpoints, /latest one or two started deals/);
 });
 
 test("creator activity notifications are independently controlled, durable, and creator-guild pinned", async () => {

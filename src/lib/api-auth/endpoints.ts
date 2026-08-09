@@ -79,6 +79,20 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/delete-preview",
+    summary:
+      "Body { guildId, creatorDiscordUserId, actorDiscordUserId }. Authorized Discord setup admins only. Returns the exact active category/chat/logs IDs that the bot must confirm and remove before unlinking the setup.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/delete",
+    summary:
+      "Body { guildId, creatorDiscordUserId, categoryId, chatChannelId, logsChannelId, actorDiscordUserId, interactionId }. Authorized Discord setup admins only. Compare-and-swap soft-deletes and unlinks the exact active setup after Discord cleanup while preserving its historical channel snapshot and audit trail. Returns { deleted: true }.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/link",
     summary:
       "Body { guildId, categoryId, channelId, creatorUserId, actorDiscordUserId, interactionId }. Staff-only first-time binding links an active creator section to the selected Packy account and grants its missing creator role. This system mapping does not require or change the account's on-site Discord OAuth link. Channel, actor, conflicts, and idempotency are verified server-side.",
@@ -116,6 +130,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     path: "/api/v1/discord/creator-setups/deal",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId }. Returns the current active or scheduled creator-facing deal terms for the Packy creator linked to that private Discord section. Internal IDs, notes, versions, and admin metadata are omitted.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/creator-setups/last-deals",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the latest one or two started deals for the linked creator. Returns deal-window signups, FTDs, attributed deposit volume, weighted wager, and approved overlapping leaderboard totals plus the top three standings.",
     scopes: ["discord:creator:setup"],
   },
   {
