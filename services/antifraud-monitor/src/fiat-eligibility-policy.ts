@@ -45,6 +45,14 @@ export const SMALL_CRYPTO_DEPOSIT_USD = 15;
 export const SMALL_CRYPTO_TRUST_WEIGHT = 0.25;
 /** Ceiling on every behaviour/history credit combined. */
 export const MAX_TRUST_CREDIT = 30;
+/**
+ * Reliable signup/login Fingerprint coverage started with the August rollout.
+ * Older accounts can legitimately have neither baseline, so that absence is
+ * recorded as an integration limitation and never treated as fraud evidence.
+ */
+export const FINGERPRINT_BASELINE_RELIABLE_FROM_MS = Date.parse(
+  "2026-08-01T00:00:00.000Z",
+);
 
 /**
  * Fingerprint signals that deny on their own. Provider booleans only — no
@@ -466,6 +474,27 @@ export function evaluateFiatEligibility(
 
   const ageDays = accountAgeDays(input.subject.created_at, input.now);
   const established = ageDays >= ESTABLISHED_ACCOUNT_DAYS;
+  const predatesReliableFingerprintBaselines =
+    input.subject.created_at.getTime() < FINGERPRINT_BASELINE_RELIABLE_FROM_MS;
+  const missingSignupFingerprint = !input.subject.visitor_id;
+  const missingLoginFingerprint = !input.subject.latest_login_visitor_id;
+
+  add(
+    predatesReliableFingerprintBaselines
+      && (missingSignupFingerprint || missingLoginFingerprint),
+    {
+      key: "legacy_fingerprint_baseline_unavailable",
+      detail:
+        "The account predates reliable Fingerprint capture on 1 August 2026; "
+        + `its missing ${[
+          missingSignupFingerprint ? "signup" : null,
+          missingLoginFingerprint ? "login" : null,
+        ].filter(Boolean).join(" and ")} baseline is ignored.`,
+      points: 0,
+      evidenceOnly: true,
+      source: "history",
+    },
+  );
 
   // ── Account state ────────────────────────────────────────────────────────
   // Already-correct states. Deny, never contain: re-locking an account staff
@@ -571,19 +600,21 @@ export function evaluateFiatEligibility(
   // ── Fingerprint identity binding ─────────────────────────────────────────
   const identity = input.identity;
   if (fingerprint?.status === "success") {
-    add(identity.linkedId !== input.subject.id, {
-      key: identity.linkedId
-        ? "fingerprint_linked_id_mismatch"
-        : "fingerprint_linked_id_missing",
-      detail: identity.linkedId
-        ? "The Fingerprint event is linked to another user."
-        : "The Fingerprint event is not linked to the requested user.",
+    add(Boolean(identity.linkedId) && identity.linkedId !== input.subject.id, {
+      key: "fingerprint_linked_id_mismatch",
+      detail: "The Fingerprint event is linked to another user.",
       points: 100,
-      // A live event proving ANOTHER account's device drove this checkout is
-      // forgery. A missing link is usually a broken integration, so it only
-      // denies.
       blocking: true,
-      containing: Boolean(identity.linkedId),
+      containing: true,
+      source: "fingerprint",
+    });
+    add(!identity.linkedId, {
+      key: "fingerprint_linked_id_missing",
+      detail:
+        "The fresh Fingerprint event has no account link. This is recorded "
+        + "as missing integration data and does not add risk.",
+      points: 0,
+      evidenceOnly: true,
       source: "fingerprint",
     });
     add(identity.eventIp !== input.requestIp, {

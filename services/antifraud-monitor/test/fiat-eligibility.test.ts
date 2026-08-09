@@ -1028,7 +1028,7 @@ test("a degraded corroborating provider scores but never blocks", () => {
   assert.equal(signal?.points, 10);
 });
 
-test("fresh Fingerprint identity is mandatory and replay-safe", () => {
+test("missing Fingerprint links are neutral while mismatches and replays block", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -1040,18 +1040,19 @@ test("fresh Fingerprint identity is mandatory and replay-safe", () => {
     },
   });
   assert.equal(reviewed.decision, "deny");
-  for (const key of [
-    "fingerprint_linked_id_missing",
-    "fingerprint_event_stale",
-    "fingerprint_event_replayed",
-  ]) {
+  for (const key of ["fingerprint_event_stale", "fingerprint_event_replayed"]) {
     assert.equal(
       reviewed.signals.find((signal) => signal.key === key)?.blocking,
       true,
     );
   }
-  // A replayed event is forgery: contain. A missing link is a broken
-  // integration: deny only.
+  const missingLink = reviewed.signals.find(
+    (signal) => signal.key === "fingerprint_linked_id_missing",
+  );
+  assert.equal(missingLink?.points, 0);
+  assert.equal(missingLink?.blocking, false);
+  assert.equal(missingLink?.evidenceOnly, true);
+  // A replayed event is forgery. Missing integration data is not.
   assert.deepEqual(reviewed.enforcementReasons, ["fingerprint_event_replayed"]);
   assert.equal(new FingerprintReuseError().name, "FingerprintReuseError");
 
@@ -1062,6 +1063,34 @@ test("fresh Fingerprint identity is mandatory and replay-safe", () => {
   assert.deepEqual(foreignDevice.enforcementReasons, [
     "fingerprint_linked_id_mismatch",
   ]);
+});
+
+test("pre-August accounts do not score missing signup or login fingerprints", () => {
+  const base = reviewInput();
+  const reviewed = fiatEligibilityInternals.automaticReview({
+    ...base,
+    now: new Date("2026-08-09T12:00:00.000Z"),
+    requestCreatedAt: new Date("2026-08-09T11:59:30.000Z"),
+    subject: subjectFixture({
+      created_at: new Date("2026-07-31T23:59:59.999Z"),
+      visitor_id: null,
+      latest_login_visitor_id: null,
+      latest_login_at: null,
+    }),
+    identity: {
+      ...base.identity,
+      linkedId: null,
+      eventTime: new Date("2026-08-09T11:59:35.000Z"),
+    },
+  });
+
+  const legacyGap = reviewed.signals.find(
+    (signal) => signal.key === "legacy_fingerprint_baseline_unavailable",
+  );
+  assert.equal(legacyGap?.points, 0);
+  assert.equal(legacyGap?.blocking, false);
+  assert.equal(legacyGap?.evidenceOnly, true);
+  assert.equal(reviewed.decision, "allow");
 });
 
 test("every containment reason is one the dashboard will honour", () => {

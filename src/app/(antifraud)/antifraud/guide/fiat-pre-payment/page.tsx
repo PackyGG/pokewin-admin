@@ -172,7 +172,7 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
           steps={[
             {
               title: "Bind the live browser event",
-              detail: "Fingerprint must return a fresh event linked to this user. Its authoritative event IP must equal the checkout IP sent by the backend.",
+              detail: "Fingerprint must return a fresh event. A link to another user is a hard block; a missing account link is recorded as missing integration data and adds no risk. The event IP must equal the checkout IP sent by the backend.",
             },
             {
               title: "Check independent IP reputation",
@@ -188,6 +188,14 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
             },
           ]}
         />
+        <GuideCallout icon={Fingerprint} tone="note" title="Legacy fingerprint gap">
+          Reliable signup and login fingerprint capture started on 1 August
+          2026. Older accounts often have no stored signup or login device
+          because our integration did not capture it. A missing historical
+          fingerprint is therefore ignored: it adds 0 points and cannot deny a
+          checkout. Comparisons use whichever verified baselines actually
+          exist.
+        </GuideCallout>
       </GuideSection>
 
       <GuideSection
