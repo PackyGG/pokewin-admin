@@ -46,12 +46,14 @@ export const SMALL_CRYPTO_TRUST_WEIGHT = 0.25;
 /** Ceiling on every behaviour/history credit combined. */
 export const MAX_TRUST_CREDIT = 30;
 /**
- * Reliable signup/login Fingerprint coverage started with the August rollout.
- * Older accounts can legitimately have neither baseline, so that absence is
- * recorded as an integration limitation and never treated as fraud evidence.
+ * Signup capture became reliable before login capture was introduced. These
+ * timestamps deliberately use safe whole-day cutoffs after each rollout.
  */
-export const FINGERPRINT_BASELINE_RELIABLE_FROM_MS = Date.parse(
+export const SIGNUP_FINGERPRINT_RELIABLE_FROM_MS = Date.parse(
   "2026-08-01T00:00:00.000Z",
+);
+export const LOGIN_FINGERPRINT_RELIABLE_FROM_MS = Date.parse(
+  "2026-08-05T00:00:00.000Z",
 );
 
 /**
@@ -474,27 +476,32 @@ export function evaluateFiatEligibility(
 
   const ageDays = accountAgeDays(input.subject.created_at, input.now);
   const established = ageDays >= ESTABLISHED_ACCOUNT_DAYS;
-  const predatesReliableFingerprintBaselines =
-    input.subject.created_at.getTime() < FINGERPRINT_BASELINE_RELIABLE_FROM_MS;
   const missingSignupFingerprint = !input.subject.visitor_id;
   const missingLoginFingerprint = !input.subject.latest_login_visitor_id;
+  const legacyMissingFingerprintBaselines = [
+    missingSignupFingerprint
+        && input.subject.created_at.getTime()
+          < SIGNUP_FINGERPRINT_RELIABLE_FROM_MS
+      ? "signup (account created before 1 August 2026)"
+      : null,
+    missingLoginFingerprint
+        && input.subject.latest_login_at
+        && input.subject.latest_login_at.getTime()
+          < LOGIN_FINGERPRINT_RELIABLE_FROM_MS
+      ? "login (login occurred before 5 August 2026)"
+      : null,
+  ].filter((baseline): baseline is string => Boolean(baseline));
 
-  add(
-    predatesReliableFingerprintBaselines
-      && (missingSignupFingerprint || missingLoginFingerprint),
-    {
-      key: "legacy_fingerprint_baseline_unavailable",
-      detail:
-        "The account predates reliable Fingerprint capture on 1 August 2026; "
-        + `its missing ${[
-          missingSignupFingerprint ? "signup" : null,
-          missingLoginFingerprint ? "login" : null,
-        ].filter(Boolean).join(" and ")} baseline is ignored.`,
-      points: 0,
-      evidenceOnly: true,
-      source: "history",
-    },
-  );
+  add(legacyMissingFingerprintBaselines.length > 0, {
+    key: "legacy_fingerprint_baseline_unavailable",
+    detail:
+      `Reliable capture was not available for the missing ${
+        legacyMissingFingerprintBaselines.join(" and ")
+      } baseline. This integration gap is ignored.`,
+    points: 0,
+    evidenceOnly: true,
+    source: "history",
+  });
 
   // ── Account state ────────────────────────────────────────────────────────
   // Already-correct states. Deny, never contain: re-locking an account staff

@@ -189,12 +189,12 @@ export default async function AntifraudFiatPrePaymentGuidePage() {
           ]}
         />
         <GuideCallout icon={Fingerprint} tone="note" title="Legacy fingerprint gap">
-          Reliable signup and login fingerprint capture started on 1 August
-          2026. Older accounts often have no stored signup or login device
-          because our integration did not capture it. A missing historical
-          fingerprint is therefore ignored: it adds 0 points and cannot deny a
-          checkout. Comparisons use whichever verified baselines actually
-          exist.
+          Reliable signup fingerprint coverage uses 1 August 2026 as its safe
+          cutoff. Login fingerprint capture was added later, on 4 August, so 5
+          August is the safe login cutoff. An older account can still gain a
+          login fingerprint by logging in after that rollout. Missing historical
+          fingerprints add 0 points and cannot deny a checkout; comparisons use
+          whichever verified baselines actually exist.
         </GuideCallout>
       </GuideSection>
 

@@ -1065,7 +1065,7 @@ test("missing Fingerprint links are neutral while mismatches and replays block",
   ]);
 });
 
-test("pre-August accounts do not score missing signup or login fingerprints", () => {
+test("pre-August accounts do not score a missing signup fingerprint", () => {
   const base = reviewInput();
   const reviewed = fiatEligibilityInternals.automaticReview({
     ...base,
@@ -1091,6 +1091,49 @@ test("pre-August accounts do not score missing signup or login fingerprints", ()
   assert.equal(legacyGap?.blocking, false);
   assert.equal(legacyGap?.evidenceOnly, true);
   assert.equal(reviewed.decision, "allow");
+});
+
+test("login fingerprint legacy status follows login time, not account age", () => {
+  const base = reviewInput();
+  const input = {
+    ...base,
+    now: new Date("2026-08-09T12:00:00.000Z"),
+    requestCreatedAt: new Date("2026-08-09T11:59:30.000Z"),
+    identity: {
+      ...base.identity,
+      eventTime: new Date("2026-08-09T11:59:35.000Z"),
+    },
+  };
+  const beforeLoginRollout = fiatEligibilityInternals.automaticReview({
+    ...input,
+    subject: subjectFixture({
+      created_at: new Date("2026-08-02T00:00:00.000Z"),
+      latest_login_at: new Date("2026-08-04T23:59:59.999Z"),
+      latest_login_visitor_id: null,
+    }),
+  });
+  const legacyGap = beforeLoginRollout.signals.find(
+    (signal) => signal.key === "legacy_fingerprint_baseline_unavailable",
+  );
+  assert.match(legacyGap?.detail ?? "", /login occurred before 5 August/);
+  assert.equal(legacyGap?.points, 0);
+  assert.equal(beforeLoginRollout.decision, "allow");
+
+  const afterLoginRollout = fiatEligibilityInternals.automaticReview({
+    ...input,
+    subject: subjectFixture({
+      created_at: new Date("2026-08-02T00:00:00.000Z"),
+      latest_login_at: new Date("2026-08-05T00:00:00.000Z"),
+      latest_login_visitor_id: null,
+    }),
+  });
+  assert.equal(
+    afterLoginRollout.signals.some(
+      (signal) => signal.key === "legacy_fingerprint_baseline_unavailable",
+    ),
+    false,
+  );
+  assert.equal(afterLoginRollout.decision, "allow");
 });
 
 test("every containment reason is one the dashboard will honour", () => {
