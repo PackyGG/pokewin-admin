@@ -100,10 +100,22 @@ test("rule match, score, and case outcome commit atomically", async () => {
       "UPDATE monitor_sessions",
       "UPDATE cases",
       "INSERT INTO",
+      "INSERT INTO",
       "COMMIT",
     ],
   );
   assert.equal(fixture.released(), true);
+});
+
+test("a manual-review rule reserves the dashboard signal before Discord", async () => {
+  const fixture = rulePoolFixture();
+  await persistRuleMatch(fixture.pool, ruleWrite);
+
+  const eventInsert = fixture.statements.find((statement) =>
+    statement.startsWith("INSERT INTO risk_events"),
+  );
+  assert.match(eventInsert ?? "", /'behavioral_rule_match'/);
+  assert.match(eventInsert ?? "", /'rule_matches'/);
 });
 
 test("a failed rule outcome rolls the match back for a safe retry", async () => {

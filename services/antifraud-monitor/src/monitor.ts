@@ -137,7 +137,7 @@ type RuleMatchWrite = {
   scoreDelta: number;
   actionType: string;
   evidence: Record<string, unknown>;
-  alert: DiscordAlert;
+  alert: DiscordAlert & { userId: string };
 };
 
 type CatchallContainmentWrite = {
@@ -347,6 +347,44 @@ export async function persistRuleMatch(
             containmentRequired: true,
             modelVersion: "behavior-v1",
             reasonCode: input.alert.trigger ?? "fresh_account_behavior",
+            ruleId: input.ruleId,
+            evidence: input.evidence,
+          }),
+        ],
+      );
+    } else {
+      // Every ordinary rule match must cross the signed dashboard-ingest
+      // pipeline before its Discord alert is delivered. That creates (or
+      // attaches to) the Admin Account Review row and gives the Discord
+      // `monitorCaseId` deep-link a review id to resolve to. Previously only
+      // lock-withdrawals rules emitted a risk event, so "Review case" opened
+      // the queue with no dialog for the common manual-review rule.
+      await client.query(
+        `
+          INSERT INTO risk_events (
+            case_id, session_id, user_id, event_type, source, source_ref,
+            score_delta, score_after, title, detail, payload, occurred_at
+          ) VALUES (
+            $1,$2,$3,'behavioral_rule_match',
+            'rule_matches',$4,$5,$6,$7,$8::jsonb,now()
+          )
+          ON CONFLICT (source, source_ref) WHERE source_ref IS NOT NULL
+          DO NOTHING
+        `,
+        [
+          input.caseId,
+          input.sessionId,
+          input.alert.userId,
+          `rule-match:${match.rows[0]!.id}`,
+          input.scoreDelta,
+          nextScore,
+          input.alert.title,
+          input.alert.description,
+          JSON.stringify({
+            reviewOnly: true,
+            modelVersion: "behavior-v1",
+            reasonCode: input.alert.trigger ?? "behavioral_rule_match",
+            actionType: input.actionType,
             ruleId: input.ruleId,
             evidence: input.evidence,
           }),
@@ -1791,10 +1829,19 @@ export class MonitorEngine {
     }>(
       `
         SELECT rule_match_id, payload, attempt_count
-        FROM rule_alert_outbox
-        WHERE delivered_at IS NULL
-          AND next_attempt_at <= now()
-        ORDER BY created_at
+        FROM rule_alert_outbox alert
+        WHERE alert.delivered_at IS NULL
+          AND alert.next_attempt_at <= now()
+          -- The button resolves through the Admin signal row. Do not let the
+          -- Discord alert outrun signed ingest and produce a dead popup link.
+          AND EXISTS (
+            SELECT 1
+            FROM risk_events event
+            WHERE event.source = 'rule_matches'
+              AND event.source_ref = 'rule-match:' || alert.rule_match_id::text
+              AND event.dashboard_delivered_at IS NOT NULL
+          )
+        ORDER BY alert.created_at
         LIMIT 8
       `,
     );
