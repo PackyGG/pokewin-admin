@@ -200,8 +200,6 @@ const runtimeConfig: Config = {
   API_TOKEN: "read-token-that-is-at-least-32-characters",
   API_ADMIN_TOKEN: "admin-token-that-is-at-least-32-characters",
   FIAT_ACCESS_API_BASE_URL: "https://packy.gg/v1",
-  FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "",
-  FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "",
   FIAT_ELIGIBILITY_GLOBALLY_ENABLED: false,
   FIAT_ELIGIBILITY_RATE_LIMIT_PER_MINUTE: 120,
   PUBLIC_BASE_URL: "https://monitor.example.com",

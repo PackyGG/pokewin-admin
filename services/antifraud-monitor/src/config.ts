@@ -56,8 +56,6 @@ const schema = z.object({
   API_ADMIN_TOKEN: z.string().min(32),
   FIAT_ELIGIBILITY_DEV_API_KEY: z.string().min(32).optional(),
   FIAT_ELIGIBILITY_PROD_API_KEY: z.string().min(32).optional(),
-  FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: z.string().default(""),
-  FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: z.string().default(""),
   FIAT_ELIGIBILITY_GLOBALLY_ENABLED: fiatEligibilityEnabledSchema,
   // Automatic account containment for enforced denials. Defaults to ON: an
   // unset variable must not silently downgrade the endpoint to observe-only.
@@ -204,22 +202,6 @@ export function loadConfig(): Config {
     throw new Error(
       "Invalid configuration: battle testing cannot use the production source database",
     );
-  }
-  for (const [key, allowlist] of [
-    [
-      config.FIAT_ELIGIBILITY_DEV_API_KEY,
-      config.FIAT_ELIGIBILITY_DEV_ALLOWED_IPS,
-    ],
-    [
-      config.FIAT_ELIGIBILITY_PROD_API_KEY,
-      config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS,
-    ],
-  ] as const) {
-    if (key && !allowlist.trim()) {
-      throw new Error(
-        "Invalid configuration: every Fiat eligibility key requires an IP allowlist",
-      );
-    }
   }
   const publicUrl = new URL(config.PUBLIC_BASE_URL);
   if (config.NODE_ENV === "production" && publicUrl.protocol !== "https:") {

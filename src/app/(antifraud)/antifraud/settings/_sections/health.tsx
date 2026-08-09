@@ -178,10 +178,8 @@ function ConfigurationIssues({
   const missingFiat = fiat
     ? [
         ["production credential", fiat.prodCredentialConfigured],
-        ["production IP allowlist", fiat.prodIpAllowlistConfigured],
         ["development credential", fiat.devCredentialConfigured],
         ["development source", fiat.devSourceConfigured],
-        ["development IP allowlist", fiat.devIpAllowlistConfigured],
       ].filter(([, configured]) => !configured)
     : [];
 

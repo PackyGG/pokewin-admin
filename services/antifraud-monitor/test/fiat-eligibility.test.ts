@@ -41,8 +41,6 @@ function access(): FiatEligibilityAccess {
   return new FiatEligibilityAccess({
     FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
     FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
-    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "10.20.0.0/16,2001:db8::/48",
-    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "203.0.113.10,2001:db8:1::10",
   });
 }
 
@@ -175,11 +173,10 @@ function providerWithSignal(
   };
 }
 
-test("dedicated Fiat credentials are isolated by environment and source IP", () => {
+test("dedicated Fiat credentials are isolated by environment", () => {
   assert.deepEqual(
     authenticateFiatEligibilityRequest(access(), {
       authorization: `Bearer ${PROD_KEY}`,
-      sourceIp: "203.0.113.10",
       environment: "prod",
     }),
     { authorized: true, environment: "prod" },
@@ -187,7 +184,6 @@ test("dedicated Fiat credentials are isolated by environment and source IP", () 
   assert.deepEqual(
     authenticateFiatEligibilityRequest(access(), {
       authorization: `Bearer ${DEV_KEY}`,
-      sourceIp: "10.20.44.8",
       environment: "prod",
     }),
     {
@@ -198,20 +194,7 @@ test("dedicated Fiat credentials are isolated by environment and source IP", () 
   );
   assert.deepEqual(
     authenticateFiatEligibilityRequest(access(), {
-      authorization: `Bearer ${PROD_KEY}`,
-      sourceIp: "203.0.113.11",
-      environment: "prod",
-    }),
-    {
-      authorized: false,
-      status: 403,
-      error: "source_ip_not_allowed",
-    },
-  );
-  assert.deepEqual(
-    authenticateFiatEligibilityRequest(access(), {
       authorization: "Bearer read-token-that-must-not-work",
-      sourceIp: "203.0.113.10",
       environment: "prod",
     }),
     { authorized: false, status: 401, error: "unauthorized" },
@@ -249,8 +232,6 @@ test("Fiat endpoint rejects oversized bodies before automatic review", async () 
   const localAccess = new FiatEligibilityAccess({
     FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
     FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
-    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
-    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
   });
   let assessed = false;
   await registerFiatEligibilityRoutes(app, {
@@ -314,8 +295,6 @@ test("Fiat endpoint logs correlated decisions without credentials or raw device 
   const localAccess = new FiatEligibilityAccess({
     FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
     FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
-    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
-    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
   });
   const decision = {
     decisionId: "decision-1",
@@ -422,8 +401,6 @@ test("Fiat endpoint logs safe rejection, replay, and failure classifications", a
   const localAccess = new FiatEligibilityAccess({
     FIAT_ELIGIBILITY_DEV_API_KEY: DEV_KEY,
     FIAT_ELIGIBILITY_PROD_API_KEY: PROD_KEY,
-    FIAT_ELIGIBILITY_DEV_ALLOWED_IPS: "127.0.0.1",
-    FIAT_ELIGIBILITY_PROD_ALLOWED_IPS: "127.0.0.1",
   });
   const secretErrorMessage =
     "database failed at postgresql://private-user:private-password@db";

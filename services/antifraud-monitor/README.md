@@ -34,7 +34,7 @@ It does not modify the Packy frontend or backend.
   delivery retries from the Antifraud database.
 - Rate-limited HTTP API with separate read and admin-write credentials
 - Fully automatic, environment-isolated Fiat checkout eligibility decisions
-  with dedicated credentials and source-IP allowlists
+  with dedicated credentials
 - `GET /v1/scoring` for the canonical live risk-point configuration
 - `GET /v1/operations/config` for sanitized deployed integration status
 - Exact-origin WebSocket stream with 30-second, single-use subprotocol tickets
@@ -105,7 +105,7 @@ numbers, images, or raw provider data.
 
 `POST /v1/fiat-eligibility/check` is a server-to-server endpoint. It never
 accepts `API_TOKEN` or `API_ADMIN_TOKEN`. Development and production use
-different credentials, source-IP allowlists and read-only source databases.
+different credentials and read-only source databases.
 The credential selects the trusted environment; a body claiming the other
 environment is rejected.
 
@@ -232,13 +232,11 @@ stored result; reusing that event with changed input returns
 withdrawal indexes this path needs; apply them with
 `npm run db:index:mirrors -- all` from the repository root.
 
-Configure `FIAT_ELIGIBILITY_PROD_API_KEY` with
-`FIAT_ELIGIBILITY_PROD_ALLOWED_IPS`. Development additionally requires
-`FIAT_ELIGIBILITY_DEV_API_KEY`, `FIAT_ELIGIBILITY_DEV_ALLOWED_IPS`, and
-`FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL`. Allowlist entries are exact IPv4 or
-IPv6 addresses or CIDRs. The allowlist applies to the calling backend's trusted
-source IP; `ipAddress` in the JSON body is the end user's IP and is never used
-to authenticate the caller.
+Configure `FIAT_ELIGIBILITY_PROD_API_KEY`. Development additionally requires
+`FIAT_ELIGIBILITY_DEV_API_KEY` and
+`FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL`. The `ipAddress` in the JSON body is
+the end user's IP used for fraud assessment and is never used to authenticate
+the caller.
 
 Every request writes structured `fiat_eligibility.*` lifecycle logs with the
 Fastify request ID. Logs cover validation and authentication rejection, rate

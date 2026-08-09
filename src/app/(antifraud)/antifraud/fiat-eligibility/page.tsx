@@ -242,7 +242,7 @@ const FLOW = [
     icon: KeyRound,
     title: "Authenticate backend",
     detail:
-      "The dedicated bearer key must match the declared environment and the caller must be inside that environment's source-IP allowlist.",
+      "The dedicated bearer key must match the declared environment.",
   },
   {
     icon: ServerCog,

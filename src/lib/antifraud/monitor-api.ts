@@ -151,8 +151,6 @@ const runtimeConfigSchema = z.object({
     devCredentialConfigured: z.boolean(),
     prodCredentialConfigured: z.boolean(),
     devSourceConfigured: z.boolean(),
-    devIpAllowlistConfigured: z.boolean(),
-    prodIpAllowlistConfigured: z.boolean(),
   }).optional(),
 });
 

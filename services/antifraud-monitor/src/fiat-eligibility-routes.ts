@@ -87,7 +87,6 @@ export function authenticateFiatEligibilityRequest(
   access: FiatEligibilityAccess,
   input: {
     authorization: string | undefined;
-    sourceIp: string;
     environment?: FiatEligibilityEnvironment;
   },
 ):
@@ -95,19 +94,13 @@ export function authenticateFiatEligibilityRequest(
   | {
       authorized: false;
       status: 401 | 403;
-      error:
-        | "unauthorized"
-        | "source_ip_not_allowed"
-        | "environment_credential_mismatch";
+      error: "unauthorized" | "environment_credential_mismatch";
     } {
-  const authentication = access.authenticate(
-    bearerToken(input.authorization),
-    input.sourceIp,
-  );
+  const authentication = access.authenticate(bearerToken(input.authorization));
   if (!authentication.authorized) {
     return {
       authorized: false,
-      status: authentication.error === "unauthorized" ? 401 : 403,
+      status: 401,
       error: authentication.error,
     };
   }
@@ -176,7 +169,6 @@ export async function registerFiatEligibilityRoutes(
       }
       const authentication = authenticateFiatEligibilityRequest(input.access, {
         authorization: request.headers.authorization,
-        sourceIp: request.ip,
         environment: parsed.data.env,
       });
       if (!authentication.authorized) {

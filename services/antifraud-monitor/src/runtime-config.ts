@@ -35,8 +35,6 @@ export function sanitizedRuntimeConfig(
     devCredentialConfigured: boolean;
     prodCredentialConfigured: boolean;
     devSourceConfigured: boolean;
-    devIpAllowlistConfigured: boolean;
-    prodIpAllowlistConfigured: boolean;
   };
 } {
   return {
@@ -83,12 +81,6 @@ export function sanitizedRuntimeConfig(
       ),
       devSourceConfigured: Boolean(
         config.FIAT_ELIGIBILITY_DEV_SOURCE_DATABASE_URL,
-      ),
-      devIpAllowlistConfigured: Boolean(
-        config.FIAT_ELIGIBILITY_DEV_ALLOWED_IPS.trim(),
-      ),
-      prodIpAllowlistConfigured: Boolean(
-        config.FIAT_ELIGIBILITY_PROD_ALLOWED_IPS.trim(),
       ),
     },
   };
