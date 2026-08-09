@@ -21,19 +21,11 @@ export const EOS_CHAIN_INFO_PATH = "/v1/chain/get_info";
 export const EOS_CHAIN_BLOCK_PATH = "/v1/chain/get_block";
 
 const EOS_ENDPOINTS = [
-  "https://api.eostitan.com",
   "https://mainnet.genereos.io",
-  "https://mainnet.eosamsterdam.net",
-  "https://eos.eosusa.io",
-  "https://eos.api.eosnation.io",
-  "https://api.eospglmlt.com",
+  "https://api.eostitan.com",
   "https://eos.newdex.one",
-  "https://api.eos.detroitledger.tech",
   "https://api.eossupport.io",
-  "https://api.main.alohaeos.com",
-  "https://mainnet.eosio.sg",
-  "https://api.eosrio.io",
-  "https://eos.hyperion.eosrio.io",
+  "https://mainnet.eosamsterdam.net",
 ] as const;
 
 const BLOCK_COUNT = 5;

@@ -131,7 +131,7 @@ test("EOS service races providers and fetches a fresh five-block window per requ
   ]);
   const freshResult = await service.select();
 
-  assert.equal(infoRequests, 39);
+  assert.equal(infoRequests, 15);
   assert.deepEqual(requestedBlocks, [
     500, 499, 498, 497, 496,
     500, 499, 498, 497, 496,
