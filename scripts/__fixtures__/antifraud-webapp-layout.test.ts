@@ -101,6 +101,7 @@ test("Fraud navigation follows the owner workspace hierarchy", () => {
 test("every Fraud guide route gates access and shares the guide primitives", () => {
   const routes = [
     "sign-up",
+    "fiat-pre-payment",
     "fiat-deposits",
     "account-review",
     "refunds",
@@ -136,12 +137,22 @@ test("every Fraud guide route gates access and shares the guide primitives", () 
     assert.doesNotMatch(page, /className=/);
     assert.doesNotMatch(page, /<(?:div|section|article|ul|ol|dl|table|h1|h2|h3) /);
   }
+});
 
-  // The retired pre-payment URL must redirect, never 404.
-  const retired = read(
+test("the pre-Fiat guide explains caller auth and checkout IP separately", () => {
+  const page = read(
     "src/app/(antifraud)/antifraud/guide/fiat-pre-payment/page.tsx",
   );
-  assert.match(retired, /redirect\("\/antifraud\/guide\/fiat-deposits"\)/);
+  const sidebar = read(
+    "src/app/(antifraud)/antifraud/_components/antifraud-sidebar.tsx",
+  );
+
+  assert.match(page, /No caller-IP allowlist/);
+  assert.match(page, /customer's checkout IP|player's checkout IP/);
+  assert.match(page, /Fingerprint and proxycheck\.io are mandatory/);
+  assert.match(page, /Most denials do not lock, ban, refund, or change KYC/);
+  assert.match(sidebar, /label: "Pre-Fiat Checks"/);
+  assert.match(sidebar, /href: "\/antifraud\/guide\/fiat-pre-payment"/);
 });
 
 test("the guide primitives stay flat — no hue-filled surfaces", () => {
