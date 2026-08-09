@@ -1,17 +1,22 @@
 import "server-only";
 
-import { sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
+import { getProdReadDrizzleDb } from "@/lib/db";
+import { account } from "@/lib/db-schema/main/schema";
 
 const MIN_DURATION_MS = 60_000;
 const MAX_DURATION_MS = 365 * 24 * 60 * 60 * 1000;
+
+export type GiveawayEntryRequirement = "none" | "linked_packy_account";
 
 export type GiveawayFailureCode =
   | "giveaway_not_found"
   | "giveaway_conflict"
   | "giveaway_not_active"
   | "giveaway_not_ended"
+  | "giveaway_requirement_not_met"
   | "winner_not_found"
   | "no_eligible_entries";
 
@@ -33,6 +38,7 @@ type GiveawayRow = {
   creator_discord_user_id: string;
   prize: string;
   winner_count: number;
+  entry_requirement: GiveawayEntryRequirement;
   ends_at: Date | string;
   status: "pending_message" | "active" | "ended" | "cancelled";
   discord_message_id: string | null;
@@ -47,6 +53,7 @@ export type DiscordGiveawayState = {
   creatorDiscordUserId: string;
   prize: string;
   winnerCount: number;
+  entryRequirement: GiveawayEntryRequirement;
   endsAt: string;
   status: GiveawayRow["status"];
   revision: number;
@@ -73,6 +80,7 @@ function stateFromRow(
     creatorDiscordUserId: row.creator_discord_user_id,
     prize: row.prize,
     winnerCount: row.winner_count,
+    entryRequirement: row.entry_requirement,
     endsAt: new Date(row.ends_at).toISOString(),
     status: row.status,
     revision: row.revision,
@@ -111,9 +119,11 @@ export async function createDiscordGiveaway(input: {
   creatorDiscordUserId: string;
   prize: string;
   winnerCount: number;
+  entryRequirement?: GiveawayEntryRequirement;
   endsAt: string;
 }): Promise<DiscordGiveawayState> {
   const prize = input.prize.trim();
+  const entryRequirement = input.entryRequirement ?? "none";
   const endsAt = new Date(input.endsAt);
   const durationMs = endsAt.getTime() - Date.now();
   if (!prize || prize.length > 1_000) {
@@ -121,6 +131,9 @@ export async function createDiscordGiveaway(input: {
   }
   if (!Number.isInteger(input.winnerCount) || input.winnerCount < 1 || input.winnerCount > 20) {
     throw new GiveawayError("giveaway_conflict", "Winner count must be between 1 and 20.");
+  }
+  if (entryRequirement !== "none" && entryRequirement !== "linked_packy_account") {
+    throw new GiveawayError("giveaway_conflict", "Unsupported giveaway entry requirement.");
   }
   if (!Number.isFinite(endsAt.getTime()) || durationMs < MIN_DURATION_MS || durationMs > MAX_DURATION_MS) {
     throw new GiveawayError("giveaway_conflict", "Giveaway duration must be between one minute and one year.");
@@ -135,6 +148,7 @@ export async function createDiscordGiveaway(input: {
         creator_discord_user_id,
         prize,
         winner_count,
+        entry_requirement,
         ends_at
       ) VALUES (
         ${input.interactionId},
@@ -143,6 +157,7 @@ export async function createDiscordGiveaway(input: {
         ${input.creatorDiscordUserId},
         ${prize},
         ${input.winnerCount},
+        ${entryRequirement},
         ${endsAt.toISOString()}
       )
       ON CONFLICT (interaction_id) DO NOTHING
@@ -160,6 +175,7 @@ export async function createDiscordGiveaway(input: {
       || row.creator_discord_user_id !== input.creatorDiscordUserId
       || row.prize !== prize
       || row.winner_count !== input.winnerCount
+      || row.entry_requirement !== entryRequirement
       || new Date(row.ends_at).getTime() !== endsAt.getTime()
     ) {
       throw new GiveawayError("giveaway_conflict", "This interaction already created a different giveaway.");
@@ -175,8 +191,11 @@ export async function enterDiscordGiveaway(input: {
   discordUserId: string;
 }): Promise<{ entered: boolean; entryCount: number }> {
   return adminDrizzle.transaction(async (tx) => {
-    const giveaway = await tx.execute<Pick<GiveawayRow, "guild_id" | "channel_id" | "status"> & { open: boolean }>(sql`
-      SELECT guild_id, channel_id, status, (ends_at > now()) AS open
+    const giveaway = await tx.execute<Pick<
+      GiveawayRow,
+      "guild_id" | "channel_id" | "status" | "entry_requirement"
+    > & { open: boolean }>(sql`
+      SELECT guild_id, channel_id, status, entry_requirement, (ends_at > now()) AS open
       FROM discord_giveaways
       WHERE id = ${input.giveawayId}::uuid
       FOR UPDATE
@@ -189,6 +208,24 @@ export async function enterDiscordGiveaway(input: {
       || row.status !== "active"
       || !row.open
     ) throw new GiveawayError("giveaway_not_active", "This giveaway is no longer accepting entries.");
+
+    if (row.entry_requirement === "linked_packy_account") {
+      const prodReadDb = getProdReadDrizzleDb();
+      const [linkedAccount] = await prodReadDb
+        .select({ accountId: account.accountId })
+        .from(account)
+        .where(and(
+          eq(account.providerId, "discord"),
+          eq(account.accountId, input.discordUserId),
+        ))
+        .limit(1);
+      if (!linkedAccount) {
+        throw new GiveawayError(
+          "giveaway_requirement_not_met",
+          "A linked Packy.GG account is required to enter this giveaway.",
+        );
+      }
+    }
 
     const inserted = await tx.execute<{ discord_user_id: string }>(sql`
       INSERT INTO discord_giveaway_entries (giveaway_id, discord_user_id)

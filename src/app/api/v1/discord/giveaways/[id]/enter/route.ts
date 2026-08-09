@@ -26,7 +26,11 @@ export const POST = withApiKey<{ id: string }>(
       return await enterDiscordGiveaway({ giveawayId: id.data, ...body.data });
     } catch (error) {
       if (error instanceof GiveawayError) {
-        const status = error.code === "giveaway_not_found" ? 404 : 409;
+        const status = error.code === "giveaway_not_found"
+          ? 404
+          : error.code === "giveaway_requirement_not_met"
+            ? 403
+            : 409;
         return apiError(status, error.code, error.message);
       }
       throw error;

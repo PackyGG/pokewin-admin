@@ -371,13 +371,14 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/giveaways",
     summary:
-      "Creates an idempotent, durable giveaway awaiting initial Discord delivery.",
+      "Creates an idempotent, durable giveaway with an optional linked-Packy-account entry requirement, awaiting initial Discord delivery.",
     scopes: ["discord:giveaways"],
   },
   {
     method: "POST",
     path: "/api/v1/discord/giveaways/[id]/enter",
-    summary: "Records one unique Discord user entry while the giveaway is active.",
+    summary:
+      "Records one unique Discord user entry while active, enforcing the persisted Packy account requirement against the canonical production identity link.",
     scopes: ["discord:giveaways"],
   },
   {

@@ -14,6 +14,7 @@ const BodySchema = z.object({
   creatorDiscordUserId: Snowflake,
   prize: z.string().trim().min(1).max(1_000),
   winnerCount: z.number().int().min(1).max(20),
+  entryRequirement: z.enum(["none", "linked_packy_account"]).default("none"),
   endsAt: z.iso.datetime({ offset: true }),
 }).strict();
 
