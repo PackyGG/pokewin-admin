@@ -15,7 +15,8 @@ test("Fraud navigation badges cover fiat and account reviews", async () => {
     source("src/components/nav-alert-badge.tsx"),
   ]);
 
-  assert.match(mainSidebar, /item\.href === "\/fiat"/);
+  assert.match(mainSidebar, /item\.href === "\/analytics"/);
+  assert.match(mainSidebar, /searchParams\.get\("tab"\) === "fiat"/);
   assert.match(antifraudSidebar, /"\/antifraud\/fiat-deposits"/);
   assert.match(antifraudSidebar, /"\/antifraud\/reviews"/);
   assert.doesNotMatch(antifraudSidebar, /"\/antifraud\/signups"/);

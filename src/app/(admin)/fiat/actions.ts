@@ -133,7 +133,7 @@ export async function updateFiatConfigAction(input: unknown): Promise<{
 
   await refreshSiteConfig();
   revalidateTag(FIAT_CACHE_TAG);
-  revalidatePath("/fiat");
+  revalidatePath("/analytics");
   revalidatePath("/security");
 
   return { key: parsed.data.key, value: normalizedValue };

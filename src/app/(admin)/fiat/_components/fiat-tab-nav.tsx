@@ -35,7 +35,11 @@ export function FiatTabNav({ current }: { current: FiatTab }) {
             role="tab"
             aria-selected={active}
             aria-current={active ? "page" : undefined}
-            href={tab === "overview" ? "/fiat" : `/fiat?tab=${tab}`}
+            href={
+              tab === "overview"
+                ? "/analytics?tab=fiat"
+                : `/analytics?tab=fiat&fiatTab=${tab}`
+            }
             replace
             scroll={false}
             prefetch={false}

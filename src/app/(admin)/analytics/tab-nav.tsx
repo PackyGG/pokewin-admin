@@ -9,6 +9,7 @@ import {
   Sigma,
   TrendingDown,
   Globe,
+  Wallet,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { LinkPendingShell } from "@/components/ux";
@@ -19,6 +20,7 @@ export type AnalyticsTab =
   | "crm"
   | "cost-breakdown"
   | "rewards"
+  | "fiat"
   | "map";
 
 // Cohorts / Funnel / Creator LTV / Retention / Top Performers were deleted
@@ -50,6 +52,10 @@ const TABS: { value: AnalyticsTab; label: string; icon: typeof BarChart3 }[] = [
   { value: "crm", label: "Player CRM", icon: Sigma },
   { value: "cost-breakdown", label: "Cost Breakdown", icon: TrendingDown },
   { value: "rewards", label: "Rewards", icon: Gift },
+  // The former standalone /fiat workspace now lives in Analytics. It keeps
+  // its own nested navigation for configuration, payments, access and
+  // webhooks; this top-level chip selects the workspace itself.
+  { value: "fiat", label: "Fiat", icon: Wallet },
   // Migrated from the standalone /map page — geographic breakdown of
   // users + per-country money flows. Lives here so it shares the
   // analytics hero's period filter instead of carrying its own.

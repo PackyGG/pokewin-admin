@@ -243,6 +243,25 @@ const nextConfig: NextConfig = {
         destination: "/analytics",
         permanent: true,
       },
+      // Fiat was folded into /analytics as a tab. Map its old nested `tab`
+      // query to `fiatTab` before the generic redirect so deep bookmarks keep
+      // selecting the same workspace panel.
+      ...["overview", "configuration", "payments", "access", "webhooks"].map(
+        (fiatTab) => ({
+          source: "/fiat",
+          has: [{ type: "query" as const, key: "tab", value: fiatTab }],
+          destination:
+            fiatTab === "overview"
+              ? "/analytics?tab=fiat"
+              : `/analytics?tab=fiat&fiatTab=${fiatTab}`,
+          permanent: true,
+        }),
+      ),
+      {
+        source: "/fiat",
+        destination: "/analytics?tab=fiat",
+        permanent: true,
+      },
       {
         // Insights challenges analytics removed (the CRUD /challenges page
         // under Rewards is unaffected).

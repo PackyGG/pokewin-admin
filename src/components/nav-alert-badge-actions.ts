@@ -119,7 +119,7 @@ export async function fetchNavAlertCounts(
     if (parsed.reviews || parsed.signups) {
       throw new Error("Antifraud badge counts require Antifraud access.");
     }
-    await requirePageAccess("/fiat");
+    await requirePageAccess("/analytics");
   }
 
   // Every cursor returned to the browser comes from the server clock. Queries

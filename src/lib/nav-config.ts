@@ -334,16 +334,19 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
   },
 
   {
+    // Fiat was absorbed into Analytics as a tab. Keep a palette shortcut for
+    // direct access, but remove the standalone Overview/sidebar entry and
+    // inherit the Analytics permission like the other absorbed tabs.
     id: "nav.fiat",
     group: "Overview",
     label: "Fiat",
-    href: "/fiat",
-    pageKey: "/fiat",
+    href: "/analytics?tab=fiat",
+    pageKey: "/analytics",
     icon: "Wallet",
     description: "Whop card deposits, limits, holds, locks, and webhooks",
     keywords: ["fiat", "whop", "card", "deposit", "payment", "hold", "kyc"],
     isNew: true,
-    inSidebar: true,
+    inSidebar: false,
     inPalette: true,
   },
 

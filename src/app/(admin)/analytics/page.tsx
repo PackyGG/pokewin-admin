@@ -25,6 +25,15 @@ import { parseMetric } from "./map/utils";
 import { parsePage } from "@/lib/utils/pagination";
 import { TabSkeleton } from "./tab-skeleton";
 import { parseKenoTab } from "../keno/tabs";
+import {
+  FiatAccessTab,
+  FiatConfigurationTab,
+  FiatOverviewTab,
+  FiatPaymentsTab,
+  FiatWebhooksTab,
+} from "../fiat/_components/fiat-tabs";
+import { FiatTabNav } from "../fiat/_components/fiat-tab-nav";
+import { parseFiatTab } from "../fiat/tabs";
 
 export const metadata = { title: "Analytics" };
 
@@ -38,6 +47,7 @@ function parseTab(value: string | undefined): AnalyticsTab {
     case "crm":
     case "cost-breakdown":
     case "rewards":
+    case "fiat":
     case "games":
     case "map":
       return value;
@@ -106,6 +116,12 @@ export default async function AnalyticsPage({
   // into the Suspense key and the tab segment re-renders when the
   // user toggles metrics.
   const mapMetric = parseMetric(params.metric);
+  const fiatTab = parseFiatTab(params.fiatTab);
+  const fiatPage = Math.max(1, Number(params.page) || 1);
+  const fiatPerPage = Math.min(
+    100,
+    Math.max(10, Number(params.perPage) || 20),
+  );
 
   return (
     <div className="space-y-6">
@@ -163,35 +179,58 @@ export default async function AnalyticsPage({
           </Suspense>
         </div>
       ) : (
-      <Suspense
-        key={`${tab}-${period}-${mapMetric}-${gameView}-${kenoTab}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}`}
-        fallback={<TabSkeleton />}
-      >
-        {tab === "games" && (
-          <GamesTab
-            view={gameView}
-            period={period}
-            ddPeriod={toDoubleDownPeriod(period)}
-            search={ddSearch}
-            page={ddPage}
-            packsSort={packsSort}
-            kenoTab={kenoTab}
-            canEditKeno={sessionIsAdmin(session) || sessionIsOwner(session)}
-          />
-        )}
-        {tab === "crm" && <CrmTab />}
-        {tab === "cost-breakdown" && (
-          <CostBreakdownTab period={insightsPeriod} />
-        )}
-        {tab === "rewards" && (
-          <RewardsTab
-            period={insightsPeriod}
-            sub={rwSub}
-            program={rwProgram}
-          />
-        )}
-        {tab === "map" && <MapTab period={period} metric={mapMetric} />}
-      </Suspense>
+        <Suspense
+          key={`${tab}-${period}-${mapMetric}-${gameView}-${kenoTab}-${packsSort ?? ""}-${ddSearch}-${ddPage}-${rwSub ?? ""}-${rwProgram ?? ""}-${fiatTab}-${fiatPage}-${fiatPerPage}-${params.search ?? ""}-${params.status ?? ""}`}
+          fallback={<TabSkeleton />}
+        >
+          {tab === "games" && (
+            <GamesTab
+              view={gameView}
+              period={period}
+              ddPeriod={toDoubleDownPeriod(period)}
+              search={ddSearch}
+              page={ddPage}
+              packsSort={packsSort}
+              kenoTab={kenoTab}
+              canEditKeno={sessionIsAdmin(session) || sessionIsOwner(session)}
+            />
+          )}
+          {tab === "crm" && <CrmTab />}
+          {tab === "cost-breakdown" && (
+            <CostBreakdownTab period={insightsPeriod} />
+          )}
+          {tab === "rewards" && (
+            <RewardsTab
+              period={insightsPeriod}
+              sub={rwSub}
+              program={rwProgram}
+            />
+          )}
+          {tab === "fiat" && (
+            <div className="space-y-6">
+              <FiatTabNav current={fiatTab} />
+              {fiatTab === "configuration" ? (
+                <FiatConfigurationTab
+                  canEdit={sessionIsAdmin(session) || sessionIsOwner(session)}
+                />
+              ) : fiatTab === "payments" ? (
+                <FiatPaymentsTab
+                  page={fiatPage}
+                  perPage={fiatPerPage}
+                  search={params.search}
+                  status={params.status}
+                />
+              ) : fiatTab === "access" ? (
+                <FiatAccessTab />
+              ) : fiatTab === "webhooks" ? (
+                <FiatWebhooksTab />
+              ) : (
+                <FiatOverviewTab />
+              )}
+            </div>
+          )}
+          {tab === "map" && <MapTab period={period} metric={mapMetric} />}
+        </Suspense>
       )}
     </div>
   );

@@ -123,7 +123,9 @@ export const ADMIN_PAGES: AdminPage[] = [
   // grant the Fiat credit review queue — that queue moved to the Fraud
   // workspace and is gated by Antifraud access, not by this key.
   { group: "Transactions", label: "Transactions", key: "/transactions/deposits" },
-  { group: "Navigation", label: "Fiat", key: "/fiat" },
+  // Fiat moved into /analytics. Retain the old key so existing stored role
+  // grants remain recognized; it no longer gates the live workspace.
+  { group: "Insights", label: "Fiat (moved → Analytics)", key: "/fiat" },
   // Notifications — global broadcast announcements (backend /v1/admin/announcements).
   // Sits with the player-facing operational tools.
   { group: "Players", label: "Notifications", key: "/notifications" },

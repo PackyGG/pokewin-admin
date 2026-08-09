@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useMemo } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useSearchParams } from "next/navigation";
 import {
   Activity,
   Bell,
@@ -411,18 +411,19 @@ export function AppSidebar({
       })),
   [isAdmin, isOwner, effectiveAllowedPages, username, dbEnv, dedicatedPackBuilder]);
 
-  const fiatVisible = groupsWithVisibility.some((group) =>
-    group.visibleItems.some((item) => item.href === "/fiat"),
+  const searchParams = useSearchParams();
+  const analyticsVisible = groupsWithVisibility.some((group) =>
+    group.visibleItems.some((item) => item.href === "/analytics"),
   );
-  const fiatIsActive = pathname === "/fiat" || pathname.startsWith("/fiat/");
-  const { counts: navAlertCounts, markSeen: markNavAlertSeen } =
-    useNavAlertBadges({
-      keys: MAIN_NAV_ALERT_KEYS,
-      viewerId,
-      scope: "main",
-      activeKey: fiatIsActive ? "fiat" : undefined,
-      enabled: fiatVisible,
-    });
+  const fiatIsActive =
+    pathname === "/analytics" && searchParams.get("tab") === "fiat";
+  const { counts: navAlertCounts } = useNavAlertBadges({
+    keys: MAIN_NAV_ALERT_KEYS,
+    viewerId,
+    scope: "main",
+    activeKey: fiatIsActive ? "fiat" : undefined,
+    enabled: analyticsVisible,
+  });
 
   const activeGroupLabel = useMemo(() =>
     groupsWithVisibility.find((group) =>
@@ -503,7 +504,7 @@ export function AppSidebar({
                       (other) => other.href !== item.href && pathname.startsWith(other.href)
                     ));
                 const alertCount =
-                  item.href === "/fiat" ? navAlertCounts.fiat : 0;
+                  item.href === "/analytics" ? navAlertCounts.fiat : 0;
                 return (
                   <SidebarMenuItem key={item.href}>
                     <SidebarMenuButton
@@ -515,10 +516,7 @@ export function AppSidebar({
                       aria-current={isActive ? "page" : undefined}
                       tooltip={item.label}
                       render={<Link href={item.href} />}
-                      onClick={() => {
-                        if (item.href === "/fiat") markNavAlertSeen("fiat");
-                        handleNavTap();
-                      }}
+                      onClick={handleNavTap}
                       // 44px tap target inside the mobile drawer; falls
                       // back to the compact 36px height on md+ where
                       // density matters more than tap area. group-data

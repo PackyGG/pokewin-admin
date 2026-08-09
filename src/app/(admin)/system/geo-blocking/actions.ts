@@ -89,7 +89,7 @@ function revalidateFiatPolicyPages(): void {
   revalidateTag(GEO_BLOCKING_CACHE_TAG);
   revalidateTag(FIAT_CACHE_TAG);
   revalidatePath("/system/geo-blocking");
-  revalidatePath("/fiat");
+  revalidatePath("/analytics");
   revalidatePath("/security");
   revalidatePath("/antifraud/config");
 }
