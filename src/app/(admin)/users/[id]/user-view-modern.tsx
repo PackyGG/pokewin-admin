@@ -93,6 +93,7 @@ import {
 import { UserAdminActions } from "./user-tabs-moderation";
 import { UserHeroSticky } from "./user-hero-sticky";
 import { CopyButton } from "@/components/copy-button";
+import { FingerprintAltDialog } from "../fingerprint-alt-dialog";
 
 // ---------------------------------------------------------------------------
 // Deferred tab chunk. The Audit tab pulls the whole admin-audit vocabulary
@@ -542,6 +543,7 @@ export function UserViewModern({
                   grouped with the status badge. Collapses to nothing for a
                   clean user (display:contents strip). */}
               <HeroFlagsStrip
+                userId={user.id}
                 statusKey={statusKey}
                 selfExclusion={selfExclusion}
                 vouchersValue={vouchersValue}
@@ -763,6 +765,7 @@ function FlagChip({
 }
 
 function HeroFlagsStrip({
+  userId,
   statusKey,
   selfExclusion,
   vouchersValue,
@@ -780,6 +783,7 @@ function HeroFlagsStrip({
   deviceLastLoginVisitorId,
   signupIpSharedCount,
 }: {
+  userId: string;
   statusKey: "active" | "locked" | "banned";
   selfExclusion: SelfExclusionState;
   vouchersValue: number;
@@ -907,12 +911,14 @@ function HeroFlagsStrip({
         // Rose — a real fraud-review signal, same weight as banned/locked.
         if (suspectedAlt) {
           return (
-            <FlagChip
-              icon={Fingerprint}
-              label={idLabel ? `Alt · ${idLabel}` : "Suspected Alt"}
-              className="border-rose-500/30 bg-rose-500/15 font-mono text-rose-600 dark:text-rose-400"
+            <FingerprintAltDialog
+              sourceUserId={userId}
+              className="inline-flex h-5 items-center gap-0.5 rounded-md border border-rose-500/30 bg-rose-500/15 px-2 py-0 font-mono text-[10px] font-medium text-rose-600 outline-none hover:bg-rose-500/25 focus-visible:ring-2 focus-visible:ring-ring dark:text-rose-400"
               title={`Suspected alt — device fingerprinting flagged this account at signup/login.${sharedLabel}${devicesLabel}${captureBreakdown}${loginLabel}\n${idTitle}`}
-            />
+            >
+              <Fingerprint className="size-2.5" />
+              {idLabel ? `Alt · ${idLabel}` : "Suspected Alt"}
+            </FingerprintAltDialog>
           );
         }
 
@@ -932,12 +938,14 @@ function HeroFlagsStrip({
         // Muted — captured and clean. Informational, so it must not compete
         // with the genuine warning chips beside it.
         return (
-          <FlagChip
-            icon={Fingerprint}
-            label={idLabel ?? "Device ID"}
-            className="border-border/60 bg-muted/50 font-mono text-muted-foreground"
+          <FingerprintAltDialog
+            sourceUserId={userId}
+            className="inline-flex h-5 items-center gap-0.5 rounded-md border border-border/60 bg-muted/50 px-2 py-0 font-mono text-[10px] font-medium text-muted-foreground outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
             title={`${idTitle}\nCaptured ${capturedLabel}${confidenceLabel}. No alt flag.${sharedLabel}${devicesLabel}${captureBreakdown}${loginLabel}`}
-          />
+          >
+            <Fingerprint className="size-2.5" />
+            {idLabel ?? "Device ID"}
+          </FingerprintAltDialog>
         );
       })()}
       {/* Shared signup IP. Amber ONLY for a small cluster — that band is

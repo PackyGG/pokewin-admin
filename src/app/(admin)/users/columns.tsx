@@ -18,6 +18,7 @@ import {
 import { useFormatDateTime } from "@/components/timezone-provider";
 import { cn } from "@/lib/utils";
 import type { UserRow } from "./_lib/user-row";
+import { FingerprintAltDialog } from "./fingerprint-alt-dialog";
 
 export type { UserRow } from "./_lib/user-row";
 
@@ -78,14 +79,13 @@ export const columns: ColumnDef<UserRow>[] = [
     accessorKey: "username",
     header: () => <UsersSortHeader title="User" sortKey="username" />,
     cell: ({ row }) => (
-      // Real <Link> so middle-click / Ctrl-click / right-click → "Open
-      // in new tab" works natively. stopPropagation prevents the row's
-      // onClick from double-firing the navigation on left-click.
-      <Link
-        href={`/users/${row.original.id}`}
-        onClick={(e) => e.stopPropagation()}
-        className="flex items-center gap-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded-md"
-      >
+      <div className="flex items-center gap-1">
+        {/* Real link so middle-click and Ctrl-click keep working. */}
+        <Link
+          href={`/users/${row.original.id}`}
+          onClick={(e) => e.stopPropagation()}
+          className="flex min-w-0 flex-1 items-center gap-3 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:rounded-md"
+        >
         <Avatar className="size-8 shrink-0">
           {row.original.image && <AvatarImage src={row.original.image} alt="" />}
           <AvatarFallback className="text-xs">
@@ -96,32 +96,6 @@ export const columns: ColumnDef<UserRow>[] = [
           <div className="flex items-center gap-1.5">
             <span className="truncate font-medium hover:underline">
               {row.original.username ?? row.original.email ?? "—"}
-            </span>
-            {/* Device-fingerprint state — shown on EVERY row, not just
-                flagged ones. Muted for a normal capture so it reads as
-                texture rather than an alert; amber when nothing was ever
-                captured (a coverage gap that used to look identical to a
-                clean account); rose only for a real alt flag. */}
-            <span
-              title={
-                row.original.suspectedAlt
-                  ? "Suspected alt — device fingerprinting flagged this account at signup/login"
-                  : row.original.hasDeviceId
-                    ? "Device fingerprint captured at signup"
-                    : "No device fingerprint captured — alt-detection cannot evaluate this account"
-              }
-              className="shrink-0"
-            >
-              <Fingerprint
-                className={cn(
-                  "size-3",
-                  row.original.suspectedAlt
-                    ? "text-rose-500"
-                    : row.original.hasDeviceId
-                      ? "text-muted-foreground/40"
-                      : "text-amber-500/70",
-                )}
-              />
             </span>
             {/* Shared signup IP. Amber only for a SMALL cluster — that's the
                 band where sharing is actually suspicious. Anything bigger is
@@ -155,7 +129,33 @@ export const columns: ColumnDef<UserRow>[] = [
             {row.original.email}
           </div>
         </div>
-      </Link>
+        </Link>
+        {row.original.hasDeviceId ? (
+          <FingerprintAltDialog
+            sourceUserId={row.original.id}
+            className="shrink-0 rounded p-1 outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
+            title={
+              row.original.suspectedAlt
+                ? "Suspected alt — click to view fingerprint-linked accounts"
+                : "Click to view fingerprint-linked accounts"
+            }
+          >
+          <Fingerprint
+            className={cn(
+              "size-3.5",
+              row.original.suspectedAlt
+                ? "text-rose-500"
+                : "text-muted-foreground/40",
+            )}
+          />
+          </FingerprintAltDialog>
+        ) : (
+          <Fingerprint
+            className="size-3 shrink-0 text-amber-500/70"
+            aria-label="No device fingerprint captured"
+          />
+        )}
+      </div>
     ),
   },
   {
@@ -195,22 +195,27 @@ export const columns: ColumnDef<UserRow>[] = [
         );
       }
       return (
-        <Badge
-          variant="outline"
-          className={cn(
-            "font-mono text-xs",
-            row.original.suspectedAlt
-              ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
-              : "border-border/60 bg-muted/50 text-muted-foreground",
-          )}
+        <FingerprintAltDialog
+          sourceUserId={row.original.id}
+          className="rounded outline-none focus-visible:ring-2 focus-visible:ring-ring"
           title={
             row.original.suspectedAlt
-              ? `Suspected alt. Device ID (visitor_id): ${id}`
-              : `Device ID (visitor_id): ${id}`
+              ? `Suspected alt. Click to view accounts linked to ${id}`
+              : `Click to view accounts linked to ${id}`
           }
         >
-          {id.slice(0, 12)}
-        </Badge>
+          <Badge
+            variant="outline"
+            className={cn(
+              "cursor-pointer font-mono text-xs hover:brightness-110",
+              row.original.suspectedAlt
+                ? "border-rose-500/30 bg-rose-500/15 text-rose-600 dark:text-rose-400"
+                : "border-border/60 bg-muted/50 text-muted-foreground",
+            )}
+          >
+            {id.slice(0, 12)}
+          </Badge>
+        </FingerprintAltDialog>
       );
     },
   },

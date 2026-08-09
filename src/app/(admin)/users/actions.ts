@@ -35,6 +35,10 @@ import {
   type UserIdentifierBlockResult,
 } from "@/lib/antifraud/user-identifier-blocking";
 import { z } from "zod";
+import {
+  getFingerprintAltAccounts,
+  type FingerprintAltAccount,
+} from "@/lib/queries/user-fingerprint-alts";
 
 // 7-day soft-delete window for admin_deleted_users snapshots. Mirrored
 // in /users/deleted's purge-on-read scan and the restore action's
@@ -506,6 +510,83 @@ function isBulkBanAuthorized(session: {
     (session.roles?.includes("admin") ?? session.role === "admin") ||
     Boolean(session.isOwner)
   );
+}
+
+export async function fetchFingerprintAltAccounts(input: unknown): Promise<
+  ServerActionResult<{
+    accounts: FingerprintAltAccount[];
+    canBulkBan: boolean;
+  }>
+> {
+  const session = await requirePageAccess("/users");
+  const parsed = z.string().trim().min(1).max(100).safeParse(input);
+  if (!parsed.success) return fail("Invalid user ID.", "VALIDATION");
+
+  try {
+    return ok({
+      accounts: await getFingerprintAltAccounts(parsed.data),
+      canBulkBan: isBulkBanAuthorized(session),
+    });
+  } catch (err) {
+    logError("users.fingerprintAlts", "linked-account lookup failed", err);
+    return fail("Couldn't load the fingerprint-linked accounts.");
+  }
+}
+
+const banFingerprintAltsSchema = z.object({
+  sourceUserId: z.string().trim().min(1).max(100),
+  userIds: z.array(z.string().trim().min(1).max(100)).min(1).max(250),
+});
+
+/** Ban a reviewed subset of accounts that are still linked to the source. */
+export async function banFingerprintAltAccounts(
+  input: unknown,
+): Promise<
+  ServerActionResult<{
+    bannedCount: number;
+    failed: Array<{ userId: string; error: string }>;
+  }>
+> {
+  const session = await requirePageAccess("/users");
+  if (!isBulkBanAuthorized(session)) {
+    return fail("Bulk ban is restricted to admins and owners.", "FORBIDDEN");
+  }
+
+  const parsed = banFingerprintAltsSchema.safeParse(input);
+  if (!parsed.success) {
+    return fail(parsed.error.issues[0]?.message ?? "Invalid selection.", "VALIDATION");
+  }
+  const requestedIds = [...new Set(parsed.data.userIds)];
+
+  let liveAccounts: FingerprintAltAccount[];
+  try {
+    liveAccounts = await getFingerprintAltAccounts(parsed.data.sourceUserId);
+  } catch (err) {
+    logError("users.fingerprintAlts.ban", "validation lookup failed", err);
+    return fail("Couldn't re-check the linked accounts. Nothing was banned.");
+  }
+
+  const liveById = new Map(liveAccounts.map((account) => [account.id, account]));
+  const invalid = requestedIds.filter((id) => !liveById.get(id)?.canBan);
+  if (invalid.length > 0) {
+    return fail(
+      "The linked-account set or protection state changed. Review the list again.",
+      "CONFLICT",
+    );
+  }
+
+  let bannedCount = 0;
+  const failed: Array<{ userId: string; error: string }> = [];
+  for (const userId of requestedIds) {
+    const result = await banUser(
+      userId,
+      `Multi — shared device fingerprint with ${parsed.data.sourceUserId}`,
+    );
+    if (result.success) bannedCount += 1;
+    else failed.push({ userId, error: result.error });
+  }
+
+  return ok({ bannedCount, failed });
 }
 
 /**
