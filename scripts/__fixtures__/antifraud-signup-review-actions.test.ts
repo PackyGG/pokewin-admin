@@ -38,6 +38,17 @@ test("Abstract catch-all signals always open Account Review", () => {
   );
 });
 
+test("behavioral rule matches always open Account Review", () => {
+  assert.equal(
+    shouldOpenReviewForSignal({
+      kind: "behavioral_rule_match",
+      riskScore: 20,
+      severity: "low",
+    }),
+    true,
+  );
+});
+
 test("Fraud review surfaces do not expose escalation controls", async () => {
   const files = await Promise.all(
     [

@@ -119,6 +119,7 @@ export function shouldOpenReviewForSignal(
   if (isNonActionableRewardEnrollmentSignal(signal.kind)) return false;
   return (
     signal.kind === "abstract_email_catchall" ||
+    signal.kind === "behavioral_rule_match" ||
     ((signal.kind === "high_risk_signup" ||
       signal.kind === "critical_risk_signup") &&
       signal.riskScore !== null &&

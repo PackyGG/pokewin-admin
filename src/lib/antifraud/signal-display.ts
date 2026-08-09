@@ -79,6 +79,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   [FIAT_WITHDRAWAL_HOLD_SIGNAL_KIND]: "Fiat-triggered withdrawal hold",
   critical_risk_signup: "Critical signup threshold",
   high_risk_signup: "High-risk signup threshold",
+  behavioral_rule_match: "Behavior rule matched",
   behavioral_withdrawal_containment: "Automatic withdrawal protection",
   fingerprint_suspect_score: "Device risk score",
   fingerprint_privacy_settings: "Privacy protections detected",
