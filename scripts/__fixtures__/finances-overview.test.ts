@@ -46,4 +46,10 @@ test("finance overview is owner-gated and reuses canonical profit math", () => {
   assert.match(page, /getSalaryExpenseSummary\(period\)/);
   assert.match(page, /value=\{salaries\.periodExpense\}/);
   assert.match(query, /monthly \* \(hours \/ \(30 \* 24\)\)/);
+  assert.match(page, /Weekly P&amp;L/);
+  assert.match(page, /getActualExpenseSummary\(period\)/);
+  assert.match(page, /expenses\.rewardsAndAffiliatePrizes/);
+  assert.match(page, /expenses\.creatorPrograms/);
+  assert.match(query, /getRewardCost\(\{ since \}\)/);
+  assert.match(query, /getCreatorCostsSince\(since\)/);
 });

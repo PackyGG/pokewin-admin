@@ -309,6 +309,21 @@ async function creatorCostsTodayFromPg(sinceIso: string): Promise<{
   };
 }
 
+export type CreatorCostComponents = Awaited<
+  ReturnType<typeof creatorCostsTodayFromPg>
+>;
+
+/**
+ * Uncached creator-cost components for an arbitrary rolling window.
+ * Finance uses this to pair the established creator accounting with its
+ * selected period instead of maintaining a second definition.
+ */
+export async function getCreatorCostsSince(
+  since: Date,
+): Promise<CreatorCostComponents> {
+  return creatorCostsTodayFromPg(since.toISOString());
+}
+
 /**
  * Creator costs for the current calendar day (since 00:00 UTC). Resolves the
  * cached today-windowed aggregate and assembles the line roster + total.

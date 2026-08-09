@@ -3,7 +3,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 export function FinancesOverviewSkeleton() {
   return (
     <div className="grid gap-4 lg:grid-cols-2">
-      {Array.from({ length: 2 }).map((_, card) => (
+      {Array.from({ length: 4 }).map((_, card) => (
         <div
           key={card}
           className="min-h-[310px] rounded-2xl bg-card py-4 ring-1 ring-foreground/10"
@@ -13,7 +13,7 @@ export function FinancesOverviewSkeleton() {
               <Skeleton className="h-5 w-32" />
               <Skeleton className="h-4 w-40" />
             </div>
-            {card === 0 && <Skeleton className="h-9 w-52 rounded-lg" />}
+            {card === 1 && <Skeleton className="h-9 w-52 rounded-lg" />}
           </div>
           <div className="space-y-6 px-4 pt-4">
             <div className="space-y-2">

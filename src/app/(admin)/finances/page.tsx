@@ -2,7 +2,9 @@ import { Suspense } from "react";
 import Link from "next/link";
 import {
   ArrowRight,
+  BadgeDollarSign,
   CalendarDays,
+  Gift,
   Receipt,
   TrendingDown,
   TrendingUp,
@@ -30,6 +32,7 @@ import {
 } from "@/lib/finances/periods";
 import { houseAmountTextClass } from "@/lib/house-pov";
 import {
+  getActualExpenseSummary,
   getFinanceProfit,
   getSalaryExpenseSummary,
 } from "@/lib/queries/finances-overview";
@@ -74,27 +77,96 @@ export default async function FinancesPage({ searchParams }: PageProps) {
 }
 
 async function FinancesOverview({ period }: { period: FinancePeriod }) {
-  const [profitResult, salaryResult] = await Promise.all([
-    safeQuery(
-      () => getFinanceProfit(period),
-      null,
-      `finances.profit.${period}`,
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getSalaryExpenseSummary(period),
-      null,
-      `finances.salaryExpenses.${period}`,
-      REWARD_QUERY_TIMEOUT_MS,
-    ),
-  ]);
+  const profitPromise = safeQuery(
+    () => getFinanceProfit(period),
+    null,
+    `finances.profit.${period}`,
+    REWARD_QUERY_TIMEOUT_MS,
+  );
+  const weeklyProfitPromise =
+    period === "7d"
+      ? profitPromise
+      : safeQuery(
+          () => getFinanceProfit("7d"),
+          null,
+          "finances.profit.7d",
+          REWARD_QUERY_TIMEOUT_MS,
+        );
+
+  const [profitResult, weeklyProfitResult, salaryResult, expenseResult] =
+    await Promise.all([
+      profitPromise,
+      weeklyProfitPromise,
+      safeQuery(
+        () => getSalaryExpenseSummary(period),
+        null,
+        `finances.salaryExpenses.${period}`,
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+      safeQuery(
+        () => getActualExpenseSummary(period),
+        null,
+        `finances.actualExpenses.${period}`,
+        REWARD_QUERY_TIMEOUT_MS,
+      ),
+    ]);
 
   const profit = profitResult.data;
+  const weeklyProfit = weeklyProfitResult.data;
   const salaries = salaryResult.data;
+  const expenses = expenseResult.data;
   const label = financePeriodLabel(period);
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
+      <Card className="min-h-[310px]">
+        <CardHeader className="border-b">
+          <CardTitle className="flex items-center gap-2">
+            <BadgeDollarSign
+              className={cn(
+                "size-4",
+                weeklyProfit && weeklyProfit.pnl < 0
+                  ? "text-rose-500"
+                  : "text-emerald-500",
+              )}
+              aria-hidden
+            />
+            Weekly P&amp;L
+          </CardTitle>
+          <CardDescription>Did the house make money this week?</CardDescription>
+        </CardHeader>
+
+        <CardContent className="flex flex-1 flex-col justify-between gap-5">
+          {weeklyProfit ? (
+            <>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  {weeklyProfit.pnl >= 0 ? "Profit this week" : "Loss this week"}
+                </p>
+                <p
+                  className={cn(
+                    "mt-1 text-4xl font-bold tracking-tight tabular-nums sm:text-5xl",
+                    houseAmountTextClass(weeklyProfit.pnl),
+                  )}
+                >
+                  {weeklyProfit.pnl >= 0 ? "+" : "−"}
+                  <AnimatedNumber
+                    value={Math.abs(weeklyProfit.pnl)}
+                    format="currency"
+                  />
+                </p>
+              </div>
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Rolling seven-day balance-sheet P&amp;L using the same accounting
+                definition as the Profit card.
+              </p>
+            </>
+          ) : (
+            <Unavailable message="Weekly P&L could not be loaded. Refresh to retry." />
+          )}
+        </CardContent>
+      </Card>
+
       <Card className="min-h-[310px]">
         <CardHeader className="gap-3 border-b">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -218,6 +290,54 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             </>
           ) : (
             <Unavailable message="Salary expenses could not be loaded. Refresh to retry." />
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="min-h-[310px]">
+        <CardHeader className="border-b">
+          <CardTitle className="flex items-center gap-2">
+            <Gift className="size-4 text-rose-500" aria-hidden />
+            Actual expenses
+          </CardTitle>
+          <CardDescription>Rewards and creator programs</CardDescription>
+        </CardHeader>
+
+        <CardContent className="flex flex-1 flex-col justify-between gap-5">
+          {expenses ? (
+            <>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
+                  Last {label}
+                </p>
+                <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
+                  −<AnimatedNumber value={expenses.total} format="currency" />
+                </p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Real costs recognized in the selected period
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <SalaryDetail
+                  icon={Gift}
+                  label="Rewards + affiliate prizes"
+                  value={formatCurrency(expenses.rewardsAndAffiliatePrizes)}
+                />
+                <SalaryDetail
+                  icon={Users}
+                  label="Creator programs"
+                  value={formatCurrency(expenses.creatorPrograms)}
+                />
+              </div>
+
+              <p className="text-xs leading-relaxed text-muted-foreground">
+                Actual reward payouts, net house-funded rain, creator deal
+                payouts, tips, and sponsored battles. No salary run rate.
+              </p>
+            </>
+          ) : (
+            <Unavailable message="Actual expenses could not be loaded. Refresh to retry." />
           )}
         </CardContent>
       </Card>
