@@ -77,6 +77,12 @@ export const API_SCOPES = {
       "Discover active real-money rains above $20 from the production mirror and manage their durable Discord delivery state in the admin database.",
     access: "admin-write",
   },
+  "discord:giveaways": {
+    label: "Manage Discord giveaways",
+    description:
+      "Create durable Discord giveaways, record entries and winners, and manage retryable message delivery and rerolls in the admin database.",
+    access: "admin-write",
+  },
   "discord:message-events": {
     label: "Store Discord message history",
     description:

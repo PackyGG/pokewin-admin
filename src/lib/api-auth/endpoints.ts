@@ -367,6 +367,39 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
       "Body { leaseToken, status, discordMessageId?, errorCode?, errorMessage? }. Acknowledges a leased rain notification as delivered or schedules a bounded retry.",
     scopes: ["discord:rains"],
   },
+  {
+    method: "POST",
+    path: "/api/v1/discord/giveaways",
+    summary:
+      "Creates an idempotent, durable giveaway awaiting initial Discord delivery.",
+    scopes: ["discord:giveaways"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/giveaways/[id]/enter",
+    summary: "Records one unique Discord user entry while the giveaway is active.",
+    scopes: ["discord:giveaways"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/giveaways/[id]/reroll",
+    summary:
+      "Rerolls all current winners or replaces one named current winner, then queues a durable message update.",
+    scopes: ["discord:giveaways"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/giveaways/jobs/claim",
+    summary:
+      "Finalizes due giveaways in the admin database and leases initial or updated Discord message deliveries.",
+    scopes: ["discord:giveaways"],
+  },
+  {
+    method: "POST",
+    path: "/api/v1/discord/giveaways/jobs/[id]/ack",
+    summary: "Completes or retries a revision-bound giveaway message delivery lease.",
+    scopes: ["discord:giveaways"],
+  },
 ];
 
 /** What a given endpoint touches, derived from its scopes (for the UI badge). */
