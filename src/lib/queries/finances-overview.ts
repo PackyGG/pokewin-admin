@@ -7,6 +7,7 @@ import { salary_employees } from "@/lib/db-schema/admin/schema";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
   FINANCE_PERIODS,
+  financePeriodSince,
   type FinancePeriod,
 } from "@/lib/finances/periods";
 import { getRewardCost } from "@/lib/metrics/queries";
@@ -18,7 +19,8 @@ import {
 import { toNumber } from "@/lib/utils/decimal";
 
 /**
- * Canonical rolling balance-sheet P&L for the selected finance window.
+ * Canonical balance-sheet P&L for the selected finance window. The 7d option
+ * starts at Monday 00:00 UTC; the other options remain rolling windows.
  * The one-shot variant keeps the read to one production-mirror pool slot.
  */
 export async function getFinanceProfit(
@@ -46,12 +48,6 @@ export type ActualExpenseSummary = {
   rewardsAndAffiliatePrizes: number;
   creatorPrograms: number;
 };
-
-function financePeriodSince(period: FinancePeriod, now: Date): Date {
-  const definition = FINANCE_PERIODS.find((item) => item.value === period);
-  const hours = definition?.hours ?? 24;
-  return new Date(now.getTime() - hours * 60 * 60 * 1_000);
-}
 
 /** Active salary commitments, including the run rate for the selected window. */
 export async function getSalaryExpenseSummary(
@@ -81,7 +77,7 @@ export async function getSalaryExpenseSummary(
 
 /**
  * Actual reward and creator-program costs recognized inside the selected
- * rolling window. Affiliate commissions and leaderboard prizes already live
+ * window. Affiliate commissions and leaderboard prizes already live
  * in the canonical reward-cost set, so only the non-overlapping creator legs
  * are added here.
  */

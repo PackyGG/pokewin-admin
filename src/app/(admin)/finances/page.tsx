@@ -27,6 +27,7 @@ import { REWARD_QUERY_TIMEOUT_MS, safeQuery } from "@/lib/errors/safe-query";
 import {
   FINANCE_PERIODS,
   financePeriodLabel,
+  financeWeekDateRange,
   parseFinancePeriod,
   type FinancePeriod,
 } from "@/lib/finances/periods";
@@ -77,8 +78,9 @@ export default async function FinancesPage({ searchParams }: PageProps) {
 }
 
 async function FinancesOverview({ period }: { period: FinancePeriod }) {
+  const now = new Date();
   const profitPromise = safeQuery(
-    () => getFinanceProfit(period),
+    () => getFinanceProfit(period, now),
     null,
     `finances.profit.${period}`,
     REWARD_QUERY_TIMEOUT_MS,
@@ -87,7 +89,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
     period === "7d"
       ? profitPromise
       : safeQuery(
-          () => getFinanceProfit("7d"),
+          () => getFinanceProfit("7d", now),
           null,
           "finances.profit.7d",
           REWARD_QUERY_TIMEOUT_MS,
@@ -104,7 +106,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
         REWARD_QUERY_TIMEOUT_MS,
       ),
       safeQuery(
-        () => getActualExpenseSummary(period),
+        () => getActualExpenseSummary(period, now),
         null,
         `finances.actualExpenses.${period}`,
         REWARD_QUERY_TIMEOUT_MS,
@@ -116,6 +118,9 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
   const salaries = salaryResult.data;
   const expenses = expenseResult.data;
   const label = financePeriodLabel(period);
+  const weekRange = financeWeekDateRange(now);
+  const selectedPeriodCaption =
+    period === "7d" ? `Week to date · ${weekRange} UTC` : `Last ${label}`;
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -133,7 +138,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             />
             Weekly P&amp;L
           </CardTitle>
-          <CardDescription>Did the house make money this week?</CardDescription>
+          <CardDescription>{weekRange} · UTC</CardDescription>
         </CardHeader>
 
         <CardContent className="flex flex-1 flex-col justify-between gap-5">
@@ -141,7 +146,9 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             <>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  {weeklyProfit.pnl >= 0 ? "Profit this week" : "Loss this week"}
+                  {weeklyProfit.pnl >= 0
+                    ? "Profit this week to date"
+                    : "Loss this week to date"}
                 </p>
                 <p
                   className={cn(
@@ -157,8 +164,8 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
                 </p>
               </div>
               <p className="text-xs leading-relaxed text-muted-foreground">
-                Rolling seven-day balance-sheet P&amp;L using the same accounting
-                definition as the Profit card.
+                Current Monday–Sunday accounting week using the same
+                balance-sheet definition as the Profit card.
               </p>
             </>
           ) : (
@@ -179,7 +186,9 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
                 )}
                 Profit
               </CardTitle>
-              <CardDescription>Rolling balance-sheet P&amp;L</CardDescription>
+              <CardDescription>
+                Balance-sheet P&amp;L for the selected period
+              </CardDescription>
             </div>
             <PeriodChips
               items={FINANCE_PERIODS}
@@ -198,7 +207,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             <>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Last {label}
+                  {selectedPeriodCaption}
                 </p>
                 <p
                   className={cn(
@@ -255,7 +264,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             <>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Last {label}
+                  {period === "7d" ? `${weekRange} UTC` : `Last ${label}`}
                 </p>
                 <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
                   −<AnimatedNumber value={salaries.periodExpense} format="currency" />
@@ -308,7 +317,7 @@ async function FinancesOverview({ period }: { period: FinancePeriod }) {
             <>
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground">
-                  Last {label}
+                  {selectedPeriodCaption}
                 </p>
                 <p className="mt-1 text-4xl font-bold tracking-tight text-rose-600 tabular-nums dark:text-rose-400 sm:text-5xl">
                   −<AnimatedNumber value={expenses.total} format="currency" />
