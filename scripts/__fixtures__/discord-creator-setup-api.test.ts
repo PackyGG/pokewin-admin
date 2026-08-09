@@ -65,6 +65,18 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(link, /principal\.keyId/);
   assert.match(stats, /getCreatorSetupStats/);
   assert.match(stats, /rejectWrongGuild/);
+  const statsService = service.slice(
+    service.indexOf("export async function getCreatorSetupStats"),
+    service.indexOf("Poll-safe stream lifecycle snapshot"),
+  );
+  assert.match(
+    statsService,
+    /COALESCE\(\s*acu\.weighted_wager_amount_usd,\s*acu\.wager_amount_usd\s*\)::numeric/,
+  );
+  assert.doesNotMatch(
+    statsService,
+    /SUM\(acu\.wager_amount_usd::numeric\)/,
+  );
   assert.match(userStats, /getCreatorSetupUserStats/);
   assert.match(userStats, /username: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(64\)/);
   assert.match(userStats, /rejectWrongGuild/);

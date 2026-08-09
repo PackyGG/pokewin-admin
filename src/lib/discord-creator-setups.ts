@@ -572,7 +572,12 @@ export async function getCreatorSetupStats(input: {
         COUNT(DISTINCT acu.referred_user_id) FILTER (
           WHERE acu.usage_type::text IN ('deposit', 'wager')
         )::text AS active_players,
-        COALESCE(SUM(acu.wager_amount_usd::numeric), 0)::text AS wager_usd,
+        COALESCE(SUM(
+          COALESCE(
+            acu.weighted_wager_amount_usd,
+            acu.wager_amount_usd
+          )::numeric
+        ), 0)::text AS wager_usd,
         COALESCE(SUM(acu.referrer_cut_usd::numeric), 0)::text AS earnings_usd
       FROM affiliate_code_usages acu
       JOIN "user" referred ON referred.id = acu.referred_user_id
