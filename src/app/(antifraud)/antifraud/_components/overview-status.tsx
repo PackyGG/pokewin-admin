@@ -8,132 +8,36 @@ import {
 
 import { HostLink } from "@/components/host-link";
 import { TILE_COLORS, type AccentColor } from "@/components/modern-panels";
-import type { AntifraudPollerHealth } from "@/lib/antifraud/monitor-api";
 import type { AntifraudLiveMirrorMetrics } from "@/lib/antifraud/overview";
 import type { ReviewQueueStats } from "@/lib/antifraud/reviews";
-import {
-  formatCompactUsd,
-  formatNumber,
-  formatRelativeStrict,
-} from "@/lib/utils/format";
+import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 /**
  * The two "right now" bands above the lifetime KPI strip.
  *
  * The dashboard used to open with six lifetime counters — true, but never
- * actionable, and blind to the one failure that silently empties every queue
- * (a stalled ingestion poller). `PulseBar` states whether the engine is
- * running and what the last 24h produced; `QueueStrip` states what is waiting
- * for a human, and links straight into that queue.
+ * actionable. `PulseBar` shows what the last 24h produced; `QueueStrip` states
+ * what is waiting for a human, and links straight into that queue. Engine
+ * health remains available in Antifraud Settings instead of occupying the
+ * dashboard.
  *
- * Both are deliberately chrome-free: no section headings, no helper copy. The
- * numbers and one status word carry the whole meaning.
+ * Both are deliberately chrome-free: no section headings and no helper copy.
+ * The numbers carry the whole meaning.
  */
 
 // ─── Pulse bar ────────────────────────────────────────────────────────────
 
-type PulseTone = "ok" | "warn" | "bad" | "idle";
-
-const TONE_DOT: Record<PulseTone, string> = {
-  ok: "bg-emerald-500",
-  warn: "bg-amber-500",
-  bad: "bg-rose-500",
-  idle: "bg-muted-foreground/40",
-};
-
-const TONE_TEXT: Record<PulseTone, string> = {
-  ok: "text-foreground",
-  warn: "text-amber-600 dark:text-amber-400",
-  bad: "text-rose-600 dark:text-rose-400",
-  idle: "text-muted-foreground",
-};
-
-/**
- * Health verdict for the ingestion loop, matching the monitor's public health
- * contract so the dashboard does not invent a second status vocabulary.
- */
-function pollerVerdict(
-  poller: AntifraudPollerHealth | null,
-  configured: boolean,
-): { tone: PulseTone; label: string } {
-  if (!configured) return { tone: "idle", label: "Monitor not configured" };
-  if (!poller) return { tone: "idle", label: "Engine status unreadable" };
-  if (poller.status === "degraded") {
-    return { tone: "bad", label: "Ingestion degraded" };
-  }
-  if (poller.consecutiveFailures > 0) {
-    return {
-      tone: "bad",
-      label: `${formatNumber(poller.consecutiveFailures)} failed tick${
-        poller.consecutiveFailures === 1 ? "" : "s"
-      }`,
-    };
-  }
-  if (poller.signupBacklogPossible) {
-    return { tone: "warn", label: "Signup backlog possible" };
-  }
-  if (poller.signupFailuresPending > 0) {
-    return {
-      tone: "warn",
-      label: `${formatNumber(poller.signupFailuresPending)} signup${
-        poller.signupFailuresPending === 1 ? "" : "s"
-      } pending recovery`,
-    };
-  }
-  if (poller.status === "starting") return { tone: "warn", label: "Starting" };
-  if (poller.status === "standby") return { tone: "idle", label: "Standby" };
-  return { tone: "ok", label: "Ingestion healthy" };
-}
-
 export function PulseBar({
-  poller,
-  pollerConfigured,
   live,
 }: {
-  poller: AntifraudPollerHealth | null;
-  pollerConfigured: boolean;
   live: AntifraudLiveMirrorMetrics;
 }) {
-  const verdict = pollerVerdict(poller, pollerConfigured);
-  const tick = poller?.lastSuccessfulTickAt;
-
   return (
-    <HostLink
-      href="/antifraud/settings"
-      className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 transition-colors hover:border-foreground/20 hover:bg-muted/40 sm:px-4"
+    <div
+      className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 sm:px-4"
+      aria-label="Antifraud activity in the last 24 hours"
     >
-      <span className="flex min-w-0 items-center gap-2">
-        <span className="relative flex size-2 shrink-0">
-          {verdict.tone === "ok" && (
-            <span
-              className="absolute inset-0 rounded-full bg-emerald-500 opacity-60 motion-safe:animate-ping"
-              aria-hidden
-            />
-          )}
-          <span
-            className={cn(
-              "relative size-2 rounded-full",
-              TONE_DOT[verdict.tone],
-            )}
-            aria-hidden
-          />
-        </span>
-        <span
-          className={cn(
-            "truncate text-xs font-semibold",
-            TONE_TEXT[verdict.tone],
-          )}
-        >
-          {verdict.label}
-        </span>
-        {tick && (
-          <span className="hidden truncate text-[11px] text-muted-foreground sm:inline">
-            · tick {formatRelativeStrict(tick)}
-          </span>
-        )}
-      </span>
-
       <span className="ml-auto flex items-center gap-3 sm:gap-4">
         <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:inline">
           24h
@@ -157,7 +61,7 @@ export function PulseBar({
           accent={live.fraudulentFiatCents24h > 0 ? "rose" : undefined}
         />
       </span>
-    </HostLink>
+    </div>
   );
 }
 

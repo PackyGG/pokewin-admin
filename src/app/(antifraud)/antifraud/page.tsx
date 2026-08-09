@@ -22,9 +22,7 @@ import {
 } from "@/lib/antifraud/overview";
 import {
   getAntifraudMonitorOverview,
-  getAntifraudPollerHealth,
   type AntifraudMonitorOverview,
-  type AntifraudPollerHealth,
 } from "@/lib/antifraud/monitor-api";
 import {
   getReviewQueueStats,
@@ -117,8 +115,8 @@ type MonitorPromise = Promise<
 /**
  * Each band waits only on the data it renders.
  *
- * The four reads are started here and deliberately NOT awaited: they are
- * handed to the bands as promises, so the engine-health bar, the case queue,
+ * The five reads are started here and deliberately NOT awaited: they are
+ * handed to the bands as promises, so the 24h activity bar, the case queue,
  * the KPI strip, the action feed and the 30-day charts each paint the moment
  * THEIR read lands, instead of all five waiting on the slowest. `safeQuery`
  * always resolves (it catches and returns a fallback), so a hoisted promise
@@ -148,12 +146,6 @@ export default async function AntifraudOverviewPage() {
     "antifraud.monitor-overview",
     QUERY_TIMEOUT_MS,
   );
-  const pollerPromise = safeQuery(
-    () => getAntifraudPollerHealth(),
-    { configured: false, data: null, error: true },
-    "antifraud.poller-health",
-    QUERY_TIMEOUT_MS,
-  );
   const queuePromise = safeQuery(
     () => getReviewQueueStats(),
     { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 },
@@ -179,7 +171,7 @@ export default async function AntifraudOverviewPage() {
   return (
     <div className="space-y-4" data-snapshot-at={snapshotAt}>
       <Suspense fallback={<Skeleton className="h-11 w-full rounded-lg" />}>
-        <PulseBand overview={overviewPromise} poller={pollerPromise} />
+        <PulseBand overview={overviewPromise} />
       </Suspense>
 
       <Suspense fallback={<QueueBandSkeleton />}>
@@ -210,32 +202,12 @@ export default async function AntifraudOverviewPage() {
   );
 }
 
-/** Engine health + the last 24 hours. Hidden entirely if the mirror read failed. */
-async function PulseBand({
-  overview,
-  poller,
-}: {
-  overview: OverviewPromise;
-  poller: Promise<
-    SafeQueryResult<{
-      configured: boolean;
-      data: AntifraudPollerHealth | null;
-      error: boolean;
-    }>
-  >;
-}) {
-  const [overviewResult, pollerResult] = await Promise.all([overview, poller]);
+/** Last-24h activity. Hidden entirely if the mirror read failed. */
+async function PulseBand({ overview }: { overview: OverviewPromise }) {
+  const overviewResult = await overview;
   // No zero values dressed up as real 24h numbers.
   if (overviewResult.error) return null;
-  return (
-    <PulseBar
-      poller={pollerResult.error ? null : pollerResult.data.data}
-      pollerConfigured={
-        pollerResult.error === null && pollerResult.data.configured
-      }
-      live={overviewResult.data.live}
-    />
-  );
+  return <PulseBar live={overviewResult.data.live} />;
 }
 
 /**

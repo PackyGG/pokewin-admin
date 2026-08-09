@@ -7,6 +7,8 @@ const queryPath = "src/lib/antifraud/overview.ts";
 const loadingPath = "src/app/(antifraud)/antifraud/loading.tsx";
 const panelsPath =
   "src/app/(antifraud)/antifraud/_components/overview-panels.tsx";
+const statusPath =
+  "src/app/(antifraud)/antifraud/_components/overview-status.tsx";
 // Recharts lives in its own module so the action feed can hydrate (and open
 // its SSE stream) without waiting on the chart bundle.
 const chartsPath =
@@ -89,4 +91,16 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
     query,
     /fraud[\s\S]{0,120}user_kyc\.kyc_required\s*=\s*TRUE/i,
   );
+});
+
+test("the dashboard omits ingestion health while keeping 24h activity", async () => {
+  const [page, status] = await Promise.all([
+    readFile(pagePath, "utf8"),
+    readFile(statusPath, "utf8"),
+  ]);
+
+  assert.doesNotMatch(page, /getAntifraudPollerHealth|poller-health/);
+  assert.doesNotMatch(status, /Ingestion healthy|lastSuccessfulTickAt/);
+  assert.match(status, /Antifraud activity in the last 24 hours/);
+  assert.match(status, /live\.signups24h/);
 });
