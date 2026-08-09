@@ -19,6 +19,7 @@ import { Spinner } from "@/components/ux";
 import type { DiscordModerationSettings } from "@/lib/discord-moderation-settings";
 
 import { updateDiscordModerationSettingsAction } from "./actions";
+import { BlockedWordsEditor } from "./blocked-words-editor";
 
 function lines(values: readonly string[]): string {
   return values.join("\n");
@@ -61,7 +62,7 @@ export function DiscordModerationCard({
 }) {
   const [isPending, startTransition] = useTransition();
   const [settings, setSettings] = useState(initial);
-  const [blockedWords, setBlockedWords] = useState(lines(initial.blockedWords));
+  const [blockedWords, setBlockedWords] = useState(initial.blockedWords);
   const [allowedInvites, setAllowedInvites] = useState(lines(initial.allowedInviteCodes));
   const [exemptRoles, setExemptRoles] = useState(lines(initial.exemptRoleIds));
   const [exemptChannels, setExemptChannels] = useState(lines(initial.exemptChannelIds));
@@ -73,7 +74,7 @@ export function DiscordModerationCard({
   const save = () => {
     const input: DiscordModerationSettings = {
       ...settings,
-      blockedWords: splitLines(blockedWords),
+      blockedWords,
       allowedInviteCodes: splitLines(allowedInvites),
       exemptRoleIds: splitLines(exemptRoles),
       exemptChannelIds: splitLines(exemptChannels),
@@ -85,7 +86,7 @@ export function DiscordModerationCard({
         return;
       }
       setSettings(result.settings);
-      setBlockedWords(lines(result.settings.blockedWords));
+      setBlockedWords(result.settings.blockedWords);
       setAllowedInvites(lines(result.settings.allowedInviteCodes));
       setExemptRoles(lines(result.settings.exemptRoleIds));
       setExemptChannels(lines(result.settings.exemptChannelIds));
@@ -101,8 +102,8 @@ export function DiscordModerationCard({
           <CardTitle>PackyGG message filtering</CardTitle>
         </div>
         <CardDescription>
-          Applies only to server {settings.guildId}. Matching messages and edited messages are deleted;
-          the existing deleted-message log keeps the staff audit copy.
+          Applies only to server {settings.guildId}. Matching messages and edits are deleted and the
+          member receives a temporary warning. The existing deleted-message log keeps the staff audit copy.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-5">
@@ -113,26 +114,21 @@ export function DiscordModerationCard({
           <ToggleRow id="invite-filter" label="Discord invite filter" description="Blocks standard and lightly obfuscated Discord invite links." checked={settings.inviteFilterEnabled} disabled={isPending} onCheckedChange={(inviteFilterEnabled) => update({ inviteFilterEnabled })} />
         </div>
 
-        <div className="grid gap-5 lg:grid-cols-2">
+        <BlockedWordsEditor words={blockedWords} disabled={isPending} onChange={setBlockedWords} />
+
+        <div className="grid gap-5 lg:grid-cols-3">
           <div className="space-y-2">
-            <Label htmlFor="blocked-words">Blocked words or phrases</Label>
-            <Textarea id="blocked-words" rows={10} value={blockedWords} disabled={isPending} onChange={(event) => setBlockedWords(event.target.value)} placeholder={"one entry per line\nblocked phrase"} />
-            <p className="text-xs text-muted-foreground">One per line. A plain word will not match inside a larger word.</p>
+            <Label htmlFor="allowed-invites">Allowed Discord invite codes</Label>
+            <Textarea id="allowed-invites" rows={5} value={allowedInvites} disabled={isPending} onChange={(event) => setAllowedInvites(event.target.value)} placeholder="packy" />
+            <p className="text-xs text-muted-foreground">Enter only the final code from discord.gg/code.</p>
           </div>
-          <div className="space-y-5">
-            <div className="space-y-2">
-              <Label htmlFor="allowed-invites">Allowed Discord invite codes</Label>
-              <Textarea id="allowed-invites" rows={4} value={allowedInvites} disabled={isPending} onChange={(event) => setAllowedInvites(event.target.value)} placeholder="packy" />
-              <p className="text-xs text-muted-foreground">Enter only the final code from discord.gg/code.</p>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="exempt-roles">Exempt role IDs</Label>
-              <Textarea id="exempt-roles" rows={3} value={exemptRoles} disabled={isPending} onChange={(event) => setExemptRoles(event.target.value)} placeholder="123456789012345678" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="exempt-channels">Exempt channel IDs</Label>
-              <Textarea id="exempt-channels" rows={3} value={exemptChannels} disabled={isPending} onChange={(event) => setExemptChannels(event.target.value)} placeholder="123456789012345678" />
-            </div>
+          <div className="space-y-2">
+            <Label htmlFor="exempt-roles">Exempt role IDs</Label>
+            <Textarea id="exempt-roles" rows={5} value={exemptRoles} disabled={isPending} onChange={(event) => setExemptRoles(event.target.value)} placeholder="123456789012345678" />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="exempt-channels">Exempt channel IDs</Label>
+            <Textarea id="exempt-channels" rows={5} value={exemptChannels} disabled={isPending} onChange={(event) => setExemptChannels(event.target.value)} placeholder="123456789012345678" />
           </div>
         </div>
 

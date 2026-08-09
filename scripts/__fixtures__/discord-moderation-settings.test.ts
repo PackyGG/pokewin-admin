@@ -5,11 +5,13 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("PackyGG moderation settings are scoped, authenticated, and operator controlled", async () => {
-  const [route, service, actions, page, endpoints, nav, pages] = await Promise.all([
+  const [route, service, actions, page, editor, card, endpoints, nav, pages] = await Promise.all([
     read("src/app/api/v1/discord/moderation-settings/route.ts"),
     read("src/lib/discord-moderation-settings.ts"),
     read("src/app/(admin)/system/discord-moderation/actions.ts"),
     read("src/app/(admin)/system/discord-moderation/page.tsx"),
+    read("src/app/(admin)/system/discord-moderation/blocked-words-editor.tsx"),
+    read("src/app/(admin)/system/discord-moderation/discord-moderation-card.tsx"),
     read("src/lib/api-auth/endpoints.ts"),
     read("src/lib/nav-config.ts"),
     read("src/lib/admin-pages.ts"),
@@ -28,6 +30,12 @@ test("PackyGG moderation settings are scoped, authenticated, and operator contro
   assert.match(actions, /createAdminAuditEvent/);
   assert.match(actions, /discord_moderation_settings_updated/);
   assert.match(page, /requirePageAccess\("\/system\/discord-moderation"\)/);
+  assert.match(editor, /MAX_BLOCKED_WORDS = 500/);
+  assert.match(editor, /Search the blocked list/);
+  assert.match(editor, /Bulk add/);
+  assert.match(editor, /duplicates are removed automatically/);
+  assert.match(editor, /Sort A–Z/);
+  assert.match(card, /<BlockedWordsEditor/);
   assert.match(endpoints, /path: "\/api\/v1\/discord\/moderation-settings"/);
   assert.match(nav, /href: "\/system\/discord-moderation"/);
   assert.match(pages, /key: "\/system\/discord-moderation"/);
