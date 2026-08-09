@@ -132,7 +132,6 @@ test("the client dialogs collect the second factor they now have to send", () =>
   for (const relative of [
     "src/app/(admin)/vouchers/create-dialog.tsx",
     "src/app/(admin)/promo-codes/create-button.tsx",
-    "src/app/(admin)/system/admin-api/admin-api-content.tsx",
   ]) {
     const source = read(relative);
     assert.match(
@@ -148,25 +147,6 @@ test("the client dialogs collect the second factor they now have to send", () =>
 });
 
 // ── Authorization gates ──────────────────────────────────────────────────
-
-test("API-key issuing needs capability + 2FA, revocation stays frictionless", () => {
-  const source = read("src/app/(admin)/system/admin-api/actions.ts");
-  assert.match(source, /__can_manage_api_keys/);
-  assert.equal(
-    source.match(/requireApiKeyIssuer\(input\.totpCode\)/g)?.length,
-    3,
-    "create + scopes + IPs must all run the issuer gate",
-  );
-  // Revocation must NOT be gated — killing a leaked key stays one click.
-  assert.match(
-    source,
-    /export async function revokeApiKeyAction\([\s\S]{0,200}await requireAdmin\(\);/,
-  );
-  assert.doesNotMatch(
-    source,
-    /export async function revokeApiKeyAction\([\s\S]{0,400}require2FA/,
-  );
-});
 
 test("creator leaderboard creation is capability-gated with bounded money", () => {
   const source = read("src/app/(admin)/creators/leaderboards/actions.ts");

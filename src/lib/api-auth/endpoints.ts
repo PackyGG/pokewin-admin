@@ -1,12 +1,8 @@
 import { API_SCOPES, type ApiScope } from "./scopes";
 
 /**
- * Catalogue of every endpoint on the `/api/v1/*` surface, rendered on
- * /system/admin-api so an operator (or whoever is wiring the Discord bot) can
- * see what exists and which scope unlocks it.
- *
- * Deliberately NOT "server-only" — the admin page renders this client-side.
- * Nothing secret lives here; it is documentation.
+ * Machine-checked catalogue of every endpoint on the `/api/v1/*` surface.
+ * Nothing secret lives here; guardrail tests use it as the API contract.
  *
  * KEEP IN SYNC: when you add a route under `src/app/api/v1/`, add its entry
  * here with the SAME scopes you passed to `withApiKey`. This list is the

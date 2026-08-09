@@ -522,37 +522,6 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: true,
   },
   {
-    // Admin API — machine-to-machine keys + the endpoint catalogue for the
-    // /api/v1 surface (Discord bot + in-house consumers). Icon string
-    // `KeyRound` is already registered in the ICONS map in
-    // `src/components/app-sidebar.tsx` (no React #130 risk).
-    id: "nav.system.admin-api",
-    group: "System",
-    label: "Admin API",
-    href: "/system/admin-api",
-    pageKey: "/system/admin-api",
-    icon: "KeyRound",
-    description: "API keys + endpoint catalogue for the /api/v1 surface",
-    keywords: ["api", "key", "token", "bot", "discord", "integration", "scope", "endpoint"],
-    inSidebar: true,
-    inPalette: true,
-  },
-  {
-    // The route and reveal action both enforce requireOwner. The allowlist is
-    // only the matching cosmetic sidebar gate for the primary owner account.
-    id: "nav.system.keno-next-preview",
-    group: "System",
-    label: "Keno Next Preview",
-    href: "/system/keno-next-preview",
-    pageKey: "/system/keno-next-preview",
-    icon: "Dices",
-    description: "Owner-only next Keno draw simulator",
-    keywords: ["keno", "seed", "nonce", "preview", "outcome"],
-    usernameAllowlist: ["motha"],
-    inSidebar: true,
-    inPalette: false,
-  },
-  {
     // Excluded Users — sidebar-only, explicit username allowlist. Not in ADMIN_PAGES
     // as the security boundary (page + actions enforce requireExcludedUsersAccess);
     // listed in ADMIN_PAGES only so the key
