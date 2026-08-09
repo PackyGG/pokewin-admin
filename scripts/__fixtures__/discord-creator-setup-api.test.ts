@@ -71,11 +71,11 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   );
   assert.match(
     statsService,
-    /COALESCE\(\s*acu\.weighted_wager_amount_usd,\s*acu\.wager_amount_usd\s*\)::numeric/,
+    /SUM\(acu\.weighted_wager_amount_usd::numeric\)/,
   );
   assert.doesNotMatch(
     statsService,
-    /SUM\(acu\.wager_amount_usd::numeric\)/,
+    /COALESCE\(\s*acu\.weighted_wager_amount_usd,\s*acu\.wager_amount_usd/,
   );
   assert.match(userStats, /getCreatorSetupUserStats/);
   assert.match(userStats, /username: z\.string\(\)\.trim\(\)\.min\(1\)\.max\(64\)/);
