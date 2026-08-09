@@ -34,6 +34,7 @@ import { EXCLUDED_USERS_ACCESS_ALLOWLIST } from "@/lib/excluded-users/access-sha
 export type NavGroupKey =
   | "Overview"
   | "Players"
+  | "Finances"
   | "Content"
   | "Creator Portal"
   | "Test Tools"
@@ -108,14 +109,15 @@ export type NavEntry = {
 export const NAV_GROUP_META: NavGroupMeta[] = [
   { label: "Overview" },
   { label: "Players" },
+  { label: "Finances" },
   // The "Insights" group is gone (owner, 2026-07-23) — every surface it held
   // is an /analytics tab now, and its pages were deleted.
   { label: "Content" },
   { label: "Creator Portal", creatorOnly: true },
   { label: "Test Tools", devEnvOnly: true },
   // The "Rewards" group was collapsed into the Rewards hub (moved into
-  // Overview below Users). The "Employees" group was deleted (Salaries moved
-  // into System, Shifts removed).
+  // Overview below Users). The "Employees" group was deleted and Shifts was
+  // removed.
   { label: "System" },
 ];
 
@@ -449,15 +451,15 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inPalette: false,
   },
 
-  // ── System ─────────────────────────────────────────────────────────────
+  // ── Finances ───────────────────────────────────────────────────────────
   {
-    // Salaries — moved here from the (now-deleted) Employees section. Still
-    // sidebar-only, owner username-gated. Not in ADMIN_PAGES (the page enforces
-    // requireMotha server-side); pageKey "/salaries" preserves today's sidebar
-    // gate (isAdmin || allowed_pages includes it, which non-admins never have
-    // → effectively admin+username gated). Icon "Coins" is in the ICONS map.
+    // Salaries remains sidebar-only and owner username-gated. It is not in
+    // ADMIN_PAGES (the page enforces requireMotha server-side); pageKey
+    // "/salaries" preserves today's sidebar gate (isAdmin || allowed_pages
+    // includes it, which non-admins never have → effectively admin+username
+    // gated). Icon "Coins" is in the ICONS map.
     id: "nav.salaries",
-    group: "System",
+    group: "Finances",
     label: "Salaries",
     href: "/salaries",
     pageKey: "/salaries",
@@ -466,6 +468,8 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
     inSidebar: true,
     inPalette: false,
   },
+
+  // ── System ─────────────────────────────────────────────────────────────
   {
     id: "nav.security",
     group: "System",
