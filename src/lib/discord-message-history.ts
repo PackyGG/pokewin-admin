@@ -7,9 +7,11 @@ import { logError } from "@/lib/errors/logger";
 
 export const CREATOR_MESSAGE_LOG_GUILD_ID = "1402743122789929022";
 export const VIP_MESSAGE_LOG_GUILD_ID = "1505650386894327919";
+export const PACKY_MESSAGE_LOG_GUILD_ID = "1438216946318442683";
 export const MESSAGE_LOG_GUILD_IDS = new Set([
   CREATOR_MESSAGE_LOG_GUILD_ID,
   VIP_MESSAGE_LOG_GUILD_ID,
+  PACKY_MESSAGE_LOG_GUILD_ID,
 ]);
 export type DiscordMessageAttachment = {
   id: string;

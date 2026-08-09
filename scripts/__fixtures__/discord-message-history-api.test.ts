@@ -28,6 +28,7 @@ test("Discord message history is bounded, private, durable, and idempotent", asy
 
   assert.match(service, /1402743122789929022/);
   assert.match(service, /1505650386894327919/);
+  assert.match(service, /1438216946318442683/);
   assert.match(service, /pg_advisory_xact_lock/);
   assert.match(service, /messageIds[\s\S]*\.sort\(\)/);
   assert.match(service, /WHERE event_id = \$\{input\.eventId\}::uuid[\s\S]*FOR UPDATE/);
