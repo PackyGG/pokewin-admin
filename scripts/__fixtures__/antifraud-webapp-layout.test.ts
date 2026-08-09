@@ -149,7 +149,8 @@ test("the pre-Fiat guide explains caller auth and checkout IP separately", () =>
 
   assert.match(page, /No caller-IP allowlist/);
   assert.match(page, /customer's checkout IP|player's checkout IP/);
-  assert.match(page, /Fingerprint and proxycheck\.io are mandatory/);
+  assert.match(page, /Provider outage is not fraud/);
+  assert.match(page, /does not deny by itself/);
   assert.match(page, /Most denials do not lock, ban, refund, or change KYC/);
   assert.match(sidebar, /label: "Pre-Fiat Checks"/);
   assert.match(sidebar, /href: "\/antifraud\/guide\/fiat-pre-payment"/);
