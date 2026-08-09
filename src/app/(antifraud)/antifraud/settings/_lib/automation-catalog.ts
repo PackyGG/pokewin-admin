@@ -170,7 +170,11 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "Route risky accounts into review",
       "Keep financial and operational failures separate",
     ],
-    discordEvents: ["antifraud.fiat_risk", "antifraud.fiat_operations"],
+    discordEvents: [
+      "antifraud.fiat_credit_review_required",
+      "antifraud.fiat_risk",
+      "antifraud.fiat_operations",
+    ],
     controls: [
       { label: "Open deposit queue", href: "/antifraud/fiat-deposits" },
       { label: "Edit risk points", href: "/antifraud/settings?tab=scoring" },

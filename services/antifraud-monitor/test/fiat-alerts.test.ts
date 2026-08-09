@@ -310,6 +310,26 @@ test("the four-route mapping preserves current fiat classification", () => {
     fiatAlertEventKey("fiat_operations"),
     "antifraud.fiat_operations",
   );
+  assert.equal(
+    fiatAlertEventKey("fiat_operations", "review"),
+    "antifraud.fiat_credit_review_required",
+  );
+});
+
+test("credit-review deposits use a dedicated action and review-queue button", () => {
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    ...failedIntent,
+    source_id: "intent-1:review",
+    problem_code: "review",
+    details: {
+      ...failedIntent.details,
+      status: "review",
+    },
+  });
+
+  assert.equal(payload.embeds[0]?.title, "Fiat deposit needs review");
+  assert.match(JSON.stringify(payload.components), /Open Deposit Reviews/);
+  assert.doesNotMatch(JSON.stringify(payload.components), /Open Fiat Operations/);
 });
 
 test("legacy high-risk destinations collapse into one routed event", async () => {

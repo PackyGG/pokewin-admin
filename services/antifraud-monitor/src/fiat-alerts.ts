@@ -82,7 +82,15 @@ export type FiatAlertDestination =
 
 export function fiatAlertEventKey(
   destination: FiatAlertDestination,
-): "antifraud.fiat_risk" | "antifraud.fiat_operations" | "antifraud.email_blacklist" {
+  problemCode?: FiatProblemCode,
+):
+  | "antifraud.fiat_credit_review_required"
+  | "antifraud.fiat_risk"
+  | "antifraud.fiat_operations"
+  | "antifraud.email_blacklist" {
+  if (problemCode === "review") {
+    return "antifraud.fiat_credit_review_required";
+  }
   switch (destination) {
     case "antifraud_risk":
     case "high_risk_supplemental":
@@ -375,6 +383,7 @@ export function buildFiatDiscordPayload(
   }
 
   const url = new URL(dashboardUrl).toString();
+  const creditReview = problem.problem_code === "review";
   const description =
     problem.problem_code === "suspicious_deposit_cluster"
       ? details.cluster_basis === "refunded_amount"
@@ -414,7 +423,7 @@ export function buildFiatDiscordPayload(
         description,
         url,
         color:
-          problem.problem_code === "review" ||
+          creditReview ||
           problem.problem_code === "pending_stale"
             ? 0xf59e0b
             : 0xef4444,
@@ -430,7 +439,7 @@ export function buildFiatDiscordPayload(
           {
             type: 2,
             style: 5,
-            label: "Open Fiat Operations",
+            label: creditReview ? "Open Deposit Reviews" : "Open Fiat Operations",
             url,
           },
         ],
@@ -1004,14 +1013,18 @@ export class FiatProblemAlerts {
   private async send(
     problem: PendingFiatAlert,
   ): Promise<{ delivered: boolean; retryAfterSeconds: number | null }> {
+    const eventKey = fiatAlertEventKey(
+      problem.destination,
+      problem.problem_code,
+    );
     const delivered = await sendBotDiscordEvent(this.config, this.log, {
-      eventKey: fiatAlertEventKey(problem.destination),
+      eventKey,
       // The former high-risk supplemental webhook now resolves to the same
       // event and dedupe key. The configurable router fans one event out to
       // every selected channel without creating duplicate alerts.
       dedupeKey:
         `fiat:${problem.source_kind}:${problem.source_id}:` +
-        fiatAlertEventKey(problem.destination),
+        eventKey,
       payload: buildFiatDiscordPayload(
         this.config.FIAT_ALERT_DASHBOARD_URL,
         problem,

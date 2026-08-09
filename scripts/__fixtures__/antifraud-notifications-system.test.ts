@@ -101,6 +101,20 @@ test("Discord recipients and error destinations match the owner contract", () =>
   assert.match(discord, /SIGNUP_RISK_FIELD_NAMES\.time/);
 });
 
+test("Fiat credit reviews own a dedicated deposits-channel action", () => {
+  const alerts = read("services/antifraud-monitor/src/fiat-alerts.ts");
+  const migration = read(
+    "drizzle/admin/migrations/20260809_fiat_credit_review_discord_event.sql",
+  );
+
+  assert.match(alerts, /problemCode === "review"/);
+  assert.match(alerts, /antifraud\.fiat_credit_review_required/);
+  assert.match(alerts, /Open Deposit Reviews/);
+  assert.match(migration, /antifraud\.fiat_credit_review_required/);
+  assert.match(migration, /1535849236447625266/);
+  assert.match(migration, /1532207461077876766/);
+});
+
 test("audit stays manager-only and runtime config never renders secrets", () => {
   const auditMigration = read(
     "drizzle/admin/migrations/20260730_antifraud_security_audit.sql",
