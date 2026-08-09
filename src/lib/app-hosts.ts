@@ -122,6 +122,7 @@ const APEX_ROUTE_SEGMENTS: ReadonlySet<string> = new Set([
   "dashboard",
   "eos",
   "fiat",
+  "finances",
   "insights",
   "keno",
   "my-profile",

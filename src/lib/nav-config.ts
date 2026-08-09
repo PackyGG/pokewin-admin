@@ -453,6 +453,17 @@ const RAW_NAV_ENTRIES: NavEntry[] = [
 
   // ── Finances ───────────────────────────────────────────────────────────
   {
+    id: "nav.finances",
+    group: "Finances",
+    label: "Overview",
+    href: "/finances",
+    pageKey: "/finances",
+    icon: "Wallet",
+    usernameAllowlist: ["motha"],
+    inSidebar: true,
+    inPalette: false,
+  },
+  {
     // Salaries remains sidebar-only and owner username-gated. It is not in
     // ADMIN_PAGES (the page enforces requireMotha server-side); pageKey
     // "/salaries" preserves today's sidebar gate (isAdmin || allowed_pages
