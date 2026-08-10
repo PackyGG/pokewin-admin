@@ -6,6 +6,7 @@ import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import {
+  COMMUNITY_RANKS,
   COMMUNITY_XP_GUILD_ID,
   type CommunityLevelRole,
 } from "@/lib/discord-community-ranks";
@@ -48,6 +49,51 @@ export type CommunityXpProfile = {
   currentLevelXp: number;
   nextLevelXp: number;
   rank: number;
+};
+
+export type CommunityXpDashboard = {
+  generatedAt: string;
+  totals: {
+    profiles: number;
+    totalXp: number;
+    discordXp: number;
+    siteChatXp: number;
+    countedMessages: number;
+  };
+  last24Hours: {
+    processed: number;
+    awarded: number;
+    rejected: number;
+    awardedXp: number;
+  };
+  sources: Array<{
+    source: CommunityXpSource;
+    processed: number;
+    awarded: number;
+    rejected: number;
+    awardedXp: number;
+  }>;
+  reasons: Array<{ reason: CommunityXpReason; count: number }>;
+  rankDistribution: Array<{
+    level: number;
+    name: string;
+    color: string;
+    members: number;
+  }>;
+  topProfiles: CommunityXpProfile[];
+  recentEvents: Array<{
+    id: string;
+    discordUserId: string;
+    source: CommunityXpSource;
+    channelId: string | null;
+    occurredAt: string;
+    awardedXp: number;
+    reason: CommunityXpReason;
+  }>;
+  siteChatCursor: {
+    lastOccurredAt: string;
+    updatedAt: string;
+  } | null;
 };
 
 function profileFromRow(row: ProfileRow): CommunityXpProfile {
@@ -208,6 +254,148 @@ export async function getCommunityXpLeaderboard(limit = 10): Promise<CommunityXp
     LIMIT ${Math.max(1, Math.min(30, Math.trunc(limit)))}
   `);
   return result.rows.map(profileFromRow);
+}
+
+const COMMUNITY_XP_REASONS: readonly CommunityXpReason[] = [
+  "awarded",
+  "cooldown",
+  "duplicate",
+  "low_quality",
+  "too_short",
+  "daily_cap",
+];
+
+export async function getCommunityXpDashboard(): Promise<CommunityXpDashboard> {
+  const [totalsResult, activityResult, levelsResult, topProfiles, recentResult, cursorResult] = await Promise.all([
+    adminDrizzle.execute<{
+      profiles: number;
+      total_xp: string;
+      discord_xp: string;
+      site_chat_xp: string;
+      counted_messages: string;
+    }>(sql`
+      SELECT
+        count(*)::integer AS profiles,
+        coalesce(sum(total_xp), 0)::text AS total_xp,
+        coalesce(sum(discord_xp), 0)::text AS discord_xp,
+        coalesce(sum(site_chat_xp), 0)::text AS site_chat_xp,
+        coalesce(sum(counted_messages), 0)::text AS counted_messages
+      FROM discord_community_xp_profiles
+    `),
+    adminDrizzle.execute<{
+      source: CommunityXpSource;
+      reason: CommunityXpReason;
+      processed: number;
+      awarded_xp: number;
+    }>(sql`
+      SELECT source, reason, count(*)::integer AS processed,
+        coalesce(sum(awarded_xp), 0)::integer AS awarded_xp
+      FROM discord_community_xp_events
+      WHERE occurred_at >= now() - interval '24 hours'
+      GROUP BY source, reason
+      ORDER BY source, reason
+    `),
+    adminDrizzle.execute<{ level: number; members: number }>(sql`
+      SELECT floor(sqrt(greatest(total_xp, 0)::numeric / 100))::integer AS level,
+        count(*)::integer AS members
+      FROM discord_community_xp_profiles
+      GROUP BY 1
+      ORDER BY 1
+    `),
+    getCommunityXpLeaderboard(10),
+    adminDrizzle.execute<{
+      id: string;
+      discord_user_id: string;
+      source: CommunityXpSource;
+      channel_id: string | null;
+      occurred_at: string;
+      awarded_xp: number;
+      reason: CommunityXpReason;
+    }>(sql`
+      SELECT id::text, discord_user_id, source, channel_id,
+        occurred_at::text, awarded_xp, reason
+      FROM discord_community_xp_events
+      ORDER BY occurred_at DESC, id DESC
+      LIMIT 16
+    `),
+    adminDrizzle.execute<{ last_occurred_at: string; updated_at: string }>(sql`
+      SELECT last_occurred_at::text, updated_at::text
+      FROM discord_community_xp_cursors
+      WHERE source = 'site_chat'
+      LIMIT 1
+    `),
+  ]);
+
+  const totalsRow = totalsResult.rows[0];
+  const sourceTotals = new Map<CommunityXpSource, CommunityXpDashboard["sources"][number]>([
+    ["discord", { source: "discord", processed: 0, awarded: 0, rejected: 0, awardedXp: 0 }],
+    ["site_chat", { source: "site_chat", processed: 0, awarded: 0, rejected: 0, awardedXp: 0 }],
+  ]);
+  const reasonTotals = new Map<CommunityXpReason, number>(
+    COMMUNITY_XP_REASONS.map((reason) => [reason, 0]),
+  );
+  for (const row of activityResult.rows) {
+    const source = sourceTotals.get(row.source);
+    if (source) {
+      source.processed += row.processed;
+      source.awarded += row.reason === "awarded" ? row.processed : 0;
+      source.rejected += row.reason === "awarded" ? 0 : row.processed;
+      source.awardedXp += row.awarded_xp;
+    }
+    reasonTotals.set(row.reason, (reasonTotals.get(row.reason) ?? 0) + row.processed);
+  }
+
+  const sources = [...sourceTotals.values()];
+  const processed = sources.reduce((sum, source) => sum + source.processed, 0);
+  const awarded = sources.reduce((sum, source) => sum + source.awarded, 0);
+  const awardedXp = sources.reduce((sum, source) => sum + source.awardedXp, 0);
+  const distribution = new Map<number, number>(COMMUNITY_RANKS.map((rank) => [rank.level, 0]));
+  for (const row of levelsResult.rows) {
+    const rank = [...COMMUNITY_RANKS].reverse().find((candidate) => candidate.level <= row.level)
+      ?? COMMUNITY_RANKS[0];
+    distribution.set(rank.level, (distribution.get(rank.level) ?? 0) + row.members);
+  }
+  const cursor = cursorResult.rows[0];
+
+  return {
+    generatedAt: new Date().toISOString(),
+    totals: {
+      profiles: totalsRow?.profiles ?? 0,
+      totalXp: Number(totalsRow?.total_xp ?? 0),
+      discordXp: Number(totalsRow?.discord_xp ?? 0),
+      siteChatXp: Number(totalsRow?.site_chat_xp ?? 0),
+      countedMessages: Number(totalsRow?.counted_messages ?? 0),
+    },
+    last24Hours: {
+      processed,
+      awarded,
+      rejected: processed - awarded,
+      awardedXp,
+    },
+    sources,
+    reasons: COMMUNITY_XP_REASONS.map((reason) => ({
+      reason,
+      count: reasonTotals.get(reason) ?? 0,
+    })),
+    rankDistribution: COMMUNITY_RANKS.map((rank) => ({
+      ...rank,
+      members: distribution.get(rank.level) ?? 0,
+    })),
+    topProfiles,
+    recentEvents: recentResult.rows.map((event) => ({
+      id: event.id,
+      discordUserId: event.discord_user_id,
+      source: event.source,
+      channelId: event.channel_id,
+      occurredAt: new Date(event.occurred_at).toISOString(),
+      awardedXp: event.awarded_xp,
+      reason: event.reason,
+    })),
+    siteChatCursor: cursor ? {
+      lastOccurredAt: new Date(cursor.last_occurred_at).toISOString(),
+      updatedAt: new Date(cursor.updated_at).toISOString(),
+    } : null,
+  };
 }
 
 export async function syncSiteChatXp(limit = 200): Promise<{ scanned: number; awarded: number; hasMore: boolean }> {

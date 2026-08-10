@@ -18,14 +18,22 @@ import {
   COMMUNITY_RANKS,
   type CommunityLevelRole,
 } from "@/lib/discord-community-ranks";
+import type { CommunityXpDashboard } from "@/lib/discord-community-xp";
 
 import { updateDiscordCommunityRanksAction } from "./actions";
+import { DiscordCommunityXpDashboard } from "./discord-community-xp-dashboard";
 
 function roleMap(roles: CommunityLevelRole[]): Record<string, string> {
   return Object.fromEntries(roles.map((role) => [String(role.level), role.roleId]));
 }
 
-export function DiscordCommunityXpCard({ initialRoles }: { initialRoles: CommunityLevelRole[] }) {
+export function DiscordCommunityXpCard({
+  initialRoles,
+  dashboard,
+}: {
+  initialRoles: CommunityLevelRole[];
+  dashboard: CommunityXpDashboard;
+}) {
   const [isPending, startTransition] = useTransition();
   const [roleIds, setRoleIds] = useState(() => roleMap(initialRoles));
   const configured = useMemo(
@@ -47,6 +55,8 @@ export function DiscordCommunityXpCard({ initialRoles }: { initialRoles: Communi
 
   return (
     <div className="space-y-5">
+      <DiscordCommunityXpDashboard data={dashboard} />
+
       <Card>
         <CardHeader>
           <div className="flex items-center gap-2">

@@ -4,9 +4,10 @@ import test from "node:test";
 
 const read = (path: string) => readFile(path, "utf8");
 
-test("community XP is durable, combined, anti-spam protected, and role-enabled", async () => {
-  const [migration, service, ranks, scopes, endpoints, awardRoute, syncRoute, messageRoute, leaderboardRoute] = await Promise.all([
+test("community XP is durable, combined, anti-spam protected, role-enabled, and observable", async () => {
+  const [migration, dashboardIndex, service, ranks, scopes, endpoints, awardRoute, syncRoute, messageRoute, leaderboardRoute, dashboard, page] = await Promise.all([
     read("drizzle/admin/migrations/20260810_discord_community_xp.sql"),
+    read("drizzle/admin/migrations/20260810_discord_community_xp_dashboard_index.sql"),
     read("src/lib/discord-community-xp.ts"),
     read("src/lib/discord-community-ranks.ts"),
     read("src/lib/api-auth/scopes.ts"),
@@ -15,6 +16,8 @@ test("community XP is durable, combined, anti-spam protected, and role-enabled",
     read("src/app/api/v1/discord/community-xp/sync-site-chat/route.ts"),
     read("src/app/api/v1/discord/message-events/route.ts"),
     read("src/app/api/v1/discord/community-xp/leaderboard/route.ts"),
+    read("src/app/(admin)/system/discord-moderation/discord-community-xp-dashboard.tsx"),
+    read("src/app/(admin)/system/discord-moderation/page.tsx"),
   ]);
   assert.match(migration, /discord_community_xp_profiles/);
   assert.match(migration, /UNIQUE \(source, source_event_id\)/);
@@ -22,6 +25,7 @@ test("community XP is durable, combined, anti-spam protected, and role-enabled",
   assert.match(migration, /level BETWEEN 0 AND 100/);
   assert.match(migration, /created_by_admin_user_id uuid REFERENCES admin_users/);
   assert.match(migration, /'discord:community-xp'/);
+  assert.match(dashboardIndex, /discord_community_xp_events \(occurred_at DESC, id DESC\)/);
   assert.match(service, /COMMUNITY_XP_PER_MESSAGE = 15/);
   assert.match(service, /COMMUNITY_XP_MIN_CHARS = 3/);
   assert.match(service, /COMMUNITY_XP_COOLDOWN_MIN_SECONDS = 3/);
@@ -39,7 +43,15 @@ test("community XP is durable, combined, anti-spam protected, and role-enabled",
   assert.match(service, /getCommunityRoleSync/);
   assert.match(service, /replaceCommunityLevelRoles/);
   assert.match(service, /Math\.min\(30, Math\.trunc\(limit\)\)/);
+  assert.match(service, /getCommunityXpDashboard/);
+  assert.match(service, /now\(\) - interval '24 hours'/);
+  assert.match(service, /LIMIT 16/);
   assert.match(leaderboardRoute, /max\(30\)/);
+  assert.match(dashboard, /XP operations/);
+  assert.match(dashboard, /24-hour pipeline/);
+  assert.match(dashboard, /Rank distribution/);
+  assert.match(dashboard, /Message content is never displayed/);
+  assert.match(page, /getCommunityXpDashboard/);
   for (const [level, name] of [[0, "Newcomer"], [3, "Member"], [5, "Regular"], [8, "Grinder"], [14, "Veteran"], [20, "Elite"], [30, "Icon"], [50, "Legend"], [75, "Packy KING"]] as const) {
     assert.match(ranks, new RegExp(`level: ${level}, name: "${name}"`));
   }
