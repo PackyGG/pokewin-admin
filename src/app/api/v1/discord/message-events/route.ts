@@ -6,6 +6,10 @@ import {
   isMessageHistoryGuildAllowed,
   recordDiscordMessageEvents,
 } from "@/lib/discord-message-history";
+import {
+  awardCommunityMessageXp,
+  COMMUNITY_XP_GUILD_ID,
+} from "@/lib/discord-community-xp";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -79,7 +83,28 @@ export const POST = withApiKey(
     }
 
     try {
-      return { results: await recordDiscordMessageEvents(parsed.data.events) };
+      const results = await recordDiscordMessageEvents(parsed.data.events);
+      // Message history is delivered through the bot's fsynced retry queue.
+      // Award after its idempotent write so an XP outage makes the caller retry
+      // instead of silently losing an otherwise eligible Discord message.
+      for (const event of parsed.data.events) {
+        if (
+          event.eventType !== "create"
+          || event.message.guildId !== COMMUNITY_XP_GUILD_ID
+          || !event.message.authorId
+          || event.message.authorIsBot === true
+          || event.message.webhookId !== null
+        ) continue;
+        await awardCommunityMessageXp({
+          source: "discord",
+          sourceEventId: event.message.messageId,
+          discordUserId: event.message.authorId,
+          channelId: event.message.channelId,
+          content: event.message.content ?? "",
+          occurredAt: event.message.createdAt,
+        });
+      }
+      return { results };
     } catch (error) {
       if (error instanceof DiscordMessageHistoryError) {
         return apiError(error.status, error.code, error.message);

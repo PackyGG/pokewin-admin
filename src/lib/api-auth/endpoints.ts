@@ -237,6 +237,36 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     scopes: ["discord:message-events"],
   },
   {
+    method: "POST", path: "/api/v1/discord/community-xp/award",
+    summary: "Idempotently awards anti-spam-capped XP for a PackyGG Discord message.",
+    scopes: ["discord:community-xp"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/community-xp/sync-site-chat",
+    summary: "Imports linked Packy site-chat messages through a durable cursor.",
+    scopes: ["discord:community-xp"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/community-xp/profile",
+    summary: "Returns one combined Discord and Packy chat XP profile.",
+    scopes: ["discord:community-xp"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/community-xp/leaderboard",
+    summary: "Returns the combined community XP leaderboard.",
+    scopes: ["discord:community-xp"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/community-xp/roles",
+    summary: "Lists, sets, or removes level milestone roles for the official server.",
+    scopes: ["discord:community-xp"],
+  },
+  {
+    method: "POST", path: "/api/v1/discord/community-xp/role-sync",
+    summary: "Returns paginated levels and configured roles for Discord reconciliation.",
+    scopes: ["discord:community-xp"],
+  },
+  {
     method: "POST",
     path: "/api/v1/discord/moderation-settings",
     summary:

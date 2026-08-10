@@ -64,11 +64,11 @@ import {
 } from "@/lib/announcement-payload";
 import { createAnnouncementAction } from "./actions";
 import {
-  searchAnnouncementPacks,
   searchAnnouncementPromoCodes,
   type AnnouncementPackOption,
   type AnnouncementPromoOption,
 } from "./composer-actions";
+import { NotificationPackPicker } from "./notification-pack-picker";
 import type {
   AnnouncementAudienceRole,
   AnnouncementCreateCategory,
@@ -374,7 +374,12 @@ export function CreateAnnouncementDialog({
           {template === "pack" && (
             <div className="space-y-1.5 rounded-md border p-3">
               <Label className="text-xs text-muted-foreground">Pack</Label>
-              <PackPicker value={pack} onSelect={applyPack} />
+              <NotificationPackPicker
+                value={pack}
+                onSelect={applyPack}
+                scope="announcement"
+                disabled={isPending}
+              />
               {pack ? (
                 pack.imageUrl ? (
                   <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
@@ -757,121 +762,6 @@ function promoBody(p: AnnouncementPromoOption): string {
   if (p.minimumLevel > 0) parts.push(`Level ${p.minimumLevel}+ only.`);
   if (p.expiresAt) parts.push(`Expires ${formatDate(p.expiresAt)}.`);
   return parts.join(" ");
-}
-
-/** Pack search-and-select — mirrors the /challenges `ItemPicker` shape. */
-function PackPicker({
-  value,
-  onSelect,
-}: {
-  value: AnnouncementPackOption | null;
-  onSelect: (pack: AnnouncementPackOption) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [query, setQuery] = useState("");
-  const [items, setItems] = useState<AnnouncementPackOption[]>([]);
-  const [isPending, startTransition] = useTransition();
-
-  useEffect(() => {
-    if (!open) return;
-    startTransition(async () => {
-      setItems(await searchAnnouncementPacks(query));
-    });
-  }, [open, query]);
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={
-          <Button
-            variant="outline"
-            className="h-9 w-full justify-between text-left font-normal"
-          />
-        }
-      >
-        {value ? (
-          <span className="flex items-center gap-2 truncate">
-            {value.imageUrl && (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={value.imageUrl}
-                alt=""
-                className="size-5 rounded object-contain"
-              />
-            )}
-            <span className="truncate">{value.name}</span>
-            <span className="ml-auto shrink-0 text-xs text-muted-foreground">
-              {formatCurrency(value.priceUsd)}
-            </span>
-          </span>
-        ) : (
-          <span className="text-muted-foreground">Select pack...</span>
-        )}
-        <ChevronsUpDown className="ml-1 size-3 shrink-0 opacity-50" />
-      </PopoverTrigger>
-      <PopoverContent className="w-80 p-0" align="start">
-        <Command shouldFilter={false}>
-          <CommandInput
-            placeholder="Search packs..."
-            value={query}
-            onValueChange={setQuery}
-          />
-          <CommandList>
-            {isPending && items.length === 0 && (
-              <div className="space-y-1 p-1" aria-hidden>
-                {Array.from({ length: 4 }).map((_, i) => (
-                  <div
-                    key={i}
-                    className="flex items-center gap-2 rounded-sm px-2 py-1.5"
-                  >
-                    <Skeleton className="size-8 shrink-0 rounded" />
-                    <div className="flex-1 space-y-1.5">
-                      <Skeleton className="h-3.5 w-2/3 rounded" />
-                      <Skeleton className="h-3 w-16 rounded" />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {!isPending && items.length === 0 && (
-              <CommandEmpty>No packs found.</CommandEmpty>
-            )}
-            {items.map((item) => (
-              <CommandItem
-                key={item.id}
-                value={item.id}
-                onSelect={() => {
-                  onSelect(item);
-                  setOpen(false);
-                }}
-              >
-                <div className="flex w-full items-center gap-2">
-                  {item.imageUrl ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img
-                      src={item.imageUrl}
-                      alt=""
-                      className="size-8 rounded object-contain"
-                    />
-                  ) : (
-                    <div className="flex size-8 items-center justify-center rounded bg-muted text-[10px] text-muted-foreground">
-                      N/A
-                    </div>
-                  )}
-                  <div className="flex-1 truncate">
-                    <div className="truncate text-sm">{item.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {formatCurrency(item.priceUsd)} · /{item.slug}
-                    </div>
-                  </div>
-                </div>
-              </CommandItem>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverContent>
-    </Popover>
-  );
 }
 
 /** Live promo codes with their plaintext, so the code needn't be retyped. */

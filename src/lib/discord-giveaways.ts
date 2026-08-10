@@ -1,15 +1,22 @@
 import "server-only";
 
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { getProdReadDrizzleDb } from "@/lib/db";
-import { account } from "@/lib/db-schema/main/schema";
+import { account, user } from "@/lib/db-schema/main/schema";
 
 const MIN_DURATION_MS = 60_000;
 const MAX_DURATION_MS = 365 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const DISCORD_EPOCH_MS = BigInt("1420070400000");
+export const MINIMUM_PACKY_ACCOUNT_AGE_DAYS = 5;
+export const MINIMUM_DISCORD_ACCOUNT_AGE_DAYS = 90;
 
-export type GiveawayEntryRequirement = "none" | "linked_packy_account";
+export type GiveawayEntryRequirement =
+  | "none"
+  | "linked_packy_account"
+  | "established_linked_packy_account";
 
 export type GiveawayFailureCode =
   | "giveaway_not_found"
@@ -66,6 +73,57 @@ export type DiscordGiveawayDeliveryJob = DiscordGiveawayState & {
   attempt: number;
   kind: "create" | "update";
 };
+
+function discordAccountCreatedAtMs(discordUserId: string): number | null {
+  try {
+    const snowflake = BigInt(discordUserId);
+    if (snowflake <= BigInt(0)) return null;
+    return Number((snowflake >> BigInt(22)) + DISCORD_EPOCH_MS);
+  } catch {
+    return null;
+  }
+}
+
+function discordAccountMeetsMinimumAge(discordUserId: string, now = Date.now()): boolean {
+  const createdAt = discordAccountCreatedAtMs(discordUserId);
+  return createdAt !== null
+    && createdAt <= now - MINIMUM_DISCORD_ACCOUNT_AGE_DAYS * DAY_MS;
+}
+
+async function establishedEligibleDiscordUserIds(
+  discordUserIds: string[],
+  now = Date.now(),
+): Promise<Set<string>> {
+  const oldEnoughDiscordIds = [...new Set(discordUserIds)]
+    .filter((discordUserId) => discordAccountMeetsMinimumAge(discordUserId, now));
+  if (oldEnoughDiscordIds.length === 0) return new Set();
+
+  const eligible = new Set<string>();
+  const prodReadDb = getProdReadDrizzleDb();
+  const packyCreatedBefore = now - MINIMUM_PACKY_ACCOUNT_AGE_DAYS * DAY_MS;
+  // Keep the production-read query bounded for unusually large giveaways.
+  for (let offset = 0; offset < oldEnoughDiscordIds.length; offset += 500) {
+    const batch = oldEnoughDiscordIds.slice(offset, offset + 500);
+    const linkedAccounts = await prodReadDb
+      .select({
+        discordUserId: account.accountId,
+        packyCreatedAt: user.created_at,
+      })
+      .from(account)
+      .innerJoin(user, eq(user.id, account.userId))
+      .where(and(
+        eq(account.providerId, "discord"),
+        inArray(account.accountId, batch),
+      ));
+    for (const linkedAccount of linkedAccounts) {
+      const createdAt = Date.parse(linkedAccount.packyCreatedAt);
+      if (Number.isFinite(createdAt) && createdAt <= packyCreatedBefore) {
+        eligible.add(linkedAccount.discordUserId);
+      }
+    }
+  }
+  return eligible;
+}
 
 function stateFromRow(
   row: GiveawayRow,
@@ -132,7 +190,11 @@ export async function createDiscordGiveaway(input: {
   if (!Number.isInteger(input.winnerCount) || input.winnerCount < 1 || input.winnerCount > 20) {
     throw new GiveawayError("giveaway_conflict", "Winner count must be between 1 and 20.");
   }
-  if (entryRequirement !== "none" && entryRequirement !== "linked_packy_account") {
+  if (
+    entryRequirement !== "none"
+    && entryRequirement !== "linked_packy_account"
+    && entryRequirement !== "established_linked_packy_account"
+  ) {
     throw new GiveawayError("giveaway_conflict", "Unsupported giveaway entry requirement.");
   }
   if (!Number.isFinite(endsAt.getTime()) || durationMs < MIN_DURATION_MS || durationMs > MAX_DURATION_MS) {
@@ -226,6 +288,15 @@ export async function enterDiscordGiveaway(input: {
         );
       }
     }
+    if (row.entry_requirement === "established_linked_packy_account") {
+      const eligible = await establishedEligibleDiscordUserIds([input.discordUserId]);
+      if (!eligible.has(input.discordUserId)) {
+        throw new GiveawayError(
+          "giveaway_requirement_not_met",
+          `A linked Packy.GG account aged ${MINIMUM_PACKY_ACCOUNT_AGE_DAYS}+ days and a Discord account aged ${MINIMUM_DISCORD_ACCOUNT_AGE_DAYS}+ days are required.`,
+        );
+      }
+    }
 
     const inserted = await tx.execute<{ discord_user_id: string }>(sql`
       INSERT INTO discord_giveaway_entries (giveaway_id, discord_user_id)
@@ -251,15 +322,32 @@ async function finalizeDueGiveaway(giveawayId: string): Promise<void> {
     `);
     const giveaway = locked.rows[0];
     if (!giveaway) return;
-    const candidates = await tx.execute<{ discord_user_id: string }>(sql`
-      SELECT discord_user_id
-      FROM discord_giveaway_entries
-      WHERE giveaway_id = ${giveawayId}::uuid
-      ORDER BY random()
-      LIMIT ${giveaway.winner_count}
-    `);
+    let candidateRows: { discord_user_id: string }[];
+    if (giveaway.entry_requirement === "established_linked_packy_account") {
+      const pool = await tx.execute<{ discord_user_id: string }>(sql`
+        SELECT discord_user_id
+        FROM discord_giveaway_entries
+        WHERE giveaway_id = ${giveawayId}::uuid
+        ORDER BY random()
+      `);
+      const eligible = await establishedEligibleDiscordUserIds(
+        pool.rows.map((candidate) => candidate.discord_user_id),
+      );
+      candidateRows = pool.rows
+        .filter((candidate) => eligible.has(candidate.discord_user_id))
+        .slice(0, giveaway.winner_count);
+    } else {
+      const candidates = await tx.execute<{ discord_user_id: string }>(sql`
+        SELECT discord_user_id
+        FROM discord_giveaway_entries
+        WHERE giveaway_id = ${giveawayId}::uuid
+        ORDER BY random()
+        LIMIT ${giveaway.winner_count}
+      `);
+      candidateRows = candidates.rows;
+    }
     const revision = giveaway.revision + 1;
-    for (const [index, candidate] of candidates.rows.entries()) {
+    for (const [index, candidate] of candidateRows.entries()) {
       await tx.execute(sql`
         INSERT INTO discord_giveaway_winners (
           giveaway_id, revision, position, discord_user_id
@@ -366,7 +454,7 @@ export async function rerollDiscordGiveaway(input: {
     if (replaced.length === 0) {
       throw new GiveawayError("winner_not_found", "This giveaway has no winners to reroll.");
     }
-    const candidates = await tx.execute<{ discord_user_id: string }>(sql`
+    const candidatePool = await tx.execute<{ discord_user_id: string }>(sql`
       SELECT entry.discord_user_id
       FROM discord_giveaway_entries AS entry
       WHERE entry.giveaway_id = ${input.giveawayId}::uuid
@@ -377,9 +465,20 @@ export async function rerollDiscordGiveaway(input: {
             AND winner.discord_user_id = entry.discord_user_id
         )
       ORDER BY random()
-      LIMIT ${replaced.length}
+      ${giveaway.entry_requirement === "established_linked_packy_account"
+        ? sql``
+        : sql`LIMIT ${replaced.length}`}
     `);
-    if (candidates.rows.length !== replaced.length) {
+    let candidateRows = candidatePool.rows;
+    if (giveaway.entry_requirement === "established_linked_packy_account") {
+      const eligible = await establishedEligibleDiscordUserIds(
+        candidateRows.map((candidate) => candidate.discord_user_id),
+      );
+      candidateRows = candidateRows
+        .filter((candidate) => eligible.has(candidate.discord_user_id))
+        .slice(0, replaced.length);
+    }
+    if (candidateRows.length !== replaced.length) {
       throw new GiveawayError("no_eligible_entries", "There are not enough different entrants to reroll.");
     }
     const revision = giveaway.revision + 1;
@@ -398,7 +497,7 @@ export async function rerollDiscordGiveaway(input: {
           ${input.giveawayId}::uuid,
           ${revision},
           ${oldWinner.position},
-          ${candidates.rows[index].discord_user_id}
+          ${candidateRows[index].discord_user_id}
         )
       `);
     }

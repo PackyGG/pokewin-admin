@@ -2,14 +2,19 @@ import { FadeIn } from "@/components/fade-in";
 import { PageHero, PageHeroIdentity } from "@/components/modern-panels";
 import { requirePageAccess } from "@/lib/dal";
 import { getDiscordModerationSettings } from "@/lib/discord-moderation-settings";
+import { COMMUNITY_XP_GUILD_ID } from "@/lib/discord-community-ranks";
+import { listCommunityLevelRoles } from "@/lib/discord-community-xp";
 
-import { DiscordModerationCard } from "./discord-moderation-card";
+import { DiscordWorkspace } from "./discord-workspace";
 
-export const metadata = { title: "Discord Moderation" };
+export const metadata = { title: "Discord" };
 
 export default async function DiscordModerationPage() {
   await requirePageAccess("/system/discord-moderation");
-  const settings = await getDiscordModerationSettings();
+  const [settings, roles] = await Promise.all([
+    getDiscordModerationSettings(),
+    listCommunityLevelRoles(COMMUNITY_XP_GUILD_ID),
+  ]);
 
   return (
     <div className="space-y-6">
@@ -17,7 +22,7 @@ export default async function DiscordModerationPage() {
         <PageHeroIdentity />
       </PageHero>
       <FadeIn>
-        <DiscordModerationCard initial={settings} />
+        <DiscordWorkspace initialModeration={settings} initialRoles={roles} />
       </FadeIn>
     </div>
   );

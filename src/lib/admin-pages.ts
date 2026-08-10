@@ -218,7 +218,7 @@ export const ADMIN_PAGES: AdminPage[] = [
   { group: "System", label: "Geo Blocking", key: "/system/geo-blocking" },
   {
     group: "System",
-    label: "Discord Moderation",
+    label: "Discord",
     key: "/system/discord-moderation",
   },
   // motha-only — the page + actions enforce the gate server-side;

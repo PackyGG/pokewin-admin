@@ -75,17 +75,9 @@ export type PromoCodeLookup = {
   restricted: boolean;
 };
 
-/** Active packs, searchable by name / slug / id. Max 20 rows. */
-export async function searchAnnouncementPacks(
+async function queryActivePacks(
   query: string,
 ): Promise<AnnouncementPackOption[]> {
-  const session = await requirePageAccess("/notifications");
-  await requireCapability(
-    session,
-    "__can_manage_announcements",
-    "compose announcements",
-  );
-
   const db = await getReadDrizzleDb();
   const q = query.trim();
   const search = q
@@ -117,6 +109,34 @@ export async function searchAnnouncementPacks(
     imageUrl: p.image_url,
     priceUsd: toNumber(p.price),
   }));
+}
+
+/** Active packs for the broadcast-announcement composer. */
+export async function searchAnnouncementPacks(
+  query: string,
+): Promise<AnnouncementPackOption[]> {
+  const session = await requirePageAccess("/notifications");
+  await requireCapability(
+    session,
+    "__can_manage_announcements",
+    "compose announcements",
+  );
+  return queryActivePacks(query);
+}
+
+/** Active packs for the personal-notification composer. Kept behind its
+ * separate money-adjacent capability rather than borrowing announcement
+ * access merely because both surfaces share the same catalog picker. */
+export async function searchDirectNotificationPacks(
+  query: string,
+): Promise<AnnouncementPackOption[]> {
+  const session = await requirePageAccess("/notifications");
+  await requireCapability(
+    session,
+    "__can_send_user_notifications",
+    "send user notifications",
+  );
+  return queryActivePacks(query);
 }
 
 /**

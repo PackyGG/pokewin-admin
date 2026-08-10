@@ -83,6 +83,12 @@ export const API_SCOPES = {
       "Create durable Discord giveaways, record entries and winners, and manage retryable message delivery and rerolls in the admin database.",
     access: "admin-write",
   },
+  "discord:community-xp": {
+    label: "Manage Discord community XP",
+    description:
+      "Award idempotent community XP for Discord and linked Packy chat messages, read ranks, and configure hourly Discord level roles.",
+    access: "admin-write",
+  },
   "discord:message-events": {
     label: "Manage Discord message moderation data",
     description:
