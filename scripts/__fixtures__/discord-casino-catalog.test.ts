@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("casino catalog is normalized, scoped, guild-pinned, and safely seeded", async () => {
-  const [migration, domainMigration, schema, service, route, endpoints] = await Promise.all([
+  const [migration, domainMigration, bSiteConversion, schema, service, route, endpoints] = await Promise.all([
     read("drizzle/admin/migrations/20260810_casino_site_catalog.sql"),
     read("drizzle/admin/migrations/20260810_casino_site_domains_v2.sql"),
+    read("drizzle/admin/migrations/20260810_b_site_conversion.sql"),
     read("src/lib/db-schema/admin/schema.ts"),
     read("src/lib/discord-casino-catalog.ts"),
     read("src/app/api/v1/discord/casino-sites/catalog/route.ts"),
@@ -32,6 +33,8 @@ test("casino catalog is normalized, scoped, guild-pinned, and safely seeded", as
     assert.match(domainMigration, new RegExp(domain.replace(".", "\\.")));
   }
   assert.doesNotMatch(domainMigration, /rubixrefs/i);
+  assert.match(bSiteConversion, /SET tokens_per_usd = 1\.42/);
+  assert.match(bSiteConversion, /WHERE slug = 'b-site'/);
   for (const value of ["500", "1.45", "1.46", "1.66", "1.69", "1.42"]) {
     assert.match(migration, new RegExp(`, ${value.replace(".", "\\.")}\\)`));
   }
