@@ -5,7 +5,7 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("community XP is durable, combined, anti-spam protected, and role-enabled", async () => {
-  const [migration, service, ranks, scopes, endpoints, awardRoute, syncRoute, messageRoute] = await Promise.all([
+  const [migration, service, ranks, scopes, endpoints, awardRoute, syncRoute, messageRoute, leaderboardRoute] = await Promise.all([
     read("drizzle/admin/migrations/20260810_discord_community_xp.sql"),
     read("src/lib/discord-community-xp.ts"),
     read("src/lib/discord-community-ranks.ts"),
@@ -14,6 +14,7 @@ test("community XP is durable, combined, anti-spam protected, and role-enabled",
     read("src/app/api/v1/discord/community-xp/award/route.ts"),
     read("src/app/api/v1/discord/community-xp/sync-site-chat/route.ts"),
     read("src/app/api/v1/discord/message-events/route.ts"),
+    read("src/app/api/v1/discord/community-xp/leaderboard/route.ts"),
   ]);
   assert.match(migration, /discord_community_xp_profiles/);
   assert.match(migration, /UNIQUE \(source, source_event_id\)/);
@@ -37,6 +38,8 @@ test("community XP is durable, combined, anti-spam protected, and role-enabled",
   assert.match(service, /communityLevelForXp/);
   assert.match(service, /getCommunityRoleSync/);
   assert.match(service, /replaceCommunityLevelRoles/);
+  assert.match(service, /Math\.min\(30, Math\.trunc\(limit\)\)/);
+  assert.match(leaderboardRoute, /max\(30\)/);
   for (const [level, name] of [[0, "Newcomer"], [3, "Member"], [5, "Regular"], [8, "Grinder"], [14, "Veteran"], [20, "Elite"], [30, "Icon"], [50, "Legend"], [75, "Packy KING"]] as const) {
     assert.match(ranks, new RegExp(`level: ${level}, name: "${name}"`));
   }

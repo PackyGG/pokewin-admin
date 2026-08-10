@@ -205,7 +205,7 @@ export async function getCommunityXpLeaderboard(limit = 10): Promise<CommunityXp
     SELECT profile.*, rank() OVER (ORDER BY total_xp DESC)::integer AS rank
     FROM discord_community_xp_profiles profile
     ORDER BY total_xp DESC, discord_user_id
-    LIMIT ${Math.max(1, Math.min(25, Math.trunc(limit)))}
+    LIMIT ${Math.max(1, Math.min(30, Math.trunc(limit)))}
   `);
   return result.rows.map(profileFromRow);
 }
