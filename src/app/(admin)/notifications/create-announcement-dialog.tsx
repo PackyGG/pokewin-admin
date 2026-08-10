@@ -12,6 +12,7 @@ import {
   Megaphone,
   Package,
   Ticket,
+  Trophy,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -84,7 +85,9 @@ export const AUDIENCE_OPTIONS: {
   { value: "creator", label: "Creators" },
 ];
 
-export function audienceLabel(roles: AnnouncementAudienceRole[] | null): string {
+export function audienceLabel(
+  roles: AnnouncementAudienceRole[] | null,
+): string {
   if (!roles || roles.length === 0) return "Everyone";
   return roles
     .map((r) => AUDIENCE_OPTIONS.find((o) => o.value === r)?.label ?? r)
@@ -92,19 +95,21 @@ export function audienceLabel(roles: AnnouncementAudienceRole[] | null): string 
 }
 
 /**
- * What kind of announcement is being composed. Each template only pre-fills
- * the same three payload fields the backend accepts (`url`, `image_url`,
- * `cta_label`) plus the title/body copy — there is no per-template server
- * behaviour, so a template is purely a shortcut for the admin.
+ * What kind of announcement is being composed. General templates pre-fill
+ * link/media metadata; the challenge template also sends the backend's
+ * validated game/name/prize fields so the site can select its dedicated card.
+ * There is no per-template delivery behaviour: each remains a composer preset.
  *
  * `type` is a free-form string the client can key an icon off. Keeping one
  * stable value per template gives the frontend something to switch on.
  */
-type Template = "message" | "pack" | "page" | "promo";
+type Template = "message" | "pack" | "challenge" | "page" | "promo";
+type ChallengeGame = "keno" | "upgrader" | "pack";
 
 const TEMPLATE_TYPES: Record<Template, string> = {
   message: "admin_announcement",
   pack: "pack_release",
+  challenge: "challenge_available",
   page: "page_release",
   promo: "promo_code",
 };
@@ -124,9 +129,8 @@ export function CreateAnnouncementDialog({
   const [template, setTemplate] = useState<Template>("message");
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
-  const [payload, setPayload] = useState<AnnouncementPayloadDraft>(
-    EMPTY_PAYLOAD_DRAFT,
-  );
+  const [payload, setPayload] =
+    useState<AnnouncementPayloadDraft>(EMPTY_PAYLOAD_DRAFT);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [category, setCategory] = useState<AnnouncementCreateCategory>("news");
   const [type, setType] = useState(TEMPLATE_TYPES.message);
@@ -139,6 +143,9 @@ export function CreateAnnouncementDialog({
   const [pagePath, setPagePath] = useState<string>(MAIN_SITE_PAGES[1].path);
   const [promo, setPromo] = useState<AnnouncementPromoOption | null>(null);
   const [manualCode, setManualCode] = useState("");
+  const [challengeGame, setChallengeGame] = useState<ChallengeGame>("keno");
+  const [challengeName, setChallengeName] = useState("");
+  const [challengePrize, setChallengePrize] = useState("");
   const [linkOpen, setLinkOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isPending, startTransition] = useTransition();
@@ -159,10 +166,7 @@ export function CreateAnnouncementDialog({
     autoFilled.current[key] = next;
   }
 
-  function autoSetPayload(
-    key: "url" | "imageUrl" | "ctaLabel",
-    next: string,
-  ) {
+  function autoSetPayload(key: "url" | "imageUrl" | "ctaLabel", next: string) {
     setPayload((cur) => ({
       ...cur,
       [key]:
@@ -188,6 +192,9 @@ export function CreateAnnouncementDialog({
     setPagePath(MAIN_SITE_PAGES[1].path);
     setPromo(null);
     setManualCode("");
+    setChallengeGame("keno");
+    setChallengeName("");
+    setChallengePrize("");
     setLinkOpen(false);
     autoFilled.current = {};
   }
@@ -199,6 +206,14 @@ export function CreateAnnouncementDialog({
 
   function handleTemplateChange(next: Template) {
     setTemplate(next);
+    if (next !== "challenge") {
+      setPayload((cur) => ({
+        ...cur,
+        challengeName: "",
+        challengeGame: "",
+        challengePrizeUsd: "",
+      }));
+    }
     // Only swap the type while it still carries a template default — a
     // hand-typed type in Advanced survives a template switch.
     setType((cur) =>
@@ -207,6 +222,12 @@ export function CreateAnnouncementDialog({
     if (next === "page") applyPage(pagePath);
     if (next === "pack" && pack) applyPack(pack);
     if (next === "promo" && promo) applyPromo(promo);
+    if (next === "challenge") {
+      // "All" means every player account, not internal staff roles.
+      setEveryoneAudience(false);
+      setAudienceRoles(new Set(["user"]));
+      applyChallenge({});
+    }
   }
 
   function applyPack(p: AnnouncementPackOption) {
@@ -251,6 +272,38 @@ export function CreateAnnouncementDialog({
     setPromo(null);
     const upper = code.trim().toUpperCase();
     if (upper) autoSetText("title", `Promo code: ${upper}`, setTitle);
+  }
+
+  function applyChallenge(next: {
+    game?: ChallengeGame;
+    name?: string;
+    prize?: string;
+  }) {
+    const game = next.game ?? challengeGame;
+    const name = next.name ?? challengeName;
+    const prize = next.prize ?? challengePrize;
+    if (next.game) setChallengeGame(next.game);
+    if (next.name !== undefined) setChallengeName(next.name);
+    if (next.prize !== undefined) setChallengePrize(next.prize);
+
+    const gameLabel =
+      game === "pack" ? "Pack opening" : game === "keno" ? "Keno" : "Upgrader";
+    autoSetText("title", name.trim() || `New ${gameLabel} challenge`, setTitle);
+    autoSetText(
+      "body",
+      prize.trim()
+        ? `${gameLabel} challenge is live — complete it to claim $${prize.replace(/^\$/, "")}.`
+        : `${gameLabel} challenge is live now.`,
+      setBody,
+    );
+    setPayload((cur) => ({
+      ...cur,
+      url: mainSiteUrl("/rewards?tab=challenges"),
+      ctaLabel: "View challenge",
+      challengeName: name.trim() || `New ${gameLabel} challenge`,
+      challengeGame: game,
+      challengePrizeUsd: prize,
+    }));
   }
 
   async function handleUpload(file: File) {
@@ -360,6 +413,10 @@ export function CreateAnnouncementDialog({
                 <Package className="size-3.5" />
                 Pack
               </TabsTrigger>
+              <TabsTrigger value="challenge">
+                <Trophy className="size-3.5" />
+                Challenge
+              </TabsTrigger>
               <TabsTrigger value="page">
                 <ExternalLink className="size-3.5" />
                 Page
@@ -435,6 +492,69 @@ export function CreateAnnouncementDialog({
             </div>
           )}
 
+          {template === "challenge" && (
+            <div className="space-y-3 rounded-md border p-3">
+              <div>
+                <Label className="text-xs text-muted-foreground">
+                  Challenge design
+                </Label>
+                <p className="text-[11px] text-muted-foreground">
+                  Broadcasts to the audience below using the matching
+                  customer-side card.
+                </p>
+              </div>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Game</Label>
+                  <Select
+                    value={challengeGame}
+                    onValueChange={(value) =>
+                      applyChallenge({ game: value as ChallengeGame })
+                    }
+                    disabled={isPending}
+                  >
+                    <SelectTrigger className="w-full">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="keno">Keno</SelectItem>
+                      <SelectItem value="upgrader">Upgrader</SelectItem>
+                      <SelectItem value="pack">Pack opening</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">
+                    Prize (optional)
+                  </Label>
+                  <Input
+                    value={challengePrize}
+                    onChange={(event) =>
+                      applyChallenge({ prize: event.target.value })
+                    }
+                    inputMode="decimal"
+                    placeholder="25.00"
+                    disabled={isPending}
+                  />
+                </div>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">
+                  Challenge name
+                </Label>
+                <Input
+                  value={challengeName}
+                  onChange={(event) =>
+                    applyChallenge({ name: event.target.value })
+                  }
+                  maxLength={200}
+                  placeholder="e.g. Lucky Seven"
+                  disabled={isPending}
+                />
+              </div>
+            </div>
+          )}
+
           {template === "promo" && (
             <div className="space-y-2 rounded-md border p-3">
               <Label className="text-xs text-muted-foreground">
@@ -471,8 +591,8 @@ export function CreateAnnouncementDialog({
                 </div>
               )}
               <p className="text-[11px] text-muted-foreground">
-                Codes are redeemed in the wallet&apos;s deposit tab, which has no
-                deep link — the code in the message body is what users copy.
+                Codes are redeemed in the wallet&apos;s deposit tab, which has
+                no deep link — the code in the message body is what users copy.
                 Add a link below only if the button should open a page.
               </p>
             </div>
@@ -584,7 +704,9 @@ export function CreateAnnouncementDialog({
           <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
             <span className="text-sm font-medium">Sends to</span>
             <span className="text-sm text-muted-foreground">
-              {everyoneAudience ? "Everyone" : audienceLabel([...audienceRoles])}
+              {everyoneAudience
+                ? "Everyone"
+                : audienceLabel([...audienceRoles])}
             </span>
           </div>
 
@@ -604,7 +726,9 @@ export function CreateAnnouncementDialog({
           {advancedOpen && (
             <div className="space-y-3 rounded-md border p-3">
               <div className="space-y-1.5">
-                <Label className="text-xs text-muted-foreground">Audience</Label>
+                <Label className="text-xs text-muted-foreground">
+                  Audience
+                </Label>
                 <label className="flex items-center gap-2 text-sm">
                   <Checkbox
                     checked={everyoneAudience}
@@ -630,7 +754,9 @@ export function CreateAnnouncementDialog({
                 )}
               </div>
               <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Category</Label>
+                <Label className="text-xs text-muted-foreground">
+                  Category
+                </Label>
                 <Select
                   value={category}
                   onValueChange={(v) =>

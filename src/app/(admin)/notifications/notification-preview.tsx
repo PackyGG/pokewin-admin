@@ -52,6 +52,13 @@ export function NotificationPreview({
               {preview.packCount} new packs
             </p>
           )}
+          {preview.challengeGame && (
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
+              {preview.challengeGame === "pack"
+                ? "Pack opening challenge"
+                : `${preview.challengeGame} challenge`}
+            </p>
+          )}
           <p className="truncate text-sm font-medium">{preview.title}</p>
           <p className="line-clamp-2 text-xs text-muted-foreground">
             {preview.body}
@@ -80,7 +87,9 @@ export function NotificationPreview({
                 <ExternalLink className="size-3" />
                 {preview.packCount && preview.packCount > 1
                   ? "Opens newest packs"
-                  : "Opens pack page"}
+                  : preview.challengeGame
+                    ? "Opens challenges"
+                    : "Opens pack page"}
               </span>
             )}
           </div>

@@ -36,6 +36,7 @@ export type NotificationPreview = {
   image?: string;
   images?: string[];
   packCount?: number;
+  challengeGame?: "keno" | "upgrader" | "pack";
   href?: string;
   /** False when the site falls back to the generic template. */
   known: boolean;
@@ -50,19 +51,26 @@ export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   reward_credited: ["amount_usd"],
   promo_code_granted: ["code", "value", "amount_usd"],
   pack_release: ["pack_name", "price_usd", "url", "image_url", "packs"],
+  challenge_available: [
+    "challenge_id",
+    "challenge_name",
+    "game_type",
+    "challenge_type",
+    "prize_usd",
+    "url",
+  ],
 };
 
 /** Mirrors the frontend's `formatUsd` — tolerant of number-or-string because
  * admin payloads are typed by hand (CSV column vs JSON body). */
 function formatUsd(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return `$${value % 1 === 0 ? value : value.toFixed(2)}`;
-  }
-  if (typeof value === "string" && value.trim() !== "") {
-    const trimmed = value.trim();
-    return trimmed.startsWith("$") ? trimmed : `$${trimmed}`;
-  }
-  return "";
+  const amount =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value.trim().replace(/^\$/, ""))
+        : Number.NaN;
+  return Number.isFinite(amount) && amount >= 0 ? `$${amount.toFixed(2)}` : "";
 }
 
 type PreviewPack = {
@@ -178,6 +186,33 @@ export function previewNotificationText(
         href: typeof payload?.url === "string" ? payload.url : undefined,
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.pack_release,
+      };
+    }
+    case "challenge_available": {
+      const challengeGame =
+        payload?.game_type === "keno" ||
+        payload?.game_type === "upgrader" ||
+        payload?.game_type === "pack"
+          ? payload.game_type
+          : payload?.challenge_type === "pack_pull"
+            ? "pack"
+            : undefined;
+      const name =
+        typeof payload?.challenge_name === "string" &&
+        payload.challenge_name.trim()
+          ? payload.challenge_name.trim()
+          : "New challenge";
+      const prize = formatUsd(payload?.prize_usd);
+      return {
+        title: name,
+        body: prize ? `Complete it to claim ${prize}.` : "Ready to play now.",
+        href:
+          typeof payload?.url === "string"
+            ? payload.url
+            : "/rewards?tab=challenges",
+        challengeGame,
+        known: challengeGame !== undefined,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.challenge_available,
       };
     }
     default:

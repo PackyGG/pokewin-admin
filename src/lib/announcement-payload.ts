@@ -13,9 +13,9 @@
  *              compose time rather than silently failing to render
  *   cta_label  optional, ≤ 60 chars
  *
- * Unknown keys are STRIPPED by the backend's zod object, so a field that is
- * not one of these three never reaches the client — do not invent extra keys
- * here (a `promo_code` key, for example, would be dropped on the way in).
+ * Unknown keys are STRIPPED by the backend's zod object. Besides the general
+ * link/media fields, the contract includes validated challenge metadata for
+ * the Keno, Upgrader and Pack Opening announcement cards.
  *
  * Validating admin-side keeps a bad value inside the dialog with a usable
  * message instead of surfacing as an opaque 422 from the backend. Both the
@@ -34,6 +34,10 @@ export type AnnouncementPayload = {
   url?: string | null;
   image_url?: string | null;
   cta_label?: string | null;
+  challenge_name?: string;
+  game_type?: "pack" | "upgrader" | "keno";
+  challenge_type?: "pack_pull" | "upgrader" | "keno";
+  prize_usd?: string;
 };
 
 /** Form-side shape used by the composer (camelCase, always strings). */
@@ -41,12 +45,18 @@ export type AnnouncementPayloadDraft = {
   url: string;
   imageUrl: string;
   ctaLabel: string;
+  challengeName: string;
+  challengeGame: "" | "pack" | "upgrader" | "keno";
+  challengePrizeUsd: string;
 };
 
 export const EMPTY_PAYLOAD_DRAFT: AnnouncementPayloadDraft = {
   url: "",
   imageUrl: "",
   ctaLabel: "",
+  challengeName: "",
+  challengeGame: "",
+  challengePrizeUsd: "",
 };
 
 /** http(s) only — blocks javascript:/data: schemes, same as the backend. */
@@ -79,10 +89,16 @@ export function validateAnnouncementPayload(
   const url = (draft?.url ?? "").trim();
   const imageUrl = (draft?.imageUrl ?? "").trim();
   const ctaLabel = (draft?.ctaLabel ?? "").trim();
+  const challengeName = (draft?.challengeName ?? "").trim();
+  const challengeGame = draft?.challengeGame ?? "";
+  const challengePrizeUsd = (draft?.challengePrizeUsd ?? "").trim();
 
   if (url) {
     if (!isHttpUrl(url)) {
-      return { ok: false, error: "Link must be a full http:// or https:// URL" };
+      return {
+        ok: false,
+        error: "Link must be a full http:// or https:// URL",
+      };
     }
     if (url.length > ANNOUNCEMENT_URL_MAX) {
       return { ok: false, error: "Link is too long (max 2048 characters)" };
@@ -97,7 +113,10 @@ export function validateAnnouncementPayload(
       };
     }
     if (imageUrl.length > ANNOUNCEMENT_URL_MAX) {
-      return { ok: false, error: "Image URL is too long (max 2048 characters)" };
+      return {
+        ok: false,
+        error: "Image URL is too long (max 2048 characters)",
+      };
     }
   }
 
@@ -110,11 +129,39 @@ export function validateAnnouncementPayload(
   if (ctaLabel && !url) {
     return {
       ok: false,
-      error: "A button label needs a link to open — add a link or clear the label",
+      error:
+        "A button label needs a link to open — add a link or clear the label",
     };
   }
 
-  if (!url && !imageUrl && !ctaLabel) return { ok: true, payload: undefined };
+  const hasChallengeMetadata = Boolean(
+    challengeName || challengeGame || challengePrizeUsd,
+  );
+  if (hasChallengeMetadata && (!challengeName || !challengeGame)) {
+    return {
+      ok: false,
+      error: "Challenge announcements need both a name and game type",
+    };
+  }
+  if (challengeName.length > 200) {
+    return {
+      ok: false,
+      error: "Challenge name must be 200 characters or less",
+    };
+  }
+  if (challengePrizeUsd) {
+    const amount = Number(challengePrizeUsd.replace(/^\$/, ""));
+    if (!Number.isFinite(amount) || amount <= 0 || amount > 100_000) {
+      return {
+        ok: false,
+        error: "Challenge prize must be between $0.01 and $100,000",
+      };
+    }
+  }
+
+  if (!url && !imageUrl && !ctaLabel && !hasChallengeMetadata) {
+    return { ok: true, payload: undefined };
+  }
 
   return {
     ok: true,
@@ -122,6 +169,22 @@ export function validateAnnouncementPayload(
       ...(url ? { url } : {}),
       ...(imageUrl ? { image_url: imageUrl } : {}),
       ...(ctaLabel ? { cta_label: ctaLabel } : {}),
+      ...(hasChallengeMetadata
+        ? {
+            challenge_name: challengeName,
+            game_type: challengeGame as "pack" | "upgrader" | "keno",
+            challenge_type: (challengeGame === "pack"
+              ? "pack_pull"
+              : challengeGame) as "pack_pull" | "upgrader" | "keno",
+            ...(challengePrizeUsd
+              ? {
+                  prize_usd: Number(
+                    challengePrizeUsd.replace(/^\$/, ""),
+                  ).toFixed(2),
+                }
+              : {}),
+          }
+        : {}),
     },
   };
 }

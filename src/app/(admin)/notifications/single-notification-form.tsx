@@ -8,6 +8,7 @@ import {
   Info,
   Package,
   Send,
+  Trophy,
   UserX,
   X,
 } from "lucide-react";
@@ -41,7 +42,8 @@ import type { DbEnv } from "@/lib/db-env";
 import { mainSiteUrl, packUrl } from "@/lib/utils/main-site";
 import { formatCurrency } from "@/lib/utils/format";
 
-type ComposerMode = "pack" | "custom";
+type ComposerMode = "pack" | "challenge" | "custom";
+type ChallengeGame = "keno" | "upgrader" | "pack";
 const MAX_NOTIFICATION_PACKS = 3;
 
 type Sent =
@@ -69,6 +71,9 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [payloadText, setPayloadText] = useState("");
   const [dedupeKey, setDedupeKey] = useState("");
   const [packs, setPacks] = useState<AnnouncementPackOption[]>([]);
+  const [challengeGame, setChallengeGame] = useState<ChallengeGame>("keno");
+  const [challengeName, setChallengeName] = useState("");
+  const [challengePrize, setChallengePrize] = useState("");
   const [sent, setSent] = useState<Sent | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -94,10 +99,30 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
           .sort()
           .join(":")}`
       : "";
+  const challengeDedupeKey =
+    mode === "challenge" && challengeName.trim()
+      ? `challenge_available:manual:${challengeGame}:${
+          challengeName
+            .trim()
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "")
+            .slice(0, 60) || "challenge"
+        }`
+      : "";
+  const challengePrizeNumber = Number(challengePrize.replace(/^\$/, ""));
+  const challengeInvalid =
+    mode === "challenge" &&
+    (!challengeName.trim() ||
+      (!!challengePrize.trim() &&
+        (!Number.isFinite(challengePrizeNumber) ||
+          challengePrizeNumber <= 0 ||
+          challengePrizeNumber > 100_000)));
   const blocked =
     isPending ||
     !userId.trim() ||
     (mode === "pack" && packs.length === 0) ||
+    challengeInvalid ||
     !payloadCheck.ok ||
     typeError !== null ||
     dedupeError !== null;
@@ -133,6 +158,39 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     setSent(null);
   }
 
+  function applyChallenge(next: {
+    game?: ChallengeGame;
+    name?: string;
+    prize?: string;
+  }) {
+    const game = next.game ?? challengeGame;
+    const name = next.name ?? challengeName;
+    const prize = next.prize ?? challengePrize;
+    if (next.game) setChallengeGame(next.game);
+    if (next.name !== undefined) setChallengeName(next.name);
+    if (next.prize !== undefined) setChallengePrize(next.prize);
+    setCategory("rewards");
+    setType("challenge_available");
+
+    const amount = Number(prize.replace(/^\$/, ""));
+    setPayloadText(
+      JSON.stringify(
+        {
+          challenge_name: name.trim(),
+          game_type: game,
+          challenge_type: game === "pack" ? "pack_pull" : game,
+          url: "/rewards?tab=challenges",
+          ...(prize.trim() && Number.isFinite(amount) && amount > 0
+            ? { prize_usd: amount.toFixed(2) }
+            : {}),
+        },
+        null,
+        2,
+      ),
+    );
+    setSent(null);
+  }
+
   function handleSend() {
     if (!payloadCheck.ok) {
       toast.error(payloadCheck.error);
@@ -157,7 +215,8 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         category,
         type: type.trim(),
         payload: payloadCheck.payload,
-        dedupeKey: packDedupeKey || dedupeKey.trim() || undefined,
+        dedupeKey:
+          packDedupeKey || challengeDedupeKey || dedupeKey.trim() || undefined,
       });
       if (result.success) {
         setSent({ kind: "ok", message: result.message });
@@ -213,12 +272,21 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
 
       <Tabs
         value={mode}
-        onValueChange={(value) => setMode(value as ComposerMode)}
+        onValueChange={(value) => {
+          const nextMode = value as ComposerMode;
+          setMode(nextMode);
+          if (nextMode === "challenge") applyChallenge({});
+          if (nextMode === "pack") applyPacks(packs);
+        }}
       >
         <TabsList variant="line" className="self-start">
           <TabsTrigger value="pack">
             <Package className="size-3.5" />
             Pack
+          </TabsTrigger>
+          <TabsTrigger value="challenge">
+            <Trophy className="size-3.5" />
+            Challenge
           </TabsTrigger>
           <TabsTrigger value="custom">
             <Braces className="size-3.5" />
@@ -327,6 +395,80 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
               recipient and notification delivery remain on DEV.
             </p>
           )}
+        </div>
+      ) : mode === "challenge" ? (
+        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
+          <div className="flex items-center gap-2">
+            <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+              2
+            </span>
+            <div>
+              <p className="text-xs font-medium">
+                Build challenge notification
+              </p>
+              <p className="text-[11px] text-muted-foreground">
+                The selected game controls the dedicated customer-side design.
+              </p>
+            </div>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Game</Label>
+              <Select
+                value={challengeGame}
+                onValueChange={(value) =>
+                  applyChallenge({ game: value as ChallengeGame })
+                }
+                disabled={isPending}
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="keno">Keno</SelectItem>
+                  <SelectItem value="upgrader">Upgrader</SelectItem>
+                  <SelectItem value="pack">Pack opening</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">
+                Prize (optional)
+              </Label>
+              <Input
+                value={challengePrize}
+                onChange={(event) =>
+                  applyChallenge({ prize: event.target.value })
+                }
+                inputMode="decimal"
+                placeholder="25.00"
+                disabled={isPending}
+              />
+            </div>
+          </div>
+          <div className="space-y-1">
+            <Label className="text-xs text-muted-foreground">
+              Challenge name
+            </Label>
+            <Input
+              value={challengeName}
+              onChange={(event) => applyChallenge({ name: event.target.value })}
+              maxLength={200}
+              placeholder="e.g. Lucky Seven"
+              disabled={isPending}
+            />
+            <p
+              className={
+                challengeInvalid
+                  ? "text-[11px] text-rose-600"
+                  : "text-[11px] text-muted-foreground"
+              }
+            >
+              {challengeInvalid
+                ? "Add a name and, when set, a prize between $0.01 and $100,000."
+                : "Links directly to the Challenges tab and is retry-safe."}
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-3 rounded-lg border p-3">
@@ -462,7 +604,11 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground">
           Retry-safe key:{" "}
           <code className="break-all">
-            {packDedupeKey || "select at least one pack"}
+            {packDedupeKey ||
+              challengeDedupeKey ||
+              (mode === "pack"
+                ? "select at least one pack"
+                : "enter a challenge name")}
           </code>
         </div>
       )}
