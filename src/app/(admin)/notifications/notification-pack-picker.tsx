@@ -29,11 +29,15 @@ export function NotificationPackPicker({
   onSelect,
   scope,
   disabled = false,
+  excludedIds = [],
+  placeholder = "Select pack…",
 }: {
   value: AnnouncementPackOption | null;
   onSelect: (pack: AnnouncementPackOption) => void;
   scope: "announcement" | "direct";
   disabled?: boolean;
+  excludedIds?: readonly string[];
+  placeholder?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -41,6 +45,7 @@ export function NotificationPackPicker({
   const [items, setItems] = useState<AnnouncementPackOption[]>([]);
   const [failed, setFailed] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const visibleItems = items.filter((item) => !excludedIds.includes(item.id));
 
   useEffect(() => {
     if (!open) return;
@@ -95,7 +100,7 @@ export function NotificationPackPicker({
             </span>
           </span>
         ) : (
-          <span className="text-muted-foreground">Select pack…</span>
+          <span className="text-muted-foreground">{placeholder}</span>
         )}
         <ChevronsUpDown className="ml-1 size-3 shrink-0 opacity-50" />
       </PopoverTrigger>
@@ -107,7 +112,7 @@ export function NotificationPackPicker({
             onValueChange={setQuery}
           />
           <CommandList>
-            {isPending && items.length === 0 && (
+            {isPending && visibleItems.length === 0 && (
               <div className="space-y-1 p-1" aria-hidden>
                 {Array.from({ length: 4 }).map((_, index) => (
                   <div
@@ -123,12 +128,16 @@ export function NotificationPackPicker({
                 ))}
               </div>
             )}
-            {!isPending && items.length === 0 && (
+            {!isPending && visibleItems.length === 0 && (
               <CommandEmpty>
-                {failed ? "Couldn’t load packs." : "No active packs found."}
+                {failed
+                  ? "Couldn’t load packs."
+                  : excludedIds.length
+                    ? "No more matching packs."
+                    : "No active packs found."}
               </CommandEmpty>
             )}
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <CommandItem
                 key={item.id}
                 value={item.id}

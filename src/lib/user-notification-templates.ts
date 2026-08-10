@@ -34,6 +34,8 @@ export type NotificationPreview = {
   /** Rendered by the site as a monospace copy-to-clipboard chip. */
   code?: string;
   image?: string;
+  images?: string[];
+  packCount?: number;
   href?: string;
   /** False when the site falls back to the generic template. */
   known: boolean;
@@ -47,7 +49,7 @@ export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   deposit_completed: ["amount_usd"],
   reward_credited: ["amount_usd"],
   promo_code_granted: ["code", "value", "amount_usd"],
-  pack_release: ["pack_name", "price_usd", "url", "image_url"],
+  pack_release: ["pack_name", "price_usd", "url", "image_url", "packs"],
 };
 
 /** Mirrors the frontend's `formatUsd` — tolerant of number-or-string because
@@ -61,6 +63,29 @@ function formatUsd(value: unknown): string {
     return trimmed.startsWith("$") ? trimmed : `$${trimmed}`;
   }
   return "";
+}
+
+type PreviewPack = {
+  name: string;
+  price?: number;
+  image?: string;
+};
+
+function previewPack(value: unknown): PreviewPack | undefined {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return;
+  const pack = value as Record<string, unknown>;
+  if (typeof pack.name !== "string" || !pack.name.trim()) return;
+  const numericPrice =
+    typeof pack.price_usd === "number"
+      ? pack.price_usd
+      : typeof pack.price_usd === "string"
+        ? Number(pack.price_usd.replace(/^\$/, ""))
+        : Number.NaN;
+  return {
+    name: pack.name.trim(),
+    price: Number.isFinite(numericPrice) ? numericPrice : undefined,
+    image: typeof pack.image_url === "string" ? pack.image_url : undefined,
+  };
 }
 
 export function previewNotificationText(
@@ -111,18 +136,45 @@ export function previewNotificationText(
       };
     }
     case "pack_release": {
+      const packs = Array.isArray(payload?.packs)
+        ? payload.packs.slice(0, 3).map(previewPack).filter(Boolean)
+        : [];
+      if (packs.length >= 2) {
+        const prices = packs
+          .map((pack) => pack?.price)
+          .filter((price): price is number => price !== undefined);
+        const lowestPrice = prices.length > 0 ? Math.min(...prices) : undefined;
+        return {
+          title: "Fresh packs just dropped",
+          body:
+            lowestPrice === undefined
+              ? "See what’s new"
+              : `Starting at ${formatUsd(lowestPrice)} per open`,
+          images: packs
+            .map((pack) => pack?.image)
+            .filter((image): image is string => image !== undefined),
+          packCount: packs.length,
+          href: typeof payload?.url === "string" ? payload.url : undefined,
+          known: true,
+          usedKeys: KNOWN_NOTIFICATION_TYPES.pack_release,
+        };
+      }
+
+      const arrayPack = packs[0];
       const packName =
-        typeof payload?.pack_name === "string" && payload.pack_name.trim()
+        arrayPack?.name ??
+        (typeof payload?.pack_name === "string" && payload.pack_name.trim()
           ? payload.pack_name.trim()
-          : "A new pack";
-      const price = formatUsd(payload?.price_usd);
+          : "A new pack");
+      const price = formatUsd(arrayPack?.price ?? payload?.price_usd);
       return {
-        title: `New pack: ${packName}`,
-        body: price ? `${price} per open — tap to view it.` : "Tap to view it.",
+        title: packName,
+        body: price ? `${price} per open` : "Tap to view it.",
         image:
-          typeof payload?.image_url === "string"
+          arrayPack?.image ??
+          (typeof payload?.image_url === "string"
             ? payload.image_url
-            : undefined,
+            : undefined),
         href: typeof payload?.url === "string" ? payload.url : undefined,
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.pack_release,

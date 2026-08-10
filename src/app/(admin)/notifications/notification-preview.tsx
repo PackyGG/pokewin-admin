@@ -27,6 +27,8 @@ export function NotificationPreview({
 }) {
   const preview = previewNotificationText(type, payload);
   const unrendered = unrenderedPayloadKeys(type, payload);
+  const previewImages =
+    preview.images ?? (preview.image ? [preview.image] : []);
 
   return (
     <div className="space-y-1.5">
@@ -39,8 +41,13 @@ export function NotificationPreview({
           <Bell className="size-3.5 text-primary" />
         </div>
         <div
-          className={`relative z-10 min-w-0 flex-1 space-y-0.5 ${preview.image ? "pr-20" : ""}`}
+          className={`relative z-10 min-w-0 flex-1 space-y-0.5 ${previewImages.length > 0 ? "pr-24" : ""}`}
         >
+          {preview.packCount && preview.packCount > 1 && (
+            <p className="text-[10px] font-semibold uppercase tracking-wide text-primary">
+              {preview.packCount} new packs
+            </p>
+          )}
           <p className="truncate text-sm font-medium">{preview.title}</p>
           <p className="line-clamp-2 text-xs text-muted-foreground">
             {preview.body}
@@ -67,19 +74,42 @@ export function NotificationPreview({
             {preview.href && (
               <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
                 <ExternalLink className="size-3" />
-                Opens pack page
+                {preview.packCount && preview.packCount > 1
+                  ? "Opens newest packs"
+                  : "Opens pack page"}
               </span>
             )}
           </div>
         </div>
-        {preview.image && (
-          <span className="pointer-events-none absolute inset-y-0 right-0 w-24 overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_45%)]">
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={preview.image}
-              alt=""
-              className="absolute left-1/2 top-1/2 h-[130%] w-[130%] -translate-x-1/2 -translate-y-[35%] -rotate-[15deg] object-cover"
-            />
+        {previewImages.length > 0 && (
+          <span className="pointer-events-none absolute inset-y-0 right-0 w-28 overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_35%)]">
+            {previewImages.map((image, index) => {
+              const count = previewImages.length;
+              const positions =
+                count === 1
+                  ? [{ left: "48%", rotate: "-15deg", zIndex: 1 }]
+                  : count === 2
+                    ? [
+                        { left: "38%", rotate: "-12deg", zIndex: 1 },
+                        { left: "65%", rotate: "12deg", zIndex: 2 },
+                      ]
+                    : [
+                        { left: "30%", rotate: "-13deg", zIndex: 1 },
+                        { left: "51%", rotate: "0deg", zIndex: 3 },
+                        { left: "72%", rotate: "13deg", zIndex: 2 },
+                      ];
+              const position = positions[index];
+              return (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  key={`${image}-${index}`}
+                  src={image}
+                  alt=""
+                  style={position}
+                  className="absolute top-1/2 h-[92%] w-[48%] -translate-x-1/2 -translate-y-1/2 object-contain"
+                />
+              );
+            })}
           </span>
         )}
       </div>

@@ -2,7 +2,15 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { Braces, CircleAlert, Info, Package, Send, UserX } from "lucide-react";
+import {
+  Braces,
+  CircleAlert,
+  Info,
+  Package,
+  Send,
+  UserX,
+  X,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -30,10 +38,11 @@ import { NotificationPreview } from "./notification-preview";
 import { NotificationPackPicker } from "./notification-pack-picker";
 import type { AnnouncementPackOption } from "./composer-actions";
 import type { DbEnv } from "@/lib/db-env";
-import { packUrl } from "@/lib/utils/main-site";
+import { mainSiteUrl, packUrl } from "@/lib/utils/main-site";
 import { formatCurrency } from "@/lib/utils/format";
 
 type ComposerMode = "pack" | "custom";
+const MAX_NOTIFICATION_PACKS = 3;
 
 type Sent =
   | { kind: "ok"; message: string }
@@ -59,7 +68,7 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [type, setType] = useState("");
   const [payloadText, setPayloadText] = useState("");
   const [dedupeKey, setDedupeKey] = useState("");
-  const [pack, setPack] = useState<AnnouncementPackOption | null>(null);
+  const [packs, setPacks] = useState<AnnouncementPackOption[]>([]);
   const [sent, setSent] = useState<Sent | null>(null);
   const [isPending, startTransition] = useTransition();
 
@@ -79,34 +88,59 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const dedupeError =
     mode === "custom" && dedupeKey.trim() ? validateDedupeKey(dedupeKey) : null;
   const packDedupeKey =
-    mode === "pack" && pack && userId.trim()
-      ? `pack_release:${pack.id}:${userId.trim()}`
+    mode === "pack" && packs.length > 0
+      ? `pack_release:${packs
+          .map((pack) => pack.id)
+          .sort()
+          .join(":")}`
       : "";
   const blocked =
     isPending ||
     !userId.trim() ||
-    (mode === "pack" && !pack) ||
+    (mode === "pack" && packs.length === 0) ||
     !payloadCheck.ok ||
     typeError !== null ||
     dedupeError !== null;
 
-  function applyPack(next: AnnouncementPackOption) {
-    setPack(next);
+  function applyPacks(next: AnnouncementPackOption[]) {
+    setPacks(next);
     setCategory("system");
     setType("pack_release");
-    setPayloadText(
-      JSON.stringify(
-        {
-          pack_name: next.name,
-          price_usd: next.priceUsd,
-          url: packUrl(next.slug),
-          ...(next.imageUrl ? { image_url: next.imageUrl } : {}),
-        },
-        null,
-        2,
-      ),
-    );
+    if (next.length === 0) {
+      setPayloadText("");
+      setSent(null);
+      return;
+    }
+
+    const payload =
+      next.length === 1
+        ? {
+            pack_name: next[0].name,
+            price_usd: next[0].priceUsd,
+            url: packUrl(next[0].slug),
+            ...(next[0].imageUrl ? { image_url: next[0].imageUrl } : {}),
+          }
+        : {
+            packs: next.map((pack) => ({
+              name: pack.name,
+              price_usd: pack.priceUsd,
+              url: packUrl(pack.slug),
+              ...(pack.imageUrl ? { image_url: pack.imageUrl } : {}),
+            })),
+            url: mainSiteUrl("/games/packs?sort=newest"),
+          };
+    setPayloadText(JSON.stringify(payload, null, 2));
     setSent(null);
+  }
+
+  function addPack(next: AnnouncementPackOption) {
+    if (
+      packs.length >= MAX_NOTIFICATION_PACKS ||
+      packs.some((pack) => pack.id === next.id)
+    ) {
+      return;
+    }
+    applyPacks([...packs, next]);
   }
 
   function handleSend() {
@@ -117,9 +151,11 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     if (
       targetEnv === "prod" &&
       !window.confirm(
-        mode === "pack" && pack
-          ? `Send the ${pack.name} notification to the selected user in PRODUCTION?`
-          : "Send this notification to the selected user in PRODUCTION?",
+        mode === "pack" && packs.length === 1
+          ? `Send the ${packs[0].name} notification to the selected user in PRODUCTION?`
+          : mode === "pack"
+            ? `Send this ${packs.length}-pack release notification to the selected user in PRODUCTION?`
+            : "Send this notification to the selected user in PRODUCTION?",
       )
     ) {
       return;
@@ -189,31 +225,88 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
       {mode === "pack" ? (
         <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
           <div className="space-y-1.5">
-            <Label className="text-xs text-muted-foreground">Pack</Label>
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs text-muted-foreground">Packs</Label>
+              <span className="text-[11px] tabular-nums text-muted-foreground">
+                {packs.length} / {MAX_NOTIFICATION_PACKS}
+              </span>
+            </div>
             <NotificationPackPicker
-              value={pack}
-              onSelect={applyPack}
+              value={null}
+              onSelect={addPack}
               scope="direct"
-              disabled={isPending}
+              excludedIds={packs.map((pack) => pack.id)}
+              placeholder={
+                packs.length > 0 ? "Add another pack…" : "Select pack…"
+              }
+              disabled={isPending || packs.length >= MAX_NOTIFICATION_PACKS}
             />
           </div>
-          {pack ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className="rounded border px-1.5 py-0.5">
-                {formatCurrency(pack.priceUsd)} per open
-              </span>
-              <span className="rounded border px-1.5 py-0.5">
-                Pack page linked
-              </span>
-              <span className="rounded border px-1.5 py-0.5">
-                {pack.imageUrl ? "Image included" : "No image"}
-              </span>
+          {packs.length > 0 ? (
+            <div className="space-y-2">
+              <div className="space-y-1">
+                {packs.map((pack) => (
+                  <div
+                    key={pack.id}
+                    className="flex items-center gap-2 rounded-md border bg-background/70 px-2 py-1.5"
+                  >
+                    {pack.imageUrl ? (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        src={pack.imageUrl}
+                        alt=""
+                        className="size-8 shrink-0 rounded object-contain"
+                      />
+                    ) : (
+                      <div className="flex size-8 shrink-0 items-center justify-center rounded bg-muted text-[9px] text-muted-foreground">
+                        N/A
+                      </div>
+                    )}
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">
+                        {pack.name}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {formatCurrency(pack.priceUsd)} per open
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label={`Remove ${pack.name}`}
+                      disabled={isPending}
+                      onClick={() =>
+                        applyPacks(packs.filter((item) => item.id !== pack.id))
+                      }
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="rounded border px-1.5 py-0.5">
+                  {packs.length === 1
+                    ? `${formatCurrency(packs[0].priceUsd)} per open`
+                    : `${packs.length} packs`}
+                </span>
+                <span className="rounded border px-1.5 py-0.5">
+                  {packs.length === 1
+                    ? "Pack page linked"
+                    : "Newest packs page linked"}
+                </span>
+                <span className="rounded border px-1.5 py-0.5">
+                  {packs.filter((pack) => pack.imageUrl).length} /{" "}
+                  {packs.length} images
+                </span>
+              </div>
             </div>
           ) : (
             <p className="text-[11px] text-muted-foreground">
-              Choose an active pack. Its name, price, page and image are filled
-              automatically with the site-supported <code>pack_release</code>{" "}
-              template.
+              Choose up to three active packs. Their names, prices, pages and
+              images are filled automatically with the site-supported{" "}
+              <code>pack_release</code> template.
             </p>
           )}
           {targetEnv === "dev" && (
@@ -332,7 +425,7 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground">
           Retry-safe key:{" "}
           <code className="break-all">
-            {packDedupeKey || "select a recipient and pack"}
+            {packDedupeKey || "select at least one pack"}
           </code>
         </div>
       )}

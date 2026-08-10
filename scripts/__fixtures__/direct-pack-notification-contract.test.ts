@@ -16,13 +16,39 @@ test("personal pack notifications have a truthful visible preview", () => {
   });
 
   assert.equal(preview.known, true);
-  assert.equal(preview.title, "New pack: Disguised");
+  assert.equal(preview.title, "Disguised");
   assert.match(preview.body, /\$12\.50 per open/);
   assert.equal(preview.href, "https://packy.gg/games/packs/disguised");
   assert.equal(
     preview.image,
     "https://ik.imagekit.io/scrkflpgw/packs/disguised.png",
   );
+});
+
+test("personal pack notifications preview up to three packs", () => {
+  const preview = previewNotificationText("pack_release", {
+    packs: [
+      {
+        name: "First",
+        price_usd: 8,
+        image_url: "https://ik.imagekit.io/scrkflpgw/packs/first.png",
+      },
+      {
+        name: "Second",
+        price_usd: 4.5,
+        image_url: "https://ik.imagekit.io/scrkflpgw/packs/second.png",
+      },
+      { name: "Third", price_usd: 12 },
+      { name: "Ignored", price_usd: 1 },
+    ],
+    url: "https://packy.gg/games/packs?sort=newest",
+  });
+
+  assert.equal(preview.title, "Fresh packs just dropped");
+  assert.equal(preview.body, "Starting at $4.50 per open");
+  assert.equal(preview.packCount, 3);
+  assert.equal(preview.images?.length, 2);
+  assert.equal(preview.href, "https://packy.gg/games/packs?sort=newest");
 });
 
 test("direct pack lookup keeps the personal-send capability boundary", () => {
@@ -41,6 +67,11 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   );
   assert.match(actions, /getProdReadDrizzleDb/);
   assert.match(form, /type=\"pack_release\"|setType\("pack_release"\)/);
-  assert.match(form, /pack_release:\$\{pack\.id\}:\$\{userId\.trim\(\)\}/);
+  assert.match(
+    form,
+    /pack_release:\$\{packs[\s\S]*\.map\(\(pack\) => pack\.id\)/,
+  );
+  assert.match(form, /MAX_NOTIFICATION_PACKS = 3/);
+  assert.match(form, /\/games\/packs\?sort=newest/);
   assert.match(form, /scope=\"direct\"/);
 });
