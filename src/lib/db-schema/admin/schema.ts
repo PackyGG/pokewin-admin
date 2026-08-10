@@ -16,6 +16,44 @@ export const social_platform = pgEnum("social_platform", ['twitter', 'youtube', 
 export const webhook_type = pgEnum("webhook_type", ['balance_fill', 'deal_data'])
 
 
+export const casino_sites = pgTable("casino_sites", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	slug: text().notNull(),
+	display_name: text().notNull(),
+	tokens_per_usd: numeric({ precision: 20, scale: 8 }),
+	active: boolean().default(true).notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	unique("casino_sites_slug_key").on(table.slug),
+	check("casino_sites_slug_check", sql`slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'::text`),
+	check("casino_sites_display_name_check", sql`length(btrim(display_name)) >= 1 AND length(btrim(display_name)) <= 80`),
+	check("casino_sites_tokens_per_usd_check", sql`tokens_per_usd IS NULL OR tokens_per_usd > 0`),
+]);
+
+export const casino_site_aliases = pgTable("casino_site_aliases", {
+	site_id: uuid().notNull(),
+	alias: text().notNull(),
+	alias_key: text().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	primaryKey({ columns: [table.site_id, table.alias_key], name: "casino_site_aliases_pkey"}),
+	unique("casino_site_aliases_alias_key_key").on(table.alias_key),
+	foreignKey({ columns: [table.site_id], foreignColumns: [casino_sites.id], name: "casino_site_aliases_site_id_fkey" }).onDelete("cascade"),
+	check("casino_site_aliases_alias_check", sql`length(btrim(alias)) >= 1 AND length(btrim(alias)) <= 80`),
+	check("casino_site_aliases_key_check", sql`alias_key ~ '^[a-z0-9]+(?: [a-z0-9]+)*$'::text`),
+]);
+
+export const casino_site_domains = pgTable("casino_site_domains", {
+	site_id: uuid().notNull(),
+	domain: text().primaryKey().notNull(),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	foreignKey({ columns: [table.site_id], foreignColumns: [casino_sites.id], name: "casino_site_domains_site_id_fkey" }).onDelete("cascade"),
+	check("casino_site_domains_domain_check", sql`domain = lower(domain) AND domain !~ '[/:]'::text AND domain ~ '^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?\\.[a-z]{2,}$'::text`),
+]);
+
+
 export const _prisma_migrations = pgTable("_prisma_migrations", {
 	id: varchar({ length: 36 }).primaryKey().notNull(),
 	checksum: varchar({ length: 64 }).notNull(),

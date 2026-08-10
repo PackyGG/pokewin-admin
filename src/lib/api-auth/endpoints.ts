@@ -141,6 +141,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/casino-sites/catalog",
+    summary:
+      "Body { guildId }. Creator-server bot-only catalog of active casino names, aliases, owned domains, and token-to-USD conversion rates used to classify external deal data.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/leaderboard",
     summary:
       "Body { guildId, categoryId, channelId, actorDiscordUserId, page, pageSize: 10 }. Returns the active linked creator leaderboard's total prize and one exact standings page. Creator IDs, leaderboard IDs, emails, and internal review markings are omitted.",
