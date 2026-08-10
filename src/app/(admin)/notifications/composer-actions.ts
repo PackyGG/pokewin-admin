@@ -12,7 +12,7 @@ import {
   or,
 } from "drizzle-orm";
 
-import { getReadDrizzleDb } from "@/lib/db";
+import { getProdReadDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import {
   packs,
   promo_code_redemptions,
@@ -31,9 +31,10 @@ import { toNumber } from "@/lib/utils/decimal";
 /**
  * Lookups behind the announcement composer's Pack and Promo-code templates.
  *
- * Both read the MAIN game DB read-only (SELECT only — no writes, ever) and
- * are gated exactly like the create action: page access to /notifications
- * plus `__can_manage_announcements`.
+ * These read the MAIN game DB read-only (SELECT only — no writes, ever).
+ * Announcement lookups follow the selected DB environment and require
+ * `__can_manage_announcements`; direct pack notifications use the live pack
+ * catalog and their separate `__can_send_user_notifications` capability.
  *
  * Query shape: `packs` is a small catalog table (282 rows / 196 active,
  * verified read-only against prod on 2026-07-22) and `promo_codes` holds a
@@ -77,8 +78,12 @@ export type PromoCodeLookup = {
 
 async function queryActivePacks(
   query: string,
+  catalog: "selected-env" | "production" = "selected-env",
 ): Promise<AnnouncementPackOption[]> {
-  const db = await getReadDrizzleDb();
+  const db =
+    catalog === "production"
+      ? getProdReadDrizzleDb()
+      : await getReadDrizzleDb();
   const q = query.trim();
   const search = q
     ? or(
@@ -136,7 +141,11 @@ export async function searchDirectNotificationPacks(
     "__can_send_user_notifications",
     "send user notifications",
   );
-  return queryActivePacks(query);
+  // Recipient lookup and delivery still follow the DEV/PROD toggle. The pack
+  // here is content for the notification, though, and the public link points
+  // at the live site. Pinning this picker to the read-only production catalog
+  // keeps DEV test sends useful even when the dev database has no seeded packs.
+  return queryActivePacks(query, "production");
 }
 
 /**

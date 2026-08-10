@@ -35,6 +35,11 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
     actions,
     /searchDirectNotificationPacks[\s\S]*__can_send_user_notifications/,
   );
+  assert.match(
+    actions,
+    /searchDirectNotificationPacks[\s\S]*queryActivePacks\(query, "production"\)/,
+  );
+  assert.match(actions, /getProdReadDrizzleDb/);
   assert.match(form, /type=\"pack_release\"|setType\("pack_release"\)/);
   assert.match(form, /pack_release:\$\{pack\.id\}:\$\{userId\.trim\(\)\}/);
   assert.match(form, /scope=\"direct\"/);

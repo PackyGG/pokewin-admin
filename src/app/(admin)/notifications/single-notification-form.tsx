@@ -216,6 +216,12 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
               template.
             </p>
           )}
+          {targetEnv === "dev" && (
+            <p className="text-[11px] text-amber-700 dark:text-amber-300">
+              Packs come from the live catalog for realistic previews. The
+              recipient and notification delivery remain on DEV.
+            </p>
+          )}
         </div>
       ) : (
         <div className="space-y-3 rounded-lg border p-3">
