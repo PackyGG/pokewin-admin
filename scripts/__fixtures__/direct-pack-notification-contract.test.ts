@@ -73,7 +73,10 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
     actions,
     /orderBy\(desc\(packs\.created_at\), desc\(packs\.id\)\)/,
   );
-  assert.match(form, /type=\"pack_release\"|setType\("pack_release"\)/);
+  assert.match(
+    form,
+    /type=\"pack_release\"|setType\("pack_release"\)|type:\s*"pack_release"/,
+  );
   assert.match(
     form,
     /pack_release:\$\{packs[\s\S]*\.map\(\(pack\) => pack\.id\)/,
@@ -82,7 +85,7 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(form, /\/games\/packs\?sort=newest/);
   assert.match(form, /scope=\"direct\"/);
   assert.match(form, /selectedValues=\{packs\}/);
-  assert.match(form, /onSelectionChange=\{applyPacks\}/);
+  assert.match(form, /onSelectionChange=\{(?:applyPacks|onChange)\}/);
   assert.match(picker, /selected\.length >= maxSelected/);
   assert.match(picker, /Select up to \{maxSelected\} packs/);
   assert.match(picker, /Search packs by name or slug/);

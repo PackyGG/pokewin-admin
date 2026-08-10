@@ -3,12 +3,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
 import {
-  Braces,
   CircleAlert,
   Info,
-  Package,
   Send,
-  Trophy,
   UserX,
   X,
 } from "lucide-react";
@@ -23,15 +20,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
-  NOTIFICATION_DEDUPE_KEY_MAX,
-  NOTIFICATION_PAYLOAD_MAX_BYTES,
-  NOTIFICATION_TYPE_MAX,
-  parsePayloadJson,
-  validateDedupeKey,
-  validateNotificationType,
-  type UserNotificationCategory,
+  ADMIN_MESSAGE_BODY_MAX,
+  ADMIN_MESSAGE_TITLE_MAX,
+  validateNotificationPayload,
 } from "@/lib/user-notification";
 import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
@@ -42,7 +34,7 @@ import type { DbEnv } from "@/lib/db-env";
 import { mainSiteUrl, packUrl } from "@/lib/utils/main-site";
 import { formatCurrency } from "@/lib/utils/format";
 
-type ComposerMode = "pack" | "challenge" | "custom";
+export type SingleNotificationMode = "message" | "pack" | "challenge";
 type ChallengeGame = "keno" | "upgrader" | "pack";
 const MAX_NOTIFICATION_PACKS = 3;
 
@@ -51,25 +43,17 @@ type Sent =
   | { kind: "not-found"; message: string }
   | { kind: "error"; message: string };
 
-/**
- * Single-recipient composer for `POST /admin/notifications`.
- *
- * Two things this form has to make honest, because the endpoint's semantics
- * are easy to misread:
- *   • 200 ≠ "row inserted". It rides the fire-and-forget notify() path and
- *     can't report created-vs-deduped, so the success state says so and
- *     points at the 1-item bulk send for exact accounting.
- *   • 404 is its own outcome (the backend checks the user explicitly), not a
- *     generic failure — it gets its own callout.
- */
-export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
-  const [mode, setMode] = useState<ComposerMode>("pack");
+export function SingleNotificationForm({
+  targetEnv,
+  mode,
+}: {
+  targetEnv: DbEnv;
+  mode: SingleNotificationMode;
+}) {
   const [userId, setUserId] = useState("");
   const [userLabel, setUserLabel] = useState<string | null>(null);
-  const [category, setCategory] = useState<UserNotificationCategory>("rewards");
-  const [type, setType] = useState("");
-  const [payloadText, setPayloadText] = useState("");
-  const [dedupeKey, setDedupeKey] = useState("");
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
   const [packs, setPacks] = useState<AnnouncementPackOption[]>([]);
   const [challengeGame, setChallengeGame] = useState<ChallengeGame>("keno");
   const [challengeName, setChallengeName] = useState("");
@@ -77,76 +61,54 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   const [sent, setSent] = useState<Sent | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const payloadCheck = useMemo(
-    () => parsePayloadJson(payloadText),
-    [payloadText],
-  );
-  const payloadBytes = useMemo(
-    () =>
-      payloadCheck.ok && payloadCheck.payload
-        ? new TextEncoder().encode(JSON.stringify(payloadCheck.payload)).length
-        : 0,
-    [payloadCheck],
-  );
-
-  const typeError = validateNotificationType(type);
-  const dedupeError =
-    mode === "custom" && dedupeKey.trim() ? validateDedupeKey(dedupeKey) : null;
-  const packDedupeKey =
-    mode === "pack" && packs.length > 0
-      ? `pack_release:${packs
-          .map((pack) => pack.id)
-          .sort()
-          .join(":")}`
-      : "";
-  const challengeDedupeKey =
-    mode === "challenge" && challengeName.trim()
-      ? `challenge_available:manual:${challengeGame}:${
-          challengeName
-            .trim()
-            .toLowerCase()
-            .replace(/[^a-z0-9]+/g, "-")
-            .replace(/^-|-$/g, "")
-            .slice(0, 60) || "challenge"
-        }`
-      : "";
   const challengePrizeNumber = Number(challengePrize.replace(/^\$/, ""));
   const challengeInvalid =
-    mode === "challenge" &&
-    (!challengeName.trim() ||
-      (!!challengePrize.trim() &&
-        (!Number.isFinite(challengePrizeNumber) ||
-          challengePrizeNumber <= 0 ||
-          challengePrizeNumber > 100_000)));
-  const blocked =
-    isPending ||
-    !userId.trim() ||
-    (mode === "pack" && packs.length === 0) ||
-    challengeInvalid ||
-    !payloadCheck.ok ||
-    typeError !== null ||
-    dedupeError !== null;
+    !challengeName.trim() ||
+    (!!challengePrize.trim() &&
+      (!Number.isFinite(challengePrizeNumber) ||
+        challengePrizeNumber <= 0 ||
+        challengePrizeNumber > 100_000));
 
-  function applyPacks(next: AnnouncementPackOption[]) {
-    setPacks(next);
-    setCategory("system");
-    setType("pack_release");
-    if (next.length === 0) {
-      setPayloadText("");
-      setSent(null);
-      return;
+  const notification = useMemo(() => {
+    if (mode === "message") {
+      return {
+        category: "system" as const,
+        type: "admin_message",
+        payload: { title: title.trim(), body: message.trim() },
+        dedupeKey: undefined,
+      };
+    }
+
+    if (mode === "challenge") {
+      return {
+        category: "rewards" as const,
+        type: "challenge_available",
+        payload: {
+          challenge_name: challengeName.trim(),
+          game_type: challengeGame,
+          challenge_type:
+            challengeGame === "pack" ? "pack_pull" : challengeGame,
+          url: mainSiteUrl("/rewards?tab=challenges"),
+          ...(challengePrize.trim() && Number.isFinite(challengePrizeNumber)
+            ? { prize_usd: challengePrizeNumber.toFixed(2) }
+            : {}),
+        },
+        dedupeKey: challengeName.trim()
+          ? `challenge_available:manual:${challengeGame}:${slugify(challengeName)}`
+          : undefined,
+      };
     }
 
     const payload =
-      next.length === 1
+      packs.length === 1
         ? {
-            pack_name: next[0].name,
-            price_usd: next[0].priceUsd,
-            url: packUrl(next[0].slug),
-            ...(next[0].imageUrl ? { image_url: next[0].imageUrl } : {}),
+            pack_name: packs[0].name,
+            price_usd: packs[0].priceUsd,
+            url: packUrl(packs[0].slug),
+            ...(packs[0].imageUrl ? { image_url: packs[0].imageUrl } : {}),
           }
         : {
-            packs: next.map((pack) => ({
+            packs: packs.map((pack) => ({
               name: pack.name,
               price_usd: pack.priceUsd,
               url: packUrl(pack.slug),
@@ -154,42 +116,39 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
             })),
             url: mainSiteUrl("/games/packs?sort=newest"),
           };
-    setPayloadText(JSON.stringify(payload, null, 2));
-    setSent(null);
-  }
 
-  function applyChallenge(next: {
-    game?: ChallengeGame;
-    name?: string;
-    prize?: string;
-  }) {
-    const game = next.game ?? challengeGame;
-    const name = next.name ?? challengeName;
-    const prize = next.prize ?? challengePrize;
-    if (next.game) setChallengeGame(next.game);
-    if (next.name !== undefined) setChallengeName(next.name);
-    if (next.prize !== undefined) setChallengePrize(next.prize);
-    setCategory("rewards");
-    setType("challenge_available");
+    return {
+      category: "system" as const,
+      type: "pack_release",
+      payload,
+      dedupeKey:
+        packs.length > 0
+          ? `pack_release:${packs
+              .map((pack) => pack.id)
+              .sort()
+              .join(":")}`
+          : undefined,
+    };
+  }, [
+    mode,
+    title,
+    message,
+    challengeName,
+    challengeGame,
+    challengePrize,
+    challengePrizeNumber,
+    packs,
+  ]);
 
-    const amount = Number(prize.replace(/^\$/, ""));
-    setPayloadText(
-      JSON.stringify(
-        {
-          challenge_name: name.trim(),
-          game_type: game,
-          challenge_type: game === "pack" ? "pack_pull" : game,
-          url: "/rewards?tab=challenges",
-          ...(prize.trim() && Number.isFinite(amount) && amount > 0
-            ? { prize_usd: amount.toFixed(2) }
-            : {}),
-        },
-        null,
-        2,
-      ),
-    );
-    setSent(null);
-  }
+  const payloadCheck = validateNotificationPayload(notification.payload);
+  const messageInvalid = !title.trim() || !message.trim();
+  const blocked =
+    isPending ||
+    !userId.trim() ||
+    (mode === "message" && messageInvalid) ||
+    (mode === "pack" && packs.length === 0) ||
+    (mode === "challenge" && challengeInvalid) ||
+    !payloadCheck.ok;
 
   function handleSend() {
     if (!payloadCheck.ok) {
@@ -199,24 +158,20 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     if (
       targetEnv === "prod" &&
       !window.confirm(
-        mode === "pack" && packs.length === 1
-          ? `Send the ${packs[0].name} notification to the selected user in PRODUCTION?`
-          : mode === "pack"
-            ? `Send this ${packs.length}-pack release notification to the selected user in PRODUCTION?`
-            : "Send this notification to the selected user in PRODUCTION?",
+        `Send this ${mode} notification to the selected user in PRODUCTION?`,
       )
     ) {
       return;
     }
+
     setSent(null);
     startTransition(async () => {
       const result = await sendDirectNotificationAction({
         userId: userId.trim(),
-        category,
-        type: type.trim(),
+        category: notification.category,
+        type: notification.type,
         payload: payloadCheck.payload,
-        dedupeKey:
-          packDedupeKey || challengeDedupeKey || dedupeKey.trim() || undefined,
+        dedupeKey: notification.dedupeKey,
       });
       if (result.success) {
         setSent({ kind: "ok", message: result.message });
@@ -232,406 +187,301 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   }
 
   return (
-    <div className="space-y-4">
-      <div className="space-y-2 rounded-lg border bg-card p-3">
-        <div className="flex items-center gap-2">
-          <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-            1
-          </span>
-          <div>
-            <p className="text-xs font-medium">Choose recipient</p>
-            <p className="text-[11px] text-muted-foreground">
-              Search by username or email, or paste an exact user ID.
-            </p>
-          </div>
-        </div>
-        <NotificationUserPicker
-          disabled={isPending}
-          label={userLabel ?? "Find a user…"}
-          onSelect={(u) => {
-            setUserId(u.id);
-            setUserLabel(u.username ?? u.email ?? u.id);
-          }}
-        />
-        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
-          <span className="h-px flex-1 bg-border" />
-          or paste ID
-          <span className="h-px flex-1 bg-border" />
-        </div>
-        <Input
-          value={userId}
-          onChange={(e) => {
-            setUserId(e.target.value);
-            setUserLabel(null);
-          }}
-          placeholder="…or paste a user id"
-          className="font-mono text-xs"
-          disabled={isPending}
-        />
-      </div>
-
-      <Tabs
-        value={mode}
-        onValueChange={(value) => {
-          const nextMode = value as ComposerMode;
-          setMode(nextMode);
-          if (nextMode === "challenge") applyChallenge({});
-          if (nextMode === "pack") applyPacks(packs);
-        }}
-      >
-        <TabsList variant="line" className="self-start">
-          <TabsTrigger value="pack">
-            <Package className="size-3.5" />
-            Pack
-          </TabsTrigger>
-          <TabsTrigger value="challenge">
-            <Trophy className="size-3.5" />
-            Challenge
-          </TabsTrigger>
-          <TabsTrigger value="custom">
-            <Braces className="size-3.5" />
-            Custom payload
-          </TabsTrigger>
-        </TabsList>
-      </Tabs>
-
-      {mode === "pack" ? (
-        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
-          <div className="space-y-1.5">
-            <div className="flex items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-                  2
-                </span>
-                <div>
-                  <Label className="text-xs">Build pack release</Label>
-                  <p className="text-[11px] text-muted-foreground">
-                    Select one to three packs in the same dropdown.
-                  </p>
-                </div>
-              </div>
-              <span className="text-[11px] tabular-nums text-muted-foreground">
-                {packs.length} / {MAX_NOTIFICATION_PACKS}
-              </span>
-            </div>
-            <NotificationPackPicker
-              selectedValues={packs}
-              onSelectionChange={applyPacks}
-              maxSelected={MAX_NOTIFICATION_PACKS}
-              scope="direct"
-              placeholder="Select up to three packs…"
-              disabled={isPending}
-            />
-          </div>
-          {packs.length > 0 ? (
-            <div className="space-y-2">
-              <div className="flex flex-wrap gap-2">
-                {packs.map((pack) => (
-                  <div
-                    key={pack.id}
-                    className="relative min-w-40 flex-1 overflow-hidden rounded-lg border bg-background/80 p-2.5"
-                  >
-                    {pack.imageUrl ? (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        src={pack.imageUrl}
-                        alt=""
-                        className="mb-2 h-16 w-full rounded bg-muted/30 object-contain"
-                      />
-                    ) : (
-                      <div className="mb-2 flex h-16 w-full items-center justify-center rounded bg-muted text-[9px] text-muted-foreground">
-                        N/A
-                      </div>
-                    )}
-                    <p className="truncate pr-6 text-xs font-medium">
-                      {pack.name}
-                    </p>
-                    <p className="text-[11px] text-muted-foreground">
-                      {formatCurrency(pack.priceUsd)} per open
-                    </p>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="icon-sm"
-                      className="absolute right-1 top-1 bg-background/80"
-                      aria-label={`Remove ${pack.name}`}
-                      disabled={isPending}
-                      onClick={() =>
-                        applyPacks(packs.filter((item) => item.id !== pack.id))
-                      }
-                    >
-                      <X className="size-3.5" />
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-                <span className="rounded border px-1.5 py-0.5">
-                  {packs.length === 1
-                    ? `${formatCurrency(packs[0].priceUsd)} per open`
-                    : `${packs.length} packs`}
-                </span>
-                <span className="rounded border px-1.5 py-0.5">
-                  {packs.length === 1
-                    ? "Pack page linked"
-                    : "Newest packs page linked"}
-                </span>
-                <span className="rounded border px-1.5 py-0.5">
-                  {packs.filter((pack) => pack.imageUrl).length} /{" "}
-                  {packs.length} images
-                </span>
-              </div>
-            </div>
-          ) : (
-            <p className="text-[11px] text-muted-foreground">
-              Choose up to three active packs. Their names, prices, pages and
-              images are filled automatically with the site-supported{" "}
-              <code>pack_release</code> template.
-            </p>
-          )}
-          {targetEnv === "dev" && (
-            <p className="text-[11px] text-amber-700 dark:text-amber-300">
-              Packs come from the live catalog for realistic previews. The
-              recipient and notification delivery remain on DEV.
-            </p>
-          )}
-        </div>
-      ) : mode === "challenge" ? (
-        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
-          <div className="flex items-center gap-2">
-            <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-              2
-            </span>
-            <div>
-              <p className="text-xs font-medium">
-                Build challenge notification
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                The selected game controls the dedicated customer-side design.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Game</Label>
-              <Select
-                value={challengeGame}
-                onValueChange={(value) =>
-                  applyChallenge({ game: value as ChallengeGame })
-                }
-                disabled={isPending}
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="keno">Keno</SelectItem>
-                  <SelectItem value="upgrader">Upgrader</SelectItem>
-                  <SelectItem value="pack">Pack opening</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">
-                Prize (optional)
-              </Label>
-              <Input
-                value={challengePrize}
-                onChange={(event) =>
-                  applyChallenge({ prize: event.target.value })
-                }
-                inputMode="decimal"
-                placeholder="25.00"
-                disabled={isPending}
-              />
-            </div>
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Challenge name
-            </Label>
-            <Input
-              value={challengeName}
-              onChange={(event) => applyChallenge({ name: event.target.value })}
-              maxLength={200}
-              placeholder="e.g. Lucky Seven"
-              disabled={isPending}
-            />
-            <p
-              className={
-                challengeInvalid
-                  ? "text-[11px] text-rose-600"
-                  : "text-[11px] text-muted-foreground"
-              }
-            >
-              {challengeInvalid
-                ? "Add a name and, when set, a prize between $0.01 and $100,000."
-                : "Links directly to the Challenges tab and is retry-safe."}
-            </p>
-          </div>
-        </div>
-      ) : (
-        <div className="space-y-3 rounded-lg border p-3">
-          <div className="flex items-center gap-2">
-            <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-              2
-            </span>
-            <div>
-              <p className="text-xs font-medium">Build custom notification</p>
-              <p className="text-[11px] text-muted-foreground">
-                Choose a supported type and supply its customer payload.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-3 sm:grid-cols-2">
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Category</Label>
-              <Select
-                value={category}
-                onValueChange={(v) =>
-                  setCategory(v as UserNotificationCategory)
-                }
-              >
-                <SelectTrigger className="w-full" disabled={isPending}>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="rewards">rewards</SelectItem>
-                  <SelectItem value="system">system</SelectItem>
-                </SelectContent>
-              </Select>
-              <p className="text-[11px] text-muted-foreground">
-                Transaction events are producer-owned; news is broadcast-only.
-              </p>
-            </div>
-
-            <div className="space-y-1">
-              <Label className="text-xs text-muted-foreground">Type</Label>
-              <Input
-                value={type}
-                onChange={(e) => setType(e.target.value)}
-                placeholder="notification_type"
-                maxLength={NOTIFICATION_TYPE_MAX}
-                className="font-mono text-xs"
-                disabled={isPending}
-              />
-              <p
-                className={`text-[11px] ${typeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-              >
-                {typeError ?? "The site maps this i18n key to visible copy."}
-              </p>
-            </div>
-          </div>
-
-          <div className="space-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs text-muted-foreground">
-                Payload (optional)
-              </Label>
-              <span
-                className={`text-[11px] tabular-nums ${
-                  payloadBytes > NOTIFICATION_PAYLOAD_MAX_BYTES
-                    ? "text-rose-600 dark:text-rose-400"
-                    : "text-muted-foreground"
-                }`}
-              >
-                {payloadBytes} / {NOTIFICATION_PAYLOAD_MAX_BYTES} bytes
-              </span>
-            </div>
-            <Textarea
-              value={payloadText}
-              onChange={(e) => setPayloadText(e.target.value)}
-              rows={6}
-              spellCheck={false}
-              className="font-mono text-xs"
-              placeholder='{ "key": "value" }'
-              disabled={isPending}
-            />
-            {payloadCheck.ok ? (
-              <p className="text-[11px] text-muted-foreground">
-                Unknown keys are delivered untouched. URLs must be http(s), and
-                images must use the Packy ImageKit endpoint.
-              </p>
-            ) : (
-              <p className="text-[11px] text-rose-600 dark:text-rose-400">
-                {payloadCheck.error}
-              </p>
-            )}
-          </div>
-        </div>
-      )}
-
-      <div className="space-y-2 rounded-lg border bg-card p-3">
-        <div className="flex items-center gap-2">
-          <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
-            3
-          </span>
-          <div>
-            <p className="text-xs font-medium">Review notification</p>
-            <p className="text-[11px] text-muted-foreground">
-              This preview mirrors the customer notification payload.
-            </p>
-          </div>
-        </div>
-        <NotificationPreview
-          type={type}
-          payload={payloadCheck.ok ? payloadCheck.payload : undefined}
-          showHeading={false}
-        />
-      </div>
-
-      {mode === "custom" ? (
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Dedupe key (optional)
-          </Label>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+      <div className="space-y-4">
+        <Step number={1} title="Choose recipient">
+          <NotificationUserPicker
+            disabled={isPending}
+            label={userLabel ?? "Find a user by name or email…"}
+            onSelect={(user) => {
+              setUserId(user.id);
+              setUserLabel(user.username ?? user.email ?? user.id);
+            }}
+          />
           <Input
-            value={dedupeKey}
-            onChange={(e) => setDedupeKey(e.target.value)}
-            placeholder="summer_promo_2026:kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g"
-            maxLength={NOTIFICATION_DEDUPE_KEY_MAX}
+            value={userId}
+            onChange={(event) => {
+              setUserId(event.target.value);
+              setUserLabel(null);
+            }}
+            placeholder="Or paste a user ID"
             className="font-mono text-xs"
             disabled={isPending}
           />
-          <p
-            className={`text-[11px] ${dedupeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-          >
-            {dedupeError ??
-              "Convention is `campaign:user_id`. Set it and a repeat send can't double-deliver."}
-          </p>
-        </div>
-      ) : (
-        <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground">
-          Retry-safe key:{" "}
-          <code className="break-all">
-            {packDedupeKey ||
-              challengeDedupeKey ||
-              (mode === "pack"
-                ? "select at least one pack"
-                : "enter a challenge name")}
-          </code>
-        </div>
-      )}
+        </Step>
 
-      <div className="flex items-center gap-2">
-        <Button onClick={handleSend} disabled={blocked} className="gap-1.5">
-          <Send className="size-4" />
-          {isPending ? "Sending…" : "Send"}
-        </Button>
-        {sent && (
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setSent(null)}
-            disabled={isPending}
-          >
-            Clear result
-          </Button>
-        )}
+        <Step number={2} title={stepTitle(mode)}>
+          {mode === "message" && (
+            <MessageFields
+              title={title}
+              message={message}
+              disabled={isPending}
+              onTitleChange={setTitle}
+              onMessageChange={setMessage}
+            />
+          )}
+          {mode === "pack" && (
+            <PackFields
+              packs={packs}
+              disabled={isPending}
+              onChange={setPacks}
+            />
+          )}
+          {mode === "challenge" && (
+            <ChallengeFields
+              game={challengeGame}
+              name={challengeName}
+              prize={challengePrize}
+              invalid={challengeInvalid}
+              disabled={isPending}
+              onGameChange={setChallengeGame}
+              onNameChange={setChallengeName}
+              onPrizeChange={setChallengePrize}
+            />
+          )}
+        </Step>
       </div>
 
-      {sent && <ResultCallout sent={sent} />}
+      <div className="space-y-4">
+        <Step number={3} title="Review and send">
+          <NotificationPreview
+            type={notification.type}
+            payload={payloadCheck.ok ? payloadCheck.payload : undefined}
+            showHeading={false}
+          />
+          {!payloadCheck.ok && (
+            <p className="text-xs text-rose-600 dark:text-rose-400">
+              {payloadCheck.error}
+            </p>
+          )}
+          <Button onClick={handleSend} disabled={blocked} className="w-full gap-2">
+            <Send className="size-4" />
+            {isPending ? "Sending…" : `Send to ${userLabel ?? "user"}`}
+          </Button>
+        </Step>
+        {sent && <ResultCallout sent={sent} />}
+      </div>
     </div>
+  );
+}
+
+function MessageFields({
+  title,
+  message,
+  disabled,
+  onTitleChange,
+  onMessageChange,
+}: {
+  title: string;
+  message: string;
+  disabled: boolean;
+  onTitleChange: (value: string) => void;
+  onMessageChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label htmlFor="direct-title">Title</Label>
+          <span className="text-[11px] text-muted-foreground">
+            {title.length}/{ADMIN_MESSAGE_TITLE_MAX}
+          </span>
+        </div>
+        <Input
+          id="direct-title"
+          value={title}
+          onChange={(event) => onTitleChange(event.target.value)}
+          placeholder="What should the user know?"
+          maxLength={ADMIN_MESSAGE_TITLE_MAX}
+          disabled={disabled}
+        />
+      </div>
+      <div className="space-y-1.5">
+        <div className="flex items-center justify-between">
+          <Label htmlFor="direct-message">Message</Label>
+          <span className="text-[11px] text-muted-foreground">
+            {message.length}/{ADMIN_MESSAGE_BODY_MAX}
+          </span>
+        </div>
+        <Textarea
+          id="direct-message"
+          value={message}
+          onChange={(event) => onMessageChange(event.target.value)}
+          placeholder="Write the notification text…"
+          rows={6}
+          maxLength={ADMIN_MESSAGE_BODY_MAX}
+          disabled={disabled}
+        />
+      </div>
+    </div>
+  );
+}
+
+function PackFields({
+  packs,
+  disabled,
+  onChange,
+}: {
+  packs: AnnouncementPackOption[];
+  disabled: boolean;
+  onChange: (packs: AnnouncementPackOption[]) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <NotificationPackPicker
+        selectedValues={packs}
+        onSelectionChange={onChange}
+        maxSelected={MAX_NOTIFICATION_PACKS}
+        scope="direct"
+        placeholder="Select up to three packs…"
+        disabled={disabled}
+      />
+      {packs.length === 0 ? (
+        <p className="text-xs text-muted-foreground">
+          Pack names, prices, images, and links are added automatically.
+        </p>
+      ) : (
+        <div className="grid gap-2 sm:grid-cols-3">
+          {packs.map((pack) => (
+            <div key={pack.id} className="relative rounded-md border bg-background p-2">
+              {pack.imageUrl ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={pack.imageUrl}
+                  alt=""
+                  className="mb-2 h-16 w-full object-contain"
+                />
+              ) : null}
+              <p className="truncate pr-5 text-xs font-medium">{pack.name}</p>
+              <p className="text-[11px] text-muted-foreground">
+                {formatCurrency(pack.priceUsd)} per open
+              </p>
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-sm"
+                className="absolute right-1 top-1"
+                aria-label={`Remove ${pack.name}`}
+                disabled={disabled}
+                onClick={() => onChange(packs.filter((item) => item.id !== pack.id))}
+              >
+                <X className="size-3.5" />
+              </Button>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ChallengeFields({
+  game,
+  name,
+  prize,
+  invalid,
+  disabled,
+  onGameChange,
+  onNameChange,
+  onPrizeChange,
+}: {
+  game: ChallengeGame;
+  name: string;
+  prize: string;
+  invalid: boolean;
+  disabled: boolean;
+  onGameChange: (value: ChallengeGame) => void;
+  onNameChange: (value: string) => void;
+  onPrizeChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-3">
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-1.5">
+          <Label>Game</Label>
+          <Select value={game} onValueChange={(value) => onGameChange(value as ChallengeGame)}>
+            <SelectTrigger className="w-full" disabled={disabled}>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="keno">Keno</SelectItem>
+              <SelectItem value="upgrader">Upgrader</SelectItem>
+              <SelectItem value="pack">Pack opening</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="challenge-prize">Prize (optional)</Label>
+          <Input
+            id="challenge-prize"
+            value={prize}
+            onChange={(event) => onPrizeChange(event.target.value)}
+            inputMode="decimal"
+            placeholder="25.00"
+            disabled={disabled}
+          />
+        </div>
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="challenge-name">Challenge name</Label>
+        <Input
+          id="challenge-name"
+          value={name}
+          onChange={(event) => onNameChange(event.target.value)}
+          maxLength={200}
+          placeholder="e.g. Lucky Seven"
+          disabled={disabled}
+        />
+      </div>
+      {invalid && (name.trim() || prize.trim()) ? (
+        <p className="text-xs text-rose-600 dark:text-rose-400">
+          Add a name and, when set, a prize between $0.01 and $100,000.
+        </p>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          The notification opens the Challenges tab automatically.
+        </p>
+      )}
+    </div>
+  );
+}
+
+function Step({
+  number,
+  title,
+  children,
+}: {
+  number: number;
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="space-y-3 rounded-lg border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+          {number}
+        </span>
+        <h3 className="text-sm font-medium">{title}</h3>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function stepTitle(mode: SingleNotificationMode): string {
+  if (mode === "pack") return "Choose packs";
+  if (mode === "challenge") return "Set up the challenge";
+  return "Write the message";
+}
+
+function slugify(value: string): string {
+  return (
+    value
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 60) || "challenge"
   );
 }
 
@@ -640,9 +490,7 @@ function ResultCallout({ sent }: { sent: Sent }) {
     return (
       <div className="flex gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/10 p-3">
         <Info className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
-        <p className="text-xs text-emerald-700 dark:text-emerald-300">
-          {sent.message}
-        </p>
+        <p className="text-xs text-emerald-700 dark:text-emerald-300">{sent.message}</p>
       </div>
     );
   }
@@ -650,15 +498,7 @@ function ResultCallout({ sent }: { sent: Sent }) {
     return (
       <div className="flex gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3">
         <UserX className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
-        <div className="space-y-1">
-          <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
-            {sent.message}
-          </p>
-          <p className="text-[11px] text-amber-700/80 dark:text-amber-300/80">
-            The backend checks the id explicitly and returns 404 — nothing was
-            written. Check you&apos;re on the right environment.
-          </p>
-        </div>
+        <p className="text-xs text-amber-700 dark:text-amber-300">{sent.message}</p>
       </div>
     );
   }

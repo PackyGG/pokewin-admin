@@ -18,6 +18,7 @@ import {
   getDirectNotificationReadStats,
   type DirectNotificationReadStat,
 } from "./_queries/direct-read-analytics";
+import type { DirectNotificationHistoryEntry } from "./_queries/direct-history";
 
 /**
  * Everything sent from this page, newest first — reconstructed from the admin
@@ -68,7 +69,7 @@ export async function DirectNotificationHistory({
             <TableRow>
               <TableHead>When</TableHead>
               <TableHead>What</TableHead>
-              <TableHead>Type</TableHead>
+              <TableHead>Kind</TableHead>
               <TableHead className="text-right">Requested</TableHead>
               <TableHead className="text-right">Created</TableHead>
               <TableHead className="text-right">Deduped</TableHead>
@@ -113,9 +114,7 @@ export async function DirectNotificationHistory({
                     )}
                     <div className="min-w-0">
                       <p className="truncate text-sm">
-                        {e.kind === "single"
-                          ? (e.targetUserId ?? "(unknown user)")
-                          : (e.campaign ?? "(no campaign)")}
+                        {historyTitle(e)}
                       </p>
                       <div className="flex flex-wrap items-center gap-1.5">
                         {e.kind === "reward" && (
@@ -142,9 +141,9 @@ export async function DirectNotificationHistory({
                           </Badge>
                         )}
                       </div>
-                      {e.samplePayload && (
-                        <p className="truncate font-mono text-[10px] text-muted-foreground">
-                          {JSON.stringify(e.samplePayload)}
+                      {historyDetail(e) && (
+                        <p className="line-clamp-2 text-[11px] text-muted-foreground">
+                          {historyDetail(e)}
                         </p>
                       )}
                     </div>
@@ -152,16 +151,7 @@ export async function DirectNotificationHistory({
                 </TableCell>
 
                 <TableCell>
-                  <div className="flex flex-col items-start gap-0.5">
-                    <span className="font-mono text-[11px]">
-                      {e.type ?? "—"}
-                    </span>
-                    {e.category && (
-                      <span className="text-[10px] text-muted-foreground">
-                        {e.category}
-                      </span>
-                    )}
-                  </div>
+                  <span className="text-xs">{historyKindLabel(e)}</span>
                 </TableCell>
 
                 <TableCell className="text-right text-xs tabular-nums">
@@ -219,6 +209,57 @@ export async function DirectNotificationHistory({
       </div>
     </div>
   );
+}
+
+function historyTitle(entry: DirectNotificationHistoryEntry): string {
+  if (entry.kind === "single") return entry.targetUserId ?? "Unknown user";
+  if (entry.type === "admin_message") {
+    const title = entry.samplePayload?.title;
+    if (typeof title === "string" && title.trim()) return title.trim();
+    return "Bulk message";
+  }
+  return entry.campaign ?? (entry.kind === "reward" ? "Reward send" : "Bulk send");
+}
+
+function historyDetail(entry: DirectNotificationHistoryEntry): string | null {
+  const payload = entry.samplePayload;
+  if (!payload) return null;
+
+  if (entry.type === "admin_message") {
+    const title = typeof payload.title === "string" ? payload.title.trim() : "";
+    const body = typeof payload.body === "string" ? payload.body.trim() : "";
+    if (entry.kind === "single") return [title, body].filter(Boolean).join(" — ") || null;
+    return body || null;
+  }
+  if (entry.type === "challenge_available") {
+    return typeof payload.challenge_name === "string"
+      ? payload.challenge_name
+      : "Challenge notification";
+  }
+  if (entry.type === "pack_release") {
+    if (typeof payload.pack_name === "string") return payload.pack_name;
+    if (Array.isArray(payload.packs)) {
+      const names = payload.packs
+        .map((pack) =>
+          pack && typeof pack === "object" && "name" in pack
+            ? String(pack.name)
+            : "",
+        )
+        .filter(Boolean);
+      return names.join(", ") || "Pack release";
+    }
+  }
+  return null;
+}
+
+function historyKindLabel(entry: DirectNotificationHistoryEntry): string {
+  if (entry.kind === "reward") return "Reward";
+  if (entry.type === "admin_message") {
+    return entry.kind === "bulk" ? "Bulk message" : "Message";
+  }
+  if (entry.type === "challenge_available") return "Challenge";
+  if (entry.type === "pack_release") return "Pack";
+  return entry.kind === "bulk" ? "Bulk" : "Notification";
 }
 
 function ReadStatCell({

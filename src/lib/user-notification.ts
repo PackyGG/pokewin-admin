@@ -47,6 +47,8 @@ export const NOTIFICATION_TYPE_MAX = 64;
 export const NOTIFICATION_DEDUPE_KEY_MAX = 200;
 export const NOTIFICATION_PAYLOAD_MAX_BYTES = 4096;
 export const NOTIFICATION_URL_MAX = 2048;
+export const ADMIN_MESSAGE_TITLE_MAX = 120;
+export const ADMIN_MESSAGE_BODY_MAX = 1000;
 
 /** Hard per-request item cap. */
 export const BULK_MAX_ITEMS = 1000;
@@ -190,6 +192,25 @@ export function validateNotificationPayload(value: unknown): PayloadValidation {
   }
 
   return { ok: true, payload };
+}
+
+/** Visible copy contract for the admin-authored personal message template. */
+export function validateAdminMessagePayload(value: unknown): string | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return "A title and message are required";
+  }
+  const payload = value as NotificationPayload;
+  const title = typeof payload.title === "string" ? payload.title.trim() : "";
+  const body = typeof payload.body === "string" ? payload.body.trim() : "";
+  if (!title) return "Title is required";
+  if (!body) return "Message is required";
+  if (title.length > ADMIN_MESSAGE_TITLE_MAX) {
+    return `Title must be ${ADMIN_MESSAGE_TITLE_MAX} characters or less`;
+  }
+  if (body.length > ADMIN_MESSAGE_BODY_MAX) {
+    return `Message must be ${ADMIN_MESSAGE_BODY_MAX} characters or less`;
+  }
+  return null;
 }
 
 /** Parse + validate the composer's raw JSON textarea. Empty text = no payload. */

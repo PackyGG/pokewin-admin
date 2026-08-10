@@ -51,6 +51,7 @@ export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   reward_credited: ["amount_usd"],
   promo_code_granted: ["code", "value", "amount_usd"],
   pack_release: ["pack_name", "price_usd", "url", "image_url", "packs"],
+  admin_message: ["title", "body"],
   challenge_available: [
     "challenge_id",
     "challenge_name",
@@ -106,6 +107,19 @@ export function previewNotificationText(
   const ofAmount = amountUsd ? ` of ${amountUsd}` : "";
 
   switch (key) {
+    case "admin_message":
+      return {
+        title:
+          typeof payload?.title === "string" && payload.title.trim()
+            ? payload.title.trim()
+            : "Message",
+        body:
+          typeof payload?.body === "string" && payload.body.trim()
+            ? payload.body.trim()
+            : "You have a new message.",
+        known: true,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.admin_message,
+      };
     case "deposit_pending":
       return {
         title: "Deposit detected",

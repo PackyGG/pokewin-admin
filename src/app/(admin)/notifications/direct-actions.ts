@@ -20,6 +20,7 @@ import {
   BULK_MAX_ITEMS,
   isUserNotificationCategory,
   jsonByteSize,
+  validateAdminMessagePayload,
   validateDedupeKey,
   validateNotificationPayload,
   validateNotificationType,
@@ -119,6 +120,10 @@ export async function sendDirectNotificationAction(
 
   const payloadCheck = validateNotificationPayload(input.payload);
   if (!payloadCheck.ok) return { success: false, error: payloadCheck.error };
+  if (type === "admin_message") {
+    const messageError = validateAdminMessagePayload(payloadCheck.payload);
+    if (messageError) return { success: false, error: messageError };
+  }
 
   // Optional here (unlike bulk) — but when set it still has to be in range.
   const dedupeKey = input.dedupeKey?.trim() || undefined;
@@ -240,6 +245,12 @@ export async function sendBulkNotificationChunkAction(
         success: false,
         error: `${item.user_id}: ${payloadCheck.error}`,
       };
+    }
+    if (type === "admin_message") {
+      const messageError = validateAdminMessagePayload(payloadCheck.payload);
+      if (messageError) {
+        return { success: false, error: `${item.user_id}: ${messageError}` };
+      }
     }
   }
 

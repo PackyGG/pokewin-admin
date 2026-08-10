@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import {
   CheckCircle2,
@@ -9,34 +9,22 @@ import {
   CopyCheck,
   Play,
   RotateCcw,
-  UserX,
+  Send,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
 import { formatNumber } from "@/lib/utils/format";
 import {
   BULK_MAX_ITEMS,
-  NOTIFICATION_PAYLOAD_MAX_BYTES,
-  NOTIFICATION_TYPE_MAX,
+  ADMIN_MESSAGE_BODY_MAX,
+  ADMIN_MESSAGE_TITLE_MAX,
   buildBulkItems,
   chunkBulkItems,
-  jsonByteSize,
-  parsePayloadJson,
   parseRecipients,
-  validateCampaignSlug,
-  validateNotificationType,
   type BulkNotificationItem,
-  type UserNotificationCategory,
 } from "@/lib/user-notification";
 import { sendBulkNotificationChunkAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
@@ -44,171 +32,109 @@ import { NotificationPreview } from "./notification-preview";
 import type { BulkNotificationResult } from "@/lib/backend-api/user-notifications";
 import type { DbEnv } from "@/lib/db-env";
 
-const RECIPIENT_PLACEHOLDER = `user_id
-kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g
-aB3dE5fG7hJ9kL1mN3pQ5rS7tU9vW1xY
-
-— or one id per line, or a JSON array of { user_id, payload }`;
-
 type Failure = { chunkIndex: number; error: string };
 
-/**
- * Bulk composer for `POST /admin/notifications/bulk`.
- *
- * The whole list is validated and chunked BEFORE the first request goes out —
- * a 400 on chunk 12 of 17 is a bad experience, and every rule the backend
- * enforces is checkable client-side.
- *
- * Chunks are sent SEQUENTIALLY from the client (one server action per chunk)
- * rather than in one long action: each chunk is a single multi-row INSERT
- * server-side with no reason to stampede it, progress stays live, and a
- * 17-chunk campaign can't blow one action's budget.
- *
- * Failure handling leans entirely on `dedupe_key` — `(user_id, dedupe_key)` is
- * backed by a partial unique index, so retrying the failed chunk verbatim is
- * always safe. Already-delivered items come back as `deduped`, which is why
- * that counter is presented as normal rather than as an error.
- */
 export function BulkNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
-  const [campaign, setCampaign] = useState("");
-  const [category, setCategory] = useState<UserNotificationCategory>("rewards");
-  const [type, setType] = useState("");
-  const [sharedPayloadText, setSharedPayloadText] = useState("");
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
   const [recipientsText, setRecipientsText] = useState("");
-  const [chunkSize, setChunkSize] = useState(BULK_MAX_ITEMS);
-
+  const [campaign, setCampaign] = useState("");
   const [sending, setSending] = useState(false);
   const [currentChunk, setCurrentChunk] = useState(0);
   const [results, setResults] = useState<BulkNotificationResult[]>([]);
   const [failure, setFailure] = useState<Failure | null>(null);
   const [copied, setCopied] = useState(false);
 
-  const slugError = campaign.trim() ? validateCampaignSlug(campaign) : null;
-  const typeError = validateNotificationType(type);
-  const sharedCheck = useMemo(
-    () => parsePayloadJson(sharedPayloadText),
-    [sharedPayloadText],
-  );
+  useEffect(() => setCampaign(createCampaignId()), []);
+
   const parsed = useMemo(
     () => (recipientsText.trim() ? parseRecipients(recipientsText) : null),
     [recipientsText],
   );
-
-  /** Wire items + chunk plan. Null until everything upstream is valid. */
-  const plan = useMemo<
-    | { ok: true; chunks: BulkNotificationItem[][] }
-    | { ok: false; error: string }
-    | null
-  >(() => {
-    if (!parsed?.ok || !sharedCheck.ok) return null;
-    if (validateCampaignSlug(campaign)) return null;
-    const built = buildBulkItems(parsed.recipients, {
+  const payload = useMemo(
+    () => ({ title: title.trim(), body: message.trim() }),
+    [title, message],
+  );
+  const chunks = useMemo(() => {
+    if (!parsed?.ok || !campaign || !title.trim() || !message.trim()) return null;
+    const recipients = parsed.recipients.map(({ userId }) => ({ userId }));
+    const built = buildBulkItems(recipients, {
       campaign,
-      sharedPayload: sharedCheck.payload,
+      sharedPayload: payload,
     });
-    if (!built.ok) return { ok: false, error: built.error };
-    const size = Math.min(Math.max(1, chunkSize || 1), BULK_MAX_ITEMS);
-    return { ok: true, chunks: chunkBulkItems(built.items, { maxItems: size }) };
-  }, [parsed, sharedCheck, campaign, chunkSize]);
+    return built.ok
+      ? chunkBulkItems(built.items, { maxItems: BULK_MAX_ITEMS })
+      : null;
+  }, [parsed, campaign, payload, title, message]);
 
-  const planError = plan && !plan.ok ? plan.error : null;
-  const chunks = plan && plan.ok ? plan.chunks : null;
+  const [sent, setSent] = useState<{
+    chunks: BulkNotificationItem[][];
+    campaign: string;
+  } | null>(null);
 
   const totals = useMemo(() => {
     const unknown = new Set<string>();
     let requested = 0;
     let created = 0;
     let deduped = 0;
-    for (const r of results) {
-      requested += r.requested;
-      created += r.created;
-      deduped += r.deduped;
-      for (const id of r.unknown_users) unknown.add(id);
+    for (const result of results) {
+      requested += result.requested;
+      created += result.created;
+      deduped += result.deduped;
+      for (const id of result.unknown_users) unknown.add(id);
     }
     return { requested, created, deduped, unknown: [...unknown] };
   }, [results]);
 
-  const readyToSend =
-    !sending &&
-    chunks !== null &&
-    chunks.length > 0 &&
-    !slugError &&
-    !typeError &&
-    campaign.trim() !== "";
-
-  /**
-   * The chunk list AND the envelope as they were when the send started.
-   *
-   * A failed chunk leaves the form editable so the operator can react, which
-   * means `chunks` can change underneath a pending retry — "Retry from chunk
-   * 12" would then send a different chunk 12 than the one that failed, and
-   * `results` (indexed by position) would silently misalign. Retrying against
-   * the frozen snapshot is what makes the dedupe guarantee actually hold:
-   * same items, same keys, so replays come back as `deduped`.
-   */
-  const [sent, setSent] = useState<{
-    chunks: BulkNotificationItem[][];
-    category: UserNotificationCategory;
-    type: string;
-    campaign: string;
-  } | null>(null);
-
-  async function run(
-    plan: NonNullable<typeof sent>,
-    fromChunk: number,
-  ) {
+  async function run(plan: NonNullable<typeof sent>, fromChunk: number) {
     setSending(true);
     setFailure(null);
     try {
-      for (let i = fromChunk; i < plan.chunks.length; i++) {
-        setCurrentChunk(i);
-        const res = await sendBulkNotificationChunkAction({
-          category: plan.category,
-          type: plan.type,
-          items: plan.chunks[i],
+      for (let index = fromChunk; index < plan.chunks.length; index++) {
+        setCurrentChunk(index);
+        const response = await sendBulkNotificationChunkAction({
+          category: "system",
+          type: "admin_message",
+          items: plan.chunks[index],
           campaign: plan.campaign,
-          chunkIndex: i,
+          chunkIndex: index,
           chunkCount: plan.chunks.length,
         });
-        if (!res.success) {
-          setFailure({ chunkIndex: i, error: res.error });
-          toast.error(`Chunk ${i + 1} failed — retrying it is safe`);
+        if (!response.success) {
+          setFailure({ chunkIndex: index, error: response.error });
+          toast.error(`Batch ${index + 1} failed — retrying it is safe`);
           return;
         }
-        setResults((prev) => [...prev, res.result]);
+        setResults((current) => [...current, response.result]);
       }
-      toast.success("Campaign sent");
+      toast.success("Bulk message sent");
     } finally {
       setSending(false);
     }
   }
 
   function handleStart() {
-    if (!chunks) return;
-    const recipientCount = chunks.reduce(
-      (count, chunk) => count + chunk.length,
-      0,
-    );
+    if (!chunks?.length || !campaign) return;
+    const count = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     if (
       !window.confirm(
-        `Send ${recipientCount} personal notification${recipientCount === 1 ? "" : "s"} to ${targetEnv.toUpperCase()}?`,
+        `Send “${title.trim()}” to ${count} user${count === 1 ? "" : "s"} in ${targetEnv.toUpperCase()}?`,
       )
     ) {
       return;
     }
-    const plan = {
-      chunks,
-      category,
-      type: type.trim(),
-      campaign: campaign.trim(),
-    };
+    const plan = { chunks, campaign };
     setSent(plan);
     setResults([]);
     setCurrentChunk(0);
     void run(plan, 0);
   }
 
-  function handleReset() {
+  function handleNewMessage() {
+    setTitle("");
+    setMessage("");
+    setRecipientsText("");
+    setCampaign(createCampaignId());
     setResults([]);
     setFailure(null);
     setCurrentChunk(0);
@@ -225,417 +151,235 @@ export function BulkNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     }
   }
 
+  const recipientCount = parsed?.ok ? parsed.recipients.length : 0;
   const done = results.length;
-  // Progress counts against the snapshot once a send has started — editing the
-  // form mid-failure must not rewrite the denominator of a run in flight.
   const total = sent?.chunks.length ?? chunks?.length ?? 0;
-  const progressPct = total > 0 ? Math.round((done / total) * 100) : 0;
-  const previewItem = chunks?.[0]?.[0];
+  const complete = sent !== null && !failure && done === total && total > 0;
+  const ready = !sending && Boolean(chunks?.length) && !complete;
 
   return (
-    <div className="space-y-4">
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Campaign slug</Label>
-          <Input
-            value={campaign}
-            onChange={(e) => setCampaign(e.target.value)}
-            placeholder="summer_promo_2026"
-            className="font-mono text-xs"
-            disabled={sending}
-          />
-          <p
-            className={`text-[11px] ${slugError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-          >
-            {slugError ??
-              "Dedupe key is derived as `slug:user_id`. Keep it stable — a timestamp or random suffix defeats the retry guarantee."}
-          </p>
-        </div>
-
-        <div className="grid gap-3 sm:grid-cols-2">
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Category</Label>
-            <Select
-              value={category}
-              onValueChange={(v) => setCategory(v as UserNotificationCategory)}
-            >
-              <SelectTrigger className="w-full" disabled={sending}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="rewards">rewards</SelectItem>
-                <SelectItem value="system">system</SelectItem>
-              </SelectContent>
-            </Select>
+    <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,0.72fr)]">
+      <div className="space-y-4">
+        <Step number={1} title="Add recipients">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-muted-foreground">
+              Paste one user ID per line, or search to add people.
+            </p>
+            <div className="w-full sm:w-60">
+              <NotificationUserPicker
+                disabled={sending}
+                label="Find and add a user…"
+                onSelect={(user) =>
+                  setRecipientsText((current) =>
+                    current.trim()
+                      ? `${current.replace(/\s+$/, "")}\n${user.id}`
+                      : user.id,
+                  )
+                }
+              />
+            </div>
           </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Type</Label>
-            <Input
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              placeholder="notification_type"
-              maxLength={NOTIFICATION_TYPE_MAX}
-              className="font-mono text-xs"
-              disabled={sending}
-            />
-          </div>
-        </div>
-      </div>
-      {typeError && (
-        <p className="text-[11px] text-rose-600 dark:text-rose-400">{typeError}</p>
-      )}
-
-      <div className="space-y-1">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <Label className="text-xs text-muted-foreground">Recipients</Label>
-          <div className="w-56">
-            <NotificationUserPicker
-              disabled={sending}
-              label="Add a user to the list…"
-              onSelect={(u) =>
-                setRecipientsText((cur) =>
-                  cur.trim() ? `${cur.replace(/\s+$/, "")}\n${u.id}` : u.id,
-                )
-              }
-            />
-          </div>
-        </div>
-        <Textarea
-          value={recipientsText}
-          onChange={(e) => setRecipientsText(e.target.value)}
-          rows={9}
-          spellCheck={false}
-          className="font-mono text-xs"
-          placeholder={RECIPIENT_PLACEHOLDER}
-          disabled={sending}
-        />
-        <RecipientSummary parsed={parsed} />
-      </div>
-
-      <div className="grid gap-3 sm:grid-cols-[1fr_10rem]">
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">
-            Shared payload (optional)
-          </Label>
           <Textarea
-            value={sharedPayloadText}
-            onChange={(e) => setSharedPayloadText(e.target.value)}
-            rows={3}
+            value={recipientsText}
+            onChange={(event) => setRecipientsText(event.target.value)}
+            rows={8}
             spellCheck={false}
             className="font-mono text-xs"
-            placeholder='{ "key": "value" }'
+            placeholder={"user_id_1\nuser_id_2\nuser_id_3"}
             disabled={sending}
           />
-          <p
-            className={`text-[11px] ${sharedCheck.ok ? "text-muted-foreground" : "text-rose-600 dark:text-rose-400"}`}
-          >
-            {sharedCheck.ok
-              ? "Merged into every item. Per-recipient keys from the list win."
-              : sharedCheck.error}
-          </p>
-        </div>
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Chunk size</Label>
-          <Input
-            type="number"
-            min={1}
-            max={BULK_MAX_ITEMS}
-            value={chunkSize}
-            onChange={(e) => setChunkSize(Number(e.target.value))}
-            className="text-xs"
-            disabled={sending}
-          />
-          <p className="text-[11px] text-muted-foreground">
-            Max {BULK_MAX_ITEMS}. Chunks also close on body size, so a big
-            payload splits earlier by itself.
-          </p>
-        </div>
-      </div>
+          {parsed?.ok ? (
+            <div className="flex flex-wrap gap-2">
+              <Badge variant="secondary">
+                {formatNumber(recipientCount)} recipient{recipientCount === 1 ? "" : "s"}
+              </Badge>
+              {parsed.duplicateIds.length > 0 && (
+                <Badge variant="outline" className="text-amber-600">
+                  {parsed.duplicateIds.length} duplicate ID
+                  {parsed.duplicateIds.length === 1 ? "" : "s"}
+                </Badge>
+              )}
+            </div>
+          ) : parsed ? (
+            <p className="text-xs text-rose-600 dark:text-rose-400">{parsed.error}</p>
+          ) : null}
+        </Step>
 
-      {planError && (
-        <div className="flex gap-2 rounded-md border border-rose-500/30 bg-rose-500/10 p-3">
-          <CircleAlert className="mt-0.5 size-4 shrink-0 text-rose-600 dark:text-rose-400" />
-          <p className="text-xs text-rose-700 dark:text-rose-300">{planError}</p>
-        </div>
-      )}
-
-      <NotificationPreview type={type} payload={previewItem?.payload} />
-
-      {chunks && chunks.length > 0 && (
-        <ChunkPlan chunks={chunks} previewItem={previewItem} />
-      )}
-
-      <div className="flex flex-wrap items-center gap-2">
-        <Button
-          onClick={handleStart}
-          disabled={!readyToSend}
-          className="gap-1.5"
-        >
-          <Play className="size-4" />
-          {sending
-            ? `Sending chunk ${currentChunk + 1} of ${total}…`
-            : `Send ${chunks ? formatNumber(chunks.reduce((n, c) => n + c.length, 0)) : "0"} notifications`}
-        </Button>
-        {failure && sent && (
-          <Button
-            variant="outline"
-            onClick={() => void run(sent, failure.chunkIndex)}
-            disabled={sending}
-            className="gap-1.5"
-          >
-            <RotateCcw className="size-4" />
-            Retry from chunk {failure.chunkIndex + 1}
-          </Button>
-        )}
-        {(results.length > 0 || failure) && !sending && (
-          <Button variant="ghost" size="sm" onClick={handleReset}>
-            Clear results
-          </Button>
-        )}
-      </div>
-
-      {(sending || results.length > 0) && total > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-            <span>
-              Chunk {Math.min(done + (sending ? 1 : 0), total)} of {total}
-            </span>
-            <span className="tabular-nums">{progressPct}%</span>
-          </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-            <div
-              className="h-full rounded-full bg-foreground/70 transition-all duration-300"
-              style={{ width: `${progressPct}%` }}
+        <Step number={2} title="Write the message">
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bulk-title">Title</Label>
+              <span className="text-[11px] text-muted-foreground">
+                {title.length}/{ADMIN_MESSAGE_TITLE_MAX}
+              </span>
+            </div>
+            <Input
+              id="bulk-title"
+              value={title}
+              onChange={(event) => setTitle(event.target.value)}
+              placeholder="What should users know?"
+              maxLength={ADMIN_MESSAGE_TITLE_MAX}
+              disabled={sending}
             />
           </div>
-        </div>
-      )}
-
-      {failure && (
-        <div className="space-y-1 rounded-md border border-rose-500/30 bg-rose-500/10 p-3">
-          <p className="text-xs font-medium text-rose-700 dark:text-rose-300">
-            Chunk {failure.chunkIndex + 1} failed
-          </p>
-          <p className="text-xs text-rose-700/90 dark:text-rose-300/90">
-            {failure.error}
-          </p>
-          <p className="text-[11px] text-rose-700/70 dark:text-rose-300/70">
-            Nothing needs reconciling — dedupe keys make a verbatim retry safe.
-            Anything already written comes back as deduped.
-          </p>
-        </div>
-      )}
-
-      {results.length > 0 && (
-        <ResultSummary
-          totals={totals}
-          chunksDone={done}
-          chunksTotal={total}
-          copied={copied}
-          onCopyUnknown={copyUnknown}
-        />
-      )}
-    </div>
-  );
-}
-
-function RecipientSummary({
-  parsed,
-}: {
-  parsed: ReturnType<typeof parseRecipients> | null;
-}) {
-  if (!parsed) {
-    return (
-      <p className="text-[11px] text-muted-foreground">
-        CSV with a <code>user_id</code> column (every other column becomes a
-        payload key), a JSON array of{" "}
-        <code>{"{ user_id, payload }"}</code>, or plain ids one per line.
-      </p>
-    );
-  }
-  if (!parsed.ok) {
-    return (
-      <p className="text-[11px] text-rose-600 dark:text-rose-400">
-        {parsed.error}
-      </p>
-    );
-  }
-  return (
-    <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
-      <Badge variant="outline" className="uppercase">
-        {parsed.format}
-      </Badge>
-      <span>{formatNumber(parsed.recipients.length)} recipients</span>
-      {parsed.duplicateIds.length > 0 && (
-        <span className="text-amber-600 dark:text-amber-400">
-          · {parsed.duplicateIds.length} id
-          {parsed.duplicateIds.length === 1 ? "" : "s"} listed more than once —
-          the repeat comes back as deduped
-        </span>
-      )}
-      {parsed.ignoredDedupeKeys > 0 && (
-        <span className="text-amber-600 dark:text-amber-400">
-          · {parsed.ignoredDedupeKeys} pasted dedupe_key
-          {parsed.ignoredDedupeKeys === 1 ? "" : "s"} ignored — keys are always
-          derived from the campaign slug
-        </span>
-      )}
-    </div>
-  );
-}
-
-function ChunkPlan({
-  chunks,
-  previewItem,
-}: {
-  chunks: BulkNotificationItem[][];
-  previewItem: BulkNotificationItem | undefined;
-}) {
-  const itemCount = chunks.reduce((n, c) => n + c.length, 0);
-  const largestBytes = Math.max(...chunks.map((c) => jsonByteSize(c)));
-  const previewBytes = previewItem ? jsonByteSize(previewItem) : 0;
-
-  return (
-    <div className="space-y-2 rounded-md border p-3">
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-        <span>
-          <span className="font-medium text-foreground">
-            {formatNumber(chunks.length)}
-          </span>{" "}
-          request{chunks.length === 1 ? "" : "s"}, sent one at a time
-        </span>
-        <span>
-          <span className="font-medium text-foreground">
-            {formatNumber(itemCount)}
-          </span>{" "}
-          items
-        </span>
-        <span>
-          largest body ≈{" "}
-          <span className="font-medium text-foreground">
-            {formatNumber(Math.round(largestBytes / 1024))} KB
-          </span>
-        </span>
-        <span>
-          per item ≈{" "}
-          <span
-            className={
-              previewBytes > NOTIFICATION_PAYLOAD_MAX_BYTES
-                ? "font-medium text-rose-600 dark:text-rose-400"
-                : "font-medium text-foreground"
-            }
-          >
-            {previewBytes} B
-          </span>
-        </span>
-      </div>
-      {previewItem != null && (
-        <pre className="max-h-24 overflow-auto rounded bg-muted/50 p-2 font-mono text-[10px] leading-relaxed">
-          {JSON.stringify(previewItem, null, 2)}
-        </pre>
-      )}
-    </div>
-  );
-}
-
-function ResultSummary({
-  totals,
-  chunksDone,
-  chunksTotal,
-  copied,
-  onCopyUnknown,
-}: {
-  totals: { requested: number; created: number; deduped: number; unknown: string[] };
-  chunksDone: number;
-  chunksTotal: number;
-  copied: boolean;
-  onCopyUnknown: () => void;
-}) {
-  return (
-    <div className="space-y-3 rounded-md border p-3">
-      <p className="text-xs font-medium">
-        {chunksDone} of {chunksTotal} chunk{chunksTotal === 1 ? "" : "s"} sent ·{" "}
-        {formatNumber(totals.requested)} requested
-      </p>
-
-      <div className="grid gap-2 sm:grid-cols-3">
-        <CountTile
-          icon={CheckCircle2}
-          label="Created"
-          value={totals.created}
-          accent="text-emerald-600 dark:text-emerald-400"
-          hint="Rows actually inserted"
-        />
-        <CountTile
-          icon={CopyCheck}
-          label="Deduped"
-          value={totals.deduped}
-          accent="text-blue-600 dark:text-blue-400"
-          hint="Already delivered — normal, not an error"
-        />
-        <CountTile
-          icon={UserX}
-          label="Unknown users"
-          value={totals.unknown.length}
-          accent="text-amber-600 dark:text-amber-400"
-          hint="Distinct ids that don't exist, dropped"
-        />
-      </div>
-
-      {totals.unknown.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center justify-between gap-2">
-            <p className="text-[11px] text-muted-foreground">
-              Dropped ids — the send still succeeded. Because this list is
-              de-duplicated, the counts above won&apos;t sum to requested when an
-              id was sent twice.
-            </p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 shrink-0 gap-1 text-xs"
-              onClick={onCopyUnknown}
-            >
-              {copied ? (
-                <CopyCheck className="size-3" />
-              ) : (
-                <Copy className="size-3" />
-              )}
-              {copied ? "Copied" : "Copy"}
-            </Button>
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between">
+              <Label htmlFor="bulk-message">Message</Label>
+              <span className="text-[11px] text-muted-foreground">
+                {message.length}/{ADMIN_MESSAGE_BODY_MAX}
+              </span>
+            </div>
+            <Textarea
+              id="bulk-message"
+              value={message}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="Write the notification text…"
+              rows={6}
+              maxLength={ADMIN_MESSAGE_BODY_MAX}
+              disabled={sending}
+            />
           </div>
-          <pre className="max-h-32 overflow-auto rounded bg-muted/50 p-2 font-mono text-[10px] leading-relaxed">
-            {totals.unknown.join("\n")}
-          </pre>
-        </div>
-      )}
+        </Step>
+      </div>
+
+      <div className="space-y-4">
+        <Step number={3} title="Review and send">
+          <NotificationPreview
+            type="admin_message"
+            payload={title.trim() || message.trim() ? payload : undefined}
+            showHeading={false}
+          />
+          <div className="rounded-md border bg-muted/30 px-3 py-2 text-xs">
+            <span className="font-medium">Sending to </span>
+            <span className="text-muted-foreground">
+              {formatNumber(recipientCount)} user{recipientCount === 1 ? "" : "s"}
+              {total > 1 ? ` in ${total} batches` : ""}
+            </span>
+          </div>
+          <Button onClick={handleStart} disabled={!ready} className="w-full gap-2">
+            <Send className="size-4" />
+            {sending ? "Sending…" : "Send bulk message"}
+          </Button>
+        </Step>
+
+        {(sent || failure) && (
+          <SendProgress
+            done={done}
+            total={total}
+            currentChunk={currentChunk}
+            sending={sending}
+            failure={failure}
+            complete={complete}
+            totals={totals}
+            copied={copied}
+            onRetry={() => sent && void run(sent, failure?.chunkIndex ?? 0)}
+            onCopyUnknown={copyUnknown}
+            onNewMessage={handleNewMessage}
+          />
+        )}
+      </div>
     </div>
   );
 }
 
-function CountTile({
-  icon: Icon,
-  label,
-  value,
-  accent,
-  hint,
+function Step({ number, title, children }: { number: number; title: string; children: React.ReactNode }) {
+  return (
+    <section className="space-y-3 rounded-lg border bg-card p-4">
+      <div className="flex items-center gap-2">
+        <span className="flex size-6 items-center justify-center rounded-full bg-primary/10 text-xs font-semibold text-primary">
+          {number}
+        </span>
+        <h3 className="text-sm font-medium">{title}</h3>
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function SendProgress({
+  done,
+  total,
+  currentChunk,
+  sending,
+  failure,
+  complete,
+  totals,
+  copied,
+  onRetry,
+  onCopyUnknown,
+  onNewMessage,
 }: {
-  icon: typeof CheckCircle2;
-  label: string;
-  value: number;
-  accent: string;
-  hint: string;
+  done: number;
+  total: number;
+  currentChunk: number;
+  sending: boolean;
+  failure: Failure | null;
+  complete: boolean;
+  totals: { requested: number; created: number; deduped: number; unknown: string[] };
+  copied: boolean;
+  onRetry: () => void;
+  onCopyUnknown: () => void;
+  onNewMessage: () => void;
 }) {
   return (
-    <div className="rounded-md border p-3">
-      <div className="flex items-center gap-1.5">
-        <Icon className={`size-3.5 ${accent}`} />
-        <span className="text-[11px] text-muted-foreground">{label}</span>
+    <div className="space-y-3 rounded-lg border bg-card p-4">
+      <div className="flex items-center gap-2">
+        {complete ? (
+          <CheckCircle2 className="size-4 text-emerald-600" />
+        ) : failure ? (
+          <CircleAlert className="size-4 text-rose-600" />
+        ) : (
+          <Play className="size-4 text-primary" />
+        )}
+        <p className="text-sm font-medium">
+          {complete
+            ? "Bulk message sent"
+            : failure
+              ? `Batch ${failure.chunkIndex + 1} failed`
+              : `Sending batch ${currentChunk + 1} of ${total}`}
+        </p>
       </div>
-      <p className={`mt-1 text-xl font-semibold tabular-nums ${accent}`}>
-        {formatNumber(value)}
+      <div className="grid grid-cols-3 gap-2 text-center">
+        <Count label="Delivered" value={totals.created} />
+        <Count label="Already sent" value={totals.deduped} />
+        <Count label="Unknown" value={totals.unknown.length} />
+      </div>
+      {failure && <p className="text-xs text-rose-600">{failure.error}</p>}
+      <p className="text-[11px] text-muted-foreground">
+        {done} of {total} batch{total === 1 ? "" : "es"} complete
       </p>
-      <p className="mt-0.5 text-[10px] text-muted-foreground">{hint}</p>
+      <div className="flex flex-wrap gap-2">
+        {failure && (
+          <Button size="sm" onClick={onRetry} disabled={sending} className="gap-1.5">
+            <RotateCcw className="size-3.5" /> Retry failed batch
+          </Button>
+        )}
+        {totals.unknown.length > 0 && (
+          <Button size="sm" variant="outline" onClick={onCopyUnknown} className="gap-1.5">
+            {copied ? <CopyCheck className="size-3.5" /> : <Copy className="size-3.5" />}
+            {copied ? "Copied" : "Copy unknown IDs"}
+          </Button>
+        )}
+        {complete && (
+          <Button size="sm" variant="outline" onClick={onNewMessage} className="gap-1.5">
+            <RotateCcw className="size-3.5" /> New bulk message
+          </Button>
+        )}
+      </div>
     </div>
   );
+}
+
+function Count({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-md border p-2">
+      <p className="text-lg font-semibold tabular-nums">{formatNumber(value)}</p>
+      <p className="text-[10px] text-muted-foreground">{label}</p>
+    </div>
+  );
+}
+
+function createCampaignId(): string {
+  const random = globalThis.crypto?.randomUUID?.().slice(0, 8) ?? Math.random().toString(36).slice(2, 10);
+  return `bulk-message-${Date.now().toString(36)}-${random}`.toLowerCase();
 }
