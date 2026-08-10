@@ -56,6 +56,9 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   const form = source(
     "src/app/(admin)/notifications/single-notification-form.tsx",
   );
+  const picker = source(
+    "src/app/(admin)/notifications/notification-pack-picker.tsx",
+  );
 
   assert.match(
     actions,
@@ -74,4 +77,8 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(form, /MAX_NOTIFICATION_PACKS = 3/);
   assert.match(form, /\/games\/packs\?sort=newest/);
   assert.match(form, /scope=\"direct\"/);
+  assert.match(form, /selectedValues=\{packs\}/);
+  assert.match(form, /onSelectionChange=\{applyPacks\}/);
+  assert.match(picker, /selected\.length >= maxSelected/);
+  assert.match(picker, /Select up to \{maxSelected\} packs/);
 });

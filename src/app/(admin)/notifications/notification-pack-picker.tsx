@@ -25,15 +25,21 @@ import {
 } from "./composer-actions";
 
 export function NotificationPackPicker({
-  value,
+  value = null,
   onSelect,
+  selectedValues,
+  onSelectionChange,
+  maxSelected = 3,
   scope,
   disabled = false,
   excludedIds = [],
   placeholder = "Select pack…",
 }: {
-  value: AnnouncementPackOption | null;
-  onSelect: (pack: AnnouncementPackOption) => void;
+  value?: AnnouncementPackOption | null;
+  onSelect?: (pack: AnnouncementPackOption) => void;
+  selectedValues?: readonly AnnouncementPackOption[];
+  onSelectionChange?: (packs: AnnouncementPackOption[]) => void;
+  maxSelected?: number;
   scope: "announcement" | "direct";
   disabled?: boolean;
   excludedIds?: readonly string[];
@@ -45,7 +51,13 @@ export function NotificationPackPicker({
   const [items, setItems] = useState<AnnouncementPackOption[]>([]);
   const [failed, setFailed] = useState(false);
   const [isPending, startTransition] = useTransition();
-  const visibleItems = items.filter((item) => !excludedIds.includes(item.id));
+  const multiple =
+    selectedValues !== undefined && onSelectionChange !== undefined;
+  const selected = selectedValues ?? [];
+  const selectedIds = new Set(selected.map((item) => item.id));
+  const visibleItems = multiple
+    ? items
+    : items.filter((item) => !excludedIds.includes(item.id));
 
   useEffect(() => {
     if (!open) return;
@@ -84,7 +96,37 @@ export function NotificationPackPicker({
           />
         }
       >
-        {value ? (
+        {multiple && selected.length > 0 ? (
+          <span className="flex min-w-0 flex-1 items-center gap-2">
+            <span className="flex -space-x-1.5">
+              {selected.map((item) =>
+                item.imageUrl ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    key={item.id}
+                    src={item.imageUrl}
+                    alt=""
+                    className="size-6 rounded border bg-background object-contain"
+                  />
+                ) : (
+                  <span
+                    key={item.id}
+                    className="flex size-6 items-center justify-center rounded border bg-muted text-[8px]"
+                  >
+                    N/A
+                  </span>
+                ),
+              )}
+            </span>
+            <span className="truncate font-medium">
+              {selected.length} {selected.length === 1 ? "pack" : "packs"}{" "}
+              selected
+            </span>
+            <span className="ml-auto shrink-0 text-xs tabular-nums text-muted-foreground">
+              {selected.length}/{maxSelected}
+            </span>
+          </span>
+        ) : value ? (
           <span className="flex min-w-0 flex-1 items-center gap-2">
             {value.imageUrl && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -141,8 +183,22 @@ export function NotificationPackPicker({
               <CommandItem
                 key={item.id}
                 value={item.id}
+                data-checked={multiple && selectedIds.has(item.id)}
+                disabled={
+                  multiple &&
+                  !selectedIds.has(item.id) &&
+                  selected.length >= maxSelected
+                }
                 onSelect={() => {
-                  onSelect(item);
+                  if (multiple) {
+                    onSelectionChange(
+                      selectedIds.has(item.id)
+                        ? selected.filter((pack) => pack.id !== item.id)
+                        : [...selected, item],
+                    );
+                    return;
+                  }
+                  onSelect?.(item);
                   setOpen(false);
                 }}
               >
@@ -169,6 +225,28 @@ export function NotificationPackPicker({
               </CommandItem>
             ))}
           </CommandList>
+          {multiple && (
+            <div className="flex items-center justify-between gap-2 border-t px-2 py-2">
+              <span className="text-[11px] text-muted-foreground">
+                Select up to {maxSelected} packs
+              </span>
+              <div className="flex items-center gap-1">
+                {selected.length > 0 && (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => onSelectionChange([])}
+                  >
+                    Clear
+                  </Button>
+                )}
+                <Button type="button" size="xs" onClick={() => setOpen(false)}>
+                  Done
+                </Button>
+              </div>
+            </div>
+          )}
         </Command>
       </PopoverContent>
     </Popover>

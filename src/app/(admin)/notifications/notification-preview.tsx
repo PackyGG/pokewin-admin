@@ -21,9 +21,11 @@ import type { NotificationPayload } from "@/lib/user-notification";
 export function NotificationPreview({
   type,
   payload,
+  showHeading = true,
 }: {
   type: string;
   payload: NotificationPayload | undefined;
+  showHeading?: boolean;
 }) {
   const preview = previewNotificationText(type, payload);
   const unrendered = unrenderedPayloadKeys(type, payload);
@@ -32,9 +34,11 @@ export function NotificationPreview({
 
   return (
     <div className="space-y-1.5">
-      <p className="text-xs font-medium text-muted-foreground">
-        What the user sees
-      </p>
+      {showHeading && (
+        <p className="text-xs font-medium text-muted-foreground">
+          What the user sees
+        </p>
+      )}
 
       <div className="relative flex gap-3 overflow-hidden rounded-md border bg-muted/30 p-3">
         <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-1.5">

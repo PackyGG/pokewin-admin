@@ -133,16 +133,6 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     setSent(null);
   }
 
-  function addPack(next: AnnouncementPackOption) {
-    if (
-      packs.length >= MAX_NOTIFICATION_PACKS ||
-      packs.some((pack) => pack.id === next.id)
-    ) {
-      return;
-    }
-    applyPacks([...packs, next]);
-  }
-
   function handleSend() {
     if (!payloadCheck.ok) {
       toast.error(payloadCheck.error);
@@ -184,8 +174,18 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
 
   return (
     <div className="space-y-4">
-      <div className="space-y-1.5">
-        <Label className="text-xs text-muted-foreground">Recipient</Label>
+      <div className="space-y-2 rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-2">
+          <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+            1
+          </span>
+          <div>
+            <p className="text-xs font-medium">Choose recipient</p>
+            <p className="text-[11px] text-muted-foreground">
+              Search by username or email, or paste an exact user ID.
+            </p>
+          </div>
+        </div>
         <NotificationUserPicker
           disabled={isPending}
           label={userLabel ?? "Find a user…"}
@@ -194,6 +194,11 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
             setUserLabel(u.username ?? u.email ?? u.id);
           }}
         />
+        <div className="flex items-center gap-2 text-[10px] uppercase tracking-wide text-muted-foreground">
+          <span className="h-px flex-1 bg-border" />
+          or paste ID
+          <span className="h-px flex-1 bg-border" />
+        </div>
         <Input
           value={userId}
           onChange={(e) => {
@@ -223,57 +228,64 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
       </Tabs>
 
       {mode === "pack" ? (
-        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+        <div className="space-y-3 rounded-lg border bg-muted/20 p-3">
           <div className="space-y-1.5">
             <div className="flex items-center justify-between gap-2">
-              <Label className="text-xs text-muted-foreground">Packs</Label>
+              <div className="flex items-center gap-2">
+                <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+                  2
+                </span>
+                <div>
+                  <Label className="text-xs">Build pack release</Label>
+                  <p className="text-[11px] text-muted-foreground">
+                    Select one to three packs in the same dropdown.
+                  </p>
+                </div>
+              </div>
               <span className="text-[11px] tabular-nums text-muted-foreground">
                 {packs.length} / {MAX_NOTIFICATION_PACKS}
               </span>
             </div>
             <NotificationPackPicker
-              value={null}
-              onSelect={addPack}
+              selectedValues={packs}
+              onSelectionChange={applyPacks}
+              maxSelected={MAX_NOTIFICATION_PACKS}
               scope="direct"
-              excludedIds={packs.map((pack) => pack.id)}
-              placeholder={
-                packs.length > 0 ? "Add another pack…" : "Select pack…"
-              }
-              disabled={isPending || packs.length >= MAX_NOTIFICATION_PACKS}
+              placeholder="Select up to three packs…"
+              disabled={isPending}
             />
           </div>
           {packs.length > 0 ? (
             <div className="space-y-2">
-              <div className="space-y-1">
+              <div className="flex flex-wrap gap-2">
                 {packs.map((pack) => (
                   <div
                     key={pack.id}
-                    className="flex items-center gap-2 rounded-md border bg-background/70 px-2 py-1.5"
+                    className="relative min-w-40 flex-1 overflow-hidden rounded-lg border bg-background/80 p-2.5"
                   >
                     {pack.imageUrl ? (
                       // eslint-disable-next-line @next/next/no-img-element
                       <img
                         src={pack.imageUrl}
                         alt=""
-                        className="size-8 shrink-0 rounded object-contain"
+                        className="mb-2 h-16 w-full rounded bg-muted/30 object-contain"
                       />
                     ) : (
-                      <div className="flex size-8 shrink-0 items-center justify-center rounded bg-muted text-[9px] text-muted-foreground">
+                      <div className="mb-2 flex h-16 w-full items-center justify-center rounded bg-muted text-[9px] text-muted-foreground">
                         N/A
                       </div>
                     )}
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-xs font-medium">
-                        {pack.name}
-                      </p>
-                      <p className="text-[11px] text-muted-foreground">
-                        {formatCurrency(pack.priceUsd)} per open
-                      </p>
-                    </div>
+                    <p className="truncate pr-6 text-xs font-medium">
+                      {pack.name}
+                    </p>
+                    <p className="text-[11px] text-muted-foreground">
+                      {formatCurrency(pack.priceUsd)} per open
+                    </p>
                     <Button
                       type="button"
                       variant="ghost"
                       size="icon-sm"
+                      className="absolute right-1 top-1 bg-background/80"
                       aria-label={`Remove ${pack.name}`}
                       disabled={isPending}
                       onClick={() =>
@@ -318,6 +330,17 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         </div>
       ) : (
         <div className="space-y-3 rounded-lg border p-3">
+          <div className="flex items-center gap-2">
+            <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+              2
+            </span>
+            <div>
+              <p className="text-xs font-medium">Build custom notification</p>
+              <p className="text-[11px] text-muted-foreground">
+                Choose a supported type and supply its customer payload.
+              </p>
+            </div>
+          </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1">
               <Label className="text-xs text-muted-foreground">Category</Label>
@@ -396,10 +419,24 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         </div>
       )}
 
-      <NotificationPreview
-        type={type}
-        payload={payloadCheck.ok ? payloadCheck.payload : undefined}
-      />
+      <div className="space-y-2 rounded-lg border bg-card p-3">
+        <div className="flex items-center gap-2">
+          <span className="flex size-5 items-center justify-center rounded-full bg-primary/10 text-[11px] font-semibold text-primary">
+            3
+          </span>
+          <div>
+            <p className="text-xs font-medium">Review notification</p>
+            <p className="text-[11px] text-muted-foreground">
+              This preview mirrors the customer notification payload.
+            </p>
+          </div>
+        </div>
+        <NotificationPreview
+          type={type}
+          payload={payloadCheck.ok ? payloadCheck.payload : undefined}
+          showHeading={false}
+        />
+      </div>
 
       {mode === "custom" ? (
         <div className="space-y-1">
