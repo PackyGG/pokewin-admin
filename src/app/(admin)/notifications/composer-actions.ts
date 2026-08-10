@@ -1,16 +1,6 @@
 "use server";
 
-import {
-  and,
-  asc,
-  count,
-  desc,
-  eq,
-  gt,
-  ilike,
-  isNull,
-  or,
-} from "drizzle-orm";
+import { and, count, desc, eq, gt, ilike, isNull, or } from "drizzle-orm";
 
 import { getProdReadDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import {
@@ -104,7 +94,7 @@ async function queryActivePacks(
     })
     .from(packs)
     .where(and(eq(packs.active, true), search))
-    .orderBy(asc(packs.name))
+    .orderBy(desc(packs.created_at), desc(packs.id))
     .limit(20);
 
   return packRows.map((p) => ({
@@ -217,9 +207,7 @@ export async function searchAnnouncementPromoCodes(
         redeemedCount: c.redeemed_count,
         requiresDiscord: c.requires_discord,
         minimumLevel: c.minimum_level,
-        expiresAt: c.expires_at
-          ? new Date(c.expires_at).toISOString()
-          : null,
+        expiresAt: c.expires_at ? new Date(c.expires_at).toISOString() : null,
       } satisfies AnnouncementPromoOption;
     })
     .filter((c): c is AnnouncementPromoOption => c !== null)

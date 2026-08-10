@@ -69,6 +69,10 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
     /searchDirectNotificationPacks[\s\S]*queryActivePacks\(query, "production"\)/,
   );
   assert.match(actions, /getProdReadDrizzleDb/);
+  assert.match(
+    actions,
+    /orderBy\(desc\(packs\.created_at\), desc\(packs\.id\)\)/,
+  );
   assert.match(form, /type=\"pack_release\"|setType\("pack_release"\)/);
   assert.match(
     form,
@@ -81,4 +85,6 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(form, /onSelectionChange=\{applyPacks\}/);
   assert.match(picker, /selected\.length >= maxSelected/);
   assert.match(picker, /Select up to \{maxSelected\} packs/);
+  assert.match(picker, /Search packs by name or slug/);
+  assert.match(picker, /Newest packs first/);
 });

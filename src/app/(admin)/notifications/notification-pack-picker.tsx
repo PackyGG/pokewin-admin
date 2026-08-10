@@ -149,10 +149,13 @@ export function NotificationPackPicker({
       <PopoverContent className="w-80 p-0" align="start">
         <Command shouldFilter={false}>
           <CommandInput
-            placeholder="Search active packs…"
+            placeholder="Search packs by name or slug…"
             value={query}
             onValueChange={setQuery}
           />
+          <div className="px-3 pb-1 pt-1.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+            Newest packs first
+          </div>
           <CommandList>
             {isPending && visibleItems.length === 0 && (
               <div className="space-y-1 p-1" aria-hidden>
