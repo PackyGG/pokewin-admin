@@ -28,7 +28,16 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { ANTIFRAUD_BAN_REASON_PRESETS } from "@/lib/ban-reasons";
 import { cn } from "@/lib/utils";
 import {
   postponeReview,
@@ -342,8 +351,12 @@ function QuickActionButton({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [credential, setCredential] = useState("");
+  const [reasonOption, setReasonOption] = useState("");
+  const [customReason, setCustomReason] = useState("");
   const idempotencyKey = useRef<string | null>(null);
   const sensitive = action === "ban";
+  const effectiveReason =
+    reasonOption === "custom" ? customReason.trim() : reasonOption;
 
   function handleConfirm() {
     startTransition(async () => {
@@ -355,8 +368,11 @@ function QuickActionButton({
           expectedStatus: status,
           idempotencyKey: idempotencyKey.current,
           credential: sensitive ? credential : undefined,
+          banReason: sensitive ? effectiveReason : undefined,
         });
         setCredential("");
+        setReasonOption("");
+        setCustomReason("");
         onActionCompleted?.();
         if (result.withdrawalRelease === "failed") {
           toast.warning(
@@ -410,18 +426,58 @@ function QuickActionButton({
           </AlertDialogDescription>
         </AlertDialogHeader>
         {sensitive && (
-          <StepUpField
-            value={credential}
-            onChange={setCredential}
-            disabled={pending}
-            label="Fresh TOTP or passkey"
-          />
+          <div className="space-y-4">
+            <div className="space-y-1.5">
+              <Label>Ban reason</Label>
+              <Select
+                value={reasonOption || undefined}
+                onValueChange={(value) => setReasonOption(value ?? "")}
+                disabled={pending}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select why this account is being banned" />
+                </SelectTrigger>
+                <SelectContent>
+                  {ANTIFRAUD_BAN_REASON_PRESETS.map((reason) => (
+                    <SelectItem key={reason} value={reason}>
+                      {reason}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="custom">Custom reason</SelectItem>
+                </SelectContent>
+              </Select>
+              {reasonOption === "custom" && (
+                <Input
+                  value={customReason}
+                  onChange={(event) => setCustomReason(event.target.value)}
+                  minLength={4}
+                  maxLength={500}
+                  placeholder="Write the exact reason"
+                  autoFocus
+                  disabled={pending}
+                />
+              )}
+              <p className="text-xs text-muted-foreground">
+                A shared IP or device alone is not proof. Legitimate established
+                accounts with normal deposits, play, and withdrawals can be approved.
+              </p>
+            </div>
+            <StepUpField
+              value={credential}
+              onChange={setCredential}
+              disabled={pending}
+              label="Fresh TOTP or passkey"
+            />
+          </div>
         )}
         <AlertDialogFooter>
           <AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
           <AlertDialogAction
             onClick={handleConfirm}
-            disabled={pending || (sensitive && !credential)}
+            disabled={
+              pending ||
+              (sensitive && (!credential || effectiveReason.length < 4))
+            }
           >
             {confirm}
           </AlertDialogAction>

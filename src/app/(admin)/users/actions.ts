@@ -580,7 +580,7 @@ export async function banFingerprintAltAccounts(
   for (const userId of requestedIds) {
     const result = await banUser(
       userId,
-      `Multi — shared device fingerprint with ${parsed.data.sourceUserId}`,
+      `Multi — shared IP or device identity with ${parsed.data.sourceUserId}`,
     );
     if (result.success) bannedCount += 1;
     else failed.push({ userId, error: result.error });

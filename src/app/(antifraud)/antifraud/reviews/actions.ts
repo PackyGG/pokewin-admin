@@ -17,6 +17,7 @@ import {
   staff_profiles,
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
+import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { getPrimaryDrizzleDb } from "@/lib/db";
@@ -40,6 +41,11 @@ import {
 import { REVIEW_REMINDER_DELAYS_MS } from "@/lib/discord-notifications/antifraud-policy";
 import { submitAntifraudCaseDecision } from "@/lib/antifraud/monitor-api";
 import { requireAccountKyc } from "../kyc/actions";
+import {
+  getFingerprintAltAccounts,
+  type FingerprintAltAccount,
+} from "@/lib/queries/user-fingerprint-alts";
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 
 /**
  * Account-review mutations.
@@ -750,6 +756,15 @@ const quickAccountActionSchema = z.object({
   expectedStatus: z.enum(REVIEW_STATUSES),
   idempotencyKey: z.string().uuid("Invalid idempotency key"),
   credential: z.string().trim().max(4_096).optional(),
+  banReason: z.string().trim().max(500).optional(),
+}).superRefine((value, ctx) => {
+  if (value.action === "ban" && (!value.banReason || value.banReason.length < 4)) {
+    ctx.addIssue({
+      code: "custom",
+      path: ["banReason"],
+      message: "Select or write a ban reason.",
+    });
+  }
 });
 
 export type QuickReviewAccountAction =
@@ -759,6 +774,142 @@ export type QuickReviewAccountActionResult = {
   /** Only ever meaningful for `fine`; every other action reports `not_applicable`. */
   withdrawalRelease: WithdrawalReleaseStatus;
 };
+
+const linkedAccountsSchema = z.object({ reviewId: uuid });
+
+/** Lazy identity-cluster lookup for the review dialog. */
+export async function fetchReviewLinkedAccounts(input: unknown): Promise<{
+  accounts: FingerprintAltAccount[];
+  canMassBan: boolean;
+}> {
+  const session = await requireAntifraudAccess();
+  const parsed = linkedAccountsSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  const [review] = await adminDrizzle.select({
+    targetUserId: antifraud_reviews.target_user_id,
+  }).from(antifraud_reviews).where(
+    eq(antifraud_reviews.id, parsed.data.reviewId),
+  ).limit(1);
+  if (!review) throw new Error("That case no longer exists");
+
+  const roles = new Set([session.role, ...(session.roles ?? [])]);
+  return {
+    accounts: await getFingerprintAltAccounts(review.targetUserId),
+    canMassBan: Boolean(session.isOwner) || roles.has("admin"),
+  };
+}
+
+const massBanLinkedAccountsSchema = z.object({
+  reviewId: uuid,
+  userIds: z.array(z.string().trim().min(1).max(100)).min(1).max(250),
+  reason: z.string().trim().min(4).max(500),
+  credential: z.string().trim().min(1).max(4_096),
+  idempotencyKey: z.string().uuid(),
+});
+
+export type MassBanLinkedAccountsResult = {
+  bannedCount: number;
+  bannedUserIds: string[];
+};
+
+/**
+ * Ban a staff-reviewed subset of the live identity cluster. This deliberately
+ * does NOT block the shared IP/fingerprint: an operator may leave legitimate
+ * household or long-standing accounts unselected, and blocking their shared
+ * identifier would punish them indirectly.
+ */
+export async function massBanReviewLinkedAccounts(
+  input: unknown,
+): Promise<MassBanLinkedAccountsResult> {
+  const session = await requireAntifraudManager();
+  await requireCapability(session, "__can_ban_users", "mass ban linked users");
+  const parsed = massBanLinkedAccountsSchema.safeParse(input);
+  if (!parsed.success) throw new Error(parsed.error.issues[0].message);
+  await require2FA(session.userId, parsed.data.credential);
+
+  const replay = await adminDrizzle.execute<{
+    user_ids: string[] | null;
+    banned: number | null;
+  }>(sql`
+    SELECT metadata->'user_ids' AS user_ids,
+           NULLIF(metadata->>'banned', '')::int AS banned
+      FROM admin_audit_events
+     WHERE event_type = 'accounts_bulk_banned'
+       AND metadata->>'source' = 'antifraud_review_linked_accounts'
+       AND metadata->>'idempotencyKey' = ${parsed.data.idempotencyKey}
+     LIMIT 1
+  `);
+  const replayed = replay.rows[0];
+  if (replayed) {
+    return {
+      bannedCount: replayed.banned ?? replayed.user_ids?.length ?? 0,
+      bannedUserIds: replayed.user_ids ?? [],
+    };
+  }
+
+  const [review] = await adminDrizzle.select({
+    targetUserId: antifraud_reviews.target_user_id,
+  }).from(antifraud_reviews).where(
+    eq(antifraud_reviews.id, parsed.data.reviewId),
+  ).limit(1);
+  if (!review) throw new Error("That case no longer exists");
+
+  const requestedIds = [...new Set(parsed.data.userIds)];
+  const liveAccounts = await getFingerprintAltAccounts(review.targetUserId);
+  const liveById = new Map(liveAccounts.map((account) => [account.id, account]));
+  if (requestedIds.some((id) => !liveById.get(id)?.canBan)) {
+    throw new Error(
+      "The linked-account set or protection state changed. Reload and review it again.",
+    );
+  }
+
+  const db = await getPrimaryDrizzleDb();
+  const issuerMainUserId = await resolveAdminMainUserId(session.userId);
+  const result = await db.transaction(async (tx) => {
+    const updated = await tx.execute<{ id: string }>(sql`
+      UPDATE "user"
+         SET is_banned = TRUE,
+             banned_reason = ${parsed.data.reason},
+             banned_at = NOW(),
+             banned_by = ${issuerMainUserId},
+             updated_at = NOW()
+       WHERE id = ANY(${pgArrayParam(requestedIds)}::text[])
+         AND is_banned = FALSE
+       RETURNING id
+    `);
+    if (updated.rows.length !== requestedIds.length) {
+      throw new Error("One or more accounts changed while banning. Nothing was changed.");
+    }
+    await tx.execute(sql`
+      DELETE FROM session
+       WHERE "userId" = ANY(${pgArrayParam(requestedIds)}::text[])
+    `);
+    return updated.rows.map((row) => row.id);
+  });
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "accounts_bulk_banned",
+    metadata: {
+      source: "antifraud_review_linked_accounts",
+      reviewId: parsed.data.reviewId,
+      sourceUserId: review.targetUserId,
+      reason: parsed.data.reason,
+      requested: requestedIds.length,
+      banned: result.length,
+      user_ids: result,
+      issuer_main_user_id: issuerMainUserId,
+      idempotencyKey: parsed.data.idempotencyKey,
+      shared_identifiers_blocked: false,
+    },
+  });
+  revalidateTag("users-list");
+  revalidateTag("users-list-stats");
+  for (const userId of result) revalidateTag(userDetailTag(userId));
+  revalidatePath("/antifraud/reviews");
+  revalidatePath(`/antifraud/reviews/${parsed.data.reviewId}`);
+  return { bannedCount: result.length, bannedUserIds: result };
+}
 
 /**
  * Account Review's deliberately small containment surface. The analyst clicks
@@ -776,7 +927,7 @@ export async function runQuickReviewAccountAction(
   const session = await requireAntifraudAccess();
   const parsed = quickAccountActionSchema.safeParse(input);
   if (!parsed.success) throw new Error(parsed.error.issues[0].message);
-  const { reviewId, action, expectedStatus, idempotencyKey } = parsed.data;
+  const { reviewId, action, expectedStatus, idempotencyKey, banReason } = parsed.data;
 
   const [review] = await adminDrizzle
     .select({
@@ -799,7 +950,7 @@ export async function runQuickReviewAccountAction(
         resolution:
           intendedStatus === "cleared"
             ? "Account marked fine from Account Review."
-            : "Account banned from Account Review.",
+            : `Account banned from Account Review: ${banReason}.`,
         idempotencyKey,
       });
       if (!replay.ok) throw new Error(replay.message);
@@ -827,7 +978,7 @@ export async function runQuickReviewAccountAction(
     await requireCapability(session, "__can_ban_users", "ban users");
     const db = await getPrimaryDrizzleDb();
     const issuerMainUserId = await resolveAdminMainUserId(session.userId);
-    const reason = `Antifraud review ${reviewId}: ${review.reason}`.slice(0, 500);
+    const reason = `Antifraud review ${reviewId}: ${banReason}`.slice(0, 500);
     let identifiers;
 
     try {
@@ -904,6 +1055,7 @@ export async function runQuickReviewAccountAction(
         // also written from /users (see lib/antifraud/staff-audit.ts).
         source: "antifraud_reviews",
         reason,
+        case_reason: review.reason,
         issuer_main_user_id: issuerMainUserId,
         reviewId,
         idempotencyKey,
@@ -920,7 +1072,7 @@ export async function runQuickReviewAccountAction(
       reviewId,
       status: "flagged",
       expectedStatus,
-      resolution: "Account banned from Account Review.",
+      resolution: `Account banned from Account Review: ${banReason}.`,
       idempotencyKey,
     });
     if (!result.ok) throw new Error(result.message);

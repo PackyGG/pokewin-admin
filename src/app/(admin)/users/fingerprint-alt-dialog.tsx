@@ -3,7 +3,7 @@
 import { useState, useTransition, type ReactNode } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Ban, Fingerprint, Loader2 } from "lucide-react";
+import { Ban, Fingerprint, Loader2, Network } from "lucide-react";
 import { toast } from "sonner";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -18,7 +18,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { formatCurrency } from "@/lib/utils/format";
+import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import type { FingerprintAltAccount } from "@/lib/queries/user-fingerprint-alts";
 import {
   banFingerprintAltAccounts,
@@ -35,7 +35,7 @@ export function FingerprintAltDialog({
   sourceUserId,
   children,
   className,
-  title = "View fingerprint-linked accounts",
+  title = "View identity-linked accounts",
 }: {
   sourceUserId: string;
   children: ReactNode;
@@ -142,11 +142,12 @@ export function FingerprintAltDialog({
       <DialogContent className="sm:max-w-3xl">
         <DialogTitle className="flex items-center gap-2">
           <Fingerprint className="size-4 text-rose-500" />
-          Fingerprint-linked accounts
+          Identity-linked accounts
         </DialogTitle>
         <DialogDescription>
-          Accounts below share at least one verified Fingerprint visitor ID
-          with this user. Deposit totals use the canonical net-credit figure.
+          Accounts below share an exact signup IP or a high-confidence
+          Fingerprint visitor ID. Shared identity is evidence, not proof of
+          abuse—review account age and real activity before banning.
         </DialogDescription>
 
         {loading || accounts === null ? (
@@ -156,7 +157,7 @@ export function FingerprintAltDialog({
           </div>
         ) : accounts.length === 0 ? (
           <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-            No other account currently shares this user&apos;s captured device IDs.
+            No other account currently shares this user&apos;s signup IP or captured device IDs.
           </div>
         ) : (
           <>
@@ -197,6 +198,14 @@ export function FingerprintAltDialog({
                           {account.sharedDeviceCount} shared device
                           {account.sharedDeviceCount === 1 ? "" : "s"}
                         </Badge>
+                        {account.sharedIp && (
+                          <Badge variant="outline" className="text-[10px]">
+                            <Network className="size-3" /> Shared signup IP
+                          </Badge>
+                        )}
+                        <Badge variant="outline" className="text-[10px]">
+                          Joined {formatRelative(account.createdAt)}
+                        </Badge>
                         {account.protectedReason && (
                           <Badge
                             variant="outline"
@@ -215,9 +224,12 @@ export function FingerprintAltDialog({
                     </div>
                   </div>
                   <div className="tabular-nums sm:min-w-24 sm:text-right">
-                    <div className="text-xs text-muted-foreground">Wagered</div>
+                    <div className="text-xs text-muted-foreground">Withdrawn</div>
                     <div className="font-medium">
-                      {formatCurrency(account.totalWagered)}
+                      {formatCurrency(account.totalWithdrawn)}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground">
+                      {formatCurrency(account.totalWagered)} wagered
                     </div>
                   </div>
                 </div>

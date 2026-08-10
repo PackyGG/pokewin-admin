@@ -90,7 +90,7 @@ const actionRows = [
     key: "ban",
     cells: [
       "Ban",
-      "Blocks every known IP and fingerprint first, then bans the account and kills its sessions. Closes the case as flagged. Needs the ban permission and a fresh 2FA step-up.",
+      "Requires a preset or custom written reason. Blocks every known IP and fingerprint first, then bans the account and kills its sessions. Closes the case as flagged. Needs the ban permission and a fresh 2FA step-up.",
     ],
   },
   {
@@ -188,6 +188,22 @@ export default async function AntifraudAccountReviewGuidePage() {
         description="They are hidden entirely once the case is cleared or flagged, so a closed case cannot be acted on from the dialog."
       >
         <GuideTable columns={["Button", "What it does"]} rows={actionRows} />
+      </GuideSection>
+
+      <GuideSection
+        icon={Fingerprint}
+        title="Linked accounts are evidence, not a verdict"
+        description="Linked accounts opens a live list of exact signup-IP and high-confidence Fingerprint matches. It also shows account age, deposits, withdrawals and wagering so normal household or long-standing activity is visible before anybody acts."
+      >
+        <GuideBullets
+          accent="amber"
+          items={[
+            "A shared IP or device does not automatically mean fraud. Legitimate linked accounts can be left alone and the reviewed case can be approved.",
+            "Admins and owners can select individual linked accounts and mass-ban only that reviewed selection, with a reason and fresh 2FA.",
+            "The mass action does not block the shared IP or fingerprint, so unselected legitimate accounts are not indirectly affected.",
+            "Staff, creators, former creators, protected analytics accounts and already-banned accounts cannot be selected.",
+          ]}
+        />
       </GuideSection>
 
       <GuideSection

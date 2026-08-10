@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  ANTIFRAUD_BAN_REASON_PRESETS,
   BAN_REASON_PRESETS,
   FRAUD_BAN_REASON,
 } from "../../src/lib/ban-reasons";
@@ -13,11 +14,12 @@ test("Fraud is a canonical ban reason preset", () => {
 });
 
 test("manual ban surfaces offer Fraud without making it automatic", async () => {
-  const [singleBan, bulkBan, reviewAction] = await Promise.all(
+  const [singleBan, bulkBan, reviewAction, reviewControls] = await Promise.all(
     [
       "../../src/app/(admin)/users/[id]/user-tabs-moderation.tsx",
       "../../src/app/(admin)/users/bulk-ban-button.tsx",
       "../../src/app/(antifraud)/antifraud/reviews/actions.ts",
+      "../../src/app/(antifraud)/antifraud/reviews/_components/quick-review-actions.tsx",
     ].map((path) => readFile(new URL(path, import.meta.url), "utf8")),
   );
 
@@ -28,8 +30,9 @@ test("manual ban surfaces offer Fraud without making it automatic", async () => 
   assert.match(bulkBan, /isCustomReason &&/);
   assert.match(bulkBan, /reason: effectiveReason/);
   assert.doesNotMatch(reviewAction, /FRAUD_BAN_REASON/);
-  assert.match(
-    reviewAction,
-    /const reason = `Antifraud review \$\{reviewId\}: \$\{review\.reason\}`/,
-  );
+  assert.ok(ANTIFRAUD_BAN_REASON_PRESETS.length >= 4);
+  assert.match(reviewControls, /ANTIFRAUD_BAN_REASON_PRESETS/);
+  assert.match(reviewControls, /Custom reason/);
+  assert.match(reviewAction, /banReason: z\.string\(\)\.trim\(\)\.max\(500\)/);
+  assert.match(reviewAction, /const reason = `Antifraud review \$\{reviewId\}: \$\{banReason\}`/);
 });

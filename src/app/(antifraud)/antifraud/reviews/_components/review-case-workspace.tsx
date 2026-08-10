@@ -23,6 +23,7 @@ import {
 import { ReviewStatusBadge } from "../../_components/badges";
 import { QuickReviewActions } from "./quick-review-actions";
 import { ReviewSignalBadge } from "./review-signal-badge";
+import { LinkedAccountsDialog } from "./linked-accounts-dialog";
 
 /** Complete evidence and controls for the queue's review dialog. */
 export async function ReviewCaseWorkspace({
@@ -91,6 +92,7 @@ export async function ReviewCaseWorkspace({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+            <LinkedAccountsDialog reviewId={review.id} />
             <QuickReviewActions
               reviewId={review.id}
               targetUserId={review.targetUserId}
