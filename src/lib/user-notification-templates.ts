@@ -13,13 +13,12 @@
  *
  * Two facts from that code drive everything below:
  *
- *  1. `notificationText()` has cases for exactly three types. Its `default:`
+ *  1. `notificationText()` has an explicit allowlist of types. Its `default:`
  *     branch returns `{ title: "Notification", body: type.replace(/_/g," ") }`
  *     — so `promo_code_granted` renders as the literal words "promo code
  *     granted" with no code in sight.
- *  2. The popover builds personal rows WITHOUT an `href`. Only broadcast
- *     announcements read `payload.url`. So adding a link to a personal
- *     notification's payload does nothing today either.
+ *  2. The popover only turns validated `payload.url` / `payload.image_url`
+ *     into a linked image row. Other payload keys need an explicit template.
  *
  * This module exists so the composer can show the operator that truth up
  * front instead of letting them discover it by sending to a real account.
@@ -34,6 +33,8 @@ export type NotificationPreview = {
   body: string;
   /** Rendered by the site as a monospace copy-to-clipboard chip. */
   code?: string;
+  image?: string;
+  href?: string;
   /** False when the site falls back to the generic template. */
   known: boolean;
   /** Payload keys the site's template actually reads for this type. */
@@ -46,6 +47,7 @@ export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   deposit_completed: ["amount_usd"],
   reward_credited: ["amount_usd"],
   promo_code_granted: ["code", "value", "amount_usd"],
+  pack_release: ["pack_name", "price_usd", "url", "image_url"],
 };
 
 /** Mirrors the frontend's `formatUsd` — tolerant of number-or-string because
@@ -106,6 +108,24 @@ export function previewNotificationText(
         code,
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.promo_code_granted,
+      };
+    }
+    case "pack_release": {
+      const packName =
+        typeof payload?.pack_name === "string" && payload.pack_name.trim()
+          ? payload.pack_name.trim()
+          : "A new pack";
+      const price = formatUsd(payload?.price_usd);
+      return {
+        title: `New pack: ${packName}`,
+        body: price ? `${price} per open — tap to view it.` : "Tap to view it.",
+        image:
+          typeof payload?.image_url === "string"
+            ? payload.image_url
+            : undefined,
+        href: typeof payload?.url === "string" ? payload.url : undefined,
+        known: true,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.pack_release,
       };
     }
     default:

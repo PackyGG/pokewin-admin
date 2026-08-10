@@ -2,7 +2,7 @@
 
 import { useMemo, useState, useTransition } from "react";
 import { toast } from "sonner";
-import { CircleAlert, Info, Send, UserX } from "lucide-react";
+import { Braces, CircleAlert, Info, Package, Send, UserX } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -14,6 +14,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   NOTIFICATION_DEDUPE_KEY_MAX,
   NOTIFICATION_PAYLOAD_MAX_BYTES,
@@ -26,7 +27,13 @@ import {
 import { sendDirectNotificationAction } from "./direct-actions";
 import { NotificationUserPicker } from "./notification-user-picker";
 import { NotificationPreview } from "./notification-preview";
+import { NotificationPackPicker } from "./notification-pack-picker";
+import type { AnnouncementPackOption } from "./composer-actions";
 import type { DbEnv } from "@/lib/db-env";
+import { packUrl } from "@/lib/utils/main-site";
+import { formatCurrency } from "@/lib/utils/format";
+
+type ComposerMode = "pack" | "custom";
 
 type Sent =
   | { kind: "ok"; message: string }
@@ -45,16 +52,21 @@ type Sent =
  *     generic failure — it gets its own callout.
  */
 export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
+  const [mode, setMode] = useState<ComposerMode>("pack");
   const [userId, setUserId] = useState("");
   const [userLabel, setUserLabel] = useState<string | null>(null);
   const [category, setCategory] = useState<UserNotificationCategory>("rewards");
   const [type, setType] = useState("");
   const [payloadText, setPayloadText] = useState("");
   const [dedupeKey, setDedupeKey] = useState("");
+  const [pack, setPack] = useState<AnnouncementPackOption | null>(null);
   const [sent, setSent] = useState<Sent | null>(null);
   const [isPending, startTransition] = useTransition();
 
-  const payloadCheck = useMemo(() => parsePayloadJson(payloadText), [payloadText]);
+  const payloadCheck = useMemo(
+    () => parsePayloadJson(payloadText),
+    [payloadText],
+  );
   const payloadBytes = useMemo(
     () =>
       payloadCheck.ok && payloadCheck.payload
@@ -64,13 +76,38 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
   );
 
   const typeError = validateNotificationType(type);
-  const dedupeError = dedupeKey.trim() ? validateDedupeKey(dedupeKey) : null;
+  const dedupeError =
+    mode === "custom" && dedupeKey.trim() ? validateDedupeKey(dedupeKey) : null;
+  const packDedupeKey =
+    mode === "pack" && pack && userId.trim()
+      ? `pack_release:${pack.id}:${userId.trim()}`
+      : "";
   const blocked =
     isPending ||
     !userId.trim() ||
+    (mode === "pack" && !pack) ||
     !payloadCheck.ok ||
     typeError !== null ||
     dedupeError !== null;
+
+  function applyPack(next: AnnouncementPackOption) {
+    setPack(next);
+    setCategory("system");
+    setType("pack_release");
+    setPayloadText(
+      JSON.stringify(
+        {
+          pack_name: next.name,
+          price_usd: next.priceUsd,
+          url: packUrl(next.slug),
+          ...(next.imageUrl ? { image_url: next.imageUrl } : {}),
+        },
+        null,
+        2,
+      ),
+    );
+    setSent(null);
+  }
 
   function handleSend() {
     if (!payloadCheck.ok) {
@@ -80,7 +117,9 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
     if (
       targetEnv === "prod" &&
       !window.confirm(
-        "Send this notification to the selected user in PRODUCTION?",
+        mode === "pack" && pack
+          ? `Send the ${pack.name} notification to the selected user in PRODUCTION?`
+          : "Send this notification to the selected user in PRODUCTION?",
       )
     ) {
       return;
@@ -92,7 +131,7 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         category,
         type: type.trim(),
         payload: payloadCheck.payload,
-        dedupeKey: dedupeKey.trim() || undefined,
+        dedupeKey: packDedupeKey || dedupeKey.trim() || undefined,
       });
       if (result.success) {
         setSent({ kind: "ok", message: result.message });
@@ -131,106 +170,166 @@ export function SingleNotificationForm({ targetEnv }: { targetEnv: DbEnv }) {
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Category</Label>
-          <Select
-            value={category}
-            onValueChange={(v) => setCategory(v as UserNotificationCategory)}
-          >
-            <SelectTrigger className="w-full" disabled={isPending}>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="rewards">rewards</SelectItem>
-              <SelectItem value="system">system</SelectItem>
-            </SelectContent>
-          </Select>
-          <p className="text-[11px] text-muted-foreground">
-            Only these two. <code>transaction</code> is producer-owned,{" "}
-            <code>news</code> is announcements-only.
-          </p>
-        </div>
+      <Tabs
+        value={mode}
+        onValueChange={(value) => setMode(value as ComposerMode)}
+      >
+        <TabsList variant="line" className="self-start">
+          <TabsTrigger value="pack">
+            <Package className="size-3.5" />
+            Pack
+          </TabsTrigger>
+          <TabsTrigger value="custom">
+            <Braces className="size-3.5" />
+            Custom payload
+          </TabsTrigger>
+        </TabsList>
+      </Tabs>
 
-        <div className="space-y-1">
-          <Label className="text-xs text-muted-foreground">Type</Label>
-          <Input
-            value={type}
-            onChange={(e) => setType(e.target.value)}
-            placeholder="notification_type"
-            maxLength={NOTIFICATION_TYPE_MAX}
-            className="font-mono text-xs"
-            disabled={isPending}
-          />
-          <p
-            className={`text-[11px] ${typeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-          >
-            {typeError ??
-              "An i18n key, not display copy — the client maps it to a localized template."}
-          </p>
+      {mode === "pack" ? (
+        <div className="space-y-2 rounded-lg border bg-muted/20 p-3">
+          <div className="space-y-1.5">
+            <Label className="text-xs text-muted-foreground">Pack</Label>
+            <NotificationPackPicker
+              value={pack}
+              onSelect={applyPack}
+              scope="direct"
+              disabled={isPending}
+            />
+          </div>
+          {pack ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+              <span className="rounded border px-1.5 py-0.5">
+                {formatCurrency(pack.priceUsd)} per open
+              </span>
+              <span className="rounded border px-1.5 py-0.5">
+                Pack page linked
+              </span>
+              <span className="rounded border px-1.5 py-0.5">
+                {pack.imageUrl ? "Image included" : "No image"}
+              </span>
+            </div>
+          ) : (
+            <p className="text-[11px] text-muted-foreground">
+              Choose an active pack. Its name, price, page and image are filled
+              automatically with the site-supported <code>pack_release</code>{" "}
+              template.
+            </p>
+          )}
         </div>
-      </div>
+      ) : (
+        <div className="space-y-3 rounded-lg border p-3">
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Category</Label>
+              <Select
+                value={category}
+                onValueChange={(v) =>
+                  setCategory(v as UserNotificationCategory)
+                }
+              >
+                <SelectTrigger className="w-full" disabled={isPending}>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="rewards">rewards</SelectItem>
+                  <SelectItem value="system">system</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-[11px] text-muted-foreground">
+                Transaction events are producer-owned; news is broadcast-only.
+              </p>
+            </div>
 
-      <div className="space-y-1">
-        <div className="flex items-center justify-between gap-2">
-          <Label className="text-xs text-muted-foreground">
-            Payload (optional)
-          </Label>
-          <span
-            className={`text-[11px] tabular-nums ${
-              payloadBytes > NOTIFICATION_PAYLOAD_MAX_BYTES
-                ? "text-rose-600 dark:text-rose-400"
-                : "text-muted-foreground"
-            }`}
-          >
-            {payloadBytes} / {NOTIFICATION_PAYLOAD_MAX_BYTES} bytes
-          </span>
+            <div className="space-y-1">
+              <Label className="text-xs text-muted-foreground">Type</Label>
+              <Input
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                placeholder="notification_type"
+                maxLength={NOTIFICATION_TYPE_MAX}
+                className="font-mono text-xs"
+                disabled={isPending}
+              />
+              <p
+                className={`text-[11px] ${typeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
+              >
+                {typeError ?? "The site maps this i18n key to visible copy."}
+              </p>
+            </div>
+          </div>
+
+          <div className="space-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <Label className="text-xs text-muted-foreground">
+                Payload (optional)
+              </Label>
+              <span
+                className={`text-[11px] tabular-nums ${
+                  payloadBytes > NOTIFICATION_PAYLOAD_MAX_BYTES
+                    ? "text-rose-600 dark:text-rose-400"
+                    : "text-muted-foreground"
+                }`}
+              >
+                {payloadBytes} / {NOTIFICATION_PAYLOAD_MAX_BYTES} bytes
+              </span>
+            </div>
+            <Textarea
+              value={payloadText}
+              onChange={(e) => setPayloadText(e.target.value)}
+              rows={6}
+              spellCheck={false}
+              className="font-mono text-xs"
+              placeholder='{ "key": "value" }'
+              disabled={isPending}
+            />
+            {payloadCheck.ok ? (
+              <p className="text-[11px] text-muted-foreground">
+                Unknown keys are delivered untouched. URLs must be http(s), and
+                images must use the Packy ImageKit endpoint.
+              </p>
+            ) : (
+              <p className="text-[11px] text-rose-600 dark:text-rose-400">
+                {payloadCheck.error}
+              </p>
+            )}
+          </div>
         </div>
-        <Textarea
-          value={payloadText}
-          onChange={(e) => setPayloadText(e.target.value)}
-          rows={6}
-          spellCheck={false}
-          className="font-mono text-xs"
-          placeholder='{ "key": "value" }'
-          disabled={isPending}
-        />
-        {payloadCheck.ok ? (
-          <p className="text-[11px] text-muted-foreground">
-            Any keys pass through untouched. <code>url</code> must be http(s);{" "}
-            <code>image_url</code> must be an ImageKit URL.
-          </p>
-        ) : (
-          <p className="text-[11px] text-rose-600 dark:text-rose-400">
-            {payloadCheck.error}
-          </p>
-        )}
-      </div>
+      )}
 
       <NotificationPreview
         type={type}
         payload={payloadCheck.ok ? payloadCheck.payload : undefined}
       />
 
-      <div className="space-y-1">
-        <Label className="text-xs text-muted-foreground">
-          Dedupe key (optional)
-        </Label>
-        <Input
-          value={dedupeKey}
-          onChange={(e) => setDedupeKey(e.target.value)}
-          placeholder="summer_promo_2026:kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g"
-          maxLength={NOTIFICATION_DEDUPE_KEY_MAX}
-          className="font-mono text-xs"
-          disabled={isPending}
-        />
-        <p
-          className={`text-[11px] ${dedupeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
-        >
-          {dedupeError ??
-            "Convention is `campaign:user_id`. Set it and a repeat send can't double-deliver."}
-        </p>
-      </div>
+      {mode === "custom" ? (
+        <div className="space-y-1">
+          <Label className="text-xs text-muted-foreground">
+            Dedupe key (optional)
+          </Label>
+          <Input
+            value={dedupeKey}
+            onChange={(e) => setDedupeKey(e.target.value)}
+            placeholder="summer_promo_2026:kX9mQ2pLr7vNa4bT8cZfE1yH6wJ3sD0g"
+            maxLength={NOTIFICATION_DEDUPE_KEY_MAX}
+            className="font-mono text-xs"
+            disabled={isPending}
+          />
+          <p
+            className={`text-[11px] ${dedupeError ? "text-rose-600 dark:text-rose-400" : "text-muted-foreground"}`}
+          >
+            {dedupeError ??
+              "Convention is `campaign:user_id`. Set it and a repeat send can't double-deliver."}
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground">
+          Retry-safe key:{" "}
+          <code className="break-all">
+            {packDedupeKey || "select a recipient and pack"}
+          </code>
+        </div>
+      )}
 
       <div className="flex items-center gap-2">
         <Button onClick={handleSend} disabled={blocked} className="gap-1.5">

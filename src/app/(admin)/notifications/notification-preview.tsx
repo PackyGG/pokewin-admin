@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, Copy, TriangleAlert } from "lucide-react";
+import { Bell, Copy, ExternalLink, TriangleAlert } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import {
   previewNotificationText,
@@ -34,11 +34,13 @@ export function NotificationPreview({
         What the user sees
       </p>
 
-      <div className="flex gap-3 rounded-md border bg-muted/30 p-3">
+      <div className="relative flex gap-3 overflow-hidden rounded-md border bg-muted/30 p-3">
         <div className="mt-0.5 shrink-0 rounded-lg bg-primary/10 p-1.5">
           <Bell className="size-3.5 text-primary" />
         </div>
-        <div className="min-w-0 flex-1 space-y-0.5">
+        <div
+          className={`relative z-10 min-w-0 flex-1 space-y-0.5 ${preview.image ? "pr-20" : ""}`}
+        >
           <p className="truncate text-sm font-medium">{preview.title}</p>
           <p className="line-clamp-2 text-xs text-muted-foreground">
             {preview.body}
@@ -51,17 +53,35 @@ export function NotificationPreview({
               <Copy className="size-3 shrink-0 text-muted-foreground" />
             </span>
           )}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            <Badge
+              variant="outline"
+              className={
+                preview.known
+                  ? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+                  : "bg-amber-500/15 text-amber-600 dark:text-amber-400"
+              }
+            >
+              {preview.known ? "Template exists" : "Fallback"}
+            </Badge>
+            {preview.href && (
+              <span className="inline-flex items-center gap-1 text-[11px] text-muted-foreground">
+                <ExternalLink className="size-3" />
+                Opens pack page
+              </span>
+            )}
+          </div>
         </div>
-        <Badge
-          variant="outline"
-          className={
-            preview.known
-              ? "shrink-0 self-start bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
-              : "shrink-0 self-start bg-amber-500/15 text-amber-600 dark:text-amber-400"
-          }
-        >
-          {preview.known ? "Template exists" : "Fallback"}
-        </Badge>
+        {preview.image && (
+          <span className="pointer-events-none absolute inset-y-0 right-0 w-24 overflow-hidden [mask-image:linear-gradient(to_right,transparent,#000_45%)]">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={preview.image}
+              alt=""
+              className="absolute left-1/2 top-1/2 h-[130%] w-[130%] -translate-x-1/2 -translate-y-[35%] -rotate-[15deg] object-cover"
+            />
+          </span>
+        )}
       </div>
 
       {!preview.known && (
@@ -74,18 +94,13 @@ export function NotificationPreview({
             </p>
             <p className="text-amber-700/80 dark:text-amber-300/80">
               The row is written and the API returns your payload, but the
-              popover falls back to the generic copy above and renders none of
-              it. Personal notifications also ignore{" "}
-              <code className="font-mono">payload.url</code> — only broadcast
-              announcements turn that into a link. Making a promo code visible
-              and redeemable needs a frontend change: a case for this type in{" "}
-              <code className="font-mono">notification-text.ts</code> that
-              reads the payload, plus a link through to the wallet&apos;s
-              deposit tab where codes are entered.
+              popover falls back to the generic copy above. Add a case for this
+              type in <code className="font-mono">notification-text.ts</code>{" "}
+              before using it for customer-facing content.
             </p>
             <p className="text-amber-700/80 dark:text-amber-300/80">
-              Sending is still useful for exercising the endpoint — the row,
-              the unread count and the websocket event all fire.
+              Sending is still useful for exercising the endpoint — the row, the
+              unread count and the websocket event all fire.
             </p>
           </div>
         </div>
@@ -96,9 +111,9 @@ export function NotificationPreview({
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
           <p className="text-[11px] text-amber-700 dark:text-amber-300">
             This template renders a copyable code, but the payload has no{" "}
-            <code className="font-mono">code</code> key — recipients would get
-            a notification telling them to redeem something they can&apos;t
-            see. Add <code className="font-mono">code</code> to the payload.
+            <code className="font-mono">code</code> key — recipients would get a
+            notification telling them to redeem something they can&apos;t see.
+            Add <code className="font-mono">code</code> to the payload.
           </p>
         </div>
       )}
