@@ -33,6 +33,7 @@ import { FilterButton, FilterGroup } from "../_components/list-page";
 import { ListSearchForm } from "../_components/list-search-form";
 import { RequireKycDialog } from "./_components/require-kyc-dialog";
 import { ReviewKycControls } from "./_components/review-kyc-controls";
+import { BanKycAccountButton } from "./_components/ban-kyc-account-button";
 
 export const metadata = { title: "KYC Review · Antifraud" };
 
@@ -518,11 +519,18 @@ function AccountCard({
                   compact
                 />
                 {awaitingReview && (
-                  <ReviewKycControls
-                    userId={account.userId}
-                    label={label}
-                    verificationCycle={account.verificationCycle}
-                  />
+                  <>
+                    <ReviewKycControls
+                      userId={account.userId}
+                      label={label}
+                      verificationCycle={account.verificationCycle}
+                    />
+                    <BanKycAccountButton
+                      userId={account.userId}
+                      label={label}
+                      verificationCycle={account.verificationCycle}
+                    />
+                  </>
                 )}
               </>
             )}

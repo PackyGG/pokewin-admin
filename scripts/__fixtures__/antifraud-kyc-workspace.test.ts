@@ -55,6 +55,28 @@ test("KYC mutations are manager-only and preserve the verification-cycle guard",
   assert.match(actions, /outcome\.status === "lost"/);
 });
 
+test("admins can ban an active KYC account while preserving its history", () => {
+  const actions = source("src/app/(antifraud)/antifraud/kyc/actions.ts");
+  const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
+  const button = source(
+    "src/app/(antifraud)/antifraud/kyc/_components/ban-kyc-account-button.tsx",
+  );
+  const start = actions.indexOf("export async function banAccountFromKyc");
+  const banAction = actions.slice(start);
+
+  assert.match(page, /<BanKycAccountButton/);
+  assert.match(button, /Ban and remove from active KYC/);
+  assert.match(button, /ANTIFRAUD_BAN_REASON_PRESETS/);
+  assert.match(banAction, /requireAntifraudManager\(/);
+  assert.match(banAction, /requireCapability\(session, "__can_ban_users"/);
+  assert.match(banAction, /require2FA\(session\.userId, parsed\.data\.credential\)/);
+  assert.match(banAction, /blockKnownUserIdentifiers\(/);
+  assert.match(banAction, /antifraud_ban_partial_failure/);
+  assert.match(banAction, /decision: "rejected"/);
+  assert.match(banAction, /DELETE FROM session/);
+  assert.doesNotMatch(banAction, /DELETE FROM user_kyc/);
+});
+
 test("the dashboard reports both internal state and Sumsub evidence", () => {
   const page = source("src/app/(antifraud)/antifraud/kyc/page.tsx");
   const query = source("src/lib/antifraud/kyc.ts");
