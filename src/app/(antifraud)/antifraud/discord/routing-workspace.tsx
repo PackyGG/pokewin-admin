@@ -687,15 +687,15 @@ export function DiscordRoutingWorkspace({
                           <div
                             key={channel.id}
                             className={cn(
-                              "group relative flex items-center overflow-hidden rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                              "group relative flex h-9 items-center overflow-hidden rounded-lg text-sidebar-foreground motion-safe:transition-[color,background-color,transform] motion-safe:duration-150 motion-safe:ease-out motion-safe:active:scale-[0.98] hover:bg-sidebar-accent/50 hover:text-sidebar-foreground",
                               selected &&
-                                "bg-primary/10 text-primary shadow-sm ring-1 ring-inset ring-primary/20",
+                                "bg-sidebar-primary/15 font-medium text-sidebar-primary",
                             )}
                           >
                             <span
                               aria-hidden="true"
                               className={cn(
-                                "absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary transition-opacity",
+                                "pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-full bg-sidebar-primary transition-opacity",
                                 selected
                                   ? "opacity-100"
                                   : "opacity-0 group-hover:opacity-40",
@@ -706,7 +706,7 @@ export function DiscordRoutingWorkspace({
                               role="treeitem"
                               aria-selected={selected}
                               aria-current={selected ? "page" : undefined}
-                              className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+                              className="flex h-full min-w-0 flex-1 items-center gap-2 py-2 pl-3 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-sidebar-ring"
                               onClick={() => openExistingChannel(channel.id)}
                             >
                               <DeliveryIndicator channel={channel} />
@@ -720,9 +720,8 @@ export function DiscordRoutingWorkspace({
                               </span>
                               <span
                                 className={cn(
-                                  "rounded px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors group-hover:bg-background/70",
-                                  selected &&
-                                    "bg-primary/10 text-primary group-hover:bg-primary/10",
+                                  "px-1 text-xs tabular-nums text-muted-foreground transition-colors group-hover:text-sidebar-accent-foreground",
+                                  selected && "text-sidebar-primary",
                                 )}
                               >
                                 {eventCount}
