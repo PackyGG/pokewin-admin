@@ -33,7 +33,11 @@ import {
   getFiatDepositReviewUsers,
   type FiatDepositReviewUser,
 } from "@/lib/queries/fiat-deposit-review-users";
-import { formatCurrency, formatRelative } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatRelative,
+  formatRelativeStrict,
+} from "@/lib/utils/format";
 import { RequireKycAction } from "./require-kyc-action";
 import { AllowFiatAutoCreditAction } from "./allow-auto-credit-action";
 import { FiatDepositReviewDecision } from "./review-decision";
@@ -487,6 +491,9 @@ function ReviewDepositCard({
                   ? "Signup"
                   : "Latest auth"}
               accountValue={user?.latestAuthIp ?? "Unavailable"}
+              accountHint={user?.latestAuthAt
+                ? formatRelativeStrict(user.latestAuthAt)
+                : undefined}
               mono
             />
             <ComparisonFact
@@ -552,6 +559,7 @@ function ComparisonFact({
   checkoutValue,
   accountLabel,
   accountValue,
+  accountHint,
   mono = false,
 }: {
   icon: typeof Banknote;
@@ -560,6 +568,7 @@ function ComparisonFact({
   checkoutValue: string;
   accountLabel: string;
   accountValue: string;
+  accountHint?: string;
   mono?: boolean;
 }) {
   const unavailableValues = new Set(["unknown", "unavailable"]);
@@ -593,19 +602,24 @@ function ComparisonFact({
       </dt>
       <dd className="mt-1.5 grid min-w-0 grid-cols-2 gap-2">
         {[
-          [checkoutLabel, checkoutValue],
-          [accountLabel, accountValue],
-        ].map(([itemLabel, value], index) => (
-          <div key={itemLabel} className="min-w-0">
-            <p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={itemLabel}>
-              {itemLabel}
+          { label: checkoutLabel, value: checkoutValue },
+          { label: accountLabel, value: accountValue, hint: accountHint },
+        ].map((item, index) => (
+          <div key={item.label} className="min-w-0">
+            <p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={item.label}>
+              {item.label}
             </p>
             <p
               className={`mt-0.5 truncate text-xs font-medium ${mono ? "font-mono text-[11px]" : ""} ${matches === false && index === 0 ? "text-red-600 dark:text-red-400" : ""}`}
-              title={value}
+              title={item.value}
             >
-              {value}
+              {item.value}
             </p>
+            {item.hint && (
+              <p className="mt-0.5 truncate text-[10px] text-muted-foreground">
+                {item.hint}
+              </p>
+            )}
           </div>
         ))}
       </dd>

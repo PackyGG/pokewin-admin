@@ -198,6 +198,11 @@ test("staff see the score, triggers, evidence gaps, and global cluster context b
   assert.match(reviewUsers, /locked_withdrawals_crypto/);
   assert.match(reviewUsers, /FROM fingerprints fp/);
   assert.match(reviewUsers, /ORDER BY fp\.created_at DESC, fp\.id DESC/);
+  assert.match(reviewUsers, /AS latest_auth_at/);
+  assert.match(reviewUsers, /array_agg\(audit\.created_at ORDER BY audit\.created_at DESC\)/);
+  assert.match(reviewUsers, /latestAuthAt: row\.latest_auth_at/);
+  assert.match(page, /accountHint=\{user\?\.latestAuthAt/);
+  assert.match(page, /formatRelativeStrict\(user\.latestAuthAt\)/);
   assert.match(page, /label="Fingerprint"/);
   assert.match(page, /checkoutFingerprint/);
   assert.match(page, /latestFingerprint/);

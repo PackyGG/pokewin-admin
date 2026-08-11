@@ -14,6 +14,7 @@ export type FiatDepositReviewUser = {
   countryCode: string | null;
   latestAuthIp: string | null;
   latestAuthEvent: "login" | "register" | null;
+  latestAuthAt: string | null;
   latestFingerprint: string | null;
   latestFingerprintEvent: string | null;
   fiatAutoApprovalEnabled: boolean;
@@ -40,6 +41,7 @@ export async function getFiatDepositReviewUsers(
     country_code: string | null;
     latest_auth_ip: string | null;
     latest_auth_event: "login" | "register" | null;
+    latest_auth_at: string | null;
     latest_fingerprint: string | null;
     latest_fingerprint_event: string | null;
     fiat_deposit_auto_approval_enabled: boolean | null;
@@ -64,6 +66,10 @@ export async function getFiatDepositReviewUsers(
         auth.latest_auth_event,
         CASE WHEN NULLIF(u.signup_ip, '') IS NOT NULL THEN 'register' END
       ) AS latest_auth_event,
+      COALESCE(
+        auth.latest_auth_at,
+        CASE WHEN NULLIF(u.signup_ip, '') IS NOT NULL THEN u.created_at END
+      )::text AS latest_auth_at,
       fingerprint.visitor_id AS latest_fingerprint,
       fingerprint.event_type AS latest_fingerprint_event,
       locks.fiat_deposit_auto_approval_enabled,
@@ -114,7 +120,9 @@ export async function getFiatDepositReviewUsers(
         (array_agg(host(audit.ip) ORDER BY audit.created_at DESC)
           FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_ip,
         (array_agg(audit.event_type::text ORDER BY audit.created_at DESC)
-          FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_event
+          FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_event,
+        (array_agg(audit.created_at ORDER BY audit.created_at DESC)
+          FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_at
       FROM audit_events audit
       WHERE audit.user_id = u.id
         AND audit.event_type IN ('login', 'register')
@@ -133,6 +141,7 @@ export async function getFiatDepositReviewUsers(
         countryCode: row.country_code,
         latestAuthIp: row.latest_auth_ip,
         latestAuthEvent: row.latest_auth_event,
+        latestAuthAt: row.latest_auth_at,
         latestFingerprint: row.latest_fingerprint,
         latestFingerprintEvent: row.latest_fingerprint_event,
         fiatAutoApprovalEnabled:
