@@ -46,8 +46,12 @@ test("chat raffle uses combined Community XP and freezes level provenance", asyn
 
   assert.match(page, /Combined Community XP/);
   assert.match(page, /Lifetime Community XP leaderboard/);
-  assert.match(page, /Discord \{formatNumber\(entry\.discordMessageCount\)\} msgs/);
-  assert.match(page, /On-site/);
+  assert.match(page, />\s*Discord\s*</);
+  assert.match(page, /formatNumber\(entry\.discordMessageCount\)/);
+  assert.match(page, />\s*On-site\s*</);
+  assert.match(page, /formatNumber\(entry\.siteChatMessageCount\)/);
+  assert.doesNotMatch(page, /D \{formatNumber\(entry\.discordXp\)\}/);
+  assert.doesNotMatch(page, /\(entry\.winChance \* 100\)\.toFixed/);
   assert.match(page, /Lv \{entry\.communityLevel\}/);
   assert.match(page, /entry\.discordXp/);
   assert.match(page, /entry\.siteChatXp/);
