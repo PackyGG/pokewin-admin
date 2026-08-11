@@ -36,9 +36,7 @@ test("user fiat deposits bind checkout email through the exact intent", () => {
 });
 
 test("user transaction UI renders exact email and missing-email states", () => {
-  const table = source(
-    "src/app/(admin)/users/[id]/user-tabs-transactions.tsx",
-  );
+  const table = source("src/app/(admin)/users/[id]/user-tabs-transactions.tsx");
   const modal = source(
     "src/app/(admin)/users/[id]/transaction-detail-modal.tsx",
   );
@@ -51,4 +49,32 @@ test("user transaction UI renders exact email and missing-email states", () => {
   assert.match(table, /Unavailable/);
   assert.match(modal, /Whop checkout email/);
   assert.match(modal, /Unavailable/);
+});
+
+test("paid Fiat intents appear before ledger credit and expose review state", () => {
+  const query = [
+    source("src/lib/queries/users-transactions.ts"),
+    source("src/lib/queries/users-fiat-intents.ts"),
+  ].join("\n");
+  const table = source("src/app/(admin)/users/[id]/user-tabs-transactions.tsx");
+  const modal = source(
+    "src/app/(admin)/users/[id]/transaction-detail-modal.tsx",
+  );
+  const types = source("src/app/(admin)/users/[id]/user-tabs-types.ts");
+
+  assert.match(query, /FROM fiat_deposit_intents i/);
+  assert.match(query, /i\.completed_ledger_id IS NULL/);
+  assert.match(
+    query,
+    /i\.paid_at IS NOT NULL[\s\S]*provider_payment_status[\s\S]*'paid'/,
+  );
+  assert.match(query, /'ledger'::text AS source/);
+  assert.match(query, /'fiat'::text AS source/);
+  assert.match(query, /syntheticKind: "fiat_deposit"/);
+  assert.match(query, /status === "review"/);
+  assert.match(types, /return "In credit review"/);
+  assert.match(table, /fiatDepositCreditLabel\(t\.fiatDepositIntentStatus\)/);
+  assert.match(modal, /Fiat Deposit Details/);
+  assert.match(modal, /Crediting status/);
+  assert.match(modal, /Payment received/);
 });

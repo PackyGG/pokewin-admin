@@ -53,10 +53,12 @@ import { battleUrl } from "@/lib/utils/main-site";
 import { BattlePasswordReveal } from "@/components/battle-password-reveal";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
 import { KenoGameReplay } from "./keno-game-replay";
-import type {
-  Transaction,
-  GameSessionDetails,
-  KenoGameDetails,
+import {
+  fiatDepositCreditClass,
+  fiatDepositCreditLabel,
+  type Transaction,
+  type GameSessionDetails,
+  type KenoGameDetails,
 } from "./user-tabs-types";
 import { RARITY_BADGE_COLORS } from "../../transactions/_shared/rarity-colors";
 
@@ -310,6 +312,85 @@ export function TransactionDetailModal({
                 </div>
               ))}
             </div>
+          </div>
+          <DialogFooter showCloseButton />
+        </DialogContent>
+      </Dialog>
+    );
+  }
+
+  if (t.syntheticKind === "fiat_deposit") {
+    const intentStatus = t.fiatDepositIntentStatus ?? "pending";
+    const fiatRows: { label: string; value: React.ReactNode }[] = [
+      {
+        label: "Deposit intent ID",
+        value: <span className="font-mono text-xs break-all">{t.id}</span>,
+      },
+      { label: "Type", value: <Badge variant="outline">Fiat deposit</Badge> },
+      {
+        label: "Amount to credit",
+        value: (
+          <span className="font-medium text-emerald-600 dark:text-emerald-400">
+            +{formatCurrency(Math.abs(t.amount))}
+          </span>
+        ),
+      },
+      {
+        label: "Crediting status",
+        value: (
+          <Badge
+            variant="outline"
+            className={fiatDepositCreditClass(intentStatus)}
+          >
+            {fiatDepositCreditLabel(intentStatus)}
+          </Badge>
+        ),
+      },
+      {
+        label: "Provider payment",
+        value: t.fiatDepositProviderPaymentStatus ?? "Unknown",
+      },
+      { label: "Description", value: t.description },
+      {
+        label: "Payment received",
+        value: t.fiatDepositPaidAt
+          ? formatDateTime(t.fiatDepositPaidAt)
+          : "Unavailable",
+      },
+      { label: "Last updated", value: formatDateTime(t.updatedAt) },
+    ];
+    if (t.whopCheckoutEmail !== undefined) {
+      fiatRows.push({
+        label: "Whop checkout email",
+        value: t.whopCheckoutEmail ? (
+          <span className="break-all">{t.whopCheckoutEmail}</span>
+        ) : (
+          <span className="text-muted-foreground">Unavailable</span>
+        ),
+      });
+    }
+    if (t.failureReason) {
+      fiatRows.push({
+        label: "Failure reason",
+        value: <span className="text-rose-400">{t.failureReason}</span>,
+      });
+    }
+
+    return (
+      <Dialog open onOpenChange={(open) => !open && onClose()}>
+        <DialogContent className="sm:max-w-2xl flex flex-col max-h-[85vh]">
+          <DialogHeader>
+            <DialogTitle>Fiat Deposit Details</DialogTitle>
+          </DialogHeader>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-3 overflow-y-auto">
+            {fiatRows.map((row) => (
+              <div key={row.label} className="flex flex-col gap-1">
+                <span className="text-xs text-muted-foreground">
+                  {row.label}
+                </span>
+                <div className="text-sm">{row.value}</div>
+              </div>
+            ))}
           </div>
           <DialogFooter showCloseButton />
         </DialogContent>

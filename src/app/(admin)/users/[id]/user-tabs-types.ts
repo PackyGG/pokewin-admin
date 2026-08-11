@@ -327,6 +327,29 @@ export type RaceClaimEntry = TipEntry & {
   position: number | null;
 };
 
+export function fiatDepositCreditLabel(status: string): string {
+  if (status === "review") return "In credit review";
+  if (status === "approval_processing") return "Crediting";
+  if (status === "refund_pending") return "Refund pending";
+  if (status === "refund_failed") return "Refund failed";
+  if (status === "completed") return "Credited";
+  if (status === "failed" || status === "canceled") return "Credit failed";
+  return "Awaiting credit";
+}
+
+export function fiatDepositCreditClass(status: string): string {
+  if (status === "review") {
+    return "border-amber-500/30 bg-amber-500/15 text-amber-700 dark:text-amber-300";
+  }
+  if (status === "approval_processing" || status === "completed") {
+    return "border-emerald-500/30 bg-emerald-500/15 text-emerald-700 dark:text-emerald-300";
+  }
+  if (["failed", "canceled", "refund_failed"].includes(status)) {
+    return "border-rose-500/30 bg-rose-500/15 text-rose-700 dark:text-rose-300";
+  }
+  return "border-blue-500/30 bg-blue-500/15 text-blue-700 dark:text-blue-300";
+}
+
 export type Transaction = {
   id: string;
   type: string;
@@ -371,6 +394,10 @@ export type Transaction = {
    * `null` means it is a fiat deposit but Whop did not provide a usable email.
    */
   whopCheckoutEmail?: string | null;
+  /** Paid Fiat intent waiting for its ledger credit. */
+  fiatDepositIntentStatus?: string;
+  fiatDepositProviderPaymentStatus?: string | null;
+  fiatDepositPaidAt?: string | null;
   createdAt: string;
   updatedAt: string;
   /**
@@ -520,9 +547,11 @@ export type Transaction = {
    *                     `battle_bet` enum value (so it stays a valid
    *                     ledger_transaction_type); the UI branches on THIS field,
    *                     not on `type`, to render the dedicated double-down row.
+   *   - "fiat_deposit" → a paid Fiat intent awaiting its canonical ledger
+   *                      credit; balance before/after deliberately stay hidden.
    *   - null → a normal, ledger-backed row (every existing row).
    */
-  syntheticKind: "double_down" | null;
+  syntheticKind: "double_down" | "fiat_deposit" | null;
   /**
    * Post-battle DOUBLE-DOWN outcome — the user gambled their battle winnings
    * (double-or-nothing) after a WIN. Sourced from `battle_double_down_offers`

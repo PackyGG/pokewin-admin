@@ -64,9 +64,11 @@ import { InlineError } from "@/components/entity-surface/inline-error";
 import { battleUrl } from "@/lib/utils/main-site";
 import { fetchUserTransactions } from "./actions";
 import type { WagerRequirementSummary } from "@/lib/queries/users-wager-progress-shared";
-import type {
-  Transaction,
-  PaginatedTransactions,
+import {
+  fiatDepositCreditClass,
+  fiatDepositCreditLabel,
+  type Transaction,
+  type PaginatedTransactions,
 } from "./user-tabs-types";
 
 // The transaction detail modal is heavy (Dialog primitives + provably-fair
@@ -824,6 +826,8 @@ export const CategoryTransactionsTable = React.memo(
                             ? t.isInstantRakeback === true
                               ? "Instant rakeback"
                               : "Rakeback"
+                            : t.syntheticKind === "fiat_deposit"
+                              ? "Fiat deposit"
                             : ledgerTypeLabel(t.type)}
                         </Badge>
                         {t.type === "upgrader_bet" &&
@@ -907,6 +911,13 @@ export const CategoryTransactionsTable = React.memo(
                     </TableCell>
                   ) : (
                     (() => {
+                      if (t.syntheticKind === "fiat_deposit") {
+                        return (
+                          <TableCell className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
+                            +{formatCurrency(Math.abs(t.amount))}
+                          </TableCell>
+                        );
+                      }
                       // Finances / overview: Amount IS the signal. COLOR is
                       // house-POV (classified by ledger type, matching every
                       // other tx surface — a rakeback claim is a house loss →
@@ -1189,29 +1200,50 @@ export const CategoryTransactionsTable = React.memo(
                       cash alone. The breakdown (cash + inventory) is in each
                       cell's tooltip, so a separate Inventory column is
                       redundant. Matches the detail modal's Worth rows. */}
-                  <TableCell
-                    className="text-muted-foreground tabular-nums"
-                    title={`Cash ${formatCurrency(t.balanceBefore)} + inventory ${formatCurrency(
-                      Math.max(0, t.worthBefore - t.balanceBefore),
-                    )}`}
-                  >
-                    {formatCurrency(t.worthBefore)}
-                  </TableCell>
-                  <TableCell
-                    className="tabular-nums"
-                    title={`Cash ${formatCurrency(
-                      t.balanceAfter,
-                    )} + inventory ${formatCurrency(t.inventoryValue)}`}
-                  >
-                    {formatCurrency(t.worthAfter)}
-                  </TableCell>
+                  {t.syntheticKind === "fiat_deposit" ? (
+                    <>
+                      <TableCell className="text-muted-foreground">—</TableCell>
+                      <TableCell className="text-muted-foreground">—</TableCell>
+                    </>
+                  ) : (
+                    <>
+                      <TableCell
+                        className="text-muted-foreground tabular-nums"
+                        title={`Cash ${formatCurrency(t.balanceBefore)} + inventory ${formatCurrency(
+                          Math.max(0, t.worthBefore - t.balanceBefore),
+                        )}`}
+                      >
+                        {formatCurrency(t.worthBefore)}
+                      </TableCell>
+                      <TableCell
+                        className="tabular-nums"
+                        title={`Cash ${formatCurrency(
+                          t.balanceAfter,
+                        )} + inventory ${formatCurrency(t.inventoryValue)}`}
+                      >
+                        {formatCurrency(t.worthAfter)}
+                      </TableCell>
+                    </>
+                  )}
                   <TableCell>
-                    <Badge
-                      variant="outline"
-                      className={STATUS_COLORS[t.status] ?? ""}
-                    >
-                      {t.status}
-                    </Badge>
+                    {t.syntheticKind === "fiat_deposit" &&
+                    t.fiatDepositIntentStatus ? (
+                      <Badge
+                        variant="outline"
+                        className={fiatDepositCreditClass(
+                          t.fiatDepositIntentStatus,
+                        )}
+                      >
+                        {fiatDepositCreditLabel(t.fiatDepositIntentStatus)}
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className={STATUS_COLORS[t.status] ?? ""}
+                      >
+                        {t.status}
+                      </Badge>
+                    )}
                   </TableCell>
                   <TableCell className="max-w-[280px] text-xs text-muted-foreground">
                     {t.packName ? (

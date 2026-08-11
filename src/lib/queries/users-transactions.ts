@@ -21,6 +21,13 @@ import { verifySession } from "@/lib/dal";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { calculateCreatorBattleOutcome } from "@/lib/eos/creator-outcome";
 import { isOwner } from "@/lib/owners";
+import {
+  fetchPendingFiatIntentsByIds,
+  fiatIntentEventAt,
+  fiatIntentWhereSql,
+  pendingFiatStatusLabel,
+  type PendingFiatIntentRow,
+} from "./users-fiat-intents";
 import type {
   Transaction,
   PaginatedTransactions,
@@ -473,6 +480,61 @@ async function fetchWhopCheckoutEmailsByLedgerId(
   );
 }
 
+function mapPendingFiatIntent(row: PendingFiatIntentRow): Transaction {
+  const eventAt = row.paid_at ?? row.updated_at;
+  const failed = [
+    "failed",
+    "canceled",
+    "refund_failed",
+    "refunded",
+    "disputed",
+  ].includes(row.status);
+  const mapped = mapFinancialLedgerRow({
+    id: row.id,
+    user_id: row.user_id,
+    type: "deposit",
+    amount: (row.credited_amount_cents / 100).toString(),
+    balance_before: "0",
+    balance_after: "0",
+    game_session_id: null,
+    crypto_asset: null,
+    crypto_amount: null,
+    exchange_rate: null,
+    fireblocks_tx_id: null,
+    external_tx_id: row.provider_payment_id,
+    blockchain_tx_hash: null,
+    source_address: null,
+    destination_address: null,
+    deposit_address_id: null,
+    status: failed
+      ? "failed"
+      : row.status === "completed"
+        ? "completed"
+        : "pending",
+    failure_reason: row.failure_reason,
+    description: `Whop Fiat deposit — ${pendingFiatStatusLabel(row.status)}`,
+    metadata: {
+      fiat_deposit_intent_id: row.id,
+      fiat_deposit_intent_status: row.status,
+      requested_amount_cents: row.requested_amount_cents,
+      actual_customer_total_cents: row.actual_customer_total_cents,
+    },
+    created_at: eventAt,
+    updated_at: row.updated_at,
+    game_sessions_ledger_transactions_game_session_idTogame_sessions: null,
+  });
+  return {
+    ...mapped,
+    syntheticKind: "fiat_deposit",
+    whopCheckoutEmail: row.checkout_email?.trim() || null,
+    fiatDepositIntentStatus: row.status,
+    fiatDepositProviderPaymentStatus: row.provider_payment_status,
+    fiatDepositPaidAt: row.paid_at
+      ? new Date(row.paid_at).toISOString()
+      : null,
+  };
+}
+
 type KenoTransactionSummary = {
   result: "win" | "lose" | "draw";
   winnings: number;
@@ -576,29 +638,43 @@ async function getUserFinancialTransactionsLight(
   page: number,
   perPage: number,
 ) {
-  const where = ledgerWhereSql(filter);
-  const [transactionResult, totalResult] = await Promise.all([
-    db.execute<Omit<
-      LedgerRow,
-      "game_sessions_ledger_transactions_game_session_idTogame_sessions"
-    >>(sql`
-      SELECT lt.*
-      FROM ledger_transactions lt
-      WHERE ${where}
-      ORDER BY lt.created_at DESC, lt.id DESC
+  const ledgerWhere = ledgerWhereSql(filter);
+  const fiatWhere = fiatIntentWhereSql(filter);
+  const [timelineResult, totalResult] = await Promise.all([
+    db.execute<{ id: string; source: "ledger" | "fiat" }>(sql`
+      WITH timeline AS (
+        SELECT lt.id::text AS id, 'ledger'::text AS source,
+               lt.created_at AS sort_at
+        FROM ledger_transactions lt
+        WHERE ${ledgerWhere}
+        UNION ALL
+        SELECT i.id::text AS id, 'fiat'::text AS source,
+               ${fiatIntentEventAt()} AS sort_at
+        FROM fiat_deposit_intents i
+        WHERE ${fiatWhere}
+      )
+      SELECT id, source
+      FROM timeline
+      ORDER BY sort_at DESC, id DESC
       LIMIT ${perPage}
       OFFSET ${(page - 1) * perPage}
     `),
     db.execute<{ total: string }>(sql`
-      SELECT count(*)::text AS total
-      FROM ledger_transactions lt
-      WHERE ${where}
+      SELECT (
+        (SELECT count(*) FROM ledger_transactions lt WHERE ${ledgerWhere}) +
+        (SELECT count(*) FROM fiat_deposit_intents i WHERE ${fiatWhere})
+      )::text AS total
     `),
   ]);
-  const transactions: LedgerRow[] = transactionResult.rows.map((row) => ({
-    ...row,
-    game_sessions_ledger_transactions_game_session_idTogame_sessions: null,
-  }));
+  const timeline = timelineResult.rows;
+  const ledgerIds = timeline
+    .filter((r) => r.source === "ledger")
+    .map((r) => r.id);
+  const fiatIds = timeline.filter((r) => r.source === "fiat").map((r) => r.id);
+  const [transactions, fiatIntents] = await Promise.all([
+    fetchLedgerRowsByIds(db, ledgerIds),
+    fetchPendingFiatIntentsByIds(db, filter.userId, fiatIds),
+  ]);
   const total = Number(totalResult.rows[0]?.total ?? 0);
   const whopCheckoutEmails = await fetchWhopCheckoutEmailsByLedgerId(
     db,
@@ -627,15 +703,29 @@ async function getUserFinancialTransactionsLight(
     }
   }
 
-  return {
-    data: transactions.map((t) => {
+  const ledgerById = new Map(
+    transactions.map((t) => {
       const mapped = mapFinancialLedgerRow(t, instantRakebackIds);
-      return whopCheckoutEmails.has(t.id)
+      const enriched = whopCheckoutEmails.has(t.id)
         ? {
             ...mapped,
             whopCheckoutEmail: whopCheckoutEmails.get(t.id) ?? null,
           }
         : mapped;
+      return [t.id, enriched] as const;
+    }),
+  );
+  const fiatById = new Map(
+    fiatIntents.map((intent) => [intent.id, mapPendingFiatIntent(intent)]),
+  );
+
+  return {
+    data: timeline.flatMap((row) => {
+      const item =
+        row.source === "fiat"
+          ? fiatById.get(row.id)
+          : ledgerById.get(row.id);
+      return item ? [item] : [];
     }),
     total,
     page,
