@@ -221,8 +221,14 @@ test("review amounts remain fully visible in the compact aligned header", () => 
   assert.doesNotMatch(amountFact, /truncate/);
   assert.doesNotMatch(page, /label="Customer paid"/);
   assert.match(page, /label="Balance credit"/);
+  assert.match(page, /w-40 shrink-0/);
+  assert.doesNotMatch(page, /min-w-40 flex-1/);
   assert.match(page, /h-12 w-12 shrink-0/);
   assert.match(page, /xl:items-start/);
+  assert.match(page, /aria-label={`\$\{label\} matches`}/);
+  assert.match(page, /aria-label={`\$\{label\} does not match`}/);
+  assert.match(page, /matches === false && index === 0/);
+  assert.match(page, /text-red-600 dark:text-red-400/);
   assert.match(page, /Open \$\{displayName\}'s profile in a new tab/);
   assert.match(page, /target="_blank"/);
   assert.match(page, /noopener noreferrer/);
