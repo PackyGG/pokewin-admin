@@ -273,6 +273,10 @@ test("creator last-deals API uses complete leaderboard frames and actual support
   assert.match(service, /Date\.parse\(leaderboard\.start_date\) <= now/);
   assert.match(service, /\.slice\(0, DEAL_LIMIT\)/);
   assert.match(service, /frame\.affiliate_codes\.length > 0/);
+  assert.match(service, /start_at: new Date\(frame\.start_date\)\.toISOString\(\)/);
+  assert.match(service, /end_at: new Date\(frame\.end_date\)\.toISOString\(\)/);
+  assert.doesNotMatch(service, /\n\s+start: new Date\(frame\.start_date\)/);
+  assert.doesNotMatch(service, /\n\s+end: new Date\(frame\.end_date\)/);
   assert.match(service, /queryCreatorAnalytics<DealMetricsRow>/);
   assert.match(service, /creator_stream_sessions AS session/);
   assert.match(analyticsDb, /CREATOR_ANALYTICS_DATABASE_URL/);

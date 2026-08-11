@@ -201,8 +201,8 @@ export async function getCreatorLastDeals(input: {
   );
   const dealWindows = frames.map((frame) => ({
     id: frame.id,
-    start: new Date(frame.start_date).toISOString(),
-    end: new Date(frame.end_date).toISOString(),
+    start_at: new Date(frame.start_date).toISOString(),
+    end_at: new Date(frame.end_date).toISOString(),
     codes: Array.from(
       new Set(
         (frame.affiliate_codes.length > 0 ? frame.affiliate_codes : codes)
@@ -212,12 +212,12 @@ export async function getCreatorLastDeals(input: {
     ),
   }));
   const earliestStart = dealWindows.reduce(
-    (earliest, frame) => frame.start < earliest ? frame.start : earliest,
-    dealWindows[0].start,
+    (earliest, frame) => frame.start_at < earliest ? frame.start_at : earliest,
+    dealWindows[0].start_at,
   );
   const latestEnd = dealWindows.reduce(
-    (latest, frame) => frame.end > latest ? frame.end : latest,
-    dealWindows[0].end,
+    (latest, frame) => frame.end_at > latest ? frame.end_at : latest,
+    dealWindows[0].end_at,
   );
   const weeklyDeals = await db
     .select({
