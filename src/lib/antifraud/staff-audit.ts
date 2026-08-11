@@ -241,6 +241,11 @@ export const ANTIFRAUD_AUDIT_EVENTS: Record<string, EventDefinition> = {
     category: "risk",
     tone: "neutral",
   },
+  user_pre_fiat_always_allow_updated: {
+    label: "Pre-Fiat always-pass updated",
+    category: "risk",
+    tone: "warn",
+  },
   antifraud_flow_created: {
     label: "Flow created",
     category: "risk",

@@ -1652,6 +1652,7 @@ test("concurrent identical requests share one automatic provider review", async 
   const answer = async (text: string) => {
     statements.push((text.trim().split("\n")[0] ?? "").trim());
     if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
+    if (text.includes("FROM fiat_eligibility_overrides")) return { rows: [] };
     if (text.includes("signup_risk_score")) return { rows: [] };
     if (text.includes("FROM fiat_deposit_assessments")) return { rows: [] };
     if (text.includes("attempts_10m")) {
@@ -1770,6 +1771,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
   let recordedAbstractStatus: unknown = null;
   const answer = async (text: string, params?: unknown[]) => {
     if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
+    if (text.includes("FROM fiat_eligibility_overrides")) return { rows: [] };
     if (text.includes("signup_risk_score")) return { rows: [] };
     if (text.includes("FROM fiat_deposit_assessments")) return { rows: [] };
     if (text.includes("attempts_10m")) {
@@ -1867,6 +1869,9 @@ test("missing or false global Fiat config can never return allow", async () => {
     };
     const antifraud = {
       async query(sql: string) {
+        if (sql.includes("FROM fiat_eligibility_assessments")) {
+          return { rows: [] };
+        }
         if (sql.includes("INSERT INTO fiat_eligibility_gate_events")) {
           return {
             rowCount: 1,
@@ -1907,4 +1912,70 @@ test("missing or false global Fiat config can never return allow", async () => {
     assert.deepEqual(decision.reasonCodes, ["fiat_globally_disabled"]);
     assert.equal(sourceCalls, 0);
   }
+});
+
+test("an enabled per-user override allows before source or provider checks", async () => {
+  const now = new Date("2026-08-12T00:00:00.000Z");
+  const request = {
+    env: "prod" as const,
+    createdAt: now.toISOString(),
+    ipAddress: "203.0.113.20",
+    fingerprint: "always-allow-fingerprint",
+    userID: "known-safe-user",
+  };
+  let sourceCalls = 0;
+  let providerCalls = 0;
+  const antifraud = {
+    async query(sql: string) {
+      if (sql.includes("FROM fiat_eligibility_assessments")) {
+        return { rows: [] };
+      }
+      if (sql.includes("FROM fiat_eligibility_overrides")) {
+        return { rows: [{ enabled: true }] };
+      }
+      if (sql.includes("INSERT INTO fiat_eligibility_gate_events")) {
+        return {
+          rowCount: 1,
+          rows: [{
+            id: "override-decision",
+            request_hash: fiatEligibilityInternals.requestHash(
+              request,
+              request.ipAddress,
+            ),
+            decision: "allow",
+            reason_code: "fiat_always_allow_override",
+            created_at: now,
+          }],
+        };
+      }
+      throw new Error(`unexpected override query: ${sql.slice(0, 80)}`);
+    },
+  };
+  const service = new FiatEligibilityService(
+    {
+      source: { query: async () => { sourceCalls += 1; } },
+      fiatDevSource: null,
+      antifraud,
+    } as never,
+    { get: async () => { throw new Error("weights must not load"); } } as never,
+    {
+      fingerprintCheck: async () => {
+        providerCalls += 1;
+        throw new Error("provider must not run");
+      },
+      proxycheck: async () => {
+        providerCalls += 1;
+        throw new Error("provider must not run");
+      },
+    } as never,
+    true,
+  );
+
+  const decision = await service.assess(request, now);
+  assert.equal(decision.allowed, true);
+  assert.equal(decision.decision, "allow");
+  assert.equal(decision.riskScore, 0);
+  assert.deepEqual(decision.reasonCodes, ["fiat_always_allow_override"]);
+  assert.equal(sourceCalls, 0);
+  assert.equal(providerCalls, 0);
 });

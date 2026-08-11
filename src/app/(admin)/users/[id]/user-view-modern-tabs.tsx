@@ -104,6 +104,7 @@ import { FraudLocksCard } from "./fraud-locks-card";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { RewardFeatureLocksCard } from "./reward-feature-locks-card";
 import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
+import type { FiatEligibilityOverride } from "@/lib/antifraud/fiat-eligibility-overrides-api";
 import { FiatDepositAccessCard } from "./fiat-deposit-access-button";
 import { KycCard } from "./kyc-card";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
@@ -1940,6 +1941,7 @@ export function AccountTab({
   wagerRequirementPromise,
   featureLocksPromise,
   fiatDepositAccessPromise,
+  preFiatOverridePromise,
   wagerProgressPromise,
   balanceWeightingPromise,
   adjustmentsTxPromise,
@@ -1960,6 +1962,7 @@ export function AccountTab({
   // Backend-API read of the per-user Fiat deposit allow-list. This does not
   // represent or override fraud/compliance/KYC/location locks.
   fiatDepositAccessPromise: Promise<FiatDepositAccess | null> | null;
+  preFiatOverridePromise: Promise<FiatEligibilityOverride | null> | null;
   // Read-only wager-requirement PROGRESS from the backend-written `balances`
   // columns (dev-only). null = prod / no-balance / read failed → muted card.
   wagerProgressPromise: Promise<UserWagerProgress | null> | null;
@@ -2100,11 +2103,12 @@ export function AccountTab({
         open={fiatDepositAccessOpen}
         onOpenChange={setFiatDepositAccessOpen}
       >
-        {fiatDepositAccessPromise ? (
+        {fiatDepositAccessPromise && preFiatOverridePromise ? (
           <Suspense fallback={<SkeletonCard lines={3} />}>
             <FiatDepositAccessStreamed
               userId={user.id}
               fiatDepositAccessPromise={fiatDepositAccessPromise}
+              preFiatOverridePromise={preFiatOverridePromise}
               canManage={data.sessionRole === "admin"}
             />
           </Suspense>
@@ -2509,17 +2513,21 @@ function RewardFeatureLocksStreamed({
 function FiatDepositAccessStreamed({
   userId,
   fiatDepositAccessPromise,
+  preFiatOverridePromise,
   canManage,
 }: {
   userId: string;
   fiatDepositAccessPromise: Promise<FiatDepositAccess | null>;
+  preFiatOverridePromise: Promise<FiatEligibilityOverride | null>;
   canManage: boolean;
 }) {
   const access = use(fiatDepositAccessPromise);
+  const preFiatOverride = use(preFiatOverridePromise);
   return (
     <FiatDepositAccessCard
       userId={userId}
       data={access}
+      preFiatOverride={preFiatOverride}
       canManage={canManage}
     />
   );

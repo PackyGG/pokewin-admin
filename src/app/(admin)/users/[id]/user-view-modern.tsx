@@ -70,6 +70,7 @@ import type { PaginatedInventory } from "./user-tabs-types";
 import type { UserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import type { UserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import type { FiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
+import type { FiatEligibilityOverride } from "@/lib/antifraud/fiat-eligibility-overrides-api";
 import type { UserKycStatus } from "@/lib/backend-api/kyc";
 import type { UserWagerProgress } from "@/lib/queries/users-wager-progress";
 import type { UserBalanceWeighting } from "@/lib/queries/users-balance-weighting";
@@ -217,6 +218,7 @@ export function UserViewModern({
   wagerRequirementPromise,
   featureLocksPromise,
   fiatDepositAccessPromise,
+  preFiatOverridePromise,
   kycPromise,
   auditPromise,
   wagerProgressPromise,
@@ -278,6 +280,7 @@ export function UserViewModern({
   // Account tab — backend-owned per-user Fiat deposit allow-list access.
   // Independent from fraud/compliance locks; null is a visible degraded state.
   fiatDepositAccessPromise: Promise<FiatDepositAccess | null> | null;
+  preFiatOverridePromise: Promise<FiatEligibilityOverride | null> | null;
   // Account tab — backend-owned Sumsub KYC status + admin control. Same
   // catch→null convention as the fraud-locks read above.
   kycPromise: Promise<UserKycStatus | null> | null;
@@ -708,6 +711,7 @@ export function UserViewModern({
             wagerRequirementPromise={wagerRequirementPromise}
             featureLocksPromise={featureLocksPromise}
             fiatDepositAccessPromise={fiatDepositAccessPromise}
+            preFiatOverridePromise={preFiatOverridePromise}
             wagerProgressPromise={wagerProgressPromise}
             balanceWeightingPromise={balanceWeightingPromise}
             adjustmentsTxPromise={adjustmentsTxPromise}

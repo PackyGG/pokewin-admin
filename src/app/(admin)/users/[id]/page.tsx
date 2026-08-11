@@ -35,6 +35,7 @@ import {
 import { getUserWagerRequirement } from "@/lib/backend-api/wager-requirements";
 import { getUserFeatureLocks } from "@/lib/backend-api/feature-locks";
 import { getFiatDepositAccess } from "@/lib/backend-api/fiat-deposit-access";
+import { getFiatEligibilityOverride } from "@/lib/antifraud/fiat-eligibility-overrides-api";
 import { getUserKyc } from "@/lib/backend-api/kyc";
 import {
   getUserAdminAuditFeed,
@@ -550,6 +551,10 @@ async function UserDetailBody({
     initialTab === "account"
       ? getFiatDepositAccess(id).catch(() => null)
       : null;
+  const preFiatOverridePromise =
+    initialTab === "account"
+      ? getFiatEligibilityOverride(id).catch(() => null)
+      : null;
   // KYC tab: backend-owned Sumsub KYC status + admin control. Same
   // catch→null convention as the fraud-locks read above — null renders the
   // card's muted "awaiting backend deploy" state instead of crashing the tab.
@@ -783,6 +788,7 @@ async function UserDetailBody({
       wagerRequirementPromise={wagerRequirementPromise}
       featureLocksPromise={featureLocksPromise}
       fiatDepositAccessPromise={fiatDepositAccessPromise}
+      preFiatOverridePromise={preFiatOverridePromise}
       kycPromise={kycPromise}
       auditPromise={auditPromise}
       wagerProgressPromise={wagerProgressPromise}

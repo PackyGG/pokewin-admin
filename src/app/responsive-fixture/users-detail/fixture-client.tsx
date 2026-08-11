@@ -408,6 +408,15 @@ export function UserDetailFixtureClient() {
         user_id: DATA.user.id,
         enabled: true,
       })}
+      preFiatOverridePromise={Promise.resolve({
+        environment: "prod",
+        userId: DATA.user.id,
+        enabled: false,
+        reason: null,
+        updatedBy: null,
+        updatedByUsername: null,
+        updatedAt: null,
+      })}
       kycPromise={Promise.resolve(null)}
       auditPromise={Promise.resolve({
         data: { events: [], total: 0, truncated: false },

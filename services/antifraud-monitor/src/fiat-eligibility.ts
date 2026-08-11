@@ -14,6 +14,7 @@ import {
 } from "./enrichment.js";
 import type { SignupProvider } from "./provider-contracts.js";
 import type { FiatEligibilityEnvironment } from "./fiat-eligibility-auth.js";
+import { fiatEligibilityOverrideEnabled } from "./fiat-eligibility-overrides.js";
 import { domainFromEmail } from "./fiat-email-domains.js";
 import {
   FIAT_ELIGIBILITY_CONTAINMENT_EVENT,
@@ -1069,8 +1070,27 @@ export class FiatEligibilityService {
         SELECT
           id, request_hash, decision, risk_score, reason_codes,
           enforcement_reasons, enforcement, expires_at, created_at
-        FROM fiat_eligibility_assessments
-        WHERE fingerprint_request_id = $1
+        FROM (
+          SELECT
+            id, request_hash, decision, risk_score, reason_codes,
+            enforcement_reasons, enforcement, expires_at, created_at,
+            0 AS gate_priority
+          FROM fiat_eligibility_assessments
+          WHERE fingerprint_request_id = $1
+
+          UNION ALL
+
+          SELECT
+            id, request_hash, decision, 0::int AS risk_score,
+            ARRAY[reason_code]::text[] AS reason_codes,
+            ARRAY[]::text[] AS enforcement_reasons,
+            'none'::text AS enforcement,
+            created_at AS expires_at, created_at,
+            1 AS gate_priority
+          FROM fiat_eligibility_gate_events
+          WHERE fingerprint_request_id = $1
+        ) stored
+        ORDER BY gate_priority DESC
         LIMIT 1
       `,
       [fingerprintRequestId],
@@ -1118,6 +1138,18 @@ export class FiatEligibilityService {
     if (previous) {
       if (previous.request_hash !== hash) throw new FingerprintReuseError();
       return storedDecision(previous, true);
+    }
+    const alwaysAllow = await withDeadline(
+      fiatEligibilityOverrideEnabled(
+        this.db.antifraud,
+        input.env,
+        input.userID,
+      ),
+      ANTIFRAUD_READ_TIMEOUT_MS,
+      "fiat_override_read",
+    );
+    if (alwaysAllow) {
+      return this.allowByOverride(input, now, hash);
     }
 
     const source = this.sourceFor(input.env);
@@ -1697,6 +1729,50 @@ export class FiatEligibilityService {
       timestamp: row.created_at.toISOString(),
       riskScore: 0,
       reasonCodes: ["fiat_globally_disabled"],
+      expiresAt: row.created_at.toISOString(),
+      idempotent: (inserted.rowCount ?? 0) === 0,
+      contained: false,
+      enforcementReasons: [],
+    };
+  }
+
+  private async allowByOverride(
+    input: FiatEligibilityRequest,
+    now: Date,
+    hash: string,
+  ): Promise<FiatEligibilityDecision> {
+    const inserted = await this.db.antifraud.query<{
+      id: string;
+      request_hash: string;
+      decision: "allow";
+      reason_code: string;
+      created_at: Date;
+    }>(
+      `
+        INSERT INTO fiat_eligibility_gate_events (
+          environment, user_id, fingerprint_request_id, request_hash,
+          decision, reason_code, created_at
+        ) VALUES ($1,$2,$3,$4,'allow','fiat_always_allow_override',$5)
+        ON CONFLICT (fingerprint_request_id) DO NOTHING
+        RETURNING id,request_hash,decision,reason_code,created_at
+      `,
+      [input.env, input.userID, input.fingerprint, hash, now],
+    );
+    let row = inserted.rows[0];
+    if (!row) {
+      const existing = await this.existing(input.fingerprint);
+      if (!existing) throw new Error("fiat_override_decision_persistence_failed");
+      if (existing.request_hash !== hash) throw new FingerprintReuseError();
+      return storedDecision(existing, true);
+    }
+    if (row.request_hash !== hash) throw new FingerprintReuseError();
+    return {
+      decisionId: row.id,
+      decision: "allow",
+      allowed: true,
+      timestamp: row.created_at.toISOString(),
+      riskScore: 0,
+      reasonCodes: ["fiat_always_allow_override"],
       expiresAt: row.created_at.toISOString(),
       idempotent: (inserted.rowCount ?? 0) === 0,
       contained: false,

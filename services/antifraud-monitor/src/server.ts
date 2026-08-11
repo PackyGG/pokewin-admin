@@ -65,6 +65,7 @@ import {
   registerFiatEligibilityRoutes,
 } from "./fiat-eligibility-routes.js";
 import { FiatEligibilityService } from "./fiat-eligibility.js";
+import { registerFiatEligibilityOverrideRoutes } from "./fiat-eligibility-overrides.js";
 import { FiatDepositAccessClient } from "./fiat-deposit-access.js";
 import { FiatDepositAccessControl } from "./fiat-deposit-access-control.js";
 import {
@@ -2266,6 +2267,7 @@ await registerFiatEligibilityRoutes(app, {
   access: fiatEligibilityAccess,
   service: fiatEligibility,
 });
+await registerFiatEligibilityOverrideRoutes(app, db);
 await registerEosRandomBlockRoutes(
   app,
   undefined,
