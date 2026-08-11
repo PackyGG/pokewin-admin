@@ -43,6 +43,7 @@ export type FiatPostPaymentDetectionEvidence = {
   paymentMethodSharedUsers: number;
   cardSignatureSharedUsers: number;
   checkoutIp: string | null;
+  checkoutFingerprint: string | null;
   checkoutIpSharedUsers: number;
   checkoutDeviceSharedUsers: number;
   exactAmountAttempts30m: number;

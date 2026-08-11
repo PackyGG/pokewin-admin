@@ -171,6 +171,11 @@ test("staff see the score, triggers, evidence gaps, and global cluster context b
   assert.match(reviewUsers, /LEFT JOIN user_feature_locks/);
   assert.match(reviewUsers, /locked_deposits_fiat/);
   assert.match(reviewUsers, /locked_withdrawals_crypto/);
+  assert.match(reviewUsers, /FROM fingerprints fp/);
+  assert.match(reviewUsers, /ORDER BY fp\.created_at DESC, fp\.id DESC/);
+  assert.match(page, /label="Fingerprint"/);
+  assert.match(page, /checkoutFingerprint/);
+  assert.match(page, /latestFingerprint/);
   assert.match(evidence, /Every scored trigger/);
   assert.match(evidence, /Evidence incomplete/);
   assert.match(evidence, /payment identity history/);
@@ -189,9 +194,13 @@ test("review amounts remain fully visible in the compact aligned header", () => 
   assert.match(amountFact, /h-12/);
   assert.match(amountFact, /whitespace-nowrap/);
   assert.doesNotMatch(amountFact, /truncate/);
-  assert.match(page, /grid min-w-80 grid-cols-2/);
+  assert.doesNotMatch(page, /label="Customer paid"/);
+  assert.match(page, /label="Balance credit"/);
   assert.match(page, /h-12 w-12 shrink-0/);
   assert.match(page, /xl:items-start/);
+  assert.match(page, /Open \$\{displayName\}'s profile in a new tab/);
+  assert.match(page, /target="_blank"/);
+  assert.match(page, /noopener noreferrer/);
   assert.match(controls, /h-12 w-28/);
   assert.match(read("src/app/(antifraud)/antifraud/fiat-deposits/require-kyc-action.tsx"), /h-12 w-28/);
 });

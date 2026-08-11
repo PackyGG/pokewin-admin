@@ -4,6 +4,7 @@ import {
   Clock3,
   CreditCard,
   ExternalLink,
+  Fingerprint,
   Mail,
   MapPin,
   ShieldCheck,
@@ -15,6 +16,7 @@ import { DataTablePagination } from "@/components/data-table/data-table-paginati
 import { EmptyState } from "@/components/empty-state";
 import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   listFiatAssessments,
   type FiatAssessment,
@@ -352,11 +354,10 @@ function ReviewDepositCard({
 }) {
   const displayName = user?.username ?? user?.email ?? item.user_id;
   const receivedAt = item.review_requested_at ?? item.paid_at ?? item.created_at;
-  const customerPaid = item.actual_customer_total_cents ?? item.requested_amount_cents;
 
   return (
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(20rem,auto)_auto] xl:items-start">
+      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(17rem,auto)_auto] xl:items-start">
         <div className="flex min-w-0 items-start gap-3">
           <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
             <UserRound className="size-4" />
@@ -388,13 +389,30 @@ function ReviewDepositCard({
           </div>
         </div>
 
-        <div className="grid min-w-80 grid-cols-2 gap-2">
-          <AmountFact label="Customer paid" value={money(customerPaid)} />
-          <AmountFact
-            label="Balance credit"
-            value={money(item.credited_amount_cents)}
-            accent
-          />
+        <div className="flex min-w-0 gap-2">
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-12 w-12 px-0 sm:w-24 sm:px-3"
+            title={`Open ${displayName}'s profile in a new tab`}
+            render={
+              <HostLink
+                href={`/users/${item.user_id}`}
+                target="_blank"
+                rel="noopener noreferrer"
+              />
+            }
+          >
+            <UserRound className="size-4" />
+            <span className="hidden sm:inline">Profile</span>
+          </Button>
+          <div className="min-w-40 flex-1">
+            <AmountFact
+              label="Balance credit"
+              value={money(item.credited_amount_cents)}
+              accent
+            />
+          </div>
         </div>
 
         <div className="flex min-h-12 flex-wrap items-center gap-2 xl:justify-end">
@@ -430,7 +448,7 @@ function ReviewDepositCard({
           <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
             Checkout compared with account
           </p>
-          <dl className="grid gap-2 sm:grid-cols-3">
+          <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-2 2xl:grid-cols-4">
             <ComparisonFact
               icon={MapPin}
               label="Location"
@@ -459,6 +477,17 @@ function ReviewDepositCard({
               checkoutValue={item.assessment.provider_evidence.checkoutEmail ?? "Unavailable"}
               accountLabel="Signup"
               accountValue={user?.signupEmail ?? "Unavailable"}
+            />
+            <ComparisonFact
+              icon={Fingerprint}
+              label="Fingerprint"
+              checkoutLabel="Checkout FP check"
+              checkoutValue={item.assessment.detection_evidence.checkoutFingerprint ?? "Unavailable"}
+              accountLabel={user?.latestFingerprintEvent
+                ? `Latest ${user.latestFingerprintEvent}`
+                : "Latest system"}
+              accountValue={user?.latestFingerprint ?? "Unavailable"}
+              mono
             />
           </dl>
           <ReviewLinks item={item} />
@@ -515,12 +544,12 @@ function ComparisonFact({
   mono?: boolean;
 }) {
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/10 p-3">
+    <div className="min-w-0 rounded-lg border bg-muted/10 p-2.5">
       <dt className="flex items-center gap-1.5 text-[11px] font-semibold">
         <Icon className="size-3.5 shrink-0" />
         {label}
       </dt>
-      <dd className="mt-2 grid min-w-0 grid-cols-2 gap-3">
+      <dd className="mt-1.5 grid min-w-0 grid-cols-2 gap-2">
         {[
           [checkoutLabel, checkoutValue],
           [accountLabel, accountValue],

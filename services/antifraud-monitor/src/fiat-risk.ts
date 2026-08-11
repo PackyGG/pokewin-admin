@@ -1093,6 +1093,7 @@ type PaymentIdentityReuse = {
 
 type AuthorizedNetworkReuse = {
   checkoutIp: string | null;
+  checkoutFingerprint: string | null;
   checkoutIpSharedUsers: number;
   checkoutDeviceSharedUsers: number;
   identityVerdict: "clear" | "watch" | "review" | "contain" | null;
@@ -1559,6 +1560,7 @@ async function loadAuthorizedNetworkReuse(
   const result = await antifraud.query<{
     intent_id: string;
     checkout_ip: string | null;
+    checkout_fingerprint: string | null;
     checkout_ip_shared_users: number;
     checkout_device_shared_users: number;
     identity_verdict: "clear" | "watch" | "review" | "contain";
@@ -1570,6 +1572,7 @@ async function loadAuthorizedNetworkReuse(
       SELECT
         current.intent_id,
         host(current.checkout_ip) AS checkout_ip,
+        current.checkout_visitor_id AS checkout_fingerprint,
         current.verdict AS identity_verdict,
         current.reason_codes AS identity_reason_codes,
         ARRAY(
@@ -1611,6 +1614,7 @@ async function loadAuthorizedNetworkReuse(
   return {
     values: new Map(result.rows.map((row) => [row.intent_id, {
       checkoutIp: row.checkout_ip,
+      checkoutFingerprint: row.checkout_fingerprint,
       checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
       checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
       identityVerdict: row.identity_verdict ?? null,
@@ -1684,6 +1688,7 @@ function postDetectionEvidence(input: {
     paymentMethodSharedUsers: input.identity?.paymentMethodSharedUsers ?? 0,
     cardSignatureSharedUsers: input.identity?.cardSignatureSharedUsers ?? 0,
     checkoutIp: input.network?.checkoutIp ?? null,
+    checkoutFingerprint: input.network?.checkoutFingerprint ?? null,
     checkoutIpSharedUsers: input.network?.checkoutIpSharedUsers ?? 0,
     checkoutDeviceSharedUsers: input.network?.checkoutDeviceSharedUsers ?? 0,
     exactAmountAttempts30m: input.context?.exact_amount_attempts_30m ?? 0,

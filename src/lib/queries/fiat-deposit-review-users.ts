@@ -14,6 +14,8 @@ export type FiatDepositReviewUser = {
   countryCode: string | null;
   latestAuthIp: string | null;
   latestAuthEvent: "login" | "register" | null;
+  latestFingerprint: string | null;
+  latestFingerprintEvent: string | null;
   fiatDepositsLocked: boolean;
   withdrawalsLocked: boolean;
 };
@@ -33,6 +35,8 @@ export async function getFiatDepositReviewUsers(
     country_code: string | null;
     latest_auth_ip: string | null;
     latest_auth_event: "login" | "register" | null;
+    latest_fingerprint: string | null;
+    latest_fingerprint_event: string | null;
     locked_deposits_fiat: boolean | null;
     locked_withdrawals_crypto: boolean | null;
     locked_withdrawals_items: boolean | null;
@@ -48,11 +52,20 @@ export async function getFiatDepositReviewUsers(
         auth.latest_auth_event,
         CASE WHEN NULLIF(u.signup_ip, '') IS NOT NULL THEN 'register' END
       ) AS latest_auth_event,
+      fingerprint.visitor_id AS latest_fingerprint,
+      fingerprint.event_type AS latest_fingerprint_event,
       locks.locked_deposits_fiat,
       locks.locked_withdrawals_crypto,
       locks.locked_withdrawals_items
     FROM "user" u
     LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
+    LEFT JOIN LATERAL (
+      SELECT fp.visitor_id, fp.event_type::text AS event_type
+      FROM fingerprints fp
+      WHERE fp.user_id = u.id
+      ORDER BY fp.created_at DESC, fp.id DESC
+      LIMIT 1
+    ) fingerprint ON TRUE
     LEFT JOIN LATERAL (
       SELECT
         (array_agg(audit.metadata->>'email' ORDER BY audit.created_at)
@@ -82,6 +95,8 @@ export async function getFiatDepositReviewUsers(
         countryCode: row.country_code,
         latestAuthIp: row.latest_auth_ip,
         latestAuthEvent: row.latest_auth_event,
+        latestFingerprint: row.latest_fingerprint,
+        latestFingerprintEvent: row.latest_fingerprint_event,
         fiatDepositsLocked: row.locked_deposits_fiat === true,
         withdrawalsLocked:
           row.locked_withdrawals_crypto === true
