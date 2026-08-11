@@ -414,7 +414,6 @@ export class DiscordAlerts {
 
   async send(
     eventKey:
-      | "antifraud.signup_low_risk"
       | "antifraud.signup_high"
       | "antifraud.signup_critical"
       | "antifraud.rule_matched",

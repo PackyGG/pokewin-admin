@@ -25,6 +25,7 @@ import { requireAntifraudManager } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
 import { requireCapability } from "@/lib/require-capability";
 import { blockKnownUserIdentifiers } from "@/lib/antifraud/user-identifier-blocking";
+import { enqueueKycRequiredReview } from "@/lib/discord-notifications/kyc-required";
 
 type ActionResult =
   | { success: true; data: UserKycStatus; userId: string }
@@ -191,6 +192,19 @@ export async function requireAccountKyc(
     // duplicate require/retry after that mutation succeeded just because the
     // dashboard's secondary ADMIN-DB audit mirror was temporarily unavailable.
     console.error("[antifraud-kyc] secondary require audit failed:", error);
+  }
+
+  try {
+    await enqueueKycRequiredReview({
+      userId,
+      reason: parsed.data.reason,
+      levelName: parsed.data.levelName || undefined,
+      verificationCycle: data.verificationCycle,
+    });
+  } catch (error) {
+    // KYC is already authoritative in the backend. Keep the successful staff
+    // action and surface a delivery failure through application monitoring.
+    console.error("[antifraud-kyc] Discord notification failed:", error);
   }
 
   revalidatePath("/antifraud/kyc");

@@ -15,6 +15,7 @@ import {
   reviewUserKyc,
   type UserKycStatus,
 } from "@/lib/backend-api/kyc";
+import { enqueueKycRequiredReview } from "@/lib/discord-notifications/kyc-required";
 
 /**
  * KYC admin actions. The backend owns the KYC state machine (require / review),
@@ -92,6 +93,17 @@ export async function requireKycAction(params: {
       verificationCycle: data.verificationCycle,
     },
   });
+
+  try {
+    await enqueueKycRequiredReview({
+      userId,
+      reason,
+      levelName,
+      verificationCycle: data.verificationCycle,
+    });
+  } catch (error) {
+    console.error("[user-kyc] Discord notification failed:", error);
+  }
 
   revalidateTag(`users-detail-${userId}`);
   return { success: true, data };

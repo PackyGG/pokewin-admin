@@ -15,13 +15,7 @@ test("Fraud Settings is one page with a tab per System section", () => {
 
   // Every section is a URL-addressable tab on ONE page, so a deep link and a
   // refresh land on the same view an operator was sent.
-  for (const tab of [
-    "health",
-    "automation",
-    "scoring",
-    "flows",
-    "events",
-  ]) {
+  for (const tab of ["health", "automation", "scoring", "flows", "events"]) {
     assert.match(page, new RegExp(`\\{ value: "${tab}", label: `));
   }
   assert.match(page, /paramKey="tab"/);
@@ -131,7 +125,6 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
   }
 
   for (const event of [
-    "antifraud.signup_low_risk",
     "antifraud.signup_high",
     "antifraud.signup_critical",
     "antifraud.rule_matched",
@@ -149,6 +142,8 @@ test("the built-in map covers player, payment, review, KYC, and operational flow
   ]) {
     assert.match(catalog, new RegExp(event.replaceAll(".", "\\.")));
   }
+  assert.doesNotMatch(catalog, /antifraud\.signup_low_risk/);
+  assert.doesNotMatch(catalog, /antifraud\.account_banned/);
 
   // Every control link points at a tab that exists, not at a retired route.
   const page = read(`${SETTINGS}/page.tsx`);
@@ -166,7 +161,10 @@ test("signup recovery controls stay sanitized, verified, and explicit", () => {
   const api = read("src/lib/antifraud/signup-failures-api.ts");
 
   assert.match(health, /getSignupIngestionFailures\(\)/);
-  assert.match(health, /<SignupFailureManager failures=\{signupFailures\.data\}/);
+  assert.match(
+    health,
+    /<SignupFailureManager failures=\{signupFailures\.data\}/,
+  );
   assert.match(manager, /id="signup-recovery"/);
   assert.match(manager, /errorSummary/);
   assert.match(manager, /errorCode/);

@@ -17,27 +17,27 @@ test("Discord notification persistence has durable routing, leases, and dedupe",
     "discord_notification_routes",
     "discord_notification_jobs",
   ]) {
-    assert.match(migration, new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`));
+    assert.match(
+      migration,
+      new RegExp(`CREATE TABLE IF NOT EXISTS "${table}"`),
+    );
   }
   assert.match(migration, /discord_notification_jobs_dedupe_idx/);
   assert.match(migration, /WHERE "status" IN \('pending', 'leased'\)/);
   assert.match(router, /FOR UPDATE SKIP LOCKED/);
   assert.match(router, /leased_until = now\(\) \+ interval '60 seconds'/);
-  assert.match(router, /ON CONFLICT \(guild_id, event_key, dedupe_key, channel_id\) DO NOTHING/);
+  assert.match(
+    router,
+    /ON CONFLICT \(guild_id, event_key, dedupe_key, channel_id\) DO NOTHING/,
+  );
   assert.match(router, /attempt_count >= max_attempts THEN 'dead'/);
 });
 
 test("bot API is scoped, guild-bound, and matches the worker contract", () => {
   const scopes = read("src/lib/api-auth/scopes.ts");
-  const sync = read(
-    "src/app/api/v1/discord/antifraud/channels/sync/route.ts",
-  );
-  const claim = read(
-    "src/app/api/v1/discord/antifraud/jobs/claim/route.ts",
-  );
-  const ack = read(
-    "src/app/api/v1/discord/antifraud/jobs/[id]/ack/route.ts",
-  );
+  const sync = read("src/app/api/v1/discord/antifraud/channels/sync/route.ts");
+  const claim = read("src/app/api/v1/discord/antifraud/jobs/claim/route.ts");
+  const ack = read("src/app/api/v1/discord/antifraud/jobs/[id]/ack/route.ts");
   const channelClaim = read(
     "src/app/api/v1/discord/antifraud/channel-jobs/claim/route.ts",
   );
@@ -63,9 +63,7 @@ test("channel creation has a durable manager request and leased bot execution", 
   const operations = read(
     "src/lib/discord-notifications/channel-operations.ts",
   );
-  const actions = read(
-    "src/app/(antifraud)/antifraud/discord/actions.ts",
-  );
+  const actions = read("src/app/(antifraud)/antifraud/discord/actions.ts");
 
   assert.match(migration, /discord_notification_channel_settings/);
   assert.match(migration, /discord_notification_channel_jobs/);
@@ -74,7 +72,10 @@ test("channel creation has a durable manager request and leased bot execution", 
   assert.match(operations, /type = 'category'/);
   assert.match(operations, /parent\.position > boundary_top\.position/);
   assert.match(operations, /parent\.position < boundary_bottom\.position/);
-  assert.match(operations, /boundary_top\.position < boundary_bottom\.position/);
+  assert.match(
+    operations,
+    /boundary_top\.position < boundary_bottom\.position/,
+  );
   assert.match(operations, /leased_until = now\(\) \+ interval '60 seconds'/);
   assert.match(actions, /requireAntifraudManager\(\)/);
   assert.match(actions, /queueDiscordChannelCreation/);
@@ -113,12 +114,8 @@ test("approved Discord categories moved outside the live boundary are rejected",
 
 test("monitor enqueue is bounded, signed, replay-safe, and webhook-free", () => {
   const receiver = read("src/app/api/antifraud/discord-events/route.ts");
-  const sender = read(
-    "services/antifraud-monitor/src/discord-events.ts",
-  );
-  const monitorConfig = read(
-    "services/antifraud-monitor/src/config.ts",
-  );
+  const sender = read("services/antifraud-monitor/src/discord-events.ts");
+  const monitorConfig = read("services/antifraud-monitor/src/config.ts");
 
   assert.match(receiver, /MAX_SKEW_MS = 5 \* 60 \* 1000/);
   assert.match(receiver, /MAX_BODY_BYTES = 64 \* 1024/);
@@ -138,12 +135,18 @@ test("errors and KYC channels post without tagging anyone", () => {
   assert.match(policy, /APPROVED_DISCORD_CATEGORIES\.kyc/);
   // The mention content is dropped at enqueue, so no routing change can
   // reintroduce a ping in those categories.
-  assert.match(router, /eligible\.parent_id IN \(\$\{silentCategoryIds\(\)\}\) THEN NULL/);
+  assert.match(
+    router,
+    /eligible\.parent_id IN \(\$\{silentCategoryIds\(\)\}\) THEN NULL/,
+  );
 });
 
 test("error routing uses only the four surviving channels", () => {
-  const migration = read(
+  const originalMigration = read(
     "drizzle/admin/migrations/20260805_consolidate_error_discord_routing.sql",
+  );
+  const cleanupMigration = read(
+    "drizzle/admin/migrations/20260812_discord_notification_routing_cleanup.sql",
   );
   const router = read("src/lib/discord-notifications/router.ts");
   const webapp = read("src/app/api/antifraud/webapp-errors/route.ts");
@@ -151,16 +154,23 @@ test("error routing uses only the four surviving channels", () => {
     "services/antifraud-monitor/src/provider-access-alerts.ts",
   );
 
-  for (const channelId of [
-    "1532248855133945956",
-    "1532249079999103077",
-    "1532248846103613552",
-    "1532248582525157458",
-  ]) {
-    assert.match(migration, new RegExp(channelId));
+  for (const channelId of ["1532248855133945956", "1532249079999103077"]) {
+    assert.match(originalMigration, new RegExp(channelId));
   }
-  for (const retired of ["code", "failed_action", "provider_access", "system", "timeout"]) {
-    assert.match(migration, new RegExp(`antifraud\\.error\\.${retired}`));
+  for (const channelId of ["1536858616810704957", "1536858608132690040"]) {
+    assert.match(cleanupMigration, new RegExp(channelId));
+  }
+  for (const retired of [
+    "code",
+    "failed_action",
+    "provider_access",
+    "system",
+    "timeout",
+  ]) {
+    assert.match(
+      originalMigration,
+      new RegExp(`antifraud\\.error\\.${retired}`),
+    );
   }
   assert.match(router, /canonicalDiscordEventKey/);
   assert.match(router, /normalized\.startsWith\("antifraud\.error\."\)/);
@@ -170,4 +180,22 @@ test("error routing uses only the four surviving channels", () => {
   assert.match(provider, /eventKey: "antifraud\.error\.third_party_api"/);
   assert.match(provider, /kind: "request_failed"/);
   assert.match(provider, /server: "Antifraud monitor · Railway production"/);
+});
+
+test("KYC requirements enqueue account review cards to the KYC route", () => {
+  const producer = read("src/lib/discord-notifications/kyc-required.ts");
+  const cleanupMigration = read(
+    "drizzle/admin/migrations/20260812_discord_notification_routing_cleanup.sql",
+  );
+  const antifraudAction = read("src/app/(antifraud)/antifraud/kyc/actions.ts");
+  const userAction = read("src/app/(admin)/users/[id]/kyc-actions.ts");
+
+  assert.match(producer, /eventKey: "antifraud\.kyc_required"/);
+  assert.match(producer, /KYC account review required/);
+  assert.match(
+    cleanupMigration,
+    /'antifraud\.kyc_required', '1532298371052867634'/,
+  );
+  assert.match(antifraudAction, /enqueueKycRequiredReview/);
+  assert.match(userAction, /enqueueKycRequiredReview/);
 });

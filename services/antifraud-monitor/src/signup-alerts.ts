@@ -4,17 +4,13 @@ export const LOW_RISK_SIGNUP_SCORE = 21;
 export const HIGH_RISK_SIGNUP_SCORE = 50;
 export const CRITICAL_RISK_SIGNUP_SCORE = 70;
 
-export type SignupDiscordAlertKind =
-  | "low_risk"
-  | "high_risk"
-  | "critical_risk";
+export type SignupDiscordAlertKind = "high_risk" | "critical_risk";
 
 export function signupDiscordAlertKind(
   score: number,
 ): SignupDiscordAlertKind | null {
   if (score >= CRITICAL_RISK_SIGNUP_SCORE) return "critical_risk";
   if (score >= HIGH_RISK_SIGNUP_SCORE) return "high_risk";
-  if (score >= LOW_RISK_SIGNUP_SCORE) return "low_risk";
   return null;
 }
 

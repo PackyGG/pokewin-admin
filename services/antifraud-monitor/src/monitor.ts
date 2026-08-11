@@ -1725,52 +1725,43 @@ export class MonitorEngine {
       attempt: async (alert) => {
         const alertKind = signupDiscordAlertKind(alert.score);
         if (!alertKind) {
-          throw new Error("Signup alert outbox contains a score below 21");
+          // Drain legacy 21-49 rows without posting. New low-risk assessments
+          // never enter this outbox now that the notification is retired.
+          return { delivered: true };
         }
-        const lowRisk = alertKind === "low_risk";
         const criticalRisk = alertKind === "critical_risk";
-        const eventKey = lowRisk
-          ? "antifraud.signup_low_risk" as const
-          : criticalRisk
-            ? "antifraud.signup_critical" as const
-            : "antifraud.signup_high" as const;
+        const eventKey = criticalRisk
+          ? "antifraud.signup_critical" as const
+          : "antifraud.signup_high" as const;
         return {
           delivered: await this.discord.send(
             eventKey,
             `signup:${alert.case_id ?? alert.user_id}:${alert.occurred_at.toISOString()}`,
             {
-              title: lowRisk
-                ? "Low-risk signup detected"
-                : criticalRisk
-                  ? "Critical-risk signup"
-                  : "High-risk signup",
-              description: lowRisk
-                ? "This account entered the low-risk signup band and is being monitored. No staff review or automatic restriction was opened."
-                : "Review the account indicators and current locks below.",
-              presentation: lowRisk ? undefined : "signup-risk",
+              title: criticalRisk
+                ? "Critical-risk signup"
+                : "High-risk signup",
+              description:
+                "Review the account indicators and current locks below.",
+              presentation: "signup-risk",
               userId: alert.user_id,
               username: alert.username,
-              location: lowRisk
-                ? undefined
-                : {
-                    city: alert.city,
-                    country: alert.country,
-                    countryCode: alert.country_code,
-                  },
-              locks: lowRisk
-                ? undefined
-                : criticalRisk
-                  ? [
-                      "Fiat deposits",
-                      "Crypto withdrawals",
-                      "Item withdrawals",
-                      "Tips",
-                    ]
-                  : [],
-              caseId: lowRisk ? undefined : (alert.case_id ?? undefined),
+              location: {
+                city: alert.city,
+                country: alert.country,
+                countryCode: alert.country_code,
+              },
+              locks: criticalRisk
+                ? [
+                    "Fiat deposits",
+                    "Crypto withdrawals",
+                    "Item withdrawals",
+                    "Tips",
+                  ]
+                : [],
+              caseId: alert.case_id ?? undefined,
               score: alert.score,
-              severity: lowRisk ? "low" : severity(alert.score),
-              trigger: lowRisk ? "Signup score reached 21-49" : undefined,
+              severity: severity(alert.score),
               signals: storedSignals(alert.signals),
               occurredAt: alert.occurred_at,
             },

@@ -33,9 +33,7 @@ test("Discord management stays inside exact approved categories and live markers
   const workspace = read(
     "src/app/(antifraud)/antifraud/discord/routing-workspace.tsx",
   );
-  const actions = read(
-    "src/app/(antifraud)/antifraud/discord/actions.ts",
-  );
+  const actions = read("src/app/(antifraud)/antifraud/discord/actions.ts");
   const router = read("src/lib/discord-notifications/router.ts");
   const ingest = read("src/app/api/antifraud/discord-events/route.ts");
 
@@ -59,7 +57,10 @@ test("Discord management stays inside exact approved categories and live markers
   assert.match(workspace, />Nobody</);
   assert.doesNotMatch(router, /\bescalate\b/);
   assert.doesNotMatch(ingest, /parsed\.data\.escalate/);
-  assert.match(actions, /require2FA\(session\.userId, parsed\.data\.credential\)/);
+  assert.match(
+    actions,
+    /require2FA\(session\.userId, parsed\.data\.credential\)/,
+  );
 });
 
 test("Discord recipients and error destinations match the owner contract", () => {
@@ -80,12 +81,8 @@ test("Discord recipients and error destinations match the owner contract", () =>
   }
   for (const destination of [
     "third-party-api",
-    "discord-command-errors",
-    "general",
-    "system",
-    "code",
-    "fail",
-    "timeout",
+    "discord-errors",
+    "general-errors",
     "webapp-errors",
   ]) {
     assert.match(policy, new RegExp(`"${destination}"`));
@@ -119,9 +116,7 @@ test("audit stays manager-only and runtime config never renders secrets", () => 
   const auditMigration = read(
     "drizzle/admin/migrations/20260730_antifraud_security_audit.sql",
   );
-  const auditPage = read(
-    "src/app/(antifraud)/antifraud/audit/page.tsx",
-  );
+  const auditPage = read("src/app/(antifraud)/antifraud/audit/page.tsx");
   const runtime = read("services/antifraud-monitor/src/runtime-config.ts");
 
   assert.match(auditMigration, /BEFORE UPDATE OR DELETE/);

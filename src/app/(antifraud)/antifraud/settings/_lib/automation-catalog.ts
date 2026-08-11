@@ -48,7 +48,6 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
       "At critical risk, lock Fiat deposits, withdrawals, and tips",
     ],
     discordEvents: [
-      "antifraud.signup_low_risk",
       "antifraud.signup_high",
       "antifraud.signup_critical",
     ],
@@ -246,7 +245,6 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     ],
     discordEvents: [
       "antifraud.review_reminder",
-      "antifraud.account_banned",
       "antifraud.account_locked",
       "antifraud.kyc_required",
     ],

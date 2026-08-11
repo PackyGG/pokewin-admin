@@ -11,13 +11,13 @@ import {
   signupReviewMarker,
 } from "../src/signup-alerts.js";
 
-test("signup Discord bands have distinct low, high, and critical actions", () => {
+test("signup Discord alerts start at high risk", () => {
   assert.equal(LOW_RISK_SIGNUP_SCORE, 21);
   assert.equal(HIGH_RISK_SIGNUP_SCORE, 50);
   assert.equal(CRITICAL_RISK_SIGNUP_SCORE, 70);
   assert.equal(signupDiscordAlertKind(20), null);
-  assert.equal(signupDiscordAlertKind(21), "low_risk");
-  assert.equal(signupDiscordAlertKind(49), "low_risk");
+  assert.equal(signupDiscordAlertKind(21), null);
+  assert.equal(signupDiscordAlertKind(49), null);
   assert.equal(signupDiscordAlertKind(50), "high_risk");
   assert.equal(signupDiscordAlertKind(69), "high_risk");
   assert.equal(signupDiscordAlertKind(70), "critical_risk");
@@ -76,7 +76,7 @@ test("critical signup marker requires all three containment actions", () => {
   ]);
 });
 
-test("score-21 signup delivery uses durable independent sinks", async () => {
+test("high-risk signup delivery uses durable independent sinks", async () => {
   const source = await readFile(
     new URL("../src/monitor.ts", import.meta.url),
     "utf8",
@@ -96,13 +96,13 @@ test("score-21 signup delivery uses durable independent sinks", async () => {
   assert.match(source, /signupReviewMarker/);
   assert.match(source, /"High-risk signup"/);
   assert.match(source, /"Critical-risk signup"/);
-  assert.match(source, /"Low-risk signup detected"/);
-  assert.match(source, /"antifraud\.signup_low_risk"/);
+  assert.doesNotMatch(source, /"Low-risk signup detected"/);
+  assert.doesNotMatch(source, /"antifraud\.signup_low_risk"/);
   assert.match(source, /"antifraud\.signup_high"/);
   assert.match(source, /"antifraud\.signup_critical"/);
-  assert.match(source, /caseId: lowRisk \? undefined/);
+  assert.match(source, /caseId: alert\.case_id \?\? undefined/);
   assert.match(source, /LEFT JOIN subjects subject/);
-  assert.match(source, /presentation: lowRisk \? undefined : "signup-risk"/);
+  assert.match(source, /presentation: "signup-risk"/);
   assert.match(source, /occurredAt: alert\.occurred_at/);
   assert.match(source, /"Fiat deposits"/);
   assert.match(source, /"Crypto withdrawals"/);

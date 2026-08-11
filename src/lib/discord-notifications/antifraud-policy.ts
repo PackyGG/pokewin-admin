@@ -40,12 +40,8 @@ export const PLANNED_DISCORD_CHANNELS = {
   ],
   errors: [
     "third-party-api",
-    "discord-command-errors",
-    "general",
-    "system",
-    "code",
-    "fail",
-    "timeout",
+    "discord-errors",
+    "general-errors",
     "webapp-errors",
   ],
 } as const;
@@ -131,12 +127,8 @@ export const REVIEW_REMINDER_DELAYS_MS = {
 
 export type AntifraudErrorRoute =
   | "third-party-api"
-  | "discord-command-errors"
-  | "general"
-  | "system"
-  | "code"
-  | "fail"
-  | "timeout"
+  | "discord-errors"
+  | "general-errors"
   | "webapp-errors";
 
 export function antifraudErrorRoute(input: {
@@ -151,10 +143,9 @@ export function antifraudErrorRoute(input: {
     | "webapp";
 }): AntifraudErrorRoute {
   if (input.source === "provider") return "third-party-api";
-  if (input.source === "discord") return "discord-command-errors";
+  if (input.source === "discord") return "discord-errors";
   if (input.source === "webapp") return "webapp-errors";
-  if (input.source === "failed_action") return "fail";
-  return input.source;
+  return "general-errors";
 }
 export function isApprovedDiscordCategory(categoryId: string | null): boolean {
   return (
