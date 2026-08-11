@@ -9,16 +9,14 @@ import {
   CircleOff,
   FolderPlus,
   Hash,
-  Pencil,
+  MoreHorizontal,
   Plus,
   RefreshCw,
   Search,
-  Send,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
 
-import { SectionHeading } from "@/components/modern-panels";
 import { StepUpField } from "@/components/step-up-field";
 import {
   AlertDialog,
@@ -49,12 +47,25 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from "@/components/ui/sheet";
+import { useIsMobile } from "@/hooks/use-mobile";
 import type {
   DiscordNotificationChannel,
   DiscordNotificationConfig,
@@ -92,11 +103,14 @@ export function DiscordRoutingWorkspace({
   initialConfig: DiscordNotificationConfig | null;
 }) {
   const router = useRouter();
+  const isMobile = useIsMobile();
   const [pending, startTransition] = useTransition();
   const [editor, setEditor] = useState<ChannelEditorState | null>(null);
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [eventQuery, setEventQuery] = useState("");
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
+  const [mobileEditorOpen, setMobileEditorOpen] = useState(false);
+  const [showUnassigned, setShowUnassigned] = useState(false);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -239,6 +253,21 @@ export function DiscordRoutingWorkspace({
     [approvedCategoryIds, initialConfig],
   );
 
+  const unassignedEvents = useMemo(() => {
+    if (!initialConfig) return [];
+    const liveChannelIds = new Set(
+      initialConfig.channels.map((channel) => channel.id),
+    );
+    const routedEventKeys = new Set(
+      initialConfig.routes
+        .filter((route) => route.enabled && liveChannelIds.has(route.channelId))
+        .map((route) => route.eventKey),
+    );
+    return initialConfig.events.filter(
+      (event) => event.enabled && !routedEventKeys.has(event.key),
+    );
+  }, [initialConfig]);
+
   if (!initialConfig) {
     return (
       <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-6">
@@ -345,6 +374,11 @@ export function DiscordRoutingWorkspace({
   }
 
   function openNewChannel() {
+    if (editorHasUnsavedChanges()) {
+      toast.error("Save or cancel the current changes first.");
+      return;
+    }
+    setShowUnassigned(false);
     setEditingChannelId(null);
     setEventQuery("");
     setEditor({
@@ -354,9 +388,15 @@ export function DiscordRoutingWorkspace({
       // Silent categories drop tags at enqueue time regardless of this.
       mentionGroupKeys: ["support"],
     });
+    if (isMobile) setMobileEditorOpen(true);
   }
 
   function openExistingChannel(channelId: string) {
+    if (editingChannelId !== channelId && editorHasUnsavedChanges()) {
+      toast.error("Save or cancel the current changes first.");
+      return;
+    }
+    setShowUnassigned(false);
     setEditingChannelId(channelId);
     setEventQuery("");
     setEditor({
@@ -376,12 +416,59 @@ export function DiscordRoutingWorkspace({
           (mention) => mention.channelId === channelId,
         )?.groupKeys ?? [],
     });
+    if (isMobile) setMobileEditorOpen(true);
   }
 
   function closeEditor() {
+    setMobileEditorOpen(false);
+    setShowUnassigned(false);
     setEditor(null);
     setEditingChannelId(null);
     setEventQuery("");
+  }
+
+  function openUnassignedEvents() {
+    if (editorHasUnsavedChanges()) {
+      toast.error("Save or cancel the current changes first.");
+      return;
+    }
+    setEditor(null);
+    setEditingChannelId(null);
+    setEventQuery("");
+    setShowUnassigned(true);
+    if (isMobile) setMobileEditorOpen(true);
+  }
+
+  function editorHasUnsavedChanges(): boolean {
+    if (!editor) return false;
+    const sameKeys = (left: readonly string[], right: readonly string[]) =>
+      [...left].sort().join("\u0000") === [...right].sort().join("\u0000");
+
+    if (!editingChannelId) {
+      return (
+        editor.eventKeys.length > 0 ||
+        !sameKeys(editor.mentionGroupKeys, ["support"])
+      );
+    }
+
+    const savedEvents = config.routes
+      .filter(
+        (route) =>
+          route.channelId === editingChannelId &&
+          route.enabled &&
+          config.events.some(
+            (event) => event.key === route.eventKey && event.enabled,
+          ),
+      )
+      .map((route) => route.eventKey);
+    const savedMentions =
+      config.channelMentions.find(
+        (mention) => mention.channelId === editingChannelId,
+      )?.groupKeys ?? [];
+    return (
+      !sameKeys(editor.eventKeys, savedEvents) ||
+      !sameKeys(editor.mentionGroupKeys, savedMentions)
+    );
   }
 
   function toggleEvent(eventKey: string, checked: boolean) {
@@ -416,7 +503,11 @@ export function DiscordRoutingWorkspace({
           credential: approval,
         }),
       editingChannelId ? "Channel updated" : "Channel added",
-      closeEditor,
+      editingChannelId
+        ? () => {
+            if (isMobile) closeEditor();
+          }
+        : closeEditor,
     );
   }
 
@@ -488,117 +579,101 @@ export function DiscordRoutingWorkspace({
         </Button>
       </div>
 
-      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:p-4">
-          <div className="min-w-0 flex-1">
-            <SectionHeading
-              icon={Send}
-              title={
-                // Kept on one line so the guardrail contract that asserts the
-                // literal `>Active channels<` in this source still matches.
-                <>
-                  Active channels
-                  <Badge variant="secondary" className="tabular-nums">
-                    {activeChannels.length}
-                  </Badge>
-                </>
-              }
-            />
-          </div>
-          <div className="flex flex-wrap gap-2">
+      <section className="grid min-h-[580px] overflow-hidden rounded-xl border border-border/60 bg-card md:grid-cols-[280px_minmax(0,1fr)]">
+        <aside
+          aria-label="Discord channel tree"
+          className="min-w-0 border-border/60 md:border-r"
+        >
+          <div className="flex h-12 items-center gap-2 border-b border-border/60 px-3">
+            <span className="min-w-0 flex-1 text-sm font-semibold">Channels</span>
             <Button
-              variant="outline"
-              onClick={() => setCreateChannelOpen(true)}
-              disabled={pending || availableCategories.length === 0}
+              variant={showUnassigned ? "secondary" : "ghost"}
+              size="sm"
+              className="h-7 gap-1 px-2 text-xs"
+              onClick={openUnassignedEvents}
             >
-              <FolderPlus />
-              Create Discord channel
+              Unassigned
+              <Badge variant="outline" className="h-5 px-1.5 tabular-nums">
+                {unassignedEvents.length}
+              </Badge>
             </Button>
-            <Button
-              onClick={openNewChannel}
-              disabled={
-                pending ||
-                availableChannels.length === 0 ||
-                enabledEvents.length === 0
-              }
-            >
-              <Plus />
-              Add existing
-            </Button>
-          </div>
-        </div>
-      </section>
-
-      {activeChannels.length === 0 ? (
-        <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-          <div className="flex min-h-64 flex-col items-center justify-center px-6 py-12 text-center">
-            <span className="flex size-11 items-center justify-center rounded-xl bg-cyan-500/10 text-cyan-500">
-              <Hash className="size-5" />
-            </span>
-            <p className="mt-3 text-sm font-semibold">No active channels</p>
-            <p className="mt-1 max-w-sm text-xs text-muted-foreground">
-              Add a bot-visible Discord channel and choose the events it should
-              receive.
-            </p>
-            <Button
-              className="mt-4"
-              onClick={openNewChannel}
-              disabled={
-                pending ||
-                availableChannels.length === 0 ||
-                enabledEvents.length === 0
-              }
-            >
-              <Plus />
-              Add existing channel
-            </Button>
-          </div>
-        </section>
-      ) : (
-        <div className="space-y-3">
-          {activeChannelGroups.map((group) => {
-            const categoryOpen = !collapsedCategoryIds.has(group.id);
-
-            return (
-              <section
-                key={group.id}
-                className="overflow-hidden rounded-xl border border-border/60 bg-card"
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                render={
+                  <Button
+                    variant="ghost"
+                    size="icon-sm"
+                    aria-label="Add Discord channel"
+                  />
+                }
               >
-                <Collapsible
-                  open={categoryOpen}
-                  onOpenChange={(open) =>
-                    setCollapsedCategoryIds((current) => {
-                      const next = new Set(current);
-                      if (open) next.delete(group.id);
-                      else next.add(group.id);
-                      return next;
-                    })
-                  }
+                <Plus />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-52">
+                <DropdownMenuItem
+                  disabled={pending || availableCategories.length === 0}
+                  onClick={() => setCreateChannelOpen(true)}
                 >
-                  <CollapsibleTrigger
-                    className={cn(
-                      "flex w-full cursor-pointer items-center gap-2 bg-muted/40 px-3 py-2 text-left transition-colors hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-4",
-                      categoryOpen && "border-b border-border/60",
-                    )}
-                    aria-label={`${categoryOpen ? "Collapse" : "Expand"} ${group.name}`}
+                  <FolderPlus />
+                  Create Discord channel
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  disabled={
+                    pending ||
+                    availableChannels.length === 0 ||
+                    enabledEvents.length === 0
+                  }
+                  onClick={openNewChannel}
+                >
+                  <Hash />
+                  Add existing
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <div role="tree" className="max-h-[720px] overflow-y-auto p-2">
+            {activeChannelGroups.length === 0 ? (
+              <p className="px-3 py-10 text-center text-sm text-muted-foreground">
+                No configured channels.
+              </p>
+            ) : (
+              activeChannelGroups.map((group) => {
+                const categoryOpen = !collapsedCategoryIds.has(group.id);
+                return (
+                  <Collapsible
+                    key={group.id}
+                    open={categoryOpen}
+                    onOpenChange={(open) =>
+                      setCollapsedCategoryIds((current) => {
+                        const next = new Set(current);
+                        if (open) next.delete(group.id);
+                        else next.add(group.id);
+                        return next;
+                      })
+                    }
+                    className="mb-2 last:mb-0"
                   >
-                    <ChevronDown
-                      className={cn(
-                        "size-3.5 shrink-0 text-muted-foreground motion-safe:transition-transform motion-safe:duration-200",
-                        !categoryOpen && "-rotate-90",
-                      )}
-                    />
-                    <span className="truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-                      {group.name}
-                    </span>
-                    <span className="text-[11px] tabular-nums text-muted-foreground/70">
-                      {group.channels.length}
-                    </span>
-                  </CollapsibleTrigger>
-                  <CollapsibleContent>
-                    <div className="divide-y divide-border/40">
+                    <CollapsibleTrigger
+                      className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left hover:bg-muted/60"
+                      aria-label={`${categoryOpen ? "Collapse" : "Expand"} ${group.name}`}
+                    >
+                      <ChevronDown
+                        className={cn(
+                          "size-3.5 text-muted-foreground transition-transform",
+                          !categoryOpen && "-rotate-90",
+                        )}
+                      />
+                      <span className="min-w-0 flex-1 truncate text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        {group.name}
+                      </span>
+                      <span className="text-[11px] tabular-nums text-muted-foreground">
+                        {group.channels.length}
+                      </span>
+                    </CollapsibleTrigger>
+                    <CollapsibleContent className="mt-1 space-y-0.5">
                       {group.channels.map((channel) => {
-                        const routes = initialConfig.routes.filter(
+                        const eventCount = initialConfig.routes.filter(
                           (route) =>
                             route.channelId === channel.id &&
                             route.enabled &&
@@ -606,123 +681,141 @@ export function DiscordRoutingWorkspace({
                               (event) =>
                                 event.key === route.eventKey && event.enabled,
                             ),
-                        );
-                        const events = routes.map(
-                          (route) =>
-                            initialConfig.events.find(
-                              (event) => event.key === route.eventKey,
-                            ) ?? {
-                              key: route.eventKey,
-                              label: route.eventKey,
-                              description:
-                                "This event is no longer in the catalog.",
-                              category: "Unavailable",
-                              custom: false,
-                              enabled: false,
-                            },
-                        );
-
+                        ).length;
+                        const selected = editingChannelId === channel.id;
                         return (
                           <div
                             key={channel.id}
-                            className="flex flex-col gap-3 px-3 py-3 transition-colors hover:bg-muted/25 sm:flex-row sm:items-center sm:gap-4 sm:px-4"
+                            className={cn(
+                              "group flex items-center rounded-md border border-transparent",
+                              selected && "border-primary/30 bg-primary/5",
+                            )}
                           >
-                            <div className="flex min-w-0 flex-1 items-start gap-3">
-                              <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[#5865F2]/10 text-[#5865F2]">
-                                <Hash className="size-4" />
+                            <button
+                              type="button"
+                              role="treeitem"
+                              aria-selected={selected}
+                              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              onClick={() => openExistingChannel(channel.id)}
+                            >
+                              <DeliveryIndicator channel={channel} />
+                              <span className="min-w-0 flex-1 truncate text-sm">
+                                #{channel.name}
                               </span>
-                              <div className="min-w-0 flex-1">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <h3 className="truncate text-sm font-semibold">
-                                    #{channel.name}
-                                  </h3>
-                                  <DeliveryBadge channel={channel} />
-                                  <span className="text-[11px] tabular-nums text-muted-foreground">
-                                    {events.length}{" "}
-                                    {events.length === 1 ? "event" : "events"}
-                                  </span>
-                                </div>
-                                <div className="mt-2 flex flex-wrap gap-1.5">
-                                  {events.map((event) => (
-                                    <Badge
-                                      key={event.key}
-                                      variant={
-                                        event.enabled
-                                          ? "outline"
-                                          : "destructive"
-                                      }
-                                      className="px-1.5 py-0 text-[11px] font-normal"
-                                      title={event.description}
-                                    >
-                                      {event.label}
-                                    </Badge>
-                                  ))}
-                                </div>
-                              </div>
-                            </div>
-                            <ChannelTagSummary
-                              channel={channel}
-                              groupKeys={
-                                initialConfig.channelMentions.find(
-                                  (mention) => mention.channelId === channel.id,
-                                )?.groupKeys ?? []
-                              }
-                            />
-                            <div className="flex shrink-0 items-center gap-1 self-end sm:self-center">
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => openExistingChannel(channel.id)}
+                              <span className="text-xs tabular-nums text-muted-foreground">
+                                {eventCount}
+                              </span>
+                            </button>
+                            <DropdownMenu>
+                              <DropdownMenuTrigger
+                                render={
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    className="mr-0.5 opacity-60 hover:opacity-100"
+                                    aria-label={`Actions for #${channel.name}`}
+                                  />
+                                }
                               >
-                                <Pencil />
-                                Edit
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon-sm"
-                                aria-label={`Remove #${channel.name}`}
-                                disabled={pending}
-                                onClick={() => removeChannel(channel)}
-                              >
-                                <Trash2 className="text-destructive" />
-                              </Button>
-                            </div>
+                                <MoreHorizontal />
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align="end">
+                                <DropdownMenuItem
+                                  variant="destructive"
+                                  disabled={pending}
+                                  onClick={() => removeChannel(channel)}
+                                >
+                                  <Trash2 />
+                                  Remove channel
+                                </DropdownMenuItem>
+                              </DropdownMenuContent>
+                            </DropdownMenu>
                           </div>
                         );
                       })}
-                    </div>
-                  </CollapsibleContent>
-                </Collapsible>
-              </section>
-            );
-          })}
-        </div>
-      )}
-
-      <ChannelEditorDialog
-        editor={editor}
-        editingChannelId={editingChannelId}
-        channels={editingChannelId ? initialConfig.channels : availableChannels}
-        events={filteredEvents}
-        eventQuery={eventQuery}
-        pending={pending}
-        onEventQueryChange={setEventQuery}
-        onEditorChange={setEditor}
-        onToggleEvent={toggleEvent}
-        onToggleMentionGroup={toggleMentionGroup}
-        onClose={closeEditor}
-        onSave={saveChannel}
-        onRemove={
-          editingChannelId
-            ? () => {
-                const channel = initialConfig.channels.find(
-                  (candidate) => candidate.id === editingChannelId,
+                    </CollapsibleContent>
+                  </Collapsible>
                 );
-                if (channel) removeChannel(channel);
+              })
+            )}
+          </div>
+        </aside>
+
+        <div className="hidden min-w-0 md:block">
+          {showUnassigned ? (
+            <UnassignedEventsPanel events={unassignedEvents} />
+          ) : editor ? (
+            <ChannelEditorPanel
+              editor={editor}
+              editingChannelId={editingChannelId}
+              channels={
+                editingChannelId ? initialConfig.channels : availableChannels
               }
-            : undefined
-        }
-      />
+              events={filteredEvents}
+              eventQuery={eventQuery}
+              pending={pending}
+              onEventQueryChange={setEventQuery}
+              onEditorChange={setEditor}
+              onToggleEvent={toggleEvent}
+              onToggleMentionGroup={toggleMentionGroup}
+              onClose={closeEditor}
+              onSave={saveChannel}
+            />
+          ) : (
+            <div className="flex min-h-[580px] items-center justify-center p-8 text-sm text-muted-foreground">
+              Select a channel to manage its alerts.
+            </div>
+          )}
+        </div>
+      </section>
+
+      {isMobile && (
+        <Sheet
+          open={mobileEditorOpen}
+          onOpenChange={(open) => {
+            if (!open && editorHasUnsavedChanges()) {
+              toast.error("Save or cancel the current changes first.");
+              return;
+            }
+            if (!open) closeEditor();
+          }}
+        >
+          <SheetContent
+            side="right"
+            className="w-full max-w-none gap-0 overflow-hidden p-0 md:hidden"
+          >
+            <SheetHeader className="border-b border-border/60">
+              <SheetTitle>
+                {showUnassigned
+                  ? "Unassigned alerts"
+                  : editingChannelId
+                    ? `#${initialConfig.channels.find((channel) => channel.id === editingChannelId)?.name ?? "channel"}`
+                    : "Add channel"}
+              </SheetTitle>
+            </SheetHeader>
+            {showUnassigned ? (
+              <UnassignedEventsPanel events={unassignedEvents} compact />
+            ) : editor ? (
+              <ChannelEditorPanel
+                editor={editor}
+                editingChannelId={editingChannelId}
+                channels={
+                  editingChannelId ? initialConfig.channels : availableChannels
+                }
+                events={filteredEvents}
+                eventQuery={eventQuery}
+                pending={pending}
+                onEventQueryChange={setEventQuery}
+                onEditorChange={setEditor}
+                onToggleEvent={toggleEvent}
+                onToggleMentionGroup={toggleMentionGroup}
+                onClose={closeEditor}
+                onSave={saveChannel}
+              />
+            ) : null}
+          </SheetContent>
+        </Sheet>
+      )}
 
       <CreateDiscordChannelDialog
         open={createChannelOpen}
@@ -943,7 +1036,7 @@ function CreateDiscordChannelDialog({
   );
 }
 
-function ChannelEditorDialog({
+function ChannelEditorPanel({
   editor,
   editingChannelId,
   channels,
@@ -956,9 +1049,8 @@ function ChannelEditorDialog({
   onToggleMentionGroup,
   onClose,
   onSave,
-  onRemove,
 }: {
-  editor: ChannelEditorState | null;
+  editor: ChannelEditorState;
   editingChannelId: string | null;
   channels: DiscordNotificationChannel[];
   events: DiscordNotificationEvent[];
@@ -970,206 +1062,244 @@ function ChannelEditorDialog({
   onToggleMentionGroup: (groupKey: string, checked: boolean) => void;
   onClose: () => void;
   onSave: () => void;
-  onRemove?: () => void;
 }) {
   const channel = channels.find(
-    (candidate) => candidate.id === editor?.channelId,
+    (candidate) => candidate.id === editor.channelId,
   );
   const silentChannel = isSilentDiscordCategory(channel?.parentId ?? null);
+  const groupedEvents = [...new Set(events.map((event) => event.category))]
+    .sort((a, b) => a.localeCompare(b))
+    .map((category) => ({
+      category,
+      events: events.filter((event) => event.category === category),
+    }));
 
   return (
-    <Dialog open={editor !== null} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>
-            {editingChannelId
-              ? `Edit #${channel?.name ?? "channel"}`
-              : "New channel"}
-          </DialogTitle>
-          <DialogDescription>
-            Choose a Discord channel and the events the bot should send there.
-          </DialogDescription>
-        </DialogHeader>
+    <section
+      aria-label="Channel editor"
+      className="flex min-h-[580px] min-w-0 flex-col"
+    >
+      <div className="flex h-12 items-center gap-2 border-b border-border/60 px-4">
+        <Hash className="size-4 text-[#5865F2]" />
+        <h2 className="min-w-0 flex-1 truncate text-sm font-semibold">
+          {editingChannelId ? `#${channel?.name ?? "channel"}` : "Add existing channel"}
+        </h2>
+        {channel && <DeliveryBadge channel={channel} />}
+      </div>
 
-        {editor && (
-          <div className="space-y-5">
-            <div className="space-y-1.5">
-              <Label>Discord channel</Label>
-              <Select
-                value={editor.channelId}
-                disabled={Boolean(editingChannelId)}
-                onValueChange={(channelId) =>
-                  onEditorChange({ ...editor, channelId: channelId ?? "" })
-                }
-              >
-                <SelectTrigger className="w-full">
-                  <SelectValue placeholder="Choose a channel" />
-                </SelectTrigger>
-                <SelectContent>
-                  {channels.map((item) => (
-                    <SelectItem key={item.id} value={item.id}>
-                      #{item.name}
-                      {item.parentName ? ` · ${item.parentName}` : ""}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label>Tag these groups</Label>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {editor.mentionGroupKeys.length === 0
-                    ? "Nobody tagged"
-                    : `${editor.mentionGroupKeys.length} selected`}
-                </span>
-              </div>
-              <div className="grid gap-2 sm:grid-cols-2">
-                {DISCORD_MENTION_GROUPS.map((group) => {
-                  const checked = editor.mentionGroupKeys.includes(group.key);
-                  return (
-                    <label
-                      key={group.key}
-                      className={cn(
-                        "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
-                        checked
-                          ? "border-cyan-500/30 bg-cyan-500/5"
-                          : "border-border/60 hover:bg-muted/60",
-                      )}
-                    >
-                      <Checkbox
-                        className="mt-0.5"
-                        checked={checked}
-                        onCheckedChange={(value) =>
-                          onToggleMentionGroup(group.key, value === true)
-                        }
-                      />
-                      <span className="min-w-0 flex-1">
-                        <span className="text-sm font-medium">
-                          {group.label}
-                        </span>
-                        <span className="mt-0.5 block text-xs text-muted-foreground">
-                          {group.description}
-                        </span>
-                      </span>
-                    </label>
-                  );
-                })}
-              </div>
-              {silentChannel ? (
-                <p className="text-xs text-muted-foreground">
-                  This channel sits under {channel?.parentName ?? "a silent"}{" "}
-                  category, so it always posts silently and tags nobody
-                  regardless of the selection above.
-                </p>
-              ) : (
-                <p className="text-xs text-muted-foreground">
-                  This selection is the complete tag list, including for urgent
-                  alerts and review reminders.
-                </p>
-              )}
-            </div>
-
-            <div className="space-y-2">
-              <div className="flex items-center justify-between gap-3">
-                <Label>Events</Label>
-                <span className="text-xs tabular-nums text-muted-foreground">
-                  {editor.eventKeys.length} selected
-                </span>
-              </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={eventQuery}
-                  onChange={(event) => onEventQueryChange(event.target.value)}
-                  placeholder="Search events"
-                  className="pl-9"
-                />
-              </div>
-              <div className="max-h-72 space-y-2 overflow-y-auto rounded-xl border border-border/60 p-2">
-                {events.length === 0 ? (
-                  <p className="px-3 py-8 text-center text-sm text-muted-foreground">
-                    No matching events.
-                  </p>
-                ) : (
-                  events.map((event) => {
-                    const checked = editor.eventKeys.includes(event.key);
-                    return (
-                      <label
-                        key={event.key}
-                        className={cn(
-                          "flex cursor-pointer items-start gap-3 rounded-lg border p-3 transition-colors",
-                          checked
-                            ? "border-cyan-500/30 bg-cyan-500/5"
-                            : "border-transparent hover:bg-muted/60",
-                        )}
-                      >
-                        <Checkbox
-                          className="mt-0.5"
-                          checked={checked}
-                          onCheckedChange={(value) =>
-                            onToggleEvent(event.key, value === true)
-                          }
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="flex flex-wrap items-center gap-2">
-                            <span className="text-sm font-medium">
-                              {event.label}
-                            </span>
-                            <Badge variant="outline">{event.category}</Badge>
-                            {event.custom && (
-                              <Badge variant="secondary">Custom</Badge>
-                            )}
-                          </span>
-                          <span className="mt-1 block text-xs text-muted-foreground">
-                            {event.description}
-                          </span>
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-              {editor.eventKeys.length === 0 && (
-                <p className="text-xs text-amber-500">
-                  Select at least one event.
-                </p>
-              )}
-            </div>
+      <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-4 sm:p-5">
+        {!editingChannelId && (
+          <div className="space-y-1.5">
+            <Label>Discord channel</Label>
+            <Select
+              value={editor.channelId}
+              onValueChange={(channelId) =>
+                onEditorChange({ ...editor, channelId: channelId ?? "" })
+              }
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue placeholder="Choose a channel" />
+              </SelectTrigger>
+              <SelectContent>
+                {channels.map((item) => (
+                  <SelectItem key={item.id} value={item.id}>
+                    #{item.name}
+                    {item.parentName ? ` · ${item.parentName}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         )}
 
-        <DialogFooter className="sm:justify-between">
-          <div>
-            {onRemove && (
-              <Button
-                variant="ghost"
-                className="text-destructive hover:text-destructive"
-                disabled={pending}
-                onClick={onRemove}
-              >
-                <Trash2 />
-                Remove channel
-              </Button>
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label>Tags</Label>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {silentChannel
+                ? "Posts silently"
+                : editor.mentionGroupKeys.length === 0
+                  ? "Nobody tagged"
+                  : `${editor.mentionGroupKeys.length} selected`}
+            </span>
+          </div>
+          {silentChannel ? (
+            <div className="rounded-lg border border-border/60 bg-muted/30 px-3 py-2.5 text-sm text-muted-foreground">
+              Errors and KYC channels never tag anyone.
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-2 xl:grid-cols-4">
+              {DISCORD_MENTION_GROUPS.map((group) => {
+                const checked = editor.mentionGroupKeys.includes(group.key);
+                return (
+                  <label
+                    key={group.key}
+                    title={group.description}
+                    className={cn(
+                      "flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 transition-colors",
+                      checked
+                        ? "border-cyan-500/30 bg-cyan-500/5"
+                        : "border-border/60 hover:bg-muted/60",
+                    )}
+                  >
+                    <Checkbox
+                      checked={checked}
+                      onCheckedChange={(value) =>
+                        onToggleMentionGroup(group.key, value === true)
+                      }
+                    />
+                    <span className="truncate text-sm font-medium">
+                      {group.label}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <Label>Alerts</Label>
+            <span className="text-xs tabular-nums text-muted-foreground">
+              {editor.eventKeys.length} selected
+            </span>
+          </div>
+          <div className="relative">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={eventQuery}
+              onChange={(event) => onEventQueryChange(event.target.value)}
+              placeholder="Find an alert"
+              className="pl-9"
+            />
+          </div>
+          <div className="max-h-[420px] overflow-y-auto rounded-xl border border-border/60">
+            {groupedEvents.length === 0 ? (
+              <p className="px-3 py-10 text-center text-sm text-muted-foreground">
+                No matching alerts.
+              </p>
+            ) : (
+              groupedEvents.map((group) => (
+                <div key={group.category}>
+                  <div className="sticky top-0 z-[1] border-y border-border/50 bg-muted/70 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground first:border-t-0">
+                    {group.category}
+                  </div>
+                  <div className="divide-y divide-border/40">
+                    {group.events.map((event) => {
+                      const checked = editor.eventKeys.includes(event.key);
+                      return (
+                        <label
+                          key={event.key}
+                          title={event.description}
+                          className={cn(
+                            "flex cursor-pointer items-center gap-3 px-3 py-2.5 transition-colors",
+                            checked ? "bg-cyan-500/5" : "hover:bg-muted/40",
+                          )}
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(value) =>
+                              onToggleEvent(event.key, value === true)
+                            }
+                          />
+                          <span className="min-w-0 flex-1 truncate text-sm">
+                            {event.label}
+                          </span>
+                          {event.custom && (
+                            <Badge variant="secondary">Custom</Badge>
+                          )}
+                        </label>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))
             )}
           </div>
-          <div className="flex gap-2">
-            <Button variant="outline" disabled={pending} onClick={onClose}>
-              Cancel
-            </Button>
-            <Button
-              disabled={
-                pending || !editor?.channelId || editor.eventKeys.length === 0
-              }
-              onClick={onSave}
+          {editor.eventKeys.length === 0 && (
+            <p className="text-xs text-amber-500">Select at least one alert.</p>
+          )}
+        </div>
+      </div>
+
+      <div className="flex shrink-0 justify-end gap-2 border-t border-border/60 bg-card p-4">
+        <Button variant="outline" disabled={pending} onClick={onClose}>
+          Cancel
+        </Button>
+        <Button
+          disabled={
+            pending || !editor.channelId || editor.eventKeys.length === 0
+          }
+          onClick={onSave}
+        >
+          {editingChannelId ? "Save changes" : "Add channel"}
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+function UnassignedEventsPanel({
+  events,
+  compact = false,
+}: {
+  events: DiscordNotificationEvent[];
+  compact?: boolean;
+}) {
+  return (
+    <section
+      aria-label="Unassigned alerts"
+      className={cn("min-h-[580px] p-4 sm:p-5", compact && "overflow-y-auto")}
+    >
+      <div className="mb-3 flex items-center gap-2">
+        <AlertTriangle className="size-4 text-amber-500" />
+        <h2 className="text-sm font-semibold">Unassigned alerts</h2>
+        <Badge variant="outline" className="tabular-nums">
+          {events.length}
+        </Badge>
+      </div>
+      {events.length === 0 ? (
+        <p className="rounded-lg border border-border/60 bg-muted/30 px-3 py-8 text-center text-sm text-muted-foreground">
+          Every enabled alert has a channel.
+        </p>
+      ) : (
+        <div className="divide-y divide-border/40 overflow-hidden rounded-lg border border-border/60">
+          {events.map((event) => (
+            <div
+              key={event.key}
+              title={event.description}
+              className="flex items-center gap-3 px-3 py-2.5"
             >
-              {editingChannelId ? "Save changes" : "Add channel"}
-            </Button>
-          </div>
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+              <span className="min-w-0 flex-1 truncate text-sm">
+                {event.label}
+              </span>
+              <Badge variant="outline" className="text-[10px]">
+                {event.category}
+              </Badge>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DeliveryIndicator({
+  channel,
+}: {
+  channel: DiscordNotificationChannel;
+}) {
+  const ready = channel.canView && channel.canSend && channel.canEmbed;
+  return (
+    <span
+      className={cn(
+        "size-2 shrink-0 rounded-full",
+        ready ? "bg-emerald-500" : "bg-destructive",
+      )}
+      title={ready ? "Ready" : "Missing Discord permissions"}
+      aria-label={ready ? "Ready" : "Missing Discord permissions"}
+    />
   );
 }
 
@@ -1185,44 +1315,6 @@ function DeliveryBadge({ channel }: { channel: DiscordNotificationChannel }) {
             ? "Cannot send"
             : "Cannot embed"}
     </Badge>
-  );
-}
-
-function ChannelTagSummary({
-  channel,
-  groupKeys,
-}: {
-  channel: DiscordNotificationChannel;
-  groupKeys: readonly string[];
-}) {
-  const groups = isSilentDiscordCategory(channel.parentId)
-    ? []
-    : DISCORD_MENTION_GROUPS.filter((group) => groupKeys.includes(group.key));
-
-  return (
-    <div
-      className="w-full rounded-lg border border-border/60 bg-muted/30 px-3 py-2 sm:w-auto sm:min-w-40"
-      aria-label={`Tags for #${channel.name}`}
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        Tags
-      </p>
-      <div className="mt-1 flex flex-wrap gap-1">
-        {groups.length === 0 ? (
-          <span className="text-xs text-muted-foreground">Nobody</span>
-        ) : (
-          groups.map((group) => (
-            <Badge
-              key={group.key}
-              variant="outline"
-              className="px-1.5 py-0 text-[11px] font-normal"
-            >
-              {group.label}
-            </Badge>
-          ))
-        )}
-      </div>
-    </div>
   );
 }
 
