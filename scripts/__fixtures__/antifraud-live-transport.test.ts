@@ -189,7 +189,8 @@ test("live events preserve the typed envelope and degrade snapshot legs independ
   assert.match(client, /24h locked/);
   assert.match(client, /24h legitimate fiat/);
   assert.match(client, /24h fraudulent fiat/);
-  assert.match(client, /Domains \/ IP catches/);
+  assert.match(client, /Active blocked domains/);
+  assert.match(client, /confirmed blocked-IP/);
   assert.match(client, /Recent monitor sessions/);
   assert.match(client, /PanelErrorBoundary/);
 });

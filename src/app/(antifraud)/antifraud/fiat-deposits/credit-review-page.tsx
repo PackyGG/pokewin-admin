@@ -117,8 +117,8 @@ const UPSTREAM_PAGE_SIZE = 100;
  * AFTER the monitor returns it, because the monitor has no knowledge of which
  * deposits staff already decided — so the visible list cannot be produced by
  * asking the monitor for one page. The old code answered that by walking
- * EVERY upstream page (unbounded: the monitor keeps declined intents in
- * `status='review'` forever, so that list only ever grows).
+ * EVERY upstream page (unbounded: the monitor keeps declined intents with
+ * `verdict='review'` forever, so that list only ever grows).
  *
  * This bounds the walk at 5 × 100 = 500 review rows, fetched serially to avoid
  * multiplying monitor refresh work, and reports the shortfall LOUDLY when the
@@ -142,7 +142,7 @@ async function scanFirstPage(): Promise<{
   const first = await listFiatAssessments({
     page: 1,
     limit: UPSTREAM_PAGE_SIZE,
-    status: "review",
+    verdict: "review",
   });
   if (first.error) {
     throw new Error("The Antifraud monitor did not return the review queue.");
@@ -171,7 +171,7 @@ async function scanRestPages(pageCount: number): Promise<FiatAssessment[]> {
     const result = await listFiatAssessments({
       page,
       limit: UPSTREAM_PAGE_SIZE,
-      status: "review",
+      verdict: "review",
     });
     // Keep what we already have. A partial scan is reported as a shortfall by
     // the caller; it must never discard page 1.

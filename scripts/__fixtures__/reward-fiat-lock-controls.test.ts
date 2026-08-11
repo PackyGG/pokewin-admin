@@ -132,6 +132,11 @@ test("Fraud Config owns all four Fiat controls and hides raw Security config", (
   assert.match(fraudConfigPage, /FiatDepositAccessControlCard/);
   assert.match(fraudAccessCard, /Fiat access for existing accounts/);
   assert.match(fraudAccessCard, /Fiat access for new signups/);
+  assert.match(fraudAccessCard, /Fiat allowed for all accounts/);
+  assert.match(fraudAccessCard, /Fiat allowed for existing accounts only/);
+  assert.match(fraudAccessCard, /Fiat access is turning on/);
+  assert.match(fraudAccessCard, /Controller allows/);
+  assert.match(fraudAccessCard, /Controller blocks/);
   assert.match(fraudAccessCard, /fiat_deposits_enabled/);
   assert.match(fraudAccessCard, /signup\.generation === 0/);
   assert.match(fraudAccessCard, /Not configured/);

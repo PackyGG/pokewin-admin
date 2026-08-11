@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useTransition } from "react";
-import { Loader2, RefreshCw, Users } from "lucide-react";
+import { CheckCircle2, Loader2, RefreshCw, ShieldOff, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 
@@ -22,6 +22,91 @@ import type { FiatAccessControlStatus } from "@/lib/antifraud/monitor-api";
 import { updateFiatDepositAccessControlAction } from "./fiat-deposit-access-control-actions";
 
 type Scope = "existing-accounts" | "new-signups";
+
+type ControllerSummary = {
+  allowed: boolean;
+  label: string;
+  detail: string;
+};
+
+function controllerSummary(
+  status: FiatAccessControlStatus,
+): ControllerSummary {
+  const existing = status.existingAccounts;
+  const signup = status.newSignups;
+  const existingConfigured = existing.generation > 0;
+  const signupConfigured = signup.generation > 0;
+  const rolloutActive = ["queued", "running"].includes(existing.status);
+
+  if (rolloutActive) {
+    return {
+      allowed: existing.enabled || signup.enabled,
+      label: existing.enabled
+        ? "Fiat access is turning on"
+        : "Fiat access is turning off",
+      detail: `${existing.succeeded.toLocaleString()} existing accounts are confirmed ${
+        existing.enabled ? "allowed" : "blocked"
+      }. New signups are ${signup.enabled ? "allowed" : "blocked"}.`,
+    };
+  }
+
+  if (existing.status === "stalled") {
+    return {
+      allowed: existing.enabled || signup.enabled,
+      label: "Fiat access rollout is retrying",
+      detail: `${existing.succeeded.toLocaleString()} existing accounts are confirmed ${
+        existing.enabled ? "allowed" : "blocked"
+      }; ${existing.failed.toLocaleString()} still need retry. New signups are ${
+        signup.enabled ? "allowed" : "blocked"
+      }.`,
+    };
+  }
+
+  const existingAllowed = existingConfigured && existing.enabled;
+  const signupAllowed = signupConfigured && signup.enabled;
+  if (existingAllowed && signupAllowed) {
+    return {
+      allowed: true,
+      label: "Fiat allowed for all accounts",
+      detail: "The controller allows existing accounts and automatically allows new signups.",
+    };
+  }
+  if (existingAllowed) {
+    return {
+      allowed: true,
+      label: "Fiat allowed for existing accounts only",
+      detail: "Existing accounts are allowed by the controller. New signups are blocked.",
+    };
+  }
+  if (signupAllowed) {
+    return {
+      allowed: true,
+      label: "Fiat allowed for new signups only",
+      detail: "New signups are allowed by the controller. Existing accounts are blocked.",
+    };
+  }
+  return {
+    allowed: false,
+    label: "Fiat blocked by the account controller",
+    detail:
+      existingConfigured || signupConfigured
+        ? "The controller does not currently allow either account group."
+        : "No account-access policy has been applied yet.",
+  };
+}
+
+function existingAccessLabel(
+  existing: FiatAccessControlStatus["existingAccounts"],
+): string {
+  if (existing.generation === 0) return "Not configured";
+  if (["queued", "running"].includes(existing.status)) {
+    return existing.enabled ? "Turning access on" : "Turning access off";
+  }
+  if (existing.status === "stalled") {
+    return existing.enabled ? "Access on · retrying" : "Access off · retrying";
+  }
+  return existing.enabled ? "Controller allows" : "Controller blocks";
+}
 
 export function FiatDepositAccessControlCard({
   initialStatus,
@@ -109,6 +194,7 @@ export function FiatDepositAccessControlCard({
   // Before the first policy exists there is no observed backend state to show,
   // so the switch reflects the value that is staged for confirmation.
   const existingUnconfigured = existing.generation === 0;
+  const summary = controllerSummary(status);
   return (
     <Card>
       <CardHeader>
@@ -123,11 +209,35 @@ export function FiatDepositAccessControlCard({
         </div>
       </CardHeader>
       <CardContent className="max-w-3xl space-y-3">
+        <div
+          role="status"
+          className={`flex items-start gap-3 rounded-lg border p-3 ${
+            summary.allowed
+              ? "border-emerald-500/30 bg-emerald-500/5"
+              : "border-amber-500/30 bg-amber-500/5"
+          }`}
+        >
+          {summary.allowed ? (
+            <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+          ) : (
+            <ShieldOff className="mt-0.5 size-4 shrink-0 text-amber-600 dark:text-amber-400" />
+          )}
+          <div className="space-y-1">
+            <p className="text-sm font-semibold">{summary.label}</p>
+            <p className="text-xs text-muted-foreground">
+              {summary.detail} Site-wide availability, location policy, KYC,
+              and fraud locks can still block an individual checkout.
+            </p>
+          </div>
+        </div>
+
         <div className="flex items-start justify-between gap-4 rounded-lg border p-3">
           <div className="space-y-1">
             <div className="flex flex-wrap items-center gap-2">
               <p className="text-sm font-medium">Fiat access for existing accounts</p>
-              <Badge variant="outline">{existing.status.replace("_", " ")}</Badge>
+              <Badge variant={existing.enabled ? "default" : "outline"}>
+                {existingAccessLabel(existing)}
+              </Badge>
             </div>
             <p className="text-xs text-muted-foreground">
               Applies the selected controller value to every account registered before confirmation.
@@ -174,8 +284,8 @@ export function FiatDepositAccessControlCard({
                 {signup.generation === 0
                   ? "Not configured"
                   : signup.enabled
-                    ? "Access on"
-                    : "Access off"}
+                    ? "Controller allows"
+                    : "Controller blocks"}
               </Badge>
             </div>
             <p className="text-xs text-muted-foreground">

@@ -38,7 +38,11 @@ const adminLedgerPage = read("src/app/(admin)/transactions/deposits/page.tsx");
 
 test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.match(page, /listFiatAssessments/);
-  assert.match(page, /status: "review"/);
+  assert.match(page, /verdict: "review"/);
+  assert.doesNotMatch(
+    page,
+    /listFiatAssessments\(\{[\s\S]{0,160}status: "review"/,
+  );
   assert.match(page, /getFiatCreditReviewStates/);
   assert.doesNotMatch(page, /QUEUE_STATUSES|Review status filters|refund_pending/);
   assert.doesNotMatch(page, /GlobalFiatReviewCard/);
@@ -54,7 +58,7 @@ test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.match(page, /scanRestPages/);
   assert.doesNotMatch(page, /remainingPages|Math\.min\(Math\.max/);
   // The upstream walk stays BOUNDED. The monitor keeps staff-declined intents
-  // in `status='review'` forever, so an all-pages loop grows without limit.
+  // with `verdict='review'` forever, so an all-pages loop grows without limit.
   assert.match(page, /const MAX_UPSTREAM_PAGES = \d+/);
   assert.match(page, /Math\.min\(pageCount, MAX_UPSTREAM_PAGES\)/);
   // Page 1 must survive a failing tail. Throwing on any page discarded rows

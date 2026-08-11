@@ -1237,20 +1237,22 @@ export function MonitorConsole({
         )}
         {snapshotPending ? (
           <PendingKpiTile
-            label="Domains / IP catches"
-            sub="Active rules / confirmed catches"
+            label="Active blocked domains"
+            sub="Confirmed blocked-IP catches"
             icon={Ban}
             accent="purple"
           />
         ) : (
           <KpiTile
-            label="Domains / IP catches"
-            value={
+            label="Active blocked domains"
+            value={summary?.activeDomainBlacklist.toLocaleString() ?? "—"}
+            sub={
               summary
-                ? `${summary.activeDomainBlacklist.toLocaleString()} / ${summary.blockedIpCatches.toLocaleString()}`
-                : "—"
+                ? `${summary.blockedIpCatches.toLocaleString()} confirmed blocked-IP ${
+                    summary.blockedIpCatches === 1 ? "catch" : "catches"
+                  }`
+                : "Confirmed blocked-IP catches"
             }
-            sub="Active rules / confirmed catches"
             icon={Ban}
             accent="purple"
           />
