@@ -119,7 +119,10 @@ export async function searchAnnouncementPacks(
     "__can_manage_announcements",
     "compose announcements",
   );
-  return queryActivePacks(query);
+  // Broadcasts are delivered to the live site, so their pack content must use
+  // the same production catalog as a direct pack notification even when the
+  // dashboard's read toggle points at development.
+  return queryActivePacks(query, "production");
 }
 
 /** Active packs for the personal-notification composer. Kept behind its

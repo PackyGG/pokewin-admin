@@ -154,5 +154,20 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(announcement, /MAX_ANNOUNCEMENT_PACKS = 3/);
   assert.match(announcement, /selectedValues=\{packs\}/);
   assert.match(announcement, /onSelectionChange=\{applyPacks\}/);
+  assert.match(announcement, /<NotificationPreview/);
+  assert.match(announcement, /type=\{TEMPLATE_TYPES\.pack\}/);
+  assert.match(announcement, /composedPayloadCheck\.payload/);
+  assert.match(announcement, /composedPayloadCheck\.error/);
+  assert.match(announcement, /!packAutoFilled/);
+  assert.match(announcement, /next === "pack"[\s\S]*TEMPLATE_TYPES\.pack/);
+  assert.match(announcement, /template !== "pack"/);
+  assert.match(
+    announcement,
+    /\{packAutoFilled \? \([\s\S]{0,200}<NotificationPreview[\s\S]*?\) : \(\s*<AnnouncementPreview/,
+  );
   assert.match(announcement, /promo: "promo_code_granted"/);
+  assert.match(
+    actions,
+    /searchAnnouncementPacks[\s\S]*queryActivePacks\(query, "production"\)/,
+  );
 });

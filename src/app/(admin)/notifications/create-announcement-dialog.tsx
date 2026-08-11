@@ -70,6 +70,7 @@ import {
   type AnnouncementPromoOption,
 } from "./composer-actions";
 import { NotificationPackPicker } from "./notification-pack-picker";
+import { NotificationPreview } from "./notification-preview";
 import type {
   AnnouncementAudienceRole,
   AnnouncementCreateCategory,
@@ -218,10 +219,14 @@ export function CreateAnnouncementDialog({
     // Only swap the type while it still carries a template default — a
     // hand-typed type in Advanced survives a template switch.
     setType((cur) =>
-      Object.values(TEMPLATE_TYPES).includes(cur) ? TEMPLATE_TYPES[next] : cur,
+      next === "pack"
+        ? TEMPLATE_TYPES.pack
+        : Object.values(TEMPLATE_TYPES).includes(cur)
+          ? TEMPLATE_TYPES[next]
+          : cur,
     );
     if (next === "page") applyPage(pagePath);
-    if (next === "pack" && packs.length > 0) applyPacks(packs);
+    if (next === "pack") applyPacks(packs);
     if (next === "promo" && promo) applyPromo(promo);
     if (next === "challenge") {
       // "All" means every player account, not internal staff roles.
@@ -235,38 +240,65 @@ export function CreateAnnouncementDialog({
     const next = nextPacks.slice(0, MAX_ANNOUNCEMENT_PACKS);
     setPacks(next);
     if (next.length === 0) {
-      autoSetPayload("url", "");
-      autoSetPayload("imageUrl", "");
-      autoSetPayload("ctaLabel", "");
+      setTitle("");
+      setBody("");
+      setPayload((cur) => ({
+        ...cur,
+        url: "",
+        imageUrl: "",
+        ctaLabel: "",
+      }));
+      autoFilled.current = {
+        ...autoFilled.current,
+        title: "",
+        body: "",
+        url: "",
+        imageUrl: "",
+        ctaLabel: "",
+      };
       return;
     }
 
     if (next.length === 1) {
       const pack = next[0];
-      autoSetText("title", `New pack: ${pack.name}`, setTitle);
-      autoSetText(
-        "body",
-        `${pack.name} is live — ${formatCurrency(pack.priceUsd)} per open.`,
-        setBody,
-      );
-      autoSetPayload("url", packUrl(pack.slug));
-      autoSetPayload("ctaLabel", "Open now");
-      autoSetPayload(
-        "imageUrl",
-        pack.imageUrl && isImageKitUrl(pack.imageUrl) ? pack.imageUrl : "",
-      );
+      const nextImage =
+        pack.imageUrl && isImageKitUrl(pack.imageUrl) ? pack.imageUrl : "";
+      setTitle(pack.name);
+      setBody(`${formatCurrency(pack.priceUsd)} per open`);
+      setPayload((cur) => ({
+        ...cur,
+        url: packUrl(pack.slug),
+        ctaLabel: "Open now",
+        imageUrl: nextImage,
+      }));
+      autoFilled.current = {
+        ...autoFilled.current,
+        title: pack.name,
+        body: `${formatCurrency(pack.priceUsd)} per open`,
+        url: packUrl(pack.slug),
+        ctaLabel: "Open now",
+        imageUrl: nextImage,
+      };
       return;
     }
 
-    autoSetText("title", "Fresh packs just dropped", setTitle);
-    autoSetText(
-      "body",
-      `${next.map((pack) => pack.name).join(", ")} are live now.`,
-      setBody,
-    );
-    autoSetPayload("url", mainSiteUrl("/games/packs?sort=newest"));
-    autoSetPayload("imageUrl", "");
-    autoSetPayload("ctaLabel", "View new packs");
+    const lowestPrice = Math.min(...next.map((pack) => pack.priceUsd));
+    setTitle("Fresh packs just dropped");
+    setBody(`Starting at ${formatCurrency(lowestPrice)} per open`);
+    setPayload((cur) => ({
+      ...cur,
+      url: mainSiteUrl("/games/packs?sort=newest"),
+      imageUrl: "",
+      ctaLabel: "View new packs",
+    }));
+    autoFilled.current = {
+      ...autoFilled.current,
+      title: "Fresh packs just dropped",
+      body: `Starting at ${formatCurrency(lowestPrice)} per open`,
+      url: mainSiteUrl("/games/packs?sort=newest"),
+      imageUrl: "",
+      ctaLabel: "View new packs",
+    };
   }
 
   function payloadForTemplate(): AnnouncementPayloadDraft {
@@ -444,6 +476,8 @@ export function CreateAnnouncementDialog({
     payload.url.trim() ? "Link" : null,
     payload.ctaLabel.trim() ? "Button" : null,
   ].filter((p): p is string => p !== null);
+  const composedPayload = payloadForTemplate();
+  const composedPayloadCheck = validateAnnouncementPayload(composedPayload);
 
   return (
     <Dialog open={open} onOpenChange={handleOpenChange}>
@@ -693,108 +727,102 @@ export function CreateAnnouncementDialog({
             </div>
           )}
 
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">Title</Label>
-            <Input
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder="e.g. Scheduled maintenance tonight"
-              disabled={isPending}
-              autoFocus
-            />
-          </div>
-          <div className="space-y-1">
-            <Label className="text-xs text-muted-foreground">
-              Message (optional)
-            </Label>
-            <Textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              rows={3}
-              placeholder="More detail shown when a user opens it"
-              disabled={isPending}
-            />
-          </div>
+          {!packAutoFilled && (
+            <>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">Title</Label>
+                <Input
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="e.g. Scheduled maintenance tonight"
+                  disabled={isPending}
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1">
+                <Label className="text-xs text-muted-foreground">
+                  Message (optional)
+                </Label>
+                <Textarea
+                  value={body}
+                  onChange={(e) => setBody(e.target.value)}
+                  rows={3}
+                  placeholder="More detail shown when a user opens it"
+                  disabled={isPending}
+                />
+              </div>
+
+              <div className="rounded-md border">
+                <button
+                  type="button"
+                  onClick={() => setLinkOpen((v) => !v)}
+                  className="flex w-full items-center gap-1.5 px-3 py-2 text-left"
+                >
+                  {linkExpanded ? (
+                    <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
+                  ) : (
+                    <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
+                  )}
+                  <span className="text-xs font-medium">
+                    Link, image &amp; button
+                  </span>
+                  <span
+                    className={`ml-auto truncate text-[11px] ${
+                      imageInvalid
+                        ? "text-rose-600 dark:text-rose-400"
+                        : "text-muted-foreground"
+                    }`}
+                  >
+                    {imageInvalid
+                      ? "Image needs attention"
+                      : filledParts.length > 0
+                        ? filledParts.join(" · ")
+                        : "Text only"}
+                  </span>
+                </button>
+
+                {linkExpanded && (
+                  <div className="border-t p-3">
+                    <PayloadFields
+                      payload={payload}
+                      onChange={(patch) =>
+                        setPayload((cur) => ({ ...cur, ...patch }))
+                      }
+                      imageInvalid={imageInvalid}
+                      uploading={uploading}
+                      disabled={isPending}
+                      onUpload={handleUpload}
+                    />
+                  </div>
+                )}
+              </div>
+            </>
+          )}
 
           {packAutoFilled ? (
             <div className="space-y-2">
-              {linkExpanded && (
-                <div className="rounded-md border p-3">
-                  <PayloadFields
-                    payload={payload}
-                    onChange={(patch) =>
-                      setPayload((cur) => ({ ...cur, ...patch }))
-                    }
-                    imageInvalid={imageInvalid}
-                    uploading={uploading}
-                    disabled={isPending}
-                    onUpload={handleUpload}
-                  />
-                </div>
+              <NotificationPreview
+                type={TEMPLATE_TYPES.pack}
+                payload={
+                  composedPayloadCheck.ok
+                    ? composedPayloadCheck.payload
+                    : undefined
+                }
+              />
+              {!composedPayloadCheck.ok && (
+                <p className="text-xs text-rose-600 dark:text-rose-400">
+                  {composedPayloadCheck.error}
+                </p>
               )}
-              <button
-                type="button"
-                onClick={() => setLinkOpen((v) => !v)}
-                className="text-[11px] text-muted-foreground hover:text-foreground"
-              >
-                {linkExpanded
-                  ? "Hide link, image & button"
-                  : "Edit link, image & button"}
-              </button>
             </div>
           ) : (
-            <div className="rounded-md border">
-              <button
-                type="button"
-                onClick={() => setLinkOpen((v) => !v)}
-                className="flex w-full items-center gap-1.5 px-3 py-2 text-left"
-              >
-                {linkExpanded ? (
-                  <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
-                ) : (
-                  <ChevronRight className="size-3 shrink-0 text-muted-foreground" />
-                )}
-                <span className="text-xs font-medium">
-                  Link, image &amp; button
-                </span>
-                <span
-                  className={`ml-auto truncate text-[11px] ${
-                    imageInvalid
-                      ? "text-rose-600 dark:text-rose-400"
-                      : "text-muted-foreground"
-                  }`}
-                >
-                  {imageInvalid
-                    ? "Image needs attention"
-                    : filledParts.length > 0
-                      ? filledParts.join(" · ")
-                      : "Text only"}
-                </span>
-              </button>
-
-              {linkExpanded && (
-                <div className="border-t p-3">
-                  <PayloadFields
-                    payload={payload}
-                    onChange={(patch) =>
-                      setPayload((cur) => ({ ...cur, ...patch }))
-                    }
-                    imageInvalid={imageInvalid}
-                    uploading={uploading}
-                    disabled={isPending}
-                    onUpload={handleUpload}
-                  />
-                </div>
-              )}
-            </div>
+            <AnnouncementPreview
+              title={title}
+              body={body}
+              payload={payload}
+              imageInvalid={imageInvalid}
+            />
           )}
-
-          <AnnouncementPreview
-            title={title}
-            body={body}
-            payload={payload}
-            imageInvalid={imageInvalid}
-          />
 
           <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2">
             <span className="text-sm font-medium">Sends to</span>
@@ -867,20 +895,22 @@ export function CreateAnnouncementDialog({
                   </SelectContent>
                 </Select>
               </div>
-              <div className="space-y-1">
-                <Label className="text-xs text-muted-foreground">Type</Label>
-                <Input
-                  value={type}
-                  onChange={(e) => setType(e.target.value)}
-                  placeholder="admin_announcement"
-                  disabled={isPending}
-                />
-                <p className="text-[11px] text-muted-foreground">
-                  Machine tag stored with the announcement — the site can key an
-                  icon off it. Keep the template default unless you know the
-                  client handles another value.
-                </p>
-              </div>
+              {template !== "pack" && (
+                <div className="space-y-1">
+                  <Label className="text-xs text-muted-foreground">Type</Label>
+                  <Input
+                    value={type}
+                    onChange={(e) => setType(e.target.value)}
+                    placeholder="admin_announcement"
+                    disabled={isPending}
+                  />
+                  <p className="text-[11px] text-muted-foreground">
+                    Machine tag stored with the announcement — the site can key
+                    an icon off it. Keep the template default unless you know
+                    the client handles another value.
+                  </p>
+                </div>
+              )}
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">
                   Ends at (optional)
