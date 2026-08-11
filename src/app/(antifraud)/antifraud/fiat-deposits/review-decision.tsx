@@ -75,7 +75,7 @@ export function FiatDepositReviewDecision({
           render={
             <Button
               size="sm"
-              className="h-14 w-28 px-3 bg-emerald-600 text-white hover:bg-emerald-700"
+              className="h-11 w-28 px-3 bg-emerald-600 text-white hover:bg-emerald-700"
               onClick={() => launch("approve")}
             />
           }
@@ -86,7 +86,7 @@ export function FiatDepositReviewDecision({
         <Button
           size="sm"
           variant="destructive"
-          className="h-14 w-28 px-3"
+          className="h-11 w-28 px-3"
           onClick={() => launch("decline")}
         >
           <XCircle className="size-4" />

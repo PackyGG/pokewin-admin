@@ -358,8 +358,8 @@ function ReviewDepositCard({
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
       <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(18rem,auto)_auto] xl:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-14 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
-            <UserRound className="size-5" />
+          <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+            <UserRound className="size-4" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">
@@ -483,13 +483,13 @@ function AmountFact({
   accent?: boolean;
 }) {
   return (
-    <div className="flex h-14 min-w-0 flex-col justify-center rounded-lg border bg-background px-3 py-2 text-right">
+    <div className="flex h-11 min-w-0 flex-col justify-center rounded-lg border bg-background px-3 py-1.5 text-right">
       <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <p className={accent
-        ? "truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
-        : "truncate text-lg font-semibold tabular-nums"}
+        ? "truncate text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
+        : "truncate text-base font-semibold tabular-nums"}
       >
         {value}
       </p>
