@@ -10,17 +10,13 @@ import {
   type CreateMultiplierDealInput,
   type MultiplierDealResponse,
 } from "@/lib/backend-api/multiplier-deals";
-import {
-  pnlDealsApi,
-  type CreatePnlDealInput,
-  type PnlDealResponse,
-} from "@/lib/backend-api/pnl-deals";
 import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
 import {
   admin_audit_events,
   admin_leaderboard_sponsorship,
   creator_deal_approval_events,
   creator_deal_approval_requests,
+  creator_pnl_deals,
   creator_reward_program_windows,
   creator_reward_programs,
   discord_creator_setups,
@@ -905,112 +901,268 @@ async function ensureBackendMultiplierDeal(request: typeof creator_deal_approval
   return outcome.dealId;
 }
 
-async function listAllPnlDeals(creatorUserId: string): Promise<PnlDealResponse[]> {
-  const deals: PnlDealResponse[] = [];
-  const limit = 100;
-  for (let offset = 0; ;) {
-    const page = await pnlDealsApi.list(creatorUserId, { offset, limit });
-    deals.push(...page.data);
-    if (deals.length >= page.total) return deals;
-    if (page.data.length === 0) error(409, "pnl_deal_history_incomplete", "P&L deal history could not be fully verified.");
-    offset += page.data.length;
-    if (offset >= 10_000) error(409, "pnl_deal_history_too_large", "P&L deal history is too large to verify safely.");
-  }
+// ADMIN owns the commercial P&L contract. The customer backend only owns the
+// ordinary fill or multiplier record used to fund it.
+type PnlFundingProvision = {
+  linkedFillDealId: string | null;
+  linkedMultiplierDealId: string | null;
+  linkedBackendDealId: string;
+};
+
+function pnlMultiplierApprovalMarker(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): string {
+  return `pnl-approval-${request.agreement_version}-${request.id}`;
 }
 
-function pnlWindowsOverlap(
-  existing: Pick<PnlDealResponse, "frame_start_utc" | "frame_end_utc">,
-  proposed: z.infer<typeof PnlPayloadSchema>,
-): boolean {
-  const existingStart = new Date(existing.frame_start_utc).getTime();
-  const existingEnd = new Date(existing.frame_end_utc).getTime();
-  const proposedStart = new Date(proposed.frame_start_utc).getTime();
-  const proposedEnd = new Date(proposed.frame_end_utc).getTime();
-  if (![existingStart, existingEnd, proposedStart, proposedEnd].every(Number.isFinite)) {
-    error(409, "backend_pnl_deal_window_invalid", "An existing P&L deal has an invalid time window.");
+async function ensurePnlFunding(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+  payload: z.infer<typeof PnlPayloadSchema>,
+  markCreateAttempted: () => Promise<void>,
+): Promise<PnlFundingProvision> {
+  if (payload.funding.type === "linked_multiplier") {
+    const linked = await multiplierDealsApi.get(
+      request.creator_user_id,
+      payload.funding.multiplier_deal_id,
+    );
+    if (linked.multiplier_bps < 20_000) {
+      error(409, "linked_multiplier_below_minimum", "The linked multiplier must be at least 2x for P&L funding.");
+    }
+    if (!["pending_deposit", "funded", "live"].includes(linked.status)) {
+      error(409, "linked_multiplier_unavailable", `The linked multiplier is ${linked.status.replaceAll("_", " ")} and cannot fund a new P&L frame.`);
+    }
+    if (linked.auto_end_at && new Date(linked.auto_end_at) < new Date(payload.frame_end_utc)) {
+      error(409, "linked_multiplier_frame_too_short", "The linked multiplier ends before the proposed P&L frame.");
+    }
+    return {
+      linkedFillDealId: null,
+      linkedMultiplierDealId: linked.id,
+      linkedBackendDealId: linked.id,
+    };
   }
-  return existingStart < proposedEnd && proposedStart < existingEnd;
+
+  if (payload.funding.type === "new_multiplier") {
+    const marker = pnlMultiplierApprovalMarker(request);
+    const listed = await listAllMultiplierDeals(request.creator_user_id);
+    const existing = listed.find((deal) => deal.terms_version === marker);
+    if (existing) {
+      if (!["pending_deposit", "funded", "live"].includes(existing.status)) {
+        error(409, "pnl_multiplier_funding_unavailable", `The previously created multiplier funding is ${existing.status.replaceAll("_", " ")}.`);
+      }
+      return { linkedFillDealId: null, linkedMultiplierDealId: existing.id, linkedBackendDealId: existing.id };
+    }
+    const conflicting = listed.find((deal) =>
+      ["pending_deposit", "funded", "live", "pending_review", "flagged"].includes(deal.status));
+    if (conflicting) {
+      error(409, "multiplier_deal_conflict", `Creator already has a ${conflicting.status.replaceAll("_", " ")} multiplier deal.`);
+    }
+    await markCreateAttempted();
+    const created = await multiplierDealsApi.create(request.creator_user_id, {
+      required_deposit_usd: payload.funding.required_deposit_usd,
+      multiplier_bps: payload.funding.multiplier_bps,
+      withdrawable_bps: payload.funding.withdrawable_bps,
+      wager_requirement_bps: payload.funding.wager_requirement_bps,
+      max_total_wager_usd: payload.funding.max_total_wager_usd,
+      max_payout_usd: payload.funding.max_payout_usd,
+      min_session_duration_seconds: payload.funding.min_session_duration_seconds,
+      min_bet_count: payload.funding.min_bet_count,
+      min_wager_to_funding_ratio_bps: payload.funding.min_wager_to_funding_ratio_bps,
+      kick_vod_required: payload.funding.kick_vod_required,
+      auto_renew: false,
+      terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
+      terms_version: marker,
+    } satisfies CreateMultiplierDealInput);
+    return { linkedFillDealId: null, linkedMultiplierDealId: created.id, linkedBackendDealId: created.id };
+  }
+
+  const listed = await listAllCreatorDeals(request.creator_user_id);
+  const existing = listed.find((deal) => markerDeal(deal, request.id));
+  if (existing) {
+    if (existing.status !== "scheduled" && existing.status !== "active") {
+      error(409, "pnl_fill_funding_unavailable", `The previously created fill funding is ${existing.status}.`);
+    }
+    return { linkedFillDealId: existing.id, linkedMultiplierDealId: null, linkedBackendDealId: existing.id };
+  }
+  const proposed = {
+    week_start_utc: payload.frame_start_utc,
+    week_end_utc: payload.frame_end_utc,
+  } as z.infer<typeof DealPayloadSchema>;
+  const overlap = listed.find((deal) =>
+    (deal.status === "active" || deal.status === "scheduled")
+    && dealWindowsOverlap(deal, proposed));
+  if (overlap) {
+    error(409, "creator_deal_window_overlap", `Creator already has an ${overlap.status} fill deal during the proposed P&L frame.`);
+  }
+  await markCreateAttempted();
+  const created = await creatorsApi.createDeal(request.creator_user_id, {
+    week_start_utc: payload.frame_start_utc,
+    week_end_utc: payload.frame_end_utc,
+    fills_allowed: payload.funding.fills_allowed,
+    per_fill_amount_usd: payload.funding.per_fill_amount_usd,
+    conversion_rate_bps: 0,
+    // Conversion is non-withdrawable; leaving the aggregate cap open keeps
+    // the separately approved tip/sponsorship allowances usable.
+    total_withdraw_cap_usd: null,
+    cooldown_minutes: payload.funding.cooldown_minutes,
+    max_tip_per_stream_usd: payload.max_tip_per_stream_usd ?? 0,
+    max_tip_per_user_usd: payload.max_tip_per_user_usd ?? 0,
+    max_sponsored_battle_usd: payload.max_sponsored_battle_usd ?? 0,
+    max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd ?? 0,
+    allow_site_leaderboards: false,
+    allow_code_leaderboards: false,
+    terms: {
+      creator_approval_request_id: request.id,
+      pnl_funding_only: true,
+      agreement_version: request.agreement_version,
+      agreement_checksum: request.agreement_checksum,
+    },
+  } satisfies CreateDealInput);
+  return { linkedFillDealId: created.id, linkedMultiplierDealId: null, linkedBackendDealId: created.id };
 }
 
-async function ensureBackendPnlDeal(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string> {
-  if (request.backend_deal_id) return request.backend_deal_id;
+async function ensureAdminPnlDeal(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): Promise<{ pnlDealId: string; linkedBackendDealId: string }> {
+  if (request.pnl_deal_id) {
+    const [existing] = await adminDrizzle.select({
+      id: creator_pnl_deals.id,
+      linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
+      linkedMultiplierDealId: creator_pnl_deals.linked_multiplier_deal_id,
+    }).from(creator_pnl_deals).where(eq(creator_pnl_deals.id, request.pnl_deal_id)).limit(1);
+    if (!existing) error(409, "admin_pnl_deal_missing", "The approval references a missing Admin P&L deal.");
+    return {
+      pnlDealId: existing.id,
+      linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
+        ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
+    };
+  }
+
   const outcome = await adminDrizzle.transaction(async (tx): Promise<
-    { ok: true; dealId: string } | { ok: false; cause: unknown }
+    { ok: true; pnlDealId: string; linkedBackendDealId: string } | { ok: false; cause: unknown }
   > => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-pnl-deal:${request.creator_user_id}`}, 0))`);
+    const [existing] = await tx.select({
+      id: creator_pnl_deals.id,
+      linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
+      linkedMultiplierDealId: creator_pnl_deals.linked_multiplier_deal_id,
+    }).from(creator_pnl_deals)
+      .where(eq(creator_pnl_deals.source_approval_request_id, request.id))
+      .limit(1);
+    if (existing) {
+      return {
+        ok: true,
+        pnlDealId: existing.id,
+        linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
+          ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
+      };
+    }
+
     const payload = PnlPayloadSchema.parse(request.pnl_payload);
-    const listed = await listAllPnlDeals(request.creator_user_id);
-    const existing = listed.find((deal) => deal.source_approval_request_id === request.id);
-    if (existing) return { ok: true, dealId: existing.id };
-    const conflict = listed.find((deal) =>
-      ["scheduled", "active", "settlement_pending"].includes(deal.status)
-      && pnlWindowsOverlap(deal, payload));
+    const [conflict] = await tx.select({ id: creator_pnl_deals.id, status: creator_pnl_deals.status })
+      .from(creator_pnl_deals)
+      .where(and(
+        eq(creator_pnl_deals.creator_user_id, request.creator_user_id),
+        sql`${creator_pnl_deals.status} IN ('scheduled','active','settlement_pending','calculated','crediting')`,
+        sql`${creator_pnl_deals.frame_start_utc} < ${payload.frame_end_utc}::timestamptz`,
+        sql`${creator_pnl_deals.frame_end_utc} > ${payload.frame_start_utc}::timestamptz`,
+      )).limit(1);
     if (conflict) {
-      error(409, "pnl_deal_window_overlap", `Creator already has a ${conflict.status.replaceAll("_", " ")} P&L deal during the proposed frame.`);
+      error(409, "pnl_deal_window_overlap", `Creator already has a ${conflict.status.replaceAll("_", " ")} Admin P&L deal during the proposed frame.`);
     }
-    if (request.backend_create_attempted_at) {
-      error(409, "backend_create_unconfirmed", "The original backend create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
-    }
-    const [claimed] = await tx.update(creator_deal_approval_requests).set({
-      backend_create_attempted_at: new Date().toISOString(),
-      updated_at: new Date().toISOString(),
-    }).where(and(
-      eq(creator_deal_approval_requests.id, request.id),
-      sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
-    )).returning({ id: creator_deal_approval_requests.id });
-    if (!claimed) error(409, "backend_create_in_progress", "Another worker already started P&L deal creation.");
+
+    let attempted = request.backend_create_attempted_at != null;
+    const markCreateAttempted = async () => {
+      if (attempted) {
+        error(409, "backend_create_unconfirmed", "The original funding create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+      }
+      const [claimed] = await tx.update(creator_deal_approval_requests).set({
+        backend_create_attempted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).where(and(
+        eq(creator_deal_approval_requests.id, request.id),
+        sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
+      )).returning({ id: creator_deal_approval_requests.id });
+      if (!claimed) error(409, "backend_create_in_progress", "Another worker already started P&L funding creation.");
+      attempted = true;
+    };
+
     try {
-      const funding: CreatePnlDealInput["funding"] = payload.funding.type === "new_multiplier"
-        ? {
-            mode: "new_multiplier",
-            multiplier: {
-              required_deposit_usd: payload.funding.required_deposit_usd,
-              multiplier_bps: payload.funding.multiplier_bps,
-              wager_requirement_bps: payload.funding.wager_requirement_bps,
-              max_total_wager_usd: payload.funding.max_total_wager_usd,
-              max_payout_usd: payload.funding.max_payout_usd,
-              min_session_duration_seconds: payload.funding.min_session_duration_seconds,
-              min_bet_count: payload.funding.min_bet_count,
-              min_wager_to_funding_ratio_bps: payload.funding.min_wager_to_funding_ratio_bps,
-              kick_vod_required: payload.funding.kick_vod_required,
-              auto_renew: false,
-              terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
-              terms_version: `approval-${request.agreement_version}-${request.id}`,
-            },
-          }
-        : payload.funding.type === "linked_multiplier"
-          ? { mode: "linked_multiplier", multiplier_deal_id: payload.funding.multiplier_deal_id }
-          : {
-              mode: "non_withdrawable_fills",
-              fills_allowed: payload.funding.fills_allowed,
-              per_fill_amount_usd: payload.funding.per_fill_amount_usd,
-              ...(payload.funding.cooldown_minutes == null ? {} : { cooldown_minutes: payload.funding.cooldown_minutes }),
-            };
-      const created = await pnlDealsApi.create(request.creator_user_id, {
+      const funding = await ensurePnlFunding(request, payload, markCreateAttempted);
+      const pnlDealId = crypto.randomUUID();
+      const now = new Date();
+      const startsActive = new Date(payload.frame_start_utc) <= now;
+      await tx.insert(creator_pnl_deals).values({
+        id: pnlDealId,
+        creator_user_id: request.creator_user_id,
+        source_approval_request_id: request.id,
+        status: startsActive ? "active" : "scheduled",
         frame_start_utc: payload.frame_start_utc,
         frame_end_utc: payload.frame_end_utc,
         positive_pnl_share_bps: payload.positive_pnl_share_bps,
-        funding,
-        max_tip_per_stream_usd: payload.max_tip_per_stream_usd,
-        max_tip_per_user_usd: payload.max_tip_per_user_usd,
-        max_sponsored_battle_usd: payload.max_sponsored_battle_usd,
-        max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd,
-        source_approval_request_id: request.id,
-        terms: {
-          creator_approval_request_id: request.id,
+        funding_mode: payload.funding.type,
+        funding_config: payload.funding,
+        linked_fill_deal_id: funding.linkedFillDealId,
+        linked_multiplier_deal_id: funding.linkedMultiplierDealId,
+        max_tip_per_stream_usd: payload.max_tip_per_stream_usd == null ? null : String(payload.max_tip_per_stream_usd),
+        max_tip_per_user_usd: payload.max_tip_per_user_usd == null ? null : String(payload.max_tip_per_user_usd),
+        max_sponsored_battle_usd: payload.max_sponsored_battle_usd == null ? null : String(payload.max_sponsored_battle_usd),
+        max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd == null ? null : String(payload.max_sponsorship_per_stream_usd),
+        terms_snapshot: {
+          agreement_document_id: request.agreement_document_id,
           agreement_version: request.agreement_version,
           agreement_checksum: request.agreement_checksum,
+          agreement_lines: z.array(z.string()).parse(request.agreement_lines),
         },
-      } satisfies CreatePnlDealInput);
-      return { ok: true, dealId: created.id };
+        credit_idempotency_key: `creator-pnl:${pnlDealId}`,
+        activated_at: startsActive ? now.toISOString() : null,
+        created_by_admin_user_id: request.submitted_by,
+      });
+      await tx.update(creator_deal_approval_requests).set({
+        pnl_deal_id: pnlDealId,
+        backend_deal_id: funding.linkedBackendDealId,
+        updated_at: now.toISOString(),
+      }).where(eq(creator_deal_approval_requests.id, request.id));
+      return { ok: true, pnlDealId, linkedBackendDealId: funding.linkedBackendDealId };
     } catch (cause) {
-      // Persist the attempted marker. A retry reconciles through the backend's
-      // unique source_approval_request_id instead of risking a second deal.
+      // Commit an ambiguous remote-create marker. A retry first reconciles the
+      // ordinary fill/multiplier by its immutable terms marker.
       return { ok: false, cause };
     }
   });
   if (!outcome.ok) throw outcome.cause;
-  return outcome.dealId;
+  return { pnlDealId: outcome.pnlDealId, linkedBackendDealId: outcome.linkedBackendDealId };
+}
+
+/**
+ * Materialize time-derived activation and calculation readiness before an
+ * Admin P&L list, calculation, or credit action reads lifecycle state.
+ */
+export async function advanceDueCreatorPnlDeals(now = new Date()): Promise<{
+  activated: number;
+  readyForCalculation: number;
+}> {
+  return adminDrizzle.transaction(async (tx) => {
+    const timestamp = now.toISOString();
+    const activated = await tx.update(creator_pnl_deals).set({
+      status: "active",
+      activated_at: timestamp,
+      updated_at: timestamp,
+      version: sql`${creator_pnl_deals.version} + 1`,
+    }).where(and(
+      eq(creator_pnl_deals.status, "scheduled"),
+      sql`${creator_pnl_deals.frame_start_utc} <= ${timestamp}::timestamptz`,
+      sql`${creator_pnl_deals.frame_end_utc} > ${timestamp}::timestamptz`,
+    )).returning({ id: creator_pnl_deals.id });
+    const ready = await tx.update(creator_pnl_deals).set({
+      status: "settlement_pending",
+      updated_at: timestamp,
+      version: sql`${creator_pnl_deals.version} + 1`,
+    }).where(and(
+      sql`${creator_pnl_deals.status} IN ('scheduled','active')`,
+      sql`${creator_pnl_deals.frame_end_utc} <= ${timestamp}::timestamptz`,
+    )).returning({ id: creator_pnl_deals.id });
+    return { activated: activated.length, readyForCalculation: ready.length };
+  });
 }
 
 async function ensureRewardProgram(request: typeof creator_deal_approval_requests.$inferSelect, approvedAt: Date): Promise<string | null> {
@@ -1149,9 +1301,10 @@ export async function provisionApprovedCreatorDealRequest(
     const approvedAt = request.approved_at ? new Date(request.approved_at) : new Date();
     const kind = request.request_kind as CreatorApprovalRequestKind;
     if (new Date(request.window_end_at) <= approvedAt) error(409, "deal_window_elapsed", "The approved request has already ended.");
-    // Fill deals may bundle rewards/leaderboards. Multiplier and standalone
-    // requests carry exactly their own payload, enforced by the table CHECK.
+    // Fill and ADMIN-owned P&L deals may bundle rewards/leaderboards.
+    // Multiplier and standalone requests carry exactly their own payload.
     let backendDealId: string | null = request.backend_deal_id;
+    let pnlDealId: string | null = request.pnl_deal_id;
     if (kind === "deal") {
       backendDealId = await ensureBackendDeal(request);
       await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
@@ -1159,23 +1312,29 @@ export async function provisionApprovedCreatorDealRequest(
       backendDealId = await ensureBackendMultiplierDeal(request);
       await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
     } else if (kind === "pnl_deal") {
-      backendDealId = await ensureBackendPnlDeal(request);
-      await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
+      const pnl = await ensureAdminPnlDeal(request);
+      pnlDealId = pnl.pnlDealId;
+      backendDealId = pnl.linkedBackendDealId;
+      await adminDrizzle.update(creator_deal_approval_requests).set({
+        pnl_deal_id: pnlDealId,
+        backend_deal_id: backendDealId,
+        updated_at: new Date().toISOString(),
+      }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
     }
     const withDeal = { ...request, backend_deal_id: backendDealId };
     const rewardProgramId = kind === "deal" || kind === "pnl_deal" || kind === "rewards_only" ? await ensureRewardProgram(withDeal, approvedAt) : null;
     const leaderboardId = kind === "deal" || kind === "pnl_deal" || kind === "leaderboard_only" ? await ensureLeaderboard(withDeal) : null;
     await adminDrizzle.transaction(async (tx) => {
       const completed = await tx.execute<{ creator_user_id: string }>(sql`
-        UPDATE creator_deal_approval_requests SET status = 'completed', backend_deal_id = ${backendDealId}, reward_program_id = ${rewardProgramId}::uuid,
+        UPDATE creator_deal_approval_requests SET status = 'completed', backend_deal_id = ${backendDealId}, pnl_deal_id = ${pnlDealId}::uuid, reward_program_id = ${rewardProgramId}::uuid,
           leaderboard_id = ${leaderboardId}::uuid,
           provisioning_lease_token = NULL, provisioning_leased_until = NULL, last_error_step = NULL,
           last_error_code = NULL, last_error_message = NULL, completed_at = now(), updated_at = now()
         WHERE id = ${id}::uuid AND provisioning_lease_token = ${token}::uuid RETURNING creator_user_id
       `);
       if (!completed.rows[0]) error(409, "provisioning_lease_lost", "Provisioning lease expired.");
-      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
-      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
+      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
+      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
     });
     return { status: "approved", requestId: id };
   } catch (cause) {
@@ -1187,7 +1346,8 @@ export async function provisionApprovedCreatorDealRequest(
             WHEN request_kind = 'leaderboard_only' THEN 'leaderboard'
             WHEN request_kind = 'rewards_only' THEN 'reward_program'
             WHEN request_kind = 'multiplier_deal' THEN 'backend_multiplier_deal'
-            WHEN request_kind = 'pnl_deal' AND backend_deal_id IS NULL THEN 'backend_pnl_deal'
+            WHEN request_kind = 'pnl_deal' AND backend_create_attempted_at IS NOT NULL AND pnl_deal_id IS NULL THEN 'backend_pnl_funding'
+            WHEN request_kind = 'pnl_deal' AND pnl_deal_id IS NULL THEN 'admin_pnl_deal'
             WHEN backend_deal_id IS NULL THEN 'backend_deal'
             WHEN reward_payload IS NOT NULL AND reward_program_id IS NULL THEN 'reward_program'
             ELSE 'leaderboard' END,

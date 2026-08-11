@@ -186,7 +186,8 @@ export async function getCreatorRewardsDetail(
       declinedAt: request.declined_at,
       completedAt: request.completed_at,
       backendDealId: request.backend_deal_id,
-      backendPnlDealId:
+      pnlDealId: request.pnl_deal_id,
+      linkedFundingDealId:
         request.request_kind === "pnl_deal" ? request.backend_deal_id : null,
       rewardProgramId: request.reward_program_id,
       lastErrorStep: request.last_error_step,

@@ -13,10 +13,10 @@ import { cn } from "@/lib/utils";
 // Overview re-render, including each `?activityPeriod=` switch.
 import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
-import type { PnlDealResponse } from "@/lib/backend-api/pnl-deals";
+import type { AdminCreatorPnlDeal } from "@/lib/creator-pnl-settlement";
 import { NewDealDialog } from "./new-deal-dialog";
 import { DealCardActions, PreviousDealsButton } from "./deal-actions";
-import { PnlSettlementButton } from "./pnl-settlement-button";
+import { PnlCalculateButton, PnlSettlementButton } from "./pnl-settlement-button";
 import { PnlDealControls } from "./pnl-deal-controls";
 import { DEAL_STATUS_COLORS } from "./status-badges";
 
@@ -96,13 +96,15 @@ export async function DealCard({
   }
 
   const deals: CreatorDealResponse[] = data?.deals.data ?? [];
-  const pnlDeals: PnlDealResponse[] = data?.pnlDeals ?? [];
+  const pnlDeals: AdminCreatorPnlDeal[] = data?.pnlDeals ?? [];
   const previousPnlDeals = pnlDeals.filter(
     (item) => item.status === "settled" || item.status === "cancelled",
   );
   const pnlDeal =
-    pnlDeals.find((item) => item.status === "active") ??
+    pnlDeals.find((item) => item.status === "crediting") ??
+    pnlDeals.find((item) => item.status === "calculated") ??
     pnlDeals.find((item) => item.status === "settlement_pending") ??
+    pnlDeals.find((item) => item.status === "active") ??
     pnlDeals
       .filter((item) => item.status === "scheduled")
       .sort((a, b) => a.frame_start_utc.localeCompare(b.frame_start_utc))[0] ??
@@ -270,26 +272,28 @@ export async function DealCard({
   );
 }
 
-const PNL_STATUS_COLORS: Record<PnlDealResponse["status"], string> = {
+const PNL_STATUS_COLORS: Record<AdminCreatorPnlDeal["status"], string> = {
   scheduled: "border-blue-500/30 text-blue-600 dark:text-blue-400",
   active: "border-emerald-500/30 text-emerald-600 dark:text-emerald-400",
   settlement_pending: "border-amber-500/30 text-amber-600 dark:text-amber-400",
+  calculated: "border-violet-500/30 text-violet-600 dark:text-violet-400",
+  crediting: "border-orange-500/30 text-orange-600 dark:text-orange-400",
   settled: "border-zinc-500/30 text-zinc-600 dark:text-zinc-400",
   cancelled: "border-rose-500/30 text-rose-600 dark:text-rose-400",
 };
 
-function PnlDealCard({ userId, deal, allDeals }: { userId: string; deal: PnlDealResponse; allDeals: PnlDealResponse[] }) {
+function PnlDealCard({ userId, deal, allDeals }: { userId: string; deal: AdminCreatorPnlDeal; allDeals: AdminCreatorPnlDeal[] }) {
   const framePnl = deal.frame_site_pnl_usd == null ? null : num(deal.frame_site_pnl_usd);
   const creatorShare = deal.creator_share_usd == null ? null : num(deal.creator_share_usd);
   const fundingLabel =
     deal.funding_mode === "non_withdrawable_fills"
-      ? `${deal.fills_used} / ${deal.fills_allowed ?? 0} fills used`
+      ? `${num(String(deal.funding_config.fills_allowed ?? 0))} non-withdrawable fills`
       : deal.funding_mode === "linked_multiplier"
         ? "Linked multiplier"
         : "New multiplier";
   const frameEnded = new Date(deal.frame_end_utc).getTime() <= Date.now();
-  const canSettle =
-    frameEnded && (deal.status === "active" || deal.status === "settlement_pending");
+  const canCalculate = frameEnded && ["scheduled", "active", "settlement_pending"].includes(deal.status);
+  const canCredit = frameEnded && ["calculated", "crediting"].includes(deal.status);
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -336,19 +340,32 @@ function PnlDealCard({ userId, deal, allDeals }: { userId: string; deal: PnlDeal
               </span>
             )}
           </div>
-          {canSettle && (
+          {deal.funding_mode !== "non_withdrawable_fills" && (
+            <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              Multiplier funding currently cannot spend the stored tip or sponsor caps. Those terms are shown for audit only until platform support is added.
+            </div>
+          )}
+          {deal.settlement_breakdown && (
+            <details className="rounded-lg border px-3 py-2 text-xs">
+              <summary className="cursor-pointer font-medium">Frozen calculation breakdown</summary>
+              <pre className="mt-2 max-h-48 overflow-auto text-[10px]">{JSON.stringify(deal.settlement_breakdown, null, 2)}</pre>
+            </details>
+          )}
+          {(canCalculate || canCredit) && (
             <div className="flex items-center justify-between gap-3 border-t pt-3">
               <span className="text-xs text-muted-foreground">
-                {deal.status === "settlement_pending"
-                  ? "Settlement is pending; recompute and retry safely."
-                  : "The exact UTC frame has ended and is ready to settle."}
+                {canCalculate
+                  ? "Calculate and freeze the exact UTC frame before choosing a manual payout."
+                  : "The calculation is frozen. Review it, then enter the approved manual credit."}
               </span>
-              <PnlSettlementButton
+              {canCalculate ? <PnlCalculateButton userId={userId} dealId={deal.id} expectedVersion={deal.version} /> : <PnlSettlementButton
                 userId={userId}
                 dealId={deal.id}
                 expectedVersion={deal.version}
-                retry={deal.status === "settlement_pending"}
-              />
+                computedShareUsd={creatorShare}
+                initialAmountUsd={deal.credited_amount_usd == null ? null : num(deal.credited_amount_usd)}
+                retry={deal.status === "crediting" || deal.credit_status === "failed"}
+              />}
             </div>
           )}
         </CardContent>

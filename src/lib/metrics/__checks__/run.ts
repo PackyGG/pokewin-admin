@@ -130,7 +130,6 @@ const ALL_ENUM_TYPES: LedgerTransactionType[] = [
   "creator_multiplier_settlement_deposit_return",
   "creator_multiplier_forfeiture",
   "creator_lb_deposit",
-  "creator_pnl_share_payout",
   "upgrader_bet",
   "upgrader_payout",
   "keno_bet",
@@ -139,7 +138,7 @@ const ALL_ENUM_TYPES: LedgerTransactionType[] = [
 
 console.log("\n[metrics checks] partition: every enum type in exactly one set");
 
-check("enum has 56 members", ALL_ENUM_TYPES.length === 56);
+check("enum has 55 members", ALL_ENUM_TYPES.length === 55);
 
 // Build the union of all assigned types and assert disjoint + complete.
 const allSets = Object.values(LEDGER_SET_MEMBERS) as readonly (readonly string[])[];
@@ -167,8 +166,8 @@ check(
   [...assigned].every((t) => (ALL_ENUM_TYPES as string[]).includes(t)),
 );
 check(
-  "union of sets covers exactly the 56 enum members",
-  assigned.size === 56,
+  "union of sets covers exactly the 55 enum members",
+  assigned.size === 55,
 );
 
 // classifyLedgerType round-trips every enum member to a non-null bucket.
@@ -268,7 +267,6 @@ check("voucher_exchange is NEUTRAL", classifyLedgerType("voucher_exchange") === 
 // NEUTRAL and it must NOT be in REWARD_PAYOUT_TYPES.
 check("voucher_redeemed is NEUTRAL (reclassified from REWARD; manual carve-out is SQL-level)", classifyLedgerType("voucher_redeemed") === "NEUTRAL" && !(REWARD_PAYOUT_TYPES as readonly string[]).includes("voucher_redeemed"));
 check("affiliate_leaderboard_prize is a REWARD (gap-fix)", classifyLedgerType("affiliate_leaderboard_prize") === "REWARD_PAYOUT");
-check("creator_pnl_share_payout is a realized REWARD cost", classifyLedgerType("creator_pnl_share_payout") === "REWARD_PAYOUT");
 check("creator_tip is RESIDUAL, NOT a reward cost", classifyLedgerType("creator_tip") === "RESIDUAL" && !(REWARD_PAYOUT_TYPES as readonly string[]).includes("creator_tip"));
 check("rain_win is a REWARD (mixed-funding handled in NGR hook)", classifyLedgerType("rain_win") === "REWARD_PAYOUT");
 check("rain_tip is RESIDUAL (funding leg, a transfer)", classifyLedgerType("rain_tip") === "RESIDUAL");

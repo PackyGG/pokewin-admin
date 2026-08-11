@@ -34,13 +34,6 @@ export type {
   RejectMultiplierDealInput,
   FlagMultiplierDealInput,
 } from "./multiplier-deals";
-export { pnlDealsApi } from "./pnl-deals";
-export type {
-  PnlDealStatus,
-  PnlDealFunding,
-  PnlDealResponse,
-  CreatePnlDealInput,
-} from "./pnl-deals";
 export { upgraderApi } from "./upgrader";
 export type {
   UpgraderOutputCard,

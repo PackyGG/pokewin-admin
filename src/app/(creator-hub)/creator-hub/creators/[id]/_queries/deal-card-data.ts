@@ -9,12 +9,12 @@ import {
   type CreatorDealData,
 } from "../../../../../(admin)/creators/[userId]/_queries/get-creator-deal-data";
 import {
-  pnlDealsApi,
-  type PnlDealResponse,
-} from "@/lib/backend-api/pnl-deals";
+  listAdminCreatorPnlDeals,
+  type AdminCreatorPnlDeal,
+} from "@/lib/creator-pnl-settlement";
 
 export type CreatorDealCardData = CreatorDealData & {
-  pnlDeals: PnlDealResponse[];
+  pnlDeals: AdminCreatorPnlDeal[];
 };
 
 /**
@@ -44,14 +44,14 @@ const DEAL_CARD_PARAMS = {
 
 const cachedDealCardData = unstable_cache(
   async (userId: string): Promise<CreatorDealCardData | null> => {
-    const [fillData, pnlPage] = await Promise.all([
+    const [fillData, pnlDeals] = await Promise.all([
       getCreatorDealData(userId, DEAL_CARD_PARAMS),
-      pnlDealsApi.list(userId, { offset: 0, limit: 100 }),
+      listAdminCreatorPnlDeals(userId),
     ]);
     if (!fillData) return null;
-    return { ...fillData, pnlDeals: pnlPage.data };
+    return { ...fillData, pnlDeals };
   },
-  ["creator-hub-deal-card-v2-pnl"],
+  ["creator-hub-deal-card-v3-admin-pnl"],
   { revalidate: 60, tags: ["creator-deal"] },
 );
 

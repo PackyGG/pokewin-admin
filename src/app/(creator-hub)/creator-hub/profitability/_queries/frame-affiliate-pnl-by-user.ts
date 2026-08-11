@@ -13,6 +13,7 @@ import {
   WITHDRAWN_UNITS_SQL,
 } from "@/lib/queries/creators-pnl";
 import { toNumber } from "@/lib/utils/decimal";
+import { fiatRefundCreditUsdSql } from "@/lib/queries/fiat-refund-credits";
 import type { FrameWindow } from "./frame-wager-by-user";
 
 /**
@@ -113,11 +114,13 @@ async function readFramePnl(
         dep_raw AS (
           SELECT lt.user_id,
                  lt.created_at,
-                 lt.amount::numeric AS amount,
+                 (lt.amount::numeric - COALESCE(${fiatRefundCreditUsdSql("i")},0)) AS amount,
                  u.role::text AS role,
                  ${COVERING_CREATOR_SQL} AS creator_id
             FROM ledger_transactions lt
             JOIN "user" u ON u.id = lt.user_id
+            LEFT JOIN fiat_deposit_intents i ON i.completed_ledger_id=lt.id
+              AND i.status IN ('partially_refunded','refunded')
            WHERE lt.type::text = 'deposit'
              AND lt.status = 'completed'
              AND lt.created_at >= LEAST(

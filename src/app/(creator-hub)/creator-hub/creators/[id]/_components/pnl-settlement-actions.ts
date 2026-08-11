@@ -3,69 +3,252 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 
-import { settleCreatorPnlDeal } from "@/lib/creator-pnl-settlement";
-import { pnlDealsApi } from "@/lib/backend-api/pnl-deals";
+import { adminDrizzle } from "@/lib/admin-db";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
+import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
+import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
+import { roundSettlementMoney } from "@/lib/creator-pnl-settlement-math";
+import { creatorsApi } from "@/lib/backend-api/creators";
+import { multiplierDealsApi } from "@/lib/backend-api/multiplier-deals";
+import { affiliateLeaderboardsApi } from "@/lib/backend-api/affiliate-leaderboards";
+import { requireCapability } from "@/lib/require-capability";
+import {
+  computeCreatorPnlPreview,
+  getAdminCreatorPnlDeal,
+} from "@/lib/creator-pnl-settlement";
 
-const InputSchema = z.object({
+const CreditSchema = z.object({
   userId: z.string().trim().min(8).max(128),
   dealId: z.string().uuid(),
   expectedVersion: z.number().int().nonnegative(),
+  amountUsd: z.number().finite().positive().multipleOf(0.01).max(1_000_000),
+  reason: z.string().trim().min(3).max(500),
+  totpCode: z.string().trim().min(1).max(2048),
 });
 
-export async function settleCreatorPnlDealAction(input: {
-  userId: string;
-  dealId: string;
-  expectedVersion: number;
-}): Promise<
-  | { success: true; frameSitePnlUsd: number; creatorShareUsd: number }
-  | { success: false; error: string }
-> {
-  await requireCreatorHubAccess("Not authorized to settle creator PnL deals.");
-  const parsed = InputSchema.safeParse(input);
-  if (!parsed.success) return { success: false, error: "Invalid settlement request." };
-
-  try {
-    const result = await settleCreatorPnlDeal(parsed.data);
-    revalidateTag("creator-deal");
-    revalidatePath(`/creator-hub/creators/${parsed.data.userId}`);
-    return {
-      success: true,
-      frameSitePnlUsd: result.breakdown.frame_site_pnl_usd,
-      creatorShareUsd: Number(result.deal.creator_share_usd ?? 0),
-    };
-  } catch (error) {
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "PnL settlement failed.",
-    };
-  }
+function invalidate(userId: string) {
+  revalidateTag("creator-deal");
+  revalidateTag(`users-detail-${userId}`);
+  revalidatePath(`/creator-hub/creators/${userId}`);
+  revalidatePath(`/users/${userId}`);
 }
 
-const CancelSchema = InputSchema.pick({ userId: true, dealId: true }).extend({
-  reason: z.string().trim().min(3).max(500),
+export async function creditCreatorPnlShareAction(input: z.input<typeof CreditSchema>): Promise<
+  | { success: true; ledgerTxId: string; amountUsd: number }
+  | { success: false; error: string }
+> {
+  const session = await requireCreatorHubAccess("Not authorized to credit creator PnL shares.");
+  const parsed = CreditSchema.safeParse(input);
+  if (!parsed.success) return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid payout." };
+  const data = parsed.data;
+
+  const deal = await getAdminCreatorPnlDeal(data.userId, data.dealId);
+  if (!deal) return { success: false, error: "PnL deal not found." };
+  if (deal.creator_user_id !== data.userId) return { success: false, error: "PnL deal creator mismatch." };
+  if (new Date(deal.frame_end_utc).getTime() > Date.now()) return { success: false, error: "The PnL frame has not ended." };
+
+  if (deal.status === "settled" && deal.credit_ledger_id && deal.credited_amount_usd != null) {
+    return { success: true, ledgerTxId: deal.credit_ledger_id, amountUsd: Number(deal.credited_amount_usd) };
+  }
+
+  const preview = deal.settlement_breakdown;
+  if (!preview || deal.frame_site_pnl_usd == null || deal.creator_share_usd == null) {
+    return { success: false, error: "Calculate and freeze the frame preview before crediting it." };
+  }
+  if (!["calculated", "crediting"].includes(deal.status)) {
+    return { success: false, error: `PnL deal cannot be credited from ${deal.status}.` };
+  }
+  if (deal.status === "crediting" && Number(deal.credited_amount_usd) !== data.amountUsd) {
+    return { success: false, error: "A different payout is already reserved for this deal." };
+  }
+  const expectedMarker = `creator-pnl:${deal.id}`;
+  if (deal.credit_idempotency_key !== expectedMarker) {
+    return { success: false, error: "PnL deal has an invalid credit idempotency marker." };
+  }
+  const externalTxId = deal.credit_idempotency_key;
+  try {
+    await adminDrizzle.transaction(async (tx) => {
+      const rows = await queryRows<Array<{ status: string; version: number; credited_amount_usd: string | null }>>(tx,
+        `SELECT status, version, credited_amount_usd::text FROM creator_pnl_deals
+          WHERE id=$1::uuid AND creator_user_id=$2 FOR UPDATE`, deal.id, data.userId);
+      const current = rows[0];
+      if (!current) throw new Error("PnL deal not found.");
+      if (current.status === "settled") return;
+      if (current.status === "crediting") {
+        if (Number(current.credited_amount_usd) !== data.amountUsd) throw new Error("A different payout is already reserved for this deal.");
+        return;
+      }
+      if (current.version !== data.expectedVersion) throw new Error("PnL deal changed. Refresh and retry.");
+      if (current.status !== "calculated") throw new Error(`PnL deal cannot be credited from ${current.status}.`);
+      await queryRows(tx,
+        `UPDATE creator_pnl_deals SET status='crediting', credited_amount_usd=$2::numeric,
+          credited_by_admin_user_id=$3::uuid, settlement_reason=$4,
+          credit_status='crediting', credit_attempted_at=now(), credit_error=NULL,
+          version=version+1, updated_at=now()
+          WHERE id=$1::uuid`, deal.id, data.amountUsd, session.userId, data.reason);
+    });
+  } catch (error) {
+    return { success: false, error: error instanceof Error ? error.message : "Could not reserve the payout." };
+  }
+
+  let ledgerTxId: string | null = null;
+  try {
+    const credit = await adjustBalance({
+      userId: data.userId,
+      amount: data.amountUsd,
+      category: "creator_pnl_share",
+      reason: `Creator PnL share — ${data.reason}`,
+      totpCode: data.totpCode,
+      details: {
+        creatorId: data.userId,
+        creatorPnlDealId: deal.id,
+        creatorPnlFrameStartUtc: deal.frame_start_utc,
+        creatorPnlFrameEndUtc: deal.frame_end_utc,
+        creatorPnlShareBps: deal.positive_pnl_share_bps,
+        creatorPnlFrameSitePnlUsd: preview.frame_site_pnl_usd,
+      },
+    });
+    if (!credit.success) throw new Error(credit.error);
+    ledgerTxId = credit.ledgerTxId;
+  } catch (error) {
+    // An ambiguous transaction outcome is reconciled from the unique marker.
+    const recovered = await queryMainRows<Array<{ id: string }>>(
+      `SELECT id::text FROM ledger_transactions WHERE external_tx_id=$1
+        AND user_id=$2 AND type::text='admin_balance_adjustment' AND status='completed'
+        AND amount::numeric=$3::numeric AND metadata->>'adjustment_category'='creator_pnl_share'
+        AND metadata->>'creator_pnl_deal_id'=$4
+        AND metadata->>'creator_pnl_frame_start_utc'=$5
+        AND metadata->>'creator_pnl_frame_end_utc'=$6
+        AND (metadata->>'creator_pnl_share_bps')::numeric=$7::numeric
+        AND (metadata->>'creator_pnl_frame_site_pnl_usd')::numeric=$8::numeric LIMIT 1`,
+      externalTxId, data.userId, data.amountUsd, deal.id, deal.frame_start_utc,
+      deal.frame_end_utc, deal.positive_pnl_share_bps, preview.frame_site_pnl_usd).catch(() => []);
+    ledgerTxId = recovered[0]?.id ?? null;
+    if (!ledgerTxId) {
+      await queryRows(adminDrizzle,
+        `UPDATE creator_pnl_deals SET status='calculated', credit_status='failed',
+          credit_error=$2, version=version+1, updated_at=now()
+          WHERE id=$1::uuid AND status='crediting' AND credit_ledger_id IS NULL`,
+        deal.id, error instanceof Error ? error.message : "Balance credit failed.").catch(() => []);
+      return { success: false, error: error instanceof Error ? error.message : "Balance credit failed." };
+    }
+  }
+
+  await queryRows(adminDrizzle,
+    `UPDATE creator_pnl_deals SET status='settled', credit_status='credited',
+      credit_error=NULL, credit_ledger_id=$2,
+      credited_at=COALESCE(credited_at,now()), settled_at=COALESCE(settled_at,now()),
+      version=version+1, updated_at=now()
+      WHERE id=$1::uuid AND status IN ('crediting','settled')`, deal.id, ledgerTxId);
+  await createAdminAuditEventDurable({
+    adminUserId: session.userId,
+    eventType: "creator_pnl_share_credited",
+    targetUserId: data.userId,
+    metadata: { dealId: deal.id, amount: data.amountUsd, ledgerTxId, externalTxId,
+      computedCreatorShareUsd: Number(deal.creator_share_usd), overrideReason: data.reason,
+      frameStartAt: deal.frame_start_utc, frameEndAt: deal.frame_end_utc,
+      positivePnlShareBps: deal.positive_pnl_share_bps,
+      frameSitePnlUsd: preview.frame_site_pnl_usd, immediatelyWithdrawable: true },
+  });
+  invalidate(data.userId);
+  return { success: true, ledgerTxId: ledgerTxId!, amountUsd: data.amountUsd };
+}
+
+const CalculateSchema = z.object({
+  userId: z.string().trim().min(8).max(128), dealId: z.string().uuid(),
+  expectedVersion: z.number().int().positive(),
 });
 
-export async function cancelCreatorPnlDealAction(input: {
-  userId: string;
-  dealId: string;
-  reason: string;
-}): Promise<{ success: true } | { success: false; error: string }> {
-  await requireCreatorHubAccess("Not authorized to cancel creator PnL deals.");
-  const parsed = CancelSchema.safeParse(input);
-  if (!parsed.success) return { success: false, error: "Enter a cancellation reason." };
-  try {
-    const current = await pnlDealsApi.get(parsed.data.userId, parsed.data.dealId);
-    if (current.status !== "scheduled" && current.status !== "active") {
-      return { success: false, error: `A ${current.status.replaceAll("_", " ")} PnL deal cannot be cancelled.` };
-    }
-    await pnlDealsApi.cancel(parsed.data.userId, parsed.data.dealId, {
-      reason: parsed.data.reason,
-    });
-    revalidateTag("creator-deal");
-    revalidatePath(`/creator-hub/creators/${parsed.data.userId}`);
-    return { success: true };
-  } catch (error) {
-    return { success: false, error: error instanceof Error ? error.message : "PnL cancellation failed." };
+export async function calculateCreatorPnlAction(input: z.input<typeof CalculateSchema>) {
+  const session = await requireCreatorHubAccess("Not authorized to calculate creator PnL.");
+  const parsed = CalculateSchema.safeParse(input);
+  if (!parsed.success) return { success: false as const, error: "Invalid PnL deal." };
+  const deal = await getAdminCreatorPnlDeal(parsed.data.userId, parsed.data.dealId);
+  if (!deal) return { success: false as const, error: "PnL deal not found." };
+  if (new Date(deal.frame_end_utc).getTime() > Date.now()) {
+    return { success: false as const, error: "The PnL frame has not ended." };
   }
+  if (!["scheduled", "active", "settlement_pending"].includes(deal.status)) {
+    return { success: false as const, error: `PnL deal cannot be calculated from ${deal.status}.` };
+  }
+  let preview;
+  try { preview = await computeCreatorPnlPreview(deal); }
+  catch (error) { return { success: false as const, error: error instanceof Error ? error.message : "Frame calculation failed." }; }
+  if (preview.creator_own_gameplay_status === "ambiguous") {
+    return { success: false as const, error: `Creator own-play is ambiguous: ${preview.creator_own_gameplay_note}` };
+  }
+  const creatorShareUsd = roundSettlementMoney(
+    Math.max(0, preview.frame_site_pnl_usd) * deal.positive_pnl_share_bps / 10_000,
+  );
+  const updated = await queryRows<Array<{ version: number }>>(adminDrizzle,
+    `UPDATE creator_pnl_deals SET status='calculated', credit_status='ready',
+      frame_site_pnl_usd=$4::numeric, creator_share_usd=$5::numeric,
+      settlement_breakdown=$6::jsonb, calculation_started_at=COALESCE(calculation_started_at,now()),
+      calculated_at=now(), credit_error=NULL, version=version+1, updated_at=now()
+      WHERE id=$1::uuid AND creator_user_id=$2 AND version=$3
+        AND status IN ('scheduled','active','settlement_pending')
+      RETURNING version`, deal.id, parsed.data.userId, parsed.data.expectedVersion,
+    preview.frame_site_pnl_usd, creatorShareUsd, JSON.stringify(preview));
+  if (!updated[0]) return { success: false as const, error: "PnL deal changed. Refresh and retry." };
+  await createAdminAuditEventDurable({ adminUserId: session.userId,
+    eventType: "creator_pnl_deal_calculated", targetUserId: parsed.data.userId,
+    metadata: { dealId: deal.id, frameSitePnlUsd: preview.frame_site_pnl_usd, creatorShareUsd } });
+  invalidate(parsed.data.userId);
+  return { success: true as const, frameSitePnlUsd: preview.frame_site_pnl_usd, creatorShareUsd };
+}
+
+const CancelSchema = z.object({ userId: z.string().min(8).max(128), dealId: z.string().uuid(), reason: z.string().trim().min(3).max(500) });
+export async function cancelCreatorPnlDealAction(input: z.input<typeof CancelSchema>) {
+  const session = await requireCreatorHubAccess("Not authorized to cancel creator PnL deals.");
+  const parsed = CancelSchema.safeParse(input);
+  if (!parsed.success) return { success: false as const, error: "Enter a cancellation reason." };
+  const deal = await getAdminCreatorPnlDeal(parsed.data.userId, parsed.data.dealId);
+  if (!deal || !["scheduled", "active", "settlement_pending", "calculated"].includes(deal.status)) {
+    return { success: false as const, error: "This PnL deal can no longer be cancelled." };
+  }
+  const links = deal.source_approval_request_id ? await queryRows<Array<{ leaderboard_id: string | null; reward_program_id: string | null }>>(adminDrizzle,
+    `SELECT leaderboard_id::text,reward_program_id::text FROM creator_deal_approval_requests WHERE id=$1::uuid`, deal.source_approval_request_id) : [];
+  try {
+    if (deal.linked_fill_deal_id) await requireCapability(session, "__can_delete_creator_deal", "cancel PnL fill funding");
+    if (deal.funding_mode === "new_multiplier") await requireCapability(session, "__can_create_multiplier_deal", "cancel PnL multiplier funding");
+    if (links[0]?.leaderboard_id) await requireCapability(session, "__can_approve_leaderboard", "cancel the bundled leaderboard");
+  } catch (error) {
+    return { success: false as const, error: error instanceof Error ? error.message : "Missing cancellation permission." };
+  }
+  try {
+    if (deal.linked_fill_deal_id) {
+      const fill = await creatorsApi.getDeal(parsed.data.userId, deal.linked_fill_deal_id);
+      if (!["completed", "terminated"].includes(fill.status)) await creatorsApi.terminateDeal(parsed.data.userId, deal.linked_fill_deal_id, { reason: parsed.data.reason, force_end_active_session: true });
+    }
+    if (deal.linked_multiplier_deal_id && deal.funding_mode === "new_multiplier") {
+      const multiplier = await multiplierDealsApi.get(parsed.data.userId, deal.linked_multiplier_deal_id);
+      if (!["cancelled", "completed", "approved", "rejected"].includes(multiplier.status)) await multiplierDealsApi.cancel(parsed.data.userId, deal.linked_multiplier_deal_id, { reason: parsed.data.reason });
+    }
+    if (links[0]?.leaderboard_id) {
+      const leaderboard = await affiliateLeaderboardsApi.get(links[0].leaderboard_id);
+      if (!leaderboard.cancelled_at) await affiliateLeaderboardsApi.cancel(links[0].leaderboard_id, session.userId);
+    }
+  } catch (error) {
+    return { success: false as const, error: `Could not cancel all bundled deal resources: ${error instanceof Error ? error.message : "unknown error"}. Retry to reconcile partial cancellation.` };
+  }
+  if (links[0]?.reward_program_id) {
+    await adminDrizzle.transaction(async (tx) => {
+      await queryRows(tx, `UPDATE creator_reward_programs SET is_active=false,updated_at=now() WHERE id=$1::uuid`, links[0]!.reward_program_id);
+      await queryRows(tx, `UPDATE creator_reward_program_windows SET ended_at=COALESCE(ended_at,now()) WHERE program_id=$1::uuid AND ended_at IS NULL`, links[0]!.reward_program_id);
+    });
+  }
+  const updated = await queryRows<Array<{ id: string }>>(adminDrizzle,
+    `UPDATE creator_pnl_deals SET status='cancelled', cancelled_at=now(),
+      cancellation_reason=$3, version=version+1, updated_at=now()
+      WHERE id=$1::uuid AND creator_user_id=$2
+        AND status IN ('scheduled','active','settlement_pending','calculated') RETURNING id::text`,
+    parsed.data.dealId, parsed.data.userId, parsed.data.reason);
+  if (!updated[0]) return { success: false as const, error: "This PnL deal can no longer be cancelled." };
+  await createAdminAuditEventDurable({ adminUserId: session.userId,
+    eventType: "creator_pnl_deal_cancelled", targetUserId: parsed.data.userId,
+    metadata: { dealId: parsed.data.dealId, reason: parsed.data.reason,
+      preservedLinkedMultiplierDealId: deal.funding_mode === "linked_multiplier" ? deal.linked_multiplier_deal_id : null } });
+  invalidate(parsed.data.userId);
+  return { success: true as const };
 }
