@@ -356,9 +356,9 @@ function ReviewDepositCard({
 
   return (
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(20rem,auto)_auto] xl:items-center">
+      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(20rem,auto)_auto] xl:items-start">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-12 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
             <UserRound className="size-4" />
           </div>
           <div className="min-w-0">
@@ -397,7 +397,7 @@ function ReviewDepositCard({
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
+        <div className="flex min-h-12 flex-wrap items-center gap-2 xl:justify-end">
           <FiatDepositReviewDecision
             intentId={item.id}
             displayName={displayName}

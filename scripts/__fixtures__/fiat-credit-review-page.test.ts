@@ -187,6 +187,8 @@ test("review amounts remain fully visible in the compact aligned header", () => 
   assert.match(amountFact, /whitespace-nowrap/);
   assert.doesNotMatch(amountFact, /truncate/);
   assert.match(page, /grid min-w-80 grid-cols-2/);
+  assert.match(page, /h-12 w-12 shrink-0/);
+  assert.match(page, /xl:items-start/);
   assert.match(controls, /h-8 w-28/);
   assert.match(read("src/app/(antifraud)/antifraud/fiat-deposits/require-kyc-action.tsx"), /h-8 w-28/);
 });
