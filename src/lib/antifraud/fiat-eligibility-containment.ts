@@ -37,6 +37,7 @@ export const FIAT_ELIGIBILITY_CONTAINMENT_REASONS = new Set([
   "blocklist_ip_match",
   "blocklist_fingerprint_match",
   "blocklist_email_domain_match",
+  "whop_prior_dispute_or_refund",
   "fingerprint_event_replayed",
   "fingerprint_linked_id_mismatch",
   "fingerprint_bad_bot",

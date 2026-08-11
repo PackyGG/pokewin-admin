@@ -151,6 +151,18 @@ function reviewInput(
       disposableEmailDomain: null,
       disposableEmailPoints: 60,
     },
+    geo: {
+      checkoutCountryCode: "DE",
+      latestLoginCountryCode: "DE",
+    },
+    whopHistory: {
+      observedPayments: 0,
+      priorDisputes: 0,
+      priorRefunds: 0,
+      priorFraudDeclines: 0,
+      highRiskSessions: 0,
+      maxProviderRiskScore: null,
+    },
     signupRiskScore: 0,
     activeCaseSeverity: null,
     attempts10m: 0,
@@ -557,6 +569,118 @@ test("changed checkout IP alone is scored and never contains", () => {
   });
   assert.equal(older.enforce, false);
   assert.equal(older.decision, "allow");
+});
+
+test("same-country IP churn stays light while country hops deny", () => {
+  const sameCountry = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({ signup_ip: "198.51.100.4" }),
+  });
+  assert.equal(sameCountry.decision, "allow");
+  assert.equal(
+    sameCountry.signals.some((signal) => signal.key.includes("country_")),
+    false,
+  );
+
+  const signupHop = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({ signup_ip: "198.51.100.4" }),
+    geo: { checkoutCountryCode: "ES", latestLoginCountryCode: "ES" },
+  });
+  assert.equal(signupHop.decision, "deny");
+  assert.equal(signupHop.enforce, false);
+  assert.ok(signupHop.signals.some(
+    (signal) => signal.key === "signup_country_checkout_mismatch",
+  ));
+  assert.ok(signupHop.signals.some(
+    (signal) => signal.key === "signup_to_login_country_hop",
+  ));
+
+  const loginHop = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({ latest_login_ip: "198.51.100.4" }),
+    geo: { checkoutCountryCode: "DE", latestLoginCountryCode: "ES" },
+  });
+  assert.equal(loginHop.decision, "deny");
+  assert.ok(loginHop.signals.some(
+    (signal) => signal.key === "latest_login_country_checkout_mismatch",
+  ));
+});
+
+test("locally observed Whop buyer history blocks the next pre-Fiat check", () => {
+  const priorAbuse = {
+    observedPayments: 1,
+    priorDisputes: 1,
+    priorRefunds: 1,
+    priorFraudDeclines: 3,
+    highRiskSessions: 15,
+    maxProviderRiskScore: 70,
+  };
+  const bannedHistory = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    whopHistory: priorAbuse,
+  });
+  assert.equal(bannedHistory.decision, "deny");
+  assert.ok(bannedHistory.enforcementReasons.includes(
+    "whop_prior_dispute_or_refund",
+  ));
+
+  const riskyHistory = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    whopHistory: { ...priorAbuse, priorDisputes: 0, priorRefunds: 0 },
+  });
+  assert.equal(riskyHistory.decision, "deny");
+  assert.equal(riskyHistory.enforce, false);
+});
+
+test("pre-Fiat Whop history read is bounded to prior local assessments", async () => {
+  let sql = "";
+  const history = await fiatEligibilityInternals.loadObservedWhopHistory({
+    query: async (text: string) => {
+      sql = text;
+      return { rows: [{
+        observed_payments: 2,
+        actual_disputes: 0,
+        actual_refunds: 1,
+        signalled_disputes: 2,
+        signalled_refunds: 0,
+        auto_ban_disputes: 1,
+        auto_ban_refunds: 3,
+        prior_fraud_declines: 3,
+        auto_ban_fraud_declines: 4,
+        high_risk_sessions: 15,
+        auto_ban_high_risk_sessions: 16,
+        max_provider_risk_score: 69,
+        auto_ban_provider_risk_score: 70,
+      }] };
+    },
+  } as never, "user-1");
+  assert.deepEqual(history, {
+    observedPayments: 2,
+    priorDisputes: 2,
+    priorRefunds: 3,
+    priorFraudDeclines: 4,
+    highRiskSessions: 16,
+    maxProviderRiskScore: 70,
+  });
+  assert.match(sql, /FROM fiat_deposit_assessments/);
+  assert.match(sql, /event_type='whop_history_auto_ban'/);
+  assert.match(sql, /WHERE user_id=\$1 AND provider='whop'/);
+  assert.match(sql, /LIMIT 100/);
+});
+
+test("country extraction uses sanitized provider evidence only", () => {
+  const proxy = provider("proxycheck", {
+    response: { result: { location: { isocode: "es", city: "Madrid" } } },
+  });
+  assert.equal(fiatEligibilityInternals.providerCountryCode(proxy), "ES");
+  assert.equal(
+    fiatEligibilityInternals.checkoutCountryCode([
+      provider("fingerprint"),
+      proxy,
+    ]),
+    "ES",
+  );
 });
 
 test("changed checkout device is scored against signup and latest login without containment", () => {
@@ -1473,6 +1597,7 @@ test("concurrent identical requests share one automatic provider review", async 
     statements.push((text.trim().split("\n")[0] ?? "").trim());
     if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
     if (text.includes("signup_risk_score")) return { rows: [] };
+    if (text.includes("FROM fiat_deposit_assessments")) return { rows: [] };
     if (text.includes("attempts_10m")) {
       return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
     }
@@ -1590,6 +1715,7 @@ test("a hanging corroborating provider cannot stall a checkout", async () => {
   const answer = async (text: string, params?: unknown[]) => {
     if (text.includes("WHERE fingerprint_request_id = $1")) return { rows: [] };
     if (text.includes("signup_risk_score")) return { rows: [] };
+    if (text.includes("FROM fiat_deposit_assessments")) return { rows: [] };
     if (text.includes("attempts_10m")) {
       return { rows: [{ attempts_10m: 0, denied_attempts_24h: 0 }] };
     }

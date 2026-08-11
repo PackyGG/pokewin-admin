@@ -37,6 +37,7 @@ import {
   type FiatEligibilityNetwork,
   type FiatEligibilityPolicyOutcome,
   type FiatEligibilitySignal,
+  type FiatEligibilityWhopHistory,
 } from "./fiat-eligibility-policy.js";
 import { disposableEmailDomain } from "./scoring.js";
 import {
@@ -266,6 +267,186 @@ function boundedCorroboration(
  */
 function checkoutIdentity(result: EnrichmentResult): FingerprintEventIdentity {
   return result.identity ?? fingerprintEventIdentity(result.response);
+}
+
+function object(value: unknown): Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+}
+
+function nested(value: unknown, ...keys: string[]): unknown {
+  let current = value;
+  for (const key of keys) current = object(current)[key];
+  return current;
+}
+
+function isoCountryCode(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toUpperCase();
+  return /^[A-Z]{2}$/.test(normalized) ? normalized : null;
+}
+
+/** Country only; city and coordinates stay outside the decision contract. */
+function providerCountryCode(result: EnrichmentResult): string | null {
+  if (result.status !== "success") return null;
+  if (result.provider === "proxycheck") {
+    return isoCountryCode(
+      nested(result.response, "result", "location", "isocode"),
+    );
+  }
+  if (result.provider === "abstract_ip") {
+    return isoCountryCode(
+      nested(result.response, "location", "country_code"),
+    );
+  }
+  if (result.provider === "fingerprint") {
+    const ipInfo = object(nested(result.response, "products", "ipInfo", "data"));
+    for (const version of ["v4", "v6"]) {
+      const code = isoCountryCode(
+        nested(ipInfo[version], "geolocation", "country", "code"),
+      );
+      if (code) return code;
+    }
+  }
+  return null;
+}
+
+function checkoutCountryCode(
+  providers: readonly EnrichmentResult[],
+): string | null {
+  for (const name of ["proxycheck", "fingerprint", "abstract_ip"] as const) {
+    const provider = providers.find((candidate) => candidate.provider === name);
+    if (!provider) continue;
+    const code = providerCountryCode(provider);
+    if (code) return code;
+  }
+  return null;
+}
+
+async function loadObservedWhopHistory(
+  antifraud: Pool,
+  userId: string,
+): Promise<FiatEligibilityWhopHistory> {
+  const result = await antifraud.query<{
+    observed_payments: number;
+    actual_disputes: number;
+    actual_refunds: number;
+    signalled_disputes: number;
+    signalled_refunds: number;
+    auto_ban_disputes: number;
+    auto_ban_refunds: number;
+    prior_fraud_declines: number;
+    auto_ban_fraud_declines: number;
+    high_risk_sessions: number;
+    auto_ban_high_risk_sessions: number;
+    max_provider_risk_score: number | null;
+    auto_ban_provider_risk_score: number | null;
+  }>(
+    `
+      WITH history AS (
+        SELECT
+          status, provider_payment_status, provider_risk_score,
+          provider_evidence
+        FROM fiat_deposit_assessments
+        WHERE user_id=$1 AND provider='whop'
+        ORDER BY occurred_at DESC
+        LIMIT 100
+      ), whop_signals AS (
+        SELECT
+          signal->>'key' AS key,
+          CASE
+            WHEN signal->>'value' ~ '^[0-9]+$'
+              THEN LEAST((signal->>'value')::int, 1000000)
+            ELSE 0
+          END AS value
+        FROM history
+        CROSS JOIN LATERAL jsonb_array_elements(
+          COALESCE(provider_evidence->'riskSignals', '[]'::jsonb)
+        ) AS signal
+      ), auto_bans AS (
+        SELECT payload
+        FROM risk_events
+        WHERE user_id=$1 AND event_type='whop_history_auto_ban'
+        ORDER BY recorded_at DESC
+        LIMIT 100
+      )
+      SELECT
+        (
+          (SELECT COUNT(*) FROM history)
+          + (SELECT COUNT(*) FROM auto_bans)
+        )::int AS observed_payments,
+        (SELECT COUNT(*)::int FROM history
+          WHERE lower(COALESCE(status, '')) LIKE '%disput%'
+             OR lower(COALESCE(provider_payment_status, '')) LIKE '%disput%'
+        ) AS actual_disputes,
+        (SELECT COUNT(*)::int FROM history
+          WHERE lower(COALESCE(status, '')) LIKE '%refund%'
+             OR lower(COALESCE(provider_payment_status, '')) LIKE '%refund%'
+        ) AS actual_refunds,
+        COALESCE(MAX(value) FILTER (WHERE key='prior_dispute_count'), 0)::int
+          AS signalled_disputes,
+        COALESCE(MAX(value) FILTER (WHERE key='prior_refund_count'), 0)::int
+          AS signalled_refunds,
+        COALESCE((SELECT MAX(CASE
+          WHEN payload->>'priorDisputeCount' ~ '^[0-9]+$'
+            THEN (payload->>'priorDisputeCount')::int ELSE 0 END)
+          FROM auto_bans), 0)::int AS auto_ban_disputes,
+        COALESCE((SELECT MAX(CASE
+          WHEN payload->>'priorRefundCount' ~ '^[0-9]+$'
+            THEN (payload->>'priorRefundCount')::int ELSE 0 END)
+          FROM auto_bans), 0)::int AS auto_ban_refunds,
+        COALESCE(MAX(value) FILTER (WHERE key='prior_fraud_declines'), 0)::int
+          AS prior_fraud_declines,
+        COALESCE((SELECT MAX(CASE
+          WHEN payload->>'priorFraudDeclines' ~ '^[0-9]+$'
+            THEN (payload->>'priorFraudDeclines')::int ELSE 0 END)
+          FROM auto_bans), 0)::int AS auto_ban_fraud_declines,
+        COALESCE(MAX(value) FILTER (WHERE key='user_high_risk_sessions'), 0)::int
+          AS high_risk_sessions,
+        COALESCE((SELECT MAX(CASE
+          WHEN payload->>'highRiskSessions' ~ '^[0-9]+$'
+            THEN (payload->>'highRiskSessions')::int ELSE 0 END)
+          FROM auto_bans), 0)::int AS auto_ban_high_risk_sessions,
+        (SELECT MAX(provider_risk_score)::int FROM history)
+          AS max_provider_risk_score,
+        (SELECT MAX((payload->>'providerRiskScore')::numeric)::int
+          FROM auto_bans
+          WHERE payload->>'providerRiskScore' ~ '^[0-9]+(\\.[0-9]+)?$'
+        ) AS auto_ban_provider_risk_score
+      FROM whop_signals
+    `,
+    [userId],
+  );
+  const row = result.rows[0];
+  const providerRiskScores = [
+    row?.max_provider_risk_score,
+    row?.auto_ban_provider_risk_score,
+  ].filter((value): value is number => typeof value === "number");
+  return {
+    observedPayments: row?.observed_payments ?? 0,
+    priorDisputes: Math.max(
+      row?.actual_disputes ?? 0,
+      row?.signalled_disputes ?? 0,
+      row?.auto_ban_disputes ?? 0,
+    ),
+    priorRefunds: Math.max(
+      row?.actual_refunds ?? 0,
+      row?.signalled_refunds ?? 0,
+      row?.auto_ban_refunds ?? 0,
+    ),
+    priorFraudDeclines: Math.max(
+      row?.prior_fraud_declines ?? 0,
+      row?.auto_ban_fraud_declines ?? 0,
+    ),
+    highRiskSessions: Math.max(
+      row?.high_risk_sessions ?? 0,
+      row?.auto_ban_high_risk_sessions ?? 0,
+    ),
+    maxProviderRiskScore: providerRiskScores.length > 0
+      ? Math.max(...providerRiskScores)
+      : null,
+  };
 }
 
 function usd(value: string | number | null | undefined): number {
@@ -990,6 +1171,19 @@ export class FiatEligibilityService {
       ).catch(unavailablePrePaymentObservations),
       () => EMPTY_PRE_PAYMENT_OBSERVATIONS,
     );
+    const latestLoginIp = subject.latest_login_ip
+      ? canonicalIp(subject.latest_login_ip) ?? null
+      : null;
+    const latestLoginGeoPromise = latestLoginIp && latestLoginIp !== requestIp
+      ? boundedCorroboration(
+          this.enrichment.proxycheck(
+            { ...providerSubject, signup_ip: latestLoginIp },
+            weights,
+            "fiat-eligibility",
+          ),
+          "proxycheck",
+        )
+      : Promise.resolve<EnrichmentResult | null>(null);
 
     const [
       fingerprint,
@@ -1001,6 +1195,8 @@ export class FiatEligibilityService {
       blocklistMatches,
       additionalBlocklists,
       observations,
+      observedWhopHistory,
+      latestLoginGeo,
     ] = await Promise.all([
       fingerprintPromise,
       this.enrichment.proxycheck(providerSubject, weights, "fiat-eligibility"),
@@ -1014,10 +1210,22 @@ export class FiatEligibilityService {
       blocklistPromise,
       additionalBlocklistsPromise,
       observationsPromise,
+      withDeadline(
+        loadObservedWhopHistory(this.db.antifraud, input.userID),
+        ANTIFRAUD_READ_TIMEOUT_MS,
+        "fiat_whop_history_read",
+      ),
+      latestLoginGeoPromise,
     ]);
 
     const identity = checkoutIdentity(fingerprint);
     const providers = [fingerprint, proxycheck, abstractIp];
+    const currentCountryCode = checkoutCountryCode(providers);
+    const latestLoginCountryCode = latestLoginIp === requestIp
+      ? currentCountryCode
+      : latestLoginGeo
+        ? providerCountryCode(latestLoginGeo)
+        : null;
     const behaviour = behaviourFrom(subject, now);
     const policyOutcome = evaluateFiatEligibility({
       now,
@@ -1038,6 +1246,11 @@ export class FiatEligibilityService {
       network,
       blocklistMatches,
       additionalBlocklists,
+      geo: {
+        checkoutCountryCode: currentCountryCode,
+        latestLoginCountryCode,
+      },
+      whopHistory: observedWhopHistory,
       signupRiskScore: history.signupRiskScore,
       activeCaseSeverity: history.activeCaseSeverity,
       attempts10m: velocity.attempts10m,
@@ -1064,6 +1277,11 @@ export class FiatEligibilityService {
       blocklistMatches,
       additionalBlocklists,
       observations,
+      geo: {
+        checkoutCountryCode: currentCountryCode,
+        latestLoginCountryCode,
+      },
+      whopHistory: observedWhopHistory,
       outcome,
     });
   }
@@ -1162,6 +1380,11 @@ export class FiatEligibilityService {
     blocklistMatches: FiatEligibilityBlocklistMatch[];
     additionalBlocklists: FiatEligibilityAdditionalBlocklists;
     observations: FiatPrePaymentObservationEvidence;
+    geo: {
+      checkoutCountryCode: string | null;
+      latestLoginCountryCode: string | null;
+    };
+    whopHistory: FiatEligibilityWhopHistory;
     outcome: FiatEligibilityPolicyOutcome;
   }): Promise<FiatEligibilityDecision> {
     const { input, now, providers, outcome } = context;
@@ -1218,6 +1441,11 @@ export class FiatEligibilityService {
       blocklistMatches: FiatEligibilityBlocklistMatch[];
       additionalBlocklists: FiatEligibilityAdditionalBlocklists;
       observations: FiatPrePaymentObservationEvidence;
+      geo: {
+        checkoutCountryCode: string | null;
+        latestLoginCountryCode: string | null;
+      };
+      whopHistory: FiatEligibilityWhopHistory;
       outcome: FiatEligibilityPolicyOutcome;
       byName: Map<string, EnrichmentResult>;
       expiresAt: Date;
@@ -1322,6 +1550,8 @@ export class FiatEligibilityService {
             })),
             additionalBlocklists: context.additionalBlocklists,
             observations: context.observations,
+            geo: context.geo,
+            whopHistory: context.whopHistory,
             requestContext: {
               amountCents: input.amountCents ?? null,
               currency: input.currency?.toUpperCase() ?? null,
@@ -1452,6 +1682,9 @@ export const fiatEligibilityInternals = {
   loadBlocklistMatches,
   loadAdditionalBlocklists,
   loadPrePaymentObservations,
+  loadObservedWhopHistory,
+  providerCountryCode,
+  checkoutCountryCode,
   behaviourSignals,
   badIpReputation,
   badDeviceReputation,

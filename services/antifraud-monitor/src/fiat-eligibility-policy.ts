@@ -157,6 +157,7 @@ export type FiatEligibilitySignal = {
 export type FiatEligibilitySubject = {
   id: string;
   created_at: Date;
+  country_code: string | null;
   signup_ip: string | null;
   visitor_id: string | null;
   latest_login_ip: string | null;
@@ -175,6 +176,20 @@ export type FiatEligibilitySubject = {
   kyc_status: string;
   kyc_admin_decision: string;
   prior_paid_fiat: number;
+};
+
+export type FiatEligibilityGeo = {
+  checkoutCountryCode: string | null;
+  latestLoginCountryCode: string | null;
+};
+
+export type FiatEligibilityWhopHistory = {
+  observedPayments: number;
+  priorDisputes: number;
+  priorRefunds: number;
+  priorFraudDeclines: number;
+  highRiskSessions: number;
+  maxProviderRiskScore: number | null;
 };
 
 /**
@@ -239,6 +254,8 @@ export type FiatEligibilityPolicyInput = {
   network: FiatEligibilityNetwork;
   blocklistMatches: readonly FiatEligibilityBlocklistMatch[];
   additionalBlocklists: FiatEligibilityAdditionalBlocklists;
+  geo: FiatEligibilityGeo;
+  whopHistory: FiatEligibilityWhopHistory;
   signupRiskScore: number;
   activeCaseSeverity: string | null;
   attempts10m: number;
@@ -722,6 +739,25 @@ export function evaluateFiatEligibility(
     : Number.POSITIVE_INFINITY;
   const latestLoginIsRecent = latestLoginAgeMs >= 0
     && latestLoginAgeMs <= RECENT_LOGIN_IDENTITY_WINDOW_MS;
+  const signupCountryCode = input.subject.country_code?.trim().toUpperCase()
+    || null;
+  const checkoutCountryCode = input.geo.checkoutCountryCode;
+  const latestLoginCountryCode = input.geo.latestLoginCountryCode;
+  const signupCountryChanged = Boolean(
+    signupCountryCode
+    && checkoutCountryCode
+    && signupCountryCode !== checkoutCountryCode,
+  );
+  const latestLoginCountryChanged = Boolean(
+    latestLoginCountryCode
+    && checkoutCountryCode
+    && latestLoginCountryCode !== checkoutCountryCode,
+  );
+  const signupToLoginCountryHop = Boolean(
+    signupCountryCode
+    && latestLoginCountryCode
+    && signupCountryCode !== latestLoginCountryCode,
+  );
 
   const badIp = badIpReputation(input.providers);
   const badDevice = badDeviceReputation(input.providers);
@@ -815,6 +851,33 @@ export function evaluateFiatEligibility(
       "The checkout device differs from the latest verified login device.",
     points: latestLoginIsRecent ? 40 : established ? 20 : 30,
     source: "fingerprint",
+  });
+  // Exact IP churn is common on mobile and residential networks. Country
+  // movement is not: signup is the strongest geographic baseline, with the
+  // latest verified login acting as a second independent baseline.
+  add(signupCountryChanged, {
+    key: "signup_country_checkout_mismatch",
+    detail:
+      `The checkout country (${checkoutCountryCode}) differs from the signup `
+      + `country (${signupCountryCode}).`,
+    points: 45,
+    source: "network",
+  });
+  add(latestLoginCountryChanged, {
+    key: "latest_login_country_checkout_mismatch",
+    detail:
+      `The checkout country (${checkoutCountryCode}) differs from the latest `
+      + `verified login country (${latestLoginCountryCode}).`,
+    points: 30,
+    source: "network",
+  });
+  add(signupToLoginCountryHop, {
+    key: "signup_to_login_country_hop",
+    detail:
+      `The latest verified login country (${latestLoginCountryCode}) differs `
+      + `from the signup country (${signupCountryCode}).`,
+    points: 25,
+    source: "history",
   });
   add(input.subject.latest_login_suspected_alt, {
     key: "latest_login_suspected_alt",
@@ -912,6 +975,41 @@ export function evaluateFiatEligibility(
     detail:
       `${input.deniedAttempts24h} Fiat eligibility attempts were denied in 24 `
       + "hours.",
+    points: 0,
+    evidenceOnly: true,
+    source: "history",
+  });
+  const whop = input.whopHistory;
+  add(whop.priorDisputes > 0 || whop.priorRefunds > 0, {
+    key: "whop_prior_dispute_or_refund",
+    detail:
+      `Previously observed Whop evidence reports ${whop.priorDisputes} prior `
+      + `dispute(s) and ${whop.priorRefunds} prior refund(s).`,
+    points: 100,
+    containing: true,
+    source: "history",
+  });
+  add(whop.priorFraudDeclines > 0, {
+    key: "whop_prior_fraud_declines",
+    detail:
+      `Previously observed Whop evidence reports ${whop.priorFraudDeclines} `
+      + "fraud decline(s).",
+    points: Math.min(60, 15 + whop.priorFraudDeclines * 10),
+    source: "history",
+  });
+  add(whop.highRiskSessions > 0, {
+    key: "whop_high_risk_sessions",
+    detail:
+      `Previously observed Whop evidence reports ${whop.highRiskSessions} `
+      + "high-risk buyer session(s).",
+    points: Math.min(40, 10 + whop.highRiskSessions * 2),
+    source: "history",
+  });
+  add(whop.maxProviderRiskScore !== null, {
+    key: "whop_prior_provider_risk_score",
+    detail:
+      `The highest previously observed Whop payment risk score is `
+      + `${whop.maxProviderRiskScore}.`,
     points: 0,
     evidenceOnly: true,
     source: "history",

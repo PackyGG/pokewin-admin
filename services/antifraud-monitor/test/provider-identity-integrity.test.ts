@@ -202,6 +202,18 @@ function policyInput(
       disposableEmailDomain: null,
       disposableEmailPoints: 60,
     },
+    geo: {
+      checkoutCountryCode: "DE",
+      latestLoginCountryCode: "DE",
+    },
+    whopHistory: {
+      observedPayments: 0,
+      priorDisputes: 0,
+      priorRefunds: 0,
+      priorFraudDeclines: 0,
+      highRiskSessions: 0,
+      maxProviderRiskScore: null,
+    },
     signupRiskScore: 0,
     activeCaseSeverity: null,
     attempts10m: 0,
