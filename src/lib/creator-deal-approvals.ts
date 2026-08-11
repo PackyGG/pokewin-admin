@@ -16,6 +16,7 @@ import {
   admin_leaderboard_sponsorship,
   creator_deal_approval_events,
   creator_deal_approval_requests,
+  creator_pnl_deals,
   creator_reward_program_windows,
   creator_reward_programs,
   discord_creator_setups,
@@ -85,6 +86,63 @@ const MultiplierPayloadSchema = z.object({
   }
 });
 
+const PnlPayloadSchema = z.object({
+  frame_start_utc: z.string().datetime({ offset: true }),
+  frame_end_utc: z.string().datetime({ offset: true }),
+  positive_pnl_share_bps: z.number().int().min(1).max(10_000),
+  funding: z.discriminatedUnion("type", [
+    z.object({
+      type: z.literal("non_withdrawable_fills"),
+      fills_allowed: z.number().int().positive().max(10_000),
+      per_fill_amount_usd: PositiveCents(1_000_000),
+      cooldown_minutes: z.number().int().min(0).max(525_600).optional(),
+    }),
+    z.object({
+      type: z.literal("linked_multiplier"),
+      multiplier_deal_id: Uuid,
+    }),
+    z.object({
+      type: z.literal("new_multiplier"),
+      required_deposit_usd: PositiveCents(1_000_000),
+      // Product rule: any multiplier from 2x upward. The only upper bound is
+      // the signed PostgreSQL integer used by the backend contract.
+      multiplier_bps: z.number().int().min(20_000).max(2_147_000_000),
+      withdrawable_bps: z.number().int().min(0).max(10_000),
+      wager_requirement_bps: z.number().int().min(0).max(10_000_000),
+      max_total_wager_usd: Cents(10_000_000).nullable(),
+      max_payout_usd: Cents(10_000_000).nullable(),
+      min_session_duration_seconds: z.number().int().min(0).max(31_536_000),
+      min_bet_count: z.number().int().min(0).max(10_000_000),
+      min_wager_to_funding_ratio_bps: z.number().int().min(0).max(10_000),
+      kick_vod_required: z.boolean(),
+      // A nested multiplier funds one fixed P&L frame. It must never renew
+      // into a later frame without a new immutable creator approval.
+      auto_renew: z.literal(false),
+    }).superRefine((funding, ctx) => {
+      if (funding.withdrawable_bps !== Math.round(100_000_000 / funding.multiplier_bps)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["withdrawable_bps"], message: "Withdrawable percentage must equal 100 divided by the multiplier." });
+      }
+    }),
+  ]),
+  max_tip_per_stream_usd: Cents(1_000_000).optional(),
+  max_tip_per_user_usd: Cents(1_000_000).optional(),
+  max_sponsored_battle_usd: Cents(1_000_000).optional(),
+  max_sponsorship_per_stream_usd: Cents(1_000_000).optional(),
+}).superRefine((deal, ctx) => {
+  const startMs = new Date(deal.frame_start_utc).getTime();
+  const endMs = new Date(deal.frame_end_utc).getTime();
+  if (endMs <= startMs) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["frame_end_utc"], message: "P&L frame end must be after its start." });
+  }
+  if (
+    deal.max_sponsorship_per_stream_usd != null
+    && deal.max_sponsored_battle_usd != null
+    && deal.max_sponsorship_per_stream_usd < deal.max_sponsored_battle_usd
+  ) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["max_sponsorship_per_stream_usd"], message: "Per-stream sponsorship cap must cover at least one battle." });
+  }
+});
+
 const RewardPayloadSchema = z.object({
   name: z.string().trim().min(2).max(80),
   codes: z.array(z.string().trim().min(1).max(32)).min(1).max(25),
@@ -143,7 +201,7 @@ const LeaderboardPayloadSchema = z.object({
   }
 });
 
-export type CreatorApprovalRequestKind = "deal" | "multiplier_deal" | "leaderboard_only" | "rewards_only";
+export type CreatorApprovalRequestKind = "deal" | "multiplier_deal" | "pnl_deal" | "leaderboard_only" | "rewards_only";
 
 export type CreatorDealApprovalStatus =
   | "pending_delivery" | "awaiting_continue" | "awaiting_decision"
@@ -234,6 +292,7 @@ export async function createCreatorDealApprovalRequest(input: {
   creatorUserId: string;
   dealPayload?: unknown | null;
   multiplierPayload?: unknown | null;
+  pnlPayload?: unknown | null;
   rewardPayload?: unknown | null;
   leaderboardPayload?: unknown | null;
   submittedByAdminUserId: string;
@@ -242,30 +301,37 @@ export async function createCreatorDealApprovalRequest(input: {
   const submittedBy = Uuid.parse(input.submittedByAdminUserId);
   const rawDeal = input.dealPayload ?? null;
   const rawMultiplier = input.multiplierPayload ?? null;
+  const rawPnl = input.pnlPayload ?? null;
   const rawReward = input.rewardPayload ?? null;
   const rawLeaderboard = input.leaderboardPayload ?? null;
 
   // The kind is inferred, never taken from the client. A non-deal request must
   // carry exactly one payload — the same invariant the table CHECK enforces.
   const kind: CreatorApprovalRequestKind =
-    rawDeal != null && rawMultiplier == null
+    rawDeal != null && rawMultiplier == null && rawPnl == null
       ? "deal"
-      : rawMultiplier != null && rawDeal == null && rawReward == null && rawLeaderboard == null
+      : rawMultiplier != null && rawDeal == null && rawPnl == null && rawReward == null && rawLeaderboard == null
         ? "multiplier_deal"
-      : rawLeaderboard != null && rawReward == null && rawDeal == null && rawMultiplier == null
+      : rawPnl != null && rawDeal == null && rawMultiplier == null
+        ? "pnl_deal"
+      : rawLeaderboard != null && rawReward == null && rawDeal == null && rawMultiplier == null && rawPnl == null
         ? "leaderboard_only"
-        : rawReward != null && rawLeaderboard == null && rawDeal == null && rawMultiplier == null
+        : rawReward != null && rawLeaderboard == null && rawDeal == null && rawMultiplier == null && rawPnl == null
           ? "rewards_only"
-          : error(400, "invalid_request_payload", "Submit either a fill deal, a multiplier deal, or exactly one standalone leaderboard or reward program.");
+          : error(400, "invalid_request_payload", "Submit either a fill deal, a multiplier deal, a P&L deal, or exactly one standalone leaderboard or reward program.");
 
   const dealPayload = rawDeal == null ? null : DealPayloadSchema.parse(rawDeal);
   const multiplierPayload = rawMultiplier == null ? null : MultiplierPayloadSchema.parse(rawMultiplier);
+  const pnlPayload = rawPnl == null ? null : PnlPayloadSchema.parse(rawPnl);
   const rewardPayload = rawReward == null ? null : RewardPayloadSchema.parse(rawReward);
   const leaderboardPayload = rawLeaderboard == null ? null : LeaderboardPayloadSchema.parse(rawLeaderboard);
   const agreement = await getPublishedCreatorAgreementTerms();
   if (!agreement) error(409, "agreement_missing", "Publish creator agreement terms before submitting a deal.");
   if (multiplierPayload && agreement.lines.join("\n").length > 20_000) {
     error(409, "agreement_too_long", "The published agreement is too long for a multiplier deal. Publish a version under 20,000 characters first.");
+  }
+  if (pnlPayload?.funding.type === "new_multiplier" && agreement.lines.join("\n").length > 20_000) {
+    error(409, "agreement_too_long", "The published agreement is too long for new multiplier funding. Publish a version under 20,000 characters first.");
   }
 
   const mainDb = getProdReadDrizzleDb();
@@ -278,6 +344,8 @@ export async function createCreatorDealApprovalRequest(input: {
     ? dealPayload.week_start_utc
     : multiplierPayload
       ? new Date().toISOString()
+    : pnlPayload
+      ? pnlPayload.frame_start_utc
     : leaderboardPayload
       ? leaderboardPayload.startsAt
       : rewardPayload?.startsAt ?? error(400, "reward_window_missing", "Enter a start date for this reward program.");
@@ -285,6 +353,8 @@ export async function createCreatorDealApprovalRequest(input: {
     ? dealPayload.week_end_utc
     : multiplierPayload
       ? multiplierPayload.approval_expires_at
+    : pnlPayload
+      ? pnlPayload.frame_end_utc
     : leaderboardPayload
       ? leaderboardPayload.endsAt
       : rewardPayload?.endsAt ?? error(400, "reward_window_missing", "Enter an end date for this reward program.");
@@ -329,13 +399,13 @@ export async function createCreatorDealApprovalRequest(input: {
 
   try {
     return await adminDrizzle.transaction(async (tx) => {
-      const requestFamily = kind === "deal" || kind === "multiplier_deal" ? "deal" : kind;
+      const requestFamily = kind === "deal" || kind === "multiplier_deal" || kind === "pnl_deal" ? "deal" : kind;
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-deal-approval:${requestFamily}:${creatorUserId}`}, 0))`);
       const expired = await tx.execute<{ id: string }>(sql`
         UPDATE creator_deal_approval_requests
         SET status = 'expired', updated_at = now()
         WHERE creator_user_id = ${creatorUserId}
-          AND ${requestFamily === "deal" ? sql`request_kind IN ('deal', 'multiplier_deal')` : sql`request_kind = ${kind}`}
+          AND ${requestFamily === "deal" ? sql`request_kind IN ('deal', 'multiplier_deal', 'pnl_deal')` : sql`request_kind = ${kind}`}
           AND status IN ('pending_delivery','awaiting_continue','awaiting_decision','delivery_failed')
           AND window_end_at <= now()
         RETURNING id::text
@@ -351,7 +421,7 @@ export async function createCreatorDealApprovalRequest(input: {
       const [existing] = await tx.select().from(creator_deal_approval_requests).where(and(
         eq(creator_deal_approval_requests.creator_user_id, creatorUserId),
         requestFamily === "deal"
-          ? sql`${creator_deal_approval_requests.request_kind} IN ('deal', 'multiplier_deal')`
+          ? sql`${creator_deal_approval_requests.request_kind} IN ('deal', 'multiplier_deal', 'pnl_deal')`
           : eq(creator_deal_approval_requests.request_kind, kind),
         sql`${creator_deal_approval_requests.status} IN ('pending_delivery','awaiting_continue','awaiting_decision','approved_provisioning','provisioning_failed','delivery_failed')`,
       )).limit(1);
@@ -359,6 +429,7 @@ export async function createCreatorDealApprovalRequest(input: {
         if (
           jsonEqual(existing.deal_payload, dealPayload)
           && jsonEqual(existing.multiplier_payload, multiplierPayload)
+          && jsonEqual(existing.pnl_payload, pnlPayload)
           && jsonEqual(existing.reward_payload, normalizedReward)
           && jsonEqual(existing.leaderboard_payload, normalizedLeaderboard)
           && existing.agreement_checksum === agreement.checksum
@@ -379,6 +450,7 @@ export async function createCreatorDealApprovalRequest(input: {
         window_end_at: windowEndIso,
         deal_payload: dealPayload,
         multiplier_payload: multiplierPayload,
+        pnl_payload: pnlPayload,
         reward_payload: normalizedReward,
         leaderboard_payload: normalizedLeaderboard,
         agreement_document_id: agreement.id,
@@ -389,7 +461,7 @@ export async function createCreatorDealApprovalRequest(input: {
       };
       const [created] = await tx.insert(creator_deal_approval_requests).values(requestValues).returning({ id: creator_deal_approval_requests.id, status: creator_deal_approval_requests.status });
       await tx.insert(creator_deal_approval_events).values({ request_id: created.id, event_type: "submitted", actor_kind: "admin", actor_admin_user_id: submittedBy });
-      await tx.insert(admin_audit_events).values({ admin_user_id: submittedBy, event_type: "creator_deal_approval_submitted", target_user_id: creatorUserId, metadata: { requestId: created.id, requestKind: kind, agreementVersion: agreement.version, agreementChecksum: agreement.checksum, hasMultiplierDeal: multiplierPayload != null, hasRewardProgram: normalizedReward != null, hasLeaderboard: normalizedLeaderboard != null } });
+      await tx.insert(admin_audit_events).values({ admin_user_id: submittedBy, event_type: "creator_deal_approval_submitted", target_user_id: creatorUserId, metadata: { requestId: created.id, requestKind: kind, agreementVersion: agreement.version, agreementChecksum: agreement.checksum, hasMultiplierDeal: multiplierPayload != null, hasPnlDeal: pnlPayload != null, hasRewardProgram: normalizedReward != null, hasLeaderboard: normalizedLeaderboard != null } });
       return { requestId: created.id, status: created.status as CreatorDealApprovalStatus, deliveryQueued: true, kind };
     });
   } catch (cause) {
@@ -404,8 +476,8 @@ export type CreatorDealApprovalDeliveryJob = {
   channelId: string; creatorDiscordUserId: string; creator: { userId: string; username: string | null };
   /** Tells the bot what to render and whether a terms step exists at all. */
   kind: CreatorApprovalRequestKind;
-  deal: unknown | null; multiplier: unknown | null; rewards: unknown | null; leaderboard: unknown | null;
-  /** Always sent, but only meaningful for fill and multiplier deals. */
+  deal: unknown | null; multiplier: unknown | null; pnl: unknown | null; rewards: unknown | null; leaderboard: unknown | null;
+  /** Always sent, but only meaningful for fill, multiplier, and P&L deals. */
   terms: { version: number; lines: string[] }; attempt: number;
   previousMessageId: string | null;
 };
@@ -417,7 +489,7 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
   const result = await adminDrizzle.execute<{
     id: string; lease_token: string; guild_id: string; category_id: string; chat_channel_id: string;
     creator_discord_user_id: string; creator_user_id: string; request_kind: CreatorApprovalRequestKind;
-    deal_payload: unknown | null; multiplier_payload: unknown | null; reward_payload: unknown | null; leaderboard_payload: unknown | null;
+    deal_payload: unknown | null; multiplier_payload: unknown | null; pnl_payload: unknown | null; reward_payload: unknown | null; leaderboard_payload: unknown | null;
     window_start_at: string; window_end_at: string;
     agreement_version: number; agreement_lines: unknown; delivery_attempt_count: number; summary_message_id: string | null;
   }>(sql`
@@ -444,13 +516,14 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
     FROM candidates WHERE request.id = candidates.id
     RETURNING request.id::text, request.delivery_lease_token::text AS lease_token, request.guild_id,
       request.category_id, request.chat_channel_id, request.creator_discord_user_id, request.creator_user_id,
-      request.request_kind, request.deal_payload, request.multiplier_payload, request.reward_payload, request.leaderboard_payload,
+      request.request_kind, request.deal_payload, request.multiplier_payload, request.pnl_payload, request.reward_payload, request.leaderboard_payload,
       request.window_start_at, request.window_end_at, request.agreement_version, request.agreement_lines,
       request.delivery_attempt_count, request.summary_message_id
   `);
   return result.rows.map((row) => {
     const deal = row.deal_payload == null ? null : DealPayloadSchema.parse(row.deal_payload);
     const multiplier = row.multiplier_payload == null ? null : MultiplierPayloadSchema.parse(row.multiplier_payload);
+    const pnl = row.pnl_payload == null ? null : PnlPayloadSchema.parse(row.pnl_payload);
     const rewards = row.reward_payload == null ? null : RewardPayloadSchema.parse(row.reward_payload);
     const leaderboard = row.leaderboard_payload == null ? null : LeaderboardPayloadSchema.parse(row.leaderboard_payload);
     return { id: row.id, requestId: row.id, leaseToken: row.lease_token, guildId: row.guild_id,
@@ -459,6 +532,7 @@ export async function claimCreatorDealApprovalJobs(input: { guildId: string; wor
       kind: row.request_kind,
       deal: deal ? { ...deal, conversionRatePercent: deal.conversion_rate_bps / 100 } : null,
       multiplier,
+      pnl,
       rewards: rewards
         ? deal
           ? { ...rewards, accrualStartAt: deal.week_start_utc, endsAt: deal.week_end_utc }
@@ -485,7 +559,7 @@ export async function acknowledgeCreatorDealApprovalJob(input: {
       // straight on Approve/Decline.
       const updated = await tx.execute<{ status: "awaiting_continue" | "awaiting_decision" }>(sql`
         UPDATE creator_deal_approval_requests
-        SET status = CASE WHEN request_kind IN ('deal', 'multiplier_deal') THEN 'awaiting_continue' ELSE 'awaiting_decision' END,
+        SET status = CASE WHEN request_kind IN ('deal', 'multiplier_deal', 'pnl_deal') THEN 'awaiting_continue' ELSE 'awaiting_decision' END,
           summary_message_id = ${messageId},
           delivery_lease_token = NULL, delivery_lease_owner = NULL, delivery_leased_until = NULL,
           last_error_step = NULL, last_error_code = NULL, last_error_message = NULL, updated_at = now()
@@ -827,6 +901,270 @@ async function ensureBackendMultiplierDeal(request: typeof creator_deal_approval
   return outcome.dealId;
 }
 
+// ADMIN owns the commercial P&L contract. The customer backend only owns the
+// ordinary fill or multiplier record used to fund it.
+type PnlFundingProvision = {
+  linkedFillDealId: string | null;
+  linkedMultiplierDealId: string | null;
+  linkedBackendDealId: string;
+};
+
+function pnlMultiplierApprovalMarker(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): string {
+  return `pnl-approval-${request.agreement_version}-${request.id}`;
+}
+
+async function ensurePnlFunding(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+  payload: z.infer<typeof PnlPayloadSchema>,
+  markCreateAttempted: () => Promise<void>,
+): Promise<PnlFundingProvision> {
+  if (payload.funding.type === "linked_multiplier") {
+    const linked = await multiplierDealsApi.get(
+      request.creator_user_id,
+      payload.funding.multiplier_deal_id,
+    );
+    if (linked.multiplier_bps < 20_000) {
+      error(409, "linked_multiplier_below_minimum", "The linked multiplier must be at least 2x for P&L funding.");
+    }
+    if (!["pending_deposit", "funded", "live"].includes(linked.status)) {
+      error(409, "linked_multiplier_unavailable", `The linked multiplier is ${linked.status.replaceAll("_", " ")} and cannot fund a new P&L frame.`);
+    }
+    if (linked.auto_end_at && new Date(linked.auto_end_at) < new Date(payload.frame_end_utc)) {
+      error(409, "linked_multiplier_frame_too_short", "The linked multiplier ends before the proposed P&L frame.");
+    }
+    return {
+      linkedFillDealId: null,
+      linkedMultiplierDealId: linked.id,
+      linkedBackendDealId: linked.id,
+    };
+  }
+
+  if (payload.funding.type === "new_multiplier") {
+    const marker = pnlMultiplierApprovalMarker(request);
+    const listed = await listAllMultiplierDeals(request.creator_user_id);
+    const existing = listed.find((deal) => deal.terms_version === marker);
+    if (existing) {
+      if (!["pending_deposit", "funded", "live"].includes(existing.status)) {
+        error(409, "pnl_multiplier_funding_unavailable", `The previously created multiplier funding is ${existing.status.replaceAll("_", " ")}.`);
+      }
+      return { linkedFillDealId: null, linkedMultiplierDealId: existing.id, linkedBackendDealId: existing.id };
+    }
+    const conflicting = listed.find((deal) =>
+      ["pending_deposit", "funded", "live", "pending_review", "flagged"].includes(deal.status));
+    if (conflicting) {
+      error(409, "multiplier_deal_conflict", `Creator already has a ${conflicting.status.replaceAll("_", " ")} multiplier deal.`);
+    }
+    await markCreateAttempted();
+    const created = await multiplierDealsApi.create(request.creator_user_id, {
+      required_deposit_usd: payload.funding.required_deposit_usd,
+      multiplier_bps: payload.funding.multiplier_bps,
+      withdrawable_bps: payload.funding.withdrawable_bps,
+      wager_requirement_bps: payload.funding.wager_requirement_bps,
+      max_total_wager_usd: payload.funding.max_total_wager_usd,
+      max_payout_usd: payload.funding.max_payout_usd,
+      min_session_duration_seconds: payload.funding.min_session_duration_seconds,
+      min_bet_count: payload.funding.min_bet_count,
+      min_wager_to_funding_ratio_bps: payload.funding.min_wager_to_funding_ratio_bps,
+      kick_vod_required: payload.funding.kick_vod_required,
+      auto_renew: false,
+      terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
+      terms_version: marker,
+    } satisfies CreateMultiplierDealInput);
+    return { linkedFillDealId: null, linkedMultiplierDealId: created.id, linkedBackendDealId: created.id };
+  }
+
+  const listed = await listAllCreatorDeals(request.creator_user_id);
+  const existing = listed.find((deal) => markerDeal(deal, request.id));
+  if (existing) {
+    if (existing.status !== "scheduled" && existing.status !== "active") {
+      error(409, "pnl_fill_funding_unavailable", `The previously created fill funding is ${existing.status}.`);
+    }
+    return { linkedFillDealId: existing.id, linkedMultiplierDealId: null, linkedBackendDealId: existing.id };
+  }
+  const proposed = {
+    week_start_utc: payload.frame_start_utc,
+    week_end_utc: payload.frame_end_utc,
+  } as z.infer<typeof DealPayloadSchema>;
+  const overlap = listed.find((deal) =>
+    (deal.status === "active" || deal.status === "scheduled")
+    && dealWindowsOverlap(deal, proposed));
+  if (overlap) {
+    error(409, "creator_deal_window_overlap", `Creator already has an ${overlap.status} fill deal during the proposed P&L frame.`);
+  }
+  await markCreateAttempted();
+  const created = await creatorsApi.createDeal(request.creator_user_id, {
+    week_start_utc: payload.frame_start_utc,
+    week_end_utc: payload.frame_end_utc,
+    fills_allowed: payload.funding.fills_allowed,
+    per_fill_amount_usd: payload.funding.per_fill_amount_usd,
+    conversion_rate_bps: 0,
+    // Conversion is non-withdrawable; leaving the aggregate cap open keeps
+    // the separately approved tip/sponsorship allowances usable.
+    total_withdraw_cap_usd: null,
+    cooldown_minutes: payload.funding.cooldown_minutes,
+    max_tip_per_stream_usd: payload.max_tip_per_stream_usd ?? 0,
+    max_tip_per_user_usd: payload.max_tip_per_user_usd ?? 0,
+    max_sponsored_battle_usd: payload.max_sponsored_battle_usd ?? 0,
+    max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd ?? 0,
+    allow_site_leaderboards: false,
+    allow_code_leaderboards: false,
+    terms: {
+      creator_approval_request_id: request.id,
+      pnl_funding_only: true,
+      agreement_version: request.agreement_version,
+      agreement_checksum: request.agreement_checksum,
+    },
+  } satisfies CreateDealInput);
+  return { linkedFillDealId: created.id, linkedMultiplierDealId: null, linkedBackendDealId: created.id };
+}
+
+async function ensureAdminPnlDeal(
+  request: typeof creator_deal_approval_requests.$inferSelect,
+): Promise<{ pnlDealId: string; linkedBackendDealId: string }> {
+  if (request.pnl_deal_id) {
+    const [existing] = await adminDrizzle.select({
+      id: creator_pnl_deals.id,
+      linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
+      linkedMultiplierDealId: creator_pnl_deals.linked_multiplier_deal_id,
+    }).from(creator_pnl_deals).where(eq(creator_pnl_deals.id, request.pnl_deal_id)).limit(1);
+    if (!existing) error(409, "admin_pnl_deal_missing", "The approval references a missing Admin P&L deal.");
+    return {
+      pnlDealId: existing.id,
+      linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
+        ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
+    };
+  }
+
+  const outcome = await adminDrizzle.transaction(async (tx): Promise<
+    { ok: true; pnlDealId: string; linkedBackendDealId: string } | { ok: false; cause: unknown }
+  > => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${`creator-pnl-deal:${request.creator_user_id}`}, 0))`);
+    const [existing] = await tx.select({
+      id: creator_pnl_deals.id,
+      linkedFillDealId: creator_pnl_deals.linked_fill_deal_id,
+      linkedMultiplierDealId: creator_pnl_deals.linked_multiplier_deal_id,
+    }).from(creator_pnl_deals)
+      .where(eq(creator_pnl_deals.source_approval_request_id, request.id))
+      .limit(1);
+    if (existing) {
+      return {
+        ok: true,
+        pnlDealId: existing.id,
+        linkedBackendDealId: existing.linkedFillDealId ?? existing.linkedMultiplierDealId
+          ?? error(409, "admin_pnl_funding_missing", "The Admin P&L deal has no linked funding record."),
+      };
+    }
+
+    const payload = PnlPayloadSchema.parse(request.pnl_payload);
+    const [conflict] = await tx.select({ id: creator_pnl_deals.id, status: creator_pnl_deals.status })
+      .from(creator_pnl_deals)
+      .where(and(
+        eq(creator_pnl_deals.creator_user_id, request.creator_user_id),
+        sql`${creator_pnl_deals.status} IN ('scheduled','active','settlement_pending','calculated','crediting')`,
+        sql`${creator_pnl_deals.frame_start_utc} < ${payload.frame_end_utc}::timestamptz`,
+        sql`${creator_pnl_deals.frame_end_utc} > ${payload.frame_start_utc}::timestamptz`,
+      )).limit(1);
+    if (conflict) {
+      error(409, "pnl_deal_window_overlap", `Creator already has a ${conflict.status.replaceAll("_", " ")} Admin P&L deal during the proposed frame.`);
+    }
+
+    let attempted = request.backend_create_attempted_at != null;
+    const markCreateAttempted = async () => {
+      if (attempted) {
+        error(409, "backend_create_unconfirmed", "The original funding create attempt is not visible yet. It will not be repeated because its outcome may be ambiguous.");
+      }
+      const [claimed] = await tx.update(creator_deal_approval_requests).set({
+        backend_create_attempted_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      }).where(and(
+        eq(creator_deal_approval_requests.id, request.id),
+        sql`${creator_deal_approval_requests.backend_create_attempted_at} IS NULL`,
+      )).returning({ id: creator_deal_approval_requests.id });
+      if (!claimed) error(409, "backend_create_in_progress", "Another worker already started P&L funding creation.");
+      attempted = true;
+    };
+
+    try {
+      const funding = await ensurePnlFunding(request, payload, markCreateAttempted);
+      const pnlDealId = crypto.randomUUID();
+      const now = new Date();
+      const startsActive = new Date(payload.frame_start_utc) <= now;
+      await tx.insert(creator_pnl_deals).values({
+        id: pnlDealId,
+        creator_user_id: request.creator_user_id,
+        source_approval_request_id: request.id,
+        status: startsActive ? "active" : "scheduled",
+        frame_start_utc: payload.frame_start_utc,
+        frame_end_utc: payload.frame_end_utc,
+        positive_pnl_share_bps: payload.positive_pnl_share_bps,
+        funding_mode: payload.funding.type,
+        funding_config: payload.funding,
+        linked_fill_deal_id: funding.linkedFillDealId,
+        linked_multiplier_deal_id: funding.linkedMultiplierDealId,
+        max_tip_per_stream_usd: payload.max_tip_per_stream_usd == null ? null : String(payload.max_tip_per_stream_usd),
+        max_tip_per_user_usd: payload.max_tip_per_user_usd == null ? null : String(payload.max_tip_per_user_usd),
+        max_sponsored_battle_usd: payload.max_sponsored_battle_usd == null ? null : String(payload.max_sponsored_battle_usd),
+        max_sponsorship_per_stream_usd: payload.max_sponsorship_per_stream_usd == null ? null : String(payload.max_sponsorship_per_stream_usd),
+        terms_snapshot: {
+          agreement_document_id: request.agreement_document_id,
+          agreement_version: request.agreement_version,
+          agreement_checksum: request.agreement_checksum,
+          agreement_lines: z.array(z.string()).parse(request.agreement_lines),
+        },
+        credit_idempotency_key: `creator-pnl:${pnlDealId}`,
+        activated_at: startsActive ? now.toISOString() : null,
+        created_by_admin_user_id: request.submitted_by,
+      });
+      await tx.update(creator_deal_approval_requests).set({
+        pnl_deal_id: pnlDealId,
+        backend_deal_id: funding.linkedBackendDealId,
+        updated_at: now.toISOString(),
+      }).where(eq(creator_deal_approval_requests.id, request.id));
+      return { ok: true, pnlDealId, linkedBackendDealId: funding.linkedBackendDealId };
+    } catch (cause) {
+      // Commit an ambiguous remote-create marker. A retry first reconciles the
+      // ordinary fill/multiplier by its immutable terms marker.
+      return { ok: false, cause };
+    }
+  });
+  if (!outcome.ok) throw outcome.cause;
+  return { pnlDealId: outcome.pnlDealId, linkedBackendDealId: outcome.linkedBackendDealId };
+}
+
+/**
+ * Materialize time-derived activation and calculation readiness before an
+ * Admin P&L list, calculation, or credit action reads lifecycle state.
+ */
+export async function advanceDueCreatorPnlDeals(now = new Date()): Promise<{
+  activated: number;
+  readyForCalculation: number;
+}> {
+  return adminDrizzle.transaction(async (tx) => {
+    const timestamp = now.toISOString();
+    const activated = await tx.update(creator_pnl_deals).set({
+      status: "active",
+      activated_at: timestamp,
+      updated_at: timestamp,
+      version: sql`${creator_pnl_deals.version} + 1`,
+    }).where(and(
+      eq(creator_pnl_deals.status, "scheduled"),
+      sql`${creator_pnl_deals.frame_start_utc} <= ${timestamp}::timestamptz`,
+      sql`${creator_pnl_deals.frame_end_utc} > ${timestamp}::timestamptz`,
+    )).returning({ id: creator_pnl_deals.id });
+    const ready = await tx.update(creator_pnl_deals).set({
+      status: "settlement_pending",
+      updated_at: timestamp,
+      version: sql`${creator_pnl_deals.version} + 1`,
+    }).where(and(
+      sql`${creator_pnl_deals.status} IN ('scheduled','active')`,
+      sql`${creator_pnl_deals.frame_end_utc} <= ${timestamp}::timestamptz`,
+    )).returning({ id: creator_pnl_deals.id });
+    return { activated: activated.length, readyForCalculation: ready.length };
+  });
+}
+
 async function ensureRewardProgram(request: typeof creator_deal_approval_requests.$inferSelect, approvedAt: Date): Promise<string | null> {
   if (!request.reward_payload) return null;
   if (request.reward_program_id) return request.reward_program_id;
@@ -963,30 +1301,40 @@ export async function provisionApprovedCreatorDealRequest(
     const approvedAt = request.approved_at ? new Date(request.approved_at) : new Date();
     const kind = request.request_kind as CreatorApprovalRequestKind;
     if (new Date(request.window_end_at) <= approvedAt) error(409, "deal_window_elapsed", "The approved request has already ended.");
-    // Fill deals may bundle rewards/leaderboards. Multiplier and standalone
-    // requests carry exactly their own payload, enforced by the table CHECK.
+    // Fill and ADMIN-owned P&L deals may bundle rewards/leaderboards.
+    // Multiplier and standalone requests carry exactly their own payload.
     let backendDealId: string | null = request.backend_deal_id;
+    let pnlDealId: string | null = request.pnl_deal_id;
     if (kind === "deal") {
       backendDealId = await ensureBackendDeal(request);
       await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
     } else if (kind === "multiplier_deal") {
       backendDealId = await ensureBackendMultiplierDeal(request);
       await adminDrizzle.update(creator_deal_approval_requests).set({ backend_deal_id: backendDealId, updated_at: new Date().toISOString() }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
+    } else if (kind === "pnl_deal") {
+      const pnl = await ensureAdminPnlDeal(request);
+      pnlDealId = pnl.pnlDealId;
+      backendDealId = pnl.linkedBackendDealId;
+      await adminDrizzle.update(creator_deal_approval_requests).set({
+        pnl_deal_id: pnlDealId,
+        backend_deal_id: backendDealId,
+        updated_at: new Date().toISOString(),
+      }).where(and(eq(creator_deal_approval_requests.id, id), eq(creator_deal_approval_requests.provisioning_lease_token, token)));
     }
     const withDeal = { ...request, backend_deal_id: backendDealId };
-    const rewardProgramId = kind === "deal" || kind === "rewards_only" ? await ensureRewardProgram(withDeal, approvedAt) : null;
-    const leaderboardId = kind === "deal" || kind === "leaderboard_only" ? await ensureLeaderboard(withDeal) : null;
+    const rewardProgramId = kind === "deal" || kind === "pnl_deal" || kind === "rewards_only" ? await ensureRewardProgram(withDeal, approvedAt) : null;
+    const leaderboardId = kind === "deal" || kind === "pnl_deal" || kind === "leaderboard_only" ? await ensureLeaderboard(withDeal) : null;
     await adminDrizzle.transaction(async (tx) => {
       const completed = await tx.execute<{ creator_user_id: string }>(sql`
-        UPDATE creator_deal_approval_requests SET status = 'completed', backend_deal_id = ${backendDealId}, reward_program_id = ${rewardProgramId}::uuid,
+        UPDATE creator_deal_approval_requests SET status = 'completed', backend_deal_id = ${backendDealId}, pnl_deal_id = ${pnlDealId}::uuid, reward_program_id = ${rewardProgramId}::uuid,
           leaderboard_id = ${leaderboardId}::uuid,
           provisioning_lease_token = NULL, provisioning_leased_until = NULL, last_error_step = NULL,
           last_error_code = NULL, last_error_message = NULL, completed_at = now(), updated_at = now()
         WHERE id = ${id}::uuid AND provisioning_lease_token = ${token}::uuid RETURNING creator_user_id
       `);
       if (!completed.rows[0]) error(409, "provisioning_lease_lost", "Provisioning lease expired.");
-      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
-      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, rewardProgramId, leaderboardId } });
+      await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
+      await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
     });
     return { status: "approved", requestId: id };
   } catch (cause) {
@@ -998,6 +1346,8 @@ export async function provisionApprovedCreatorDealRequest(
             WHEN request_kind = 'leaderboard_only' THEN 'leaderboard'
             WHEN request_kind = 'rewards_only' THEN 'reward_program'
             WHEN request_kind = 'multiplier_deal' THEN 'backend_multiplier_deal'
+            WHEN request_kind = 'pnl_deal' AND backend_create_attempted_at IS NOT NULL AND pnl_deal_id IS NULL THEN 'backend_pnl_funding'
+            WHEN request_kind = 'pnl_deal' AND pnl_deal_id IS NULL THEN 'admin_pnl_deal'
             WHEN backend_deal_id IS NULL THEN 'backend_deal'
             WHEN reward_payload IS NOT NULL AND reward_program_id IS NULL THEN 'reward_program'
             ELSE 'leaderboard' END,
@@ -1160,7 +1510,7 @@ export async function respondToCreatorDealApproval(input: {
     if (transition.status === "provisioning_failed") return { status: "failed", requestId: parsed.requestId };
     // Only deal kinds have terms to present. A stray continue on a standalone
     // leaderboard/rewards request is tolerated as a no-op, never as consent.
-    if (transition.request_kind !== "deal" && transition.request_kind !== "multiplier_deal") return { status: "awaiting_decision", requestId: parsed.requestId };
+    if (transition.request_kind !== "deal" && transition.request_kind !== "multiplier_deal" && transition.request_kind !== "pnl_deal") return { status: "awaiting_decision", requestId: parsed.requestId };
     return { status: "awaiting_decision", requestId: parsed.requestId, terms: { version: transition.agreement_version, lines: z.array(z.string()).parse(transition.agreement_lines), checksum: transition.agreement_checksum } };
   }
   if (parsed.action === "decline" || transition.status === "declined") return { status: "declined", requestId: parsed.requestId };

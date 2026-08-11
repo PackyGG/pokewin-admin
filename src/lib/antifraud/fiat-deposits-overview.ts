@@ -15,10 +15,12 @@ export type FiatDepositOverviewItem = {
   checkoutEmail: string | null;
   checkoutCountry: string | null;
   status: string;
+  providerPaymentStatus: string | null;
+  failureReason: string | null;
   requestedAmountUsd: number;
   customerPaidUsd: number | null;
   creditedAmountUsd: number | null;
-  paidAt: string;
+  occurredAt: string;
 };
 
 export type FiatDepositsOverviewResult = {
@@ -43,10 +45,12 @@ type RawDeposit = {
   checkout_email: string | null;
   checkout_country: string | null;
   status: string;
+  provider_payment_status: string | null;
+  failure_reason: string | null;
   requested_amount_cents: string;
   customer_paid_cents: string | null;
   credited_amount_cents: string | null;
-  paid_at: Date | string;
+  occurred_at: Date | string;
 };
 
 function optionalUsd(cents: string | null): number | null {
@@ -54,11 +58,12 @@ function optionalUsd(cents: string | null): number | null {
 }
 
 /**
- * Paid MAIN intents are the source of truth for this overview. Risk
- * assessments are enrichment and may legitimately arrive after a payment, so
- * they must never decide whether the deposit itself is visible.
+ * MAIN intents are the source of truth for this overview. Alongside paid
+ * deposits, terminal failed/canceled Whop attempts remain visible so provider
+ * declines do not disappear from the operational history. Risk assessments
+ * are enrichment and must never decide whether an intent itself is visible.
  */
-export async function listPaidFiatDeposits(input: {
+export async function listFiatDeposits(input: {
   page: number;
   limit: number;
 }): Promise<FiatDepositsOverviewResult> {
@@ -68,7 +73,12 @@ export async function listPaidFiatDeposits(input: {
   const excludedUserIds = await getExcludedUserIdsStrict();
 
   const baseWhere = `
-    i.paid_at IS NOT NULL
+    (
+      i.paid_at IS NOT NULL
+      OR i.status IN ('failed', 'canceled')
+      OR COALESCE(i.provider_payment_status, '')
+        ~* '(failed|declined|denied|canceled|cancelled)'
+    )
     AND COALESCE(u.role::text, '') <> 'creator'
     AND 'creator' <> ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))
     AND i.user_id <> ALL($1::text[])
@@ -76,36 +86,39 @@ export async function listPaidFiatDeposits(input: {
 
   const [rows, counts] = await Promise.all([
     queryMainRows<RawDeposit[]>(
-      `WITH paid AS (
+      `WITH deposits AS (
          SELECT i.*, u.username, u.email AS account_email, u.country_code,
            u.signup_ip
          FROM fiat_deposit_intents i
          JOIN "user" u ON u.id = i.user_id
          WHERE ${baseWhere}
-         ORDER BY i.paid_at DESC, i.id DESC
+         ORDER BY COALESCE(i.paid_at, i.updated_at) DESC, i.id DESC
          LIMIT $2 OFFSET $3
        )
        SELECT
-         paid.id::text AS id,
-         paid.user_id::text AS user_id,
-         paid.username,
-         paid.account_email,
-         COALESCE(auth.signup_email, paid.account_email) AS signup_email,
-         paid.country_code AS account_country,
-         COALESCE(auth.latest_auth_ip, NULLIF(paid.signup_ip, ''))
+         deposits.id::text AS id,
+         deposits.user_id::text AS user_id,
+         deposits.username,
+         deposits.account_email,
+         COALESCE(auth.signup_email, deposits.account_email) AS signup_email,
+         deposits.country_code AS account_country,
+         COALESCE(auth.latest_auth_ip, NULLIF(deposits.signup_ip, ''))
            AS latest_auth_ip,
          COALESCE(
            auth.latest_auth_event,
-           CASE WHEN NULLIF(paid.signup_ip, '') IS NOT NULL THEN 'register' END
+           CASE WHEN NULLIF(deposits.signup_ip, '') IS NOT NULL THEN 'register' END
          ) AS latest_auth_event,
          checkout.checkout_email,
          checkout.checkout_country,
-         paid.status::text AS status,
-         paid.requested_amount_cents::text AS requested_amount_cents,
-         paid.actual_customer_total_cents::text AS customer_paid_cents,
-         paid.credited_amount_cents::text AS credited_amount_cents,
-         paid.paid_at AT TIME ZONE 'UTC' AS paid_at
-       FROM paid
+         deposits.status::text AS status,
+         deposits.provider_payment_status,
+         deposits.failure_reason,
+         deposits.requested_amount_cents::text AS requested_amount_cents,
+         deposits.actual_customer_total_cents::text AS customer_paid_cents,
+         deposits.credited_amount_cents::text AS credited_amount_cents,
+         COALESCE(deposits.paid_at, deposits.updated_at)
+           AT TIME ZONE 'UTC' AS occurred_at
+       FROM deposits
        LEFT JOIN LATERAL (
          SELECT
            (array_agg(NULLIF(BTRIM(pwe.payload #>> '{data,user,email}'), '')
@@ -122,8 +135,8 @@ export async function listPaidFiatDeposits(input: {
          FROM payment_webhook_events pwe
          WHERE pwe.provider = 'whop'
            AND pwe.provider_resource_id IN (
-             paid.provider_checkout_id,
-             paid.provider_payment_id
+             deposits.provider_checkout_id,
+             deposits.provider_payment_id
            )
        ) checkout ON TRUE
        LEFT JOIN LATERAL (
@@ -138,10 +151,11 @@ export async function listPaidFiatDeposits(input: {
            (array_agg(audit.event_type::text ORDER BY audit.created_at DESC)
              FILTER (WHERE audit.ip IS NOT NULL))[1] AS latest_auth_event
          FROM audit_events audit
-         WHERE audit.user_id = paid.user_id
+         WHERE audit.user_id = deposits.user_id
            AND audit.event_type IN ('login', 'register')
        ) auth ON TRUE
-       ORDER BY paid.paid_at DESC, paid.id DESC`,
+       ORDER BY COALESCE(deposits.paid_at, deposits.updated_at) DESC,
+         deposits.id DESC`,
       excludedUserIds,
       limit,
       offset,
@@ -169,10 +183,12 @@ export async function listPaidFiatDeposits(input: {
       checkoutEmail: row.checkout_email,
       checkoutCountry: row.checkout_country,
       status: row.status,
+      providerPaymentStatus: row.provider_payment_status,
+      failureReason: row.failure_reason,
       requestedAmountUsd: Number(row.requested_amount_cents) / 100,
       customerPaidUsd: optionalUsd(row.customer_paid_cents),
       creditedAmountUsd: optionalUsd(row.credited_amount_cents),
-      paidAt: new Date(row.paid_at).toISOString(),
+      occurredAt: new Date(row.occurred_at).toISOString(),
     })),
     pagination: {
       page,

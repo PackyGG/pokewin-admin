@@ -5,11 +5,15 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator deal approval is durable, identity-bound, and recoverable", async () => {
-  const [migration, leaderboardMigration, multiplierMigration, workflow, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
+  const [migration, leaderboardMigration, multiplierMigration, pnlMigration, workflow, adminSchema, historyQuery, backendIndex, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
     read("drizzle/admin/migrations/20260806_creator_deal_approval_workflow.sql"),
     read("drizzle/admin/migrations/20260806_creator_deal_approval_leaderboard.sql"),
     read("drizzle/admin/migrations/20260811_creator_multiplier_deal_approval.sql"),
+    read("drizzle/admin/migrations/20260812_creator_pnl_deal_approval.sql"),
     read("src/lib/creator-deal-approvals.ts"),
+    read("src/lib/db-schema/admin/schema.ts"),
+    read("src/app/(creator-hub)/creator-hub/creators/[id]/_queries/creator-rewards-data.ts"),
+    read("src/lib/backend-api/index.ts"),
     read("src/lib/creator-agreement-terms.ts"),
     read("src/app/api/v1/discord/creator-deal-approvals/jobs/claim/route.ts"),
     read("src/app/api/v1/discord/creator-deal-approvals/jobs/[id]/ack/route.ts"),
@@ -100,23 +104,82 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(leaderboardMigration, /deal_payload ->> 'week_start_utc'/);
   assert.match(leaderboardMigration, /\(creator_user_id, request_kind\)/);
   assert.match(workflow, /const LeaderboardPayloadSchema/);
-  assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "multiplier_deal" \| "leaderboard_only" \| "rewards_only"/);
+  assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "multiplier_deal" \| "pnl_deal" \| "leaderboard_only" \| "rewards_only"/);
   assert.match(workflow, /async function ensureLeaderboard/);
   assert.match(workflow, /affiliateLeaderboardsApi\.create/);
   assert.match(workflow, /if \(request\.leaderboard_id\) return request\.leaderboard_id/);
   assert.match(workflow, /codes: await loadAllCreatorCodes\(creatorUserId\)/);
   assert.match(workflow, /startsAt: windowStartIso/);
-  assert.match(workflow, /request_kind IN \('deal', 'multiplier_deal'\)/);
-  assert.match(workflow, /kind === "deal" \|\| kind === "rewards_only" \? await ensureRewardProgram/);
-  assert.match(workflow, /kind === "deal" \|\| kind === "leaderboard_only" \? await ensureLeaderboard/);
+  assert.match(workflow, /request_kind IN \('deal', 'multiplier_deal', 'pnl_deal'\)/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "pnl_deal" \|\| kind === "rewards_only" \? await ensureRewardProgram/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "pnl_deal" \|\| kind === "leaderboard_only" \? await ensureLeaderboard/);
   assert.match(workflow, /new Date\(request\.window_end_at\)\.getTime\(\) <= Date\.now\(\)/);
-  assert.match(workflow, /transition\.request_kind !== "deal" && transition\.request_kind !== "multiplier_deal"/);
+  assert.match(workflow, /transition\.request_kind !== "deal" && transition\.request_kind !== "multiplier_deal" && transition\.request_kind !== "pnl_deal"/);
   assert.match(multiplierMigration, /multiplier_payload JSONB/);
   assert.match(multiplierMigration, /request_kind IN \('deal', 'multiplier_deal'\)/);
   assert.match(multiplierMigration, /creator_deal_approval_one_unresolved_creator/);
   assert.match(workflow, /async function ensureBackendMultiplierDeal/);
   assert.match(workflow, /multiplierDealsApi\.create/);
   assert.match(workflow, /terms_version: marker/);
+
+  // First-class P&L deals share the unresolved deal-family slot, preserve an
+  // immutable frame/funding snapshot in ADMIN. Only the ordinary funding
+  // fill/multiplier is provisioned through an existing backend API.
+  assert.match(pnlMigration, /ADD COLUMN IF NOT EXISTS pnl_payload JSONB/);
+  assert.match(pnlMigration, /request_kind IN \('deal', 'multiplier_deal', 'pnl_deal'\)/);
+  assert.match(pnlMigration, /request_kind = 'pnl_deal'/);
+  assert.match(pnlMigration, /pnl_payload IS NOT NULL/);
+  assert.match(workflow, /const PnlPayloadSchema/);
+  assert.match(workflow, /positive_pnl_share_bps: z\.number\(\)\.int\(\)\.min\(1\)\.max\(10_000\)/);
+  assert.match(workflow, /type: z\.literal\("non_withdrawable_fills"\)/);
+  assert.match(workflow, /type: z\.literal\("linked_multiplier"\)/);
+  assert.match(workflow, /type: z\.literal\("new_multiplier"\)/);
+  assert.match(workflow, /multiplier_bps: z\.number\(\)\.int\(\)\.min\(20_000\)/);
+  assert.match(workflow, /\.max\(2_147_000_000\)/);
+  assert.match(workflow, /auto_renew: z\.literal\(false\)/);
+  assert.match(workflow, /pnlPayload\?: unknown \| null/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "multiplier_deal" \|\| kind === "pnl_deal"/);
+  assert.match(workflow, /request\.request_kind, request\.deal_payload, request\.multiplier_payload, request\.pnl_payload/);
+  assert.match(pnlMigration, /CREATE TABLE IF NOT EXISTS creator_pnl_deals/);
+  assert.match(pnlMigration, /source_approval_request_id UUID NOT NULL UNIQUE/);
+  assert.match(pnlMigration, /funding_config JSONB NOT NULL/);
+  assert.match(pnlMigration, /status IN \('scheduled', 'active', 'settlement_pending', 'calculated', 'crediting', 'settled', 'cancelled'\)/);
+  assert.match(pnlMigration, /credit_idempotency_key TEXT NOT NULL/);
+  assert.match(pnlMigration, /credit_idempotency_key = 'creator-pnl:' \|\| id::text/);
+  assert.match(pnlMigration, /credit_attempted_at TIMESTAMPTZ\(6\)/);
+  assert.match(pnlMigration, /credit_error TEXT/);
+  assert.match(pnlMigration, /credited_amount_usd NUMERIC\(20, 2\)/);
+  assert.match(pnlMigration, /credit_ledger_id UUID/);
+  assert.match(pnlMigration, /settlement_breakdown JSONB/);
+  assert.match(pnlMigration, /settlement_reason TEXT/);
+  assert.match(pnlMigration, /guard_creator_pnl_deal_immutable_contract/);
+  assert.match(pnlMigration, /BEFORE UPDATE ON creator_pnl_deals/);
+  assert.match(adminSchema, /export const creator_pnl_deals = pgTable\(\s*"creator_pnl_deals"/);
+  assert.match(workflow, /async function ensureAdminPnlDeal/);
+  assert.match(workflow, /creator_pnl_deals\.source_approval_request_id/);
+  assert.match(workflow, /credit_idempotency_key: `creator-pnl:\$\{pnlDealId\}`/);
+  assert.match(workflow, /backend_create_attempted_at/);
+  assert.match(workflow, /backend_create_unconfirmed/);
+  assert.match(workflow, /hasPnlDeal: pnlPayload != null/);
+  assert.match(workflow, /backend_pnl_funding/);
+  assert.match(workflow, /admin_pnl_deal/);
+  assert.match(workflow, /conversion_rate_bps: 0/);
+  assert.match(workflow, /total_withdraw_cap_usd: null/);
+  assert.match(workflow, /auto_renew: false/);
+  assert.match(workflow, /linked\.multiplier_bps < 20_000/);
+  assert.match(workflow, /linked\.auto_end_at/);
+  assert.match(workflow, /export async function advanceDueCreatorPnlDeals/);
+  assert.match(workflow, /status: "settlement_pending"/);
+  assert.match(workflow, /terms_version: marker/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "pnl_deal" \|\| kind === "rewards_only"/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "pnl_deal" \|\| kind === "leaderboard_only"/);
+  assert.match(workflow, /terms_text: z\.array\(z\.string\(\)\)\.parse\(request\.agreement_lines\)\.join\("\\n"\)/);
+  assert.match(workflow, /terms_version: marker/);
+  assert.match(historyQuery, /pnlDealId: request\.pnl_deal_id/);
+  assert.match(historyQuery, /linkedFundingDealId/);
+  assert.doesNotMatch(backendIndex, /pnlDealsApi|pnl-deals/);
+  assert.doesNotMatch(workflow, /pnlDealsApi|\/pnl-deals/);
+  assert.match(endpoints, /Jobs expose the immutable proposal under deal, multiplier, pnl, rewards, or leaderboard/);
   // Never re-derive the deal window from a payload that may not exist.
   assert.doesNotMatch(workflow, /DealPayloadSchema\.parse\(request\.deal_payload\)\.week_end_utc/);
 

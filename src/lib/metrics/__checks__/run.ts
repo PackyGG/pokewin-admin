@@ -132,11 +132,13 @@ const ALL_ENUM_TYPES: LedgerTransactionType[] = [
   "creator_lb_deposit",
   "upgrader_bet",
   "upgrader_payout",
+  "keno_bet",
+  "keno_payout",
 ];
 
 console.log("\n[metrics checks] partition: every enum type in exactly one set");
 
-check("enum has 53 members", ALL_ENUM_TYPES.length === 53);
+check("enum has 55 members", ALL_ENUM_TYPES.length === 55);
 
 // Build the union of all assigned types and assert disjoint + complete.
 const allSets = Object.values(LEDGER_SET_MEMBERS) as readonly (readonly string[])[];
@@ -164,8 +166,8 @@ check(
   [...assigned].every((t) => (ALL_ENUM_TYPES as string[]).includes(t)),
 );
 check(
-  "union of sets covers exactly the 53 enum members",
-  assigned.size === 53,
+  "union of sets covers exactly the 55 enum members",
+  assigned.size === 55,
 );
 
 // classifyLedgerType round-trips every enum member to a non-null bucket.
@@ -178,7 +180,7 @@ check("classifyLedgerType returns null for an unknown type", classifyLedgerType(
 // ─── 2. Specific membership the model hinges on ──────────────────────
 console.log("[metrics checks] specific membership (the booking model)");
 
-check("WAGER = pack_opening/battle_bet/battle_sponsorship only", arrEq(WAGER_TYPES, ["pack_opening", "battle_bet", "battle_sponsorship"]));
+check("WAGER contains pack/battle/sponsorship/keno stakes", arrEq(WAGER_TYPES, ["pack_opening", "battle_bet", "battle_sponsorship", "keno_bet"]));
 // Fix 1 — battle_sponsorship is a CUSTOMER WAGER type. It is summed on
 // the wager side of GGR everywhere (getGamingLegs / getDailyGamingMetrics
 // / getPackBattlePurePnl / _shared.WAGER_NON_BORROW_FILTER), so the GGR
@@ -202,7 +204,7 @@ check("Fix 1: battle_sponsorship is summed by WAGER_TYPES_SQL (in the IN-list)",
 // that pack gaming flows through pack_opening only and the partition is
 // UNCHANGED by Fix 2 (reward packs do not get their own bucket).
 check("Fix 2: pack gaming wager type is pack_opening only (reward-pack split is SQL-level, no type change)", WAGER_TYPES.includes("pack_opening") && classifyLedgerType("pack_opening") === "WAGER");
-check("Fix 2: GAMING_PAYOUT unchanged (reward-pack exclusion is an inventory/source_id SQL filter, not a payout-type change)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher"]));
+check("Fix 2: reward-pack exclusion does not alter ledger payout types", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher", "keno_payout"]));
 
 // ─── 2b. SQL-shape assertions for the canonical legs (gaming-sql.ts) ──
 // gaming-sql.ts is client-safe (no DB / no server-only), so the EXACT
@@ -253,7 +255,7 @@ check("withdrawal_shipping_fee is a FEE, not WAGER", FEE_TYPES.includes("withdra
 // battle-win settlement legs; upgrader stays isolated). battle_excess_to_
 // voucher was reclassified from NEUTRAL — it COMPLETES a battle win the
 // inventory card under-counts.
-check("GAMING_PAYOUT = battle_refund + battle_excess_to_voucher (upgrader isolated)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher"]));
+check("GAMING_PAYOUT contains battle settlement and Keno payout legs (upgrader isolated)", arrEq(GAMING_PAYOUT_TYPES, ["battle_refund", "battle_excess_to_voucher", "keno_payout"]));
 check("battle_excess_to_voucher is a GAMING_PAYOUT (reclassified from NEUTRAL)", classifyLedgerType("battle_excess_to_voucher") === "GAMING_PAYOUT" && !(NEUTRAL_TYPES as readonly string[]).includes("battle_excess_to_voucher"));
 check("card_sale is NEUTRAL (not a payout)", NEUTRAL_TYPES.includes("card_sale") && classifyLedgerType("card_sale") === "NEUTRAL");
 check("card_exchange is NEUTRAL", classifyLedgerType("card_exchange") === "NEUTRAL");
@@ -277,7 +279,7 @@ check("upgrader_bet / upgrader_payout are isolated in UPGRADER (default)", UPGRA
 check("UPGRADER_IN_LEDGER defaults to false (prod-confirm pending)", UPGRADER_IN_LEDGER === false);
 
 // SQL list helper shape.
-check("WAGER_TYPES_SQL renders a parenthesised quoted list", WAGER_TYPES_SQL === "('pack_opening','battle_bet','battle_sponsorship')");
+check("WAGER_TYPES_SQL renders a parenthesised quoted list", WAGER_TYPES_SQL === "('pack_opening','battle_bet','battle_sponsorship','keno_bet')");
 check("ledgerTypesToSqlList quotes each member", ledgerTypesToSqlList(["deposit"]) === "('deposit')");
 
 // ─── 3. GGR: wager − inventory-delta − battle_refund (NOT card_sale) ──

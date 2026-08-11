@@ -198,6 +198,11 @@ const adjustmentDetailsSchema = z
     // in SELECTABLE_ADJUSTMENT_CATEGORY_KEYS).
     chatRaffleRoundId: z.string().uuid().optional(),
     chatRafflePosition: z.number().int().min(1).max(100).optional(),
+    creatorPnlDealId: z.string().uuid().optional(),
+    creatorPnlFrameStartUtc: z.string().datetime().optional(),
+    creatorPnlFrameEndUtc: z.string().datetime().optional(),
+    creatorPnlShareBps: z.number().int().min(1).max(10_000).optional(),
+    creatorPnlFrameSitePnlUsd: z.number().finite().optional(),
   })
   .optional();
 
@@ -252,6 +257,11 @@ type ResolvedAdjustmentMeta = {
   /** Set only for `chat_raffle` — the round + place this payout settles. */
   chatRaffleRoundId: string | null;
   chatRafflePosition: number | null;
+  creatorPnlDealId: string | null;
+  creatorPnlFrameStartUtc: string | null;
+  creatorPnlFrameEndUtc: string | null;
+  creatorPnlShareBps: number | null;
+  creatorPnlFrameSitePnlUsd: number | null;
 };
 
 /**
@@ -291,6 +301,11 @@ function validateAdjustmentCategory(
     creatorRewardLeg: null,
     chatRaffleRoundId: null,
     chatRafflePosition: null,
+    creatorPnlDealId: null,
+    creatorPnlFrameStartUtc: null,
+    creatorPnlFrameEndUtc: null,
+    creatorPnlShareBps: null,
+    creatorPnlFrameSitePnlUsd: null,
   };
 
   switch (category) {
@@ -524,6 +539,24 @@ function validateAdjustmentCategory(
         },
       };
     }
+    case "creator_pnl_share": {
+      if (amount <= 0) return { ok: false, error: "Creator PnL shares must credit balance" };
+      const creatorId = (d.creatorId ?? "").trim();
+      if (!creatorId || !d.creatorPnlDealId || !d.creatorPnlFrameStartUtc
+        || !d.creatorPnlFrameEndUtc || d.creatorPnlShareBps === undefined
+        || d.creatorPnlFrameSitePnlUsd === undefined) {
+        return { ok: false, error: "Creator PnL share requires its authorizing deal and frozen frame" };
+      }
+      if (new Date(d.creatorPnlFrameStartUtc).getTime() >= new Date(d.creatorPnlFrameEndUtc).getTime()) {
+        return { ok: false, error: "Creator PnL share frame is invalid" };
+      }
+      return { ok: true, meta: { ...base, creatorId,
+        creatorPnlDealId: d.creatorPnlDealId,
+        creatorPnlFrameStartUtc: d.creatorPnlFrameStartUtc,
+        creatorPnlFrameEndUtc: d.creatorPnlFrameEndUtc,
+        creatorPnlShareBps: d.creatorPnlShareBps,
+        creatorPnlFrameSitePnlUsd: d.creatorPnlFrameSitePnlUsd } };
+    }
     case "other": {
       const reasonText = (d.reasonText ?? "").trim();
       if (reasonText.length < 20) {
@@ -557,6 +590,11 @@ export async function adjustBalance(data: {
     /** Chat-raffle payout trace — see `adjustmentDetailsSchema`. */
     chatRaffleRoundId?: string;
     chatRafflePosition?: number;
+    creatorPnlDealId?: string;
+    creatorPnlFrameStartUtc?: string;
+    creatorPnlFrameEndUtc?: string;
+    creatorPnlShareBps?: number;
+    creatorPnlFrameSitePnlUsd?: number;
   };
 }): Promise<
   { success: true; ledgerTxId: string } | { success: false; error: string }
@@ -706,7 +744,7 @@ export async function adjustBalance(data: {
   // Capture the ledger row id so the admin-side metadata write below can
   // cross-reference it.
   let ledgerTxId: string = crypto.randomUUID();
-  let reusedCreatorRewardLedger = false;
+  let reusedIdempotentLedger = false;
 
   // Resolve the admin-adjustment wager requirement (FROZEN per credit, exactly
   // the model deposits/bonuses use on the backend). Read the global site_config
@@ -746,9 +784,33 @@ export async function adjustBalance(data: {
     // fall back to the global bps already resolved above.
   }
   const accruesWagerDebt =
-    !affectsLockedBalance && parsed.amount > 0 && adminAdjustmentWagerBps > 0;
+    !affectsLockedBalance && parsed.category !== "creator_pnl_share"
+    && parsed.amount > 0 && adminAdjustmentWagerBps > 0;
   try {
     await db.transaction(async (tx) => {
+      if (meta.creatorPnlDealId) {
+        const marker = `creator-pnl:${meta.creatorPnlDealId}`;
+        await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${marker}, 0))`);
+        const existing = (await tx.execute<{ id: string; user_id: string; type: string; status: string; amount: string; metadata: Record<string, unknown> }>(sql`
+          SELECT id, user_id, type::text, status::text, amount::text, metadata FROM ledger_transactions
+          WHERE external_tx_id = ${marker} LIMIT 1
+        `)).rows[0];
+        if (existing) {
+          if (existing.user_id !== parsed.userId || existing.type !== "admin_balance_adjustment"
+            || existing.status !== "completed" || Number(existing.amount) !== parsed.amount
+            || existing.metadata?.adjustment_category !== "creator_pnl_share"
+            || existing.metadata?.creator_pnl_deal_id !== meta.creatorPnlDealId
+            || existing.metadata?.creator_pnl_frame_start_utc !== meta.creatorPnlFrameStartUtc
+            || existing.metadata?.creator_pnl_frame_end_utc !== meta.creatorPnlFrameEndUtc
+            || Number(existing.metadata?.creator_pnl_share_bps) !== meta.creatorPnlShareBps
+            || Number(existing.metadata?.creator_pnl_frame_site_pnl_usd) !== meta.creatorPnlFrameSitePnlUsd) {
+            throw new Error("Existing creator PnL credit conflicts with the immutable reservation");
+          }
+          ledgerTxId = existing.id;
+          reusedIdempotentLedger = true;
+          return;
+        }
+      }
       if (meta.vipClaimId) {
         // A claim approval spans ADMIN and MAIN, so there is no cross-database
         // unique constraint available. Serialize on the immutable claim id and
@@ -772,7 +834,7 @@ export async function adjustBalance(data: {
         ).rows[0];
         if (existing) {
           ledgerTxId = existing.id;
-          reusedCreatorRewardLedger = true;
+          reusedIdempotentLedger = true;
           return;
         }
       }
@@ -839,15 +901,24 @@ export async function adjustBalance(data: {
           ...(meta.chatRaffleRoundId && meta.chatRafflePosition !== null
             ? { chat_raffle_round_id: meta.chatRaffleRoundId,
                 chat_raffle_position: meta.chatRafflePosition } : {}),
+          ...(meta.creatorPnlDealId ? {
+            creator_pnl_deal_id: meta.creatorPnlDealId,
+            creator_pnl_frame_start_utc: meta.creatorPnlFrameStartUtc,
+            creator_pnl_frame_end_utc: meta.creatorPnlFrameEndUtc,
+            creator_pnl_share_bps: meta.creatorPnlShareBps,
+            creator_pnl_frame_site_pnl_usd: meta.creatorPnlFrameSitePnlUsd,
+            immediately_withdrawable: true,
+          } : {}),
         };
       }
       await tx.execute(sql`
         INSERT INTO ledger_transactions (
           id, user_id, type, amount, balance_before, balance_after,
-          description, metadata, status
+          external_tx_id, description, metadata, status
         ) VALUES (
           ${ledgerTxId}::uuid, ${parsed.userId}, 'admin_balance_adjustment',
           ${parsed.amount}, ${currentBalanceText}::numeric, ${newBalanceText}::numeric,
+          ${meta.creatorPnlDealId ? `creator-pnl:${meta.creatorPnlDealId}` : null},
           ${`Admin adjustment: ${parsed.reason}`},
           ${JSON.stringify(ledgerMetadata)}::jsonb, 'completed'
         )
@@ -876,7 +947,7 @@ export async function adjustBalance(data: {
     return { success: false, error: classifyAdjustBalanceError(err) };
   }
 
-  if (reusedCreatorRewardLedger) {
+  if (reusedIdempotentLedger) {
     return { success: true, ledgerTxId };
   }
 

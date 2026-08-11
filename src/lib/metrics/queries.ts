@@ -6,6 +6,7 @@ import { toNumber } from "@/lib/utils/decimal";
 import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
+import { getWeightedCreatorGameplayByDay, getWeightedCreatorGameplayForWindow } from "@/lib/creator-pnl-settlement";
 import {
   WAGER_TYPES_SQL,
   GAMING_PAYOUT_TYPES_SQL,
@@ -237,6 +238,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     // a permanently inert no-op kept for the CTE contract. See scope.ts.
     const scope = await getMetricsScope();
     const since = window.since;
+    const metricsEnd = new Date().toISOString();
 
     type LedgerRow = {
       wager: string;
@@ -250,7 +252,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     };
     type InvRow = { inv_payout: string };
 
-    const [ledger, inv, upg, dd] = await Promise.all([
+    const [ledger, inv, upg, dd, pnlCreator] = await Promise.all([
       queryRows<LedgerRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -323,6 +325,7 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       // per-row session-window exclusion is redundant for the tiny DD
       // table). `null` on a pre-DD DB → contributes 0.
       doubleDownLegs(window),
+      getWeightedCreatorGameplayForWindow({ startIso: since?.toISOString(), endIso: metricsEnd }),
     ]);
 
     const ledgerWager = toNumber(ledger[0]?.wager);
@@ -353,9 +356,9 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       // breakdown transparent (a caller can subtract `ddPayout` to see the
       // pre-DD number). Losing DD rounds forfeit the stake: no `ddPayout`
       // row on a loss → the whole DD wager stays as GGR contribution.
-      wager: ledgerWager + upgraderWager + ddWager,
-      battleRefund: ledgerGamingPayout + upgraderPayout,
-      bets: ledgerBets + upgraderBets + ddBets,
+      wager: ledgerWager + upgraderWager + ddWager + pnlCreator.weightedWagerUsd,
+      battleRefund: ledgerGamingPayout + upgraderPayout + pnlCreator.weightedPayoutUsd,
+      bets: ledgerBets + upgraderBets + ddBets + pnlCreator.weightedBetCount,
       inventoryPayout,
       // Upgrader-only slices (already included above; do not re-add).
       upgraderWager,
@@ -844,6 +847,7 @@ export async function getDailyGamingMetrics(
     // Canonical wholesale customer scope for the ledger + inventory legs.
     const scope = await getMetricsScope();
     const since = window.since;
+    const dailyEnd = new Date().toISOString();
     const countedAdj = countedAdjustmentSqlPredicate();
 
     // Upgrader uses the same wholesale-creator-drop scope as the shared
@@ -889,7 +893,7 @@ export async function getDailyGamingMetrics(
     type UpgDayRow = { date: string; upg_wager: string; upg_payout: string };
     type DdDayRow = { date: string; dd_wager: string; dd_payout: string };
 
-    const [ledgerRows, invRows, upgRows, ddRows] = await Promise.all([
+    const [ledgerRows, invRows, upgRows, ddRows, pnlRows] = await Promise.all([
       queryRows<LedgerDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -987,6 +991,7 @@ export async function getDailyGamingMetrics(
              GROUP BY DATE(o.resolved_at)`,
           )
         : Promise.resolve([] as DdDayRow[]),
+      getWeightedCreatorGameplayByDay({ startIso: since?.toISOString(), endIso: dailyEnd }),
     ]);
 
     // Merge the day-keyed sets. A day can appear in any (wager-only days,
@@ -1051,7 +1056,12 @@ export async function getDailyGamingMetrics(
       e.ddPayout += toNumber(r.dd_payout);
       byDate.set(key, e);
     }
-
+    for (const r of pnlRows) {
+      const e = byDate.get(r.date) ?? blank();
+      e.wager += r.weightedWagerUsd;
+      e.battleRefund += r.weightedPayoutUsd;
+      byDate.set(r.date, e);
+    }
     return [...byDate.entries()]
       .map(([date, e]) => {
         const gamingPayout = gamingPayoutTotal({

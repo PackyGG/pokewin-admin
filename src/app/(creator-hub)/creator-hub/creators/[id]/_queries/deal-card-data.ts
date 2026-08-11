@@ -8,6 +8,14 @@ import {
   getCreatorDealData,
   type CreatorDealData,
 } from "../../../../../(admin)/creators/[userId]/_queries/get-creator-deal-data";
+import {
+  listAdminCreatorPnlDeals,
+  type AdminCreatorPnlDeal,
+} from "@/lib/creator-pnl-settlement";
+
+export type CreatorDealCardData = CreatorDealData & {
+  pnlDeals: AdminCreatorPnlDeal[];
+};
 
 /**
  * Cached backend deal read for the hub Overview **Deal card** only.
@@ -35,14 +43,20 @@ const DEAL_CARD_PARAMS = {
 } as const;
 
 const cachedDealCardData = unstable_cache(
-  (userId: string): Promise<CreatorDealData | null> =>
-    getCreatorDealData(userId, DEAL_CARD_PARAMS),
-  ["creator-hub-deal-card-v1"],
+  async (userId: string): Promise<CreatorDealCardData | null> => {
+    const [fillData, pnlDeals] = await Promise.all([
+      getCreatorDealData(userId, DEAL_CARD_PARAMS),
+      listAdminCreatorPnlDeals(userId),
+    ]);
+    if (!fillData) return null;
+    return { ...fillData, pnlDeals };
+  },
+  ["creator-hub-deal-card-v3-admin-pnl"],
   { revalidate: 60, tags: ["creator-deal"] },
 );
 
 export async function getDealCardDataCached(
   userId: string,
-): Promise<CreatorDealData | null> {
+): Promise<CreatorDealCardData | null> {
   return cachedDealCardData(userId);
 }

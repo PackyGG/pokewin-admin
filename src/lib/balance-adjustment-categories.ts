@@ -74,6 +74,7 @@ export const BALANCE_ADJUSTMENT_CATEGORY_KEYS = [
   "fraud_abuse",
   "official_stream",
   "creator_vip_reward",
+  "creator_pnl_share",
   "other",
 ] as const;
 
@@ -133,6 +134,7 @@ export const CREATOR_LINKED_ADJUSTMENT_CATEGORY_KEYS = [
   "leaderboard",
   "official_stream",
   "creator_vip_reward",
+  "creator_pnl_share",
 ] as const;
 
 export type CreatorLinkedAdjustmentCategory =
@@ -209,11 +211,12 @@ export const SELECTABLE_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_K
   (k) =>
     k !== "other" &&
     k !== "creator_vip_reward" &&
+    k !== "creator_pnl_share" &&
     k !== "chat_raffle" &&
     k !== "ultra_lossback",
 ) as readonly Exclude<
   BalanceAdjustmentCategory,
-  "other" | "creator_vip_reward" | "chat_raffle" | "ultra_lossback"
+  "other" | "creator_vip_reward" | "creator_pnl_share" | "chat_raffle" | "ultra_lossback"
 >[];
 
 /** Type-guard: is this string one of the canonical category keys? */
@@ -376,6 +379,13 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
     costLabel: "Creator VIP wager rewards (uncounted)",
     why: "Wager-milestone reward paid to a user under a creator's VIP program (\"wager $X under my code, get $Y\"). Written ONLY by an approved `creator_reward_claims` row, never by hand — the ledger row carries `metadata.creator_id`, `metadata.vip_claim_id` and `metadata.vip_program_id` so every payout traces back to the claim and the program that authorized it. NOT counted in GGR/NGR/cost YET — it follows the `leaderboard` / `official_stream` precedent of persisting the creator link first; lifting it into reward cost requires updating the canonical PostgreSQL counted-category lists (see COUNTED_ADJUSTMENT_CATEGORY_KEYS).",
     counted: false,
+  },
+  creator_pnl_share: {
+    key: "creator_pnl_share",
+    label: "Creator PnL share",
+    costLabel: "Creator positive-PnL shares",
+    why: "Manual positive-PnL payout credited from an immutable Admin creator-PnL row. The ledger carries the deal id, exact UTC frame, agreed share, and preview PnL. This is a realized, counted house cost.",
+    counted: true,
   },
   other: {
     key: "other",

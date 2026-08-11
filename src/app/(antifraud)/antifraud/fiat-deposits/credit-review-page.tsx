@@ -1,6 +1,7 @@
 import {
   AlertTriangle,
   Banknote,
+  Check,
   Clock3,
   CreditCard,
   ExternalLink,
@@ -10,6 +11,7 @@ import {
   ShieldCheck,
   UserRound,
   Wifi,
+  X,
 } from "lucide-react";
 
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -415,7 +417,7 @@ function ReviewDepositCard({
             <UserRound className="size-4" />
             <span className="hidden sm:inline">Profile</span>
           </Button>
-          <div className="min-w-40 flex-1">
+          <div className="w-40 shrink-0">
             <AmountFact
               label="Balance credit"
               value={money(item.credited_amount_cents)}
@@ -560,8 +562,31 @@ function ComparisonFact({
   accountValue: string;
   mono?: boolean;
 }) {
+  const unavailableValues = new Set(["unknown", "unavailable"]);
+  const normalizedCheckoutValue = checkoutValue.trim().toLowerCase();
+  const normalizedAccountValue = accountValue.trim().toLowerCase();
+  const canCompare = normalizedCheckoutValue.length > 0
+    && normalizedAccountValue.length > 0
+    && !unavailableValues.has(normalizedCheckoutValue)
+    && !unavailableValues.has(normalizedAccountValue);
+  const matches = canCompare
+    ? normalizedCheckoutValue === normalizedAccountValue
+    : null;
+
   return (
-    <div className="min-w-0 rounded-lg border bg-muted/10 p-2.5">
+    <div className="relative min-w-0 rounded-lg border bg-muted/10 p-2.5">
+      {matches === true && (
+        <Check
+          aria-label={`${label} matches`}
+          className="absolute right-2.5 top-2.5 size-4 text-emerald-600 dark:text-emerald-400"
+        />
+      )}
+      {matches === false && (
+        <X
+          aria-label={`${label} does not match`}
+          className="absolute right-2.5 top-2.5 size-4 text-red-600 dark:text-red-400"
+        />
+      )}
       <dt className="flex items-center gap-1.5 text-[11px] font-semibold">
         <Icon className="size-3.5 shrink-0" />
         {label}
@@ -570,13 +595,13 @@ function ComparisonFact({
         {[
           [checkoutLabel, checkoutValue],
           [accountLabel, accountValue],
-        ].map(([itemLabel, value]) => (
+        ].map(([itemLabel, value], index) => (
           <div key={itemLabel} className="min-w-0">
             <p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={itemLabel}>
               {itemLabel}
             </p>
             <p
-              className={`mt-0.5 truncate text-xs font-medium ${mono ? "font-mono text-[11px]" : ""}`}
+              className={`mt-0.5 truncate text-xs font-medium ${mono ? "font-mono text-[11px]" : ""} ${matches === false && index === 0 ? "text-red-600 dark:text-red-400" : ""}`}
               title={value}
             >
               {value}

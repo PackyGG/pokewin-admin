@@ -109,7 +109,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-setups/pnl",
     summary:
-      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the linked creator's active deal performance and canonical site PnL: attributed deposits minus card withdrawals minus affiliate claims.",
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the linked creator's current Admin-owned PnL deal, exact house-cost breakdown, positive-PnL share, and provisional or frozen calculation state.",
     scopes: ["discord:creator:setup"],
   },
   {
@@ -171,7 +171,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-deal-approvals/jobs/claim",
     summary:
-      "Body { guildId, workerId, limit }. Leases creator deal proposals for durable delivery to each proposal's stored private creator chat channel.",
+      "Body { guildId, workerId, limit }. Leases fill, multiplier, P&L, reward, or leaderboard proposals for durable delivery to each proposal's stored private creator chat channel. Jobs expose the immutable proposal under deal, multiplier, pnl, rewards, or leaderboard according to kind.",
     scopes: ["discord:creator:setup"],
   },
   {

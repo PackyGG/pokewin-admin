@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { CheckCircle2, HandCoins, Plus, Repeat2 } from "lucide-react";
+import { CheckCircle2, HandCoins, Plus, Repeat2, Scale } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -24,6 +24,7 @@ import {
   submitCreatorDealApproval,
   type CreatorLeaderboardApprovalPayload,
   type CreatorMultiplierApprovalPayload,
+  type CreatorPnlApprovalPayload,
   type CreatorRewardApprovalPayload,
 } from "./deal-approval-actions";
 import {
@@ -32,6 +33,12 @@ import {
   parseMultiplierDealDraft,
   type MultiplierDealDraft,
 } from "./multiplier-deal-approval-fields";
+import {
+  buildPnlDealDraft,
+  parsePnlDealDraft,
+  PnlDealApprovalFields,
+  type PnlDealDraft,
+} from "./pnl-deal-approval-fields";
 import {
   buildRewardDraft,
   CreatorRewardDraftFields,
@@ -53,8 +60,8 @@ import {
   type DealPayload,
 } from "./deal-form-shared";
 
-type Step = "type" | "deal" | "multiplier" | "rewards" | "leaderboard" | "confirm" | "queued";
-type DealType = "fill" | "multiplier";
+type Step = "type" | "deal" | "multiplier" | "pnl" | "rewards" | "leaderboard" | "confirm" | "queued";
+type DealType = "fill" | "multiplier" | "pnl";
 
 export function NewDealDialog({ userId }: { userId: string }) {
   const initialDeal = useMemo(() => buildCreateDefaults(), []);
@@ -65,6 +72,8 @@ export function NewDealDialog({ userId }: { userId: string }) {
   const [dealPayload, setDealPayload] = useState<DealPayload | null>(null);
   const [multiplierDraft, setMultiplierDraft] = useState<MultiplierDealDraft>(() => buildMultiplierDealDraft());
   const [multiplierPayload, setMultiplierPayload] = useState<CreatorMultiplierApprovalPayload | null>(null);
+  const [pnlDraft, setPnlDraft] = useState<PnlDealDraft>(() => buildPnlDealDraft());
+  const [pnlPayload, setPnlPayload] = useState<CreatorPnlApprovalPayload | null>(null);
   const [availableCodes, setAvailableCodes] = useState<string[]>([]);
   const [rewardDraft, setRewardDraft] = useState<CreatorRewardDraft>(() =>
     buildRewardDraft([]),
@@ -111,6 +120,8 @@ export function NewDealDialog({ userId }: { userId: string }) {
     setDealPayload(null);
     setMultiplierDraft(buildMultiplierDealDraft());
     setMultiplierPayload(null);
+    setPnlDraft(buildPnlDealDraft());
+    setPnlPayload(null);
     setAvailableCodes([]);
     setRewardDraft(buildRewardDraft([]));
     setRewardPayload(null);
@@ -157,6 +168,16 @@ export function NewDealDialog({ userId }: { userId: string }) {
     setStep("confirm");
   }
 
+  function continueFromPnl() {
+    const parsed = parsePnlDealDraft(pnlDraft);
+    if ("error" in parsed) {
+      toast.error(parsed.error);
+      return;
+    }
+    setPnlPayload(parsed.payload);
+    setStep("rewards");
+  }
+
   function continueFromRewards() {
     const parsed = parseRewardDraft(rewardDraft);
     if ("error" in parsed) {
@@ -178,8 +199,14 @@ export function NewDealDialog({ userId }: { userId: string }) {
     // schema still requires ISO values before that derivation runs.
     setLeaderboardPayload({
       ...parsed.payload,
-      startsAt: dealPayload?.week_start_utc ?? parsed.payload.startsAt,
-      endsAt: dealPayload?.week_end_utc ?? parsed.payload.endsAt,
+      startsAt:
+        dealType === "pnl"
+          ? (pnlPayload?.frame_start_utc ?? parsed.payload.startsAt)
+          : (dealPayload?.week_start_utc ?? parsed.payload.startsAt),
+      endsAt:
+        dealType === "pnl"
+          ? (pnlPayload?.frame_end_utc ?? parsed.payload.endsAt)
+          : (dealPayload?.week_end_utc ?? parsed.payload.endsAt),
     });
     setStep("confirm");
   }
@@ -187,13 +214,15 @@ export function NewDealDialog({ userId }: { userId: string }) {
   function submit() {
     if (dealType === "fill" && !dealPayload) return;
     if (dealType === "multiplier" && !multiplierPayload) return;
+    if (dealType === "pnl" && !pnlPayload) return;
     startTransition(async () => {
       const result = await submitCreatorDealApproval({
         creatorUserId: userId,
         dealPayload: dealType === "fill" ? dealPayload : null,
         multiplierPayload: dealType === "multiplier" ? multiplierPayload : null,
-        rewardPayload: dealType === "fill" ? rewardPayload : null,
-        leaderboardPayload: dealType === "fill" ? leaderboardPayload : null,
+        pnlPayload: dealType === "pnl" ? pnlPayload : null,
+        rewardPayload: dealType === "fill" || dealType === "pnl" ? rewardPayload : null,
+        leaderboardPayload: dealType === "fill" || dealType === "pnl" ? leaderboardPayload : null,
       });
       if (!result.success) {
         toast.error(result.error);
@@ -221,17 +250,20 @@ export function NewDealDialog({ userId }: { userId: string }) {
             {step === "type" && "Choose deal type"}
             {step === "deal" && "New creator deal"}
             {step === "multiplier" && "New multiplier deal"}
+            {step === "pnl" && "New PnL deal"}
             {step === "rewards" && "Creator reward program"}
             {step === "leaderboard" && "Affiliate leaderboard"}
             {step === "confirm" && "Confirm approval request"}
             {step === "queued" && "Sent for creator approval"}
           </DialogTitle>
           <DialogDescription>
-            {step === "type" && "Send either a fill deal or a multiplier deal through the creator's Discord approval flow."}
+            {step === "type" && "Send a fill, multiplier, or frame-based PnL deal through the creator's Discord approval flow."}
             {step === "deal" &&
               "Select the start date and deal length."}
             {step === "multiplier" &&
               "Set the deposit, multiplier, wagering, and activity requirements."}
+            {step === "pnl" &&
+              "Set the frame, positive-profit share, content funding, tips, and sponsorship limits."}
             {step === "rewards" &&
               "Optional. Add rewards now, or skip this step and submit only the deal."}
             {step === "leaderboard" &&
@@ -244,7 +276,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
         </DialogHeader>
 
         {step === "type" && (
-          <div className="grid gap-3 sm:grid-cols-2">
+          <div className="grid gap-3 sm:grid-cols-3">
             <button type="button" className="rounded-xl border p-5 text-left transition-colors hover:border-emerald-500 hover:bg-emerald-500/5" onClick={() => { setDealType("fill"); setStep("deal"); }}>
               <HandCoins className="mb-3 size-5 text-emerald-600" />
               <div className="font-semibold">Fill deal</div>
@@ -254,6 +286,11 @@ export function NewDealDialog({ userId }: { userId: string }) {
               <Repeat2 className="mb-3 size-5 text-violet-600" />
               <div className="font-semibold">Multiplier deal</div>
               <p className="mt-1 text-sm text-muted-foreground">Deposit-based balance multiplier with wagering, payout, and stream activity requirements.</p>
+            </button>
+            <button type="button" className="rounded-xl border p-5 text-left transition-colors hover:border-pink-500 hover:bg-pink-500/5" onClick={() => { setDealType("pnl"); setStep("pnl"); }}>
+              <Scale className="mb-3 size-5 text-pink-600" />
+              <div className="font-semibold">PnL deal</div>
+              <p className="mt-1 text-sm text-muted-foreground">Creator receives a percentage of positive realized PnL over one fixed deal frame.</p>
             </button>
           </div>
         )}
@@ -270,6 +307,14 @@ export function NewDealDialog({ userId }: { userId: string }) {
 
         {step === "multiplier" && (
           <MultiplierDealApprovalFields draft={multiplierDraft} onChange={setMultiplierDraft} disabled={pending} />
+        )}
+
+        {step === "pnl" && (
+          <PnlDealApprovalFields
+            draft={pnlDraft}
+            onChange={setPnlDraft}
+            disabled={pending}
+          />
         )}
 
         {step === "rewards" && (
@@ -353,6 +398,54 @@ export function NewDealDialog({ userId }: { userId: string }) {
           </div>
         )}
 
+        {step === "confirm" && dealType === "pnl" && pnlPayload && (
+          <div className="space-y-4">
+            <ReviewSection title="PnL deal">
+              <ReviewRow label="Frame" value={`${formatDate(pnlPayload.frame_start_utc, "UTC")} → ${formatDate(pnlPayload.frame_end_utc, "UTC")}`} />
+              <ReviewRow label="Creator share" value={`${pnlPayload.positive_pnl_share_bps / 100}% of positive realized PnL`} />
+              <ReviewRow label="Negative PnL" value="Creator payout resets to $0 for this frame" />
+              {pnlPayload.funding.type === "non_withdrawable_fills" ? (
+                <>
+                  <ReviewRow label="Funding" value={`${pnlPayload.funding.fills_allowed} × ${formatCurrency(pnlPayload.funding.per_fill_amount_usd)} non-withdrawable fills`} />
+                  <ReviewRow label="Fill cooldown" value={`${pnlPayload.funding.cooldown_minutes} minutes`} />
+                </>
+              ) : pnlPayload.funding.type === "new_multiplier" ? (
+                <>
+                  <ReviewRow label="Funding" value={`${pnlPayload.funding.multiplier_bps / 10_000}x multiplier on ${formatCurrency(pnlPayload.funding.required_deposit_usd)} minimum deposit`} />
+                  <ReviewRow label="Real-money attribution" value={`${pnlPayload.funding.withdrawable_bps / 100}% of multiplier-session activity`} />
+                  <ReviewRow label="Wager requirement" value={`${pnlPayload.funding.wager_requirement_bps / 100}%`} />
+                </>
+              ) : (
+                <ReviewRow label="Funding" value={`Linked multiplier ${pnlPayload.funding.multiplier_deal_id}`} />
+              )}
+              <ReviewRow label="Tips" value={`${formatCurrency(pnlPayload.max_tip_per_user_usd)} per user · ${formatCurrency(pnlPayload.max_tip_per_stream_usd)} per stream`} />
+              <ReviewRow label="Sponsorships" value={`${formatCurrency(pnlPayload.max_sponsored_battle_usd)} per battle · ${formatCurrency(pnlPayload.max_sponsorship_per_stream_usd)} per stream`} />
+            </ReviewSection>
+            <ReviewSection title="Rewards">
+              {rewardPayload ? (
+                <>
+                  <ReviewRow label="Program" value={rewardPayload.name} />
+                  <ReviewRow label="Codes" value={rewardPayload.codes.join(", ")} />
+                  <ReviewRow label="Runs through" value={formatDate(pnlPayload.frame_end_utc, "UTC")} />
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Skipped — no reward program will be created.</p>
+              )}
+            </ReviewSection>
+            <ReviewSection title="Leaderboard">
+              {leaderboardPayload ? (
+                <>
+                  <ReviewRow label="Title" value={leaderboardPayload.title} />
+                  <ReviewRow label="Frame" value={`${formatDate(pnlPayload.frame_start_utc, "UTC")} → ${formatDate(pnlPayload.frame_end_utc, "UTC")}`} />
+                  <ReviewRow label="Prize pool" value={`${formatCurrency(leaderboardPayload.siteBonusUsd)} site-funded · ${leaderboardPayload.sponsoredPct}% house share`} />
+                </>
+              ) : (
+                <p className="text-sm text-muted-foreground">Skipped — no leaderboard will be created.</p>
+              )}
+            </ReviewSection>
+          </div>
+        )}
+
         {step === "queued" && queued && (
           <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
             <div className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
@@ -386,9 +479,15 @@ export function NewDealDialog({ userId }: { userId: string }) {
               <Button type="button" onClick={continueFromMultiplier} disabled={pending}>Review</Button>
             </>
           )}
+          {step === "pnl" && (
+            <>
+              <Button type="button" variant="outline" onClick={() => setStep("type")} disabled={pending}>Back</Button>
+              <Button type="button" onClick={continueFromPnl} disabled={pending}>Next</Button>
+            </>
+          )}
           {step === "rewards" && (
             <>
-              <Button type="button" variant="outline" onClick={() => setStep("deal")} disabled={pending}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep(dealType === "pnl" ? "pnl" : "deal")} disabled={pending}>Back</Button>
               <Button type="button" variant="ghost" onClick={() => { setRewardPayload(null); setStep("leaderboard"); }} disabled={pending}>Skip rewards</Button>
               <Button type="button" onClick={continueFromRewards} disabled={pending || availableCodes.length === 0}>Next</Button>
             </>

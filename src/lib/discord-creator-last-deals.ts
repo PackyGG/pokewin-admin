@@ -22,7 +22,10 @@ import {
   requireLinkedSetupActor,
 } from "@/lib/discord-creator-setups";
 import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
-import { getFrameAffiliatePnlByUser } from "@/app/(creator-hub)/creator-hub/profitability/_queries/frame-affiliate-pnl-by-user";
+import {
+  computeCreatorPnlPreview,
+  listAdminCreatorPnlDeals,
+} from "@/lib/creator-pnl-settlement";
 
 const DEAL_LIMIT = 2;
 const LEADERBOARD_PAGE_SIZE = 100;
@@ -92,16 +95,27 @@ export type CreatorCurrentDealPnl = {
   creator: CreatorLastDeals["creator"];
   deal: null | {
     dealId: string;
+    status: "active" | "settlement_pending" | "calculated" | "crediting";
     startedAt: string;
     endedAt: string;
-    signups: number;
-    firstTimeDepositors: number;
-    depositsUsd: number;
-    weightedWagerUsd: number;
+    positivePnlShareBps: number;
+    fundingMode: "non_withdrawable_fills" | "linked_multiplier" | "new_multiplier";
+    calculationState: "provisional" | "frozen";
     sitePnlUsd: number;
-    attributedDepositsUsd: number;
-    cardWithdrawalsUsd: number;
+    creatorShareUsd: number;
+    creditedAmountUsd: number | null;
+    affiliatesMadeUsUsd: number;
+    affiliateDepositsUsd: number;
+    affiliateWithdrawalsUsd: number;
     affiliateClaimsUsd: number;
+    creatorOwnGameplayPnlUsd: number;
+    leaderboardCostUsd: number;
+    fillCashoutCostUsd: number;
+    tipCostUsd: number;
+    sponsorshipCostUsd: number;
+    rewardProgramCostUsd: number;
+    houseCostUsd: number;
+    limitations: string[];
   };
 };
 
@@ -486,47 +500,94 @@ export async function getCreatorLastDeals(input: {
   };
 }
 
-/** Current active deal performance plus the dashboard's canonical site PnL. */
+/** Current Admin-owned PnL deal plus its canonical live or frozen calculation. */
 export async function getCreatorCurrentDealPnl(input: {
   guildId: string;
   categoryId: string;
   channelId: string;
   actorDiscordUserId: string;
 }): Promise<CreatorCurrentDealPnl> {
-  const lastDeals = await getCreatorLastDeals(input);
-  const activeDeal = lastDeals.deals.find((deal) => deal.status === "active") ?? null;
-  if (!activeDeal) {
+  const setup = await requireLinkedSetupActor(input, {
+    allowDashboardOperator: true,
+  });
+  if (
+    input.actorDiscordUserId !== setup.creator_discord_user_id
+    && !isDiscordDashboardOperator(input.actorDiscordUserId)
+  ) {
+    throw new CreatorSetupError(
+      403,
+      "setup_actor_forbidden",
+      "Only this creator or an authorized dashboard operator can view deal PnL.",
+    );
+  }
+
+  const creator = await requireActiveCreator(setup.creator_user_id);
+  const deals = await listAdminCreatorPnlDeals(creator.id);
+  const current = deals.find((deal) => deal.status === "active")
+    ?? deals.find((deal) => deal.status === "settlement_pending")
+    ?? deals.find((deal) => deal.status === "calculated")
+    ?? deals.find((deal) => deal.status === "crediting")
+    ?? null;
+  if (!current) {
     return {
-      generatedAt: lastDeals.generatedAt,
-      creator: lastDeals.creator,
+      generatedAt: new Date().toISOString(),
+      creator: { userId: creator.id, username: creator.username },
       deal: null,
     };
   }
 
-  const pnl = (await getFrameAffiliatePnlByUser([{
-    userId: lastDeals.creator.userId,
-    startIso: activeDeal.startedAt,
-    endIso: activeDeal.endedAt,
-  }])).get(lastDeals.creator.userId);
-  if (!pnl) {
-    throw new Error("Current creator deal PnL query returned no row");
-  }
+  const frozen = current.settlement_breakdown;
+  const pnl = frozen ?? await computeCreatorPnlPreview(current, { allowOpenFrame: true });
+  const status = (() => {
+    switch (current.status) {
+      case "active":
+      case "settlement_pending":
+      case "calculated":
+      case "crediting":
+        return current.status;
+      default:
+        throw new Error(`Unexpected current PnL deal status: ${current.status}`);
+    }
+  })();
+  const creatorShareUsd = current.creator_share_usd === null
+    ? money(Math.max(0, pnl.frame_site_pnl_usd) * current.positive_pnl_share_bps / 10_000)
+    : money(current.creator_share_usd);
+  const houseCostUsd = money(
+    pnl.leaderboard_house_cost_usd
+    + pnl.fill_cashout_cost_usd
+    + pnl.tip_cost_usd
+    + pnl.sponsorship_cost_usd
+    + pnl.reward_program_cost_usd,
+  );
 
   return {
     generatedAt: new Date().toISOString(),
-    creator: lastDeals.creator,
+    creator: { userId: creator.id, username: creator.username },
     deal: {
-      dealId: activeDeal.dealId,
-      startedAt: activeDeal.startedAt,
-      endedAt: activeDeal.endedAt,
-      signups: activeDeal.signups,
-      firstTimeDepositors: activeDeal.firstTimeDepositors,
-      depositsUsd: activeDeal.depositsUsd,
-      weightedWagerUsd: activeDeal.weightedWagerUsd,
-      sitePnlUsd: money(pnl.affiliatesMadeUs),
-      attributedDepositsUsd: money(pnl.deposits),
-      cardWithdrawalsUsd: money(pnl.cardWithdrawals),
-      affiliateClaimsUsd: money(pnl.affiliateClaims),
+      dealId: current.id,
+      status,
+      startedAt: current.frame_start_utc,
+      endedAt: current.frame_end_utc,
+      positivePnlShareBps: current.positive_pnl_share_bps,
+      fundingMode: current.funding_mode,
+      calculationState: frozen ? "frozen" : "provisional",
+      sitePnlUsd: money(pnl.frame_site_pnl_usd),
+      creatorShareUsd,
+      creditedAmountUsd: current.credited_amount_usd === null
+        ? null
+        : money(current.credited_amount_usd),
+      affiliatesMadeUsUsd: money(pnl.affiliate_contribution_usd),
+      affiliateDepositsUsd: money(pnl.affiliate_deposits_usd),
+      affiliateWithdrawalsUsd: money(pnl.affiliate_withdrawals_usd),
+      affiliateClaimsUsd: money(pnl.affiliate_claims_usd),
+      creatorOwnGameplayPnlUsd: money(pnl.creator_own_gameplay_pnl_usd),
+      leaderboardCostUsd: money(pnl.leaderboard_house_cost_usd),
+      fillCashoutCostUsd: money(pnl.fill_cashout_cost_usd),
+      tipCostUsd: money(pnl.tip_cost_usd),
+      sponsorshipCostUsd: money(pnl.sponsorship_cost_usd),
+      rewardProgramCostUsd: money(pnl.reward_program_cost_usd),
+      houseCostUsd,
+      limitations: pnl.limitations,
     },
   };
 }
