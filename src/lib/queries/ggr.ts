@@ -491,6 +491,9 @@ const EMPTY_GAMING_LEGS: GamingLegs = {
       ddPayout: 0,
       ddBets: 0,
       organicWager: 0,
+      pnlCreatorWager: 0,
+      pnlCreatorPayout: 0,
+      pnlCreatorBets: 0,
 };
 
 /** Neutral all-zero fallback for the reward cost. */
@@ -619,7 +622,8 @@ export async function getGgrPageData(
   // subtracted out into its own row, keeping the merged win + upgrader
   // summing to `gamingPayout` exactly (inventory + ledger-legs + upgrader =
   // headline gamingPayout).
-  const ledgerGamingPayout = legs.battleRefund - upgraderPayout;
+  const ledgerGamingPayout = legs.battleRefund - upgraderPayout
+    - legs.pnlCreatorPayout;
   const gamingLegs: GgrGamingLeg[] = [
     {
       label: "Pack & battle wins",
@@ -628,6 +632,12 @@ export async function getGgrPageData(
   ];
   if (upgraderPayout > 0) {
     gamingLegs.push({ label: "Upgrader payout", total: upgraderPayout });
+  }
+  if (legs.pnlCreatorPayout > 0) {
+    gamingLegs.push({
+      label: "PnL creator payout (real-money share)",
+      total: legs.pnlCreatorPayout,
+    });
   }
 
   return {

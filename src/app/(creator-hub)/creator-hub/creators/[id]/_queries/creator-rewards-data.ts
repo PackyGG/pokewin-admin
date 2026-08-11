@@ -174,7 +174,10 @@ export async function getCreatorRewardsDetail(
     approvalRequests: approvalRequests.map((request) => ({
       id: request.id,
       status: request.status,
+      requestKind: request.request_kind,
       agreementVersion: request.agreement_version,
+      hasPnlDeal: request.pnl_payload != null,
+      pnlPayload: request.pnl_payload,
       hasRewardProgram: request.reward_payload != null,
       deliveryAttemptCount: request.delivery_attempt_count,
       provisioningAttemptCount: request.provisioning_attempt_count,
@@ -183,6 +186,8 @@ export async function getCreatorRewardsDetail(
       declinedAt: request.declined_at,
       completedAt: request.completed_at,
       backendDealId: request.backend_deal_id,
+      backendPnlDealId:
+        request.request_kind === "pnl_deal" ? request.backend_deal_id : null,
       rewardProgramId: request.reward_program_id,
       lastErrorStep: request.last_error_step,
       lastErrorCode: request.last_error_code,

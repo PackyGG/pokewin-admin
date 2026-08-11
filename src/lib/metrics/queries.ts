@@ -7,6 +7,10 @@ import { withTiming } from "@/lib/observability/query-timings";
 import { blacklistNotInClause } from "@/lib/queries/_blacklist";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import {
+  getWeightedCreatorGameplayByDay,
+  getWeightedCreatorGameplayForWindow,
+} from "@/lib/creator-pnl-settlement";
+import {
   WAGER_TYPES_SQL,
   GAMING_PAYOUT_TYPES_SQL,
   REWARD_PAYOUT_TYPES_SQL,
@@ -210,6 +214,12 @@ export type GamingLegs = {
   ddBets: number;
   /** Canonical wager from customers without a creator-code referrer. */
   organicWager: number;
+  /** Real-money 1/X slice of creator gameplay inside active PnL deals. */
+  pnlCreatorWager: number;
+  /** Matching weighted payout slice; already included in `battleRefund`. */
+  pnlCreatorPayout: number;
+  /** Creator PnL sessions with a positive frozen real-money share. */
+  pnlCreatorBets: number;
 };
 
 /**
@@ -250,7 +260,8 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
     };
     type InvRow = { inv_payout: string };
 
-    const [ledger, inv, upg, dd] = await Promise.all([
+    const metricsEnd = new Date().toISOString();
+    const [ledger, inv, upg, dd, pnlCreator] = await Promise.all([
       queryRows<LedgerRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -323,6 +334,10 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       // per-row session-window exclusion is redundant for the tiny DD
       // table). `null` on a pre-DD DB → contributes 0.
       doubleDownLegs(window),
+      getWeightedCreatorGameplayForWindow({
+        startIso: since?.toISOString(),
+        endIso: metricsEnd,
+      }),
     ]);
 
     const ledgerWager = toNumber(ledger[0]?.wager);
@@ -353,9 +368,12 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       // breakdown transparent (a caller can subtract `ddPayout` to see the
       // pre-DD number). Losing DD rounds forfeit the stake: no `ddPayout`
       // row on a loss → the whole DD wager stays as GGR contribution.
-      wager: ledgerWager + upgraderWager + ddWager,
-      battleRefund: ledgerGamingPayout + upgraderPayout,
-      bets: ledgerBets + upgraderBets + ddBets,
+      wager: ledgerWager + upgraderWager + ddWager
+        + pnlCreator.weightedWagerUsd,
+      battleRefund: ledgerGamingPayout + upgraderPayout
+        + pnlCreator.weightedPayoutUsd,
+      bets: ledgerBets + upgraderBets + ddBets
+        + pnlCreator.weightedBetCount,
       inventoryPayout,
       // Upgrader-only slices (already included above; do not re-add).
       upgraderWager,
@@ -371,6 +389,9 @@ export async function getGamingLegs(window: MetricWindow): Promise<GamingLegs> {
       ddBets,
       organicWager:
         ledgerOrganicWager + upgraderOrganicWager + ddOrganicWager,
+      pnlCreatorWager: pnlCreator.weightedWagerUsd,
+      pnlCreatorPayout: pnlCreator.weightedPayoutUsd,
+      pnlCreatorBets: pnlCreator.weightedBetCount,
     };
   });
 }
@@ -560,7 +581,11 @@ export async function getRewardCost(window: MetricWindow): Promise<RewardCost> {
          COALESCE(SUM(CASE WHEN type::text = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
        FROM ledger_transactions
        WHERE status = 'completed'
-         AND user_id IN ${scope.userScopeSql}
+         -- PnL-share payouts are booked to the creator account itself. Keep
+         -- every other reward on the canonical customer scope, but include
+         -- this one realized house expense explicitly.
+         AND (user_id IN ${scope.userScopeSql}
+              OR type::text = 'creator_pnl_share_payout')
          AND ${scope.notInCreatorSession("user_id", "created_at")}
          ${sinceClause("created_at", since)}`,
     );
@@ -889,7 +914,8 @@ export async function getDailyGamingMetrics(
     type UpgDayRow = { date: string; upg_wager: string; upg_payout: string };
     type DdDayRow = { date: string; dd_wager: string; dd_payout: string };
 
-    const [ledgerRows, invRows, upgRows, ddRows] = await Promise.all([
+    const dailyEnd = new Date().toISOString();
+    const [ledgerRows, invRows, upgRows, ddRows, pnlCreatorRows] = await Promise.all([
       queryRows<LedgerDayRow[]>(db,
         `WITH ${scope.sessionWindowsCte}
          SELECT
@@ -927,7 +953,8 @@ export async function getDailyGamingMetrics(
            COALESCE(SUM(CASE WHEN type::text = 'rain_tip' THEN ABS(amount::numeric) ELSE 0 END), 0)::text AS rain_tip
          FROM ledger_transactions
          WHERE status = 'completed'
-           AND user_id IN ${scope.userScopeSql}
+           AND (user_id IN ${scope.userScopeSql}
+                OR type::text = 'creator_pnl_share_payout')
            AND ${scope.notInCreatorSession("user_id", "created_at")}
            ${sinceClause("created_at", since)}
          GROUP BY DATE(created_at)`,
@@ -987,6 +1014,10 @@ export async function getDailyGamingMetrics(
              GROUP BY DATE(o.resolved_at)`,
           )
         : Promise.resolve([] as DdDayRow[]),
+      getWeightedCreatorGameplayByDay({
+        startIso: since?.toISOString(),
+        endIso: dailyEnd,
+      }),
     ]);
 
     // Merge the day-keyed sets. A day can appear in any (wager-only days,
@@ -1050,6 +1081,16 @@ export async function getDailyGamingMetrics(
       e.wager += toNumber(r.dd_wager);
       e.ddPayout += toNumber(r.dd_payout);
       byDate.set(key, e);
+    }
+    // PnL creators normally remain outside the customer scope. Their own
+    // multiplier-funded play contributes only the frozen real-money 1/X
+    // share, on both wager and payout sides; fill-funded sessions carry 0
+    // bps and therefore add nothing.
+    for (const r of pnlCreatorRows) {
+      const e = byDate.get(r.date) ?? blank();
+      e.wager += r.weightedWagerUsd;
+      e.battleRefund += r.weightedPayoutUsd;
+      byDate.set(r.date, e);
     }
 
     return [...byDate.entries()]

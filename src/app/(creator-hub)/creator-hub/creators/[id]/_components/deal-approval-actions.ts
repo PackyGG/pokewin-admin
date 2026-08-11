@@ -52,6 +52,41 @@ export type CreatorMultiplierApprovalPayload = {
   auto_renew: boolean;
 };
 
+export type CreatorPnlApprovalPayload = {
+  frame_start_utc: string;
+  frame_end_utc: string;
+  positive_pnl_share_bps: number;
+  funding:
+    | {
+        type: "non_withdrawable_fills";
+        fills_allowed: number;
+        per_fill_amount_usd: number;
+        cooldown_minutes: number;
+      }
+    | {
+        type: "linked_multiplier";
+        multiplier_deal_id: string;
+      }
+    | {
+        type: "new_multiplier";
+        required_deposit_usd: number;
+        multiplier_bps: number;
+        withdrawable_bps: number;
+        wager_requirement_bps: number;
+        max_total_wager_usd: number | null;
+        max_payout_usd: number | null;
+        min_session_duration_seconds: number;
+        min_bet_count: number;
+        min_wager_to_funding_ratio_bps: number;
+        kick_vod_required: boolean;
+        auto_renew: false;
+      };
+  max_tip_per_stream_usd: number;
+  max_tip_per_user_usd: number;
+  max_sponsored_battle_usd: number;
+  max_sponsorship_per_stream_usd: number;
+};
+
 export async function loadCreatorCodesForApproval(
   creatorUserId: string,
 ): Promise<string[]> {
@@ -88,6 +123,7 @@ export async function submitCreatorDealApproval(input: {
   creatorUserId: string;
   dealPayload: DealPayload | null;
   multiplierPayload?: CreatorMultiplierApprovalPayload | null;
+  pnlPayload?: CreatorPnlApprovalPayload | null;
   rewardPayload: CreatorRewardApprovalPayload | null;
   leaderboardPayload?: CreatorLeaderboardApprovalPayload | null;
 }): Promise<
@@ -96,7 +132,12 @@ export async function submitCreatorDealApproval(input: {
       requestId: string;
       status: string;
       deliveryQueued: boolean;
-      kind: "deal" | "multiplier_deal" | "leaderboard_only" | "rewards_only";
+      kind:
+        | "deal"
+        | "multiplier_deal"
+        | "pnl_deal"
+        | "leaderboard_only"
+        | "rewards_only";
     }
   | { success: false; error: string }
 > {

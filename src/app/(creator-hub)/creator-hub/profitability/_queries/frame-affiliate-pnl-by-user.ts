@@ -17,7 +17,7 @@ import type { FrameWindow } from "./frame-wager-by-user";
 
 /**
  * "Affiliates made us" per creator, summed strictly INSIDE each creator's
- * own deal frame `[start, end]` — the SAME coverage-attributed cohort
+ * own deal frame `[start, end)` — the SAME coverage-attributed cohort
  * methodology the creator-detail "Creator Net (P&L)" box uses
  * (`getCreatorPnl` in creators-pnl.ts), only windowed to the deal frame
  * instead of the fixed 24h/…/365d windows.
@@ -46,7 +46,7 @@ import type { FrameWindow } from "./frame-wager-by-user";
  * card withdrawn during the deal still attributes even when the producing
  * wager / first deposit predates the frame.
  *
- * One batched scan covers the whole roster: per-creator `[start, end]`
+ * One batched scan covers the whole roster: per-creator `[start, end)`
  * bounds arrive via a VALUES list (same shape as `getFrameWagerByUser`).
  * It is the heaviest read on the Profitability page (the correlated
  * coverage subquery runs once per deposit row across the widest window), so
@@ -72,13 +72,11 @@ type FrameAffiliatePnl = {
   affiliateClaims: number;
 };
 
-const cachedFramePnl = (
+async function readFramePnl(
   env: DbEnv,
   frames: FrameWindow[],
   blacklistIds: string[],
-) =>
-  unstable_cache(
-    async (): Promise<[string, FrameAffiliatePnl][]> => {
+): Promise<[string, FrameAffiliatePnl][]> {
       const db = readDrizzleForEnv(env);
 
       const tuples: string[] = [];
@@ -126,7 +124,7 @@ const cachedFramePnl = (
                    (SELECT min_start FROM bounds),
                    NOW() - INTERVAL '${LIFETIME_LOOKBACK_DAYS} days'
                  )
-             AND lt.created_at <= (SELECT max_end FROM bounds)
+             AND lt.created_at < (SELECT max_end FROM bounds)
         ),
         -- Deposits INSIDE the frame, staff/creator + blacklist excluded,
         -- creator's own deposits excluded (mirrors attr_dep).
@@ -137,7 +135,7 @@ const cachedFramePnl = (
             JOIN frames f
               ON f.cid = dr.creator_id
              AND dr.created_at >= f.start_ts
-             AND dr.created_at <= f.end_ts
+             AND dr.created_at < f.end_ts
            WHERE dr.creator_id IS NOT NULL
              AND dr.user_id <> dr.creator_id
              AND dr.role NOT IN ('admin', 'support', 'creator')${blacklistDepAnd}
@@ -173,7 +171,7 @@ const cachedFramePnl = (
             FROM ${WITHDRAWN_UNITS_SQL} wu
             JOIN frames f
               ON wu.withdrawn_at >= f.start_ts
-             AND wu.withdrawn_at <= f.end_ts
+             AND wu.withdrawn_at < f.end_ts
             JOIN deptors dp ON dp.creator_id = f.cid AND dp.user_id = wu.user_id
             JOIN sess s ON s.creator_id = f.cid AND s.game_session_id = wu.source_id
            GROUP BY f.cid
@@ -188,7 +186,7 @@ const cachedFramePnl = (
             JOIN frames f
               ON f.cid = lt.user_id
              AND lt.created_at >= f.start_ts
-             AND lt.created_at <= f.end_ts
+             AND lt.created_at < f.end_ts
            WHERE lt.type::text = 'affiliate_claim'
              AND lt.status = 'completed'
            GROUP BY f.cid
@@ -230,9 +228,17 @@ const cachedFramePnl = (
           },
         ] satisfies [string, FrameAffiliatePnl];
       });
-    },
+}
+
+const cachedFramePnl = (
+  env: DbEnv,
+  frames: FrameWindow[],
+  blacklistIds: string[],
+) =>
+  unstable_cache(
+    () => readFramePnl(env, frames, blacklistIds),
     [
-      "profitability-frame-affiliate-pnl-v2",
+      "profitability-frame-affiliate-pnl-v3-half-open",
       env,
       ...frames.map((f) => `${f.userId}:${f.startIso}:${f.endIso}`),
       ...blacklistIds,
@@ -248,4 +254,14 @@ export async function getFrameAffiliatePnlByUser(
   const blacklistIds = await getExcludedUserIds();
   const entries = await cachedFramePnl(env, frames, blacklistIds)();
   return new Map(entries);
+}
+
+/** Settlement-grade read: bypasses the profitability UI's 180s cache. */
+export async function getFrameAffiliatePnlByUserUncached(
+  frames: FrameWindow[],
+): Promise<Map<string, FrameAffiliatePnl>> {
+  if (frames.length === 0) return new Map();
+  const env = await readDbEnv();
+  const blacklistIds = await getExcludedUserIds();
+  return new Map(await readFramePnl(env, frames, blacklistIds));
 }

@@ -7,6 +7,10 @@
     {
       "path": "/api/cron/antifraud-containment-retry",
       "schedule": "*/5 * * * *"
+    },
+    {
+      "path": "/api/cron/creator-pnl-settlement",
+      "schedule": "*/5 * * * *"
     }
   ]
 }

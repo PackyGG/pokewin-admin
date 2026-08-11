@@ -121,6 +121,7 @@ export type LedgerTransactionType =
   | "creator_multiplier_settlement_deposit_return"
   | "creator_multiplier_forfeiture"
   | "creator_lb_deposit"
+  | "creator_pnl_share_payout"
   | "upgrader_bet"
   | "upgrader_payout"
   // Keno (prod enum, verified read-only 2026-07-22). UNLIKE upgrader, keno is
@@ -320,6 +321,10 @@ export const REWARD_PAYOUT_TYPES = [
   "balance_reward_claim",
   "affiliate_claim",
   "affiliate_leaderboard_prize",
+  // Final positive-PnL share paid to a creator after an immutable frame is
+  // settled. Unlike creator funding/escrow legs, this is a realized house
+  // expense and therefore reduces NGR.
+  "creator_pnl_share_payout",
 ] as const satisfies readonly LedgerTransactionType[];
 
 // ─── RESIDUAL ────────────────────────────────────────────────────────

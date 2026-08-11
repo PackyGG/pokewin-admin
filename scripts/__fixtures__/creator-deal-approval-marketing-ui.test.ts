@@ -5,15 +5,18 @@ import test from "node:test";
 const read = (path: string) => readFileSync(path, "utf8");
 const detail = "src/app/(creator-hub)/creator-hub/creators/[id]";
 
-test("new creator deal chooses fill or multiplier and never creates before approval", () => {
+test("new creator deal chooses fill, multiplier, or P&L and never creates before approval", () => {
   const dialog = read(`${detail}/_components/new-deal-dialog.tsx`);
   const action = read(`${detail}/_components/deal-approval-actions.ts`);
   const fields = read(`${detail}/_components/deal-form-shared.tsx`);
+  const pnlFields = read(`${detail}/_components/pnl-deal-approval-fields.tsx`);
 
-  assert.match(dialog, /"type" \| "deal" \| "multiplier" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
+  assert.match(dialog, /"type" \| "deal" \| "multiplier" \| "pnl" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
   assert.match(dialog, /Fill deal/);
   assert.match(dialog, /Multiplier deal/);
+  assert.match(dialog, /PnL deal/);
   assert.match(dialog, /multiplierPayload/);
+  assert.match(dialog, /pnlPayload/);
   assert.match(dialog, /Skip rewards/);
   assert.match(dialog, /Skip leaderboard/);
   assert.match(dialog, /leaderboardPayload/);
@@ -27,6 +30,13 @@ test("new creator deal chooses fill or multiplier and never creates before appro
   assert.doesNotMatch(read(`${detail}/_components/creator-reward-draft-fields.tsx`), /creatorLabel/);
   assert.match(action, /createCreatorDealApprovalRequest/);
   assert.doesNotMatch(action, /createCreatorDeal\(|createCreatorRewardProgram\(/);
+
+  assert.match(pnlFields, /positive_pnl_share_bps/);
+  assert.match(pnlFields, /"non_withdrawable_fills"/);
+  assert.match(pnlFields, /"new_multiplier"/);
+  assert.match(pnlFields, /auto_renew: false/);
+  assert.match(dialog, /dealType === "fill" \|\| dealType === "pnl" \? rewardPayload : null/);
+  assert.match(dialog, /dealType === "fill" \|\| dealType === "pnl" \? leaderboardPayload : null/);
 
   assert.match(fields, /type=\{mode === "create" \? "date" : "datetime-local"\}/);
   assert.match(fields, /T00:00:00/);

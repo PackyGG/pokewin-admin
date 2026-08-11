@@ -171,7 +171,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-deal-approvals/jobs/claim",
     summary:
-      "Body { guildId, workerId, limit }. Leases creator deal proposals for durable delivery to each proposal's stored private creator chat channel.",
+      "Body { guildId, workerId, limit }. Leases fill, multiplier, P&L, reward, or leaderboard proposals for durable delivery to each proposal's stored private creator chat channel. Jobs expose the immutable proposal under deal, multiplier, pnl, rewards, or leaderboard according to kind.",
     scopes: ["discord:creator:setup"],
   },
   {
