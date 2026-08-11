@@ -10,6 +10,7 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { queryCreatorAnalytics } from "@/lib/creator-analytics-db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
+import { LB_HOUSE_SHARE } from "@/lib/deal-economics";
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
@@ -54,6 +55,15 @@ export type CreatorLastDeals = {
       tipsUsd: number;
       sponsoredBattlesUsd: number;
     };
+    terms: {
+      fillAmountsUsd: number[];
+      keepPercentages: number[];
+      withdrawalCaps7DayUsd: number[];
+      tipAllowancesPerStreamUsd: number[];
+      tipAllowancesPerUserUsd: number[];
+      sponsorshipAllowancesPerStreamUsd: number[];
+      sponsorshipAllowancesPerBattleUsd: number[];
+    };
     leaderboards: Array<{
       leaderboardId: string;
       title: string;
@@ -63,6 +73,7 @@ export type CreatorLastDeals = {
       totalPrizeUsd: number;
       totalEntries: number;
       weightedWagerUsd: number;
+      packyPaidPercentage: number;
       topEntries: Array<{
         rank: number;
         username: string;
@@ -78,6 +89,13 @@ type DealRow = {
   status: LastDealStatus;
   week_start_utc: string;
   week_end_utc: string;
+  per_fill_amount_usd: string;
+  conversion_rate_bps: number;
+  max_tip_per_stream_usd: string;
+  max_tip_per_user_usd: string;
+  max_sponsored_battle_usd: string;
+  max_sponsorship_per_stream_usd: string;
+  total_withdraw_cap_usd: string | null;
 };
 
 type DealMetricsRow = {
@@ -97,6 +115,9 @@ type DealMetricsRow = {
 
 const money = (value: unknown): number =>
   Math.round(toNumber(value) * 100) / 100;
+
+const uniqueNumbers = (values: number[]): number[] =>
+  Array.from(new Set(values.filter(Number.isFinite))).sort((a, b) => a - b);
 
 function overlaps(
   leftStart: string,
@@ -225,6 +246,13 @@ export async function getCreatorLastDeals(input: {
       status: creator_deals.status,
       week_start_utc: creator_deals.week_start_utc,
       week_end_utc: creator_deals.week_end_utc,
+      per_fill_amount_usd: creator_deals.per_fill_amount_usd,
+      conversion_rate_bps: creator_deals.conversion_rate_bps,
+      max_tip_per_stream_usd: creator_deals.max_tip_per_stream_usd,
+      max_tip_per_user_usd: creator_deals.max_tip_per_user_usd,
+      max_sponsored_battle_usd: creator_deals.max_sponsored_battle_usd,
+      max_sponsorship_per_stream_usd: creator_deals.max_sponsorship_per_stream_usd,
+      total_withdraw_cap_usd: creator_deals.total_withdraw_cap_usd,
     })
     .from(creator_deals)
     .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
@@ -363,6 +391,7 @@ export async function getCreatorLastDeals(input: {
         totalPrizeUsd: money(frame.total_prize_usd),
         totalEntries: standings.totalEntries,
         weightedWagerUsd: money(standings.totalWageredUsd),
+        packyPaidPercentage: LB_HOUSE_SHARE * 100,
         topEntries: standings.entries.map((entry) => ({
           rank: entry.position,
           username: entry.username?.trim() || "Anonymous player",
@@ -404,6 +433,21 @@ export async function getCreatorLastDeals(input: {
           convertedPayoutUsd: money(metrics?.converted_payout_usd ?? 0),
           tipsUsd: money(metrics?.tips_usd ?? 0),
           sponsoredBattlesUsd: money(metrics?.sponsored_battles_usd ?? 0),
+        },
+        terms: {
+          fillAmountsUsd: uniqueNumbers(matchingDeals.map((deal) => money(deal.per_fill_amount_usd))),
+          keepPercentages: uniqueNumbers(matchingDeals.map((deal) => deal.conversion_rate_bps / 100)),
+          withdrawalCaps7DayUsd: uniqueNumbers(matchingDeals
+            .filter((deal) => deal.total_withdraw_cap_usd !== null)
+            .map((deal) => money(deal.total_withdraw_cap_usd))),
+          tipAllowancesPerStreamUsd: uniqueNumbers(matchingDeals
+            .map((deal) => money(deal.max_tip_per_stream_usd))),
+          tipAllowancesPerUserUsd: uniqueNumbers(matchingDeals
+            .map((deal) => money(deal.max_tip_per_user_usd))),
+          sponsorshipAllowancesPerStreamUsd: uniqueNumbers(matchingDeals
+            .map((deal) => money(deal.max_sponsorship_per_stream_usd))),
+          sponsorshipAllowancesPerBattleUsd: uniqueNumbers(matchingDeals
+            .map((deal) => money(deal.max_sponsored_battle_usd))),
         },
         leaderboards: [leaderboard],
       };

@@ -302,6 +302,14 @@ test("creator last-deals API uses complete leaderboard frames and actual support
   assert.match(service, /SUM\(session\.converted_to_raw_usd::numeric\)/);
   assert.match(service, /SUM\(session\.tips_spent_this_session_usd::numeric\)/);
   assert.match(service, /SUM\(session\.sponsorship_spent_this_session_usd::numeric\)/);
+  assert.match(service, /max_tip_per_stream_usd/);
+  assert.match(service, /max_sponsorship_per_stream_usd/);
+  assert.match(service, /fillAmountsUsd/);
+  assert.match(service, /keepPercentages/);
+  assert.match(service, /withdrawalCaps7DayUsd/);
+  assert.match(service, /tipAllowancesPerStreamUsd/);
+  assert.match(service, /sponsorshipAllowancesPerBattleUsd/);
+  assert.match(service, /packyPaidPercentage: LB_HOUSE_SHARE \* 100/);
   assert.match(standings, /SUM\(als\.total_wagered_usd\) OVER\(\)/);
   assert.match(
     standings,
