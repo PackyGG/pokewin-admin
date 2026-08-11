@@ -164,6 +164,15 @@ function byRecordedOrder(left: RiskEventRow, right: RiskEventRow): number {
   return delta !== 0 ? delta : left.id.localeCompare(right.id);
 }
 
+function byContainmentDeliveryOrder(
+  left: RiskEventRow,
+  right: RiskEventRow,
+): number {
+  const leftPriority = left.event_type === "whop_history_auto_ban" ? 0 : 1;
+  const rightPriority = right.event_type === "whop_history_auto_ban" ? 0 : 1;
+  return leftPriority - rightPriority || byRecordedOrder(left, right);
+}
+
 export class IngestDelivery {
   private timer: NodeJS.Timeout | null = null;
   private stopped = false;
@@ -297,7 +306,7 @@ export class IngestDelivery {
             && objectPayload(event.payload).reviewOnly !== true,
         ),
       ]
-        .sort(byRecordedOrder)
+        .sort(byContainmentDeliveryOrder)
         .slice(0, BATCH_SIZE);
       if (containmentRows.length > 0) {
         await this.deliverEvents(containmentRows);

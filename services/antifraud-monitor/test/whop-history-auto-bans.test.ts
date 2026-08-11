@@ -98,4 +98,9 @@ test("automatic bans jump ahead of historical containment delivery backlog", () 
     delivery,
     /CASE WHEN re\.event_type = 'whop_history_auto_ban' THEN 0 ELSE 1 END/,
   );
+  assert.match(delivery, /\.sort\(byContainmentDeliveryOrder\)/);
+  assert.match(
+    delivery,
+    /left\.event_type === "whop_history_auto_ban" \? 0 : 1/,
+  );
 });
