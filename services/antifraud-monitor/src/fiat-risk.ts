@@ -1488,6 +1488,7 @@ function postDetectionEvidence(input: {
     "partially_refunded",
     "refunded",
     "disputed",
+    "review",
     "paid_unreconciled",
   ].includes(input.intent.status);
   return {

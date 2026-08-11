@@ -303,6 +303,10 @@ test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat
   );
   assert.match(source, /current\.intent_id=ANY\(\$1::text\[\]\)/);
   assert.doesNotMatch(source, /current\.intent_id=ANY\(\$1::uuid\[\]\)/);
+  assert.match(
+    source,
+    /const paymentSucceeded = \[[\s\S]{0,180}"review"/,
+  );
 });
 
 const cleanMaxMind: MaxMindEvaluation = {
