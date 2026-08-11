@@ -222,6 +222,9 @@ export function validateAnnouncementPayload(
   if (promoCode.length > 256) {
     return { ok: false, error: "Promo code must be 256 characters or less" };
   }
+  if (promoValueUsd && !promoCode) {
+    return { ok: false, error: "A promo value requires a promo code" };
+  }
   if (promoValueUsd) {
     const amount = Number(promoValueUsd.replace(/^\$/, ""));
     if (!Number.isFinite(amount) || amount < 0 || amount > 100_000) {

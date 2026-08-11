@@ -100,6 +100,7 @@ test("broadcast promo announcements retain reveal-card metadata", () => {
     ok: true,
     payload: { code: "SUMMER-25", value: "25.00" },
   });
+  assert.equal(validateAnnouncementPayload({ promoValueUsd: "25" }).ok, false);
 });
 
 test("direct pack lookup keeps the personal-send capability boundary", () => {
