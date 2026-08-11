@@ -5,10 +5,9 @@ import { eq, sql } from "drizzle-orm";
 import {
   affiliate_codes,
   creator_deals,
-  creator_stream_sessions,
 } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
-import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { queryCreatorAnalytics } from "@/lib/creator-analytics-db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
 import {
@@ -81,8 +80,11 @@ type DealRow = {
   week_end_utc: string;
 };
 
-type DealSupportRow = {
+type DealMetricsRow = {
   deal_id: string;
+  signups: string;
+  first_time_depositors: string;
+  deposits_usd: string;
   fill_count: string;
   fills_loaded_usd: string;
   fills_spent_usd: string;
@@ -91,17 +93,6 @@ type DealSupportRow = {
   converted_payout_usd: string;
   tips_usd: string;
   sponsored_battles_usd: string;
-};
-
-type DealActivityRow = {
-  deal_id: string;
-  signups: string;
-  first_time_depositors: string;
-};
-
-type DealDepositRow = {
-  deal_id: string;
-  deposits_usd: string;
 };
 
 const money = (value: unknown): number =>
@@ -239,110 +230,76 @@ export async function getCreatorLastDeals(input: {
     .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
       AND ${creator_deals.week_start_utc} < ${latestEnd}
       AND ${creator_deals.week_end_utc} > ${earliestStart}`) as DealRow[];
-  const excludedUsageFilter =
-    excludedUserIds.length > 0
-      ? sql`AND usage.referred_user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
-      : sql``;
-  const excludedDepositFilter =
-    excludedUserIds.length > 0
-      ? sql`AND deposit.user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
-      : sql``;
-
-  const [activityRows, depositRows, supportRows] = await Promise.all([
-    dealWindows.every((frame) => frame.codes.length === 0)
-      ? Promise.resolve({ rows: [] as DealActivityRow[] })
-      : db.execute<DealActivityRow>(sql`
-          WITH deal_windows AS (
-            SELECT *
-            FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
-              id text,
-              start_at timestamptz,
-              end_at timestamptz,
-              codes text[]
-            )
-          )
-          SELECT
-            deal.id AS deal_id,
-            COUNT(DISTINCT usage.referred_user_id) FILTER (
-              WHERE usage.usage_type::text = 'signup'
-            )::text AS signups,
-            COUNT(DISTINCT usage.referred_user_id) FILTER (
-              WHERE usage.usage_type::text = 'deposit'
-            )::text AS first_time_depositors
-          FROM deal_windows AS deal
-          LEFT JOIN affiliate_code_usages AS usage
-            ON usage.affiliate_user_id = ${setup.creator_user_id}
-           AND UPPER(usage.code) = ANY(deal.codes)
-           AND usage.status::text = 'completed'
-           AND usage.referred_user_id <> usage.affiliate_user_id
-           AND usage.created_at >= deal.start_at
-           AND usage.created_at < deal.end_at
-          LEFT JOIN "user" AS referred ON referred.id = usage.referred_user_id
-          WHERE usage.id IS NULL OR (
-            referred.role::text NOT IN ('admin', 'support', 'creator')
-            ${excludedUsageFilter}
-          )
-          GROUP BY deal.id
-        `),
-    dealWindows.every((frame) => frame.codes.length === 0)
-      ? Promise.resolve({ rows: [] as DealDepositRow[] })
-      : db.execute<DealDepositRow>(sql`
-          WITH deal_windows AS (
-            SELECT *
-            FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
-              id text,
-              start_at timestamptz,
-              end_at timestamptz,
-              codes text[]
-            )
-          ), covered_deposits AS (
-            SELECT
-              deal.id AS deal_id,
-              deposit.id AS deposit_id,
-              deposit.amount::numeric AS amount_usd
-            FROM deal_windows AS deal
-            JOIN ledger_transactions AS deposit
-              ON deposit.type = 'deposit'
-             AND deposit.status = 'completed'
-             AND deposit.amount::numeric > 0
-             AND deposit.created_at >= deal.start_at
-             AND deposit.created_at < deal.end_at
-            JOIN "user" AS referred ON referred.id = deposit.user_id
-            JOIN LATERAL (
-              SELECT usage.affiliate_user_id AS creator_user_id
-              FROM affiliate_code_usages AS usage
-              JOIN affiliate_codes AS owned_code
-                ON owned_code.user_id = usage.affiliate_user_id
-               AND UPPER(owned_code.code) = UPPER(usage.code)
-              WHERE usage.referred_user_id = deposit.user_id
-                AND usage.referred_user_id <> usage.affiliate_user_id
-                AND usage.status::text = 'completed'
-                AND UPPER(usage.code) = ANY(deal.codes)
-                AND usage.created_at <= deposit.created_at
-                AND usage.created_at >= deposit.created_at - INTERVAL '7 days'
-              ORDER BY usage.created_at DESC, usage.id DESC
-              LIMIT 1
-            ) AS attribution ON attribution.creator_user_id = ${setup.creator_user_id}
-            WHERE referred.role::text NOT IN ('admin', 'support', 'creator')
-              ${excludedDepositFilter}
-          )
-          SELECT
-            deal.id AS deal_id,
-            COALESCE(SUM(covered.amount_usd), 0)::text AS deposits_usd
-          FROM deal_windows AS deal
-          LEFT JOIN covered_deposits AS covered ON covered.deal_id = deal.id
-          GROUP BY deal.id
-        `),
-    db.execute<DealSupportRow>(sql`
-      WITH deal_windows AS (
-        SELECT *
-        FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
-          id text,
-          start_at timestamptz,
-          end_at timestamptz,
-          codes text[]
-        )
+  const metricRows = await queryCreatorAnalytics<DealMetricsRow>(`
+    WITH deal_windows AS (
+      SELECT *
+      FROM jsonb_to_recordset($1::jsonb) AS deal(
+        id text,
+        start_at timestamptz,
+        end_at timestamptz,
+        codes text[]
       )
+    ), activity AS (
+      SELECT
+        deal.id AS deal_id,
+        COUNT(DISTINCT usage.referred_user_id) FILTER (
+          WHERE usage.usage_type::text = 'signup'
+        )::text AS signups,
+        COUNT(DISTINCT usage.referred_user_id) FILTER (
+          WHERE usage.usage_type::text = 'deposit'
+        )::text AS first_time_depositors
+      FROM deal_windows AS deal
+      LEFT JOIN affiliate_code_usages AS usage
+        ON usage.affiliate_user_id = $2
+       AND UPPER(usage.code) = ANY(deal.codes)
+       AND usage.status::text = 'completed'
+       AND usage.referred_user_id <> usage.affiliate_user_id
+       AND usage.created_at >= deal.start_at
+       AND usage.created_at < deal.end_at
+      LEFT JOIN "user" AS referred ON referred.id = usage.referred_user_id
+      WHERE usage.id IS NULL OR (
+        referred.role::text NOT IN ('admin', 'support', 'creator')
+        AND usage.referred_user_id <> ALL($3::text[])
+      )
+      GROUP BY deal.id
+    ), covered_deposits AS (
+      SELECT
+        deal.id AS deal_id,
+        deposit.id AS deposit_id,
+        deposit.amount::numeric AS amount_usd
+      FROM deal_windows AS deal
+      JOIN ledger_transactions AS deposit
+        ON deposit.type = 'deposit'
+       AND deposit.status = 'completed'
+       AND deposit.amount::numeric > 0
+       AND deposit.created_at >= deal.start_at
+       AND deposit.created_at < deal.end_at
+      JOIN "user" AS referred ON referred.id = deposit.user_id
+      JOIN LATERAL (
+        SELECT usage.affiliate_user_id AS creator_user_id
+        FROM affiliate_code_usages AS usage
+        JOIN affiliate_codes AS owned_code
+          ON owned_code.user_id = usage.affiliate_user_id
+         AND UPPER(owned_code.code) = UPPER(usage.code)
+        WHERE usage.referred_user_id = deposit.user_id
+          AND usage.referred_user_id <> usage.affiliate_user_id
+          AND usage.status::text = 'completed'
+          AND UPPER(usage.code) = ANY(deal.codes)
+          AND usage.created_at <= deposit.created_at
+          AND usage.created_at >= deposit.created_at - INTERVAL '7 days'
+        ORDER BY usage.created_at DESC, usage.id DESC
+        LIMIT 1
+      ) AS attribution ON attribution.creator_user_id = $2
+      WHERE referred.role::text NOT IN ('admin', 'support', 'creator')
+        AND deposit.user_id <> ALL($3::text[])
+    ), deposits AS (
+      SELECT
+        deal.id AS deal_id,
+        COALESCE(SUM(covered.amount_usd), 0)::text AS deposits_usd
+      FROM deal_windows AS deal
+      LEFT JOIN covered_deposits AS covered ON covered.deal_id = deal.id
+      GROUP BY deal.id
+    ), support AS (
       SELECT
         deal.id AS deal_id,
         COUNT(session.id)::text AS fill_count,
@@ -355,22 +312,33 @@ export async function getCreatorLastDeals(input: {
         COALESCE(SUM(session.sponsorship_spent_this_session_usd::numeric), 0)::text
           AS sponsored_battles_usd
       FROM deal_windows AS deal
-      LEFT JOIN ${creator_stream_sessions} AS session
-        ON session.user_id = ${setup.creator_user_id}
+      LEFT JOIN creator_stream_sessions AS session
+        ON session.user_id = $2
        AND session.activated_at >= deal.start_at
        AND session.activated_at < deal.end_at
       GROUP BY deal.id
-    `),
-  ]);
+    )
+    SELECT
+      deal.id AS deal_id,
+      activity.signups,
+      activity.first_time_depositors,
+      deposits.deposits_usd,
+      support.fill_count,
+      support.fills_loaded_usd,
+      support.fills_spent_usd,
+      support.fills_refunded_usd,
+      support.fills_remaining_usd,
+      support.converted_payout_usd,
+      support.tips_usd,
+      support.sponsored_battles_usd
+    FROM deal_windows AS deal
+    JOIN activity ON activity.deal_id = deal.id
+    JOIN deposits ON deposits.deal_id = deal.id
+    JOIN support ON support.deal_id = deal.id
+  `, [JSON.stringify(dealWindows), setup.creator_user_id, excludedUserIds]);
 
-  const activityByDeal = new Map(
-    activityRows.rows.map((row) => [row.deal_id, row]),
-  );
-  const depositsByDeal = new Map(
-    depositRows.rows.map((row) => [row.deal_id, row]),
-  );
-  const supportByDeal = new Map(
-    supportRows.rows.map((row) => [row.deal_id, row]),
+  const metricsByDeal = new Map(
+    metricRows.map((row) => [row.deal_id, row]),
   );
 
   const dealResults = await Promise.all(
@@ -417,27 +385,25 @@ export async function getCreatorLastDeals(input: {
           : matchingDeals.some((deal) => deal.status === "terminated")
             ? "terminated"
             : "completed";
-      const activity = activityByDeal.get(frame.id);
-      const deposits = depositsByDeal.get(frame.id);
-      const support = supportByDeal.get(frame.id);
+      const metrics = metricsByDeal.get(frame.id);
       return {
         dealId: frame.id,
         status,
         startedAt: leaderboard.startedAt,
         endedAt: leaderboard.endedAt,
-        signups: Number(activity?.signups ?? 0),
-        firstTimeDepositors: Number(activity?.first_time_depositors ?? 0),
-        depositsUsd: money(deposits?.deposits_usd ?? 0),
+        signups: Number(metrics?.signups ?? 0),
+        firstTimeDepositors: Number(metrics?.first_time_depositors ?? 0),
+        depositsUsd: money(metrics?.deposits_usd ?? 0),
         weightedWagerUsd: leaderboard.weightedWagerUsd,
         support: {
-          fillCount: Number(support?.fill_count ?? 0),
-          fillsLoadedUsd: money(support?.fills_loaded_usd ?? 0),
-          fillsSpentUsd: money(support?.fills_spent_usd ?? 0),
-          fillsRefundedUsd: money(support?.fills_refunded_usd ?? 0),
-          fillsRemainingUsd: money(support?.fills_remaining_usd ?? 0),
-          convertedPayoutUsd: money(support?.converted_payout_usd ?? 0),
-          tipsUsd: money(support?.tips_usd ?? 0),
-          sponsoredBattlesUsd: money(support?.sponsored_battles_usd ?? 0),
+          fillCount: Number(metrics?.fill_count ?? 0),
+          fillsLoadedUsd: money(metrics?.fills_loaded_usd ?? 0),
+          fillsSpentUsd: money(metrics?.fills_spent_usd ?? 0),
+          fillsRefundedUsd: money(metrics?.fills_refunded_usd ?? 0),
+          fillsRemainingUsd: money(metrics?.fills_remaining_usd ?? 0),
+          convertedPayoutUsd: money(metrics?.converted_payout_usd ?? 0),
+          tipsUsd: money(metrics?.tips_usd ?? 0),
+          sponsoredBattlesUsd: money(metrics?.sponsored_battles_usd ?? 0),
         },
         leaderboards: [leaderboard],
       };

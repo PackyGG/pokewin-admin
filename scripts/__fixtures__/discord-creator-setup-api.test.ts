@@ -256,9 +256,10 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
 });
 
 test("creator last-deals API uses complete leaderboard frames and actual support", async () => {
-  const [route, service, standings, endpoints] = await Promise.all([
+  const [route, service, analyticsDb, standings, endpoints] = await Promise.all([
     read("src/app/api/v1/discord/creator-setups/last-deals/route.ts"),
     read("src/lib/discord-creator-last-deals.ts"),
+    read("src/lib/creator-analytics-db.ts"),
     read("src/lib/queries/creators-leaderboards.ts"),
     read("src/lib/api-auth/endpoints.ts"),
   ]);
@@ -272,6 +273,10 @@ test("creator last-deals API uses complete leaderboard frames and actual support
   assert.match(service, /Date\.parse\(leaderboard\.start_date\) <= now/);
   assert.match(service, /\.slice\(0, DEAL_LIMIT\)/);
   assert.match(service, /frame\.affiliate_codes\.length > 0/);
+  assert.match(service, /queryCreatorAnalytics<DealMetricsRow>/);
+  assert.match(service, /creator_stream_sessions AS session/);
+  assert.match(analyticsDb, /CREATOR_ANALYTICS_DATABASE_URL/);
+  assert.match(analyticsDb, /default_transaction_read_only=on/);
   assert.match(
     service,
     /usage\.usage_type::text = 'signup'/,
