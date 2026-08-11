@@ -210,11 +210,11 @@ export class WhopPaymentReconciler {
     }>(
       `
         UPDATE source_cursors
-        SET updated_at=$2
+        SET updated_at=$2::timestamptz
         WHERE stream=$1
           AND (
             source_id<>''
-            OR updated_at <= $2 - interval '5 minutes'
+            OR updated_at <= $2::timestamptz - interval '5 minutes'
           )
         RETURNING occurred_at, source_id
       `,

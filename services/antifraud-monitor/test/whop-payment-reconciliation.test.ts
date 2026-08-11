@@ -130,8 +130,11 @@ test("Whop reconciliation uses a shared due-time claim across replicas", async (
   let requests = 0;
   const antifraud = {
     async query(sql: string) {
-      assert.match(sql, /SET updated_at=\$2/);
-      assert.match(sql, /updated_at <= \$2 - interval '5 minutes'/);
+      assert.match(sql, /SET updated_at=\$2::timestamptz/);
+      assert.match(
+        sql,
+        /updated_at <= \$2::timestamptz - interval '5 minutes'/,
+      );
       return { rows: [] };
     },
   } as unknown as pg.Pool;
