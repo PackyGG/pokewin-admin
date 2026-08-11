@@ -16,6 +16,11 @@ export type FiatDepositReviewUser = {
   latestAuthEvent: "login" | "register" | null;
   latestFingerprint: string | null;
   latestFingerprintEvent: string | null;
+  fiatAutoApprovalEnabled: boolean;
+  cleanFiatDeposits: number;
+  reversedFiatDeposits: number;
+  firstCleanFiatAt: string | null;
+  accountClean: boolean;
   fiatDepositsLocked: boolean;
   withdrawalsLocked: boolean;
 };
@@ -37,6 +42,13 @@ export async function getFiatDepositReviewUsers(
     latest_auth_event: "login" | "register" | null;
     latest_fingerprint: string | null;
     latest_fingerprint_event: string | null;
+    fiat_deposit_auto_approval_enabled: boolean | null;
+    clean_fiat_deposits: number;
+    reversed_fiat_deposits: number;
+    first_clean_fiat_at: string | null;
+    is_banned: boolean;
+    is_locked: boolean;
+    kyc_required: boolean;
     locked_deposits_fiat: boolean | null;
     locked_withdrawals_crypto: boolean | null;
     locked_withdrawals_items: boolean | null;
@@ -54,11 +66,19 @@ export async function getFiatDepositReviewUsers(
       ) AS latest_auth_event,
       fingerprint.visitor_id AS latest_fingerprint,
       fingerprint.event_type AS latest_fingerprint_event,
+      locks.fiat_deposit_auto_approval_enabled,
+      fiat_history.clean_fiat_deposits,
+      fiat_history.reversed_fiat_deposits,
+      fiat_history.first_clean_fiat_at::text,
+      u.is_banned,
+      u.is_locked,
+      COALESCE(kyc.kyc_required, false) AS kyc_required,
       locks.locked_deposits_fiat,
       locks.locked_withdrawals_crypto,
       locks.locked_withdrawals_items
     FROM "user" u
     LEFT JOIN user_feature_locks locks ON locks.user_id = u.id
+    LEFT JOIN user_kyc kyc ON kyc.user_id = u.id
     LEFT JOIN LATERAL (
       SELECT fp.visitor_id, fp.event_type::text AS event_type
       FROM fingerprints fp
@@ -66,6 +86,24 @@ export async function getFiatDepositReviewUsers(
       ORDER BY fp.created_at DESC, fp.id DESC
       LIMIT 1
     ) fingerprint ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT
+        COUNT(*) FILTER (
+          WHERE deposit.status::text = 'completed'
+            AND deposit.paid_at IS NOT NULL
+        )::int AS clean_fiat_deposits,
+        COUNT(*) FILTER (
+          WHERE deposit.status::text IN (
+            'refunded', 'partially_refunded', 'disputed'
+          )
+        )::int AS reversed_fiat_deposits,
+        MIN(deposit.paid_at) FILTER (
+          WHERE deposit.status::text = 'completed'
+            AND deposit.paid_at IS NOT NULL
+        ) AS first_clean_fiat_at
+      FROM fiat_deposit_intents deposit
+      WHERE deposit.user_id = u.id
+    ) fiat_history ON TRUE
     LEFT JOIN LATERAL (
       SELECT
         (array_agg(audit.metadata->>'email' ORDER BY audit.created_at)
@@ -97,6 +135,15 @@ export async function getFiatDepositReviewUsers(
         latestAuthEvent: row.latest_auth_event,
         latestFingerprint: row.latest_fingerprint,
         latestFingerprintEvent: row.latest_fingerprint_event,
+        fiatAutoApprovalEnabled:
+          row.fiat_deposit_auto_approval_enabled === true,
+        cleanFiatDeposits: row.clean_fiat_deposits ?? 0,
+        reversedFiatDeposits: row.reversed_fiat_deposits ?? 0,
+        firstCleanFiatAt: row.first_clean_fiat_at,
+        accountClean:
+          row.is_banned !== true
+          && row.is_locked !== true
+          && row.kyc_required !== true,
         fiatDepositsLocked: row.locked_deposits_fiat === true,
         withdrawalsLocked:
           row.locked_withdrawals_crypto === true

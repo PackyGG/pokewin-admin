@@ -17,6 +17,7 @@ import { EmptyState } from "@/components/empty-state";
 import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { isFiatAutoCreditEligible } from "@/lib/antifraud/fiat-auto-credit-eligibility";
 import {
   listFiatAssessments,
   type FiatAssessment,
@@ -32,6 +33,7 @@ import {
 } from "@/lib/queries/fiat-deposit-review-users";
 import { formatCurrency, formatRelative } from "@/lib/utils/format";
 import { RequireKycAction } from "./require-kyc-action";
+import { AllowFiatAutoCreditAction } from "./allow-auto-credit-action";
 import { FiatDepositReviewDecision } from "./review-decision";
 import { FiatReviewEvidence } from "./review-evidence";
 
@@ -354,6 +356,13 @@ function ReviewDepositCard({
 }) {
   const displayName = user?.username ?? user?.email ?? item.user_id;
   const receivedAt = item.review_requested_at ?? item.paid_at ?? item.created_at;
+  const canAllowAutoCredit = Boolean(
+    canManageKyc
+    && user
+    && item.assessment.verdict === "good"
+    && item.assessment.risk_score < 50
+    && isFiatAutoCreditEligible(user),
+  );
 
   return (
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
@@ -425,6 +434,14 @@ function ReviewDepositCard({
             <RequireKycAction
               userId={item.user_id}
               displayName={displayName}
+            />
+          )}
+          {canAllowAutoCredit && user && (
+            <AllowFiatAutoCreditAction
+              intentId={item.id}
+              userId={item.user_id}
+              displayName={displayName}
+              cleanDeposits={user.cleanFiatDeposits}
             />
           )}
         </div>

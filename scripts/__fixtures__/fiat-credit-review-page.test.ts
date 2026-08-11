@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
+import { isFiatAutoCreditEligible } from "../../src/lib/antifraud/fiat-auto-credit-eligibility";
+
 const read = (path: string): string => readFileSync(path, "utf8");
 
 const page = read(
@@ -19,8 +21,15 @@ const controls = read(
 const evidence = read(
   "src/app/(antifraud)/antifraud/fiat-deposits/review-evidence.tsx",
 );
+const autoCreditControl = read(
+  "src/app/(antifraud)/antifraud/fiat-deposits/allow-auto-credit-action.tsx",
+);
+const autoCreditActions = read(
+  "src/app/(antifraud)/antifraud/fiat-deposits/auto-credit-actions.ts",
+);
 const reviewUsers = read("src/lib/queries/fiat-deposit-review-users.ts");
 const workflow = read("src/lib/antifraud/fiat-credit-review.ts");
+const mainSchema = read("src/lib/db-schema/main/schema.ts");
 const adminPage = read("src/app/(antifraud)/antifraud/admin/deposits/page.tsx");
 const adminActions = read("src/app/(antifraud)/antifraud/admin/deposits/actions.ts");
 const adminControls = read("src/app/(antifraud)/antifraud/admin/deposits/declined-deposit-decision.tsx");
@@ -131,6 +140,22 @@ test("review decisions do not use the customer backend", () => {
   assert.match(workflow, /deposit_completed:/);
 });
 
+test("simultaneous approvals cannot credit the same payment twice", () => {
+  assert.match(actions, /pg_advisory_xact_lock/);
+  assert.match(actions, /fiat-credit-review:\$\{snapshot\.depositIntentId\}/);
+  assert.match(actions, /Another staff member already decided this deposit/);
+  assert.match(workflow, /FROM fiat_deposit_intents[\s\S]*?FOR UPDATE/);
+  assert.match(
+    workflow,
+    /WHERE external_tx_id = \$\{input\.providerPaymentId\}[\s\S]*?FOR UPDATE/,
+  );
+  assert.match(workflow, /existingLedger\?\.status === "completed"/);
+  assert.match(
+    mainSchema,
+    /unique\("ledger_transactions_external_tx_id_unique"\)/,
+  );
+});
+
 test("staff decisions require Fraud access, 2FA, decline reason, idempotency, and audit", () => {
   assert.match(actions, /requireAntifraudAccess\(\)/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.stepUpCredential\)/);
@@ -203,6 +228,42 @@ test("review amounts remain fully visible in the compact aligned header", () => 
   assert.match(page, /noopener noreferrer/);
   assert.match(controls, /h-12 w-28/);
   assert.match(read("src/app/(antifraud)/antifraud/fiat-deposits/require-kyc-action.tsx"), /h-12 w-28/);
+});
+
+test("future auto credit is offered only for mature clean Fiat history", () => {
+  const now = Date.UTC(2026, 7, 12);
+  const eligible = {
+    fiatAutoApprovalEnabled: false,
+    cleanFiatDeposits: 3,
+    reversedFiatDeposits: 0,
+    firstCleanFiatAt: new Date(now - 14 * 24 * 60 * 60 * 1_000).toISOString(),
+    accountClean: true,
+    fiatDepositsLocked: false,
+    withdrawalsLocked: false,
+  };
+
+  assert.equal(isFiatAutoCreditEligible(eligible, now), true);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, cleanFiatDeposits: 2 }, now), false);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, reversedFiatDeposits: 1 }, now), false);
+  assert.equal(isFiatAutoCreditEligible({
+    ...eligible,
+    firstCleanFiatAt: new Date(now - 13 * 24 * 60 * 60 * 1_000).toISOString(),
+  }, now), false);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, accountClean: false }, now), false);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, fiatDepositsLocked: true }, now), false);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, withdrawalsLocked: true }, now), false);
+  assert.equal(isFiatAutoCreditEligible({ ...eligible, fiatAutoApprovalEnabled: true }, now), false);
+  assert.match(page, /AllowFiatAutoCreditAction/);
+  assert.match(page, /assessment\.verdict === "good"/);
+  assert.match(page, /assessment\.risk_score < 50/);
+  assert.match(autoCreditControl, /Allow future auto credit/);
+  assert.match(autoCreditControl, /h-12 w-28/);
+  assert.match(autoCreditControl, /does not approve the current deposit/);
+  assert.match(autoCreditActions, /requireAntifraudManager/);
+  assert.match(autoCreditActions, /require2FA/);
+  assert.match(autoCreditActions, /updateUserFiatDepositAutoApproval/);
+  assert.match(autoCreditActions, /user_fiat_auto_approval_updated/);
+  assert.match(autoCreditActions, /isFiatAutoCreditEligible/);
 });
 
 test("Admin Deposits is manager-only and supports independent refund and ban decisions", () => {
