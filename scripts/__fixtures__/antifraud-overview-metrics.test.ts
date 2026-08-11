@@ -7,8 +7,6 @@ const queryPath = "src/lib/antifraud/overview.ts";
 const loadingPath = "src/app/(antifraud)/antifraud/loading.tsx";
 const panelsPath =
   "src/app/(antifraud)/antifraud/_components/overview-panels.tsx";
-const statusPath =
-  "src/app/(antifraud)/antifraud/_components/overview-status.tsx";
 // Recharts lives in its own module so the action feed can hydrate (and open
 // its SSE stream) without waiting on the chart bundle.
 const chartsPath =
@@ -93,16 +91,12 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   );
 });
 
-test("the dashboard omits ingestion health and the retired 24h strip", async () => {
-  const [page, status] = await Promise.all([
-    readFile(pagePath, "utf8"),
-    readFile(statusPath, "utf8"),
-  ]);
+test("the dashboard omits ingestion health and both retired status strips", async () => {
+  const page = await readFile(pagePath, "utf8");
 
   assert.doesNotMatch(page, /getAntifraudPollerHealth|poller-health/);
-  assert.doesNotMatch(status, /Ingestion healthy|lastSuccessfulTickAt/);
-  assert.doesNotMatch(status, /Antifraud activity in the last 24 hours/);
-  assert.doesNotMatch(status, /live\.signups24h/);
-  assert.match(status, /export function QueueStrip/);
-  assert.match(status, /stats\[queue\.key\]/);
+  assert.doesNotMatch(page, /Ingestion healthy|lastSuccessfulTickAt/);
+  assert.doesNotMatch(page, /Antifraud activity in the last 24 hours/);
+  assert.doesNotMatch(page, /live\.signups24h/);
+  assert.doesNotMatch(page, /QueueStrip|getReviewQueueStats|QueueBand/);
 });
