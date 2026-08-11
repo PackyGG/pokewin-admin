@@ -973,6 +973,7 @@ type PaymentIdentityReuse = {
 };
 
 type AuthorizedNetworkReuse = {
+  checkoutIp: string | null;
   checkoutIpSharedUsers: number;
   checkoutDeviceSharedUsers: number;
 };
@@ -1434,12 +1435,14 @@ async function loadAuthorizedNetworkReuse(
   }
   const result = await antifraud.query<{
     intent_id: string;
+    checkout_ip: string | null;
     checkout_ip_shared_users: number;
     checkout_device_shared_users: number;
   }>(
     `
       SELECT
         current.intent_id,
+        host(current.checkout_ip) AS checkout_ip,
         CASE WHEN current.checkout_ip IS NULL THEN 0 ELSE (
           SELECT COUNT(DISTINCT peer.user_id)::int
           FROM fiat_deposit_identity_checks peer
@@ -1459,6 +1462,7 @@ async function loadAuthorizedNetworkReuse(
   );
   return {
     values: new Map(result.rows.map((row) => [row.intent_id, {
+      checkoutIp: row.checkout_ip,
       checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
       checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
     }])),
@@ -1526,6 +1530,7 @@ function postDetectionEvidence(input: {
     whopCustomerSharedUsers: input.identity?.whopCustomerSharedUsers ?? 0,
     paymentMethodSharedUsers: input.identity?.paymentMethodSharedUsers ?? 0,
     cardSignatureSharedUsers: input.identity?.cardSignatureSharedUsers ?? 0,
+    checkoutIp: input.network?.checkoutIp ?? null,
     checkoutIpSharedUsers: input.network?.checkoutIpSharedUsers ?? 0,
     checkoutDeviceSharedUsers: input.network?.checkoutDeviceSharedUsers ?? 0,
     exactAmountAttempts30m: input.context?.exact_amount_attempts_30m ?? 0,

@@ -4,9 +4,11 @@ import {
   Clock3,
   CreditCard,
   ExternalLink,
+  Mail,
   MapPin,
   ShieldCheck,
   UserRound,
+  Wifi,
 } from "lucide-react";
 
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
@@ -427,8 +429,37 @@ function ReviewDepositCard({
             />
             <ReviewFact
               icon={MapPin}
-              label="Account country"
+              label="Whop checkout location"
+              value={item.assessment.provider_evidence.billingCountry ?? "Unknown"}
+            />
+            <ReviewFact
+              icon={MapPin}
+              label="Account location"
               value={user?.countryCode ?? "Unknown"}
+            />
+            <ReviewFact
+              icon={Wifi}
+              label="Whop checkout IP"
+              value={item.assessment.detection_evidence.checkoutIp ?? "Unavailable"}
+            />
+            <ReviewFact
+              icon={Wifi}
+              label={user?.latestAuthEvent === "login"
+                ? "Latest login IP"
+                : user?.latestAuthEvent === "register"
+                  ? "Signup IP"
+                  : "Latest auth IP"}
+              value={user?.latestAuthIp ?? "Unavailable"}
+            />
+            <ReviewFact
+              icon={Mail}
+              label="Checkout email"
+              value={item.assessment.provider_evidence.checkoutEmail ?? "Unavailable"}
+            />
+            <ReviewFact
+              icon={Mail}
+              label="Signup email"
+              value={user?.signupEmail ?? "Unavailable"}
             />
             <ReviewFact
               icon={Clock3}
@@ -480,12 +511,17 @@ function ReviewFact({
   value: string;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-3">
+    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 py-3">
       <dt className="flex items-center gap-2 text-xs text-muted-foreground">
-        <Icon className="size-3.5" />
+        <Icon className="size-3.5 shrink-0" />
         {label}
       </dt>
-      <dd className="text-right text-xs font-medium tabular-nums">{value}</dd>
+      <dd
+        className="min-w-0 truncate text-right text-xs font-medium tabular-nums"
+        title={value}
+      >
+        {value}
+      </dd>
     </div>
   );
 }
