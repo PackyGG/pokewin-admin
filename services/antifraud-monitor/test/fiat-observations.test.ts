@@ -6,7 +6,7 @@ import {
   prePaymentObservationSignals,
 } from "../src/fiat-observations.js";
 
-test("pre-payment heuristics are evidence-only and cannot act", () => {
+test("pre-payment velocity scores strong reuse without containing accounts", () => {
   const signals = prePaymentObservationSignals({
     status: "complete",
     ipAttempts10m: 5,
@@ -14,14 +14,18 @@ test("pre-payment heuristics are evidence-only and cannot act", () => {
     platformAttempts10m: 50,
     ipDistinctUsers24h: 5,
     deviceDistinctUsers24h: 4,
-    linkedActiveRiskUsers: 2,
+    ipLinkedActiveRiskUsers: 1,
+    deviceLinkedActiveRiskUsers: 2,
     amountAttempts30m: 8,
     amountDistinctUsers30m: 5,
   });
   assert.ok(signals.length >= 7);
-  assert.ok(signals.every((signal) => signal.evidenceOnly === true));
-  assert.ok(signals.every((signal) => signal.points === 0));
+  assert.ok(signals.some((signal) => !signal.evidenceOnly));
+  assert.ok(signals.some((signal) => signal.points > 0));
   assert.ok(signals.every((signal) => !signal.blocking && !signal.containing));
+  assert.ok(signals.find(
+    (signal) => signal.key === "checkout_device_linked_active_fraud_cases",
+  )?.points === 70);
 });
 
 test("post-payment status gaps stay evidence-only; reuse signals now score", () => {
@@ -132,7 +136,8 @@ test("missing and partial observations stay explicit and evidence-only", () => {
     platformAttempts10m: 0,
     ipDistinctUsers24h: 0,
     deviceDistinctUsers24h: 0,
-    linkedActiveRiskUsers: 0,
+    ipLinkedActiveRiskUsers: 0,
+    deviceLinkedActiveRiskUsers: 0,
     amountAttempts30m: 0,
     amountDistinctUsers30m: 0,
   });

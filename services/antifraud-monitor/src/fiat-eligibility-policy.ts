@@ -33,6 +33,10 @@ export const AUTOMATIC_DENY_SCORE = 50;
 export const RECENT_PAID_FIAT_DENY_MS = 60_000;
 /** A login this recent is expected to describe the checkout session. */
 export const RECENT_LOGIN_IDENTITY_WINDOW_MS = 30 * 60_000;
+/** Country changes inside this window are too fast to be ordinary travel. */
+export const RAPID_COUNTRY_HOP_MS = 6 * 60 * 60_000;
+/** A new signup changing country inside this window is weighted most heavily. */
+export const NEW_ACCOUNT_COUNTRY_HOP_MS = 24 * 60 * 60_000;
 /** Account age at which the trust credits and lighter drift weights unlock. */
 export const ESTABLISHED_ACCOUNT_DAYS = 7;
 /** Account age treated as a long-standing customer for behaviour credit. */
@@ -260,6 +264,7 @@ export type FiatEligibilityPolicyInput = {
   activeCaseSeverity: string | null;
   attempts10m: number;
   deniedAttempts24h: number;
+  prePaymentSignals: readonly FiatEligibilitySignal[];
 };
 
 export type FiatEligibilityPolicyOutcome = {
@@ -758,6 +763,14 @@ export function evaluateFiatEligibility(
     && latestLoginCountryCode
     && signupCountryCode !== latestLoginCountryCode,
   );
+  const accountAgeMs = Math.max(
+    0,
+    input.now.getTime() - input.subject.created_at.getTime(),
+  );
+  const signupToLoginMs = input.subject.latest_login_at
+    ? input.subject.latest_login_at.getTime()
+      - input.subject.created_at.getTime()
+    : Number.POSITIVE_INFINITY;
 
   const badIp = badIpReputation(input.providers);
   const badDevice = badDeviceReputation(input.providers);
@@ -879,6 +892,46 @@ export function evaluateFiatEligibility(
     points: 25,
     source: "history",
   });
+  add(
+    signupCountryChanged && accountAgeMs <= NEW_ACCOUNT_COUNTRY_HOP_MS,
+    {
+      key: "rapid_signup_country_checkout_hop",
+      detail:
+        `A ${Math.max(0, Math.round(accountAgeMs / 60_000))}-minute-old `
+        + `account moved from signup country ${signupCountryCode} to checkout `
+        + `country ${checkoutCountryCode}.`,
+      points: accountAgeMs <= RAPID_COUNTRY_HOP_MS ? 70 : 50,
+      source: "history",
+    },
+  );
+  add(
+    latestLoginCountryChanged
+      && latestLoginAgeMs >= 0
+      && latestLoginAgeMs <= RAPID_COUNTRY_HOP_MS,
+    {
+      key: "rapid_login_country_checkout_hop",
+      detail:
+        `The checkout moved from login country ${latestLoginCountryCode} to `
+        + `${checkoutCountryCode} in ${Math.round(latestLoginAgeMs / 60_000)} `
+        + "minute(s).",
+      points: latestLoginAgeMs <= 60 * 60_000 ? 60 : 45,
+      source: "history",
+    },
+  );
+  add(
+    signupToLoginCountryHop
+      && signupToLoginMs >= 0
+      && signupToLoginMs <= NEW_ACCOUNT_COUNTRY_HOP_MS,
+    {
+      key: "rapid_signup_country_login_hop",
+      detail:
+        `The account moved from signup country ${signupCountryCode} to login `
+        + `country ${latestLoginCountryCode} in `
+        + `${Math.round(signupToLoginMs / 60_000)} minute(s).`,
+      points: signupToLoginMs <= RAPID_COUNTRY_HOP_MS ? 55 : 40,
+      source: "history",
+    },
+  );
   add(input.subject.latest_login_suspected_alt, {
     key: "latest_login_suspected_alt",
     detail: "The latest verified login was marked as suspected alternate use.",
@@ -1014,6 +1067,11 @@ export function evaluateFiatEligibility(
     evidenceOnly: true,
     source: "history",
   });
+
+  // Velocity signals are derived from already-persisted pre-Fiat assessments.
+  // None can contain an account; they only deny the current checkout when the
+  // combined score crosses the normal policy floor.
+  signals.push(...input.prePaymentSignals);
 
   // ── Behaviour ────────────────────────────────────────────────────────────
   const behaviour = behaviourSignals({ ageDays, behaviour: input.behaviour });

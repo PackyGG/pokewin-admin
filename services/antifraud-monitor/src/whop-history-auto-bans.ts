@@ -32,6 +32,13 @@ type SourceWebhookRow = {
   account_created_at: Date | null;
 };
 
+export type ReconciledWhopPayment = {
+  paymentId: string;
+  userId: string | null;
+  payload: unknown;
+  updatedAt: Date;
+};
+
 export type WhopHistoryEvidence = {
   paymentId: string;
   depositIntentId: string;
@@ -101,17 +108,26 @@ export function whopHistoryEvidence(
   }
   const priorDisputeCount = finiteCount(byKey.get("prior_dispute_count"));
   const priorRefundCount = finiteCount(byKey.get("prior_refund_count"));
-  if (priorDisputeCount === 0 && priorRefundCount === 0) return null;
+  const paymentStatus = nullableString(data.substatus ?? data.status, 80);
+  const normalizedStatus = paymentStatus?.toLowerCase() ?? "";
+  const currentDispute = normalizedStatus.includes("dispute")
+    || nullableString(data.dispute_alerted_at, 80) !== null;
+  const currentRefund = normalizedStatus.includes("refund")
+    || nullableString(data.refunded_at, 80) !== null
+    || data.auto_refunded === true;
+  const admittedDisputes = Math.max(priorDisputeCount, currentDispute ? 1 : 0);
+  const admittedRefunds = Math.max(priorRefundCount, currentRefund ? 1 : 0);
+  if (admittedDisputes === 0 && admittedRefunds === 0) return null;
 
   return {
     paymentId,
     depositIntentId,
-    priorDisputeCount,
-    priorRefundCount,
+    priorDisputeCount: admittedDisputes,
+    priorRefundCount: admittedRefunds,
     priorFraudDeclines: finiteCount(byKey.get("prior_fraud_declines")),
     highRiskSessions: finiteCount(byKey.get("user_high_risk_sessions")),
     providerRiskScore: nullableNumber(data.risk_score),
-    paymentStatus: nullableString(data.substatus ?? data.status, 80),
+    paymentStatus,
     declineCode: nullableString(data.decline_code, 120),
     threeDsVerified:
       typeof data.three_ds_verified === "boolean"
@@ -160,6 +176,75 @@ export class WhopHistoryAutoBans {
       if (rows.length < BATCH_SIZE) break;
     }
     await this.queueConfirmedNotifications();
+    return detected;
+  }
+
+  /**
+   * Admit API-reconciled payments through the exact same idempotent auto-ban
+   * path as webhooks. Source remains read-only; the poller only reads account
+   * metadata and writes durable evidence to Antifraud.
+   */
+  async storeReconciledPayments(
+    payments: readonly ReconciledWhopPayment[],
+  ): Promise<number> {
+    const candidates = payments.flatMap((payment) => {
+      const evidence = whopHistoryEvidence(payment.payload, payment.paymentId);
+      return evidence && payment.userId
+        ? [{ payment, evidence }]
+        : [];
+    });
+    if (candidates.length === 0) return 0;
+
+    const userIds = [...new Set(candidates.map(({ payment }) => payment.userId!))];
+    const accounts = await this.db.source.query<Omit<
+      SourceWebhookRow,
+      "id" | "provider_event_id" | "provider_resource_id" | "event_type"
+        | "payload" | "received_at"
+    >>(
+      `
+        SELECT
+          account.id AS user_id, account.username, account.email,
+          account.image, account.signup_ip, account.country,
+          account.country_code, account.continent_code, account.state,
+          account.city, account.affiliate_code, account.referred_by,
+          account.created_at AS account_created_at
+        FROM "user" AS account
+        WHERE account.id=ANY($1::text[])
+          AND account.is_banned=false
+          AND COALESCE(account.role::text, '') NOT IN (
+            'admin', 'support', 'creator'
+          )
+          AND NOT COALESCE(account.roles::text[], ARRAY[]::text[])
+            && ARRAY['admin','support','creator']::text[]
+      `,
+      [userIds],
+    );
+    const byUser = new Map(accounts.rows.map((account) => [account.user_id, account]));
+    const client = await this.db.antifraud.connect();
+    let detected = 0;
+    try {
+      await client.query("BEGIN");
+      for (const { payment, evidence } of candidates) {
+        const account = byUser.get(payment.userId!);
+        if (!account) continue;
+        const row: SourceWebhookRow = {
+          id: `reconciled:${payment.paymentId}`,
+          provider_event_id: `reconciled:${payment.paymentId}`,
+          provider_resource_id: payment.paymentId,
+          event_type: "payment.reconciled",
+          payload: payment.payload,
+          received_at: payment.updatedAt,
+          ...account,
+        };
+        if (await this.insertAutoBanEvent(client, row, evidence)) detected += 1;
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
     return detected;
   }
 

@@ -10,7 +10,8 @@ export type FiatPrePaymentObservationEvidence = {
   platformAttempts10m: number;
   ipDistinctUsers24h: number;
   deviceDistinctUsers24h: number;
-  linkedActiveRiskUsers: number;
+  ipLinkedActiveRiskUsers: number;
+  deviceLinkedActiveRiskUsers: number;
   amountAttempts30m: number;
   amountDistinctUsers30m: number;
 };
@@ -59,22 +60,24 @@ function preSignal(
   key: string,
   detail: string,
   source: FiatEligibilitySignal["source"],
+  points = 0,
 ): FiatEligibilitySignal {
   return {
     key,
     detail,
-    points: 0,
+    points,
     blocking: false,
     containing: false,
-    evidenceOnly: true,
+    ...(points === 0 ? { evidenceOnly: true as const } : {}),
     source,
   };
 }
 
 /**
- * Heuristic pre-payment detections. Every result is evidence-only by contract:
- * no score, checkout decision, lock, KYC, refund, or withdrawal action may be
- * derived from this function until an explicit policy is approved separately.
+ * Pre-payment velocity detections. Strong account/device reuse now contributes
+ * to the checkout score, but never contains an account by itself. Global
+ * traffic is deliberately evidence-only: one attacker must not be able to
+ * deny every customer by creating a platform-wide burst.
  */
 export function prePaymentObservationSignals(
   evidence: FiatPrePaymentObservationEvidence,
@@ -92,6 +95,7 @@ export function prePaymentObservationSignals(
       "observe_checkout_ip_velocity",
       `${evidence.ipAttempts10m} checkout checks used this IP in ten minutes.`,
       "network",
+      evidence.ipAttempts10m >= 8 ? 45 : evidence.ipAttempts10m >= 5 ? 30 : 15,
     ));
   }
   if (evidence.deviceAttempts10m >= 3) {
@@ -99,6 +103,7 @@ export function prePaymentObservationSignals(
       "observe_checkout_device_velocity",
       `${evidence.deviceAttempts10m} checkout checks used this device in ten minutes.`,
       "fingerprint",
+      evidence.deviceAttempts10m >= 8 ? 60 : evidence.deviceAttempts10m >= 5 ? 45 : 25,
     ));
   }
   if (evidence.platformAttempts10m >= 20) {
@@ -113,6 +118,7 @@ export function prePaymentObservationSignals(
       "observe_checkout_ip_account_cluster",
       `${evidence.ipDistinctUsers24h} accounts used this checkout IP in 24 hours.`,
       "network",
+      evidence.ipDistinctUsers24h >= 10 ? 45 : 20,
     ));
   }
   if (evidence.deviceDistinctUsers24h >= 2) {
@@ -120,13 +126,23 @@ export function prePaymentObservationSignals(
       "observe_checkout_device_account_cluster",
       `${evidence.deviceDistinctUsers24h} accounts used this checkout device in 24 hours.`,
       "fingerprint",
+      evidence.deviceDistinctUsers24h >= 4 ? 70 : evidence.deviceDistinctUsers24h >= 3 ? 55 : 40,
     ));
   }
-  if (evidence.linkedActiveRiskUsers > 0) {
+  if (evidence.ipLinkedActiveRiskUsers > 0) {
     signals.push(preSignal(
-      "observe_linked_active_fraud_cases",
-      `${evidence.linkedActiveRiskUsers} linked account(s) have an active high or critical Fraud case.`,
+      "checkout_ip_linked_active_fraud_cases",
+      `${evidence.ipLinkedActiveRiskUsers} account(s) sharing this checkout IP have an active high or critical Fraud case.`,
       "history",
+      evidence.ipLinkedActiveRiskUsers >= 3 ? 50 : 25,
+    ));
+  }
+  if (evidence.deviceLinkedActiveRiskUsers > 0) {
+    signals.push(preSignal(
+      "checkout_device_linked_active_fraud_cases",
+      `${evidence.deviceLinkedActiveRiskUsers} account(s) sharing this checkout device have an active high or critical Fraud case.`,
+      "history",
+      evidence.deviceLinkedActiveRiskUsers >= 2 ? 70 : 55,
     ));
   }
   if (evidence.amountDistinctUsers30m >= 3) {
@@ -134,6 +150,7 @@ export function prePaymentObservationSignals(
       "observe_requested_amount_cluster",
       `${evidence.amountDistinctUsers30m} accounts requested the same amount across ${evidence.amountAttempts30m} checks in 30 minutes.`,
       "history",
+      evidence.amountDistinctUsers30m >= 5 ? 35 : 20,
     ));
   }
   return signals;

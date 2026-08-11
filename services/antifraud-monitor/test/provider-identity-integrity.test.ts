@@ -218,6 +218,7 @@ function policyInput(
     activeCaseSeverity: null,
     attempts10m: 0,
     deniedAttempts24h: 0,
+    prePaymentSignals: [],
   };
 }
 

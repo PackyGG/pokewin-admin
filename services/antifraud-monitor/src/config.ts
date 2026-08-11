@@ -40,6 +40,9 @@ const schema = z.object({
   PROXYCHECK_API_KEY: z.string().min(1),
   ABSTRACT_IP_INTELLIGENCE_API_KEY: z.string().min(1),
   ABSTRACT_EMAIL_REPUTATION_API_KEY: z.string().min(1),
+  /** Company-scoped Whop credentials used only by the bounded payment poller. */
+  WHOP_ADMIN_KEY: z.string().min(1).optional(),
+  WHOP_COMPANY_ID: z.string().regex(/^biz_[A-Za-z0-9]+$/).optional(),
   MAXMIND_ACCOUNT_ID: z.string().regex(/^\d+$/).optional(),
   MAXMIND_LICENSE_KEY: z.string().min(16).optional(),
   MAXMIND_ALERT_WEBHOOK_SECRET: z.string().min(20).max(100).optional(),
@@ -166,6 +169,11 @@ export function loadConfig(): Config {
   if (Boolean(config.SUMSUB_ADMIN_TOKEN) !== Boolean(config.SUMSUB_ADMIN_KEY)) {
     throw new Error(
       "Invalid configuration: SUMSUB_ADMIN_TOKEN and SUMSUB_ADMIN_KEY must be configured together",
+    );
+  }
+  if (Boolean(config.WHOP_ADMIN_KEY) !== Boolean(config.WHOP_COMPANY_ID)) {
+    throw new Error(
+      "Invalid configuration: WHOP_ADMIN_KEY and WHOP_COMPANY_ID must be configured together",
     );
   }
   const serviceKeys = [

@@ -89,6 +89,21 @@ test("current-payment dispute arrays do not impersonate prior buyer history", ()
   assert.equal(whopHistoryEvidence(payload, null), null);
 });
 
+test("reconciled refund and dispute statuses enter the automatic-ban path", () => {
+  const refunded = payment([]);
+  refunded.data.substatus = "refunded";
+  assert.equal(
+    whopHistoryEvidence(refunded, null)?.priorRefundCount,
+    1,
+  );
+  const disputed = payment([]);
+  disputed.data.substatus = "dispute_under_review";
+  assert.equal(
+    whopHistoryEvidence(disputed, null)?.priorDisputeCount,
+    1,
+  );
+});
+
 test("automatic bans jump ahead of historical containment delivery backlog", () => {
   const delivery = readFileSync(
     new URL("../src/ingest-delivery.ts", import.meta.url),

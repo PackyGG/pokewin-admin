@@ -54,7 +54,8 @@ const EMPTY_PRE_PAYMENT_OBSERVATIONS: FiatPrePaymentObservationEvidence = {
   platformAttempts10m: 0,
   ipDistinctUsers24h: 0,
   deviceDistinctUsers24h: 0,
-  linkedActiveRiskUsers: 0,
+  ipLinkedActiveRiskUsers: 0,
+  deviceLinkedActiveRiskUsers: 0,
   amountAttempts30m: 0,
   amountDistinctUsers30m: 0,
 };
@@ -342,6 +343,9 @@ async function loadObservedWhopHistory(
     auto_ban_high_risk_sessions: number;
     max_provider_risk_score: number | null;
     auto_ban_provider_risk_score: number | null;
+    snapshot_disputes: number;
+    snapshot_refunds: number;
+    snapshot_provider_risk_score: number | null;
   }>(
     `
       WITH history AS (
@@ -351,6 +355,12 @@ async function loadObservedWhopHistory(
         FROM fiat_deposit_assessments
         WHERE user_id=$1 AND provider='whop'
         ORDER BY occurred_at DESC
+        LIMIT 100
+      ), snapshots AS (
+        SELECT status, substatus, provider_risk_score, risk_signals
+        FROM whop_payment_snapshots
+        WHERE user_id=$1
+        ORDER BY provider_updated_at DESC NULLS LAST, last_synced_at DESC
         LIMIT 100
       ), whop_signals AS (
         SELECT
@@ -364,6 +374,16 @@ async function loadObservedWhopHistory(
         CROSS JOIN LATERAL jsonb_array_elements(
           COALESCE(provider_evidence->'riskSignals', '[]'::jsonb)
         ) AS signal
+        UNION ALL
+        SELECT
+          signal->>'key' AS key,
+          CASE
+            WHEN signal->>'value' ~ '^[0-9]+$'
+              THEN LEAST((signal->>'value')::int, 1000000)
+            ELSE 0
+          END AS value
+        FROM snapshots
+        CROSS JOIN LATERAL jsonb_array_elements(risk_signals) AS signal
       ), auto_bans AS (
         SELECT payload
         FROM risk_events
@@ -374,6 +394,7 @@ async function loadObservedWhopHistory(
       SELECT
         (
           (SELECT COUNT(*) FROM history)
+          + (SELECT COUNT(*) FROM snapshots)
           + (SELECT COUNT(*) FROM auto_bans)
         )::int AS observed_payments,
         (SELECT COUNT(*)::int FROM history
@@ -410,6 +431,16 @@ async function loadObservedWhopHistory(
           FROM auto_bans), 0)::int AS auto_ban_high_risk_sessions,
         (SELECT MAX(provider_risk_score)::int FROM history)
           AS max_provider_risk_score,
+        (SELECT COUNT(*)::int FROM snapshots
+          WHERE lower(COALESCE(status, '')) LIKE '%disput%'
+             OR lower(COALESCE(substatus, '')) LIKE '%disput%'
+        ) AS snapshot_disputes,
+        (SELECT COUNT(*)::int FROM snapshots
+          WHERE lower(COALESCE(status, '')) LIKE '%refund%'
+             OR lower(COALESCE(substatus, '')) LIKE '%refund%'
+        ) AS snapshot_refunds,
+        (SELECT MAX(provider_risk_score)::int FROM snapshots)
+          AS snapshot_provider_risk_score,
         (SELECT MAX((payload->>'providerRiskScore')::numeric)::int
           FROM auto_bans
           WHERE payload->>'providerRiskScore' ~ '^[0-9]+(\\.[0-9]+)?$'
@@ -422,6 +453,7 @@ async function loadObservedWhopHistory(
   const providerRiskScores = [
     row?.max_provider_risk_score,
     row?.auto_ban_provider_risk_score,
+    row?.snapshot_provider_risk_score,
   ].filter((value): value is number => typeof value === "number");
   return {
     observedPayments: row?.observed_payments ?? 0,
@@ -429,11 +461,13 @@ async function loadObservedWhopHistory(
       row?.actual_disputes ?? 0,
       row?.signalled_disputes ?? 0,
       row?.auto_ban_disputes ?? 0,
+      row?.snapshot_disputes ?? 0,
     ),
     priorRefunds: Math.max(
       row?.actual_refunds ?? 0,
       row?.signalled_refunds ?? 0,
       row?.auto_ban_refunds ?? 0,
+      row?.snapshot_refunds ?? 0,
     ),
     priorFraudDeclines: Math.max(
       row?.prior_fraud_declines ?? 0,
@@ -824,7 +858,8 @@ async function loadPrePaymentObservations(
     platform_attempts_10m: number;
     ip_distinct_users_24h: number;
     device_distinct_users_24h: number;
-    linked_active_risk_users: number;
+    ip_linked_active_risk_users: number;
+    device_linked_active_risk_users: number;
     amount_attempts_30m: number;
     amount_distinct_users_30m: number;
     ip_has_current_user_24h: boolean;
@@ -837,17 +872,6 @@ async function loadPrePaymentObservations(
           created_at
         FROM fiat_eligibility_assessments
         WHERE environment=$1 AND created_at>=now()-interval '24 hours'
-      ), linked_users AS (
-        SELECT DISTINCT user_id
-        FROM recent
-        WHERE user_id<>$2
-          AND (
-            request_ip=$3::inet
-            OR (
-              $4::text IS NOT NULL
-              AND checkout_visitor_id=$4
-            )
-          )
       )
       SELECT
         COUNT(*) FILTER (
@@ -876,10 +900,22 @@ async function loadPrePaymentObservations(
         (
           SELECT COUNT(DISTINCT c.user_id)::int
           FROM cases c
-          JOIN linked_users linked ON linked.user_id=c.user_id
-          WHERE c.status<>'resolved'
+          JOIN recent linked ON linked.user_id=c.user_id
+          WHERE linked.user_id<>$2
+            AND linked.request_ip=$3::inet
+            AND c.status<>'resolved'
             AND c.severity IN ('high','critical')
-        ) AS linked_active_risk_users,
+        ) AS ip_linked_active_risk_users,
+        (
+          SELECT COUNT(DISTINCT c.user_id)::int
+          FROM cases c
+          JOIN recent linked ON linked.user_id=c.user_id
+          WHERE linked.user_id<>$2
+            AND $4::text IS NOT NULL
+            AND linked.checkout_visitor_id=$4
+            AND c.status<>'resolved'
+            AND c.severity IN ('high','critical')
+        ) AS device_linked_active_risk_users,
         COUNT(*) FILTER (
           WHERE $5::int IS NOT NULL
             AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
@@ -948,7 +984,8 @@ async function loadPrePaymentObservations(
           row?.device_has_current_user_24h,
         )
       : 0,
-    linkedActiveRiskUsers: row?.linked_active_risk_users ?? 0,
+    ipLinkedActiveRiskUsers: row?.ip_linked_active_risk_users ?? 0,
+    deviceLinkedActiveRiskUsers: row?.device_linked_active_risk_users ?? 0,
     amountAttempts30m: input.amountCents === undefined
       ? 0
       : includeCurrent(row?.amount_attempts_30m),
@@ -1255,14 +1292,9 @@ export class FiatEligibilityService {
       activeCaseSeverity: history.activeCaseSeverity,
       attempts10m: velocity.attempts10m,
       deniedAttempts24h: velocity.deniedAttempts24h,
+      prePaymentSignals: prePaymentObservationSignals(observations),
     });
-    const outcome: FiatEligibilityPolicyOutcome = {
-      ...policyOutcome,
-      signals: [
-        ...policyOutcome.signals,
-        ...prePaymentObservationSignals(observations),
-      ],
-    };
+    const outcome: FiatEligibilityPolicyOutcome = policyOutcome;
 
     return this.persist({
       input,

@@ -31,6 +31,7 @@ import {
   type FiatEligibilityPolicyInput,
   type FiatEligibilitySubject,
 } from "../src/fiat-eligibility-policy.js";
+import { prePaymentObservationSignals } from "../src/fiat-observations.js";
 
 const DEV_KEY = "dev-fiat-key-that-is-at-least-32-characters";
 const PROD_KEY = "prod-fiat-key-that-is-at-least-32-characters";
@@ -167,6 +168,7 @@ function reviewInput(
     activeCaseSeverity: null,
     attempts10m: 0,
     deniedAttempts24h: 0,
+    prePaymentSignals: [],
     ...overrides,
   };
 }
@@ -605,6 +607,52 @@ test("same-country IP churn stays light while country hops deny", () => {
   assert.ok(loginHop.signals.some(
     (signal) => signal.key === "latest_login_country_checkout_mismatch",
   ));
+  assert.ok(loginHop.signals.some(
+    (signal) => signal.key === "rapid_login_country_checkout_hop",
+  ));
+
+  const newSignupHop = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    subject: subjectFixture({
+      created_at: new Date("2026-07-29T09:00:00.000Z"),
+      latest_login_at: new Date("2026-07-29T10:00:00.000Z"),
+    }),
+    geo: { checkoutCountryCode: "ES", latestLoginCountryCode: "ES" },
+  });
+  assert.equal(newSignupHop.decision, "deny");
+  assert.ok(newSignupHop.signals.some(
+    (signal) => signal.key === "rapid_signup_country_checkout_hop",
+  ));
+  assert.ok(newSignupHop.signals.some(
+    (signal) => signal.key === "rapid_signup_country_login_hop",
+  ));
+});
+
+test("cross-account checkout velocity denies without permanently containing", () => {
+  const velocity = prePaymentObservationSignals({
+    status: "complete",
+    ipAttempts10m: 1,
+    deviceAttempts10m: 8,
+    platformAttempts10m: 50,
+    ipDistinctUsers24h: 1,
+    deviceDistinctUsers24h: 4,
+    ipLinkedActiveRiskUsers: 0,
+    deviceLinkedActiveRiskUsers: 1,
+    amountAttempts30m: 1,
+    amountDistinctUsers30m: 1,
+  });
+  const outcome = fiatEligibilityInternals.automaticReview({
+    ...reviewInput(),
+    prePaymentSignals: velocity,
+  });
+  assert.equal(outcome.decision, "deny");
+  assert.equal(outcome.enforce, false);
+  assert.ok(outcome.signals.some(
+    (signal) => signal.key === "observe_checkout_device_velocity",
+  ));
+  assert.ok(outcome.signals.find(
+    (signal) => signal.key === "observe_platform_checkout_burst",
+  )?.evidenceOnly);
 });
 
 test("locally observed Whop buyer history blocks the next pre-Fiat check", () => {
@@ -1017,7 +1065,8 @@ test("pre-Fiat observations query every assessment without creating actions", as
         platform_attempts_10m: 19,
         ip_distinct_users_24h: 2,
         device_distinct_users_24h: 1,
-        linked_active_risk_users: 1,
+        ip_linked_active_risk_users: 1,
+        device_linked_active_risk_users: 1,
         amount_attempts_30m: 4,
         amount_distinct_users_30m: 2,
         ip_has_current_user_24h: false,
@@ -1052,7 +1101,8 @@ test("pre-Fiat distinct counts do not add an already-seen current user", async (
       platform_attempts_10m: 5,
       ip_distinct_users_24h: 2,
       device_distinct_users_24h: 2,
-      linked_active_risk_users: 0,
+      ip_linked_active_risk_users: 0,
+      device_linked_active_risk_users: 0,
       amount_attempts_30m: 2,
       amount_distinct_users_30m: 2,
       ip_has_current_user_24h: true,
