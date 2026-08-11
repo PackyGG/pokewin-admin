@@ -40,6 +40,7 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = [
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
+  "checkout_refunded_amount_cluster",
   "checkout_card_changed_recent",
   "checkout_ip_and_device_changed",
 ] as const;
@@ -69,7 +70,6 @@ export type FiatIdentityWatchReason =
   (typeof FIAT_IDENTITY_WATCH_REASONS)[number];
 
 export const FIAT_IDENTITY_REVIEW_REASONS = [
-  "checkout_refunded_amount_cluster",
   "checkout_email_catchall",
   "checkout_email_undeliverable",
   "checkout_email_changed",
@@ -217,7 +217,7 @@ export function evaluateFiatDepositIdentity(
     detail:
       "This exact payment amount is part of an active refunded-payment "
       + `campaign: ${seen.refundedAmountClusterReason ?? "unknown"}`,
-    action: "review",
+    action: "withdrawals",
   });
 
   for (const match of seen.blocklistMatches) {

@@ -131,9 +131,12 @@ test("review decisions do not use the customer backend", () => {
   assert.match(workflow, /deposit_completed:/);
 });
 
-test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit", () => {
+test("staff decisions require Fraud access, 2FA, decline reason, idempotency, and audit", () => {
   assert.match(actions, /requireAntifraudAccess\(\)/);
   assert.match(actions, /require2FA\(session\.userId, parsed\.data\.stepUpCredential\)/);
+  assert.match(actions, /decision: z\.literal\("approve"\)/);
+  assert.match(actions, /value\.length === 0 \|\| value\.length >= 3/);
+  assert.match(actions, /decision: z\.literal\("decline"\)/);
   assert.match(actions, /reason: z\.string\(\)\.trim\(\)\.min\(3\)\.max\(500\)/);
   assert.match(actions, /idempotencyKey: z\.string\(\)\.uuid\(\)/);
   assert.match(actions, /createAdminAuditEvent/);
@@ -148,6 +151,8 @@ test("staff decisions require Fraud access, 2FA, reason, idempotency, and audit"
   assert.match(actions, /revalidatePath\("\/antifraud\/fiat-deposits"\)/);
   assert.match(controls, /Approve balance credit/);
   assert.match(controls, /Decline and lock account/);
+  assert.match(controls, /decision === "decline" && \(/);
+  assert.match(controls, /decision === "decline" && reason\.trim\(\)\.length < 3/);
   assert.match(controls, /Future Fiat deposits will still require their own review/);
   assert.doesNotMatch(controls, /Reject and refund|Retry refund/);
   assert.match(controls, /StepUpField/);

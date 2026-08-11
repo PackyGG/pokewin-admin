@@ -133,6 +133,7 @@ test("risk rows map to bounded dashboard signal fields", () => {
       environment: "prod",
       intentId: "intent-1",
       reasonCodes: ["checkout_refunded_amount_cluster"],
+      refundedAmountClusterActiveUntil: "2026-08-12T00:00:00.000Z",
       evidence: "x".repeat(4_000),
     },
   });
@@ -144,6 +145,7 @@ test("risk rows map to bounded dashboard signal fields", () => {
     environment: "prod",
     intentId: "intent-1",
     reasonCodes: ["checkout_refunded_amount_cluster"],
+    refundedAmountClusterActiveUntil: "2026-08-12T00:00:00.000Z",
     caseId: row.case_id,
     sessionId: row.session_id,
     source: "signup",

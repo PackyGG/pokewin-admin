@@ -296,7 +296,7 @@ test("identity containment dominates trust discounts in the Fiat workspace", () 
   assert.match(contained.summary, /post-authorization identity/i);
 });
 
-test("a refunded-amount cluster is review-only, including legacy containment rows", () => {
+test("an active refunded-amount cluster contains while an expired one is ignored", () => {
   const base = scoreFiatDeposit(safeInput);
   const reviewed = applyFiatIdentityContainmentRisk(base, {
     identityVerdict: "review",
@@ -306,12 +306,6 @@ test("a refunded-amount cluster is review-only, including legacy containment row
   });
   assert.equal(reviewed.riskScore, 50);
   assert.equal(reviewed.verdict, "review");
-  assert.equal(reviewed.scoreBreakdown.network, 50);
-  assert.equal(
-    reviewed.signals[0]?.key,
-    "fiat_refunded_amount_cluster_review",
-  );
-  assert.match(reviewed.summary, /last 48 hours/i);
 
   const legacy = applyFiatIdentityContainmentRisk(base, {
     identityVerdict: "contain",
@@ -319,8 +313,8 @@ test("a refunded-amount cluster is review-only, including legacy containment row
     identityReviewCodes: [],
     identityClusterActive: true,
   });
-  assert.equal(legacy.riskScore, 50);
-  assert.equal(legacy.verdict, "review");
+  assert.equal(legacy.riskScore, 100);
+  assert.equal(legacy.verdict, "bad");
 
   const expired = applyFiatIdentityContainmentRisk(base, {
     identityVerdict: "contain",

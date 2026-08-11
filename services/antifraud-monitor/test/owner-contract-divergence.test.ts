@@ -105,14 +105,16 @@ test("Fiat identity drift opens review and applies only approved locks", async (
     "checkout_email_domain_blacklisted",
     "checkout_ip_blocklisted",
     "checkout_fingerprint_blocklisted",
+    "checkout_refunded_amount_cluster",
     "checkout_card_changed_recent",
     "checkout_ip_and_device_changed",
   ]) {
     assert.match(policy, new RegExp(`"${reason}"`));
     assert.match(containment, new RegExp(`"${reason}"`));
   }
-  assert.match(policy, /"checkout_refunded_amount_cluster"/);
-  assert.doesNotMatch(containment, /"checkout_refunded_amount_cluster"/);
+  assert.match(service, /refundedAmountClusterActiveUntil/);
+  assert.match(containment, /Date\.parse\(payload\.refundedAmountClusterActiveUntil\)/);
+  assert.match(containment, /clusterActiveUntil > Date\.now\(\)/);
 
   // A single changed IP or device is ordinary customer behaviour; only the pair
   // contains.

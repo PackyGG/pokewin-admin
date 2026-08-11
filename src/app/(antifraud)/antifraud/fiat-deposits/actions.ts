@@ -19,13 +19,26 @@ import { resolveAdminMainUserId } from "@/lib/resolve-admin-main-user-id";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
 import { require2FA } from "@/lib/require-2fa";
 
-const creditDecisionSchema = z.object({
+const decisionFields = {
   intentId: z.string().uuid(),
-  decision: z.enum(["approve", "decline"]),
-  reason: z.string().trim().min(3).max(500),
   stepUpCredential: z.string().trim().min(1).max(4_096),
   idempotencyKey: z.string().uuid(),
-});
+};
+const creditDecisionSchema = z.discriminatedUnion("decision", [
+  z.object({
+    ...decisionFields,
+    decision: z.literal("approve"),
+    reason: z.string().trim().max(500).refine(
+      (value) => value.length === 0 || value.length >= 3,
+      "An optional approval note must be at least 3 characters.",
+    ).transform((value) => value || null),
+  }),
+  z.object({
+    ...decisionFields,
+    decision: z.literal("decline"),
+    reason: z.string().trim().min(3).max(500),
+  }),
+]);
 
 export type FiatDepositDecisionResult =
   | { success: true; status: string }

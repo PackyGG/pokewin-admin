@@ -102,24 +102,24 @@ export function FiatDepositReviewDecision({
               : `This does not refund the payment. It locks Fiat deposits and all withdrawals, then sends the deposit to Admin for a refund and/or ban decision.`}
           </AlertDialogDescription>
         </AlertDialogHeader>
-        <div className="space-y-2">
-          <Label htmlFor={`fiat-decision-reason-${intentId}`}>Decision reason</Label>
-          <Textarea
-            id={`fiat-decision-reason-${intentId}`}
-            value={reason}
-            onChange={(event) => setReason(event.target.value)}
-            maxLength={500}
-            placeholder={
-              decision === "approve"
-                ? "Why is this payment safe to credit?"
-                : "Why should this payment be declined?"
-            }
-            disabled={isPending}
-          />
-          <p className="text-right text-[11px] text-muted-foreground">
-            {reason.trim().length}/500
-          </p>
-        </div>
+        {decision === "decline" && (
+          <div className="space-y-2">
+            <Label htmlFor={`fiat-decision-reason-${intentId}`}>
+              Decision reason
+            </Label>
+            <Textarea
+              id={`fiat-decision-reason-${intentId}`}
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              maxLength={500}
+              placeholder="Why should this payment be declined?"
+              disabled={isPending}
+            />
+            <p className="text-right text-[11px] text-muted-foreground">
+              {reason.trim().length}/500
+            </p>
+          </div>
+        )}
         <StepUpField
           value={stepUpCredential}
           onChange={setStepUpCredential}
@@ -131,7 +131,7 @@ export function FiatDepositReviewDecision({
             onClick={submit}
             disabled={
               isPending ||
-              reason.trim().length < 3 ||
+              (decision === "decline" && reason.trim().length < 3) ||
               !stepUpCredential.trim()
             }
           >

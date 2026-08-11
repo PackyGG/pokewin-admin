@@ -94,6 +94,7 @@ function objectPayload(value: unknown): Record<string, unknown> {
     "reasonCodes",
     "reviewCodes",
     "watchCodes",
+    "refundedAmountClusterActiveUntil",
   ] as const;
   const compact: Record<string, unknown> = {
     deliveryPayloadTruncated: true,

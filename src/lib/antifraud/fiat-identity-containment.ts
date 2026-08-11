@@ -14,6 +14,7 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = new Set([
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
+  "checkout_refunded_amount_cluster",
   "checkout_card_changed_recent",
   "checkout_ip_and_device_changed",
 ]);
@@ -34,13 +35,23 @@ export function fiatIdentityContainmentTarget(signal: {
 }): FiatIdentityContainmentTarget | null {
   const userId = signal.userId;
   const payload = signal.payload ?? {};
+  const clusterActiveUntil =
+    typeof payload.refundedAmountClusterActiveUntil === "string"
+      ? Date.parse(payload.refundedAmountClusterActiveUntil)
+      : Number.NaN;
   const rawReasons = payload.reasonCodes;
   const reasons = Array.isArray(rawReasons)
-    ? rawReasons.filter(
-        (reason): reason is string =>
-          typeof reason === "string"
-          && FIAT_IDENTITY_CONTAINMENT_REASONS.has(reason),
-      )
+    ? rawReasons.filter((reason): reason is string => {
+        if (
+          typeof reason !== "string"
+          || !FIAT_IDENTITY_CONTAINMENT_REASONS.has(reason)
+        ) {
+          return false;
+        }
+        return reason !== "checkout_refunded_amount_cluster"
+          || (Number.isFinite(clusterActiveUntil)
+            && clusterActiveUntil > Date.now());
+      })
     : [];
   const intentId =
     typeof payload.intentId === "string" ? payload.intentId : null;

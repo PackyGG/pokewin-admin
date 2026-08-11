@@ -484,10 +484,13 @@ export class FiatDepositIdentityChecks {
 
   private async refundedAmountCluster(
     intent: AuthorizedIntentRow,
-  ): Promise<string | null> {
-    const result = await this.db.antifraud.query<{ reason: string }>(
+  ): Promise<{ reason: string; activeUntil: Date } | null> {
+    const result = await this.db.antifraud.query<{
+      reason: string;
+      active_until: Date;
+    }>(
       `
-        SELECT reason
+        SELECT reason, active_until
         FROM fiat_refunded_amount_clusters
         WHERE currency = upper($1)
           AND requested_amount_cents = $2
@@ -497,7 +500,8 @@ export class FiatDepositIdentityChecks {
       `,
       [intent.currency, intent.requested_amount_cents],
     );
-    return result.rows[0]?.reason ?? null;
+    const row = result.rows[0];
+    return row ? { reason: row.reason, activeUntil: row.active_until } : null;
   }
 
   /**
@@ -619,7 +623,7 @@ export class FiatDepositIdentityChecks {
         checkoutVisitorId: network.visitorId,
         email,
         blacklistedEmailDomain: blacklisted,
-        refundedAmountClusterReason: refundedAmountCluster,
+        refundedAmountClusterReason: refundedAmountCluster?.reason ?? null,
         blocklistMatches: blocklist,
         priorCleanDeposits: priorClean,
       },
@@ -647,7 +651,9 @@ export class FiatDepositIdentityChecks {
       checkoutEmail: facts.checkoutEmail,
       baselineCardLast4: baseline?.cardLast4 ?? null,
       baselineCheckoutEmail: baseline?.checkoutEmail ?? null,
-      refundedAmountClusterReason: refundedAmountCluster,
+      refundedAmountClusterReason: refundedAmountCluster?.reason ?? null,
+      refundedAmountClusterActiveUntil:
+        refundedAmountCluster?.activeUntil.toISOString() ?? null,
       signals: outcome.signals,
     };
 

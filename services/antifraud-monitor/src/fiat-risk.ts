@@ -891,7 +891,9 @@ export function applyFiatIdentityContainmentRisk(
   if (!identity) return scored;
 
   const hardReasons = identity.identityReasonCodes.filter(
-    (reason) => reason !== "checkout_refunded_amount_cluster",
+    (reason) =>
+      reason !== "checkout_refunded_amount_cluster"
+      || identity.identityClusterActive,
   );
   const clusterReview = identity.identityClusterActive && (
     identity.identityReviewCodes.includes("checkout_refunded_amount_cluster")

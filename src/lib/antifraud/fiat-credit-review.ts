@@ -239,7 +239,7 @@ export async function creditReviewedFiatDeposit(input: {
   amountCents: number;
   payment: WhopPayment;
   reviewedBy: string;
-  reason: string;
+  reason: string | null;
 }): Promise<{
   amountCents: number;
   ledgerId: string;
