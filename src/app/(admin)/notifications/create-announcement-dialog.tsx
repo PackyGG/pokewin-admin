@@ -111,10 +111,11 @@ const TEMPLATE_TYPES: Record<Template, string> = {
   pack: "pack_release",
   challenge: "challenge_available",
   page: "page_release",
-  promo: "promo_code",
+  promo: "promo_code_granted",
 };
 
 const CUSTOM_PAGE = "__custom__";
+const MAX_ANNOUNCEMENT_PACKS = 3;
 
 type AutoKey = "title" | "body" | "url" | "imageUrl" | "ctaLabel";
 
@@ -139,7 +140,7 @@ export function CreateAnnouncementDialog({
     Set<AnnouncementAudienceRole>
   >(() => new Set());
   const [endsAt, setEndsAt] = useState("");
-  const [pack, setPack] = useState<AnnouncementPackOption | null>(null);
+  const [packs, setPacks] = useState<AnnouncementPackOption[]>([]);
   const [pagePath, setPagePath] = useState<string>(MAIN_SITE_PAGES[1].path);
   const [promo, setPromo] = useState<AnnouncementPromoOption | null>(null);
   const [manualCode, setManualCode] = useState("");
@@ -188,7 +189,7 @@ export function CreateAnnouncementDialog({
     setEveryoneAudience(true);
     setAudienceRoles(new Set());
     setEndsAt("");
-    setPack(null);
+    setPacks([]);
     setPagePath(MAIN_SITE_PAGES[1].path);
     setPromo(null);
     setManualCode("");
@@ -220,7 +221,7 @@ export function CreateAnnouncementDialog({
       Object.values(TEMPLATE_TYPES).includes(cur) ? TEMPLATE_TYPES[next] : cur,
     );
     if (next === "page") applyPage(pagePath);
-    if (next === "pack" && pack) applyPack(pack);
+    if (next === "pack" && packs.length > 0) applyPacks(packs);
     if (next === "promo" && promo) applyPromo(promo);
     if (next === "challenge") {
       // "All" means every player account, not internal staff roles.
@@ -230,21 +231,64 @@ export function CreateAnnouncementDialog({
     }
   }
 
-  function applyPack(p: AnnouncementPackOption) {
-    setPack(p);
-    autoSetText("title", `New pack: ${p.name}`, setTitle);
+  function applyPacks(nextPacks: AnnouncementPackOption[]) {
+    const next = nextPacks.slice(0, MAX_ANNOUNCEMENT_PACKS);
+    setPacks(next);
+    if (next.length === 0) {
+      autoSetPayload("url", "");
+      autoSetPayload("imageUrl", "");
+      autoSetPayload("ctaLabel", "");
+      return;
+    }
+
+    if (next.length === 1) {
+      const pack = next[0];
+      autoSetText("title", `New pack: ${pack.name}`, setTitle);
+      autoSetText(
+        "body",
+        `${pack.name} is live — ${formatCurrency(pack.priceUsd)} per open.`,
+        setBody,
+      );
+      autoSetPayload("url", packUrl(pack.slug));
+      autoSetPayload("ctaLabel", "Open now");
+      autoSetPayload(
+        "imageUrl",
+        pack.imageUrl && isImageKitUrl(pack.imageUrl) ? pack.imageUrl : "",
+      );
+      return;
+    }
+
+    autoSetText("title", "Fresh packs just dropped", setTitle);
     autoSetText(
       "body",
-      `${p.name} is live — ${formatCurrency(p.priceUsd)} per open.`,
+      `${next.map((pack) => pack.name).join(", ")} are live now.`,
       setBody,
     );
-    autoSetPayload("url", packUrl(p.slug));
-    autoSetPayload("ctaLabel", "Open now");
-    // Every pack image on prod is ImageKit-hosted, but a pack can have none
-    // (14 image-less packs, all inactive) — never push an unusable value.
-    if (p.imageUrl && isImageKitUrl(p.imageUrl)) {
-      autoSetPayload("imageUrl", p.imageUrl);
-    }
+    autoSetPayload("url", mainSiteUrl("/games/packs?sort=newest"));
+    autoSetPayload("imageUrl", "");
+    autoSetPayload("ctaLabel", "View new packs");
+  }
+
+  function payloadForTemplate(): AnnouncementPayloadDraft {
+    return {
+      ...payload,
+      ...(template === "pack"
+        ? {
+            packs: packs.map((pack) => ({
+              name: pack.name,
+              priceUsd: pack.priceUsd,
+              url: packUrl(pack.slug),
+              imageUrl: pack.imageUrl,
+            })),
+          }
+        : {}),
+      ...(template === "promo"
+        ? {
+            promoCode: manualCode,
+            promoValueUsd: promo ? String(promo.valueUsd) : "",
+          }
+        : {}),
+    };
   }
 
   function applyPage(path: string) {
@@ -328,7 +372,16 @@ export function CreateAnnouncementDialog({
       toast.error("Pick at least one audience role, or choose Everyone");
       return;
     }
-    const check = validateAnnouncementPayload(payload);
+    if (template === "pack" && packs.length === 0) {
+      toast.error("Select at least one pack");
+      return;
+    }
+    if (template === "promo" && !manualCode.trim()) {
+      toast.error("Enter a promo code");
+      return;
+    }
+    const composedPayload = payloadForTemplate();
+    const check = validateAnnouncementPayload(composedPayload);
     if (!check.ok) {
       toast.error(check.error);
       return;
@@ -347,7 +400,7 @@ export function CreateAnnouncementDialog({
           type,
           audienceRoles: everyoneAudience ? null : [...audienceRoles],
           endsAt: endsAtIso,
-          payload,
+          payload: composedPayload,
         });
         if (!result.success) {
           toast.error(result.error);
@@ -385,7 +438,7 @@ export function CreateAnnouncementDialog({
   const linkExpanded =
     linkOpen ||
     imageInvalid ||
-    (packAutoFilled && pack != null && !pack.imageUrl);
+    (packAutoFilled && packs.some((pack) => !pack.imageUrl));
   const filledParts = [
     payload.imageUrl.trim() ? "Image" : null,
     payload.url.trim() ? "Link" : null,
@@ -432,28 +485,70 @@ export function CreateAnnouncementDialog({
             <div className="space-y-1.5 rounded-md border p-3">
               <Label className="text-xs text-muted-foreground">Pack</Label>
               <NotificationPackPicker
-                value={pack}
-                onSelect={applyPack}
+                selectedValues={packs}
+                onSelectionChange={applyPacks}
+                maxSelected={MAX_ANNOUNCEMENT_PACKS}
                 scope="announcement"
+                placeholder="Select up to three packs…"
                 disabled={isPending}
               />
-              {pack ? (
-                pack.imageUrl ? (
+              {packs.length > 0 ? (
+                packs.every((pack) => pack.imageUrl) ? (
                   <p className="text-[11px] text-emerald-600 dark:text-emerald-400">
-                    Image, link and button filled in from the pack — nothing to
-                    paste.
+                    Pack artwork, prices, links, and button are added
+                    automatically in newest-first order.
                   </p>
                 ) : (
                   <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    Link and button filled in. This pack has no image — upload
-                    one below or send without.
+                    One or more packs have no artwork. They will still render
+                    with their names, prices, and links.
                   </p>
                 )
               ) : (
                 <p className="text-[11px] text-muted-foreground">
-                  Pick a pack — its image, page link and button label fill in
-                  automatically.
+                  Pick up to three packs. The newest selected pack is shown
+                  first.
                 </p>
+              )}
+              {packs.length > 0 && (
+                <div className="grid gap-2 sm:grid-cols-3">
+                  {packs.map((pack) => (
+                    <div
+                      key={pack.id}
+                      className="relative rounded-md border bg-background p-2"
+                    >
+                      {pack.imageUrl && (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img
+                          src={pack.imageUrl}
+                          alt=""
+                          className="mb-2 h-16 w-full object-contain"
+                        />
+                      )}
+                      <p className="truncate pr-5 text-xs font-medium">
+                        {pack.name}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground">
+                        {formatCurrency(pack.priceUsd)} per open
+                      </p>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon-sm"
+                        className="absolute right-1 top-1"
+                        aria-label={`Remove ${pack.name}`}
+                        disabled={isPending}
+                        onClick={() =>
+                          applyPacks(
+                            packs.filter((item) => item.id !== pack.id),
+                          )
+                        }
+                      >
+                        <Trash2 className="size-3.5" />
+                      </Button>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           )}

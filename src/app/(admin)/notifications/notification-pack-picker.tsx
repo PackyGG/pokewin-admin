@@ -24,6 +24,15 @@ import {
   type AnnouncementPackOption,
 } from "./composer-actions";
 
+function newestPacksFirst(
+  packs: readonly AnnouncementPackOption[],
+): AnnouncementPackOption[] {
+  return [...packs].sort((a, b) => {
+    const byCreatedAt = Date.parse(b.createdAt) - Date.parse(a.createdAt);
+    return byCreatedAt || b.id.localeCompare(a.id);
+  });
+}
+
 export function NotificationPackPicker({
   value = null,
   onSelect,
@@ -195,9 +204,11 @@ export function NotificationPackPicker({
                 onSelect={() => {
                   if (multiple) {
                     onSelectionChange(
-                      selectedIds.has(item.id)
-                        ? selected.filter((pack) => pack.id !== item.id)
-                        : [...selected, item],
+                      newestPacksFirst(
+                        selectedIds.has(item.id)
+                          ? selected.filter((pack) => pack.id !== item.id)
+                          : [...selected, item].slice(0, maxSelected),
+                      ),
                     );
                     return;
                   }

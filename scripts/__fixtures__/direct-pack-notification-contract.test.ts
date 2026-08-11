@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import { previewNotificationText } from "@/lib/user-notification-templates";
+import { validateAnnouncementPayload } from "@/lib/announcement-payload";
 
 const root = process.cwd();
 const source = (path: string) => readFileSync(`${root}/${path}`, "utf8");
@@ -51,6 +52,56 @@ test("personal pack notifications preview up to three packs", () => {
   assert.equal(preview.href, "https://packy.gg/games/packs?sort=newest");
 });
 
+test("broadcast pack announcements preserve the shared one-to-three-pack contract", () => {
+  const result = validateAnnouncementPayload({
+    url: "https://packy.gg/games/packs?sort=newest",
+    ctaLabel: "View new packs",
+    packs: [
+      {
+        name: "Newest",
+        priceUsd: 8,
+        url: "https://packy.gg/games/packs/newest",
+        imageUrl: "https://ik.imagekit.io/scrkflpgw/packs/newest.png",
+      },
+      {
+        name: "Second",
+        priceUsd: 5,
+        url: "https://packy.gg/games/packs/second",
+        imageUrl: null,
+      },
+    ],
+  });
+
+  assert.equal(result.ok, true);
+  if (!result.ok) return;
+  assert.equal(result.payload?.packs?.length, 2);
+  assert.equal(result.payload?.packs?.[0].name, "Newest");
+  assert.equal(result.payload?.packs?.[0].price_usd, "8.00");
+
+  assert.equal(
+    validateAnnouncementPayload({
+      packs: Array.from({ length: 4 }, (_, index) => ({
+        name: `Pack ${index}`,
+        priceUsd: index,
+        url: `https://packy.gg/games/packs/pack-${index}`,
+        imageUrl: null,
+      })),
+    }).ok,
+    false,
+  );
+});
+
+test("broadcast promo announcements retain reveal-card metadata", () => {
+  const result = validateAnnouncementPayload({
+    promoCode: " summer-25 ",
+    promoValueUsd: "25",
+  });
+  assert.deepEqual(result, {
+    ok: true,
+    payload: { code: "SUMMER-25", value: "25.00" },
+  });
+});
+
 test("direct pack lookup keeps the personal-send capability boundary", () => {
   const actions = source("src/app/(admin)/notifications/composer-actions.ts");
   const form = source(
@@ -74,6 +125,10 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
     /orderBy\(desc\(packs\.created_at\), desc\(packs\.id\)\)/,
   );
   assert.match(
+    actions,
+    /createdAt: new Date\(p\.created_at\)\.toISOString\(\)/,
+  );
+  assert.match(
     form,
     /type=\"pack_release\"|setType\("pack_release"\)|type:\s*"pack_release"/,
   );
@@ -90,4 +145,13 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(picker, /Select up to \{maxSelected\} packs/);
   assert.match(picker, /Search packs by name or slug/);
   assert.match(picker, /Newest packs first/);
+  assert.match(picker, /newestPacksFirst/);
+
+  const announcement = source(
+    "src/app/(admin)/notifications/create-announcement-dialog.tsx",
+  );
+  assert.match(announcement, /MAX_ANNOUNCEMENT_PACKS = 3/);
+  assert.match(announcement, /selectedValues=\{packs\}/);
+  assert.match(announcement, /onSelectionChange=\{applyPacks\}/);
+  assert.match(announcement, /promo: "promo_code_granted"/);
 });

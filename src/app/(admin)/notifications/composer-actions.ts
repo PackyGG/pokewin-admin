@@ -43,6 +43,7 @@ export type AnnouncementPackOption = {
   slug: string;
   imageUrl: string | null;
   priceUsd: number;
+  createdAt: string;
 };
 
 export type AnnouncementPromoOption = {
@@ -91,6 +92,7 @@ async function queryActivePacks(
       slug: packs.slug,
       image_url: packs.image_url,
       price: packs.price,
+      created_at: packs.created_at,
     })
     .from(packs)
     .where(and(eq(packs.active, true), search))
@@ -103,6 +105,7 @@ async function queryActivePacks(
     slug: p.slug,
     imageUrl: p.image_url,
     priceUsd: toNumber(p.price),
+    createdAt: new Date(p.created_at).toISOString(),
   }));
 }
 

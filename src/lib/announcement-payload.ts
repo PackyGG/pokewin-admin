@@ -14,8 +14,8 @@
  *   cta_label  optional, ≤ 60 chars
  *
  * Unknown keys are STRIPPED by the backend's zod object. Besides the general
- * link/media fields, the contract includes validated challenge metadata for
- * the Keno, Upgrader and Pack Opening announcement cards.
+ * link/media fields, the contract includes validated challenge, pack-release,
+ * and promo-card metadata.
  *
  * Validating admin-side keeps a bad value inside the dialog with a usable
  * message instead of surfacing as an opaque 422 from the backend. Both the
@@ -38,9 +38,26 @@ export type AnnouncementPayload = {
   game_type?: "pack" | "upgrader" | "keno";
   challenge_type?: "pack_pull" | "upgrader" | "keno";
   prize_usd?: string;
+  pack_name?: string;
+  price_usd?: string;
+  packs?: Array<{
+    name: string;
+    price_usd: string;
+    url: string;
+    image_url?: string;
+  }>;
+  code?: string;
+  value?: string;
 };
 
-/** Form-side shape used by the composer (camelCase, always strings). */
+export type AnnouncementPackPayloadDraft = {
+  name: string;
+  priceUsd: number;
+  url: string;
+  imageUrl: string | null;
+};
+
+/** Form-side shape used by the composer (camelCase). */
 export type AnnouncementPayloadDraft = {
   url: string;
   imageUrl: string;
@@ -48,6 +65,9 @@ export type AnnouncementPayloadDraft = {
   challengeName: string;
   challengeGame: "" | "pack" | "upgrader" | "keno";
   challengePrizeUsd: string;
+  packs?: AnnouncementPackPayloadDraft[];
+  promoCode?: string;
+  promoValueUsd?: string;
 };
 
 export const EMPTY_PAYLOAD_DRAFT: AnnouncementPayloadDraft = {
@@ -92,6 +112,9 @@ export function validateAnnouncementPayload(
   const challengeName = (draft?.challengeName ?? "").trim();
   const challengeGame = draft?.challengeGame ?? "";
   const challengePrizeUsd = (draft?.challengePrizeUsd ?? "").trim();
+  const packDrafts = draft?.packs ?? [];
+  const promoCode = (draft?.promoCode ?? "").trim().toUpperCase();
+  const promoValueUsd = (draft?.promoValueUsd ?? "").trim();
 
   if (url) {
     if (!isHttpUrl(url)) {
@@ -159,7 +182,65 @@ export function validateAnnouncementPayload(
     }
   }
 
-  if (!url && !imageUrl && !ctaLabel && !hasChallengeMetadata) {
+  if (packDrafts.length > 3) {
+    return { ok: false, error: "Pack announcements support up to 3 packs" };
+  }
+  const seenPackUrls = new Set<string>();
+  const validatedPacks: NonNullable<AnnouncementPayload["packs"]> = [];
+  for (const pack of packDrafts) {
+    const name = pack.name.trim();
+    const packUrl = pack.url.trim();
+    const imageUrl = pack.imageUrl?.trim() ?? "";
+    if (!name || name.length > 200) {
+      return { ok: false, error: "Every pack needs a valid name" };
+    }
+    if (!isHttpUrl(packUrl) || packUrl.length > ANNOUNCEMENT_URL_MAX) {
+      return { ok: false, error: `Pack ${name} needs a valid http(s) link` };
+    }
+    if (seenPackUrls.has(packUrl)) {
+      return { ok: false, error: "The same pack cannot be selected twice" };
+    }
+    seenPackUrls.add(packUrl);
+    if (imageUrl && !isImageKitUrl(imageUrl)) {
+      return { ok: false, error: `Pack ${name} has an invalid image URL` };
+    }
+    if (
+      !Number.isFinite(pack.priceUsd) ||
+      pack.priceUsd < 0 ||
+      pack.priceUsd > 100_000
+    ) {
+      return { ok: false, error: `Pack ${name} has an invalid price` };
+    }
+    validatedPacks.push({
+      name,
+      price_usd: pack.priceUsd.toFixed(2),
+      url: packUrl,
+      ...(imageUrl ? { image_url: imageUrl } : {}),
+    });
+  }
+
+  if (promoCode.length > 256) {
+    return { ok: false, error: "Promo code must be 256 characters or less" };
+  }
+  if (promoValueUsd) {
+    const amount = Number(promoValueUsd.replace(/^\$/, ""));
+    if (!Number.isFinite(amount) || amount < 0 || amount > 100_000) {
+      return {
+        ok: false,
+        error: "Promo value must be between $0 and $100,000",
+      };
+    }
+  }
+
+  if (
+    !url &&
+    !imageUrl &&
+    !ctaLabel &&
+    !hasChallengeMetadata &&
+    validatedPacks.length === 0 &&
+    !promoCode &&
+    !promoValueUsd
+  ) {
     return { ok: true, payload: undefined };
   }
 
@@ -184,6 +265,22 @@ export function validateAnnouncementPayload(
                 }
               : {}),
           }
+        : {}),
+      ...(validatedPacks.length === 1
+        ? {
+            pack_name: validatedPacks[0].name,
+            price_usd: validatedPacks[0].price_usd,
+            url: validatedPacks[0].url,
+            ...(validatedPacks[0].image_url
+              ? { image_url: validatedPacks[0].image_url }
+              : {}),
+          }
+        : validatedPacks.length > 1
+          ? { packs: validatedPacks }
+          : {}),
+      ...(promoCode ? { code: promoCode } : {}),
+      ...(promoValueUsd
+        ? { value: Number(promoValueUsd.replace(/^\$/, "")).toFixed(2) }
         : {}),
     },
   };
