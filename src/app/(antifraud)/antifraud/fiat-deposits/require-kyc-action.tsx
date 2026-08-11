@@ -59,7 +59,15 @@ export function RequireKycAction({
 
   return (
     <AlertDialog open={open} onOpenChange={(next) => !isPending && setOpen(next)}>
-      <AlertDialogTrigger render={<Button size="sm" variant="outline" />}>
+      <AlertDialogTrigger
+        render={
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-9 min-w-24 px-3"
+          />
+        }
+      >
         <BadgeCheck className="size-3.5" />
         Require KYC
       </AlertDialogTrigger>

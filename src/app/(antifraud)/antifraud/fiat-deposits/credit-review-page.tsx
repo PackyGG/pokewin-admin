@@ -358,8 +358,8 @@ function ReviewDepositCard({
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
       <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(18rem,auto)_auto] xl:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
-            <UserRound className="size-4.5" />
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+            <UserRound className="size-4" />
           </div>
           <div className="min-w-0">
             <div className="flex flex-wrap items-center gap-2">

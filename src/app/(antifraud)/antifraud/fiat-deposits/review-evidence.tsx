@@ -98,6 +98,9 @@ export function FiatReviewEvidence({
     safeguards?.fiatDepositsLocked ? "Fiat deposits locked" : null,
     safeguards?.withdrawalsLocked ? "Withdrawals locked" : null,
   ].filter((item): item is string => item !== null);
+  const showRecommendation =
+    assessment.recommendation !==
+    "Whop, funding history, account trust, and post-deposit behavior are consistent.";
 
   return (
     <div className="min-w-0 space-y-2">
@@ -129,7 +132,9 @@ export function FiatReviewEvidence({
         )}
       </div>
 
-      <p className="text-xs font-medium leading-5">{assessment.recommendation}</p>
+      {showRecommendation && (
+        <p className="text-xs font-medium leading-5">{assessment.recommendation}</p>
+      )}
       <p className="text-xs leading-5 text-muted-foreground">{assessment.summary}</p>
 
       <div className="flex flex-wrap items-center gap-1.5">
