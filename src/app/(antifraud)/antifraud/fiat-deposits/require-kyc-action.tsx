@@ -64,7 +64,7 @@ export function RequireKycAction({
           <Button
             size="sm"
             variant="outline"
-            className="h-11 w-28 px-3"
+            className="h-12 w-28 px-3"
           />
         }
       >

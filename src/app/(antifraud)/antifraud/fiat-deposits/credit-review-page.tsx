@@ -356,9 +356,9 @@ function ReviewDepositCard({
 
   return (
     <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(18rem,auto)_auto] xl:items-center">
+      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(20rem,auto)_auto] xl:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
+          <div className="flex size-12 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
             <UserRound className="size-4" />
           </div>
           <div className="min-w-0">
@@ -388,7 +388,7 @@ function ReviewDepositCard({
           </div>
         </div>
 
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid min-w-80 grid-cols-2 gap-2">
           <AmountFact label="Customer paid" value={money(customerPaid)} />
           <AmountFact
             label="Balance credit"
@@ -483,13 +483,13 @@ function AmountFact({
   accent?: boolean;
 }) {
   return (
-    <div className="flex h-11 min-w-0 flex-col justify-center rounded-lg border bg-background px-3 py-1.5 text-right">
-      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+    <div className="flex h-12 min-w-0 flex-col justify-center rounded-lg border bg-background px-3 py-1.5 text-right">
+      <p className="text-[10px] font-medium leading-none uppercase tracking-wide text-muted-foreground">
         {label}
       </p>
       <p className={accent
-        ? "truncate text-base font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
-        : "truncate text-base font-semibold tabular-nums"}
+        ? "mt-1 whitespace-nowrap text-base font-bold leading-none tabular-nums text-emerald-600 dark:text-emerald-400"
+        : "mt-1 whitespace-nowrap text-base font-semibold leading-none tabular-nums"}
       >
         {value}
       </p>

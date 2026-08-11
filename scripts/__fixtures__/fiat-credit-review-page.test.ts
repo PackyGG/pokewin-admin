@@ -177,6 +177,19 @@ test("staff see the score, triggers, evidence gaps, and global cluster context b
   assert.match(evidence, /Decline does not refund it/);
 });
 
+test("review amounts remain fully visible in the compact aligned header", () => {
+  const amountFact = page.slice(
+    page.indexOf("function AmountFact"),
+    page.indexOf("function ComparisonFact"),
+  );
+
+  assert.match(amountFact, /h-12/);
+  assert.match(amountFact, /whitespace-nowrap/);
+  assert.doesNotMatch(amountFact, /truncate/);
+  assert.match(page, /grid min-w-80 grid-cols-2/);
+  assert.match(controls, /h-12 w-28/);
+});
+
 test("Admin Deposits is manager-only and supports independent refund and ban decisions", () => {
   assert.match(adminPage, /requireAntifraudManagerPage\(\)/);
   assert.match(adminPage, /getDeclinedFiatCreditReviews/);
