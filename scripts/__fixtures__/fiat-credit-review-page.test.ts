@@ -162,6 +162,8 @@ test("staff see the score, triggers, evidence gaps, and global cluster context b
   assert.match(page, /<FiatReviewEvidence[\s\S]*?assessment=\{item\.assessment\}/);
   assert.match(evidence, /Risk \{assessment\.risk_score\}\/100/);
   assert.match(evidence, /assessment\.recommendation/);
+  assert.doesNotMatch(evidence, /assessment\.summary/);
+  assert.doesNotMatch(evidence, /post-deposit behavior are consistent/);
   assert.match(evidence, /Current safeguards/);
   assert.match(evidence, /Fiat deposits locked/);
   assert.match(evidence, /Withdrawals locked/);
