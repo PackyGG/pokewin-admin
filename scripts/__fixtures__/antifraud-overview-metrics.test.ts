@@ -93,7 +93,7 @@ test("overview metrics use bounded real sources and never equate KYC with fraud"
   );
 });
 
-test("the dashboard omits ingestion health while keeping 24h activity", async () => {
+test("the dashboard omits ingestion health and the retired 24h strip", async () => {
   const [page, status] = await Promise.all([
     readFile(pagePath, "utf8"),
     readFile(statusPath, "utf8"),
@@ -101,6 +101,8 @@ test("the dashboard omits ingestion health while keeping 24h activity", async ()
 
   assert.doesNotMatch(page, /getAntifraudPollerHealth|poller-health/);
   assert.doesNotMatch(status, /Ingestion healthy|lastSuccessfulTickAt/);
-  assert.match(status, /Antifraud activity in the last 24 hours/);
-  assert.match(status, /live\.signups24h/);
+  assert.doesNotMatch(status, /Antifraud activity in the last 24 hours/);
+  assert.doesNotMatch(status, /live\.signups24h/);
+  assert.match(status, /export function QueueStrip/);
+  assert.match(status, /stats\[queue\.key\]/);
 });
