@@ -20,6 +20,7 @@ const HIGH_RISK_CURSOR_STREAM = "fiat-high-risk";
 const FAILED_WEBHOOK_CURSOR_STREAM = "fiat-failed-webhooks";
 const BATCH_SIZE = 100;
 const DELIVERY_BATCH_SIZE = 8;
+const CREDIT_REVIEW_SETTLEMENT_SECONDS = 10;
 const UTC = "AT TIME ZONE 'UTC'";
 
 export const FIAT_PROBLEM_CODES = [
@@ -1105,15 +1106,18 @@ export class FiatProblemAlerts {
         WHERE delivery.delivered_at IS NULL
           AND delivery.next_attempt_at <= now()
           AND alert.next_attempt_at <= now()
-          -- A held payment is classified by separate risk and identity
-          -- workers. Give both a bounded settlement window, then suppress the
-          -- normal #deposits card whenever either worker classified the same
-          -- intent as high risk. This prevents one payment from producing a
-          -- normal review card followed by a high-risk card seconds later.
+          -- Risk and identity classification run before this delivery phase.
+          -- Keep two real production monitor cycles as a short reconciliation
+          -- window, then suppress the normal #deposits card whenever either
+          -- worker classified the same intent as high risk. The previous
+          -- 60-second buffer made an otherwise healthy notification feel
+          -- broken while adding no stronger consistency guarantee.
           AND (
             alert.problem_code <> 'review'
             OR (
-              alert.created_at <= now() - interval '60 seconds'
+              alert.created_at <= now() - make_interval(
+                secs => ${CREDIT_REVIEW_SETTLEMENT_SECONDS}
+              )
               AND NOT EXISTS (
                 SELECT 1
                 FROM fiat_deposit_assessments assessment

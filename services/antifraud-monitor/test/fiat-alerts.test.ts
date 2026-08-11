@@ -436,7 +436,7 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   assert.ok(
     pendingQueries.every(
       (query) =>
-        query.includes("alert.created_at <= now() - interval '60 seconds'")
+        query.includes("secs => 10")
         && query.includes("assessment.verdict = 'bad'")
         && query.includes("identity_check.verdict = 'contain'"),
     ),
