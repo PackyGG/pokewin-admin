@@ -4,6 +4,7 @@ import {
   claimPendingContainmentRows,
   runDeferredContainment,
 } from "@/lib/antifraud/containment-outbox";
+import { reconcileConfirmedCatchallPromotions } from "@/lib/antifraud/catchall-domain-promotion";
 
 /**
  * Retry sweep for the containment outbox on `antifraud_signals`.
@@ -48,17 +49,23 @@ export async function GET(request: Request): Promise<Response> {
   let skipped = 0;
   let failed = 0;
   for (const row of claimed) {
-    const outcome = await runDeferredContainment({
-      kind: row.kind,
-      userId: row.targetUserId,
-      riskScore: row.riskScore,
-      payload: row.payload,
-      signalRowId: row.id,
-    });
+    const outcome = await runDeferredContainment(
+      {
+        kind: row.kind,
+        userId: row.targetUserId,
+        riskScore: row.riskScore,
+        payload: row.payload,
+        signalRowId: row.id,
+      },
+      { attemptAlreadyCounted: true },
+    );
     if (outcome === "locked") locked += 1;
     else if (outcome === "skipped") skipped += 1;
     else failed += 1;
   }
+
+  const catchallPromotions =
+    await reconcileConfirmedCatchallPromotions(BATCH_LIMIT);
 
   return NextResponse.json({
     ok: true,
@@ -66,5 +73,6 @@ export async function GET(request: Request): Promise<Response> {
     locked,
     skipped,
     failed,
+    catchallPromotions,
   });
 }

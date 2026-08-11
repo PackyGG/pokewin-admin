@@ -7,6 +7,7 @@ import { createAdminAuditEvent } from "@/lib/admin-audit";
 import { getPrimaryDrizzleDb, getReadDrizzleDb } from "@/lib/db";
 import { user_kyc } from "@/lib/db-schema/main/schema";
 import { logError } from "@/lib/errors/logger";
+import { pgArrayParam } from "@/lib/drizzle-array-param";
 import {
   getUserFeatureLocks,
   updateUserRewardLocks,
@@ -79,6 +80,57 @@ type ReleaseRow = {
   released_withdrawals: boolean;
 };
 
+type CatchallMainSnapshot = {
+  appliedReason: string;
+  depositsFiat: string[];
+  depositsAt: string | null;
+  depositsBy: string | null;
+  depositsReason: string | null;
+  withdrawalsCrypto: string[];
+  withdrawalsItems: boolean;
+  withdrawalsAt: string | null;
+  withdrawalsBy: string | null;
+  withdrawalsReason: string | null;
+};
+
+function stringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function nullableString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function catchallMainSnapshot(
+  metadata: Record<string, unknown> | undefined,
+): CatchallMainSnapshot | null {
+  const raw = metadata?.previousMain;
+  const appliedReason = metadata?.appliedReason;
+  if (
+    !raw ||
+    typeof raw !== "object" ||
+    Array.isArray(raw) ||
+    typeof appliedReason !== "string"
+  ) {
+    return null;
+  }
+  const value = raw as Record<string, unknown>;
+  return {
+    appliedReason,
+    depositsFiat: stringArray(value.depositsFiat),
+    depositsAt: nullableString(value.depositsAt),
+    depositsBy: nullableString(value.depositsBy),
+    depositsReason: nullableString(value.depositsReason),
+    withdrawalsCrypto: stringArray(value.withdrawalsCrypto),
+    withdrawalsItems: value.withdrawalsItems === true,
+    withdrawalsAt: nullableString(value.withdrawalsAt),
+    withdrawalsBy: nullableString(value.withdrawalsBy),
+    withdrawalsReason: nullableString(value.withdrawalsReason),
+  };
+}
+
 /**
  * Release both withdrawal channels for `userId` and mirror it into the ADMIN
  * audit trail.
@@ -121,41 +173,61 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
+  let catchallSnapshot: Record<string, unknown> | undefined;
+  try {
+    const snapshot = await adminDrizzle.execute<{
+      metadata: Record<string, unknown>;
+    }>(sql`
+      SELECT audit.metadata
+      FROM antifraud_signals AS signal
+      JOIN admin_audit_events AS audit
+        ON audit.event_type IN (
+            'antifraud_catchall_lock_snapshot',
+            'antifraud_catchall_reward_lock_snapshot'
+          )
+       AND audit.metadata ->> 'signalRowId' = signal.id::text
+      WHERE signal.review_id = ${reviewId}::uuid
+        AND signal.kind = 'abstract_email_catchall'
+        AND audit.target_user_id = ${userId}
+      ORDER BY audit.created_at DESC
+      LIMIT 1
+    `);
+    catchallSnapshot = snapshot.rows[0]?.metadata;
+  } catch (error) {
+    logError(
+      "antifraud.review.releaseAutomaticRestrictions",
+      `catch-all snapshot lookup failed for review ${reviewId}`,
+      error,
+    );
+    return { status: "failed" };
+  }
+
   let releasedRewardCategories: string[] = [];
   try {
     const current = await getUserFeatureLocks(userId);
     if (
       current.locked_reward_categories.length > 0 &&
-      current.locked_rewards_reason?.startsWith(AUTOMATIC_FRAUD_LOCK_REASON_PREFIX)
+      current.locked_rewards_reason?.startsWith(
+        AUTOMATIC_FRAUD_LOCK_REASON_PREFIX,
+      )
     ) {
-      const snapshot = await adminDrizzle.execute<{
-        previous_categories: unknown;
-        previous_reason: unknown;
-      }>(sql`
-        SELECT
-          audit.metadata -> 'previousCategories' AS previous_categories,
-          audit.metadata -> 'previousReason' AS previous_reason
-        FROM antifraud_signals AS signal
-        JOIN admin_audit_events AS audit
-          ON audit.event_type = 'antifraud_catchall_reward_lock_snapshot'
-         AND audit.metadata ->> 'signalRowId' = signal.id::text
-        WHERE signal.review_id = ${reviewId}::uuid
-          AND signal.kind = 'abstract_email_catchall'
-          AND audit.target_user_id = ${userId}
-        ORDER BY audit.created_at DESC
-        LIMIT 1
-      `);
-      const saved = snapshot.rows[0];
-      const previousCategories = Array.isArray(saved?.previous_categories)
-        ? saved.previous_categories.filter(
-            (value): value is typeof current.locked_reward_categories[number] =>
-              typeof value === "string" && current.available_reward_categories.includes(
-                value as typeof current.locked_reward_categories[number],
+      const previousCategories = Array.isArray(
+        catchallSnapshot?.previousCategories,
+      )
+        ? catchallSnapshot.previousCategories.filter(
+            (
+              value,
+            ): value is (typeof current.locked_reward_categories)[number] =>
+              typeof value === "string" &&
+              current.available_reward_categories.includes(
+                value as (typeof current.locked_reward_categories)[number],
               ),
           )
         : [];
       const previousReason =
-        typeof saved?.previous_reason === "string" ? saved.previous_reason : null;
+        typeof catchallSnapshot?.previousReason === "string"
+          ? catchallSnapshot.previousReason
+          : null;
       const updated = await updateUserRewardLocks(
         userId,
         previousCategories,
@@ -184,12 +256,93 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
   }
 
   let row: ReleaseRow | undefined;
+  let restoredCatchallReason: string | null = null;
   try {
     const db = await getPrimaryDrizzleDb();
-    // The CTE snapshots the pre-release state under a row lock, so the
-    // returned "previous" values are the ones this call actually cleared and
-    // two analysts clearing at once cannot both claim the release.
-    const released = await db.execute<ReleaseRow>(sql`
+    const savedMain = catchallMainSnapshot(catchallSnapshot);
+    if (savedMain) {
+      restoredCatchallReason = savedMain.appliedReason;
+      const restored = await db.execute<ReleaseRow>(sql`
+        WITH previous AS (
+          SELECT
+            user_id,
+            locked_deposits_fiat AS deposits_fiat,
+            locked_deposits_reason AS deposits_reason,
+            locked_withdrawals_crypto AS crypto,
+            locked_withdrawals_items AS items,
+            locked_withdrawals_reason AS withdrawals_reason
+          FROM user_feature_locks
+          WHERE user_id = ${userId}
+          FOR UPDATE
+        )
+        UPDATE user_feature_locks AS locks
+        SET
+          locked_deposits_fiat = CASE
+            WHEN previous.deposits_reason = ${savedMain.appliedReason}
+              THEN ${pgArrayParam(savedMain.depositsFiat)}::text[]
+            ELSE locks.locked_deposits_fiat END,
+          locked_deposits_at = CASE
+            WHEN previous.deposits_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.depositsAt}::timestamp
+            ELSE locks.locked_deposits_at END,
+          locked_deposits_by = CASE
+            WHEN previous.deposits_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.depositsBy}
+            ELSE locks.locked_deposits_by END,
+          locked_deposits_reason = CASE
+            WHEN previous.deposits_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.depositsReason}
+            ELSE locks.locked_deposits_reason END,
+          locked_withdrawals_crypto = CASE
+            WHEN previous.withdrawals_reason = ${savedMain.appliedReason}
+              THEN ${pgArrayParam(savedMain.withdrawalsCrypto)}::text[]
+            ELSE locks.locked_withdrawals_crypto END,
+          locked_withdrawals_items = CASE
+            WHEN previous.withdrawals_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.withdrawalsItems}
+            ELSE locks.locked_withdrawals_items END,
+          locked_withdrawals_at = CASE
+            WHEN previous.withdrawals_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.withdrawalsAt}::timestamp
+            ELSE locks.locked_withdrawals_at END,
+          locked_withdrawals_by = CASE
+            WHEN previous.withdrawals_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.withdrawalsBy}
+            ELSE locks.locked_withdrawals_by END,
+          locked_withdrawals_reason = CASE
+            WHEN previous.withdrawals_reason = ${savedMain.appliedReason}
+              THEN ${savedMain.withdrawalsReason}
+            ELSE locks.locked_withdrawals_reason END,
+          updated_at = NOW()
+        FROM previous
+        WHERE locks.user_id = previous.user_id
+          AND (
+            previous.deposits_reason = ${savedMain.appliedReason}
+            OR previous.withdrawals_reason = ${savedMain.appliedReason}
+          )
+        RETURNING
+          previous.crypto AS previous_crypto,
+          previous.items AS previous_items,
+          (
+            previous.deposits_reason = ${savedMain.appliedReason}
+            AND previous.deposits_fiat IS DISTINCT FROM
+              ${pgArrayParam(savedMain.depositsFiat)}::text[]
+          ) AS released_fiat,
+          (
+            previous.withdrawals_reason = ${savedMain.appliedReason}
+            AND (
+              previous.crypto IS DISTINCT FROM
+                ${pgArrayParam(savedMain.withdrawalsCrypto)}::text[]
+              OR previous.items IS DISTINCT FROM ${savedMain.withdrawalsItems}
+            )
+          ) AS released_withdrawals
+      `);
+      row = restored.rows[0];
+    } else {
+      // The CTE snapshots the pre-release state under a row lock, so the
+      // returned "previous" values are the ones this call actually cleared and
+      // two analysts clearing at once cannot both claim the release.
+      const released = await db.execute<ReleaseRow>(sql`
       WITH previous AS (
         SELECT
           user_id,
@@ -283,7 +436,8 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
           )
         ) AS released_withdrawals
     `);
-    row = released.rows[0];
+      row = released.rows[0];
+    }
   } catch (error) {
     logError(
       "antifraud.review.releaseWithdrawals",
@@ -293,7 +447,8 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
-  if (!row && releasedRewardCategories.length === 0) return { status: "already_open" };
+  if (!row && releasedRewardCategories.length === 0)
+    return { status: "already_open" };
 
   const previousCrypto = row?.previous_crypto ?? [];
   const previousItems = row?.previous_items === true;
@@ -306,7 +461,9 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     previousCrypto,
     previousItems,
     releasedFiat,
+    releasedWithdrawals,
     releasedRewardCategories,
+    catchallAppliedReason: restoredCatchallReason,
   };
 
   // Best effort: MAIN is already released. A failed mirror must not report the
@@ -333,13 +490,21 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
         adminUserId,
         eventType: "locked_withdrawals_crypto_disabled",
         targetUserId: userId,
-        metadata: { ...metadata, feature: "locked_withdrawals_crypto", locked: false },
+        metadata: {
+          ...metadata,
+          feature: "locked_withdrawals_crypto",
+          locked: false,
+        },
       });
       await createAdminAuditEvent({
         adminUserId,
         eventType: "locked_withdrawals_items_disabled",
         targetUserId: userId,
-        metadata: { ...metadata, feature: "locked_withdrawals_items", locked: false },
+        metadata: {
+          ...metadata,
+          feature: "locked_withdrawals_items",
+          locked: false,
+        },
       });
     }
   } catch (error) {
@@ -392,7 +557,9 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
 
   let releaseMetadata: Record<string, unknown>;
   try {
-    const released = await adminDrizzle.execute<{ metadata: Record<string, unknown> }>(sql`
+    const released = await adminDrizzle.execute<{
+      metadata: Record<string, unknown>;
+    }>(sql`
       SELECT metadata
       FROM admin_audit_events
       WHERE event_type = 'antifraud_critical_signup_restrictions_unlocked'
@@ -412,8 +579,14 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
     return { status: "failed" };
   }
 
-  const reason = `${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX}antifraud review ${reviewId} reopened`;
+  const reason =
+    typeof releaseMetadata.catchallAppliedReason === "string"
+      ? releaseMetadata.catchallAppliedReason
+      : `${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX}antifraud review ${reviewId} reopened`;
+  const restoreExactCatchall =
+    typeof releaseMetadata.catchallAppliedReason === "string";
   const restoreFiat = releaseMetadata.releasedFiat === true;
+  const restoreWithdrawals = releaseMetadata.releasedWithdrawals === true;
   try {
     const db = await getPrimaryDrizzleDb();
     const locked = await db.execute<{ user_id: string }>(sql`
@@ -439,11 +612,11 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
         CASE WHEN ${restoreFiat} THEN NOW() ELSE NULL END,
         NULL,
         CASE WHEN ${restoreFiat} THEN ${reason} ELSE NULL END,
-        ARRAY['all']::text[],
-        TRUE,
-        NOW(),
+        CASE WHEN ${restoreWithdrawals} THEN ARRAY['all']::text[] ELSE '{}'::text[] END,
+        ${restoreWithdrawals},
+        CASE WHEN ${restoreWithdrawals} THEN NOW() ELSE NULL END,
         NULL,
-        ${reason},
+        CASE WHEN ${restoreWithdrawals} THEN ${reason} ELSE NULL END,
         NOW(),
         NOW()
       FROM "user" u
@@ -452,21 +625,25 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
         locked_deposits_fiat = CASE WHEN ${restoreFiat}
           THEN ARRAY['all']::text[] ELSE user_feature_locks.locked_deposits_fiat END,
         locked_deposits_at = CASE WHEN ${restoreFiat}
-          THEN COALESCE(user_feature_locks.locked_deposits_at, NOW())
+          THEN CASE WHEN ${restoreExactCatchall} THEN NOW()
+            ELSE COALESCE(user_feature_locks.locked_deposits_at, NOW()) END
           ELSE user_feature_locks.locked_deposits_at END,
         locked_deposits_reason = CASE WHEN ${restoreFiat}
-          THEN COALESCE(user_feature_locks.locked_deposits_reason, ${reason})
+          THEN CASE WHEN ${restoreExactCatchall} THEN ${reason}
+            ELSE COALESCE(user_feature_locks.locked_deposits_reason, ${reason}) END
           ELSE user_feature_locks.locked_deposits_reason END,
-        locked_withdrawals_crypto = ARRAY['all']::text[],
-        locked_withdrawals_items = TRUE,
-        locked_withdrawals_at = COALESCE(
-          user_feature_locks.locked_withdrawals_at,
-          EXCLUDED.locked_withdrawals_at
-        ),
-        locked_withdrawals_reason = COALESCE(
-          user_feature_locks.locked_withdrawals_reason,
-          EXCLUDED.locked_withdrawals_reason
-        ),
+        locked_withdrawals_crypto = CASE WHEN ${restoreWithdrawals}
+          THEN ARRAY['all']::text[] ELSE user_feature_locks.locked_withdrawals_crypto END,
+        locked_withdrawals_items = CASE WHEN ${restoreWithdrawals}
+          THEN TRUE ELSE user_feature_locks.locked_withdrawals_items END,
+        locked_withdrawals_at = CASE WHEN ${restoreWithdrawals}
+          THEN CASE WHEN ${restoreExactCatchall} THEN NOW()
+            ELSE COALESCE(user_feature_locks.locked_withdrawals_at, EXCLUDED.locked_withdrawals_at) END
+          ELSE user_feature_locks.locked_withdrawals_at END,
+        locked_withdrawals_reason = CASE WHEN ${restoreWithdrawals}
+          THEN CASE WHEN ${restoreExactCatchall} THEN ${reason}
+            ELSE COALESCE(user_feature_locks.locked_withdrawals_reason, EXCLUDED.locked_withdrawals_reason) END
+          ELSE user_feature_locks.locked_withdrawals_reason END,
         updated_at = NOW()
       RETURNING user_id
     `);
@@ -480,7 +657,9 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
     return { status: "failed" };
   }
 
-  const releasedRewards = Array.isArray(releaseMetadata.releasedRewardCategories)
+  const releasedRewards = Array.isArray(
+    releaseMetadata.releasedRewardCategories,
+  )
     ? releaseMetadata.releasedRewardCategories.filter(
         (value): value is string => typeof value === "string",
       )
@@ -490,16 +669,22 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
       const current = await getUserFeatureLocks(userId);
       const restorable = releasedRewards.filter((category) =>
         current.available_reward_categories.includes(
-          category as typeof current.available_reward_categories[number],
+          category as (typeof current.available_reward_categories)[number],
         ),
       ) as typeof current.available_reward_categories;
       const updated = await updateUserRewardLocks(
         userId,
-        Array.from(new Set([...current.locked_reward_categories, ...restorable])),
+        Array.from(
+          new Set([...current.locked_reward_categories, ...restorable]),
+        ),
         adminUserId,
         reason,
       );
-      if (restorable.some((category) => !updated.locked_reward_categories.includes(category))) {
+      if (
+        restorable.some(
+          (category) => !updated.locked_reward_categories.includes(category),
+        )
+      ) {
         throw new Error("Backend did not confirm the restored reward locks");
       }
     } catch (error) {
@@ -532,13 +717,21 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
       adminUserId,
       eventType: "locked_withdrawals_crypto_enabled",
       targetUserId: userId,
-      metadata: { ...metadata, feature: "locked_withdrawals_crypto", locked: true },
+      metadata: {
+        ...metadata,
+        feature: "locked_withdrawals_crypto",
+        locked: true,
+      },
     });
     await createAdminAuditEvent({
       adminUserId,
       eventType: "locked_withdrawals_items_enabled",
       targetUserId: userId,
-      metadata: { ...metadata, feature: "locked_withdrawals_items", locked: true },
+      metadata: {
+        ...metadata,
+        feature: "locked_withdrawals_items",
+        locked: true,
+      },
     });
   } catch (error) {
     logError(

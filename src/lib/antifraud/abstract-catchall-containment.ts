@@ -55,9 +55,11 @@ export function abstractCatchallContainmentTarget(signal: {
   return {
     userId,
     domain,
-    reason: (
-      `Automatic fraud lock: new catch-all email domain pending review (${domain})`
-    ).slice(0, 500),
+    reason:
+      `Automatic fraud lock: new catch-all email domain pending review (${domain})`.slice(
+        0,
+        500,
+      ),
   };
 }
 
@@ -71,6 +73,74 @@ export async function applyAbstractCatchallContainment(
   signalRowId?: string,
 ): Promise<"locked" | "skipped"> {
   const db = getProdPrimaryDrizzleDb();
+  const currentRewards = await getUserFeatureLocks(target.userId);
+  const allRewards = currentRewards.available_reward_categories;
+  if (allRewards.length === 0) {
+    throw new Error("Backend exposes no reward-lock categories");
+  }
+
+  // Persist the complete before-state before touching MAIN or the backend.
+  // A retry after a crash must never snapshot its own partially applied lock.
+  if (signalRowId) {
+    const prior = await adminDrizzle.execute<{ id: string }>(sql`
+      SELECT id FROM admin_audit_events
+      WHERE event_type IN (
+          'antifraud_catchall_lock_snapshot',
+          'antifraud_catchall_reward_lock_snapshot'
+        )
+        AND metadata ->> 'signalRowId' = ${signalRowId}
+      LIMIT 1
+    `);
+    if (prior.rows.length === 0) {
+      const main = await db.execute<{
+        locked_deposits_fiat: string[];
+        locked_deposits_at: Date | string | null;
+        locked_deposits_by: string | null;
+        locked_deposits_reason: string | null;
+        locked_withdrawals_crypto: string[];
+        locked_withdrawals_items: boolean;
+        locked_withdrawals_at: Date | string | null;
+        locked_withdrawals_by: string | null;
+        locked_withdrawals_reason: string | null;
+      }>(sql`
+        SELECT
+          locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
+          locked_deposits_reason, locked_withdrawals_crypto,
+          locked_withdrawals_items, locked_withdrawals_at,
+          locked_withdrawals_by, locked_withdrawals_reason
+        FROM user_feature_locks
+        WHERE user_id = ${target.userId}
+        LIMIT 1
+      `);
+      const before = main.rows[0];
+      await createAdminAuditEvent({
+        adminUserId: null,
+        eventType: "antifraud_catchall_lock_snapshot",
+        targetUserId: target.userId,
+        metadata: {
+          source: "antifraud_containment",
+          signalRowId,
+          domain: target.domain,
+          appliedReason: target.reason,
+          previousCategories: currentRewards.locked_reward_categories,
+          previousReason: currentRewards.locked_rewards_reason,
+          previousMain: {
+            existed: before !== undefined,
+            depositsFiat: before?.locked_deposits_fiat ?? [],
+            depositsAt: before?.locked_deposits_at ?? null,
+            depositsBy: before?.locked_deposits_by ?? null,
+            depositsReason: before?.locked_deposits_reason ?? null,
+            withdrawalsCrypto: before?.locked_withdrawals_crypto ?? [],
+            withdrawalsItems: before?.locked_withdrawals_items ?? false,
+            withdrawalsAt: before?.locked_withdrawals_at ?? null,
+            withdrawalsBy: before?.locked_withdrawals_by ?? null,
+            withdrawalsReason: before?.locked_withdrawals_reason ?? null,
+          },
+        },
+      });
+    }
+  }
+
   const locked = await db.execute<{ user_id: string }>(sql`
     INSERT INTO user_feature_locks (
       id, user_id,
@@ -90,55 +160,39 @@ export async function applyAbstractCatchallContainment(
     WHERE u.id = ${target.userId}
     ON CONFLICT (user_id) DO UPDATE SET
       locked_deposits_fiat = ARRAY['all']::text[],
-      locked_deposits_at = COALESCE(user_feature_locks.locked_deposits_at, EXCLUDED.locked_deposits_at),
-      locked_deposits_reason = COALESCE(user_feature_locks.locked_deposits_reason, EXCLUDED.locked_deposits_reason),
+      locked_deposits_at = EXCLUDED.locked_deposits_at,
+      locked_deposits_by = NULL,
+      locked_deposits_reason = EXCLUDED.locked_deposits_reason,
       locked_withdrawals_crypto = ARRAY['all']::text[],
       locked_withdrawals_items = TRUE,
-      locked_withdrawals_at = COALESCE(user_feature_locks.locked_withdrawals_at, EXCLUDED.locked_withdrawals_at),
-      locked_withdrawals_reason = COALESCE(user_feature_locks.locked_withdrawals_reason, EXCLUDED.locked_withdrawals_reason),
+      locked_withdrawals_at = EXCLUDED.locked_withdrawals_at,
+      locked_withdrawals_by = NULL,
+      locked_withdrawals_reason = EXCLUDED.locked_withdrawals_reason,
       updated_at = NOW()
     RETURNING user_id
   `);
   if (locked.rows.length === 0) return "skipped";
 
-  const current = await getUserFeatureLocks(target.userId);
-  const allRewards = current.available_reward_categories;
-  if (allRewards.length === 0) {
-    throw new Error("Backend exposes no reward-lock categories");
-  }
-  if (signalRowId) {
-    const prior = await adminDrizzle.execute<{ id: string }>(sql`
-      SELECT id FROM admin_audit_events
-      WHERE event_type = 'antifraud_catchall_reward_lock_snapshot'
-        AND metadata ->> 'signalRowId' = ${signalRowId}
-      LIMIT 1
-    `);
-    if (prior.rows.length === 0) {
-      await createAdminAuditEvent({
-        adminUserId: null,
-        eventType: "antifraud_catchall_reward_lock_snapshot",
-        targetUserId: target.userId,
-        metadata: {
-          source: "antifraud_containment",
-          signalRowId,
-          domain: target.domain,
-          previousCategories: current.locked_reward_categories,
-          previousReason: current.locked_rewards_reason,
-        },
-      });
-    }
-  }
   const missing = allRewards.filter(
-    (category) => !current.locked_reward_categories.includes(category),
+    (category) => !currentRewards.locked_reward_categories.includes(category),
   );
-  if (missing.length > 0) {
+  if (
+    missing.length > 0 ||
+    currentRewards.locked_rewards_reason !== target.reason
+  ) {
     const updated = await updateUserRewardLocks(
       target.userId,
-      Array.from(new Set([...current.locked_reward_categories, ...allRewards])),
+      Array.from(
+        new Set([...currentRewards.locked_reward_categories, ...allRewards]),
+      ),
       undefined,
       target.reason,
     );
-    if (allRewards.some((category) => !updated.locked_reward_categories.includes(category))) {
+    if (
+      allRewards.some(
+        (category) => !updated.locked_reward_categories.includes(category),
+      )
+    ) {
       throw new Error("Backend did not confirm the full reward lock");
     }
   }

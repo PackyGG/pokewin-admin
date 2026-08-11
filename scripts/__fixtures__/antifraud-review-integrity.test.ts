@@ -101,7 +101,10 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
   assert.match(release, /locked_deposits_fiat = CASE/);
   assert.match(release, /locked_reward_categories\.length > 0/);
   assert.match(release, /antifraud_catchall_reward_lock_snapshot/);
+  assert.match(release, /antifraud_catchall_lock_snapshot/);
   assert.match(release, /previousCategories/);
+  assert.match(release, /previousMain/);
+  assert.match(release, /savedMain\.appliedReason/);
   // Idempotent: only a genuinely locked row is touched, so a replay is a no-op.
   assert.match(
     release,
@@ -142,6 +145,7 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
   assert.match(release, /INSERT INTO user_feature_locks/);
   assert.match(release, /releasedRewardCategories/);
   assert.match(release, /restoreFiat/);
+  assert.match(release, /restoreWithdrawals/);
 
   const actions = read("src/app/(antifraud)/antifraud/reviews/actions.ts");
   assert.match(
@@ -162,6 +166,14 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
     1,
   );
   assert.match(actions, /if \(!result\.ok\) throw new Error\(result\.message\);\s*return \{ withdrawalRelease: result\.withdrawalRelease \}/);
+  assert.match(actions, /promoteConfirmedCatchallDomainsForReview/);
+  assert.match(actions, /catch-all promotion queued for retry/);
+
+  const promotion = read("src/lib/antifraud/catchall-domain-promotion.ts");
+  assert.match(promotion, /status = 'flagged'/);
+  assert.match(promotion, /antifraud_catchall_domain_promoted/);
+  assert.match(promotion, /promotionIdempotencyKey\(params\.reviewId, domain\)/);
+  assert.match(promotion, /NOT EXISTS/);
   // The release runs after the ADMIN transaction commits, including on a
   // replay — that is what repairs a clear whose release never ran.
   assert.match(actions, /kind: "replayed";[\s\S]*?targetUserId: string/);

@@ -133,6 +133,13 @@ test("crash between commit and the external call is recovered by the cron sweep,
 
   assert.match(cron, /claimPendingContainmentRows/);
   assert.match(cron, /runDeferredContainment/);
+  assert.match(cron, /attemptAlreadyCounted: true/);
+  assert.match(
+    outbox,
+    /if \(options\.attemptAlreadyCounted !== true\)/,
+    "a cron-claimed retry must consume exactly one attempt",
+  );
+  assert.match(cron, /reconcileConfirmedCatchallPromotions/);
   assert.match(cron, /CRON_SECRET/);
   assert.match(cron, /process\.env\.NODE_ENV === "production"/);
 });

@@ -152,12 +152,15 @@ export async function markContainmentPending(
  */
 export async function runDeferredContainment(
   signal: DeferredContainmentSignal & { signalRowId: string },
+  options: { attemptAlreadyCounted?: boolean } = {},
 ): Promise<ContainmentOutboxResult> {
-  await adminDrizzle.execute(sql`
-    UPDATE antifraud_signals
-    SET containment_outbox_attempts = containment_outbox_attempts + 1
-    WHERE id = ${signal.signalRowId}::uuid
-  `);
+  if (options.attemptAlreadyCounted !== true) {
+    await adminDrizzle.execute(sql`
+      UPDATE antifraud_signals
+      SET containment_outbox_attempts = containment_outbox_attempts + 1
+      WHERE id = ${signal.signalRowId}::uuid
+    `);
+  }
   try {
     const outcome = await applyContainmentForKind(signal);
     await recordContainmentOutcome(
