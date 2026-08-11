@@ -1456,7 +1456,7 @@ async function loadAuthorizedNetworkReuse(
             AND peer.occurred_at>=now()-interval '365 days'
         ) END AS checkout_device_shared_users
       FROM fiat_deposit_identity_checks current
-      WHERE current.intent_id=ANY($1::uuid[])
+      WHERE current.intent_id=ANY($1::text[])
     `,
     [intentIds],
   );

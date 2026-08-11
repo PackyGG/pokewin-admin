@@ -301,6 +301,8 @@ test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat
     source,
     /FIAT_ASSESSMENT_STATUSES[\s\S]{0,200}"checkout_ready"/,
   );
+  assert.match(source, /current\.intent_id=ANY\(\$1::text\[\]\)/);
+  assert.doesNotMatch(source, /current\.intent_id=ANY\(\$1::uuid\[\]\)/);
 });
 
 const cleanMaxMind: MaxMindEvaluation = {
