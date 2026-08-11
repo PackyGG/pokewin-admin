@@ -355,10 +355,10 @@ function ReviewDepositCard({
   const customerPaid = item.actual_customer_total_cents ?? item.requested_amount_cents;
 
   return (
-    <article className="overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md">
-      <header className="flex flex-col gap-4 border-b bg-gradient-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+    <article className="overflow-hidden rounded-xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+      <header className="grid gap-3 border-b bg-muted/20 px-4 py-3 xl:grid-cols-[minmax(15rem,1fr)_minmax(18rem,auto)_auto] xl:items-center">
         <div className="flex min-w-0 items-start gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background text-muted-foreground shadow-sm">
+          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border bg-background text-muted-foreground">
             <UserRound className="size-4.5" />
           </div>
           <div className="min-w-0">
@@ -374,12 +374,12 @@ function ReviewDepositCard({
                   {user.countryCode}
                 </Badge>
               )}
-            </div>
-            <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={item.user_id}>
-              {item.user_id}
-            </p>
-            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
               {statusBadge()}
+            </div>
+            <div className="mt-1 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
+              <span className="max-w-64 truncate font-mono" title={item.user_id}>
+                {item.user_id}
+              </span>
               <span className="flex items-center gap-1">
                 <Clock3 className="size-3.5" />
                 {formatRelative(receivedAt)}
@@ -388,102 +388,16 @@ function ReviewDepositCard({
           </div>
         </div>
 
-        <div className="w-full rounded-xl border bg-background/80 px-4 py-3 shadow-sm lg:w-[16.5rem] lg:shrink-0 lg:text-right">
-          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
-            Balance credit
-          </p>
-          <p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums text-emerald-600 dark:text-emerald-400">
-            {money(item.credited_amount_cents)}
-          </p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Customer paid <span className="font-medium tabular-nums text-foreground">{money(customerPaid)}</span>
-          </p>
-        </div>
-      </header>
-
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_19rem]">
-        <section className="min-w-0 space-y-3 p-4 sm:p-5">
-          <div>
-            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-              Risk assessment
-            </p>
-          </div>
-          <FiatReviewEvidence
-            assessment={item.assessment}
-            safeguards={user ? {
-              fiatDepositsLocked: user.fiatDepositsLocked,
-              withdrawalsLocked: user.withdrawalsLocked,
-            } : undefined}
+        <div className="grid grid-cols-2 gap-2">
+          <AmountFact label="Customer paid" value={money(customerPaid)} />
+          <AmountFact
+            label="Balance credit"
+            value={money(item.credited_amount_cents)}
+            accent
           />
-        </section>
-
-        <aside className="border-t bg-muted/15 p-4 sm:p-5 lg:border-l lg:border-t-0">
-          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
-            Payment snapshot
-          </p>
-          <dl className="mt-3 divide-y rounded-xl border bg-background px-3">
-            <ReviewFact
-              icon={Banknote}
-              label="Customer paid"
-              value={money(customerPaid)}
-            />
-            <ReviewFact
-              icon={MapPin}
-              label="Whop checkout location"
-              value={item.assessment.provider_evidence.billingCountry ?? "Unknown"}
-            />
-            <ReviewFact
-              icon={MapPin}
-              label="Account location"
-              value={user?.countryCode ?? "Unknown"}
-            />
-            <ReviewFact
-              icon={Wifi}
-              label="Whop checkout IP"
-              value={item.assessment.detection_evidence.checkoutIp ?? "Unavailable"}
-            />
-            <ReviewFact
-              icon={Wifi}
-              label={user?.latestAuthEvent === "login"
-                ? "Latest login IP"
-                : user?.latestAuthEvent === "register"
-                  ? "Signup IP"
-                  : "Latest auth IP"}
-              value={user?.latestAuthIp ?? "Unavailable"}
-            />
-            <ReviewFact
-              icon={Mail}
-              label="Checkout email"
-              value={item.assessment.provider_evidence.checkoutEmail ?? "Unavailable"}
-            />
-            <ReviewFact
-              icon={Mail}
-              label="Signup email"
-              value={user?.signupEmail ?? "Unavailable"}
-            />
-            <ReviewFact
-              icon={Clock3}
-              label="Received"
-              value={formatRelative(receivedAt)}
-            />
-          </dl>
-          <ReviewLinks item={item} />
-          {item.failure_reason && (
-            <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300">
-              {item.failure_reason}
-            </div>
-          )}
-        </aside>
-      </div>
-
-      <footer className="flex flex-col gap-3 border-t bg-muted/25 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
-        <div>
-          <p className="text-sm font-semibold">Choose an outcome</p>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Approval credits this deposit only. Decline locks money movement for follow-up.
-          </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+
+        <div className="flex flex-wrap items-center gap-2 xl:justify-end">
           <FiatDepositReviewDecision
             intentId={item.id}
             displayName={displayName}
@@ -496,31 +410,133 @@ function ReviewDepositCard({
             />
           )}
         </div>
-      </footer>
+      </header>
+
+      <div className="grid xl:grid-cols-[minmax(0,0.9fr)_minmax(32rem,1.1fr)]">
+        <section className="min-w-0 p-4 xl:border-r">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Decision evidence
+          </p>
+          <FiatReviewEvidence
+            assessment={item.assessment}
+            safeguards={user ? {
+              fiatDepositsLocked: user.fiatDepositsLocked,
+              withdrawalsLocked: user.withdrawalsLocked,
+            } : undefined}
+          />
+        </section>
+
+        <aside className="border-t p-4 xl:border-t-0">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Checkout compared with account
+          </p>
+          <dl className="grid gap-2 sm:grid-cols-3">
+            <ComparisonFact
+              icon={MapPin}
+              label="Location"
+              checkoutLabel="Whop checkout"
+              checkoutValue={item.assessment.provider_evidence.billingCountry ?? "Unknown"}
+              accountLabel="Account"
+              accountValue={user?.countryCode ?? "Unknown"}
+            />
+            <ComparisonFact
+              icon={Wifi}
+              label="IP address"
+              checkoutLabel="Whop checkout"
+              checkoutValue={item.assessment.detection_evidence.checkoutIp ?? "Unavailable"}
+              accountLabel={user?.latestAuthEvent === "login"
+                ? "Latest login"
+                : user?.latestAuthEvent === "register"
+                  ? "Signup"
+                  : "Latest auth"}
+              accountValue={user?.latestAuthIp ?? "Unavailable"}
+              mono
+            />
+            <ComparisonFact
+              icon={Mail}
+              label="Email"
+              checkoutLabel="Checkout"
+              checkoutValue={item.assessment.provider_evidence.checkoutEmail ?? "Unavailable"}
+              accountLabel="Signup"
+              accountValue={user?.signupEmail ?? "Unavailable"}
+            />
+          </dl>
+          <ReviewLinks item={item} />
+          {item.failure_reason && (
+            <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300">
+              {item.failure_reason}
+            </div>
+          )}
+        </aside>
+      </div>
     </article>
   );
 }
 
-function ReviewFact({
-  icon: Icon,
+function AmountFact({
   label,
   value,
+  accent = false,
+}: {
+  label: string;
+  value: string;
+  accent?: boolean;
+}) {
+  return (
+    <div className="flex min-h-14 min-w-0 flex-col justify-center rounded-lg border bg-background px-3 py-2 text-right">
+      <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+        {label}
+      </p>
+      <p className={accent
+        ? "truncate text-lg font-bold tabular-nums text-emerald-600 dark:text-emerald-400"
+        : "truncate text-lg font-semibold tabular-nums"}
+      >
+        {value}
+      </p>
+    </div>
+  );
+}
+
+function ComparisonFact({
+  icon: Icon,
+  label,
+  checkoutLabel,
+  checkoutValue,
+  accountLabel,
+  accountValue,
+  mono = false,
 }: {
   icon: typeof Banknote;
   label: string;
-  value: string;
+  checkoutLabel: string;
+  checkoutValue: string;
+  accountLabel: string;
+  accountValue: string;
+  mono?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-3 py-3">
-      <dt className="flex items-center gap-2 text-xs text-muted-foreground">
+    <div className="min-w-0 rounded-lg border bg-muted/10 p-3">
+      <dt className="flex items-center gap-1.5 text-[11px] font-semibold">
         <Icon className="size-3.5 shrink-0" />
         {label}
       </dt>
-      <dd
-        className="min-w-0 truncate text-right text-xs font-medium tabular-nums"
-        title={value}
-      >
-        {value}
+      <dd className="mt-2 grid min-w-0 grid-cols-2 gap-3">
+        {[
+          [checkoutLabel, checkoutValue],
+          [accountLabel, accountValue],
+        ].map(([itemLabel, value]) => (
+          <div key={itemLabel} className="min-w-0">
+            <p className="truncate text-[9px] uppercase tracking-wide text-muted-foreground" title={itemLabel}>
+              {itemLabel}
+            </p>
+            <p
+              className={`mt-0.5 truncate text-xs font-medium ${mono ? "font-mono text-[11px]" : ""}`}
+              title={value}
+            >
+              {value}
+            </p>
+          </div>
+        ))}
       </dd>
     </div>
   );
@@ -530,19 +546,17 @@ function ReviewLinks({ item }: { item: ReviewItem }) {
   const paymentReference = item.provider_payment_id ?? item.provider_checkout_id ?? item.id;
 
   return (
-    <div className="mt-3 rounded-xl border bg-background p-3 text-xs">
+    <div className="mt-2 flex min-w-0 items-center gap-3 rounded-lg border bg-muted/10 px-3 py-2 text-xs">
       <HostLink
         href={`/transactions/card-payments/${item.id}`}
-        className="flex items-center justify-between gap-2 font-medium hover:underline"
+        className="flex shrink-0 items-center gap-2 font-medium hover:underline"
       >
-        <span className="flex items-center gap-2">
-          <CreditCard className="size-3.5 text-muted-foreground" />
-          Payment details
-        </span>
+        <CreditCard className="size-3.5 text-muted-foreground" />
+        Payment details
         <ExternalLink className="size-3.5 text-muted-foreground" />
       </HostLink>
       <p
-        className="mt-2 truncate border-t pt-2 font-mono text-[10px] text-muted-foreground"
+        className="min-w-0 flex-1 truncate border-l pl-3 font-mono text-[10px] text-muted-foreground"
         title={paymentReference}
       >
         {paymentReference}
