@@ -51,8 +51,8 @@ import { enforceOfferExpiry, expiredWagerBasisUsd } from "./offer-expiry";
  * construction, so a tampered bot payload can't inflate a payout.
  *
  * ── THE MODEL ─────────────────────────────────────────────────────────────
- * Qualifying wager is READ from prod and never mutated. "Spending" it is
- * modelled as admin-side CONSUMPTION:
+ * Qualifying wager is the frozen leaderboard-weighted amount READ from prod
+ * and never mutated. "Spending" it is modelled as admin-side CONSUMPTION:
  *
  *     available = Σ(qualifying wager)  −  Σ(basis held by pending+approved claims)
  *     units     = floor(available / threshold)
@@ -299,7 +299,7 @@ type WagerPositionRow = {
  *   run can never begin before the program did.
  *
  * `current` — spendable wager: inside a live window AND at/after the run
- *   start.
+ *   start, using the leaderboard-weighted amount frozen when the bet landed.
  *
  * `lifetime` — the same live-window bound WITHOUT the run clamp, so
  *   `forfeited = lifetime − current` isolates what code switches cost and
@@ -308,6 +308,12 @@ type WagerPositionRow = {
  * Both sums are bounded by the program's live windows, bound as parallel
  * arrays and matched with an EXISTS over `unnest` — any number of
  * pause/resume cycles stays one query, with no string-built OR chain.
+ *
+ * The amount is the SAME frozen value used by official races and creator
+ * leaderboards: packs/battles currently count 1x, while upgrader/Keno count
+ * 0.5x. We never expose or add the raw amount alongside it. The raw fallback
+ * exists only for historical rows written before weighted wager was added;
+ * current rows carry an explicit weighted value (including a legitimate 0).
  *
  * KNOWN LIMIT: a player who switches codes and then generates NO activity
  * under the new one leaves no trace, so nothing is detectable and their run
@@ -355,7 +361,12 @@ function wagerPositionSql(
          AND created_at >= ${since}::timestamp
     ),
     live AS (
-      SELECT acu.created_at, acu.wager_amount_usd
+      SELECT
+        acu.created_at,
+        COALESCE(
+          acu.weighted_wager_amount_usd,
+          acu.wager_amount_usd
+        ) AS reward_wager_amount_usd
         FROM affiliate_code_usages acu
        WHERE acu.referred_user_id = ${userId}
          AND acu.usage_type::text = 'wager'
@@ -370,10 +381,10 @@ function wagerPositionSql(
     SELECT
       ${programId}::text AS program_id,
       (SELECT run_start FROM boundary) AS run_start,
-      COALESCE(SUM(live.wager_amount_usd::numeric) FILTER (
+      COALESCE(SUM(live.reward_wager_amount_usd::numeric) FILTER (
         WHERE live.created_at >= (SELECT run_start FROM boundary)
       ), 0)::text AS current,
-      COALESCE(SUM(live.wager_amount_usd::numeric), 0)::text AS lifetime
+      COALESCE(SUM(live.reward_wager_amount_usd::numeric), 0)::text AS lifetime
     FROM live
   `;
 }

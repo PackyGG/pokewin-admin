@@ -157,14 +157,15 @@ export type CreatorRewardEntitlement = {
   /** The per-unit rate actually used: the VIP rate if earned, else standard. */
   appliedRewardUsd: number;
   /**
-   * Σ SPENDABLE wager — under the program's codes, on the CURRENT run only.
-   * Leaving for another creator's code resets this.
+   * Σ SPENDABLE leaderboard-weighted wager — under the program's codes, on
+   * the CURRENT run only. This is the sole wager amount exposed to callers;
+   * leaving for another creator's code resets it.
    */
   qualifyingWagerUsd: number;
   /**
-   * Σ wager under these codes across ALL runs since `accrualStartAt`.
-   * AUDIT ONLY — never spendable. Exists so a reset is visible rather than
-   * silent.
+   * Σ leaderboard-weighted wager under these codes across ALL runs since
+   * `accrualStartAt`. AUDIT ONLY — never spendable. Exists so a reset is
+   * visible rather than silent.
    */
   lifetimeWagerUsd: number;
   /** lifetimeWagerUsd − qualifyingWagerUsd: cleared by earlier code switches. */
