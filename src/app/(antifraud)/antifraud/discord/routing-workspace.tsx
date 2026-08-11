@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   AlertTriangle,
-  BellRing,
   CheckCircle2,
   ChevronDown,
   CircleOff,
@@ -12,11 +11,9 @@ import {
   Hash,
   Pencil,
   Plus,
-  Route,
   RefreshCw,
   Search,
   Send,
-  Server,
   Trash2,
 } from "lucide-react";
 import { toast } from "sonner";
@@ -99,7 +96,6 @@ export function DiscordRoutingWorkspace({
   const [editor, setEditor] = useState<ChannelEditorState | null>(null);
   const [editingChannelId, setEditingChannelId] = useState<string | null>(null);
   const [eventQuery, setEventQuery] = useState("");
-  const [routeQuery, setRouteQuery] = useState("");
   const [createChannelOpen, setCreateChannelOpen] = useState(false);
   const [collapsedCategoryIds, setCollapsedCategoryIds] = useState<Set<string>>(
     () => new Set(),
@@ -242,59 +238,6 @@ export function DiscordRoutingWorkspace({
         ) ?? [],
     [approvedCategoryIds, initialConfig],
   );
-
-  const routingSummary = useMemo(() => {
-    if (!initialConfig) {
-      return {
-        enabledEvents: [],
-        routedEventKeys: new Set<string>(),
-        unroutedEvents: [],
-      };
-    }
-    const enabledEvents = initialConfig.events.filter((event) => event.enabled);
-    const liveChannelIds = new Set(
-      initialConfig.channels.map((channel) => channel.id),
-    );
-    const routedEventKeys = new Set(
-      initialConfig.routes
-        .filter((route) => route.enabled && liveChannelIds.has(route.channelId))
-        .map((route) => route.eventKey),
-    );
-    return {
-      enabledEvents,
-      routedEventKeys,
-      unroutedEvents: enabledEvents.filter(
-        (event) => !routedEventKeys.has(event.key),
-      ),
-    };
-  }, [initialConfig]);
-
-  const visibleChannelGroups = useMemo(() => {
-    const query = routeQuery.trim().toLowerCase();
-    if (!query || !initialConfig) return activeChannelGroups;
-
-    return activeChannelGroups.flatMap((group) => {
-      const channels = group.channels.filter((channel) => {
-        if (
-          channel.name.toLowerCase().includes(query) ||
-          group.name.toLowerCase().includes(query)
-        ) {
-          return true;
-        }
-        const eventKeys = initialConfig.routes
-          .filter((route) => route.enabled && route.channelId === channel.id)
-          .map((route) => route.eventKey);
-        return initialConfig.events.some(
-          (event) =>
-            eventKeys.includes(event.key) &&
-            (event.label.toLowerCase().includes(query) ||
-              event.category.toLowerCase().includes(query) ||
-              event.key.includes(query)),
-        );
-      });
-      return channels.length > 0 ? [{ ...group, channels }] : [];
-    });
-  }, [activeChannelGroups, initialConfig, routeQuery]);
 
   if (!initialConfig) {
     return (
@@ -499,24 +442,70 @@ export function DiscordRoutingWorkspace({
   }
 
   return (
-    <div className="space-y-5">
-      <section className="overflow-hidden rounded-2xl border border-border/60 bg-card">
-        <div className="flex flex-col gap-5 p-5 sm:p-6 lg:flex-row lg:items-center lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#5865F2]">
-              <Route className="size-4" />
-              Discord routing
-            </div>
-            <h1 className="mt-2 text-2xl font-semibold tracking-tight sm:text-3xl">
-              Alert destinations
-            </h1>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-muted-foreground">
-              Decide which staff channel receives each Fraud alert. Every alert
-              can have one destination, and each channel can receive several
-              alert types.
-            </p>
+    <div className="space-y-4">
+      <div
+        className={cn(
+          "flex flex-col gap-3 rounded-xl border px-4 py-3 sm:flex-row sm:items-center",
+          initialConfig.guild.connected
+            ? "border-emerald-500/20 bg-emerald-500/5"
+            : "border-amber-500/25 bg-amber-500/5",
+        )}
+      >
+        <span
+          className={cn(
+            "flex size-9 shrink-0 items-center justify-center rounded-lg",
+            initialConfig.guild.connected
+              ? "bg-emerald-500/10 text-emerald-500"
+              : "bg-amber-500/10 text-amber-500",
+          )}
+        >
+          {initialConfig.guild.connected ? (
+            <CheckCircle2 className="size-4" />
+          ) : (
+            <CircleOff className="size-4" />
+          )}
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-semibold">
+            {initialConfig.guild.connected
+              ? initialConfig.guild.name
+              : "Antifraud Discord routing is not connected"}
+          </p>
+          <p className="text-xs text-muted-foreground">
+            {initialConfig.guild.lastSyncedAt
+              ? `Channels synced ${formatTimestamp(initialConfig.guild.lastSyncedAt)}`
+              : "Waiting for the bot to sync its channels"}
+          </p>
+        </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={pending}
+          onClick={() => startTransition(() => router.refresh())}
+        >
+          <RefreshCw className={cn(pending && "motion-safe:animate-spin")} />
+          Refresh
+        </Button>
+      </div>
+
+      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
+        <div className="flex flex-col gap-3 p-3 sm:flex-row sm:items-center sm:p-4">
+          <div className="min-w-0 flex-1">
+            <SectionHeading
+              icon={Send}
+              title={
+                // Kept on one line so the guardrail contract that asserts the
+                // literal `>Active channels<` in this source still matches.
+                <>
+                  Active channels
+                  <Badge variant="secondary" className="tabular-nums">
+                    {activeChannels.length}
+                  </Badge>
+                </>
+              }
+            />
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
+          <div className="flex flex-wrap gap-2">
             <Button
               variant="outline"
               onClick={() => setCreateChannelOpen(true)}
@@ -536,157 +525,6 @@ export function DiscordRoutingWorkspace({
               <Plus />
               Add existing
             </Button>
-          </div>
-        </div>
-        <div
-          className={cn(
-            "flex flex-col gap-3 border-t px-5 py-3 sm:flex-row sm:items-center sm:px-6",
-            initialConfig.guild.connected
-              ? "border-emerald-500/15 bg-emerald-500/5"
-              : "border-amber-500/20 bg-amber-500/5",
-          )}
-        >
-          <span
-            className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-lg",
-              initialConfig.guild.connected
-                ? "bg-emerald-500/10 text-emerald-500"
-                : "bg-amber-500/10 text-amber-500",
-            )}
-          >
-            {initialConfig.guild.connected ? (
-              <CheckCircle2 className="size-4" />
-            ) : (
-              <CircleOff className="size-4" />
-            )}
-          </span>
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-medium">
-              {initialConfig.guild.connected
-                ? `${initialConfig.guild.name} connected`
-                : "Discord bot not connected"}
-            </p>
-            <p className="text-xs text-muted-foreground">
-              {initialConfig.guild.lastSyncedAt
-                ? `Channel list synced ${formatTimestamp(initialConfig.guild.lastSyncedAt)}`
-                : "Waiting for the bot to publish its channel list"}
-            </p>
-          </div>
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={pending}
-            onClick={() => startTransition(() => router.refresh())}
-          >
-            <RefreshCw className={cn(pending && "motion-safe:animate-spin")} />
-            Refresh
-          </Button>
-        </div>
-      </section>
-
-      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        <RoutingStat
-          icon={Hash}
-          label="Receiving channels"
-          value={activeChannels.length}
-          detail={`${availableChannels.length} more available`}
-          tone="blue"
-        />
-        <RoutingStat
-          icon={BellRing}
-          label="Routed alerts"
-          value={routingSummary.routedEventKeys.size}
-          detail={`${routingSummary.enabledEvents.length} enabled in catalog`}
-          tone="emerald"
-        />
-        <RoutingStat
-          icon={AlertTriangle}
-          label="Needs a destination"
-          value={routingSummary.unroutedEvents.length}
-          detail={
-            routingSummary.unroutedEvents.length === 0
-              ? "Every enabled alert is covered"
-              : "These alerts will not reach Discord"
-          }
-          tone={
-            routingSummary.unroutedEvents.length === 0 ? "emerald" : "amber"
-          }
-        />
-        <RoutingStat
-          icon={Server}
-          label="Discord server"
-          value={initialConfig.guild.connected ? "Online" : "Offline"}
-          detail={initialConfig.guild.name}
-          tone={initialConfig.guild.connected ? "emerald" : "amber"}
-        />
-      </div>
-
-      {routingSummary.unroutedEvents.length > 0 && (
-        <section className="overflow-hidden rounded-xl border border-amber-500/25 bg-amber-500/5">
-          <div className="flex items-start gap-3 border-b border-amber-500/15 px-4 py-3 sm:px-5">
-            <span className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/10 text-amber-500">
-              <AlertTriangle className="size-4" />
-            </span>
-            <div>
-              <h2 className="text-sm font-semibold">
-                Alerts without a destination
-              </h2>
-              <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
-                Edit a receiving channel below and add these alerts. Until then,
-                Discord will not receive them.
-              </p>
-            </div>
-          </div>
-          <div className="grid gap-px bg-amber-500/10 sm:grid-cols-2 xl:grid-cols-3">
-            {routingSummary.unroutedEvents.map((event) => (
-              <div key={event.key} className="bg-card/95 px-4 py-3">
-                <div className="flex items-center gap-2">
-                  <p className="min-w-0 flex-1 truncate text-sm font-medium">
-                    {event.label}
-                  </p>
-                  <Badge variant="outline" className="shrink-0 text-[10px]">
-                    {event.category}
-                  </Badge>
-                </div>
-                <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">
-                  {event.description}
-                </p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      <section className="overflow-hidden rounded-xl border border-border/60 bg-card">
-        <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-end sm:justify-between sm:p-5">
-          <div>
-            <SectionHeading
-              icon={Send}
-              title={
-                // Kept on one line so the guardrail contract that asserts the
-                // literal `>Active channels<` in this source still matches.
-                <>
-                  Active channels
-                  <Badge variant="secondary" className="tabular-nums">
-                    {activeChannels.length}
-                  </Badge>
-                </>
-              }
-            />
-            <p className="mt-1.5 text-xs leading-5 text-muted-foreground">
-              Open a channel to change the alerts it receives or the staff
-              groups it tags.
-            </p>
-          </div>
-          <div className="relative w-full sm:w-72">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={routeQuery}
-              onChange={(event) => setRouteQuery(event.target.value)}
-              placeholder="Find a channel or alert"
-              aria-label="Find a channel or alert"
-              className="pl-9"
-            />
           </div>
         </div>
       </section>
@@ -716,26 +554,9 @@ export function DiscordRoutingWorkspace({
             </Button>
           </div>
         </section>
-      ) : visibleChannelGroups.length === 0 ? (
-        <section className="rounded-xl border border-border/60 bg-card px-6 py-12 text-center">
-          <Search className="mx-auto size-5 text-muted-foreground" />
-          <p className="mt-3 text-sm font-semibold">
-            No routes match that search
-          </p>
-          <p className="mt-1 text-xs text-muted-foreground">
-            Try a channel name, alert name, category, or event key.
-          </p>
-          <Button
-            className="mt-4"
-            variant="outline"
-            onClick={() => setRouteQuery("")}
-          >
-            Clear search
-          </Button>
-        </section>
       ) : (
         <div className="space-y-3">
-          {visibleChannelGroups.map((group) => {
+          {activeChannelGroups.map((group) => {
             const categoryOpen = !collapsedCategoryIds.has(group.id);
 
             return (
@@ -975,48 +796,6 @@ export function DiscordRoutingWorkspace({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </div>
-  );
-}
-
-function RoutingStat({
-  icon: Icon,
-  label,
-  value,
-  detail,
-  tone,
-}: {
-  icon: typeof Hash;
-  label: string;
-  value: string | number;
-  detail: string;
-  tone: "blue" | "emerald" | "amber";
-}) {
-  const styles = {
-    blue: "bg-[#5865F2]/10 text-[#5865F2]",
-    emerald: "bg-emerald-500/10 text-emerald-500",
-    amber: "bg-amber-500/10 text-amber-500",
-  }[tone];
-
-  return (
-    <div className="rounded-xl border border-border/60 bg-card p-4">
-      <div className="flex items-start gap-3">
-        <span
-          className={cn(
-            "flex size-9 shrink-0 items-center justify-center rounded-lg",
-            styles,
-          )}
-        >
-          <Icon className="size-4" />
-        </span>
-        <div className="min-w-0">
-          <p className="text-xs font-medium text-muted-foreground">{label}</p>
-          <p className="mt-0.5 text-xl font-semibold tabular-nums">{value}</p>
-          <p className="mt-1 truncate text-[11px] text-muted-foreground">
-            {detail}
-          </p>
-        </div>
-      </div>
     </div>
   );
 }
