@@ -164,6 +164,7 @@ test("staff see the score, triggers, evidence gaps, and global cluster context b
   assert.match(evidence, /assessment\.recommendation/);
   assert.doesNotMatch(evidence, /assessment\.summary/);
   assert.doesNotMatch(evidence, /post-deposit behavior are consistent/);
+  assert.doesNotMatch(evidence, /No positive score driver returned/);
   assert.match(evidence, /Current safeguards/);
   assert.match(evidence, /Fiat deposits locked/);
   assert.match(evidence, /Withdrawals locked/);

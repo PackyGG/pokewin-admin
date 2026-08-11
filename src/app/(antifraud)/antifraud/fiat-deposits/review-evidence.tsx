@@ -1,4 +1,4 @@
-import { AlertTriangle, CheckCircle2, ShieldAlert } from "lucide-react";
+import { AlertTriangle, ShieldAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import type { FiatAssessment } from "@/lib/antifraud/fiat-deposits-api";
@@ -147,7 +147,7 @@ export function FiatReviewEvidence({
         )}
       </div>
 
-      {topDrivers.length > 0 ? (
+      {topDrivers.length > 0 && (
         <div className="space-y-1">
           {topDrivers.map((signal) => (
             <div key={signal.key} className="flex items-start justify-between gap-2 text-xs">
@@ -159,11 +159,6 @@ export function FiatReviewEvidence({
               </span>
             </div>
           ))}
-        </div>
-      ) : (
-        <div className="flex items-center gap-1.5 text-xs text-emerald-700 dark:text-emerald-300">
-          <CheckCircle2 className="size-3.5" />
-          No positive score driver returned
         </div>
       )}
 
