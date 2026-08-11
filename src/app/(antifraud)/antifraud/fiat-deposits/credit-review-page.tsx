@@ -1,22 +1,18 @@
 import {
   AlertTriangle,
+  Banknote,
+  Clock3,
+  CreditCard,
   ExternalLink,
+  MapPin,
   ShieldCheck,
+  UserRound,
 } from "lucide-react";
 
 import { DataTablePagination } from "@/components/data-table/data-table-pagination";
 import { EmptyState } from "@/components/empty-state";
 import { HostLink } from "@/components/host-link";
 import { Badge } from "@/components/ui/badge";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
 import {
   listFiatAssessments,
   type FiatAssessment,
@@ -289,147 +285,21 @@ export async function FiatDepositReviewQueue({
           detail="Every review below is real and complete, but the player name and country are missing — rows fall back to the raw user id."
         />
       )}
-        <div className="space-y-3 lg:hidden">
+        <div className="space-y-4">
           {queue.items.length === 0 ? (
-            <QueueEmpty failed={queueFailed} />
+            <div className="overflow-hidden rounded-2xl border bg-card">
+              <QueueEmpty failed={queueFailed} />
+            </div>
           ) : (
-            queue.items.map((item) => {
-              const user = users.get(item.user_id);
-              const displayName = user?.username ?? user?.email ?? item.user_id;
-              return (
-                <Card key={item.id}>
-                  <CardHeader className="pb-3">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <CardTitle className="truncate text-sm">
-                          <HostLink href={`/users/${item.user_id}`} className="hover:underline">
-                            {displayName}
-                          </HostLink>
-                        </CardTitle>
-                        <CardDescription className="truncate font-mono text-[10px]">
-                          {item.id}
-                        </CardDescription>
-                      </div>
-                      {statusBadge()}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="space-y-3">
-                    <ReviewFacts item={item} countryCode={user?.countryCode ?? null} />
-                    <FiatReviewEvidence
-                      assessment={item.assessment}
-                      safeguards={user ? {
-                        fiatDepositsLocked: user.fiatDepositsLocked,
-                        withdrawalsLocked: user.withdrawalsLocked,
-                      } : undefined}
-                    />
-                    <ReviewLinks item={item} />
-                    <div className="flex flex-wrap gap-2">
-                      <FiatDepositReviewDecision
-                        intentId={item.id}
-                        displayName={displayName}
-                        amount={money(item.credited_amount_cents)}
-                      />
-                      {canManageKyc && (
-                        <RequireKycAction
-                          userId={item.user_id}
-                          displayName={displayName}
-                        />
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })
+            queue.items.map((item) => (
+              <ReviewDepositCard
+                key={item.id}
+                item={item}
+                user={users.get(item.user_id)}
+                canManageKyc={canManageKyc}
+              />
+            ))
           )}
-        </div>
-
-        <div className="hidden overflow-x-auto rounded-md border lg:block">
-          <Table zebra>
-            <TableHeader>
-              <TableRow>
-                <TableHead>Player</TableHead>
-                <TableHead>Payment</TableHead>
-                <TableHead>Amount</TableHead>
-                <TableHead className="min-w-80">Risk evidence</TableHead>
-                <TableHead>Received</TableHead>
-                <TableHead className="min-w-64">Decision</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {queue.items.length === 0 ? (
-                <TableRow className="hover:bg-transparent">
-                  <TableCell colSpan={6} className="p-0">
-                    <QueueEmpty failed={queueFailed} />
-                  </TableCell>
-                </TableRow>
-              ) : (
-                queue.items.map((item) => {
-                  const user = users.get(item.user_id);
-                  const displayName = user?.username ?? user?.email ?? item.user_id;
-                  return (
-                    <TableRow key={item.id}>
-                      <TableCell>
-                        <div className="min-w-40">
-                          <HostLink
-                            href={`/users/${item.user_id}`}
-                            className="font-medium hover:underline"
-                          >
-                            {displayName}
-                          </HostLink>
-                          <p className="max-w-48 truncate font-mono text-[10px] text-muted-foreground">
-                            {item.user_id}
-                          </p>
-                          {user?.countryCode && (
-                            <p className="text-[10px] text-muted-foreground">
-                              {user.countryCode}
-                            </p>
-                          )}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        <ReviewLinks item={item} />
-                      </TableCell>
-                      <TableCell>
-                        <p className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">
-                          {money(item.credited_amount_cents)}
-                        </p>
-                        <p className="text-[10px] text-muted-foreground">
-                          Paid {money(item.actual_customer_total_cents ?? item.requested_amount_cents)}
-                        </p>
-                      </TableCell>
-                      <TableCell>
-                        <FiatReviewEvidence
-                          assessment={item.assessment}
-                          safeguards={user ? {
-                            fiatDepositsLocked: user.fiatDepositsLocked,
-                            withdrawalsLocked: user.withdrawalsLocked,
-                          } : undefined}
-                        />
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
-                        {formatRelative(item.review_requested_at ?? item.paid_at ?? item.created_at)}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex flex-wrap gap-2">
-                          <FiatDepositReviewDecision
-                            intentId={item.id}
-                            displayName={displayName}
-                            amount={money(item.credited_amount_cents)}
-                          />
-                          {canManageKyc && (
-                            <RequireKycAction
-                              userId={item.user_id}
-                              displayName={displayName}
-                            />
-                          )}
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  );
-                })
-              )}
-            </TableBody>
-          </Table>
         </div>
 
         <DataTablePagination
@@ -469,56 +339,180 @@ function DegradedNotice({
   );
 }
 
-function ReviewFacts({
+function ReviewDepositCard({
   item,
-  countryCode,
+  user,
+  canManageKyc,
 }: {
   item: ReviewItem;
-  countryCode: string | null;
+  user: FiatDepositReviewUser | undefined;
+  canManageKyc: boolean;
+}) {
+  const displayName = user?.username ?? user?.email ?? item.user_id;
+  const receivedAt = item.review_requested_at ?? item.paid_at ?? item.created_at;
+  const customerPaid = item.actual_customer_total_cents ?? item.requested_amount_cents;
+
+  return (
+    <article className="overflow-hidden rounded-2xl border bg-card shadow-sm transition-shadow hover:shadow-md">
+      <header className="flex flex-col gap-4 border-b bg-gradient-to-r from-muted/45 via-muted/20 to-transparent px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="flex size-10 shrink-0 items-center justify-center rounded-xl border bg-background text-muted-foreground shadow-sm">
+            <UserRound className="size-4.5" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <HostLink
+                href={`/users/${item.user_id}`}
+                className="truncate text-base font-semibold tracking-tight hover:underline"
+              >
+                {displayName}
+              </HostLink>
+              {user?.countryCode && (
+                <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-medium">
+                  {user.countryCode}
+                </Badge>
+              )}
+            </div>
+            <p className="mt-0.5 truncate font-mono text-[10px] text-muted-foreground" title={item.user_id}>
+              {item.user_id}
+            </p>
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              {statusBadge()}
+              <span className="flex items-center gap-1">
+                <Clock3 className="size-3.5" />
+                {formatRelative(receivedAt)}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-xl border bg-background/80 px-4 py-3 shadow-sm lg:min-w-52 lg:text-right">
+          <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+            Balance credit
+          </p>
+          <p className="mt-0.5 text-2xl font-bold tracking-tight tabular-nums text-emerald-600 dark:text-emerald-400">
+            {money(item.credited_amount_cents)}
+          </p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Customer paid <span className="font-medium tabular-nums text-foreground">{money(customerPaid)}</span>
+          </p>
+        </div>
+      </header>
+
+      <div className="grid lg:grid-cols-[minmax(0,1fr)_19rem]">
+        <section className="min-w-0 space-y-3 p-4 sm:p-5">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Risk assessment
+            </p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Review the strongest signals and available safeguards before deciding.
+            </p>
+          </div>
+          <FiatReviewEvidence
+            assessment={item.assessment}
+            safeguards={user ? {
+              fiatDepositsLocked: user.fiatDepositsLocked,
+              withdrawalsLocked: user.withdrawalsLocked,
+            } : undefined}
+          />
+        </section>
+
+        <aside className="border-t bg-muted/15 p-4 sm:p-5 lg:border-l lg:border-t-0">
+          <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+            Payment snapshot
+          </p>
+          <dl className="mt-3 divide-y rounded-xl border bg-background px-3">
+            <ReviewFact
+              icon={Banknote}
+              label="Customer paid"
+              value={money(customerPaid)}
+            />
+            <ReviewFact
+              icon={MapPin}
+              label="Account country"
+              value={user?.countryCode ?? "Unknown"}
+            />
+            <ReviewFact
+              icon={Clock3}
+              label="Received"
+              value={formatRelative(receivedAt)}
+            />
+          </dl>
+          <ReviewLinks item={item} />
+          {item.failure_reason && (
+            <div className="mt-3 rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-xs text-red-700 dark:text-red-300">
+              {item.failure_reason}
+            </div>
+          )}
+        </aside>
+      </div>
+
+      <footer className="flex flex-col gap-3 border-t bg-muted/25 px-4 py-4 sm:px-5 lg:flex-row lg:items-center lg:justify-between">
+        <div>
+          <p className="text-sm font-semibold">Choose an outcome</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Approval credits this deposit only. Decline locks money movement for follow-up.
+          </p>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <FiatDepositReviewDecision
+            intentId={item.id}
+            displayName={displayName}
+            amount={money(item.credited_amount_cents)}
+          />
+          {canManageKyc && (
+            <RequireKycAction
+              userId={item.user_id}
+              displayName={displayName}
+            />
+          )}
+        </div>
+      </footer>
+    </article>
+  );
+}
+
+function ReviewFact({
+  icon: Icon,
+  label,
+  value,
+}: {
+  icon: typeof Banknote;
+  label: string;
+  value: string;
 }) {
   return (
-    <div className="grid grid-cols-2 gap-3 text-xs">
-      <div>
-        <p className="text-muted-foreground">Balance credit</p>
-        <p className="font-medium tabular-nums">{money(item.credited_amount_cents)}</p>
-      </div>
-      <div>
-        <p className="text-muted-foreground">Customer paid</p>
-        <p className="font-medium tabular-nums">
-          {money(item.actual_customer_total_cents ?? item.requested_amount_cents)}
-        </p>
-      </div>
-      <div>
-        <p className="text-muted-foreground">Received</p>
-        <p>{formatRelative(item.review_requested_at ?? item.paid_at ?? item.created_at)}</p>
-      </div>
-      <div>
-        <p className="text-muted-foreground">Country</p>
-        <p>{countryCode ?? "Unknown"}</p>
-      </div>
-      {item.failure_reason && (
-        <div className="col-span-2 rounded-md border border-red-500/30 bg-red-500/10 p-2 text-red-700 dark:text-red-300">
-          {item.failure_reason}
-        </div>
-      )}
+    <div className="flex items-center justify-between gap-3 py-3">
+      <dt className="flex items-center gap-2 text-xs text-muted-foreground">
+        <Icon className="size-3.5" />
+        {label}
+      </dt>
+      <dd className="text-right text-xs font-medium tabular-nums">{value}</dd>
     </div>
   );
 }
 
 function ReviewLinks({ item }: { item: ReviewItem }) {
+  const paymentReference = item.provider_payment_id ?? item.provider_checkout_id ?? item.id;
+
   return (
-    <div className="space-y-1 text-xs">
+    <div className="mt-3 rounded-xl border bg-background p-3 text-xs">
       <HostLink
         href={`/transactions/card-payments/${item.id}`}
-        className="flex items-center gap-1 font-medium hover:underline"
+        className="flex items-center justify-between gap-2 font-medium hover:underline"
       >
-        Payment details <ExternalLink className="size-3" />
+        <span className="flex items-center gap-2">
+          <CreditCard className="size-3.5 text-muted-foreground" />
+          Payment details
+        </span>
+        <ExternalLink className="size-3.5 text-muted-foreground" />
       </HostLink>
       <p
-        className="max-w-48 truncate font-mono text-[10px] text-muted-foreground"
-        title={item.provider_payment_id ?? item.provider_checkout_id ?? item.id}
+        className="mt-2 truncate border-t pt-2 font-mono text-[10px] text-muted-foreground"
+        title={paymentReference}
       >
-        {item.provider_payment_id ?? item.provider_checkout_id ?? item.id}
+        {paymentReference}
       </p>
     </div>
   );
