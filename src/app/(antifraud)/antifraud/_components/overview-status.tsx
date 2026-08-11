@@ -8,93 +8,14 @@ import {
 
 import { HostLink } from "@/components/host-link";
 import { TILE_COLORS, type AccentColor } from "@/components/modern-panels";
-import type { AntifraudLiveMirrorMetrics } from "@/lib/antifraud/overview";
 import type { ReviewQueueStats } from "@/lib/antifraud/reviews";
-import { formatCompactUsd, formatNumber } from "@/lib/utils/format";
+import { formatNumber } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
 
 /**
- * The two "right now" bands above the lifetime KPI strip.
- *
- * The dashboard used to open with six lifetime counters — true, but never
- * actionable. `PulseBar` shows what the last 24h produced; `QueueStrip` states
- * what is waiting for a human, and links straight into that queue. Engine
- * health remains available in Antifraud Settings instead of occupying the
- * dashboard.
- *
- * Both are deliberately chrome-free: no section headings and no helper copy.
- * The numbers carry the whole meaning.
+ * What is waiting for a human, with direct links into each queue.
+ * Deliberately chrome-free: the labels and counts carry the whole meaning.
  */
-
-// ─── Pulse bar ────────────────────────────────────────────────────────────
-
-export function PulseBar({
-  live,
-}: {
-  live: AntifraudLiveMirrorMetrics;
-}) {
-  return (
-    <div
-      className="flex flex-wrap items-center justify-end gap-x-4 gap-y-2 rounded-lg border bg-card px-3 py-2 sm:px-4"
-      aria-label="Antifraud activity in the last 24 hours"
-    >
-      <span className="ml-auto flex items-center gap-3 sm:gap-4">
-        <span className="hidden text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground sm:inline">
-          24h
-        </span>
-        <Pulse label="Signups" value={formatNumber(live.signups24h)} />
-        <Pulse
-          label="Locks"
-          value={formatNumber(live.locks24h)}
-          accent={live.locks24h > 0 ? "amber" : undefined}
-        />
-        {/* House POV: a deposit is money the player hands over — emerald.
-            Fraudulent volume is money we stand to give back — rose. */}
-        <Pulse
-          label="Deposits"
-          value={formatCompactUsd(live.legitimateFiatCents24h / 100)}
-          accent="emerald"
-        />
-        <Pulse
-          label="Fraud"
-          value={formatCompactUsd(live.fraudulentFiatCents24h / 100)}
-          accent={live.fraudulentFiatCents24h > 0 ? "rose" : undefined}
-        />
-      </span>
-    </div>
-  );
-}
-
-function Pulse({
-  label,
-  value,
-  accent,
-}: {
-  label: string;
-  value: string;
-  accent?: AccentColor;
-}) {
-  return (
-    <span
-      className="flex items-baseline gap-1.5"
-      aria-label={`${label} last 24 hours: ${value}`}
-    >
-      <span
-        className={cn(
-          "text-sm font-bold tabular-nums leading-none",
-          accent ? TILE_COLORS[accent].text : "text-foreground",
-        )}
-      >
-        {value}
-      </span>
-      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-        {label}
-      </span>
-    </span>
-  );
-}
-
-// ─── Queue strip ──────────────────────────────────────────────────────────
 
 const QUEUES: {
   key: keyof ReviewQueueStats;

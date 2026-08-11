@@ -46,7 +46,7 @@ import {
   ChartRowSkeleton,
   OverviewCharts,
 } from "./_components/overview-charts-lazy";
-import { PulseBar, QueueStrip } from "./_components/overview-status";
+import { QueueStrip } from "./_components/overview-status";
 import {
   CaseThroughputPanel,
   CaseThroughputSkeleton,
@@ -116,9 +116,9 @@ type MonitorPromise = Promise<
  * Each band waits only on the data it renders.
  *
  * The five reads are started here and deliberately NOT awaited: they are
- * handed to the bands as promises, so the 24h activity bar, the case queue,
- * the KPI strip, the action feed and the 30-day charts each paint the moment
- * THEIR read lands, instead of all five waiting on the slowest. `safeQuery`
+ * handed to the bands as promises, so the case queue, KPI strip, action feed
+ * and 30-day charts each paint the moment THEIR read lands, instead of all
+ * four waiting on the slowest. `safeQuery`
  * always resolves (it catches and returns a fallback), so a hoisted promise
  * here can never surface as an unhandled rejection.
  *
@@ -170,10 +170,6 @@ export default async function AntifraudOverviewPage() {
 
   return (
     <div className="space-y-4" data-snapshot-at={snapshotAt}>
-      <Suspense fallback={<Skeleton className="h-11 w-full rounded-lg" />}>
-        <PulseBand overview={overviewPromise} />
-      </Suspense>
-
       <Suspense fallback={<QueueBandSkeleton />}>
         <QueueBand queue={queuePromise} />
       </Suspense>
@@ -200,14 +196,6 @@ export default async function AntifraudOverviewPage() {
       </Suspense>
     </div>
   );
-}
-
-/** Last-24h activity. Hidden entirely if the mirror read failed. */
-async function PulseBand({ overview }: { overview: OverviewPromise }) {
-  const overviewResult = await overview;
-  // No zero values dressed up as real 24h numbers.
-  if (overviewResult.error) return null;
-  return <PulseBar live={overviewResult.data.live} />;
 }
 
 /**

@@ -1,9 +1,9 @@
 import { Skeleton } from "@/components/ui/skeleton";
 
 /**
- * Matches /antifraud: the pulse bar, the four queue tiles, six aligned KPI
- * cards, action feed, the two 30-day charts, the case-flow panel and the two
- * detection-health panels.
+ * Matches /antifraud: the four queue tiles, six aligned KPI cards, action
+ * feed, the two 30-day charts, the case-flow panel and the two detection-health
+ * panels.
  *
  * This is the composition of every Suspense fallback in `page.tsx`, in page
  * order. Adding a band there without adding its skeleton here reintroduces
@@ -12,7 +12,6 @@ import { Skeleton } from "@/components/ui/skeleton";
 export default function AntifraudOverviewLoading() {
   return (
     <div className="space-y-4">
-      <Skeleton className="h-11 w-full rounded-lg" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }).map((_, i) => (
           <Skeleton key={i} className="h-[52px] w-full rounded-lg" />
