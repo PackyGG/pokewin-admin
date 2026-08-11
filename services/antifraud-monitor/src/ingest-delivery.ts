@@ -242,7 +242,13 @@ export class IngestDelivery {
               OR re.event_type = 'fiat_eligibility_containment'
               OR re.event_type = 'whop_history_auto_ban'
             )
-          ORDER BY re.recorded_at, re.id
+          -- A provider-confirmed prior dispute/refund is an account-access
+          -- decision, so it must not wait behind historical review/lock
+          -- receipts. Preserve FIFO inside each priority band.
+          ORDER BY
+            CASE WHEN re.event_type = 'whop_history_auto_ban' THEN 0 ELSE 1 END,
+            re.recorded_at,
+            re.id
           LIMIT $1
         `,
         [BATCH_SIZE],

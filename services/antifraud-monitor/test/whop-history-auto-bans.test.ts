@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { whopHistoryEvidence } from "../src/whop-history-auto-bans.js";
@@ -86,4 +87,15 @@ test("current-payment dispute arrays do not impersonate prior buyer history", ()
   payload.data.disputes = [{ id: "dp_current" }];
   payload.data.refunds = [{ id: "rf_current" }];
   assert.equal(whopHistoryEvidence(payload, null), null);
+});
+
+test("automatic bans jump ahead of historical containment delivery backlog", () => {
+  const delivery = readFileSync(
+    new URL("../src/ingest-delivery.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    delivery,
+    /CASE WHEN re\.event_type = 'whop_history_auto_ban' THEN 0 ELSE 1 END/,
+  );
 });
