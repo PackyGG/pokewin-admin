@@ -136,7 +136,7 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
     method: "POST",
     path: "/api/v1/discord/creator-setups/last-deals",
     summary:
-      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the latest one or two started deals for the linked creator. Returns deal-window signups, FTDs, attributed deposit volume, weighted wager, and approved overlapping leaderboard totals plus the top three standings.",
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the latest one or two started leaderboard deal frames for the linked creator. Weekly and bi-weekly frames use their complete leaderboard window and return signups, FTDs, attributed deposit volume, authoritative weighted wager, top-three standings, and actual fill/tip/sponsorship/payout support.",
     scopes: ["discord:creator:setup"],
   },
   {

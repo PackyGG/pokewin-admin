@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import {
   affiliate_codes,
   creator_deals,
+  creator_stream_sessions,
 } from "@/lib/db-schema/main/schema";
 import { getProdReadDrizzleDb } from "@/lib/db";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
@@ -44,6 +45,16 @@ export type CreatorLastDeals = {
     firstTimeDepositors: number;
     depositsUsd: number;
     weightedWagerUsd: number;
+    support: {
+      fillCount: number;
+      fillsLoadedUsd: number;
+      fillsSpentUsd: number;
+      fillsRefundedUsd: number;
+      fillsRemainingUsd: number;
+      convertedPayoutUsd: number;
+      tipsUsd: number;
+      sponsoredBattlesUsd: number;
+    };
     leaderboards: Array<{
       leaderboardId: string;
       title: string;
@@ -70,11 +81,22 @@ type DealRow = {
   week_end_utc: string;
 };
 
+type DealSupportRow = {
+  deal_id: string;
+  fill_count: string;
+  fills_loaded_usd: string;
+  fills_spent_usd: string;
+  fills_refunded_usd: string;
+  fills_remaining_usd: string;
+  converted_payout_usd: string;
+  tips_usd: string;
+  sponsored_battles_usd: string;
+};
+
 type DealActivityRow = {
   deal_id: string;
   signups: string;
   first_time_depositors: string;
-  weighted_wager_usd: string;
 };
 
 type DealDepositRow = {
@@ -129,8 +151,12 @@ async function listApprovedCreatorLeaderboards(
 }
 
 /**
- * Creator/admin view of the latest two started creator deals. Every metric is
- * bounded to the deal's half-open `[week_start_utc, week_end_utc)` window.
+ * Creator/admin view of the latest two started creator deal frames.
+ *
+ * The leaderboard frame is the deal: a bi-weekly leaderboard spans two weekly
+ * fill-program records and must produce one 14-day result. Every performance
+ * and support metric is bounded to that frame, never to one arbitrary weekly
+ * record that happens to overlap it.
  */
 export async function getCreatorLastDeals(input: {
   guildId: string;
@@ -153,28 +179,21 @@ export async function getCreatorLastDeals(input: {
   }
 
   const db = getProdReadDrizzleDb();
-  const [creator, deals, ownedCodes, excludedUserIds] = await Promise.all([
+  const [creator, ownedCodes, excludedUserIds, allLeaderboards] = await Promise.all([
     requireActiveCreator(setup.creator_user_id),
-    db
-      .select({
-        id: creator_deals.id,
-        status: creator_deals.status,
-        week_start_utc: creator_deals.week_start_utc,
-        week_end_utc: creator_deals.week_end_utc,
-      })
-      .from(creator_deals)
-      .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
-        AND ${creator_deals.week_start_utc} <= NOW()`)
-      .orderBy(sql`${creator_deals.week_start_utc} DESC`)
-      .limit(DEAL_LIMIT),
     db
       .select({ code: affiliate_codes.code })
       .from(affiliate_codes)
       .where(eq(affiliate_codes.user_id, setup.creator_user_id)),
     getExcludedUserIds(),
+    listApprovedCreatorLeaderboards(setup.creator_user_id),
   ]);
-  const typedDeals = deals as DealRow[];
-  if (typedDeals.length === 0) {
+  const now = Date.now();
+  const frames = allLeaderboards
+    .filter((leaderboard) => Date.parse(leaderboard.start_date) <= now)
+    .sort((a, b) => b.start_date.localeCompare(a.start_date))
+    .slice(0, DEAL_LIMIT);
+  if (frames.length === 0) {
     return {
       generatedAt: new Date().toISOString(),
       creator: { userId: creator.id, username: creator.username },
@@ -189,11 +208,37 @@ export async function getCreatorLastDeals(input: {
         .filter(Boolean),
     ),
   );
-  const dealWindows = typedDeals.map((deal) => ({
-    id: deal.id,
-    start: new Date(deal.week_start_utc).toISOString(),
-    end: new Date(deal.week_end_utc).toISOString(),
+  const dealWindows = frames.map((frame) => ({
+    id: frame.id,
+    start: new Date(frame.start_date).toISOString(),
+    end: new Date(frame.end_date).toISOString(),
+    codes: Array.from(
+      new Set(
+        (frame.affiliate_codes.length > 0 ? frame.affiliate_codes : codes)
+          .map((code) => code.trim().toUpperCase())
+          .filter(Boolean),
+      ),
+    ),
   }));
+  const earliestStart = dealWindows.reduce(
+    (earliest, frame) => frame.start < earliest ? frame.start : earliest,
+    dealWindows[0].start,
+  );
+  const latestEnd = dealWindows.reduce(
+    (latest, frame) => frame.end > latest ? frame.end : latest,
+    dealWindows[0].end,
+  );
+  const weeklyDeals = await db
+    .select({
+      id: creator_deals.id,
+      status: creator_deals.status,
+      week_start_utc: creator_deals.week_start_utc,
+      week_end_utc: creator_deals.week_end_utc,
+    })
+    .from(creator_deals)
+    .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
+      AND ${creator_deals.week_start_utc} < ${latestEnd}
+      AND ${creator_deals.week_end_utc} > ${earliestStart}`) as DealRow[];
   const excludedUsageFilter =
     excludedUserIds.length > 0
       ? sql`AND usage.referred_user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
@@ -203,30 +248,31 @@ export async function getCreatorLastDeals(input: {
       ? sql`AND deposit.user_id <> ALL(${pgArrayParam(excludedUserIds)}::text[])`
       : sql``;
 
-  const [activityRows, depositRows, allLeaderboards] = await Promise.all([
-    codes.length === 0
+  const [activityRows, depositRows, supportRows] = await Promise.all([
+    dealWindows.every((frame) => frame.codes.length === 0)
       ? Promise.resolve({ rows: [] as DealActivityRow[] })
       : db.execute<DealActivityRow>(sql`
           WITH deal_windows AS (
             SELECT *
             FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
-              id uuid,
+              id text,
               start_at timestamptz,
-              end_at timestamptz
+              end_at timestamptz,
+              codes text[]
             )
           )
           SELECT
-            deal.id::text AS deal_id,
-            COUNT(DISTINCT usage.referred_user_id)::text AS signups,
+            deal.id AS deal_id,
+            COUNT(DISTINCT usage.referred_user_id) FILTER (
+              WHERE usage.usage_type::text = 'signup'
+            )::text AS signups,
             COUNT(DISTINCT usage.referred_user_id) FILTER (
               WHERE usage.usage_type::text = 'deposit'
-            )::text AS first_time_depositors,
-            COALESCE(SUM(usage.weighted_wager_amount_usd::numeric), 0)::text
-              AS weighted_wager_usd
+            )::text AS first_time_depositors
           FROM deal_windows AS deal
           LEFT JOIN affiliate_code_usages AS usage
             ON usage.affiliate_user_id = ${setup.creator_user_id}
-           AND UPPER(usage.code) = ANY(${pgArrayParam(codes)}::text[])
+           AND UPPER(usage.code) = ANY(deal.codes)
            AND usage.status::text = 'completed'
            AND usage.referred_user_id <> usage.affiliate_user_id
            AND usage.created_at >= deal.start_at
@@ -238,15 +284,16 @@ export async function getCreatorLastDeals(input: {
           )
           GROUP BY deal.id
         `),
-    codes.length === 0
+    dealWindows.every((frame) => frame.codes.length === 0)
       ? Promise.resolve({ rows: [] as DealDepositRow[] })
       : db.execute<DealDepositRow>(sql`
           WITH deal_windows AS (
             SELECT *
             FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
-              id uuid,
+              id text,
               start_at timestamptz,
-              end_at timestamptz
+              end_at timestamptz,
+              codes text[]
             )
           ), covered_deposits AS (
             SELECT
@@ -270,6 +317,7 @@ export async function getCreatorLastDeals(input: {
               WHERE usage.referred_user_id = deposit.user_id
                 AND usage.referred_user_id <> usage.affiliate_user_id
                 AND usage.status::text = 'completed'
+                AND UPPER(usage.code) = ANY(deal.codes)
                 AND usage.created_at <= deposit.created_at
                 AND usage.created_at >= deposit.created_at - INTERVAL '7 days'
               ORDER BY usage.created_at DESC, usage.id DESC
@@ -279,13 +327,40 @@ export async function getCreatorLastDeals(input: {
               ${excludedDepositFilter}
           )
           SELECT
-            deal.id::text AS deal_id,
+            deal.id AS deal_id,
             COALESCE(SUM(covered.amount_usd), 0)::text AS deposits_usd
           FROM deal_windows AS deal
           LEFT JOIN covered_deposits AS covered ON covered.deal_id = deal.id
           GROUP BY deal.id
         `),
-    listApprovedCreatorLeaderboards(setup.creator_user_id),
+    db.execute<DealSupportRow>(sql`
+      WITH deal_windows AS (
+        SELECT *
+        FROM jsonb_to_recordset(${JSON.stringify(dealWindows)}::jsonb) AS deal(
+          id text,
+          start_at timestamptz,
+          end_at timestamptz,
+          codes text[]
+        )
+      )
+      SELECT
+        deal.id AS deal_id,
+        COUNT(session.id)::text AS fill_count,
+        COALESCE(SUM(session.fill_loaded_usd::numeric), 0)::text AS fills_loaded_usd,
+        COALESCE(SUM(session.fill_spent_usd::numeric), 0)::text AS fills_spent_usd,
+        COALESCE(SUM(session.fill_refunded_usd::numeric), 0)::text AS fills_refunded_usd,
+        COALESCE(SUM(session.fill_remaining_usd::numeric), 0)::text AS fills_remaining_usd,
+        COALESCE(SUM(session.converted_to_raw_usd::numeric), 0)::text AS converted_payout_usd,
+        COALESCE(SUM(session.tips_spent_this_session_usd::numeric), 0)::text AS tips_usd,
+        COALESCE(SUM(session.sponsorship_spent_this_session_usd::numeric), 0)::text
+          AS sponsored_battles_usd
+      FROM deal_windows AS deal
+      LEFT JOIN ${creator_stream_sessions} AS session
+        ON session.user_id = ${setup.creator_user_id}
+       AND session.activated_at >= deal.start_at
+       AND session.activated_at < deal.end_at
+      GROUP BY deal.id
+    `),
   ]);
 
   const activityByDeal = new Map(
@@ -294,62 +369,77 @@ export async function getCreatorLastDeals(input: {
   const depositsByDeal = new Map(
     depositRows.rows.map((row) => [row.deal_id, row]),
   );
+  const supportByDeal = new Map(
+    supportRows.rows.map((row) => [row.deal_id, row]),
+  );
 
   const dealResults = await Promise.all(
-    typedDeals.map(async (deal) => {
-      const matchingLeaderboards = allLeaderboards
-        .filter((leaderboard) =>
-          overlaps(
-            deal.week_start_utc,
-            deal.week_end_utc,
-            leaderboard.start_date,
-            leaderboard.end_date,
-          ),
-        )
-        .sort((a, b) => b.start_date.localeCompare(a.start_date));
-      const leaderboards = await Promise.all(
-        matchingLeaderboards.map(async (leaderboard) => {
-          const standings = await getAffiliateLeaderboardPage({
-            leaderboardId: leaderboard.id,
-            creatorUserId: leaderboard.creator_user_id,
-            coCreatorUserIds: leaderboard.co_creator_user_ids,
-            affiliateCodes: leaderboard.affiliate_codes,
-            startDate: new Date(leaderboard.start_date),
-            endDate: new Date(leaderboard.end_date),
-            prizeTiers: leaderboard.prize_tiers,
-            page: 0,
-            pageSize: TOP_ENTRY_LIMIT,
-          });
-          return {
-            leaderboardId: leaderboard.id,
-            title: leaderboard.title,
-            status: leaderboard.time_status,
-            startedAt: new Date(leaderboard.start_date).toISOString(),
-            endedAt: new Date(leaderboard.end_date).toISOString(),
-            totalPrizeUsd: money(leaderboard.total_prize_usd),
-            totalEntries: standings.totalEntries,
-            weightedWagerUsd: money(standings.totalWageredUsd),
-            topEntries: standings.entries.map((entry) => ({
-              rank: entry.position,
-              username: entry.username?.trim() || "Anonymous player",
-              wagerUsd: money(entry.totalWageredUsd),
-              prizeUsd: entry.prizeUsd === null ? null : money(entry.prizeUsd),
-            })),
-          };
-        }),
+    frames.map(async (frame) => {
+      const standings = await getAffiliateLeaderboardPage({
+        leaderboardId: frame.id,
+        creatorUserId: frame.creator_user_id,
+        coCreatorUserIds: frame.co_creator_user_ids,
+        affiliateCodes: frame.affiliate_codes,
+        startDate: new Date(frame.start_date),
+        endDate: new Date(frame.end_date),
+        prizeTiers: frame.prize_tiers,
+        page: 0,
+        pageSize: TOP_ENTRY_LIMIT,
+      });
+      const leaderboard = {
+        leaderboardId: frame.id,
+        title: frame.title,
+        status: frame.time_status,
+        startedAt: new Date(frame.start_date).toISOString(),
+        endedAt: new Date(frame.end_date).toISOString(),
+        totalPrizeUsd: money(frame.total_prize_usd),
+        totalEntries: standings.totalEntries,
+        weightedWagerUsd: money(standings.totalWageredUsd),
+        topEntries: standings.entries.map((entry) => ({
+          rank: entry.position,
+          username: entry.username?.trim() || "Anonymous player",
+          wagerUsd: money(entry.totalWageredUsd),
+          prizeUsd: entry.prizeUsd === null ? null : money(entry.prizeUsd),
+        })),
+      };
+      const matchingDeals = weeklyDeals.filter((deal) =>
+        overlaps(
+          deal.week_start_utc,
+          deal.week_end_utc,
+          frame.start_date,
+          frame.end_date,
+        ),
       );
-      const activity = activityByDeal.get(deal.id);
-      const deposits = depositsByDeal.get(deal.id);
+      const status: LastDealStatus = frame.time_status === "active"
+        ? "active"
+        : frame.time_status === "upcoming"
+          ? "scheduled"
+          : matchingDeals.some((deal) => deal.status === "terminated")
+            ? "terminated"
+            : "completed";
+      const activity = activityByDeal.get(frame.id);
+      const deposits = depositsByDeal.get(frame.id);
+      const support = supportByDeal.get(frame.id);
       return {
-        dealId: deal.id,
-        status: deal.status,
-        startedAt: new Date(deal.week_start_utc).toISOString(),
-        endedAt: new Date(deal.week_end_utc).toISOString(),
+        dealId: frame.id,
+        status,
+        startedAt: leaderboard.startedAt,
+        endedAt: leaderboard.endedAt,
         signups: Number(activity?.signups ?? 0),
         firstTimeDepositors: Number(activity?.first_time_depositors ?? 0),
         depositsUsd: money(deposits?.deposits_usd ?? 0),
-        weightedWagerUsd: money(activity?.weighted_wager_usd ?? 0),
-        leaderboards,
+        weightedWagerUsd: leaderboard.weightedWagerUsd,
+        support: {
+          fillCount: Number(support?.fill_count ?? 0),
+          fillsLoadedUsd: money(support?.fills_loaded_usd ?? 0),
+          fillsSpentUsd: money(support?.fills_spent_usd ?? 0),
+          fillsRefundedUsd: money(support?.fills_refunded_usd ?? 0),
+          fillsRemainingUsd: money(support?.fills_remaining_usd ?? 0),
+          convertedPayoutUsd: money(support?.converted_payout_usd ?? 0),
+          tipsUsd: money(support?.tips_usd ?? 0),
+          sponsoredBattlesUsd: money(support?.sponsored_battles_usd ?? 0),
+        },
+        leaderboards: [leaderboard],
       };
     }),
   );

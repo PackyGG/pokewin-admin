@@ -255,7 +255,7 @@ test("creator setup API is guild-pinned, scoped, and transactionally idempotent"
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/rewards/);
 });
 
-test("creator last-deals API is creator/admin-only and uses canonical bounded attribution", async () => {
+test("creator last-deals API uses complete leaderboard frames and actual support", async () => {
   const [route, service, standings, endpoints] = await Promise.all([
     read("src/app/api/v1/discord/creator-setups/last-deals/route.ts"),
     read("src/lib/discord-creator-last-deals.ts"),
@@ -269,21 +269,15 @@ test("creator last-deals API is creator/admin-only and uses canonical bounded at
   assert.match(service, /requireLinkedSetupActor\(input, \{\s*allowDashboardOperator: true/);
   assert.match(service, /setup\.creator_discord_user_id/);
   assert.match(service, /isDiscordDashboardOperator\(input\.actorDiscordUserId\)/);
-  assert.match(service, /week_start_utc\} <= NOW\(\)/);
-  assert.match(service, /\.limit\(DEAL_LIMIT\)/);
+  assert.match(service, /Date\.parse\(leaderboard\.start_date\) <= now/);
+  assert.match(service, /\.slice\(0, DEAL_LIMIT\)/);
+  assert.match(service, /frame\.affiliate_codes\.length > 0/);
   assert.match(
     service,
-    /COUNT\(DISTINCT usage\.referred_user_id\)::text AS signups/,
+    /usage\.usage_type::text = 'signup'/,
   );
   assert.match(service, /usage\.usage_type::text = 'deposit'/);
-  assert.match(
-    service,
-    /SUM\(usage\.weighted_wager_amount_usd::numeric\)/,
-  );
-  assert.doesNotMatch(
-    service,
-    /COALESCE\(usage\.weighted_wager_amount_usd, usage\.wager_amount_usd\)/,
-  );
+  assert.match(service, /weightedWagerUsd: leaderboard\.weightedWagerUsd/);
   assert.match(service, /usage\.status::text = 'completed'/);
   assert.match(service, /deposit\.status = 'completed'/);
   assert.match(service, /deposit\.created_at - INTERVAL '7 days'/);
@@ -294,13 +288,18 @@ test("creator last-deals API is creator/admin-only and uses canonical bounded at
   assert.match(service, /include_cancelled: false/);
   assert.match(service, /getAffiliateLeaderboardPage/);
   assert.match(service, /pageSize: TOP_ENTRY_LIMIT/);
+  assert.match(service, /session\.activated_at >= deal\.start_at/);
+  assert.match(service, /SUM\(session\.fill_loaded_usd::numeric\)/);
+  assert.match(service, /SUM\(session\.converted_to_raw_usd::numeric\)/);
+  assert.match(service, /SUM\(session\.tips_spent_this_session_usd::numeric\)/);
+  assert.match(service, /SUM\(session\.sponsorship_spent_this_session_usd::numeric\)/);
   assert.match(standings, /SUM\(als\.total_wagered_usd\) OVER\(\)/);
   assert.match(
     standings,
     /SUM\(SUM\(COALESCE\(acu\.weighted_wager_amount_usd, acu\.wager_amount_usd\)::numeric\)\)/,
   );
   assert.match(endpoints, /\/api\/v1\/discord\/creator-setups\/last-deals/);
-  assert.match(endpoints, /latest one or two started deals/);
+  assert.match(endpoints, /latest one or two started leaderboard deal frames/);
 });
 
 test("creator activity notifications are independently controlled, durable, and creator-guild pinned", async () => {
