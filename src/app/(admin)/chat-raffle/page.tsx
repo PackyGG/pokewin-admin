@@ -371,7 +371,7 @@ function StandingsTable({
                   </AvatarFallback>
                 </Avatar>
 
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                <div className="min-w-40 flex-1">
                   <div className="flex min-w-0 items-center gap-2">
                     <Link
                       href={`/users/${entry.userId}`}
@@ -407,29 +407,31 @@ function StandingsTable({
                       Lv {entry.communityLevel} · {entry.communityRankName}
                     </Badge>
                   </div>
-                  <span className="truncate text-[10px] text-muted-foreground tabular-nums sm:text-[11px]">
-                    Discord {formatNumber(entry.discordMessageCount)} msgs · On-site{" "}
-                    {formatNumber(entry.siteChatMessageCount)} msgs
-                  </span>
                 </div>
 
-                <span
-                  className="hidden shrink-0 text-xs text-muted-foreground md:inline"
-                  title={`${formatNumber(entry.messageCount)} qualifying messages`}
+                <div
+                  className="order-last ml-11 grid w-[calc(100%-2.75rem)] shrink-0 grid-cols-2 overflow-hidden rounded-lg border bg-muted/30 sm:order-none sm:ml-0 sm:w-auto"
+                  title={`${formatNumber(entry.messageCount)} qualifying messages total`}
                 >
-                  D {formatNumber(entry.discordXp)} · S {formatNumber(entry.siteChatXp)} XP
-                </span>
-
-                <span className="w-16 shrink-0 text-right tabular-nums text-sm font-medium">
-                  {formatNumber(entry.tickets)}
-                  <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    {lifetime ? "XP" : "tix"}
-                  </span>
-                </span>
-
-                <span className="w-12 shrink-0 text-right tabular-nums text-xs text-muted-foreground">
-                  {(entry.winChance * 100).toFixed(1)}%
-                </span>
+                  <div className="min-w-24 px-3 py-1.5">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      Discord
+                    </div>
+                    <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
+                      {formatNumber(entry.discordMessageCount)}
+                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
+                    </div>
+                  </div>
+                  <div className="min-w-24 border-l px-3 py-1.5">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      On-site
+                    </div>
+                    <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
+                      {formatNumber(entry.siteChatMessageCount)}
+                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
+                    </div>
+                  </div>
+                </div>
 
                 {adjustable && roundId && (
                   <AdjustPointsDialog
