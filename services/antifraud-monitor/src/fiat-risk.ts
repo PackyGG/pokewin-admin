@@ -882,7 +882,10 @@ export function applyFiatIdentityContainmentRisk(
   scored: ReturnType<typeof scoreFiatDeposit>,
   identity: Pick<
     AuthorizedNetworkReuse,
-    "identityVerdict" | "identityReasonCodes" | "identityReviewCodes"
+    | "identityVerdict"
+    | "identityReasonCodes"
+    | "identityReviewCodes"
+    | "identityClusterActive"
   > | undefined,
 ): ReturnType<typeof scoreFiatDeposit> {
   if (!identity) return scored;
@@ -890,7 +893,7 @@ export function applyFiatIdentityContainmentRisk(
   const hardReasons = identity.identityReasonCodes.filter(
     (reason) => reason !== "checkout_refunded_amount_cluster",
   );
-  const clusterReview =
+  const clusterReview = identity.identityClusterActive && (
     identity.identityReviewCodes.includes("checkout_refunded_amount_cluster")
     || (
       identity.identityVerdict === "contain"
@@ -899,7 +902,8 @@ export function applyFiatIdentityContainmentRisk(
       && identity.identityReasonCodes.every(
         (reason) => reason === "checkout_refunded_amount_cluster",
       )
-    );
+    )
+  );
 
   if (identity.identityVerdict !== "contain" || hardReasons.length === 0) {
     if (!clusterReview) return scored;
@@ -1092,6 +1096,7 @@ type AuthorizedNetworkReuse = {
   identityVerdict: "clear" | "watch" | "review" | "contain" | null;
   identityReasonCodes: string[];
   identityReviewCodes: string[];
+  identityClusterActive: boolean;
 };
 
 type ObservationLoad<T> = {
@@ -1557,6 +1562,7 @@ async function loadAuthorizedNetworkReuse(
     identity_verdict: "clear" | "watch" | "review" | "contain";
     identity_reason_codes: string[];
     identity_review_codes: string[];
+    identity_cluster_active: boolean;
   }>(
     `
       SELECT
@@ -1575,6 +1581,14 @@ async function loadAuthorizedNetworkReuse(
           ) signal
           WHERE signal ->> 'action' = 'review'
         ) AS identity_review_codes,
+        EXISTS (
+          SELECT 1
+          FROM fiat_refunded_amount_clusters cluster
+          WHERE cluster.reason =
+              current.evidence ->> 'refundedAmountClusterReason'
+            AND cluster.active_until > now()
+            AND cluster.window_end > now() - interval '48 hours'
+        ) AS identity_cluster_active,
         CASE WHEN current.checkout_ip IS NULL THEN 0 ELSE (
           SELECT COUNT(DISTINCT peer.user_id)::int
           FROM fiat_deposit_identity_checks peer
@@ -1600,6 +1614,7 @@ async function loadAuthorizedNetworkReuse(
       identityVerdict: row.identity_verdict ?? null,
       identityReasonCodes: row.identity_reason_codes ?? [],
       identityReviewCodes: row.identity_review_codes ?? [],
+      identityClusterActive: row.identity_cluster_active === true,
     }])),
     status: "complete",
   };

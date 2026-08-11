@@ -287,6 +287,7 @@ test("identity containment dominates trust discounts in the Fiat workspace", () 
     identityVerdict: "contain",
     identityReasonCodes: ["checkout_ip_blocklisted"],
     identityReviewCodes: [],
+    identityClusterActive: false,
   });
   assert.equal(contained.riskScore, 100);
   assert.equal(contained.verdict, "bad");
@@ -301,6 +302,7 @@ test("a refunded-amount cluster is review-only, including legacy containment row
     identityVerdict: "review",
     identityReasonCodes: [],
     identityReviewCodes: ["checkout_refunded_amount_cluster"],
+    identityClusterActive: true,
   });
   assert.equal(reviewed.riskScore, 50);
   assert.equal(reviewed.verdict, "review");
@@ -315,9 +317,19 @@ test("a refunded-amount cluster is review-only, including legacy containment row
     identityVerdict: "contain",
     identityReasonCodes: ["checkout_refunded_amount_cluster"],
     identityReviewCodes: [],
+    identityClusterActive: true,
   });
   assert.equal(legacy.riskScore, 50);
   assert.equal(legacy.verdict, "review");
+
+  const expired = applyFiatIdentityContainmentRisk(base, {
+    identityVerdict: "contain",
+    identityReasonCodes: ["checkout_refunded_amount_cluster"],
+    identityReviewCodes: [],
+    identityClusterActive: false,
+  });
+  assert.equal(expired.riskScore, 0);
+  assert.equal(expired.verdict, "good");
 });
 
 test("a clean MaxMind result does not erode the refunded-amount review floor", () => {
@@ -326,6 +338,7 @@ test("a clean MaxMind result does not erode the refunded-amount review floor", (
     identityVerdict: "review",
     identityReasonCodes: [],
     identityReviewCodes: ["checkout_refunded_amount_cluster"],
+    identityClusterActive: true,
   });
   const enriched = applyMaxMindFiatRisk(reviewed, cleanMaxMind);
   assert.equal(enriched.riskScore, 50);
