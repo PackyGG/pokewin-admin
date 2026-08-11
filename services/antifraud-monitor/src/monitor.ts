@@ -456,6 +456,8 @@ export class MonitorEngine {
   private readonly fiatAlerts: FiatProblemAlerts;
   private readonly whopHistoryAutoBans: WhopHistoryAutoBans;
   private readonly whopPaymentReconciler: WhopPaymentReconciler;
+  private whopReconciliation: Promise<void> | null = null;
+  private whopReconciliationAbort: AbortController | null = null;
   private readonly fiatDepositIdentity: FiatDepositIdentityChecks;
   private readonly freeBattleRisk: FreeBattleRiskMonitor;
   private readonly freshBehavior: FreshBehaviorMonitor;
@@ -519,15 +521,24 @@ export class MonitorEngine {
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.whopReconciliationAbort?.abort();
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     const deadline = Date.now() + this.watchdogBudgetMs();
-    while (this.running && Date.now() < deadline) {
+    while (
+      (this.running || this.whopReconciliation !== null)
+      && Date.now() < deadline
+    ) {
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
     if (this.running) {
       this.log.warn(
         "Antifraud monitor stopped while a tick was still in flight",
+      );
+    }
+    if (this.whopReconciliation) {
+      this.log.warn(
+        "Antifraud monitor stopped while Whop reconciliation was still in flight",
       );
     }
   }
@@ -694,9 +705,12 @@ export class MonitorEngine {
       await this.runPhase("whop-history-auto-bans", () =>
         this.whopHistoryAutoBans.process(),
       );
-      await this.runPhase("whop-payment-reconciliation", () =>
-        this.whopPaymentReconciler.process(),
-      );
+      // Whop can take one list request plus five bounded retrieve waves. Keep
+      // that provider latency off the serialized one-second monitor tick so it
+      // cannot delay signup, login or containment work. The in-process guard
+      // prevents overlap, and shutdown waits for the background promise before
+      // the database pools are closed.
+      this.scheduleWhopPaymentReconciliation();
       await this.runPhase("fiat-problem-alerts", () =>
         this.fiatAlerts.process(),
       );
@@ -770,6 +784,33 @@ export class MonitorEngine {
       this.recordTickFailure(phase, error);
       return null;
     }
+  }
+
+  private scheduleWhopPaymentReconciliation(): void {
+    if (this.stopped || this.whopReconciliation) return;
+    const abort = new AbortController();
+    this.whopReconciliationAbort = abort;
+    this.whopReconciliation = this.whopPaymentReconciler.process(
+      new Date(),
+      abort.signal,
+    )
+      .then(() => undefined)
+      .catch((error) => {
+        if (this.stopped && abort.signal.aborted) return;
+        this.log.error(
+          {
+            err: this.safeError(error),
+            phase: "whop-payment-reconciliation",
+          },
+          "Antifraud monitor Whop payment reconciliation failed",
+        );
+      })
+      .finally(() => {
+        this.whopReconciliation = null;
+        if (this.whopReconciliationAbort === abort) {
+          this.whopReconciliationAbort = null;
+        }
+      });
   }
 
   private recordTickFailure(phase: string, error: unknown): void {

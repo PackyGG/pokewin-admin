@@ -201,25 +201,38 @@ export class WhopPaymentReconciler {
     );
   }
 
-  async process(now = new Date()): Promise<number> {
+  async process(now = new Date(), signal?: AbortSignal): Promise<number> {
     if (!this.enabled() || now.getTime() < this.nextRunAt) return 0;
     this.nextRunAt = now.getTime() + RUN_INTERVAL_MS;
     const cursorResult = await this.db.antifraud.query<{
       occurred_at: Date;
       source_id: string;
     }>(
-      `SELECT occurred_at, source_id FROM source_cursors WHERE stream=$1`,
-      [CURSOR_STREAM],
+      `
+        UPDATE source_cursors
+        SET updated_at=$2
+        WHERE stream=$1
+          AND (
+            source_id<>''
+            OR updated_at <= $2 - interval '5 minutes'
+          )
+        RETURNING occurred_at, source_id
+      `,
+      [CURSOR_STREAM, now],
     );
     const cursor = cursorResult.rows[0];
-    if (!cursor) throw new Error("whop_reconciliation_cursor_missing");
+    // `updated_at` is a shared due-time claim. It stops a second replica from
+    // repeating a completed first page even though each process has its own
+    // in-memory cadence. A non-empty page cursor remains immediately eligible
+    // so a long backlog can continue one bounded page at a time.
+    if (!cursor) return 0;
 
     const url = new URL(`${API_BASE_URL}/payments`);
     url.searchParams.set("company_id", this.config.WHOP_COMPANY_ID!);
     url.searchParams.set("first", String(PAGE_SIZE));
     url.searchParams.set("updated_after", cursor.occurred_at.toISOString());
     if (cursor.source_id) url.searchParams.set("after", cursor.source_id);
-    const page = await this.fetchJson<PaymentPage>(url);
+    const page = await this.fetchJson<PaymentPage>(url, signal);
     const summaries = Array.isArray(page.data) ? page.data : [];
     const paymentIds = summaries.flatMap((summary) => {
       const data = paymentData(summary);
@@ -234,6 +247,7 @@ export class WhopPaymentReconciler {
       RETRIEVE_CONCURRENCY,
       async (paymentId) => this.fetchJson<unknown>(
         new URL(`${API_BASE_URL}/payments/${encodeURIComponent(paymentId)}`),
+        signal,
       ),
     );
     const payments = fetched.flatMap((body) => {
@@ -274,13 +288,16 @@ export class WhopPaymentReconciler {
     return Boolean(this.config.WHOP_ADMIN_KEY && this.config.WHOP_COMPANY_ID);
   }
 
-  private async fetchJson<T>(url: URL): Promise<T> {
+  private async fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
+    const requestSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)])
+      : AbortSignal.timeout(REQUEST_TIMEOUT_MS);
     const response = await this.send(url, {
       headers: {
         authorization: `Bearer ${this.config.WHOP_ADMIN_KEY}`,
         accept: "application/json",
       },
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      signal: requestSignal,
     });
     if (!response.ok) {
       throw new Error(`whop_api_${response.status}`);

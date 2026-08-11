@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import type { FastifyBaseLogger } from "fastify";
@@ -52,7 +53,7 @@ test("Whop reconciliation pages by updated time and feeds the idempotent ban pat
   const antifraud = {
     async query(sql: string, values?: unknown[]) {
       antifraudQueries.push({ sql, values });
-      if (sql.includes("SELECT occurred_at")) {
+      if (sql.includes("RETURNING occurred_at, source_id")) {
         return {
           rows: [{
             occurred_at: new Date("2026-08-10T00:00:00.000Z"),
@@ -117,10 +118,51 @@ test("Whop reconciliation pages by updated time and feeds the idempotent ban pat
     query.sql.includes("INSERT INTO whop_payment_snapshots")
   ));
   const cursorUpdate = antifraudQueries.find((query) =>
-    query.sql.includes("UPDATE source_cursors")
+    query.sql.includes("SET occurred_at=$2")
   );
   assert.equal(
     (cursorUpdate?.values?.[1] as Date).toISOString(),
     "2026-08-12T11:55:00.000Z",
   );
+});
+
+test("Whop reconciliation uses a shared due-time claim across replicas", async () => {
+  let requests = 0;
+  const antifraud = {
+    async query(sql: string) {
+      assert.match(sql, /SET updated_at=\$2/);
+      assert.match(sql, /updated_at <= \$2 - interval '5 minutes'/);
+      return { rows: [] };
+    },
+  } as unknown as pg.Pool;
+  const reconciler = new WhopPaymentReconciler(
+    {
+      WHOP_ADMIN_KEY: "whop-secret",
+      WHOP_COMPANY_ID: "biz_QyTuXanxcrSIyN",
+    } as Config,
+    { antifraud } as Databases,
+    { storeReconciledPayments: async () => 0 } as unknown as WhopHistoryAutoBans,
+    { info() {} } as unknown as FastifyBaseLogger,
+    async () => {
+      requests += 1;
+      return new Response("{}");
+    },
+  );
+
+  assert.equal(await reconciler.process(new Date("2026-08-12T12:00:00Z")), 0);
+  assert.equal(requests, 0);
+});
+
+test("Whop provider latency stays outside the serialized monitor tick", () => {
+  const source = readFileSync(
+    new URL("../src/monitor.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /scheduleWhopPaymentReconciliation\(\);/);
+  assert.doesNotMatch(
+    source,
+    /await this\.runPhase\("whop-payment-reconciliation"/,
+  );
+  assert.match(source, /this\.whopReconciliationAbort\?\.abort\(\)/);
+  assert.match(source, /this\.running \|\| this\.whopReconciliation !== null/);
 });

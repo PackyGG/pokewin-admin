@@ -1086,6 +1086,12 @@ test("pre-Fiat observations query every assessment without creating actions", as
     "prod", "user-1", "203.0.113.20", "visitor-1", 2000, "USD",
   ]);
   assert.match(sql, /fiat_eligibility_assessments/);
+  assert.match(sql, /WITH ip_recent AS MATERIALIZED/);
+  assert.match(sql, /request_ip=\$3::inet/);
+  assert.match(sql, /device_recent AS MATERIALIZED/);
+  assert.match(sql, /checkout_visitor_id=\$4/);
+  assert.match(sql, /amount_recent AS MATERIALIZED/);
+  assert.doesNotMatch(sql, /WITH recent AS \(/);
   assert.match(sql, /provider_evidence#>>'\{requestContext,currency\}'/);
   assert.equal(evidence.ipAttempts10m, 3);
   assert.equal(evidence.amountDistinctUsers30m, 3);

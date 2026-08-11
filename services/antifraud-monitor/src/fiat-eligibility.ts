@@ -867,90 +867,88 @@ async function loadPrePaymentObservations(
     amount_has_current_user_30m: boolean;
   }>(
     `
-      WITH recent AS (
-        SELECT user_id, request_ip, checkout_visitor_id, provider_evidence,
-          created_at
+      WITH ip_recent AS MATERIALIZED (
+        SELECT user_id, created_at
         FROM fiat_eligibility_assessments
-        WHERE environment=$1 AND created_at>=now()-interval '24 hours'
+        WHERE environment=$1
+          AND request_ip=$3::inet
+          AND created_at>=now()-interval '24 hours'
+      ), device_recent AS MATERIALIZED (
+        SELECT user_id, created_at
+        FROM fiat_eligibility_assessments
+        WHERE environment=$1
+          AND $4::text IS NOT NULL
+          AND checkout_visitor_id=$4
+          AND created_at>=now()-interval '24 hours'
+      ), amount_recent AS MATERIALIZED (
+        SELECT user_id, provider_evidence, created_at
+        FROM fiat_eligibility_assessments
+        WHERE environment=$1
+          AND $5::int IS NOT NULL
+          AND created_at>=now()-interval '30 minutes'
       )
       SELECT
-        COUNT(*) FILTER (
-          WHERE request_ip=$3::inet
-            AND created_at>=now()-interval '10 minutes'
-        )::int AS ip_attempts_10m,
-        COUNT(*) FILTER (
-          WHERE $4::text IS NOT NULL
-            AND checkout_visitor_id=$4
-            AND created_at>=now()-interval '10 minutes'
-        )::int AS device_attempts_10m,
-        COUNT(*) FILTER (
+        (SELECT COUNT(*)::int FROM ip_recent
           WHERE created_at>=now()-interval '10 minutes'
-        )::int AS platform_attempts_10m,
-        COUNT(DISTINCT user_id) FILTER (
-          WHERE request_ip=$3::inet
-        )::int AS ip_distinct_users_24h,
-        COALESCE(BOOL_OR(request_ip=$3::inet AND user_id=$2), false)
+        ) AS ip_attempts_10m,
+        (SELECT COUNT(*)::int FROM device_recent
+          WHERE created_at>=now()-interval '10 minutes'
+        ) AS device_attempts_10m,
+        (SELECT COUNT(*)::int FROM fiat_eligibility_assessments
+          WHERE environment=$1
+            AND created_at>=now()-interval '10 minutes'
+        ) AS platform_attempts_10m,
+        (SELECT COUNT(DISTINCT user_id)::int FROM ip_recent)
+          AS ip_distinct_users_24h,
+        COALESCE((SELECT BOOL_OR(user_id=$2) FROM ip_recent), false)
           AS ip_has_current_user_24h,
-        COUNT(DISTINCT user_id) FILTER (
-          WHERE $4::text IS NOT NULL AND checkout_visitor_id=$4
-        )::int AS device_distinct_users_24h,
-        COALESCE(BOOL_OR(
-          $4::text IS NOT NULL AND checkout_visitor_id=$4 AND user_id=$2
-        ), false) AS device_has_current_user_24h,
+        (SELECT COUNT(DISTINCT user_id)::int FROM device_recent)
+          AS device_distinct_users_24h,
+        COALESCE((SELECT BOOL_OR(user_id=$2) FROM device_recent), false)
+          AS device_has_current_user_24h,
         (
           SELECT COUNT(DISTINCT c.user_id)::int
           FROM cases c
-          JOIN recent linked ON linked.user_id=c.user_id
+          JOIN ip_recent linked ON linked.user_id=c.user_id
           WHERE linked.user_id<>$2
-            AND linked.request_ip=$3::inet
             AND c.status<>'resolved'
             AND c.severity IN ('high','critical')
         ) AS ip_linked_active_risk_users,
         (
           SELECT COUNT(DISTINCT c.user_id)::int
           FROM cases c
-          JOIN recent linked ON linked.user_id=c.user_id
+          JOIN device_recent linked ON linked.user_id=c.user_id
           WHERE linked.user_id<>$2
-            AND $4::text IS NOT NULL
-            AND linked.checkout_visitor_id=$4
             AND c.status<>'resolved'
             AND c.severity IN ('high','critical')
         ) AS device_linked_active_risk_users,
-        COUNT(*) FILTER (
-          WHERE $5::int IS NOT NULL
-            AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+        (SELECT COUNT(*)::int FROM amount_recent
+          WHERE upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
             AND CASE
               WHEN provider_evidence#>>'{requestContext,amountCents}'
                 ~ '^[0-9]+$'
               THEN (provider_evidence#>>'{requestContext,amountCents}')::int
               ELSE NULL
             END=$5
-            AND created_at>=now()-interval '30 minutes'
-        )::int AS amount_attempts_30m,
-        COUNT(DISTINCT user_id) FILTER (
-          WHERE $5::int IS NOT NULL
-            AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+        ) AS amount_attempts_30m,
+        (SELECT COUNT(DISTINCT user_id)::int FROM amount_recent
+          WHERE upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
             AND CASE
               WHEN provider_evidence#>>'{requestContext,amountCents}'
                 ~ '^[0-9]+$'
               THEN (provider_evidence#>>'{requestContext,amountCents}')::int
               ELSE NULL
             END=$5
-            AND created_at>=now()-interval '30 minutes'
-        )::int AS amount_distinct_users_30m,
-        COALESCE(BOOL_OR(
-          $5::int IS NOT NULL
-          AND user_id=$2
-          AND upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
-          AND CASE
-            WHEN provider_evidence#>>'{requestContext,amountCents}'
-              ~ '^[0-9]+$'
-            THEN (provider_evidence#>>'{requestContext,amountCents}')::int
-            ELSE NULL
-          END=$5
-          AND created_at>=now()-interval '30 minutes'
+        ) AS amount_distinct_users_30m,
+        COALESCE((SELECT BOOL_OR(user_id=$2) FROM amount_recent
+          WHERE upper(provider_evidence#>>'{requestContext,currency}')=upper($6)
+            AND CASE
+              WHEN provider_evidence#>>'{requestContext,amountCents}'
+                ~ '^[0-9]+$'
+              THEN (provider_evidence#>>'{requestContext,amountCents}')::int
+              ELSE NULL
+            END=$5
         ), false) AS amount_has_current_user_30m
-      FROM recent
     `,
     [
       input.environment,
