@@ -79,6 +79,7 @@ function persistSectionState(storageKey: string, open: boolean) {
 
 const OVERVIEW_NAV: NavItem[] = [
   { label: "Dashboard", href: "/antifraud", icon: LayoutDashboard },
+  { label: "Deposits", href: "/antifraud/deposits", icon: Banknote },
   { label: "Live events", href: "/antifraud/monitor", icon: RadioTower },
   { label: "Account reviews", href: "/antifraud/reviews", icon: ShieldAlert },
 ];

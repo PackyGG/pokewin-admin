@@ -198,6 +198,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
     segmentRoutes: [
       "admin",
       "automation",
+      "deposits",
       "monitor",
       "refunds",
       "fiat-deposits",
