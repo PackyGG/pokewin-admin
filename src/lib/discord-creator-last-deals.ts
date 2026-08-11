@@ -538,6 +538,17 @@ export async function getCreatorCurrentDealPnl(input: {
 
   const frozen = current.settlement_breakdown;
   const pnl = frozen ?? await computeCreatorPnlPreview(current, { allowOpenFrame: true });
+  const status = (() => {
+    switch (current.status) {
+      case "active":
+      case "settlement_pending":
+      case "calculated":
+      case "crediting":
+        return current.status;
+      default:
+        throw new Error(`Unexpected current PnL deal status: ${current.status}`);
+    }
+  })();
   const creatorShareUsd = current.creator_share_usd === null
     ? money(Math.max(0, pnl.frame_site_pnl_usd) * current.positive_pnl_share_bps / 10_000)
     : money(current.creator_share_usd);
@@ -554,7 +565,7 @@ export async function getCreatorCurrentDealPnl(input: {
     creator: { userId: creator.id, username: creator.username },
     deal: {
       dealId: current.id,
-      status: current.status,
+      status,
       startedAt: current.frame_start_utc,
       endedAt: current.frame_end_utc,
       positivePnlShareBps: current.positive_pnl_share_bps,
