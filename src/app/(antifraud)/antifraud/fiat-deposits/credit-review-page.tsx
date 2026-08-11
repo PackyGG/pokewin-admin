@@ -386,7 +386,7 @@ function ReviewDepositCard({
           </div>
         </div>
 
-        <div className="rounded-xl border bg-background/80 px-4 py-3 shadow-sm lg:min-w-52 lg:text-right">
+        <div className="w-full rounded-xl border bg-background/80 px-4 py-3 shadow-sm lg:w-[16.5rem] lg:shrink-0 lg:text-right">
           <p className="text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
             Balance credit
           </p>
@@ -404,9 +404,6 @@ function ReviewDepositCard({
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
               Risk assessment
-            </p>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Review the strongest signals and available safeguards before deciding.
             </p>
           </div>
           <FiatReviewEvidence
