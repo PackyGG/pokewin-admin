@@ -245,7 +245,7 @@ async function approvalLinks(id: string | null): Promise<ApprovalLinks> {
 }
 
 async function rewardCost(programId: string | null, start: string, end: string) {
-  if (!programId) return 0;
+  if (!programId) return { total: 0, unresolved: 0 };
   const rows = await queryRows<{ total: string; unresolved: string }[]>(adminDrizzle,
     `SELECT COALESCE(SUM(amount_usd::numeric) FILTER (
               WHERE status = 'approved' AND ledger_tx_id IS NOT NULL), 0)::text AS total,
@@ -254,11 +254,13 @@ async function rewardCost(programId: string | null, start: string, end: string) 
        FROM creator_reward_claims
       WHERE program_id = $1::uuid AND requested_at >= $2::timestamptz
         AND requested_at < $3::timestamptz`, programId, start, end);
-  if (n(rows[0]?.unresolved) > 0) throw new Error("In-frame reward claims are still unresolved.");
-  return n(rows[0]?.total);
+  return {
+    total: n(rows[0]?.total),
+    unresolved: Math.trunc(n(rows[0]?.unresolved)),
+  };
 }
 
-async function creatorOwnGameplay(deal: AdminCreatorPnlDeal): Promise<{
+async function creatorOwnGameplay(deal: AdminCreatorPnlDeal, calculationEnd = deal.frame_end_utc): Promise<{
   wager: number; payout: number; pnl: number;
   status: CreatorPnlPreview["creator_own_gameplay_status"]; note: string;
 }> {
@@ -284,8 +286,8 @@ async function creatorOwnGameplay(deal: AdminCreatorPnlDeal): Promise<{
     return { wager: 0, payout: 0, pnl: 0, status: "ambiguous", note: "Linked multiplier lifecycle or multiplier is incomplete; creator own-play was not inferred." };
   }
   const start = new Date(Math.max(new Date(deal.frame_start_utc).getTime(), new Date(multiplier.activated_at).getTime())).toISOString();
-  const lifecycleEnd = multiplier.ended_at ? new Date(multiplier.ended_at).getTime() : new Date(deal.frame_end_utc).getTime();
-  const end = new Date(Math.min(new Date(deal.frame_end_utc).getTime(), lifecycleEnd)).toISOString();
+  const lifecycleEnd = multiplier.ended_at ? new Date(multiplier.ended_at).getTime() : new Date(calculationEnd).getTime();
+  const end = new Date(Math.min(new Date(calculationEnd).getTime(), lifecycleEnd)).toISOString();
   if (start >= end) return { wager: 0, payout: 0, pnl: 0, status: "computed", note: "Linked multiplier lifecycle did not overlap the frame." };
   const game = await queryMainRows<Array<{ wager: string; payout: string }>>(
     `WITH sessions AS (
@@ -319,7 +321,7 @@ async function creatorOwnGameplay(deal: AdminCreatorPnlDeal): Promise<{
   return { wager, payout, pnl: money(wager - payout), status: "computed", note: `Weighted at the linked multiplier's 1/X real-money share (${money(weight * 100)}%).` };
 }
 
-async function realizedSpend(deal: AdminCreatorPnlDeal) {
+async function realizedSpend(deal: AdminCreatorPnlDeal, calculationEnd = deal.frame_end_utc) {
   const zero = "00000000-0000-0000-0000-000000000000";
   const rows = await queryMainRows<Array<{ fill: string; tips: string; sponsors: string }>>(
     `WITH sessions AS (SELECT id FROM creator_stream_sessions WHERE deal_id=$1::uuid),
@@ -330,24 +332,30 @@ async function realizedSpend(deal: AdminCreatorPnlDeal) {
        FROM ledger_transactions WHERE user_id=$3 AND status='completed' AND created_at >= $4::timestamptz AND created_at < $5::timestamptz AND metadata->>'deal_id' IN ($1,$2))
      SELECT fill.amount::text fill, spend.tips::text tips, spend.sponsors::text sponsors FROM fill CROSS JOIN spend`,
     deal.linked_fill_deal_id ?? zero, deal.linked_multiplier_deal_id ?? zero,
-    deal.creator_user_id, deal.frame_start_utc, deal.frame_end_utc,
+    deal.creator_user_id, deal.frame_start_utc, calculationEnd,
   );
   return { fill: n(rows[0]?.fill), tips: n(rows[0]?.tips), sponsors: n(rows[0]?.sponsors) };
 }
 
-export async function computeCreatorPnlPreview(deal: AdminCreatorPnlDeal): Promise<CreatorPnlPreview> {
-  if (new Date(deal.frame_end_utc).getTime() > Date.now()) throw new Error("PnL frame has not ended.");
+export async function computeCreatorPnlPreview(
+  deal: AdminCreatorPnlDeal,
+  options: { allowOpenFrame?: boolean; now?: Date } = {},
+): Promise<CreatorPnlPreview> {
+  const now = options.now ?? new Date();
+  const frameIsOpen = new Date(deal.frame_end_utc).getTime() > now.getTime();
+  if (frameIsOpen && !options.allowOpenFrame) throw new Error("PnL frame has not ended.");
+  const calculationEnd = frameIsOpen ? now.toISOString() : deal.frame_end_utc;
   const [affiliateMap, own, spend, links] = await Promise.all([
-    getFrameAffiliatePnlByUserUncached([{ userId: deal.creator_user_id, startIso: deal.frame_start_utc, endIso: deal.frame_end_utc }]),
-    creatorOwnGameplay(deal), realizedSpend(deal), approvalLinks(deal.source_approval_request_id),
+    getFrameAffiliatePnlByUserUncached([{ userId: deal.creator_user_id, startIso: deal.frame_start_utc, endIso: calculationEnd }]),
+    creatorOwnGameplay(deal, calculationEnd), realizedSpend(deal, calculationEnd), approvalLinks(deal.source_approval_request_id),
   ]);
   const affiliate = affiliateMap.get(deal.creator_user_id) ?? { affiliatesMadeUs: 0, deposits: 0, cardWithdrawals: 0, affiliateClaims: 0 };
   const [leaderboard, rewards] = await Promise.all([
     links.leaderboard_id ? affiliateLeaderboardsApi.get(links.leaderboard_id) : Promise.resolve(null),
-    rewardCost(links.reward_program_id, deal.frame_start_utc, deal.frame_end_utc),
+    rewardCost(links.reward_program_id, deal.frame_start_utc, calculationEnd),
   ]);
   if (links.leaderboard_id && leaderboard?.approval_status !== "approved") throw new Error("Bundled leaderboard is not in an authoritative final state.");
-  if (leaderboard && leaderboard.time_status !== "ended") throw new Error("Bundled leaderboard has not ended; its realized cost is not final.");
+  if (leaderboard && leaderboard.time_status !== "ended" && !options.allowOpenFrame) throw new Error("Bundled leaderboard has not ended; its realized cost is not final.");
   if (leaderboard && (
     new Date(leaderboard.start_date).getTime() !== new Date(deal.frame_start_utc).getTime()
     || new Date(leaderboard.end_date).getTime() !== new Date(deal.frame_end_utc).getTime()
@@ -355,12 +363,15 @@ export async function computeCreatorPnlPreview(deal: AdminCreatorPnlDeal): Promi
   const pctRaw = links.leaderboard_payload?.sponsoredPct;
   if (links.leaderboard_id && (typeof pctRaw !== "number" || pctRaw < 0 || pctRaw > 100)) throw new Error("Bundled leaderboard house share is missing.");
   const lb = leaderboard ? Math.max(0, n(leaderboard.total_prize_usd) - n(leaderboard.refund_amount_usd)) * (n(pctRaw) / 100) : 0;
-  const framePnl = calculateFrameSitePnlUsd({ affiliateContributionUsd: money(affiliate.affiliatesMadeUs), weightedCreatorGameplayPnlUsd: own.pnl, leaderboardHouseCostUsd: money(lb), fillCashoutCostUsd: money(spend.fill), tipCostUsd: money(spend.tips), sponsorshipCostUsd: money(spend.sponsors), rewardProgramCostUsd: money(rewards) });
+  if (rewards.unresolved > 0 && !options.allowOpenFrame) throw new Error("In-frame reward claims are still unresolved.");
+  const framePnl = calculateFrameSitePnlUsd({ affiliateContributionUsd: money(affiliate.affiliatesMadeUs), weightedCreatorGameplayPnlUsd: own.pnl, leaderboardHouseCostUsd: money(lb), fillCashoutCostUsd: money(spend.fill), tipCostUsd: money(spend.tips), sponsorshipCostUsd: money(spend.sponsors), rewardProgramCostUsd: money(rewards.total) });
   const limitations = own.status === "ambiguous" ? [own.note] : [];
-  return { computation_version: "admin-pnl-v2", computed_at: new Date().toISOString(), frame_start_at: deal.frame_start_utc, frame_end_at: deal.frame_end_utc,
+  if (frameIsOpen) limitations.push(`Live provisional calculation through ${calculationEnd}; the deal frame is still open.`);
+  if (rewards.unresolved > 0) limitations.push(`${rewards.unresolved} in-frame reward claim(s) are unresolved and not included yet.`);
+  return { computation_version: "admin-pnl-v2", computed_at: now.toISOString(), frame_start_at: deal.frame_start_utc, frame_end_at: deal.frame_end_utc,
     affiliate_contribution_usd: money(affiliate.affiliatesMadeUs), affiliate_deposits_usd: money(affiliate.deposits), affiliate_withdrawals_usd: money(affiliate.cardWithdrawals), affiliate_claims_usd: money(affiliate.affiliateClaims),
     creator_own_gameplay_pnl_usd: own.pnl, creator_own_gameplay_wager_usd: own.wager, creator_own_gameplay_payout_usd: own.payout, creator_own_gameplay_status: own.status, creator_own_gameplay_note: own.note,
-    leaderboard_house_cost_usd: money(lb), fill_cashout_cost_usd: money(spend.fill), tip_cost_usd: money(spend.tips), sponsorship_cost_usd: money(spend.sponsors), reward_program_cost_usd: money(rewards), frame_site_pnl_usd: framePnl,
+    leaderboard_house_cost_usd: money(lb), fill_cashout_cost_usd: money(spend.fill), tip_cost_usd: money(spend.tips), sponsorship_cost_usd: money(spend.sponsors), reward_program_cost_usd: money(rewards.total), frame_site_pnl_usd: framePnl,
     audit: {
       pnl_deal_id: deal.id,
       source_approval_request_id: deal.source_approval_request_id,

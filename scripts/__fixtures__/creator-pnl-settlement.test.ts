@@ -10,6 +10,7 @@ const affiliate = read("src/app/(creator-hub)/creator-hub/profitability/_queries
 const action = read("src/app/(creator-hub)/creator-hub/creators/[id]/_components/pnl-settlement-actions.ts");
 const balanceWriter = read("src/app/(admin)/users/[id]/actions.ts");
 const button = read("src/app/(creator-hub)/creator-hub/creators/[id]/_components/pnl-settlement-button.tsx");
+const discord = read("src/lib/discord-creator-last-deals.ts");
 
 test("preview applies the exact house-cost formula", () => {
   assert.equal(calculateFrameSitePnlUsd({
@@ -61,4 +62,14 @@ test("manual UI requires explicit confirmation and 2FA; automatic cron is gone",
   assert.match(button, /StepUpField/);
   assert.match(button, /immediately increases the creator/);
   assert.equal(existsSync("src/app/api/cron/creator-pnl-settlement/route.ts"), false);
+});
+
+test("Discord PnL reads the Admin-owned deal and exposes the exact cost/share contract", () => {
+  assert.match(discord, /listAdminCreatorPnlDeals/);
+  assert.match(discord, /computeCreatorPnlPreview\(current, \{ allowOpenFrame: true \}\)/);
+  assert.match(discord, /positivePnlShareBps/);
+  assert.match(discord, /creatorShareUsd/);
+  assert.match(discord, /leaderboardCostUsd/);
+  assert.match(discord, /rewardProgramCostUsd/);
+  assert.match(discord, /calculationState: frozen \? "frozen" : "provisional"/);
 });
