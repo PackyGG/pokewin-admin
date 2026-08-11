@@ -25,10 +25,6 @@ import {
   type AntifraudMonitorOverview,
 } from "@/lib/antifraud/monitor-api";
 import {
-  getReviewQueueStats,
-  type ReviewQueueStats,
-} from "@/lib/antifraud/reviews";
-import {
   getAntifraudCaseThroughput,
   getAntifraudDetectionHealth,
   type AntifraudCaseThroughput,
@@ -46,7 +42,6 @@ import {
   ChartRowSkeleton,
   OverviewCharts,
 } from "./_components/overview-charts-lazy";
-import { QueueStrip } from "./_components/overview-status";
 import {
   CaseThroughputPanel,
   CaseThroughputSkeleton,
@@ -115,10 +110,10 @@ type MonitorPromise = Promise<
 /**
  * Each band waits only on the data it renders.
  *
- * The five reads are started here and deliberately NOT awaited: they are
- * handed to the bands as promises, so the case queue, KPI strip, action feed
- * and 30-day charts each paint the moment THEIR read lands, instead of all
- * four waiting on the slowest. `safeQuery`
+ * The four reads are started here and deliberately NOT awaited: they are
+ * handed to the bands as promises, so the KPI strip, action feed and 30-day
+ * charts each paint the moment THEIR read lands, instead of waiting on the
+ * slowest. `safeQuery`
  * always resolves (it catches and returns a fallback), so a hoisted promise
  * here can never surface as an unhandled rejection.
  *
@@ -146,15 +141,8 @@ export default async function AntifraudOverviewPage() {
     "antifraud.monitor-overview",
     QUERY_TIMEOUT_MS,
   );
-  const queuePromise = safeQuery(
-    () => getReviewQueueStats(),
-    { priority: 0, normal: 0, waitingKyc: 0, postponed: 0 },
-    "antifraud.review-queue-stats",
-    QUERY_TIMEOUT_MS,
-  );
-  // Two more Admin-DB-only reads, each owning its own band below. They are
-  // deliberately NOT folded into an existing band: the queue strip must never
-  // wait on a 30-day aggregate, and these two must never wait on the mirror.
+  // Two more Admin-DB-only reads, each owning its own band below. They stay
+  // independent of the overview so neither must wait on the MAIN mirror.
   const throughputPromise: ThroughputPromise = safeQuery(
     () => getAntifraudCaseThroughput(),
     EMPTY_THROUGHPUT,
@@ -170,10 +158,6 @@ export default async function AntifraudOverviewPage() {
 
   return (
     <div className="space-y-4" data-snapshot-at={snapshotAt}>
-      <Suspense fallback={<QueueBandSkeleton />}>
-        <QueueBand queue={queuePromise} />
-      </Suspense>
-
       <Suspense fallback={<KpiBandSkeleton />}>
         <KpiBand overview={overviewPromise} monitor={monitorPromise} />
       </Suspense>
@@ -196,20 +180,6 @@ export default async function AntifraudOverviewPage() {
       </Suspense>
     </div>
   );
-}
-
-/**
- * The Admin-DB queue read is independent of the mirror overview, so a failed
- * overview must not blank the one band that says what is waiting for a human.
- */
-async function QueueBand({
-  queue,
-}: {
-  queue: Promise<SafeQueryResult<ReviewQueueStats>>;
-}) {
-  const queueResult = await queue;
-  if (queueResult.error) return null;
-  return <QueueStrip stats={queueResult.data} />;
 }
 
 async function KpiBand({
@@ -511,16 +481,6 @@ function UnavailablePanel({
  * `loading.tsx` renders, so the route-level skeleton and these boundaries can
  * never disagree about the page's geometry.
  */
-function QueueBandSkeleton() {
-  return (
-    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-      {Array.from({ length: 4 }).map((_, index) => (
-        <Skeleton key={index} className="h-[52px] w-full rounded-lg" />
-      ))}
-    </div>
-  );
-}
-
 function KpiBandSkeleton() {
   return (
     <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3 2xl:grid-cols-6">
