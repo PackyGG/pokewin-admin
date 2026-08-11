@@ -687,22 +687,44 @@ export function DiscordRoutingWorkspace({
                           <div
                             key={channel.id}
                             className={cn(
-                              "group flex items-center rounded-md border border-transparent",
-                              selected && "border-primary/30 bg-primary/5",
+                              "group relative flex items-center overflow-hidden rounded-md text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+                              selected &&
+                                "bg-primary/10 text-primary shadow-sm ring-1 ring-inset ring-primary/20",
                             )}
                           >
+                            <span
+                              aria-hidden="true"
+                              className={cn(
+                                "absolute inset-y-1 left-0 w-0.5 rounded-full bg-primary transition-opacity",
+                                selected
+                                  ? "opacity-100"
+                                  : "opacity-0 group-hover:opacity-40",
+                              )}
+                            />
                             <button
                               type="button"
                               role="treeitem"
                               aria-selected={selected}
-                              className="flex min-w-0 flex-1 items-center gap-2 px-2 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                              aria-current={selected ? "page" : undefined}
+                              className="flex min-w-0 flex-1 items-center gap-2 py-2 pl-3 pr-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
                               onClick={() => openExistingChannel(channel.id)}
                             >
                               <DeliveryIndicator channel={channel} />
-                              <span className="min-w-0 flex-1 truncate text-sm">
+                              <span
+                                className={cn(
+                                  "min-w-0 flex-1 truncate text-sm",
+                                  selected && "font-medium",
+                                )}
+                              >
                                 #{channel.name}
                               </span>
-                              <span className="text-xs tabular-nums text-muted-foreground">
+                              <span
+                                className={cn(
+                                  "rounded px-1.5 py-0.5 text-[11px] tabular-nums text-muted-foreground transition-colors group-hover:bg-background/70",
+                                  selected &&
+                                    "bg-primary/10 text-primary group-hover:bg-primary/10",
+                                )}
+                              >
                                 {eventCount}
                               </span>
                             </button>
@@ -712,7 +734,10 @@ export function DiscordRoutingWorkspace({
                                   <Button
                                     variant="ghost"
                                     size="icon-sm"
-                                    className="mr-0.5 opacity-60 hover:opacity-100"
+                                    className={cn(
+                                      "mr-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100",
+                                      selected && "opacity-70",
+                                    )}
                                     aria-label={`Actions for #${channel.name}`}
                                   />
                                 }

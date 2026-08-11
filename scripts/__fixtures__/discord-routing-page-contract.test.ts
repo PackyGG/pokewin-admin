@@ -31,6 +31,9 @@ test("Discord Routing is a selectable two-panel channel manager", () => {
   assert.match(workspace, /role="tree"/);
   assert.match(workspace, /role="treeitem"/);
   assert.match(workspace, /aria-selected=/);
+  assert.match(workspace, /aria-current=\{selected \? "page" : undefined\}/);
+  assert.match(workspace, /hover:bg-muted\/70/);
+  assert.match(workspace, /bg-primary\/10 text-primary/);
   assert.match(workspace, /aria-label="Channel editor"/);
   assert.match(workspace, /activeChannelGroups/);
   assert.match(workspace, /Create Discord channel/);
