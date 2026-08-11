@@ -92,9 +92,10 @@ test("manual case open keeps case, trail and audit in one transaction", () => {
   assert.match(body, /conflictReviewId/);
 });
 
-test("approving a case releases only automatic critical-signup locks", () => {
+test("approving a case releases every antifraud-owned automatic lock", () => {
   const release = read("src/lib/antifraud/withdrawal-release.ts");
   assert.match(release, /UPDATE user_feature_locks/);
+  assert.match(release, /AUTOMATIC_FRAUD_LOCK_REASON_PREFIX/);
   assert.match(release, /CRITICAL_SIGNUP_LOCK_REASON_PREFIX/);
   assert.match(release, /locked_withdrawals_crypto = CASE/);
   assert.match(release, /locked_withdrawals_items = CASE/);
@@ -108,9 +109,14 @@ test("approving a case releases only automatic critical-signup locks", () => {
   assert.match(release, /locked_withdrawals_crypto_disabled/);
   assert.match(release, /locked_withdrawals_items_disabled/);
   assert.match(release, /antifraud_withdrawals_unlocked/);
-  // Deposit locks stay untouched — only the two withdrawal channels move.
+  // Automatic Fiat locks are released; manual deposit and withdrawal locks
+  // remain protected because they do not carry the automatic ownership prefix.
   assert.match(release, /previous\.deposits_reason LIKE/);
   assert.match(release, /previous\.withdrawals_reason LIKE/);
+  assert.match(
+    release,
+    /previous\.withdrawals_reason LIKE \$\{AUTOMATIC_FRAUD_LOCK_REASON_PREFIX \+ "%"\}/,
+  );
   // A KYC gate is owner/admin + 2FA only. An analyst's clear must never lift
   // it, and an unreadable KYC state fails CLOSED.
   assert.match(

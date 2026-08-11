@@ -12,8 +12,15 @@ import {
   updateUserRewardLocks,
 } from "@/lib/backend-api/feature-locks";
 
+/**
+ * Ownership marker shared by every automatic lock written by the signed
+ * Antifraud containment pipeline. A cleared Account Review may release these
+ * locks; staff/manual locks use a different reason and must remain untouched.
+ */
+const AUTOMATIC_FRAUD_LOCK_REASON_PREFIX = "Automatic fraud lock: ";
+
 const CRITICAL_SIGNUP_LOCK_REASON_PREFIX =
-  "Automatic fraud lock: critical signup scored ";
+  `${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX}critical signup scored `;
 
 /**
  * WITHDRAWAL RELEASE — the account side of an Account Review verdict.
@@ -37,8 +44,9 @@ const CRITICAL_SIGNUP_LOCK_REASON_PREFIX =
  * - It is idempotent. The UPDATE only matches a row that is actually locked,
  *   so a retry after a partial failure releases nothing twice and writes no
  *   duplicate audit rows.
- * - It releases withdrawals ONLY. Deposit locks, opening/exchange/vault locks
- *   and the backend-owned KYC gate are separate decisions and are untouched.
+ * - It releases antifraud-owned withdrawal locks and antifraud-owned Fiat
+ *   deposit locks. Manual locks and opening/exchange/vault locks are separate
+ *   decisions and are untouched.
  * - A KYC-gated account is NEVER released here. Requiring and reviewing KYC is
  *   owner/admin-only with fresh 2FA (`requireAntifraudManager` in
  *   `antifraud/kyc/actions.ts`); letting an analyst's case verdict lift that
@@ -171,50 +179,50 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
       UPDATE user_feature_locks AS locks
       SET
         locked_deposits_fiat = CASE
-          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN '{}'::text[]
           ELSE locks.locked_deposits_fiat
         END,
         locked_deposits_at = CASE
-          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_at
         END,
         locked_deposits_by = CASE
-          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_by
         END,
         locked_deposits_reason = CASE
-          WHEN previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             AND COALESCE(array_length(previous.deposits_crypto, 1), 0) = 0
             THEN NULL
           ELSE locks.locked_deposits_reason
         END,
         locked_withdrawals_crypto = CASE
-          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN '{}'::text[]
           ELSE locks.locked_withdrawals_crypto
         END,
         locked_withdrawals_items = CASE
-          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN FALSE
           ELSE locks.locked_withdrawals_items
         END,
         locked_withdrawals_at = CASE
-          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN NULL
           ELSE locks.locked_withdrawals_at
         END,
         locked_withdrawals_by = CASE
-          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN NULL
           ELSE locks.locked_withdrawals_by
         END,
         locked_withdrawals_reason = CASE
-          WHEN previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          WHEN previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             THEN NULL
           ELSE locks.locked_withdrawals_reason
         END,
@@ -223,10 +231,10 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
       WHERE locks.user_id = previous.user_id
         AND (
           (
-            previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
           ) OR (
-            previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+            previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
             AND (
               COALESCE(array_length(previous.crypto, 1), 0) > 0
               OR previous.items
@@ -237,11 +245,11 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
         previous.crypto AS previous_crypto,
         previous.items AS previous_items,
         (
-          previous.deposits_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          previous.deposits_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
           AND COALESCE(array_length(previous.deposits_fiat, 1), 0) > 0
         ) AS released_fiat,
         (
-          previous.withdrawals_reason LIKE ${CRITICAL_SIGNUP_LOCK_REASON_PREFIX + "%"}
+          previous.withdrawals_reason LIKE ${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX + "%"}
           AND (
             COALESCE(array_length(previous.crypto, 1), 0) > 0
             OR previous.items
