@@ -78,12 +78,13 @@ type SearchParams = {
   review?: string;
 };
 
-const REVIEW_TABS = ["reviews", "postponed"] as const;
+const REVIEW_TABS = ["reviews", "postponed", "auto-banned"] as const;
 type ReviewTab = (typeof REVIEW_TABS)[number];
 
 const REVIEW_TAB_LABELS: Record<ReviewTab, string> = {
   reviews: "Reviews",
   postponed: "Postponed",
+  "auto-banned": "Auto banned",
 };
 
 export default async function ReviewQueuePage({
@@ -121,10 +122,12 @@ export default async function ReviewQueuePage({
       : null;
 
   const filters: ReviewFilters = {
-    // Reviews is the complete active queue: untouched and already-started
-    // cases stay together. Postponement is the only separate work state.
+    // Automatic bans are already contained, so they stay out of both the
+    // active and postponed work queues and live only in their own tab.
     status: "unresolved",
-    postponed: tab === "postponed",
+    postponed:
+      tab === "postponed" ? true : tab === "reviews" ? false : undefined,
+    autoBanned: tab === "auto-banned",
     severities: ["critical", "high"],
     severityFirst: true,
     search,
@@ -320,6 +323,7 @@ function loadReviewQueueData(filters: ReviewFilters, cursor?: string) {
       stats: {
         reviews: 0,
         postponed: 0,
+        autoBanned: 0,
       },
     },
     "antifraud.review-queue",
@@ -348,6 +352,7 @@ async function QueueList({
   const counts: Record<ReviewTab, number> = {
     reviews: stats.reviews,
     postponed: stats.postponed,
+    "auto-banned": stats.autoBanned,
   };
 
   return (
@@ -558,7 +563,7 @@ function CaseRow({
               <UserRound className="size-3.5" />
               Profile
             </HostLink>
-            {tab === "reviews" && review.status === "open" ? (
+            {tab !== "postponed" && review.status === "open" ? (
               <StartReviewButton
                 reviewId={review.id}
                 href={buildHref({ review: review.id }, current)}

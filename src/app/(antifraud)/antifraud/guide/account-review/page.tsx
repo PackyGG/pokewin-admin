@@ -143,14 +143,14 @@ export default async function AntifraudAccountReviewGuidePage() {
       <GuideSection
         icon={Inbox}
         title="What is actually in the queue"
-        description="Two tabs — Reviews and Postponed — and both of them are filtered hard."
+        description="Three tabs — Reviews, Postponed, and Auto banned — and all of them are filtered hard."
       >
         <GuideBullets
           accent="cyan"
           items={[
-            "Only Critical and High severity cases are listed. Nothing else reaches either tab, or either tab's badge count.",
+            "Only Critical and High severity cases are listed. Nothing else reaches these tabs or their badge counts.",
             "Only cases that are still live: open, in review, or escalated. Cleared and flagged cases drop out.",
-            "Reviews shows what is available right now. Postponed shows what someone parked, until its two hours lapse.",
+            "Reviews shows what is available right now. Postponed shows what someone parked until its two hours lapse. Auto banned contains accounts already banned by the Whop-history automation and keeps them out of both active queues.",
           ]}
         />
         <GuideCallout
@@ -161,7 +161,7 @@ export default async function AntifraudAccountReviewGuidePage() {
           Opening a review manually creates it at{" "}
           <GuideBadge accent="blue">Medium</GuideBadge> severity, and there is
           no way to set the severity on that path. Because the queue only lists
-          High and Critical, that case is invisible in both tabs and both
+          High and Critical, that case is invisible in all tabs and their
           counts. It still exists and is still reachable by its direct link, so
           keep the link if you create one — otherwise you have effectively
           filed it in a drawer nobody opens.

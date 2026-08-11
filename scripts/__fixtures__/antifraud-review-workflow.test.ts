@@ -6,11 +6,14 @@ function source(path: string): string {
   return readFileSync(path, "utf8");
 }
 
-test("Account Reviews use only Reviews and Postponed tabs", () => {
+test("Account Reviews isolate automatic bans in their own tab", () => {
   const page = source("src/app/(antifraud)/antifraud/reviews/page.tsx");
   const reviews = source("src/lib/antifraud/reviews.ts");
 
-  assert.match(page, /REVIEW_TABS = \["reviews", "postponed"\]/);
+  assert.match(
+    page,
+    /REVIEW_TABS = \["reviews", "postponed", "auto-banned"\]/,
+  );
   assert.doesNotMatch(page, /in_review: "In review"/);
   assert.match(page, /REVIEW_TABS\.map/);
   assert.match(page, /getAccountReviewTabCounts/);
@@ -18,6 +21,15 @@ test("Account Reviews use only Reviews and Postponed tabs", () => {
     reviews,
     /review\.status IN \('open', 'in_review', 'escalated'\)[\s\S]*?AS reviews/,
   );
+  assert.match(
+    reviews,
+    /NOT review\.signals @> ARRAY\['whop_history_auto_ban'\]::text\[\]/,
+  );
+  assert.match(
+    reviews,
+    /review\.signals @> ARRAY\['whop_history_auto_ban'\]::text\[[\s\S]*?AS auto_banned/,
+  );
+  assert.match(page, /autoBanned: tab === "auto-banned"/);
   assert.doesNotMatch(reviews, /inReview: Number\(row\?\.in_review/);
   assert.match(page, /severities: \["critical", "high"\]/);
   assert.match(page, /severityFirst: true/);

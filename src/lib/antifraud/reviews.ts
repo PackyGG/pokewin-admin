@@ -164,6 +164,8 @@ export type ReviewFilters = {
   queue?: ReviewQueueState;
   /** Active postponement state. False keeps normal tabs free of postponed work. */
   postponed?: boolean;
+  /** Whop-history automatic bans live in their own operational queue. */
+  autoBanned?: boolean;
   /** Restrict the queue to the selected risk bands. */
   severities?: readonly ReviewSeverity[];
   /** Put critical cases ahead of high cases across every page. */
@@ -222,6 +224,12 @@ function buildReviewConditions(filters: ReviewFilters): SQL[] {
       WHERE postponed.review_id = ${antifraud_reviews.id}
         AND postponed.postponed_until > now()
     )`);
+  }
+  const autoBanned = sql`${antifraud_reviews.signals} @> ARRAY['whop_history_auto_ban']::text[]`;
+  if (filters.autoBanned === true) {
+    conditions.push(autoBanned);
+  } else if (filters.autoBanned === false) {
+    conditions.push(sql`NOT (${autoBanned})`);
   }
   if (filters.severities?.length) {
     conditions.push(inArray(antifraud_reviews.severity, [...filters.severities]));
@@ -742,25 +750,33 @@ export type ReviewQueueStats = {
 export type AccountReviewTabCounts = {
   reviews: number;
   postponed: number;
+  autoBanned: number;
 };
 
-/** Counts for the two operational tabs; low/medium never enter this view. */
+/** Counts for the operational tabs; low/medium never enter this view. */
 export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCounts> {
-  const empty = { reviews: 0, postponed: 0 };
+  const empty = { reviews: 0, postponed: 0, autoBanned: 0 };
   try {
     const result = await adminDrizzle.execute<{
       reviews: string;
       postponed: string;
+      auto_banned: string;
     }>(sql`
       SELECT
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
             AND NOT COALESCE(workflow.postponed_until > now(), false)
+            AND NOT review.signals @> ARRAY['whop_history_auto_ban']::text[]
         ) AS reviews,
         COUNT(*) FILTER (
           WHERE review.status IN ('open', 'in_review', 'escalated')
             AND workflow.postponed_until > now()
-        ) AS postponed
+            AND NOT review.signals @> ARRAY['whop_history_auto_ban']::text[]
+        ) AS postponed,
+        COUNT(*) FILTER (
+          WHERE review.status IN ('open', 'in_review', 'escalated')
+            AND review.signals @> ARRAY['whop_history_auto_ban']::text[]
+        ) AS auto_banned
       FROM antifraud_reviews AS review
       LEFT JOIN antifraud_review_workflow AS workflow
         ON workflow.review_id = review.id
@@ -770,6 +786,7 @@ export async function getAccountReviewTabCounts(): Promise<AccountReviewTabCount
     return {
       reviews: Number(row?.reviews ?? 0),
       postponed: Number(row?.postponed ?? 0),
+      autoBanned: Number(row?.auto_banned ?? 0),
     };
   } catch (error) {
     console.error("[antifraud] getAccountReviewTabCounts failed:", error);
