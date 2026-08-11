@@ -320,6 +320,19 @@ test("a refunded-amount cluster is review-only, including legacy containment row
   assert.equal(legacy.verdict, "review");
 });
 
+test("a clean MaxMind result does not erode the refunded-amount review floor", () => {
+  const base = scoreFiatDeposit(safeInput);
+  const reviewed = applyFiatIdentityContainmentRisk(base, {
+    identityVerdict: "review",
+    identityReasonCodes: [],
+    identityReviewCodes: ["checkout_refunded_amount_cluster"],
+  });
+  const enriched = applyMaxMindFiatRisk(reviewed, cleanMaxMind);
+  assert.equal(enriched.riskScore, 50);
+  assert.equal(enriched.verdict, "review");
+  assert.match(enriched.recommendation, /no automatic account lock/i);
+});
+
 test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat", async () => {
   const source = await readFile(
     new URL("../src/fiat-risk.ts", import.meta.url),

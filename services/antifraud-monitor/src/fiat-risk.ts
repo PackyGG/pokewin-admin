@@ -1781,13 +1781,19 @@ export function applyMaxMindFiatRisk(
 ): ReturnType<typeof scoreFiatDeposit> {
   const native = evaluation.riskScore ?? 0;
   const rawPoints = maxMindRiskPoints(native);
+  const hasRefundedAmountClusterReview = scored.signals.some(
+    (signal) => signal.key === "fiat_refunded_amount_cluster_review",
+  );
   // A low MaxMind score is weak absence-of-evidence and must not erode hard
   // evidence: this runs after the blacklisted-checkout-email rule has already
   // pinned the score at 100 and it ignores the nonDiscountableRisk floor, so
   // the -5 credit was persisting a blocked-domain checkout as 95 while the
   // dashboard reports 100 for the same match. Only the positive path applies
   // to an already-bad result.
-  const points = rawPoints < 0 && scored.riskScore >= 60 ? 0 : rawPoints;
+  const points = rawPoints < 0
+      && (scored.riskScore >= 60 || hasRefundedAmountClusterReview)
+    ? 0
+    : rawPoints;
   const signal: FiatSignal = {
     key: "maxmind_factors_risk",
     label: "MaxMind minFraud Factors",
@@ -1817,11 +1823,13 @@ export function applyMaxMindFiatRisk(
     ...scored,
     riskScore,
     verdict,
-    recommendation: verdict === "bad"
-      ? "Hold withdrawals and complete an analyst review."
-      : verdict === "review"
-        ? "Review before allowing value to leave the account."
-        : scored.recommendation,
+    recommendation: points <= 0
+      ? scored.recommendation
+      : verdict === "bad"
+        ? "Hold withdrawals and complete an analyst review."
+        : verdict === "review"
+          ? "Review before allowing value to leave the account."
+          : scored.recommendation,
     summary: points > 0 ? signal.detail : scored.summary,
     signals,
     scoreBreakdown: { ...scored.scoreBreakdown, provider: providerScore },
