@@ -56,9 +56,11 @@ export type CreatorLastDeals = {
       sponsoredBattlesUsd: number;
     };
     terms: {
-      fillAmountsUsd: number[];
-      keepPercentages: number[];
-      withdrawalCaps7DayUsd: number[];
+      weeks: Array<{
+        fillAmountUsd: number;
+        keepPercentage: number;
+        withdrawalCap7DayUsd: number | null;
+      }>;
       tipAllowancesPerStreamUsd: number[];
       tipAllowancesPerUserUsd: number[];
       sponsorshipAllowancesPerStreamUsd: number[];
@@ -399,14 +401,16 @@ export async function getCreatorLastDeals(input: {
           prizeUsd: entry.prizeUsd === null ? null : money(entry.prizeUsd),
         })),
       };
-      const matchingDeals = weeklyDeals.filter((deal) =>
-        overlaps(
-          deal.week_start_utc,
-          deal.week_end_utc,
-          frame.start_date,
-          frame.end_date,
-        ),
-      );
+      const matchingDeals = weeklyDeals
+        .filter((deal) =>
+          overlaps(
+            deal.week_start_utc,
+            deal.week_end_utc,
+            frame.start_date,
+            frame.end_date,
+          ),
+        )
+        .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc));
       const status: LastDealStatus = frame.time_status === "active"
         ? "active"
         : frame.time_status === "upcoming"
@@ -435,11 +439,13 @@ export async function getCreatorLastDeals(input: {
           sponsoredBattlesUsd: money(metrics?.sponsored_battles_usd ?? 0),
         },
         terms: {
-          fillAmountsUsd: uniqueNumbers(matchingDeals.map((deal) => money(deal.per_fill_amount_usd))),
-          keepPercentages: uniqueNumbers(matchingDeals.map((deal) => deal.conversion_rate_bps / 100)),
-          withdrawalCaps7DayUsd: uniqueNumbers(matchingDeals
-            .filter((deal) => deal.total_withdraw_cap_usd !== null)
-            .map((deal) => money(deal.total_withdraw_cap_usd))),
+          weeks: matchingDeals.map((deal) => ({
+            fillAmountUsd: money(deal.per_fill_amount_usd),
+            keepPercentage: deal.conversion_rate_bps / 100,
+            withdrawalCap7DayUsd: deal.total_withdraw_cap_usd === null
+              ? null
+              : money(deal.total_withdraw_cap_usd),
+          })),
           tipAllowancesPerStreamUsd: uniqueNumbers(matchingDeals
             .map((deal) => money(deal.max_tip_per_stream_usd))),
           tipAllowancesPerUserUsd: uniqueNumbers(matchingDeals
