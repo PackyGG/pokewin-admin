@@ -36,20 +36,14 @@ const failedIntent: FiatProblem = {
 };
 
 test("fiat problem payload is safe, useful, and has no Discord mentions", () => {
-  const payload = buildFiatDiscordPayload(
-    FIAT_WORKSPACE_URL,
-    failedIntent,
-  );
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, failedIntent);
 
   assert.equal(payload.username, "PackyGG Fiat");
   assert.ok(!("escalate" in payload));
   assert.equal(payload.embeds[0]?.title, "Fiat deposit failed");
   assert.equal(payload.embeds[0]?.color, 0xef4444);
   assert.equal(payload.embeds[0]?.url, FIAT_WORKSPACE_URL);
-  assert.equal(
-    payload.components[0]?.components[0]?.url,
-    FIAT_WORKSPACE_URL,
-  );
+  assert.equal(payload.components[0]?.components[0]?.url, FIAT_WORKSPACE_URL);
   assert.match(
     payload.embeds[0]?.fields.find((field) => field.name === "Account")
       ?.value ?? "",
@@ -58,29 +52,25 @@ test("fiat problem payload is safe, useful, and has no Discord mentions", () => 
   assert.doesNotMatch(JSON.stringify(payload), /<@/);
   assert.match(JSON.stringify(payload), /\$125\.50/);
   assert.equal(
-    payload.embeds[0]?.fields.find(
-      (field) => field.name === "Payment option",
-    )?.value,
+    payload.embeds[0]?.fields.find((field) => field.name === "Payment option")
+      ?.value,
     "Apple Pay",
   );
 });
 
 test("locked-account deposit alerts expose the active fiat lock", () => {
-  const payload = buildFiatDiscordPayload(
-    FIAT_WORKSPACE_URL,
-    {
-      ...failedIntent,
-      source_id: "intent-2:fiat_locked_account",
-      problem_code: "fiat_locked_account",
-      details: {
-        intent_id: "intent-2",
-        status: "completed",
-        credited_amount_cents: 50_000,
-        locked_deposits_fiat: "credit_card",
-        locked_deposits_reason: "High account risk",
-      },
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    ...failedIntent,
+    source_id: "intent-2:fiat_locked_account",
+    problem_code: "fiat_locked_account",
+    details: {
+      intent_id: "intent-2",
+      status: "completed",
+      credited_amount_cents: 50_000,
+      locked_deposits_fiat: "credit_card",
+      locked_deposits_reason: "High account risk",
     },
-  );
+  });
 
   assert.equal(
     payload.embeds[0]?.title,
@@ -95,39 +85,57 @@ test("locked-account deposit alerts expose the active fiat lock", () => {
   );
   assert.match(JSON.stringify(payload), /High account risk/);
   assert.equal(
-    payload.embeds[0]?.fields.find(
-      (field) => field.name === "Payment option",
-    )?.value,
+    payload.embeds[0]?.fields.find((field) => field.name === "Payment option")
+      ?.value,
     "Unknown",
   );
 });
 
 test("canonical bad fiat assessments use the same dedicated webhook payload", () => {
-  const payload = buildFiatDiscordPayload(
-    FIAT_WORKSPACE_URL,
-    {
-      ...failedIntent,
-      source_id: "intent-3:high_risk",
-      problem_code: "high_risk",
-      details: {
-        intent_id: "intent-3",
-        status: "completed",
-        credited_amount_cents: 75_000,
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    ...failedIntent,
+    source_id: "intent-3:high_risk",
+    problem_code: "high_risk",
+    details: {
+      intent_id: "intent-3",
+      status: "completed",
+      credited_amount_cents: 75_000,
+      provider_payment_status: "paid",
+      payment_method_type: "card",
+      deposit_occurred_at: "2026-07-28T11:55:00.000Z",
         risk_score: 85,
         verdict: "bad",
+        recommendation: "Hold withdrawals and review the payment evidence.",
         summary: "Shared device and provider dispute evidence.",
-      },
     },
-  );
+  });
 
-  assert.equal(payload.embeds[0]?.title, "High-risk fiat deposit");
+  assert.equal(payload.embeds[0]?.title, "🚨 High-risk fiat deposit");
   assert.match(payload.embeds[0]?.description ?? "", /high-risk verdict/);
   assert.equal(
-    payload.embeds[0]?.fields.find((field) => field.name === "Risk score")
+    payload.embeds[0]?.fields.find((field) => field.name === "📊 Risk score")
       ?.value,
-    "85/100",
+    "**85 / 100**\nCritical risk",
+  );
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "💵 Deposit amount",
+    )?.value,
+    "**$750.00**",
+  );
+  assert.equal(
+    payload.embeds[0]?.fields.find(
+      (field) => field.name === "🕒 Deposit received",
+    )?.value,
+    "<t:1785239700:F>\n<t:1785239700:R>",
+  );
+  assert.equal(payload.embeds[0]?.timestamp, "2026-07-28T11:55:00.000Z");
+  assert.equal(
+    payload.components[0]?.components[0]?.label,
+    "Review High-Risk Deposit",
   );
   assert.match(JSON.stringify(payload), /provider dispute evidence/);
+  assert.match(JSON.stringify(payload), /Hold withdrawals and review/);
 });
 
 test("every monitored problem has explicit operator-facing copy", () => {
@@ -167,24 +175,21 @@ test("only blocking and high-risk fiat problems use the risk webhook", () => {
 });
 
 test("signup blacklist alerts identify the signup email", () => {
-  const payload = buildFiatDiscordPayload(
-    FIAT_WORKSPACE_URL,
-    {
-      source_kind: "signup",
-      source_id: "signup:user-1:blacklisted_email_domain:stolas.org",
-      problem_code: "blacklisted_email_domain",
-      user_id: "user-1",
-      username: "test-user",
-      details: {
-        email: "person@stolas.org",
-        email_domain: "stolas.org",
-        match_source: "signup",
-        risk_score: 100,
-        status: "withdrawals_locked",
-      },
-      occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    source_kind: "signup",
+    source_id: "signup:user-1:blacklisted_email_domain:stolas.org",
+    problem_code: "blacklisted_email_domain",
+    user_id: "user-1",
+    username: "test-user",
+    details: {
+      email: "person@stolas.org",
+      email_domain: "stolas.org",
+      match_source: "signup",
+      risk_score: 100,
+      status: "withdrawals_locked",
     },
-  );
+    occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  });
 
   assert.match(payload.embeds[0]?.description ?? "", /new signup/);
   assert.equal(
@@ -197,25 +202,22 @@ test("signup blacklist alerts identify the signup email", () => {
 });
 
 test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
-  const payload = buildFiatDiscordPayload(
-    FIAT_WORKSPACE_URL,
-    {
-      source_kind: "payment_webhook",
-      source_id: "event-1:blacklisted_email_domain:gmail.com",
-      problem_code: "blacklisted_email_domain",
-      user_id: "user-1",
-      username: "test-user",
-      details: {
-        checkout_email: "carmenw.oods29.7.1@gmail.com",
-        email_domain: "gmail.com",
-        email_risk_type: "gmail_dot_fragmentation",
-        email_risk_reason: "Dot-fragmented Gmail pattern",
-        risk_score: 100,
-        status: "withdrawals_locked",
-      },
-      occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    source_kind: "payment_webhook",
+    source_id: "event-1:blacklisted_email_domain:gmail.com",
+    problem_code: "blacklisted_email_domain",
+    user_id: "user-1",
+    username: "test-user",
+    details: {
+      checkout_email: "carmenw.oods29.7.1@gmail.com",
+      email_domain: "gmail.com",
+      email_risk_type: "gmail_dot_fragmentation",
+      email_risk_reason: "Dot-fragmented Gmail pattern",
+      risk_score: 100,
+      status: "withdrawals_locked",
     },
-  );
+    occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  });
 
   assert.equal(payload.embeds[0]?.title, "Suspicious checkout email review");
   assert.match(payload.embeds[0]?.description ?? "", /dot-fragmentation/);
@@ -268,9 +270,8 @@ test("deposit cluster alerts aggregate evidence without duplicate account alerts
     "€18.47",
   );
   assert.match(
-    payload.embeds[0]?.fields.find(
-      (field) => field.name === "Cluster evidence",
-    )?.value ?? "",
+    payload.embeds[0]?.fields.find((field) => field.name === "Cluster evidence")
+      ?.value ?? "",
     /3 events.*3 accounts.*3 payment identities/,
   );
   assert.equal(
@@ -282,25 +283,25 @@ test("deposit cluster alerts aggregate evidence without duplicate account alerts
 });
 
 test("the four-route mapping preserves current fiat classification", () => {
-  assert.deepEqual(
-    fiatAlertDestinations("blacklisted_email_domain"),
-    ["email_blacklist"],
-  );
-  assert.deepEqual(
-    fiatAlertDestinations("suspicious_deposit_cluster"),
-    ["email_blacklist"],
-  );
-  assert.deepEqual(
-    fiatAlertDestinations("high_risk"),
-    ["antifraud_risk", "high_risk_supplemental"],
-  );
-  assert.deepEqual(
-    fiatAlertDestinations("fiat_locked_account"),
-    ["antifraud_risk"],
-  );
+  assert.deepEqual(fiatAlertDestinations("blacklisted_email_domain"), [
+    "email_blacklist",
+  ]);
+  assert.deepEqual(fiatAlertDestinations("suspicious_deposit_cluster"), [
+    "email_blacklist",
+  ]);
+  assert.deepEqual(fiatAlertDestinations("high_risk"), [
+    "antifraud_risk",
+    "high_risk_supplemental",
+  ]);
+  assert.deepEqual(fiatAlertDestinations("fiat_locked_account"), [
+    "antifraud_risk",
+  ]);
   assert.deepEqual(fiatAlertDestinations("failed"), ["fiat_operations"]);
 
-  assert.equal(fiatAlertEventKey("email_blacklist"), "antifraud.email_blacklist");
+  assert.equal(
+    fiatAlertEventKey("email_blacklist"),
+    "antifraud.email_blacklist",
+  );
   assert.equal(fiatAlertEventKey("antifraud_risk"), "antifraud.fiat_risk");
   assert.equal(
     fiatAlertEventKey("high_risk_supplemental"),
@@ -329,7 +330,10 @@ test("credit-review deposits use a dedicated action and review-queue button", ()
 
   assert.equal(payload.embeds[0]?.title, "Fiat deposit needs review");
   assert.match(JSON.stringify(payload.components), /Open Deposit Reviews/);
-  assert.doesNotMatch(JSON.stringify(payload.components), /Open Fiat Operations/);
+  assert.doesNotMatch(
+    JSON.stringify(payload.components),
+    /Open Fiat Operations/,
+  );
 });
 
 test("legacy high-risk destinations collapse into one routed event", async () => {
@@ -370,10 +374,8 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   };
   const config = {
     ADMIN_GUILD_ID: "1483064422778798112",
-    ANTIFRAUD_INGEST_URL:
-      "https://fraud.packydash.com/api/antifraud/ingest",
-    ANTIFRAUD_INGEST_SECRET:
-      "ingest-secret-that-is-at-least-32-characters",
+    ANTIFRAUD_INGEST_URL: "https://fraud.packydash.com/api/antifraud/ingest",
+    ANTIFRAUD_INGEST_SECRET: "ingest-secret-that-is-at-least-32-characters",
     FIAT_ALERT_DASHBOARD_URL: FIAT_WORKSPACE_URL,
   } as Config;
   const alerts = new FiatProblemAlerts(
@@ -406,11 +408,10 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   }
 
   assert.equal(fetchUrls.length, 2);
-  assert.ok(fetchUrls.every((url) => url.endsWith("/api/antifraud/discord-events")));
-  assert.deepEqual(eventKeys, [
-    "antifraud.fiat_risk",
-    "antifraud.fiat_risk",
-  ]);
+  assert.ok(
+    fetchUrls.every((url) => url.endsWith("/api/antifraud/discord-events")),
+  );
+  assert.deepEqual(eventKeys, ["antifraud.fiat_risk", "antifraud.fiat_risk"]);
   assert.equal(new Set(dedupeKeys).size, 1);
   assert.deepEqual(
     updates.map((values) => ({
@@ -419,10 +420,10 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
       retrySeconds: values[5],
     })),
     [
-        {
-          destination: "antifraud_risk",
-          delivered: true,
-          retrySeconds: 2,
+      {
+        destination: "antifraud_risk",
+        delivered: true,
+        retrySeconds: 2,
       },
       {
         destination: "high_risk_supplemental",
@@ -451,7 +452,10 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
 
   assert.match(source, /FROM fiat_deposit_intents fdi/);
-  assert.match(source, /JOIN user_feature_locks ufl ON ufl\.user_id = fdi\.user_id/);
+  assert.match(
+    source,
+    /JOIN user_feature_locks ufl ON ufl\.user_id = fdi\.user_id/,
+  );
   assert.match(source, /cardinality\(ufl\.locked_deposits_fiat\) > 0/);
   assert.match(source, /ufl\.locked_deposits_at <= fdi\.created_at/);
   assert.match(source, /fiat_locked_account/);
@@ -497,19 +501,15 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
     /alert\.problem_code IN \('high_risk', 'fiat_locked_account'\)/,
   );
   assert.equal(
-    splitMigration.match(
-      /d67b5118-9926-47bd-b58c-9203a15620be:high_risk/g,
-    )?.length,
+    splitMigration.match(/d67b5118-9926-47bd-b58c-9203a15620be:high_risk/g)
+      ?.length,
     2,
   );
   assert.match(
     splitMigration,
     /ON CONFLICT \(source_kind, source_id, destination\) DO NOTHING/,
   );
-  assert.match(
-    splitMigration,
-    /WHERE alert\.problem_code = 'high_risk'/,
-  );
+  assert.match(splitMigration, /WHERE alert\.problem_code = 'high_risk'/);
 
   const calls: Array<{ text: string; values: unknown[] }> = [];
   const pool = {
@@ -548,6 +548,10 @@ test("fiat alert ingestion is mirror-only, durable, and retryable", async () => 
   );
   assert.equal(riskCalls[0]?.values[2], 50);
   assert.match(riskCalls[0]?.text ?? "", /verdict = 'bad'/);
+  assert.match(
+    riskCalls[0]?.text ?? "",
+    /'deposit_occurred_at', fda\.occurred_at/,
+  );
 });
 
 test("high-risk fiat alerts wait out the assessment settlement lag", async () => {

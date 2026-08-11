@@ -74,11 +74,10 @@ export const FIAT_ALERT_DESTINATIONS = [
   "email_blacklist",
 ] as const;
 
-export type FiatAlertDestination =
-  Extract<
-    FiatNotificationRouteKey,
-    (typeof FIAT_ALERT_DESTINATIONS)[number]
-  >;
+export type FiatAlertDestination = Extract<
+  FiatNotificationRouteKey,
+  (typeof FIAT_ALERT_DESTINATIONS)[number]
+>;
 
 export function fiatAlertEventKey(
   destination: FiatAlertDestination,
@@ -107,19 +106,29 @@ type DiscordPayload = DiscordWebhookPayload;
 function clean(value: unknown, maxLength = 1_024): string {
   const text = sanitizeDiscordMentions(String(value ?? "")).trim();
   if (text.length === 0) return "Not provided";
-  return text.length <= maxLength
-    ? text
-    : `${text.slice(0, maxLength - 1)}…`;
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}…`;
 }
 
-function detail(
-  details: Record<string, unknown>,
-  key: string,
-): string | null {
+function detail(details: Record<string, unknown>, key: string): string | null {
   const value = details[key];
   return value === null || value === undefined || value === ""
     ? null
     : String(value);
+}
+
+function detailDate(
+  details: Record<string, unknown>,
+  key: string,
+): Date | null {
+  const value = detail(details, key);
+  if (!value) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function discordTime(date: Date): string {
+  const seconds = Math.floor(date.getTime() / 1_000);
+  return `<t:${seconds}:F>\n<t:${seconds}:R>`;
 }
 
 function formatUsdCents(value: unknown): string | null {
@@ -136,7 +145,9 @@ function formatCurrencyCents(
   currencyValue: unknown,
 ): string | null {
   const cents = Number(value);
-  const currency = String(currencyValue ?? "").trim().toUpperCase();
+  const currency = String(currencyValue ?? "")
+    .trim()
+    .toUpperCase();
   if (
     !Number.isSafeInteger(cents) ||
     cents <= 0 ||
@@ -192,57 +203,100 @@ export function buildFiatDiscordPayload(
   const details = problem.details;
   const amount = formatUsdCents(details.credited_amount_cents);
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
+  const highRisk = problem.problem_code === "high_risk";
+  const status = detail(details, "status");
+  const providerStatus = detail(details, "provider_payment_status");
+  const riskScore = detail(details, "risk_score");
+  const depositOccurredAt = highRisk
+    ? (detailDate(details, "deposit_occurred_at") ?? problem.occurred_at)
+    : null;
 
-  if (problem.username || problem.user_id) {
+  if (highRisk) {
     fields.push({
-      name: "Account",
+      name: "👤 Account",
       value: clean(
-        [problem.username, problem.user_id].filter(Boolean).join(" · "),
+        [problem.username ?? "Unknown user", problem.user_id]
+          .filter(Boolean)
+          .join("\n"),
       ),
       inline: true,
     });
-  }
-  if (amount) {
-    fields.push({ name: "Credit amount", value: amount, inline: true });
-  }
-  const status = detail(details, "status");
-  if (status) {
-    fields.push({ name: "Status", value: clean(status), inline: true });
-  }
-  const providerStatus = detail(details, "provider_payment_status");
-  if (providerStatus) {
     fields.push({
-      name: "Provider status",
-      value: clean(providerStatus),
+      name: "💵 Deposit amount",
+      value: amount ? `**${amount}**` : "Unknown",
       inline: true,
     });
-  }
-  if (problem.source_kind !== "signup") {
     fields.push({
-      name: "Payment option",
+      name: "📊 Risk score",
+      value: riskScore
+        ? `**${clean(riskScore)} / 100**\nCritical risk`
+        : "Critical risk",
+      inline: true,
+    });
+    fields.push({
+      name: "💳 Payment method",
       value: whopPaymentMethodLabel(details.payment_method_type),
       inline: true,
     });
-  }
-  const eventType = detail(details, "event_type");
-  if (eventType) {
     fields.push({
-      name: "Webhook event",
-      value: clean(eventType),
+      name: "📌 Payment status",
+      value: clean(providerStatus ?? status ?? "Unknown"),
       inline: true,
     });
-  }
-  const attempts = detail(details, "attempt_count");
-  if (attempts) {
-    fields.push({ name: "Attempts", value: clean(attempts), inline: true });
-  }
-  const riskScore = detail(details, "risk_score");
-  if (riskScore) {
     fields.push({
-      name: "Risk score",
-      value: `${clean(riskScore)}/100`,
+      name: "🕒 Deposit received",
+      value: discordTime(depositOccurredAt ?? problem.occurred_at),
       inline: true,
     });
+  } else {
+    if (problem.username || problem.user_id) {
+      fields.push({
+        name: "Account",
+        value: clean(
+          [problem.username, problem.user_id].filter(Boolean).join(" · "),
+        ),
+        inline: true,
+      });
+    }
+    if (amount) {
+      fields.push({ name: "Credit amount", value: amount, inline: true });
+    }
+    if (status) {
+      fields.push({ name: "Status", value: clean(status), inline: true });
+    }
+    if (providerStatus) {
+      fields.push({
+        name: "Provider status",
+        value: clean(providerStatus),
+        inline: true,
+      });
+    }
+    if (problem.source_kind !== "signup") {
+      fields.push({
+        name: "Payment option",
+        value: whopPaymentMethodLabel(details.payment_method_type),
+        inline: true,
+      });
+    }
+    const eventType = detail(details, "event_type");
+    if (eventType) {
+      fields.push({
+        name: "Webhook event",
+        value: clean(eventType),
+        inline: true,
+      });
+    }
+    const attempts = detail(details, "attempt_count");
+    if (attempts) {
+      fields.push({ name: "Attempts", value: clean(attempts), inline: true });
+    }
+    if (riskScore) {
+      fields.push({
+        name: "Risk score",
+        value: `${clean(riskScore)}/100`,
+        inline: true,
+      });
+    }
   }
   const lockedMethods = detail(details, "locked_deposits_fiat");
   if (lockedMethods) {
@@ -376,8 +430,16 @@ export function buildFiatDiscordPayload(
     detail(details, "locked_deposits_reason");
   if (reason) {
     fields.push({
-      name: "Failure detail",
+      name: highRisk ? "🔎 Why it was flagged" : "Failure detail",
       value: clean(reason),
+      inline: false,
+    });
+  }
+  const recommendation = highRisk ? detail(details, "recommendation") : null;
+  if (recommendation) {
+    fields.push({
+      name: "🛡️ Recommended action",
+      value: clean(recommendation),
       inline: false,
     });
   }
@@ -390,28 +452,28 @@ export function buildFiatDiscordPayload(
         ? "A high share of settled payments for this exact amount was refunded across distinct accounts and payment identities. Crypto and item withdrawals are locked."
         : "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
       : problem.problem_code === "blacklisted_email_domain"
-      ? patternMatch
-        ? "The email matched the Gmail dot-fragmentation fraud pattern. Staff review is required; no automatic account action was taken."
-        : problem.source_kind === "signup"
-        ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
-        : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
-      : problem.problem_code === "fiat_identity_drift"
-      ? details.verdict === "contain"
-        ? details.enforcement === "contained"
-          ? details.containment_action === "fiat_and_withdrawals"
-            ? "An authorized Fiat deposit hit a high-confidence identity rule. Fiat deposits and all withdrawals are locked pending staff review; KYC was not changed."
-            : "An authorized Fiat deposit hit a high-confidence identity rule. Crypto and item withdrawals are locked pending staff review; KYC was not changed."
-          : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
-        : details.verdict === "review"
-          ? "An authorized Fiat deposit matched an identity review rule. Account Review was opened; no automatic lock or KYC action was taken."
-          : "An authorized Fiat deposit produced watch-only identity evidence. No automatic account action was taken."
-      : problem.problem_code === "high_risk"
-      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} received the canonical high-risk verdict.`
-      : problem.problem_code === "fiat_locked_account"
-      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} was created for an account with fiat deposits locked.`
-      : problem.source_kind === "deposit_intent"
-      ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} requires attention.`
-      : `Whop payment webhook ${clean(details.provider_event_id ?? problem.source_id, 256)} could not be processed.`;
+        ? patternMatch
+          ? "The email matched the Gmail dot-fragmentation fraud pattern. Staff review is required; no automatic account action was taken."
+          : problem.source_kind === "signup"
+            ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
+            : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
+        : problem.problem_code === "fiat_identity_drift"
+          ? details.verdict === "contain"
+            ? details.enforcement === "contained"
+              ? details.containment_action === "fiat_and_withdrawals"
+                ? "An authorized Fiat deposit hit a high-confidence identity rule. Fiat deposits and all withdrawals are locked pending staff review; KYC was not changed."
+                : "An authorized Fiat deposit hit a high-confidence identity rule. Crypto and item withdrawals are locked pending staff review; KYC was not changed."
+              : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
+            : details.verdict === "review"
+              ? "An authorized Fiat deposit matched an identity review rule. Account Review was opened; no automatic lock or KYC action was taken."
+              : "An authorized Fiat deposit produced watch-only identity evidence. No automatic account action was taken."
+          : problem.problem_code === "high_risk"
+            ? "A fiat deposit received a canonical high-risk verdict. Review the evidence before clearing or escalating it."
+            : problem.problem_code === "fiat_locked_account"
+              ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} was created for an account with fiat deposits locked.`
+              : problem.source_kind === "deposit_intent"
+                ? `Whop fiat intent ${clean(details.intent_id ?? problem.source_id, 256)} requires attention.`
+                : `Whop payment webhook ${clean(details.provider_event_id ?? problem.source_id, 256)} could not be processed.`;
 
   return {
     username: "PackyGG Fiat",
@@ -419,17 +481,22 @@ export function buildFiatDiscordPayload(
       {
         title: patternMatch
           ? "Suspicious checkout email review"
-          : fiatProblemTitle(problem.problem_code),
+          : highRisk
+            ? "🚨 High-risk fiat deposit"
+            : fiatProblemTitle(problem.problem_code),
         description,
         url,
         color:
-          creditReview ||
-          problem.problem_code === "pending_stale"
+          creditReview || problem.problem_code === "pending_stale"
             ? 0xf59e0b
             : 0xef4444,
         fields,
-        footer: { text: "PackyGG Fiat Operations" },
-        timestamp: problem.occurred_at.toISOString(),
+        footer: {
+          text: highRisk
+            ? "PackyGG Fiat Risk · Deposit received"
+            : "PackyGG Fiat Operations",
+        },
+        timestamp: (depositOccurredAt ?? problem.occurred_at).toISOString(),
       },
     ],
     components: [
@@ -439,7 +506,11 @@ export function buildFiatDiscordPayload(
           {
             type: 2,
             style: 5,
-            label: creditReview ? "Open Deposit Reviews" : "Open Fiat Operations",
+            label: creditReview
+              ? "Open Deposit Reviews"
+              : highRisk
+                ? "Review High-Risk Deposit"
+                : "Open Fiat Operations",
             url,
           },
         ],
@@ -659,6 +730,7 @@ export async function fetchHighRiskFiatProblems(
           'provider_payment_status', fda.provider_payment_status,
           'payment_method_type',
             fda.provider_evidence->>'paymentMethodType',
+          'deposit_occurred_at', fda.occurred_at,
           'risk_score', fda.risk_score,
           'verdict', fda.verdict,
           'recommendation', fda.recommendation,
@@ -731,10 +803,10 @@ export class FiatProblemAlerts {
       const row = cursor.rows[0];
       if (!row) throw new Error("High-risk fiat cursor is missing");
 
-      const problems = await fetchHighRiskFiatProblems(
-        this.db.antifraud,
-        { occurredAt: row.occurred_at, sourceId: row.source_id },
-      );
+      const problems = await fetchHighRiskFiatProblems(this.db.antifraud, {
+        occurredAt: row.occurred_at,
+        sourceId: row.source_id,
+      });
       if (problems.length === 0) return;
 
       await this.storeProblems(problems);
@@ -764,10 +836,10 @@ export class FiatProblemAlerts {
       );
       const row = cursor.rows[0];
       if (!row) throw new Error("Failed-webhook cursor is missing");
-      const failedWebhooks = await fetchFailedPaymentWebhooks(
-        this.db.source,
-        { occurredAt: row.occurred_at, sourceId: row.source_id },
-      );
+      const failedWebhooks = await fetchFailedPaymentWebhooks(this.db.source, {
+        occurredAt: row.occurred_at,
+        sourceId: row.source_id,
+      });
       if (failedWebhooks.length === 0) break;
       await this.storeProblems(failedWebhooks);
       const last = failedWebhooks.at(-1);
@@ -798,10 +870,10 @@ export class FiatProblemAlerts {
       const row = cursor.rows[0];
       if (!row) throw new Error("Fiat problem cursor is missing");
 
-      const problems = await fetchFiatProblems(
-        this.db.source,
-        { occurredAt: row.occurred_at, sourceId: row.source_id },
-      );
+      const problems = await fetchFiatProblems(this.db.source, {
+        occurredAt: row.occurred_at,
+        sourceId: row.source_id,
+      });
       if (problems.length === 0) return;
 
       await this.storeProblems(problems);
@@ -924,7 +996,7 @@ export class FiatProblemAlerts {
       attempt: (problem) => this.send(problem),
       record: async (problem, outcome) => {
         await this.db.antifraud.query(
-        `
+          `
           UPDATE fiat_problem_alert_deliveries
           SET
             delivered_at = CASE
@@ -945,25 +1017,25 @@ export class FiatProblemAlerts {
             AND source_id = $2
             AND destination = $3
         `,
-        [
-          problem.source_kind,
-          problem.source_id,
-          problem.destination,
+          [
+            problem.source_kind,
+            problem.source_id,
+            problem.destination,
             outcome.delivered,
             outcome.attempt,
             outcome.retrySeconds,
-        ],
+          ],
         );
       },
       onRecorded: async (problem, outcome) => {
         if (outcome.delivered) {
           this.log.info(
-          {
-            sourceKind: problem.source_kind,
-            sourceId: problem.source_id,
-            destination: problem.destination,
-          },
-          "Fiat Discord alert delivered",
+            {
+              sourceKind: problem.source_kind,
+              sourceId: problem.source_id,
+              destination: problem.destination,
+            },
+            "Fiat Discord alert delivered",
           );
         }
         await this.refreshLegacyDeliveryState(problem);
@@ -1022,9 +1094,7 @@ export class FiatProblemAlerts {
       // The former high-risk supplemental webhook now resolves to the same
       // event and dedupe key. The configurable router fans one event out to
       // every selected channel without creating duplicate alerts.
-      dedupeKey:
-        `fiat:${problem.source_kind}:${problem.source_id}:` +
-        eventKey,
+      dedupeKey: `fiat:${problem.source_kind}:${problem.source_id}:` + eventKey,
       payload: buildFiatDiscordPayload(
         this.config.FIAT_ALERT_DASHBOARD_URL,
         problem,
