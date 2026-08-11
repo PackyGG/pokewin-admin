@@ -457,16 +457,16 @@ export function buildFiatDiscordPayload(
           : problem.source_kind === "signup"
             ? "A new signup matched the email-domain blacklist. Crypto and item withdrawals are locked."
             : "A Whop checkout matched the email-domain blacklist. Crypto and item withdrawals are locked."
-        : problem.problem_code === "fiat_identity_drift"
-          ? details.verdict === "contain"
-            ? details.enforcement === "contained"
-              ? details.containment_action === "fiat_and_withdrawals"
-                ? "An authorized Fiat deposit hit a high-confidence identity rule. Fiat deposits and all withdrawals are locked pending staff review; KYC was not changed."
-                : "An authorized Fiat deposit hit a high-confidence identity rule. Crypto and item withdrawals are locked pending staff review; KYC was not changed."
-              : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
-            : details.verdict === "review"
-              ? "An authorized Fiat deposit matched an identity review rule. Account Review was opened; no automatic lock or KYC action was taken."
-              : "An authorized Fiat deposit produced watch-only identity evidence. No automatic account action was taken."
+          : problem.problem_code === "fiat_identity_drift"
+            ? details.verdict === "contain"
+              ? details.enforcement === "contained"
+                ? details.containment_action === "fiat_and_withdrawals"
+                  ? "An authorized Fiat deposit hit a high-confidence identity rule. Automatic Fiat and withdrawal containment was queued for durable application; KYC was not changed."
+                  : "An authorized Fiat deposit hit a high-confidence identity rule. Automatic crypto and item withdrawal containment was queued for durable application; KYC was not changed."
+                : "An authorized Fiat deposit matched a containment rule, but automatic enforcement is switched off — nothing was locked. Review and act manually."
+              : details.verdict === "review"
+                ? "An authorized Fiat deposit matched an identity review rule. Account Review was opened; no automatic lock or KYC action was taken."
+                : "An authorized Fiat deposit produced watch-only identity evidence. No automatic account action was taken."
           : problem.problem_code === "high_risk"
             ? "A fiat deposit received a canonical high-risk verdict. Review the evidence before clearing or escalating it."
             : problem.problem_code === "fiat_locked_account"
@@ -985,6 +985,31 @@ export class FiatProblemAlerts {
         WHERE delivery.delivered_at IS NULL
           AND delivery.next_attempt_at <= now()
           AND alert.next_attempt_at <= now()
+          -- A held payment is classified by separate risk and identity
+          -- workers. Give both a bounded settlement window, then suppress the
+          -- normal #deposits card whenever either worker classified the same
+          -- intent as high risk. This prevents one payment from producing a
+          -- normal review card followed by a high-risk card seconds later.
+          AND (
+            alert.problem_code <> 'review'
+            OR (
+              alert.created_at <= now() - interval '60 seconds'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM fiat_deposit_assessments assessment
+                WHERE assessment.deposit_intent_id::text =
+                  split_part(alert.source_id, ':', 1)
+                  AND assessment.verdict = 'bad'
+              )
+              AND NOT EXISTS (
+                SELECT 1
+                FROM fiat_deposit_identity_checks identity_check
+                WHERE identity_check.intent_id =
+                  split_part(alert.source_id, ':', 1)
+                  AND identity_check.verdict = 'contain'
+              )
+            )
+          )
         ORDER BY alert.occurred_at, delivery.destination
         LIMIT ${DELIVERY_BATCH_SIZE}
       `,

@@ -71,10 +71,37 @@ function objectPayload(value: unknown): Record<string, unknown> {
     return {};
   }
   const payload = value as Record<string, unknown>;
-  return Buffer.byteLength(JSON.stringify(payload), "utf8") <=
+  if (
+    Buffer.byteLength(JSON.stringify(payload), "utf8") <=
     MAX_EVIDENCE_PAYLOAD_BYTES
-    ? payload
-    : { deliveryPayloadTruncated: true };
+  ) {
+    return payload;
+  }
+
+  // Large evidence blobs must not erase the small command envelope that the
+  // dashboard validates before applying containment. The former all-or-
+  // nothing truncation reduced an otherwise valid Fiat identity command to
+  // `{ deliveryPayloadTruncated: true }`, so the dashboard stored the alert
+  // but correctly refused to lock the account. Preserve only the reviewed
+  // admission fields; bulky provider/network evidence remains available in
+  // the Antifraud database and webapp.
+  const preservedKeys = [
+    "containmentRequired",
+    "containmentAction",
+    "reviewOnly",
+    "environment",
+    "intentId",
+    "reasonCodes",
+    "reviewCodes",
+    "watchCodes",
+  ] as const;
+  const compact: Record<string, unknown> = {
+    deliveryPayloadTruncated: true,
+  };
+  for (const key of preservedKeys) {
+    if (payload[key] !== undefined) compact[key] = payload[key];
+  }
+  return compact;
 }
 
 export function signIngest(

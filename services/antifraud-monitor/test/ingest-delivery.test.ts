@@ -122,6 +122,35 @@ test("risk rows map to bounded dashboard signal fields", () => {
       scoreAfter: 75,
     },
   );
+
+  const containment = ingestEvent({
+    ...row,
+    event_type: "fiat_deposit_identity_containment",
+    payload: {
+      containmentRequired: true,
+      containmentAction: "withdrawals",
+      reviewOnly: false,
+      environment: "prod",
+      intentId: "intent-1",
+      reasonCodes: ["checkout_refunded_amount_cluster"],
+      evidence: "x".repeat(4_000),
+    },
+  });
+  assert.deepEqual(containment.payload, {
+    deliveryPayloadTruncated: true,
+    containmentRequired: true,
+    containmentAction: "withdrawals",
+    reviewOnly: false,
+    environment: "prod",
+    intentId: "intent-1",
+    reasonCodes: ["checkout_refunded_amount_cluster"],
+    caseId: row.case_id,
+    sessionId: row.session_id,
+    source: "signup",
+    sourceRef: "user-1:shared_device",
+    scoreDelta: 40,
+    scoreAfter: 75,
+  });
 });
 
 test("delivery advances only after every event is confirmed", async () => {

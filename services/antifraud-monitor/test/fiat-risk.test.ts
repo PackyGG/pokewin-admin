@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   applyBlacklistedCheckoutEmail,
+  applyFiatIdentityContainmentRisk,
   applyMaxMindFiatRisk,
   FiatRiskService,
   likeContains,
@@ -276,6 +277,21 @@ test("paid webhook failures remain visible until MAIN reconciliation succeeds", 
     true,
   );
   assert.match(result.recommendation, /Reconcile the successful Whop payment/);
+});
+
+test("identity containment dominates trust discounts in the Fiat workspace", () => {
+  const base = scoreFiatDeposit(safeInput);
+  assert.equal(base.riskScore, 0);
+
+  const contained = applyFiatIdentityContainmentRisk(base, {
+    identityVerdict: "contain",
+    identityReasonCodes: ["checkout_refunded_amount_cluster"],
+  });
+  assert.equal(contained.riskScore, 100);
+  assert.equal(contained.verdict, "bad");
+  assert.equal(contained.scoreBreakdown.network, 100);
+  assert.equal(contained.signals[0]?.key, "fiat_identity_containment");
+  assert.match(contained.summary, /post-authorization identity/i);
 });
 
 test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat", async () => {

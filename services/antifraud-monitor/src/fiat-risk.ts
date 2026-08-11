@@ -352,6 +352,7 @@ export function scoreFiatDeposit(input: FiatScoreInput): {
     "partially_refunded",
     "refunded",
     "disputed",
+    "review",
     "paid_unreconciled",
   ].includes(input.status);
 
@@ -870,6 +871,62 @@ export function applyBlacklistedCheckoutEmail(
   };
 }
 
+/**
+ * Reconcile the post-authorization identity verdict with the canonical Fiat
+ * assessment shown in the webapp. A hard identity containment is not merely
+ * supporting evidence: it must dominate discounts from trusted funding,
+ * play-through, 3DS, or MaxMind so the same deposit cannot be displayed as
+ * `0 / good` while its withdrawal lock is being applied.
+ */
+export function applyFiatIdentityContainmentRisk(
+  scored: ReturnType<typeof scoreFiatDeposit>,
+  identity: Pick<
+    AuthorizedNetworkReuse,
+    "identityVerdict" | "identityReasonCodes"
+  > | undefined,
+): ReturnType<typeof scoreFiatDeposit> {
+  if (identity?.identityVerdict !== "contain") return scored;
+
+  const reasons = identity.identityReasonCodes.length > 0
+    ? identity.identityReasonCodes.join(", ")
+    : "high-confidence post-authorization identity evidence";
+  const signal: FiatSignal = {
+    key: "fiat_identity_containment",
+    label: "Fiat identity containment",
+    detail: `The authorized payment matched: ${reasons}.`,
+    points: 100,
+    tone: "bad",
+    category: "network",
+  };
+  return {
+    ...scored,
+    riskScore: 100,
+    verdict: "bad",
+    recommendation:
+      "Keep crypto and item withdrawals locked and complete an analyst review.",
+    summary:
+      "Critical: post-authorization identity checks require containment.",
+    signals: [
+      signal,
+      ...scored.signals.filter((entry) => entry.key !== signal.key),
+    ],
+    scoreBreakdown: {
+      ...scored.scoreBreakdown,
+      network: 100,
+    },
+    flowChecks: scored.flowChecks.map((check) =>
+      check.key === "network"
+        ? {
+            ...check,
+            status: "block" as const,
+            score: 100,
+            evidence: [signal.detail, ...check.evidence],
+          }
+        : check,
+    ),
+  };
+}
+
 async function loadBlacklistedCheckoutEmails(
   antifraud: Pool,
   intentIds: string[],
@@ -976,6 +1033,8 @@ type AuthorizedNetworkReuse = {
   checkoutIp: string | null;
   checkoutIpSharedUsers: number;
   checkoutDeviceSharedUsers: number;
+  identityVerdict: "clear" | "watch" | "review" | "contain" | null;
+  identityReasonCodes: string[];
 };
 
 type ObservationLoad<T> = {
@@ -1438,11 +1497,15 @@ async function loadAuthorizedNetworkReuse(
     checkout_ip: string | null;
     checkout_ip_shared_users: number;
     checkout_device_shared_users: number;
+    identity_verdict: "clear" | "watch" | "review" | "contain";
+    identity_reason_codes: string[];
   }>(
     `
       SELECT
         current.intent_id,
         host(current.checkout_ip) AS checkout_ip,
+        current.verdict AS identity_verdict,
+        current.reason_codes AS identity_reason_codes,
         CASE WHEN current.checkout_ip IS NULL THEN 0 ELSE (
           SELECT COUNT(DISTINCT peer.user_id)::int
           FROM fiat_deposit_identity_checks peer
@@ -1465,6 +1528,8 @@ async function loadAuthorizedNetworkReuse(
       checkoutIp: row.checkout_ip,
       checkoutIpSharedUsers: row.checkout_ip_shared_users ?? 0,
       checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
+      identityVerdict: row.identity_verdict ?? null,
+      identityReasonCodes: row.identity_reason_codes ?? [],
     }])),
     status: "complete",
   };
@@ -2029,9 +2094,13 @@ export class FiatRiskService {
         detection,
       });
       const blacklistedCheckoutEmail = blacklistedCheckoutEmails.get(intent.id);
-      const locallyScored = blacklistedCheckoutEmail
+      const emailScored = blacklistedCheckoutEmail
         ? applyBlacklistedCheckoutEmail(baseScore, blacklistedCheckoutEmail)
         : baseScore;
+      const locallyScored = applyFiatIdentityContainmentRisk(
+        emailScored,
+        authorizedNetworkReuse.values.get(intent.id),
+      );
       const scored = maxmind?.status === "success" && maxmind.riskScore !== null
         ? applyMaxMindFiatRisk(locallyScored, maxmind)
         : locallyScored;

@@ -352,6 +352,7 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
     },
   ];
   const updates: unknown[][] = [];
+  const pendingQueries: string[] = [];
   let pendingIndex = 0;
   const antifraud = {
     query: async (text: string, values: unknown[] = []) => {
@@ -359,6 +360,7 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
         text.includes("FROM fiat_problem_alert_deliveries AS delivery") &&
         text.includes("JOIN fiat_problem_alert_outbox AS alert")
       ) {
+        pendingQueries.push(text);
         const row = pending[pendingIndex];
         pendingIndex += 1;
         return { rows: row ? [row] : [] };
@@ -408,6 +410,14 @@ test("legacy high-risk destinations collapse into one routed event", async () =>
   }
 
   assert.equal(fetchUrls.length, 2);
+  assert.ok(
+    pendingQueries.every(
+      (query) =>
+        query.includes("alert.created_at <= now() - interval '60 seconds'")
+        && query.includes("assessment.verdict = 'bad'")
+        && query.includes("identity_check.verdict = 'contain'"),
+    ),
+  );
   assert.ok(
     fetchUrls.every((url) => url.endsWith("/api/antifraud/discord-events")),
   );
