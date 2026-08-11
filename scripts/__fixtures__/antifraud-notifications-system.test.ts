@@ -104,6 +104,9 @@ test("Fiat credit reviews own a dedicated deposits-channel action", () => {
   const migration = read(
     "drizzle/admin/migrations/20260809_fiat_credit_review_discord_event.sql",
   );
+  const mentions = read(
+    "drizzle/admin/migrations/20260812_deposits_support_mentions.sql",
+  );
 
   assert.match(alerts, /problemCode === "review"/);
   assert.match(alerts, /antifraud\.fiat_credit_review_required/);
@@ -111,6 +114,11 @@ test("Fiat credit reviews own a dedicated deposits-channel action", () => {
   assert.match(migration, /antifraud\.fiat_credit_review_required/);
   assert.match(migration, /1535849236447625266/);
   assert.match(migration, /1532207461077876766/);
+  assert.match(mentions, /1535849236447625266/);
+  assert.match(mentions, /1532207461077876766/);
+  assert.match(mentions, /antifraud\.fiat_credit_review_required/);
+  assert.match(mentions, /'support'/);
+  assert.match(mentions, /ON CONFLICT \(guild_id, channel_id, group_key\) DO NOTHING/);
 });
 
 test("audit stays manager-only and runtime config never renders secrets", () => {
