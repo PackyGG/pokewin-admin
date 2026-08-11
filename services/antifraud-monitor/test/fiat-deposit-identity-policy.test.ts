@@ -88,7 +88,7 @@ test("operator blocklist hits contain and name the right kind", () => {
   ]);
 });
 
-test("an active refunded-amount campaign contains the next matching payment", () => {
+test("an active refunded-amount campaign reviews without containment", () => {
   const outcome = evaluateFiatDepositIdentity({
     baseline: null,
     observation: observation({
@@ -96,10 +96,12 @@ test("an active refunded-amount campaign contains the next matching payment", ()
         "5 of 6 settled payments were refunded across 5 accounts",
     }),
   });
-  assert.equal(outcome.verdict, "contain");
-  assert.deepEqual(outcome.reasonCodes, [
+  assert.equal(outcome.verdict, "review");
+  assert.deepEqual(outcome.reasonCodes, []);
+  assert.deepEqual(outcome.reviewCodes, [
     "checkout_refunded_amount_cluster",
   ]);
+  assert.equal(outcome.containmentAction, null);
 });
 
 test("a known VPN IP only watches and never contains", () => {

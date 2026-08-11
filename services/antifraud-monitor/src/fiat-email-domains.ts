@@ -22,7 +22,7 @@ const REFUNDED_AMOUNT_CLUSTER_STREAM = "fiat_refunded_amount_clusters_v1";
 const BATCH_SIZE = 100;
 const CLUSTER_WINDOW_MINUTES = 30;
 const CLUSTER_MIN_MEMBERS = 3;
-const REFUND_CLUSTER_WINDOW_DAYS = 7;
+const REFUND_CLUSTER_WINDOW_HOURS = 48;
 const REFUND_CLUSTER_MIN_MEMBERS = 5;
 const REFUND_CLUSTER_MIN_ACCOUNTS = 3;
 const REFUND_CLUSTER_MIN_RATIO = 0.5;
@@ -784,8 +784,8 @@ export async function fetchRefundedAmountClusterCandidates(
             'completed', 'refunded', 'partially_refunded', 'disputed'
           )
           AND (peer.created_at ${UTC}) BETWEEN
-            n.occurred_at - interval '3 days 12 hours'
-            AND n.occurred_at + interval '3 days 12 hours'
+            n.occurred_at - interval '24 hours'
+            AND n.occurred_at + interval '24 hours'
       ) stats
       ORDER BY n.updated_at, n.deposit_intent_id
     `,
@@ -1265,7 +1265,7 @@ export class FiatEmailDomainGuard {
           + `settled payments (${ratioPercent}%) for `
           + `${candidate.requested_amount_cents} ${candidate.currency} cents `
           + `were refunded across ${cluster.accountCount} accounts inside a `
-          + `${REFUND_CLUSTER_WINDOW_DAYS}-day payment window`;
+          + `${REFUND_CLUSTER_WINDOW_HOURS}-hour payment window`;
         const windowStart = new Date(Math.min(
           ...cluster.members.map((member) => member.occurred_at.getTime()),
         ));
@@ -1281,17 +1281,11 @@ export class FiatEmailDomainGuard {
               active_until
             ) VALUES (
               $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,
-              now() + interval '7 days'
+              $4::timestamptz + interval '48 hours'
             )
             ON CONFLICT (currency, requested_amount_cents) DO UPDATE SET
-              window_start = LEAST(
-                fiat_refunded_amount_clusters.window_start,
-                EXCLUDED.window_start
-              ),
-              window_end = GREATEST(
-                fiat_refunded_amount_clusters.window_end,
-                EXCLUDED.window_end
-              ),
+              window_start = EXCLUDED.window_start,
+              window_end = EXCLUDED.window_end,
               total_payment_count = EXCLUDED.total_payment_count,
               refunded_payment_count = EXCLUDED.refunded_payment_count,
               account_count = EXCLUDED.account_count,
@@ -1299,7 +1293,7 @@ export class FiatEmailDomainGuard {
               refund_ratio = EXCLUDED.refund_ratio,
               reason = EXCLUDED.reason,
               source_event_ids = EXCLUDED.source_event_ids,
-              active_until = now() + interval '7 days',
+              active_until = EXCLUDED.active_until,
               updated_at = now()
           `,
           [
@@ -1381,7 +1375,7 @@ export class FiatEmailDomainGuard {
               cluster_payment_count: cluster.paymentCount,
               cluster_total_payment_count: candidate.total_payment_count,
               cluster_refund_ratio: cluster.refundRatio,
-              cluster_window_days: REFUND_CLUSTER_WINDOW_DAYS,
+              cluster_window_hours: REFUND_CLUSTER_WINDOW_HOURS,
               cluster_source_event_ids: sourceIds,
             },
             candidate.updated_at,

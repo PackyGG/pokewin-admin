@@ -285,13 +285,39 @@ test("identity containment dominates trust discounts in the Fiat workspace", () 
 
   const contained = applyFiatIdentityContainmentRisk(base, {
     identityVerdict: "contain",
-    identityReasonCodes: ["checkout_refunded_amount_cluster"],
+    identityReasonCodes: ["checkout_ip_blocklisted"],
+    identityReviewCodes: [],
   });
   assert.equal(contained.riskScore, 100);
   assert.equal(contained.verdict, "bad");
   assert.equal(contained.scoreBreakdown.network, 100);
   assert.equal(contained.signals[0]?.key, "fiat_identity_containment");
   assert.match(contained.summary, /post-authorization identity/i);
+});
+
+test("a refunded-amount cluster is review-only, including legacy containment rows", () => {
+  const base = scoreFiatDeposit(safeInput);
+  const reviewed = applyFiatIdentityContainmentRisk(base, {
+    identityVerdict: "review",
+    identityReasonCodes: [],
+    identityReviewCodes: ["checkout_refunded_amount_cluster"],
+  });
+  assert.equal(reviewed.riskScore, 50);
+  assert.equal(reviewed.verdict, "review");
+  assert.equal(reviewed.scoreBreakdown.network, 50);
+  assert.equal(
+    reviewed.signals[0]?.key,
+    "fiat_refunded_amount_cluster_review",
+  );
+  assert.match(reviewed.summary, /last 48 hours/i);
+
+  const legacy = applyFiatIdentityContainmentRisk(base, {
+    identityVerdict: "contain",
+    identityReasonCodes: ["checkout_refunded_amount_cluster"],
+    identityReviewCodes: [],
+  });
+  assert.equal(legacy.riskScore, 50);
+  assert.equal(legacy.verdict, "review");
 });
 
 test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat", async () => {

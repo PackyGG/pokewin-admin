@@ -872,23 +872,79 @@ export function applyBlacklistedCheckoutEmail(
 }
 
 /**
- * Reconcile the post-authorization identity verdict with the canonical Fiat
- * assessment shown in the webapp. A hard identity containment is not merely
- * supporting evidence: it must dominate discounts from trusted funding,
- * play-through, 3DS, or MaxMind so the same deposit cannot be displayed as
- * `0 / good` while its withdrawal lock is being applied.
+ * Reconcile post-authorization identity policy with the canonical Fiat
+ * assessment shown in the webapp. Hard containment dominates trust discounts.
+ * A refunded-amount cluster is deliberately different: matching a popular
+ * amount is useful review evidence, but is never sufficient by itself to lock
+ * an account or label the payment as proven fraud.
  */
 export function applyFiatIdentityContainmentRisk(
   scored: ReturnType<typeof scoreFiatDeposit>,
   identity: Pick<
     AuthorizedNetworkReuse,
-    "identityVerdict" | "identityReasonCodes"
+    "identityVerdict" | "identityReasonCodes" | "identityReviewCodes"
   > | undefined,
 ): ReturnType<typeof scoreFiatDeposit> {
-  if (identity?.identityVerdict !== "contain") return scored;
+  if (!identity) return scored;
 
-  const reasons = identity.identityReasonCodes.length > 0
-    ? identity.identityReasonCodes.join(", ")
+  const hardReasons = identity.identityReasonCodes.filter(
+    (reason) => reason !== "checkout_refunded_amount_cluster",
+  );
+  const clusterReview =
+    identity.identityReviewCodes.includes("checkout_refunded_amount_cluster")
+    || (
+      identity.identityVerdict === "contain"
+      && identity.identityReasonCodes.length > 0
+      && hardReasons.length === 0
+      && identity.identityReasonCodes.every(
+        (reason) => reason === "checkout_refunded_amount_cluster",
+      )
+    );
+
+  if (identity.identityVerdict !== "contain" || hardReasons.length === 0) {
+    if (!clusterReview) return scored;
+    const reviewScore = Math.max(scored.riskScore, 50);
+    const signal: FiatSignal = {
+      key: "fiat_refunded_amount_cluster_review",
+      label: "Recent refunded-amount pattern",
+      detail:
+        "The payment amount matches a refund pattern from the last 48 hours; "
+        + "this requires review but does not automatically lock the account.",
+      points: 50,
+      tone: "warning",
+      category: "network",
+    };
+    return {
+      ...scored,
+      riskScore: reviewScore,
+      verdict: reviewScore >= 60 ? "bad" : "review",
+      recommendation: reviewScore >= 60
+        ? scored.recommendation
+        : "Review the recent refunded-amount pattern; no automatic account lock is required.",
+      summary: reviewScore >= 60 ? scored.summary : signal.detail,
+      signals: [
+        signal,
+        ...scored.signals.filter((entry) => entry.key !== signal.key),
+      ],
+      scoreBreakdown: {
+        ...scored.scoreBreakdown,
+        network: Math.max(scored.scoreBreakdown.network, 50),
+      },
+      flowChecks: scored.flowChecks.map((check) =>
+        check.key === "network"
+          ? {
+              ...check,
+              status: "review" as const,
+              score: Math.max(check.score, 50),
+              evidence: [signal.detail, ...check.evidence],
+            }
+          : check,
+      ),
+    };
+  }
+
+  const reasons = hardReasons.length > 0
+    ? hardReasons.join(", ")
     : "high-confidence post-authorization identity evidence";
   const signal: FiatSignal = {
     key: "fiat_identity_containment",
@@ -1035,6 +1091,7 @@ type AuthorizedNetworkReuse = {
   checkoutDeviceSharedUsers: number;
   identityVerdict: "clear" | "watch" | "review" | "contain" | null;
   identityReasonCodes: string[];
+  identityReviewCodes: string[];
 };
 
 type ObservationLoad<T> = {
@@ -1499,6 +1556,7 @@ async function loadAuthorizedNetworkReuse(
     checkout_device_shared_users: number;
     identity_verdict: "clear" | "watch" | "review" | "contain";
     identity_reason_codes: string[];
+    identity_review_codes: string[];
   }>(
     `
       SELECT
@@ -1506,6 +1564,17 @@ async function loadAuthorizedNetworkReuse(
         host(current.checkout_ip) AS checkout_ip,
         current.verdict AS identity_verdict,
         current.reason_codes AS identity_reason_codes,
+        ARRAY(
+          SELECT signal ->> 'key'
+          FROM jsonb_array_elements(
+            CASE
+              WHEN jsonb_typeof(current.evidence -> 'signals') = 'array'
+                THEN current.evidence -> 'signals'
+              ELSE '[]'::jsonb
+            END
+          ) signal
+          WHERE signal ->> 'action' = 'review'
+        ) AS identity_review_codes,
         CASE WHEN current.checkout_ip IS NULL THEN 0 ELSE (
           SELECT COUNT(DISTINCT peer.user_id)::int
           FROM fiat_deposit_identity_checks peer
@@ -1530,6 +1599,7 @@ async function loadAuthorizedNetworkReuse(
       checkoutDeviceSharedUsers: row.checkout_device_shared_users ?? 0,
       identityVerdict: row.identity_verdict ?? null,
       identityReasonCodes: row.identity_reason_codes ?? [],
+      identityReviewCodes: row.identity_review_codes ?? [],
     }])),
     status: "complete",
   };

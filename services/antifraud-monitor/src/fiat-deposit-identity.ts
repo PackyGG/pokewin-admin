@@ -492,6 +492,7 @@ export class FiatDepositIdentityChecks {
         WHERE currency = upper($1)
           AND requested_amount_cents = $2
           AND active_until > now()
+          AND window_end > now() - interval '48 hours'
         LIMIT 1
       `,
       [intent.currency, intent.requested_amount_cents],

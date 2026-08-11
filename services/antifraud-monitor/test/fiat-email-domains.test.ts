@@ -332,7 +332,7 @@ test("refunded amount polling follows refund updates and measures all settled pa
   assert.match(calls[0]?.sql ?? "", /fdi\.status::text IN \('refunded', 'partially_refunded'\)/);
   assert.match(calls[0]?.sql ?? "", /\(\(fdi\.updated_at AT TIME ZONE 'UTC'\), fdi\.id::text\)\s*>/);
   assert.match(calls[0]?.sql ?? "", /COUNT\(\*\)::int AS total_payment_count/);
-  assert.match(calls[0]?.sql ?? "", /interval '3 days 12 hours'/);
+  assert.match(calls[0]?.sql ?? "", /interval '24 hours'/);
   assert.deepEqual(calls[0]?.values, [occurredAt, "intent-1", 50]);
 });
 

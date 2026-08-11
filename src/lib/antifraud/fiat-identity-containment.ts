@@ -14,7 +14,6 @@ export const FIAT_IDENTITY_CONTAINMENT_REASONS = new Set([
   "checkout_email_domain_blacklisted",
   "checkout_ip_blocklisted",
   "checkout_fingerprint_blocklisted",
-  "checkout_refunded_amount_cluster",
   "checkout_card_changed_recent",
   "checkout_ip_and_device_changed",
 ]);
