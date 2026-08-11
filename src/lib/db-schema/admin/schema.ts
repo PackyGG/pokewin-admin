@@ -2639,6 +2639,7 @@ export const creator_deal_approval_requests = pgTable("creator_deal_approval_req
 	category_id: text().notNull(),
 	chat_channel_id: text().notNull(),
 	deal_payload: jsonb(),
+	multiplier_payload: jsonb(),
 	reward_payload: jsonb(),
 	agreement_document_id: uuid().notNull(),
 	agreement_version: integer().notNull(),
@@ -2678,7 +2679,7 @@ export const creator_deal_approval_requests = pgTable("creator_deal_approval_req
 }, (table) => [
 	index("creator_deal_approval_creator_history_idx").using("btree", table.creator_user_id.asc().nullsLast().op("uuid_ops"), table.created_at.desc().nullsFirst().op("uuid_ops"), table.id.desc().nullsFirst().op("text_ops")),
 	index("creator_deal_approval_delivery_claim_idx").using("btree", table.guild_id.asc().nullsLast().op("timestamptz_ops"), table.delivery_available_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("text_ops")).where(sql`(status = 'pending_delivery'::text)`),
-	uniqueIndex("creator_deal_approval_one_unresolved_creator").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops"), table.request_kind.asc().nullsLast().op("text_ops")).where(sql`(status = ANY (ARRAY['pending_delivery'::text, 'awaiting_continue'::text, 'awaiting_decision'::text, 'approved_provisioning'::text, 'provisioning_failed'::text, 'delivery_failed'::text]))`),
+	uniqueIndex("creator_deal_approval_one_unresolved_creator").using("btree", table.creator_user_id.asc().nullsLast().op("text_ops"), sql`(CASE WHEN request_kind = ANY (ARRAY['deal'::text, 'multiplier_deal'::text]) THEN 'deal'::text ELSE request_kind END)`).where(sql`(status = ANY (ARRAY['pending_delivery'::text, 'awaiting_continue'::text, 'awaiting_decision'::text, 'approved_provisioning'::text, 'provisioning_failed'::text, 'delivery_failed'::text]))`),
 	foreignKey({
 			columns: [table.agreement_document_id],
 			foreignColumns: [creator_agreement_documents.id],
@@ -2698,10 +2699,10 @@ export const creator_deal_approval_requests = pgTable("creator_deal_approval_req
 	check("creator_deal_approval_creator_user_check", sql`((length(creator_user_id) >= 8) AND (length(creator_user_id) <= 64)) AND (creator_user_id ~ '^[A-Za-z0-9_-]+$'::text)`),
 	check("creator_deal_approval_delivery_attempt_check", sql`(delivery_attempt_count >= 0) AND ((delivery_max_attempts >= 1) AND (delivery_max_attempts <= 25))`),
 	check("creator_deal_approval_discord_ids_check", sql`(creator_discord_user_id ~ '^[0-9]{17,20}$'::text) AND (guild_id ~ '^[0-9]{17,20}$'::text) AND (category_id ~ '^[0-9]{17,20}$'::text) AND (chat_channel_id ~ '^[0-9]{17,20}$'::text)`),
-	check("creator_deal_approval_kind_payload_check", sql`((request_kind = 'deal'::text) AND (deal_payload IS NOT NULL)) OR ((request_kind = 'leaderboard_only'::text) AND (leaderboard_payload IS NOT NULL) AND (deal_payload IS NULL) AND (reward_payload IS NULL)) OR ((request_kind = 'rewards_only'::text) AND (reward_payload IS NOT NULL) AND (deal_payload IS NULL) AND (leaderboard_payload IS NULL))`),
-	check("creator_deal_approval_payload_check", sql`((deal_payload IS NULL) OR (jsonb_typeof(deal_payload) = 'object'::text)) AND ((reward_payload IS NULL) OR (jsonb_typeof(reward_payload) = 'object'::text)) AND ((leaderboard_payload IS NULL) OR (jsonb_typeof(leaderboard_payload) = 'object'::text)) AND (jsonb_typeof(agreement_lines) = 'array'::text) AND (jsonb_array_length(agreement_lines) > 0)`),
+	check("creator_deal_approval_kind_payload_check", sql`((request_kind = 'deal'::text) AND (deal_payload IS NOT NULL) AND (multiplier_payload IS NULL)) OR ((request_kind = 'multiplier_deal'::text) AND (multiplier_payload IS NOT NULL) AND (deal_payload IS NULL) AND (reward_payload IS NULL) AND (leaderboard_payload IS NULL)) OR ((request_kind = 'leaderboard_only'::text) AND (leaderboard_payload IS NOT NULL) AND (deal_payload IS NULL) AND (multiplier_payload IS NULL) AND (reward_payload IS NULL)) OR ((request_kind = 'rewards_only'::text) AND (reward_payload IS NOT NULL) AND (deal_payload IS NULL) AND (multiplier_payload IS NULL) AND (leaderboard_payload IS NULL))`),
+	check("creator_deal_approval_payload_check", sql`((deal_payload IS NULL) OR (jsonb_typeof(deal_payload) = 'object'::text)) AND ((multiplier_payload IS NULL) OR (jsonb_typeof(multiplier_payload) = 'object'::text)) AND ((reward_payload IS NULL) OR (jsonb_typeof(reward_payload) = 'object'::text)) AND ((leaderboard_payload IS NULL) OR (jsonb_typeof(leaderboard_payload) = 'object'::text)) AND (jsonb_typeof(agreement_lines) = 'array'::text) AND (jsonb_array_length(agreement_lines) > 0)`),
 	check("creator_deal_approval_provision_attempt_check", sql`provisioning_attempt_count >= 0`),
-	check("creator_deal_approval_request_kind_check", sql`request_kind = ANY (ARRAY['deal'::text, 'leaderboard_only'::text, 'rewards_only'::text])`),
+	check("creator_deal_approval_request_kind_check", sql`request_kind = ANY (ARRAY['deal'::text, 'multiplier_deal'::text, 'leaderboard_only'::text, 'rewards_only'::text])`),
 	check("creator_deal_approval_status_check", sql`status = ANY (ARRAY['pending_delivery'::text, 'awaiting_continue'::text, 'awaiting_decision'::text, 'approved_provisioning'::text, 'provisioning_failed'::text, 'completed'::text, 'declined'::text, 'delivery_failed'::text, 'cancelled'::text, 'expired'::text])`),
 	check("creator_deal_approval_window_check", sql`window_end_at > window_start_at`),
 ]);

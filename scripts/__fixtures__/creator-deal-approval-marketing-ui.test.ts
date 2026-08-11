@@ -5,12 +5,15 @@ import test from "node:test";
 const read = (path: string) => readFileSync(path, "utf8");
 const detail = "src/app/(creator-hub)/creator-hub/creators/[id]";
 
-test("new creator deal is a three-step approval request, never an immediate create", () => {
+test("new creator deal chooses fill or multiplier and never creates before approval", () => {
   const dialog = read(`${detail}/_components/new-deal-dialog.tsx`);
   const action = read(`${detail}/_components/deal-approval-actions.ts`);
   const fields = read(`${detail}/_components/deal-form-shared.tsx`);
 
-  assert.match(dialog, /"deal" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
+  assert.match(dialog, /"type" \| "deal" \| "multiplier" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
+  assert.match(dialog, /Fill deal/);
+  assert.match(dialog, /Multiplier deal/);
+  assert.match(dialog, /multiplierPayload/);
   assert.match(dialog, /Skip rewards/);
   assert.match(dialog, /Skip leaderboard/);
   assert.match(dialog, /leaderboardPayload/);

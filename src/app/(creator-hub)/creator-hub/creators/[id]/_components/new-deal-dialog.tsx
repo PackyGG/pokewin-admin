@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, useTransition } from "react";
-import { CheckCircle2, HandCoins, Plus } from "lucide-react";
+import { CheckCircle2, HandCoins, Plus, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -23,8 +23,15 @@ import {
   loadCreatorNameForApproval,
   submitCreatorDealApproval,
   type CreatorLeaderboardApprovalPayload,
+  type CreatorMultiplierApprovalPayload,
   type CreatorRewardApprovalPayload,
 } from "./deal-approval-actions";
+import {
+  buildMultiplierDealDraft,
+  MultiplierDealApprovalFields,
+  parseMultiplierDealDraft,
+  type MultiplierDealDraft,
+} from "./multiplier-deal-approval-fields";
 import {
   buildRewardDraft,
   CreatorRewardDraftFields,
@@ -46,14 +53,18 @@ import {
   type DealPayload,
 } from "./deal-form-shared";
 
-type Step = "deal" | "rewards" | "leaderboard" | "confirm" | "queued";
+type Step = "type" | "deal" | "multiplier" | "rewards" | "leaderboard" | "confirm" | "queued";
+type DealType = "fill" | "multiplier";
 
 export function NewDealDialog({ userId }: { userId: string }) {
   const initialDeal = useMemo(() => buildCreateDefaults(), []);
   const [open, setOpen] = useState(false);
-  const [step, setStep] = useState<Step>("deal");
+  const [step, setStep] = useState<Step>("type");
+  const [dealType, setDealType] = useState<DealType | null>(null);
   const [deal, setDeal] = useState<DealFormState>(initialDeal);
   const [dealPayload, setDealPayload] = useState<DealPayload | null>(null);
+  const [multiplierDraft, setMultiplierDraft] = useState<MultiplierDealDraft>(() => buildMultiplierDealDraft());
+  const [multiplierPayload, setMultiplierPayload] = useState<CreatorMultiplierApprovalPayload | null>(null);
   const [availableCodes, setAvailableCodes] = useState<string[]>([]);
   const [rewardDraft, setRewardDraft] = useState<CreatorRewardDraft>(() =>
     buildRewardDraft([]),
@@ -94,9 +105,12 @@ export function NewDealDialog({ userId }: { userId: string }) {
 
   function reset() {
     const defaults = buildCreateDefaults();
-    setStep("deal");
+    setStep("type");
+    setDealType(null);
     setDeal(defaults);
     setDealPayload(null);
+    setMultiplierDraft(buildMultiplierDealDraft());
+    setMultiplierPayload(null);
     setAvailableCodes([]);
     setRewardDraft(buildRewardDraft([]));
     setRewardPayload(null);
@@ -133,6 +147,16 @@ export function NewDealDialog({ userId }: { userId: string }) {
     setStep("rewards");
   }
 
+  function continueFromMultiplier() {
+    const parsed = parseMultiplierDealDraft(multiplierDraft);
+    if ("error" in parsed) {
+      toast.error(parsed.error);
+      return;
+    }
+    setMultiplierPayload(parsed.payload);
+    setStep("confirm");
+  }
+
   function continueFromRewards() {
     const parsed = parseRewardDraft(rewardDraft);
     if ("error" in parsed) {
@@ -161,13 +185,15 @@ export function NewDealDialog({ userId }: { userId: string }) {
   }
 
   function submit() {
-    if (!dealPayload) return;
+    if (dealType === "fill" && !dealPayload) return;
+    if (dealType === "multiplier" && !multiplierPayload) return;
     startTransition(async () => {
       const result = await submitCreatorDealApproval({
         creatorUserId: userId,
-        dealPayload,
-        rewardPayload,
-        leaderboardPayload,
+        dealPayload: dealType === "fill" ? dealPayload : null,
+        multiplierPayload: dealType === "multiplier" ? multiplierPayload : null,
+        rewardPayload: dealType === "fill" ? rewardPayload : null,
+        leaderboardPayload: dealType === "fill" ? leaderboardPayload : null,
       });
       if (!result.success) {
         toast.error(result.error);
@@ -192,15 +218,20 @@ export function NewDealDialog({ userId }: { userId: string }) {
             <span className="flex size-7 items-center justify-center rounded-lg bg-emerald-500/15 text-emerald-600 ring-1 ring-inset ring-emerald-500/30 dark:text-emerald-400">
               <HandCoins className="size-4" />
             </span>
+            {step === "type" && "Choose deal type"}
             {step === "deal" && "New creator deal"}
+            {step === "multiplier" && "New multiplier deal"}
             {step === "rewards" && "Creator reward program"}
             {step === "leaderboard" && "Affiliate leaderboard"}
             {step === "confirm" && "Confirm approval request"}
             {step === "queued" && "Sent for creator approval"}
           </DialogTitle>
           <DialogDescription>
+            {step === "type" && "Send either a fill deal or a multiplier deal through the creator's Discord approval flow."}
             {step === "deal" &&
               "Select the start date and deal length."}
+            {step === "multiplier" &&
+              "Set the deposit, multiplier, wagering, and activity requirements."}
             {step === "rewards" &&
               "Optional. Add rewards now, or skip this step and submit only the deal."}
             {step === "leaderboard" &&
@@ -212,6 +243,21 @@ export function NewDealDialog({ userId }: { userId: string }) {
           </DialogDescription>
         </DialogHeader>
 
+        {step === "type" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button type="button" className="rounded-xl border p-5 text-left transition-colors hover:border-emerald-500 hover:bg-emerald-500/5" onClick={() => { setDealType("fill"); setStep("deal"); }}>
+              <HandCoins className="mb-3 size-5 text-emerald-600" />
+              <div className="font-semibold">Fill deal</div>
+              <p className="mt-1 text-sm text-muted-foreground">Scheduled fills, withdrawal conversion, tips, and sponsorship limits. Can bundle rewards and a leaderboard.</p>
+            </button>
+            <button type="button" className="rounded-xl border p-5 text-left transition-colors hover:border-violet-500 hover:bg-violet-500/5" onClick={() => { setDealType("multiplier"); setStep("multiplier"); }}>
+              <Repeat2 className="mb-3 size-5 text-violet-600" />
+              <div className="font-semibold">Multiplier deal</div>
+              <p className="mt-1 text-sm text-muted-foreground">Deposit-based balance multiplier with wagering, payout, and stream activity requirements.</p>
+            </button>
+          </div>
+        )}
+
         {step === "deal" && (
           <DealFormFields
             form={deal}
@@ -220,6 +266,10 @@ export function NewDealDialog({ userId }: { userId: string }) {
             idPrefix="new_deal"
             mode="create"
           />
+        )}
+
+        {step === "multiplier" && (
+          <MultiplierDealApprovalFields draft={multiplierDraft} onChange={setMultiplierDraft} disabled={pending} />
         )}
 
         {step === "rewards" && (
@@ -239,7 +289,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
           />
         )}
 
-        {step === "confirm" && dealPayload && (
+        {step === "confirm" && dealType === "fill" && dealPayload && (
           <div className="space-y-4">
             <ReviewSection title="Deal">
               <ReviewRow label="Starts" value={formatDate(dealPayload.week_start_utc, "UTC")} />
@@ -286,6 +336,23 @@ export function NewDealDialog({ userId }: { userId: string }) {
           </div>
         )}
 
+        {step === "confirm" && dealType === "multiplier" && multiplierPayload && (
+          <div className="space-y-4">
+            <ReviewSection title="Multiplier deal">
+              <ReviewRow label="Approval expires" value={formatDate(multiplierPayload.approval_expires_at, "UTC")} />
+              <ReviewRow label="Minimum deposit" value={formatCurrency(multiplierPayload.required_deposit_usd)} />
+              <ReviewRow label="Multiplier" value={`${multiplierPayload.multiplier_bps / 10_000}x`} />
+              <ReviewRow label="Withdrawable" value={`${multiplierPayload.withdrawable_bps / 100}%`} />
+              <ReviewRow label="Wager requirement" value={`${multiplierPayload.wager_requirement_bps / 100}%`} />
+              <ReviewRow label="Max total wager" value={multiplierPayload.max_total_wager_usd == null ? "No cap" : formatCurrency(multiplierPayload.max_total_wager_usd)} />
+              <ReviewRow label="Max payout" value={multiplierPayload.max_payout_usd == null ? "No cap" : formatCurrency(multiplierPayload.max_payout_usd)} />
+              <ReviewRow label="Activity floor" value={`${multiplierPayload.min_session_duration_seconds / 60} min · ${multiplierPayload.min_bet_count} bets · ${multiplierPayload.min_wager_to_funding_ratio_bps / 100}% wager/funding`} />
+              <ReviewRow label="Kick VOD" value={multiplierPayload.kick_vod_required ? "Required" : "Not required"} />
+              <ReviewRow label="Auto-renew" value={multiplierPayload.auto_renew ? "Enabled" : "Disabled"} />
+            </ReviewSection>
+          </div>
+        )}
+
         {step === "queued" && queued && (
           <div className="space-y-3 rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-4">
             <div className="flex items-center gap-2 font-medium text-emerald-700 dark:text-emerald-300">
@@ -294,7 +361,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
             </div>
             <p className="text-sm text-muted-foreground">
               {queued.deliveryQueued
-                ? "Discord delivery is queued. The deal and rewards remain inactive until the creator approves."
+                ? "Discord delivery is queued. Nothing will be created or activated until the creator approves."
                 : "The request is saved, but Discord delivery was not queued. Its delivery state is retained for retry."}
             </p>
             <p className="font-mono text-xs text-muted-foreground">
@@ -304,10 +371,19 @@ export function NewDealDialog({ userId }: { userId: string }) {
         )}
 
         <DialogFooter>
+          {step === "type" && (
+            <DialogClose render={<Button variant="outline" disabled={pending} />}>Cancel</DialogClose>
+          )}
           {step === "deal" && (
             <>
-              <DialogClose render={<Button variant="outline" disabled={pending} />}>Cancel</DialogClose>
+              <Button type="button" variant="outline" onClick={() => setStep("type")} disabled={pending}>Back</Button>
               <Button type="button" onClick={continueFromDeal} disabled={pending}>Next</Button>
+            </>
+          )}
+          {step === "multiplier" && (
+            <>
+              <Button type="button" variant="outline" onClick={() => setStep("type")} disabled={pending}>Back</Button>
+              <Button type="button" onClick={continueFromMultiplier} disabled={pending}>Review</Button>
             </>
           )}
           {step === "rewards" && (
@@ -326,7 +402,7 @@ export function NewDealDialog({ userId }: { userId: string }) {
           )}
           {step === "confirm" && (
             <>
-              <Button type="button" variant="outline" onClick={() => setStep("leaderboard")} disabled={pending}>Back</Button>
+              <Button type="button" variant="outline" onClick={() => setStep(dealType === "multiplier" ? "multiplier" : "leaderboard")} disabled={pending}>Back</Button>
               <Button type="button" onClick={submit} disabled={pending}>
                 {pending && <Spinner size={14} />}
                 {pending ? "Queueing…" : "Send to Discord"}

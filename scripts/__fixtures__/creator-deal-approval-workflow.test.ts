@@ -5,9 +5,10 @@ import test from "node:test";
 const read = (path: string) => readFile(path, "utf8");
 
 test("creator deal approval is durable, identity-bound, and recoverable", async () => {
-  const [migration, leaderboardMigration, workflow, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
+  const [migration, leaderboardMigration, multiplierMigration, workflow, terms, claim, ack, respond, continueRoute, decisionRoute, endpoints] = await Promise.all([
     read("drizzle/admin/migrations/20260806_creator_deal_approval_workflow.sql"),
     read("drizzle/admin/migrations/20260806_creator_deal_approval_leaderboard.sql"),
+    read("drizzle/admin/migrations/20260811_creator_multiplier_deal_approval.sql"),
     read("src/lib/creator-deal-approvals.ts"),
     read("src/lib/creator-agreement-terms.ts"),
     read("src/app/api/v1/discord/creator-deal-approvals/jobs/claim/route.ts"),
@@ -99,17 +100,23 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(leaderboardMigration, /deal_payload ->> 'week_start_utc'/);
   assert.match(leaderboardMigration, /\(creator_user_id, request_kind\)/);
   assert.match(workflow, /const LeaderboardPayloadSchema/);
-  assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "leaderboard_only" \| "rewards_only"/);
+  assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "multiplier_deal" \| "leaderboard_only" \| "rewards_only"/);
   assert.match(workflow, /async function ensureLeaderboard/);
   assert.match(workflow, /affiliateLeaderboardsApi\.create/);
   assert.match(workflow, /if \(request\.leaderboard_id\) return request\.leaderboard_id/);
   assert.match(workflow, /codes: await loadAllCreatorCodes\(creatorUserId\)/);
   assert.match(workflow, /startsAt: windowStartIso/);
-  assert.match(workflow, /WHEN request_kind = 'deal' THEN 'awaiting_continue' ELSE 'awaiting_decision' END/);
-  assert.match(workflow, /kind === "leaderboard_only" \? null : await ensureRewardProgram/);
-  assert.match(workflow, /kind === "rewards_only" \? null : await ensureLeaderboard/);
+  assert.match(workflow, /request_kind IN \('deal', 'multiplier_deal'\)/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "rewards_only" \? await ensureRewardProgram/);
+  assert.match(workflow, /kind === "deal" \|\| kind === "leaderboard_only" \? await ensureLeaderboard/);
   assert.match(workflow, /new Date\(request\.window_end_at\)\.getTime\(\) <= Date\.now\(\)/);
-  assert.match(workflow, /transition\.request_kind !== "deal"/);
+  assert.match(workflow, /transition\.request_kind !== "deal" && transition\.request_kind !== "multiplier_deal"/);
+  assert.match(multiplierMigration, /multiplier_payload JSONB/);
+  assert.match(multiplierMigration, /request_kind IN \('deal', 'multiplier_deal'\)/);
+  assert.match(multiplierMigration, /creator_deal_approval_one_unresolved_creator/);
+  assert.match(workflow, /async function ensureBackendMultiplierDeal/);
+  assert.match(workflow, /multiplierDealsApi\.create/);
+  assert.match(workflow, /terms_version: marker/);
   // Never re-derive the deal window from a payload that may not exist.
   assert.doesNotMatch(workflow, /DealPayloadSchema\.parse\(request\.deal_payload\)\.week_end_utc/);
 

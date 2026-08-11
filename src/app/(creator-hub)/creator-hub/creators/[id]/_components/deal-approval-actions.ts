@@ -37,6 +37,21 @@ export type CreatorLeaderboardApprovalPayload = {
   endsAt: string;
 };
 
+export type CreatorMultiplierApprovalPayload = {
+  approval_expires_at: string;
+  required_deposit_usd: number;
+  multiplier_bps: number;
+  withdrawable_bps: number;
+  wager_requirement_bps: number;
+  max_total_wager_usd: number | null;
+  max_payout_usd: number | null;
+  min_session_duration_seconds: number;
+  min_bet_count: number;
+  min_wager_to_funding_ratio_bps: number;
+  kick_vod_required: boolean;
+  auto_renew: boolean;
+};
+
 export async function loadCreatorCodesForApproval(
   creatorUserId: string,
 ): Promise<string[]> {
@@ -65,13 +80,14 @@ export async function loadCreatorNameForApproval(
 
 /**
  * Queue a creator approval request for Discord. The kind is inferred
- * server-side from which payloads are present: a deal (optionally bundling a
- * reward program and/or a leaderboard), or exactly one standalone leaderboard
- * or reward program — the standalone kinds skip the terms step entirely.
+ * server-side from which payloads are present: a fill deal (optionally bundling
+ * rewards/leaderboard), a multiplier deal, or one standalone add-on. Both deal
+ * kinds require terms; standalone add-ons skip that step.
  */
 export async function submitCreatorDealApproval(input: {
   creatorUserId: string;
   dealPayload: DealPayload | null;
+  multiplierPayload?: CreatorMultiplierApprovalPayload | null;
   rewardPayload: CreatorRewardApprovalPayload | null;
   leaderboardPayload?: CreatorLeaderboardApprovalPayload | null;
 }): Promise<
@@ -80,7 +96,7 @@ export async function submitCreatorDealApproval(input: {
       requestId: string;
       status: string;
       deliveryQueued: boolean;
-      kind: "deal" | "leaderboard_only" | "rewards_only";
+      kind: "deal" | "multiplier_deal" | "leaderboard_only" | "rewards_only";
     }
   | { success: false; error: string }
 > {
