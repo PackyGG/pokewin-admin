@@ -312,7 +312,14 @@ export async function getRoundAdjustments(
 export type ChatRaffleEntryView = {
   userId: string;
   username: string | null;
+  discordUserId: string | null;
   messageCount: number;
+  discordXp: number | null;
+  siteChatXp: number | null;
+  discordMessageCount: number | null;
+  siteChatMessageCount: number | null;
+  communityTotalXp: number | null;
+  communityLevel: number | null;
   basePoints: number;
   adjustmentPoints: number;
   tickets: number;
@@ -333,7 +340,14 @@ export async function getRoundEntries(
   return rows.map((r) => ({
     userId: r.user_id,
     username: r.username,
+    discordUserId: r.discord_user_id,
     messageCount: r.message_count,
+    discordXp: r.discord_xp,
+    siteChatXp: r.site_chat_xp,
+    discordMessageCount: r.discord_message_count,
+    siteChatMessageCount: r.site_chat_message_count,
+    communityTotalXp: r.community_total_xp,
+    communityLevel: r.community_level,
     basePoints: r.base_points,
     adjustmentPoints: r.adjustment_points,
     tickets: r.tickets,

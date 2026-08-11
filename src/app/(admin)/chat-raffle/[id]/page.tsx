@@ -23,9 +23,9 @@ import {
 import {
   CHAT_RAFFLE_PHASE_COLOR,
   CHAT_RAFFLE_PHASE_LABEL,
-  describeScoring,
   positionColor,
 } from "@/lib/chat-raffle/config";
+import { communityRankForLevel } from "@/lib/discord-community-ranks";
 import {
   getChatRaffleRound,
   getRoundAdjustments,
@@ -138,9 +138,9 @@ async function RoundDetail({ id }: { id: string }) {
 
       <div className="rounded-2xl border bg-card p-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-semibold">Scoring used</span>
+          <span className="text-sm font-semibold">Combined Community XP</span>
           <span className="text-xs text-muted-foreground">
-            {describeScoring(round.scoring)}
+            Discord + linked on-site chat · 1 XP = 1 ticket
           </span>
         </div>
         {round.drawSeed && (
@@ -245,9 +245,26 @@ async function RoundDetail({ id }: { id: string }) {
                 >
                   {entry.username ?? entry.userId.slice(0, 8)}
                 </Link>
-                <span className="shrink-0 text-xs text-muted-foreground">
-                  {formatNumber(entry.messageCount)} msgs
-                </span>
+                {entry.communityLevel !== null ? (
+                  <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[10px]">
+                    Lv {entry.communityLevel} · {communityRankForLevel(entry.communityLevel).name}
+                  </Badge>
+                ) : (
+                  <Badge variant="outline" className="h-5 shrink-0 px-1.5 text-[10px] text-muted-foreground">
+                    Legacy scoring
+                  </Badge>
+                )}
+                {entry.discordXp !== null && entry.siteChatXp !== null &&
+                entry.discordMessageCount !== null && entry.siteChatMessageCount !== null ? (
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    Discord {formatNumber(entry.discordMessageCount)} msgs / {formatNumber(entry.discordXp)} XP ·{" "}
+                    On-site {formatNumber(entry.siteChatMessageCount)} msgs / {formatNumber(entry.siteChatXp)} XP
+                  </span>
+                ) : (
+                  <span className="hidden shrink-0 text-xs text-muted-foreground md:inline">
+                    {formatNumber(entry.messageCount)} msgs
+                  </span>
+                )}
                 {entry.adjustmentPoints !== 0 && (
                   <Badge
                     variant="outline"

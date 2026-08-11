@@ -1472,7 +1472,14 @@ export const chat_raffle_entries = pgTable("chat_raffle_entries", {
 	round_id: uuid().notNull(),
 	user_id: text().notNull(),
 	username: text(),
+	discord_user_id: text(),
 	message_count: integer().default(0).notNull(),
+	discord_xp: integer(),
+	site_chat_xp: integer(),
+	discord_message_count: integer(),
+	site_chat_message_count: integer(),
+	community_total_xp: integer(),
+	community_level: integer(),
 	base_points: integer().default(0).notNull(),
 	adjustment_points: integer().default(0).notNull(),
 	tickets: integer().default(0).notNull(),
@@ -1488,6 +1495,8 @@ export const chat_raffle_entries = pgTable("chat_raffle_entries", {
 			name: "chat_raffle_entries_round_id_fkey"
 		}).onDelete("cascade"),
 	unique("chat_raffle_entries_round_user_unique").on(table.round_id, table.user_id),
+	check("chat_raffle_entries_community_xp_check", sql`(discord_user_id IS NULL OR discord_user_id ~ '^[0-9]{17,20}$'::text) AND (discord_xp IS NULL OR discord_xp >= 0) AND (site_chat_xp IS NULL OR site_chat_xp >= 0) AND (community_total_xp IS NULL OR community_total_xp >= 0) AND (community_level IS NULL OR community_level >= 0) AND ((discord_xp IS NULL AND site_chat_xp IS NULL) OR (discord_xp IS NOT NULL AND site_chat_xp IS NOT NULL AND base_points = (discord_xp + site_chat_xp)))`),
+	check("chat_raffle_entries_source_message_counts_check", sql`(discord_message_count IS NULL AND site_chat_message_count IS NULL) OR (discord_message_count IS NOT NULL AND discord_message_count >= 0 AND site_chat_message_count IS NOT NULL AND site_chat_message_count >= 0 AND message_count = (discord_message_count + site_chat_message_count))`),
 ]);
 
 export const chat_raffle_adjustments = pgTable("chat_raffle_adjustments", {

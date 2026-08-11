@@ -22,7 +22,6 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
   InputGroup,
   InputGroupAddon,
@@ -45,7 +44,6 @@ import {
   CHAT_RAFFLE_MAX_PRIZES,
   CHAT_RAFFLE_MAX_WINDOW_DAYS,
   DEFAULT_CHAT_RAFFLE_SCORING,
-  describeScoring,
   positionColor,
   type ChatRaffleScoring,
 } from "@/lib/chat-raffle/config";
@@ -189,68 +187,6 @@ function StatChip({
   );
 }
 
-function NumberField({
-  id,
-  label,
-  hint,
-  value,
-  onChange,
-  onBlur,
-  min,
-  max,
-}: {
-  id: string;
-  label: string;
-  hint?: string;
-  value: string;
-  onChange: (v: string) => void;
-  onBlur?: () => void;
-  min?: number;
-  max?: number;
-}) {
-  return (
-    <div className="space-y-1.5">
-      <Label htmlFor={id} className="text-xs">
-        {label}
-      </Label>
-      <Input
-        id={id}
-        type="number"
-        inputMode="numeric"
-        min={min}
-        max={max}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onBlur={onBlur}
-        className="h-9 tabular-nums"
-      />
-      {hint && <p className="text-[11px] leading-snug text-muted-foreground">{hint}</p>}
-    </div>
-  );
-}
-
-function ToggleRow({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: (v: boolean) => void;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-4 rounded-lg border px-3 py-2.5">
-      <div className="min-w-0 space-y-0.5">
-        <p className="text-xs font-medium">{label}</p>
-        <p className="text-[11px] text-muted-foreground">{hint}</p>
-      </div>
-      <Switch checked={checked} onCheckedChange={onChange} className="mt-0.5" />
-    </div>
-  );
-}
-
 export type RoundFormValues = {
   id: string;
   name: string;
@@ -261,28 +197,23 @@ export type RoundFormValues = {
 };
 
 /**
- * Create or edit a round: window, prize ladder, and every scoring knob in one
- * form. Editing is blocked server-side once a round is drawn, so this form is
- * only ever rendered for an editable round.
+ * Create or edit a round. Community XP owns scoring globally, so operators
+ * choose only the time window and prize ladder here.
  */
 export function RoundFormDialog({
   mode,
   round,
-  defaultScoring,
   triggerLabel,
   triggerVariant = "default",
   triggerSize = "sm",
 }: {
   mode: "create" | "edit";
   round?: RoundFormValues;
-  /** Prefill for a new round — the most recent round's config. */
-  defaultScoring?: ChatRaffleScoring;
   triggerLabel?: string;
   triggerVariant?: "default" | "outline" | "ghost";
   triggerSize?: "sm" | "default";
 }) {
-  const initialScoring =
-    round?.scoring ?? defaultScoring ?? DEFAULT_CHAT_RAFFLE_SCORING;
+  const scoring = round?.scoring ?? DEFAULT_CHAT_RAFFLE_SCORING;
 
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -293,7 +224,6 @@ export function RoundFormDialog({
       round?.endsAt ?? new Date(Date.now() + 7 * 86_400_000).toISOString(),
     ),
   );
-  const [scoring, setScoring] = useState<ChatRaffleScoring>(initialScoring);
   const [prizes, setPrizes] = useState<PrizeDraft[]>(
     round?.prizes.length
       ? round.prizes.map((p) => ({
@@ -302,40 +232,6 @@ export function RoundFormDialog({
         }))
       : [{ amountUsd: "", label: "" }],
   );
-
-  /**
-   * Transient text for the number inputs. Without this, clearing a field
-   * coerces straight to 0 and the box redisplays "0", so you cannot type over
-   * a value without first deleting the zero. The raw string wins while the
-   * field is focused; blur drops it and the canonical number renders again.
-   */
-  const [rawNumbers, setRawNumbers] = useState<Record<string, string>>({});
-
-  function setScoringField<K extends keyof ChatRaffleScoring>(
-    key: K,
-    value: ChatRaffleScoring[K],
-  ) {
-    setScoring((prev) => ({ ...prev, [key]: value }));
-  }
-
-  function numField(key: keyof ChatRaffleScoring) {
-    return {
-      value: rawNumbers[key] ?? String(scoring[key]),
-      onChange: (v: string) => {
-        setRawNumbers((prev) => ({ ...prev, [key]: v }));
-        const n = Number(v);
-        if (v !== "" && Number.isFinite(n)) {
-          setScoringField(key, n as ChatRaffleScoring[typeof key]);
-        }
-      },
-      onBlur: () =>
-        setRawNumbers((prev) => {
-          const next = { ...prev };
-          delete next[key];
-          return next;
-        }),
-    };
-  }
 
   async function handleSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -402,7 +298,7 @@ export function RoundFormDialog({
         <DialogHeading
           icon={mode === "create" ? Sparkles : Sliders}
           title={mode === "create" ? "New raffle round" : "Edit raffle round"}
-          description="Chat in the window becomes points, points become tickets, and one ticket is drawn per prize place."
+          description="Community XP earned from Discord and linked on-site chat in the window becomes tickets."
         />
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -555,56 +451,6 @@ export function RoundFormDialog({
                 Add place
               </Button>
             )}
-          </FormSection>
-
-          {/* ─── Points ─────────────────────────────────────────── */}
-          <FormSection icon={Ticket} title="Points & weights">
-            <div className="grid gap-3 sm:grid-cols-2">
-              <NumberField
-                id="pts-per-msg"
-                label="Points per message"
-                min={1}
-                max={100}
-                {...numField("pointsPerMessage")}
-              />
-              <NumberField
-                id="min-chars"
-                label="Minimum characters"
-                hint="Shorter messages score nothing."
-                min={1}
-                max={500}
-                {...numField("minMessageChars")}
-              />
-              <NumberField
-                id="bucket-min"
-                label="Rate-cap window (minutes)"
-                min={1}
-                max={1440}
-                {...numField("bucketMinutes")}
-              />
-              <NumberField
-                id="bucket-max"
-                label="Max counted messages per window"
-                hint="The anti-farm cap. Everything above it is dropped."
-                min={1}
-                max={1000}
-                {...numField("maxMessagesPerBucket")}
-              />
-            </div>
-
-            <ToggleRow
-              label="Dedupe identical messages"
-              hint="Repeating the same line counts once per window."
-              checked={scoring.dedupeIdentical}
-              onChange={(v) => setScoringField("dedupeIdentical", v)}
-            />
-
-            {/* Live restatement of the knobs above — the same one-liner the
-                page shows, so the form and the round can't describe the same
-                config two different ways. */}
-            <p className="rounded-lg bg-muted/40 px-3 py-2 text-[11px] tabular-nums text-muted-foreground">
-              {describeScoring(scoring)}
-            </p>
           </FormSection>
 
           {/* ─── Fixed rules ────────────────────────────────────── */}

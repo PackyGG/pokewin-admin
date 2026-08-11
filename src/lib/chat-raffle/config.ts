@@ -1,29 +1,16 @@
 import { z } from "zod";
 
 /**
- * config.ts — the scoring model of the Chat Raffle, in one client-safe file.
+ * config.ts — the lifecycle and legacy scoring model of the Chat Raffle.
  *
- * Client-safe on purpose (no `server-only`, no DB import): the round dialog,
- * the standings table and the server-side scorer all read the SAME bounds and
- * labels, so the form can never offer a value the scorer rejects.
+ * Client-safe on purpose (no `server-only`, no DB import): lifecycle labels,
+ * fixed eligibility rules and legacy round config are shared by server and UI.
  *
- * ─── How a message becomes a ticket ──────────────────────────────────────
- *
- *   1. Only non-deleted `chat_messages` inside the round window count. A
- *      moderator soft-deleting spam retroactively removes its points, right
- *      up until the draw freezes the standings.
- *   2. A message shorter than `minMessageChars` (trimmed) scores nothing.
- *   3. Inside each `bucketMinutes` window a user gets at most
- *      `maxMessagesPerBucket` counted messages — this is the anti-farm cap.
- *      Everything above it in that bucket is dropped.
- *   4. With `dedupeIdentical`, the same text (trimmed, case-insensitive)
- *      counts once per bucket.
- *   5. A surviving message is worth `pointsPerMessage`.
- *   6. Manual per-user adjustments (chat_raffle_adjustments) are added.
- *   7. Anyone left on 0 or fewer points is out; otherwise 1 point = 1 ticket.
- *
- * Every knob lives on the ROUND, not in a global settings row, so retuning
- * the weights can never retroactively rewrite how a past round was scored.
+ * New and open rounds use the canonical Community XP decisions written by
+ * `discord-community-xp.ts`: qualifying Discord and linked on-site messages
+ * inside the round window contribute their awarded XP, and 1 XP = 1 ticket.
+ * The five scoring columns remain on old round rows for compatibility and to
+ * keep historical records readable; operators no longer tune them here.
  *
  * ─── What is NOT configurable (deliberately) ─────────────────────────────
  *
@@ -49,6 +36,7 @@ export type ChatRaffleStatus = (typeof CHAT_RAFFLE_STATUSES)[number];
  * ticket ranges valid for every pick, not just the first.
  */
 export const CHAT_RAFFLE_FIXED_RULES = [
+  "Discord and linked on-site chat XP both count",
   "Staff, admins and creators never qualify",
   "Blacklisted users never qualify",
   "Muted users never qualify",
@@ -112,7 +100,7 @@ export function positionColor(position: number): string {
   return CHAT_RAFFLE_POSITION_COLORS[position] ?? CHAT_RAFFLE_POSITION_FALLBACK;
 }
 
-/** The scoring knobs of a round. */
+/** Legacy per-round scoring columns retained for old records/API shape. */
 export type ChatRaffleScoring = {
   pointsPerMessage: number;
   minMessageChars: number;
@@ -122,10 +110,8 @@ export type ChatRaffleScoring = {
 };
 
 /**
- * Defaults for a brand-new round when there is no previous one to copy.
- * Tuned to reward conversation over volume: 10 counted messages per 10
- * minutes is far above what a real chatter sends and far below what a
- * scripted spammer would want.
+ * Compatibility values written to the legacy columns of a new round. The
+ * Community XP event pipeline, not these values, now decides ticket awards.
  */
 export const DEFAULT_CHAT_RAFFLE_SCORING: ChatRaffleScoring = {
   pointsPerMessage: 1,

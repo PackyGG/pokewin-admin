@@ -32,7 +32,6 @@ import {
 import { drawWinners, generateDrawSeed } from "@/lib/chat-raffle/draw";
 import {
   getRoundAdjustmentTotals,
-  scoringFromRow,
   scoringToColumns,
 } from "@/lib/chat-raffle/rounds";
 import { getChatRaffleStandings } from "@/lib/chat-raffle/standings";
@@ -422,13 +421,11 @@ export async function drawChatRaffleRound(input: {
     return { success: false, error: "Add at least one prize before drawing" };
   }
 
-  const scoring = scoringFromRow(round);
   const adjustments = await getRoundAdjustmentTotals(round.id);
   const { standings, totalTickets, entrants, truncated } =
     await getChatRaffleStandings({
       startsAt: new Date(round.starts_at),
       endsAt: new Date(round.ends_at),
-      scoring,
       adjustments,
     });
 
@@ -457,7 +454,14 @@ export async function drawChatRaffleRound(input: {
       round_id: round.id,
       user_id: s.userId,
       username: s.username,
+      discord_user_id: s.discordUserId,
       message_count: s.messageCount,
+      discord_xp: s.discordXp,
+      site_chat_xp: s.siteChatXp,
+      discord_message_count: s.discordMessageCount,
+      site_chat_message_count: s.siteChatMessageCount,
+      community_total_xp: s.communityTotalXp,
+      community_level: s.communityLevel,
       base_points: s.basePoints,
       adjustment_points: s.adjustmentPoints,
       tickets: s.tickets,

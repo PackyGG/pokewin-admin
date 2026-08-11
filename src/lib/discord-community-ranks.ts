@@ -13,3 +13,13 @@ export const COMMUNITY_RANKS = Object.freeze([
 ]);
 
 export type CommunityLevelRole = { guildId: string; level: number; roleId: string };
+
+export type CommunityRank = (typeof COMMUNITY_RANKS)[number];
+
+/** Highest named community rank earned at a numeric XP level. */
+export function communityRankForLevel(level: number): CommunityRank {
+  const safeLevel = Math.max(0, Math.trunc(level));
+  return [...COMMUNITY_RANKS]
+    .reverse()
+    .find((rank) => rank.level <= safeLevel) ?? COMMUNITY_RANKS[0];
+}

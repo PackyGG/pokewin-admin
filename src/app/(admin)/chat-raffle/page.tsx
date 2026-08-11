@@ -31,16 +31,13 @@ import {
   CHAT_RAFFLE_MAX_ENTRIES,
   CHAT_RAFFLE_PHASE_COLOR,
   CHAT_RAFFLE_PHASE_LABEL,
-  DEFAULT_CHAT_RAFFLE_SCORING,
   canDrawRound,
   canEditRound,
-  describeScoring,
   positionColor,
 } from "@/lib/chat-raffle/config";
 import {
   getActiveChatRaffleRound,
   getChatRaffleRounds,
-  getDefaultScoringForNewRound,
   getRoundAdjustmentTotals,
   pickActiveRound,
   type ChatRaffleRoundView,
@@ -62,20 +59,18 @@ export const metadata = { title: "Chat Raffle" };
 /**
  * Players → Chat Raffle.
  *
- * Chat activity becomes points, points become tickets, and one ticket per
- * prize place is drawn with a stored seed. The whole system lives in the
- * ADMIN DB: rounds, scoring config, manual point corrections, the frozen draw
- * snapshot and the prize ladder. The prod game DB is only READ (scoring the
- * window off `chat_messages`) — the single write is the existing
- * balance-adjustment path when an operator pays a winner. No prod code change.
+ * Qualifying Discord and linked on-site messages become Community XP, one XP
+ * becomes one ticket, and one ticket per prize place is drawn with a stored
+ * seed. XP decisions, rounds, manual corrections and frozen draw snapshots
+ * live in the ADMIN DB. MAIN is read only to resolve Discord ids to eligible
+ * Packy users; its single write is the existing winner payout path.
  *
  * Shell-first: the page paints immediately and both data legs stream in
  * behind their own Suspense boundaries (see loading.tsx for the matching
  * skeletons).
  */
 
-/** Bounded window + a small table, but it heap-fetches every message in the
- *  round — keep the connection-hang guard. */
+/** Bounded indexed XP-event aggregate plus a linked-user MAIN lookup. */
 const STANDINGS_TIMEOUT_MS = 20_000;
 const ROUNDS_TIMEOUT_MS = 10_000;
 
@@ -102,28 +97,16 @@ export default async function ChatRafflePage() {
 // ─── Active round ───────────────────────────────────────────────────
 
 async function ActiveRoundSection() {
-  // Independent reads → one wave. (The two below them genuinely chain on
-  // `round.id` and stay serial.)
-  const [roundResult, defaultScoring] = await Promise.all([
-    safeQuery(
-      () => getActiveChatRaffleRound(),
-      null,
-      "chat-raffle.active-round",
-      ROUNDS_TIMEOUT_MS,
-    ),
-    safeQuery(
-      () => getDefaultScoringForNewRound(),
-      DEFAULT_CHAT_RAFFLE_SCORING,
-      "chat-raffle.default-scoring",
-      ROUNDS_TIMEOUT_MS,
-    ),
-  ]);
+  const roundResult = await safeQuery(
+    () => getActiveChatRaffleRound(),
+    null,
+    "chat-raffle.active-round",
+    ROUNDS_TIMEOUT_MS,
+  );
   const round = roundResult.data;
 
   if (!round) {
-    return (
-      <NoActiveRound defaultScoring={defaultScoring.data} />
-    );
+    return <NoActiveRound />;
   }
 
   const adjustments = await safeQuery(
@@ -138,7 +121,6 @@ async function ActiveRoundSection() {
       getChatRaffleStandings({
         startsAt: new Date(round.startsAt),
         endsAt: new Date(round.endsAt),
-        scoring: round.scoring,
         adjustments: adjustments.data,
       }),
     { standings: [], totalTickets: 0, entrants: 0, truncated: false },
@@ -147,6 +129,8 @@ async function ActiveRoundSection() {
   );
 
   const { standings, totalTickets, entrants, truncated } = standingsResult.data;
+  const discordXp = standings.reduce((sum, entry) => sum + entry.discordXp, 0);
+  const siteChatXp = standings.reduce((sum, entry) => sum + entry.siteChatXp, 0);
   const editable = canEditRound(round.phase);
 
   return (
@@ -199,7 +183,6 @@ async function ActiveRoundSection() {
             )}
             <RoundFormDialog
               mode="create"
-              defaultScoring={defaultScoring.data}
               triggerVariant="outline"
             />
           </>
@@ -224,7 +207,7 @@ async function ActiveRoundSection() {
         <KpiTile
           label="Tickets"
           value={formatNumber(totalTickets)}
-          sub="1 point = 1 ticket"
+          sub="1 XP = 1 ticket"
           icon={Ticket}
           accent="cyan"
         />
@@ -238,11 +221,17 @@ async function ActiveRoundSection() {
       </div>
 
       <div className="rounded-2xl border bg-card p-4">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm font-semibold">Scoring</span>
-          <span className="text-xs text-muted-foreground">
-            {describeScoring(round.scoring)}
-          </span>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <span className="text-sm font-semibold">Combined Community XP</span>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Qualifying Discord and linked on-site chat XP earned inside this round becomes tickets.
+            </p>
+          </div>
+          <div className="flex gap-2 text-xs tabular-nums">
+            <Badge variant="outline">Discord {formatNumber(discordXp)} XP</Badge>
+            <Badge variant="outline">Site {formatNumber(siteChatXp)} XP</Badge>
+          </div>
         </div>
       </div>
 
@@ -265,15 +254,10 @@ async function ActiveRoundSection() {
 }
 
 /**
- * No open round: show what the current UTC day WOULD score under the default
- * config, so an operator can sanity-check the weights before committing a
- * round to them.
+ * No open round: show the lifetime combined Community XP leaderboard so an
+ * operator can inspect established community standing before opening a round.
  */
-async function NoActiveRound({
-  defaultScoring,
-}: {
-  defaultScoring: typeof DEFAULT_CHAT_RAFFLE_SCORING;
-}) {
+async function NoActiveRound() {
   const now = new Date();
   const dayStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -285,7 +269,7 @@ async function NoActiveRound({
       getChatRaffleStandings({
         startsAt: dayStart,
         endsAt: dayEnd,
-        scoring: defaultScoring,
+        timeframe: "lifetime",
       }),
     { standings: [], totalTickets: 0, entrants: 0, truncated: false },
     "chat-raffle.preview",
@@ -298,7 +282,7 @@ async function NoActiveRound({
         icon={Dices}
         title="No round running"
         action={
-          <RoundFormDialog mode="create" defaultScoring={defaultScoring} />
+          <RoundFormDialog mode="create" />
         }
       />
 
@@ -306,20 +290,21 @@ async function NoActiveRound({
         <Dices className="mx-auto size-6 text-muted-foreground" />
         <p className="mt-2 text-sm font-medium">Start a round to hand out tickets</p>
         <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
-          Below is what today would score under the current default config —
-          a dry run, nothing is being counted toward a prize.
+          Below is the lifetime Community XP leaderboard across Discord and
+          linked on-site chat. Nothing is being counted toward a prize.
         </p>
       </div>
 
       {preview.error !== null && <QueryFailedNotice />}
 
-      <SectionHeading icon={MessageSquare} title="Today's chat, scored (preview)" />
+      <SectionHeading icon={MessageSquare} title="Lifetime Community XP leaderboard" />
       <StandingsTable
         standings={preview.data.standings}
         totalTickets={preview.data.totalTickets}
         roundId={null}
         adjustable={false}
-        emptyMessage="No chat messages have scored today yet."
+        lifetime
+        emptyMessage="No qualifying Community XP has been recorded yet."
       />
     </FadeIn>
   );
@@ -332,12 +317,14 @@ function StandingsTable({
   totalTickets,
   roundId,
   adjustable,
+  lifetime = false,
   emptyMessage,
 }: {
   standings: ChatRaffleStanding[];
   totalTickets: number;
   roundId: string | null;
   adjustable: boolean;
+  lifetime?: boolean;
   emptyMessage: string;
 }) {
   return (
@@ -347,7 +334,7 @@ function StandingsTable({
         <span className="text-xs text-muted-foreground">
           {formatNumber(standings.length)}{" "}
           {standings.length === 1 ? "entrant" : "entrants"} ·{" "}
-          {formatNumber(totalTickets)} tickets
+          {formatNumber(totalTickets)} {lifetime ? "lifetime XP" : "tickets"}
         </span>
       </div>
 
@@ -384,43 +371,59 @@ function StandingsTable({
                   </AvatarFallback>
                 </Avatar>
 
-                <div className="flex min-w-0 flex-1 items-center gap-2">
-                  <Link
-                    href={`/users/${entry.userId}`}
-                    className="truncate font-semibold hover:underline"
-                  >
-                    {entry.username ?? entry.userId.slice(0, 8)}
-                  </Link>
-                  {entry.role !== "user" && (
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Link
+                      href={`/users/${entry.userId}`}
+                      className="truncate font-semibold hover:underline"
+                    >
+                      {entry.username ?? entry.userId.slice(0, 8)}
+                    </Link>
+                    {entry.role !== "user" && (
+                      <Badge
+                        variant="outline"
+                        className={cn(
+                          "h-4 shrink-0 px-1 text-[9px] uppercase",
+                          ROLE_COLORS[entry.role],
+                        )}
+                      >
+                        {entry.role}
+                      </Badge>
+                    )}
+                    {entry.adjustmentPoints !== 0 && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 shrink-0 px-1 text-[9px] tabular-nums"
+                      >
+                        {entry.adjustmentPoints > 0 ? "+" : ""}
+                        {entry.adjustmentPoints} adj
+                      </Badge>
+                    )}
                     <Badge
                       variant="outline"
-                      className={cn(
-                        "h-4 shrink-0 px-1 text-[9px] uppercase",
-                        ROLE_COLORS[entry.role],
-                      )}
+                      className="h-4 shrink-0 px-1 text-[9px]"
+                      title={`${formatNumber(entry.communityTotalXp)} lifetime XP`}
                     >
-                      {entry.role}
+                      Lv {entry.communityLevel} · {entry.communityRankName}
                     </Badge>
-                  )}
-                  {entry.adjustmentPoints !== 0 && (
-                    <Badge
-                      variant="outline"
-                      className="h-4 shrink-0 px-1 text-[9px] tabular-nums"
-                    >
-                      {entry.adjustmentPoints > 0 ? "+" : ""}
-                      {entry.adjustmentPoints} adj
-                    </Badge>
-                  )}
+                  </div>
+                  <span className="truncate text-[10px] text-muted-foreground tabular-nums sm:text-[11px]">
+                    Discord {formatNumber(entry.discordMessageCount)} msgs · On-site{" "}
+                    {formatNumber(entry.siteChatMessageCount)} msgs
+                  </span>
                 </div>
 
-                <span className="hidden shrink-0 text-xs text-muted-foreground sm:inline">
-                  {formatNumber(entry.messageCount)} msgs
+                <span
+                  className="hidden shrink-0 text-xs text-muted-foreground md:inline"
+                  title={`${formatNumber(entry.messageCount)} qualifying messages`}
+                >
+                  D {formatNumber(entry.discordXp)} · S {formatNumber(entry.siteChatXp)} XP
                 </span>
 
                 <span className="w-16 shrink-0 text-right tabular-nums text-sm font-medium">
                   {formatNumber(entry.tickets)}
                   <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    tix
+                    {lifetime ? "XP" : "tix"}
                   </span>
                 </span>
 
@@ -641,8 +644,7 @@ function TruncatedNotice() {
         More than {formatNumber(CHAT_RAFFLE_MAX_ENTRIES)} users qualified, so
         the list below is clipped and the draw is blocked — drawing from a
         clipped pool would silently give the users past the cut zero chance.
-        Raise the minimum points to enter (or shorten the window), then
-        reload.
+        Shorten the round window, then reload.
       </p>
     </div>
   );

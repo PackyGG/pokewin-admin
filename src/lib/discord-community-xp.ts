@@ -36,6 +36,8 @@ type ProfileRow = {
   discord_xp: number;
   site_chat_xp: number;
   counted_messages: number;
+  discord_counted_messages: number;
+  site_chat_counted_messages: number;
   rank: number;
 };
 
@@ -45,6 +47,8 @@ export type CommunityXpProfile = {
   discordXp: number;
   siteChatXp: number;
   countedMessages: number;
+  discordCountedMessages: number;
+  siteChatCountedMessages: number;
   level: number;
   currentLevelXp: number;
   nextLevelXp: number;
@@ -104,6 +108,8 @@ function profileFromRow(row: ProfileRow): CommunityXpProfile {
     discordXp: row.discord_xp,
     siteChatXp: row.site_chat_xp,
     countedMessages: row.counted_messages,
+    discordCountedMessages: row.discord_counted_messages,
+    siteChatCountedMessages: row.site_chat_counted_messages,
     level,
     currentLevelXp: communityXpForLevel(level),
     nextLevelXp: communityXpForLevel(level + 1),
@@ -212,6 +218,8 @@ export async function awardCommunityMessageXp(input: {
             discord_xp = discord_xp + ${input.source === "discord" ? awardedXp : 0},
             site_chat_xp = site_chat_xp + ${input.source === "site_chat" ? awardedXp : 0},
             counted_messages = counted_messages + 1,
+            discord_counted_messages = discord_counted_messages + ${input.source === "discord" ? 1 : 0},
+            site_chat_counted_messages = site_chat_counted_messages + ${input.source === "site_chat" ? 1 : 0},
             updated_at = now()
           WHERE discord_user_id = ${input.discordUserId}
         `);
@@ -239,7 +247,8 @@ async function getCommunityXpProfile(
   `);
   const row = result.rows[0] ?? {
     discord_user_id: discordUserId, total_xp: 0, discord_xp: 0,
-    site_chat_xp: 0, counted_messages: 0, rank: 0,
+    site_chat_xp: 0, counted_messages: 0, discord_counted_messages: 0,
+    site_chat_counted_messages: 0, rank: 0,
   };
   return profileFromRow(row);
 }
