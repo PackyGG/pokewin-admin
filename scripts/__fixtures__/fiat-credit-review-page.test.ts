@@ -38,11 +38,11 @@ const adminLedgerPage = read("src/app/(admin)/transactions/deposits/page.tsx");
 
 test("Deposits is an active-only Antifraud Fiat credit review queue", () => {
   assert.match(page, /listFiatAssessments/);
-  assert.match(page, /verdict: "review"/);
-  assert.doesNotMatch(
+  assert.match(
     page,
     /listFiatAssessments\(\{[\s\S]{0,160}status: "review"/,
   );
+  assert.doesNotMatch(page, /verdict: "review"/);
   assert.match(page, /getFiatCreditReviewStates/);
   assert.doesNotMatch(page, /QUEUE_STATUSES|Review status filters|refund_pending/);
   assert.doesNotMatch(page, /GlobalFiatReviewCard/);

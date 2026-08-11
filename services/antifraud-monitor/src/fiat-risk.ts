@@ -1621,11 +1621,19 @@ function contextBehavior(
   };
 }
 
-export const FIAT_ASSESSMENT_STATUSES = [
+const FIAT_SOURCE_ASSESSMENT_STATUSES = [
   "completed",
   "partially_refunded",
   "refunded",
   "disputed",
+  // A successful Whop payment held for a staff credit decision is still a
+  // paid deposit. Omitting this source state made the review queue incapable
+  // of loading the exact rows its action endpoint requires.
+  "review",
+] as const;
+
+export const FIAT_ASSESSMENT_STATUSES = [
+  ...FIAT_SOURCE_ASSESSMENT_STATUSES,
   "paid_unreconciled",
 ] as const;
 
@@ -1740,8 +1748,7 @@ export class FiatRiskService {
     excludedUserIds?: string[];
     limit?: number;
   }): Promise<{ ids: string[] }> {
-    const settledStatuses = FIAT_ASSESSMENT_STATUSES.slice(0, -1);
-    const values: unknown[] = [settledStatuses];
+    const values: unknown[] = [FIAT_SOURCE_ASSESSMENT_STATUSES];
     const conditions = [
       `COALESCE(u.role::text,'')<>'creator'`,
       `'creator'<>ALL(COALESCE(u.roles::text[], ARRAY[]::text[]))`,

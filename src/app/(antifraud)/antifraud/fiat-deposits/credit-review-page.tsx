@@ -140,7 +140,7 @@ async function scanFirstPage(): Promise<{
   const first = await listFiatAssessments({
     page: 1,
     limit: UPSTREAM_PAGE_SIZE,
-    verdict: "review",
+    status: "review",
   });
   if (first.error) {
     throw new Error("The Antifraud monitor did not return the review queue.");
@@ -169,7 +169,7 @@ async function scanRestPages(pageCount: number): Promise<FiatAssessment[]> {
     const result = await listFiatAssessments({
       page,
       limit: UPSTREAM_PAGE_SIZE,
-      verdict: "review",
+      status: "review",
     });
     // Keep what we already have. A partial scan is reported as a shortfall by
     // the caller; it must never discard page 1.

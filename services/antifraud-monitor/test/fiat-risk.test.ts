@@ -278,7 +278,7 @@ test("paid webhook failures remain visible until MAIN reconciliation succeeds", 
   assert.match(result.recommendation, /Reconcile the successful Whop payment/);
 });
 
-test("assessment refresh loads settled and paid-unreconciled fiat", async () => {
+test("assessment refresh loads settled, staff-review, and paid-unreconciled fiat", async () => {
   const source = await readFile(
     new URL("../src/fiat-risk.ts", import.meta.url),
     "utf8",
@@ -288,6 +288,7 @@ test("assessment refresh loads settled and paid-unreconciled fiat", async () => 
   assert.match(source, /"partially_refunded"/);
   assert.match(source, /"refunded"/);
   assert.match(source, /"disputed"/);
+  assert.match(source, /"review"/);
   assert.match(source, /"paid_unreconciled"/);
   assert.match(source, /event_type='payment\.succeeded'/);
   assert.match(source, /processing_status='failed'/);
