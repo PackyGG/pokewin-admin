@@ -22,6 +22,20 @@ const updateSchema = actorSchema.extend({
   expiresAt: z.string().datetime().nullable(),
 });
 
+const promoteCatchallSchema = actorSchema.extend({
+  domain: z.string().trim().min(1).max(253),
+  reason: z.string().trim().min(4).max(500),
+});
+
+// A provider classification bug must never turn a major public mailbox into
+// an account-ban rule. This endpoint is only for organization-owned catch-all
+// domains discovered by the signup pipeline.
+const PUBLIC_MAILBOX_DOMAINS = new Set([
+  "gmail.com", "googlemail.com", "outlook.com", "hotmail.com", "live.com",
+  "yahoo.com", "icloud.com", "me.com", "proton.me", "protonmail.com",
+  "aol.com", "gmx.com", "gmx.de", "web.de", "mail.com",
+]);
+
 const catchHistoryQuerySchema = z.object({
   page: z.coerce.number().int().min(1).max(10_000).default(1),
   limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -231,6 +245,90 @@ export async function registerFiatEmailDomainRoutes(
     return reply.code(idempotent ? 200 : 201).send({
       data: { ...serializeRule(row), idempotent },
     });
+  });
+
+  app.post("/v1/fiat-email-domains/promote-catchall", async (request, reply) => {
+    const parsed = promoteCatchallSchema.safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: "invalid_request" });
+    const domain = normalizeEmailDomain(parsed.data.domain);
+    if (!domain || PUBLIC_MAILBOX_DOMAINS.has(domain)) {
+      return reply.code(400).send({ error: "invalid_domain" });
+    }
+
+    const client = await db.antifraud.connect();
+    let ruleId: string | null = null;
+    let idempotent = false;
+    try {
+      await client.query("BEGIN");
+      const prior = await client.query<{ rule_id: string; actor_id: string; after_state: Record<string, unknown> }>(
+        `SELECT rule_id, actor_id, after_state
+         FROM fiat_email_domain_blacklist_audit WHERE idempotency_key=$1`,
+        [parsed.data.idempotencyKey],
+      );
+      const replay = prior.rows[0];
+      if (replay) {
+        if (
+          replay.actor_id !== parsed.data.actorId ||
+          replay.after_state.domain !== domain ||
+          replay.after_state.reason !== parsed.data.reason ||
+          replay.after_state.enabled !== true
+        ) {
+          await client.query("ROLLBACK");
+          return reply.code(409).send({ error: "idempotency_conflict" });
+        }
+        ruleId = replay.rule_id;
+        idempotent = true;
+      } else {
+        await client.query(
+          "SELECT pg_advisory_xact_lock(hashtextextended(lower($1), 0))",
+          [domain],
+        );
+        const current = await client.query<{ id: string; domain: string; reason: string; enabled: boolean }>(
+          `SELECT id, domain, reason, enabled FROM fiat_email_domain_blacklist
+           WHERE lower(domain)=lower($1) FOR UPDATE`,
+          [domain],
+        );
+        const before = current.rows[0] ?? null;
+        if (before) {
+          ruleId = before.id;
+          await client.query(
+            `UPDATE fiat_email_domain_blacklist SET enabled=true, reason=$2,
+               expires_at=NULL, updated_by=$3,
+               backfill_received_at=CASE WHEN NOT enabled THEN 'epoch'::timestamptz ELSE backfill_received_at END,
+               backfill_source_id=CASE WHEN NOT enabled THEN '' ELSE backfill_source_id END,
+               backfill_completed_at=CASE WHEN NOT enabled THEN NULL ELSE backfill_completed_at END,
+               updated_at=now() WHERE id=$1`,
+            [ruleId, parsed.data.reason, parsed.data.actorId],
+          );
+        } else {
+          const inserted = await client.query<{ id: string }>(
+            `INSERT INTO fiat_email_domain_blacklist
+               (domain,reason,enabled,created_by,updated_by,expires_at)
+             VALUES ($1,$2,true,$3,$3,NULL) RETURNING id`,
+            [domain, parsed.data.reason, parsed.data.actorId],
+          );
+          ruleId = inserted.rows[0]?.id ?? null;
+        }
+        if (!ruleId) throw new Error("promoted rule was not created");
+        const after = { id: ruleId, domain, reason: parsed.data.reason, enabled: true, expiresAt: null };
+        await client.query(
+          `INSERT INTO fiat_email_domain_blacklist_audit
+             (rule_id,action,actor_id,actor_username,idempotency_key,before_state,after_state)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+          [ruleId, before ? "updated" : "created", parsed.data.actorId,
+            parsed.data.actorUsername ?? null, parsed.data.idempotencyKey, before, after],
+        );
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+    const row = ruleId ? (await listRules(db, ruleId))[0] : null;
+    if (!row) return reply.code(500).send({ error: "rule_missing" });
+    return reply.code(idempotent ? 200 : 201).send({ data: { ...serializeRule(row), idempotent } });
   });
 
   app.put("/v1/fiat-email-domains/:id", async (request, reply) => {

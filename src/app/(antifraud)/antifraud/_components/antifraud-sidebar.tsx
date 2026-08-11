@@ -5,6 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
   BookOpen,
+  Ban,
   Banknote,
   ChevronRight,
   Fingerprint,
@@ -163,6 +164,7 @@ const GUIDE_NAV: NavItem[] = [
 
 const ADMIN_NAV: NavItem[] = [
   { label: "Deposits", href: "/antifraud/admin/deposits", icon: Banknote },
+  { label: "Auto Bans", href: "/antifraud/auto-bans", icon: Ban },
 ];
 
 /**

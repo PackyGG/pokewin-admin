@@ -142,7 +142,7 @@ const containmentPolicyItems = [
   {
     term: "Email — catch-all domain, blacklisted domain",
     detail:
-      "The two that also mark the account for an automatic ban. A confirmed catch-all additionally queues the domain, IP and fingerprint for blocking.",
+      "A first-seen catch-all gets full temporary locks and staff review. A domain staff already confirmed and blacklisted automatically bans the account.",
   },
   {
     term: "Blocklist hit — IP, fingerprint",

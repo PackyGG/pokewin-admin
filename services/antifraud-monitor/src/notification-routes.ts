@@ -6,6 +6,7 @@ export const NOTIFICATION_ROUTE_KEYS = [
   "high_risk_supplemental",
   "email_blacklist",
   "withdrawal_hold",
+  "auto_banned",
   "signed_ingest",
 ] as const;
 
@@ -64,18 +65,23 @@ const ROUTES = {
   },
   email_blacklist: {
     label: "Email containment",
-    purpose: "Discord alerts for email and deposit-cluster containment.",
-    eventFamilies: [
-      "Blacklisted signup email domains",
-      "Blacklisted Whop checkout domains",
-      "Suspicious same-amount deposit clusters",
-    ],
+    purpose: "Discord alerts for deposit-cluster containment.",
+    eventFamilies: ["Suspicious same-amount deposit clusters"],
     configured: botQueueConfigured,
   },
   withdrawal_hold: {
     label: "Withdrawal holds",
     purpose: "Discord alerts for automatic account-level withdrawal holds.",
     eventFamilies: ["Automatic lifetime-fiat withdrawal holds"],
+    configured: botQueueConfigured,
+  },
+  auto_banned: {
+    label: "Automatically banned accounts",
+    purpose: "Confirmed automatic account bans from deterministic fraud rules.",
+    eventFamilies: [
+      "Whop prior-dispute/refund automatic bans",
+      "Known blacklisted email-domain automatic bans",
+    ],
     configured: botQueueConfigured,
   },
   signed_ingest: {
@@ -142,7 +148,8 @@ type FiatProblemCode =
   | "webhook_failed"
   | "blacklisted_email_domain"
   | "suspicious_deposit_cluster"
-  | "fiat_identity_drift";
+  | "fiat_identity_drift"
+  | "whop_history_auto_ban";
 
 export type FiatNotificationRouteKey = Extract<
   BotNotificationRouteKey,
@@ -150,15 +157,17 @@ export type FiatNotificationRouteKey = Extract<
   | "fiat_operations"
   | "high_risk_supplemental"
   | "email_blacklist"
+  | "auto_banned"
 >;
 
 export function notificationRoutesForFiatProblem(
   problemCode: FiatProblemCode,
 ): readonly FiatNotificationRouteKey[] {
   if (
-    problemCode === "blacklisted_email_domain" ||
-    problemCode === "suspicious_deposit_cluster"
-  ) {
+    problemCode === "whop_history_auto_ban" ||
+    problemCode === "blacklisted_email_domain"
+  ) return ["auto_banned"];
+  if (problemCode === "suspicious_deposit_cluster") {
     return ["email_blacklist"];
   }
   if (problemCode === "high_risk") {

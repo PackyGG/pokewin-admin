@@ -1,5 +1,6 @@
 "use server";
 
+import { createHash } from "node:crypto";
 import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 import { and, eq, inArray, ne, sql } from "drizzle-orm";
@@ -14,6 +15,7 @@ import {
   admin_users,
   antifraud_review_notes,
   antifraud_reviews,
+  antifraud_signals,
   staff_profiles,
 } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
@@ -46,6 +48,7 @@ import {
   type FingerprintAltAccount,
 } from "@/lib/queries/user-fingerprint-alts";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
+import { promoteCatchallEmailDomain } from "@/lib/antifraud/fiat-email-domains-api";
 
 /**
  * Account-review mutations.
@@ -91,6 +94,47 @@ const UNIQUE_VIOLATION = "23505";
  */
 const STALE_CASE_MESSAGE =
   "Someone else changed this case while you were working on it — reload and try again.";
+
+function catchallDomainFromPayload(payload: unknown): string | null {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+  const value = (payload as Record<string, unknown>).emailDomain;
+  if (typeof value !== "string") return null;
+  const domain = value.trim().toLowerCase();
+  return domain.includes(".") ? domain : null;
+}
+
+function promotionIdempotencyKey(reviewKey: string, domain: string): string {
+  const hex = createHash("sha256").update(`${reviewKey}:${domain}`).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-5${hex.slice(13, 16)}-a${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
+
+async function promoteConfirmedCatchallDomain(params: {
+  reviewId: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+}): Promise<void> {
+  const signals = await adminDrizzle.select({ payload: antifraud_signals.payload })
+    .from(antifraud_signals)
+    .where(and(
+      eq(antifraud_signals.review_id, params.reviewId),
+      eq(antifraud_signals.kind, "abstract_email_catchall"),
+    ));
+  const domains = Array.from(new Set(
+    signals.map((signal) => catchallDomainFromPayload(signal.payload)).filter(
+      (domain): domain is string => domain !== null,
+    ),
+  ));
+  for (const domain of domains) {
+    await promoteCatchallEmailDomain({
+      domain,
+      reason: `Confirmed fraudulent catch-all from Account Review ${params.reviewId}`,
+      idempotencyKey: promotionIdempotencyKey(params.idempotencyKey, domain),
+      actorId: params.actorId,
+      actorUsername: params.actorUsername,
+    });
+  }
+}
 
 const openReviewSchema = z.object({
   // MAIN-DB user id — a loose string, so validate shape not existence.
@@ -387,7 +431,9 @@ async function releaseClearedCaseWithdrawals(params: {
           outcome.releasedFiat ? "Fiat deposits" : null,
           outcome.previousCrypto.length > 0 ? "crypto withdrawals" : null,
           outcome.previousItems ? "item withdrawals" : null,
-          outcome.releasedTips ? "tips" : null,
+          outcome.releasedRewardCategories.length > 0
+            ? "all automatic reward restrictions"
+            : null,
         ].filter(Boolean).join(", ") + " unlocked after approval.",
       });
     } catch (error) {
@@ -721,6 +767,18 @@ export async function updateReviewStatus(
             idempotencyKey,
           })
         : "not_applicable";
+
+  // A fraud verdict confirms that any first-seen catch-all evidence attached
+  // to this case is no longer hypothetical. Promotion is replay-safe; if the
+  // monitor is temporarily unavailable, retrying the same verdict repairs it.
+  if (status === "flagged") {
+    await promoteConfirmedCatchallDomain({
+      reviewId,
+      idempotencyKey,
+      actorId: session.userId,
+      actorUsername: session.username ?? undefined,
+    });
+  }
 
   if (status === "in_review" || status === "cleared" || status === "flagged") {
     await syncLinkedMonitorCase({

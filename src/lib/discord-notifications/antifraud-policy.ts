@@ -32,6 +32,7 @@ export function isSilentDiscordCategory(categoryId: string | null): boolean {
 
 export const PLANNED_DISCORD_CHANNELS = {
   accounts: [
+    "auto-banned",
     "banned-accounts",
     "locked-accounts",
     "account-reviews",

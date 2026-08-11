@@ -81,6 +81,7 @@ const SIGNAL_LABELS: Record<string, string> = {
   high_risk_signup: "High-risk signup threshold",
   behavioral_rule_match: "Behavior rule matched",
   behavioral_withdrawal_containment: "Automatic withdrawal protection",
+  whop_history_auto_ban: "Whop-history automatic ban",
   fingerprint_suspect_score: "Device risk score",
   fingerprint_privacy_settings: "Privacy protections detected",
   fingerprint_tampering: "Browser tampering detected",
@@ -110,6 +111,8 @@ const SIGNAL_NOTES: Record<string, string> = {
     "The stabilized signup assessment reached the critical band and activated automatic account safeguards.",
   behavioral_withdrawal_containment:
     "This is the protection action created by the risk engine, not a separate piece of fraud evidence.",
+  whop_history_auto_ban:
+    "Whop reported at least one prior dispute or refund for the buyer; Packy automatically banned the linked account and revoked its sessions.",
   fingerprint_suspect_score:
     "Fingerprint's native suspect score materially increased the signup assessment.",
   fingerprint_privacy_settings:
@@ -148,6 +151,7 @@ const REVIEW_QUEUE_OPERATIONAL_SIGNALS = new Set([
   "critical_risk_signup",
   "high_risk_signup",
   "behavioral_withdrawal_containment",
+  "whop_history_auto_ban",
 ]);
 
 /** Queue cards show evidence, not the workflow markers created from it. */
@@ -167,6 +171,14 @@ export type ReviewQueueSafeguard = {
 export function reviewQueueSafeguard(
   signals: readonly string[],
 ): ReviewQueueSafeguard | null {
+  if (signals.includes("whop_history_auto_ban")) {
+    return {
+      title: "Account automatically banned",
+      detail:
+        "Whop reported prior buyer disputes or refunds. Account access and active sessions were revoked automatically.",
+      tone: "critical",
+    };
+  }
   if (signals.includes("critical_risk_signup")) {
     return {
       title: "Safeguards active",

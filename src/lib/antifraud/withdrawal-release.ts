@@ -19,9 +19,6 @@ import {
  */
 const AUTOMATIC_FRAUD_LOCK_REASON_PREFIX = "Automatic fraud lock: ";
 
-const CRITICAL_SIGNUP_LOCK_REASON_PREFIX =
-  `${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX}critical signup scored `;
-
 /**
  * WITHDRAWAL RELEASE — the account side of an Account Review verdict.
  *
@@ -66,7 +63,7 @@ export type WithdrawalReleaseOutcome =
       previousCrypto: string[];
       previousItems: boolean;
       releasedFiat: boolean;
-      releasedTips: boolean;
+      releasedRewardCategories: string[];
     }
   /** Nothing to do — no lock row, or withdrawals were already open. */
   | { status: "already_open" }
@@ -124,33 +121,63 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
-  let releasedTips = false;
+  let releasedRewardCategories: string[] = [];
   try {
     const current = await getUserFeatureLocks(userId);
     if (
-      current.locked_reward_categories.includes("tips") &&
-      current.locked_rewards_reason?.startsWith(
-        CRITICAL_SIGNUP_LOCK_REASON_PREFIX,
-      )
+      current.locked_reward_categories.length > 0 &&
+      current.locked_rewards_reason?.startsWith(AUTOMATIC_FRAUD_LOCK_REASON_PREFIX)
     ) {
-      const next = current.locked_reward_categories.filter(
-        (category) => category !== "tips",
-      );
+      const snapshot = await adminDrizzle.execute<{
+        previous_categories: unknown;
+        previous_reason: unknown;
+      }>(sql`
+        SELECT
+          audit.metadata -> 'previousCategories' AS previous_categories,
+          audit.metadata -> 'previousReason' AS previous_reason
+        FROM antifraud_signals AS signal
+        JOIN admin_audit_events AS audit
+          ON audit.event_type = 'antifraud_catchall_reward_lock_snapshot'
+         AND audit.metadata ->> 'signalRowId' = signal.id::text
+        WHERE signal.review_id = ${reviewId}::uuid
+          AND signal.kind = 'abstract_email_catchall'
+          AND audit.target_user_id = ${userId}
+        ORDER BY audit.created_at DESC
+        LIMIT 1
+      `);
+      const saved = snapshot.rows[0];
+      const previousCategories = Array.isArray(saved?.previous_categories)
+        ? saved.previous_categories.filter(
+            (value): value is typeof current.locked_reward_categories[number] =>
+              typeof value === "string" && current.available_reward_categories.includes(
+                value as typeof current.locked_reward_categories[number],
+              ),
+          )
+        : [];
+      const previousReason =
+        typeof saved?.previous_reason === "string" ? saved.previous_reason : null;
       const updated = await updateUserRewardLocks(
         userId,
-        next,
+        previousCategories,
         adminUserId,
-        next.length > 0 ? current.locked_rewards_reason : null,
+        previousReason,
       );
-      if (updated.locked_reward_categories.includes("tips")) {
-        throw new Error("Backend did not confirm the tips unlock");
+      if (
+        updated.locked_reward_categories.length !== previousCategories.length ||
+        previousCategories.some(
+          (category) => !updated.locked_reward_categories.includes(category),
+        )
+      ) {
+        throw new Error("Backend did not confirm the reward unlock");
       }
-      releasedTips = true;
+      releasedRewardCategories = current.locked_reward_categories.filter(
+        (category) => !previousCategories.includes(category),
+      );
     }
   } catch (error) {
     logError(
-      "antifraud.review.releaseCriticalSignupTips",
-      `tips release failed for review ${reviewId}`,
+      "antifraud.review.releaseAutomaticRewards",
+      `reward release failed for review ${reviewId}`,
       error,
     );
     return { status: "failed" };
@@ -266,7 +293,7 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     return { status: "failed" };
   }
 
-  if (!row && !releasedTips) return { status: "already_open" };
+  if (!row && releasedRewardCategories.length === 0) return { status: "already_open" };
 
   const previousCrypto = row?.previous_crypto ?? [];
   const previousItems = row?.previous_items === true;
@@ -279,7 +306,7 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     previousCrypto,
     previousItems,
     releasedFiat,
-    releasedTips,
+    releasedRewardCategories,
   };
 
   // Best effort: MAIN is already released. A failed mirror must not report the
@@ -328,7 +355,7 @@ export async function releaseWithdrawalLocksForClearedCase(params: {
     previousCrypto,
     previousItems,
     releasedFiat,
-    releasedTips,
+    releasedRewardCategories,
   };
 }
 
@@ -349,8 +376,8 @@ export type WithdrawalRestoreOutcome =
  * staff are still deciding, which is the exact window this whole workspace
  * exists to close.
  *
- * It re-locks ONLY when this case's own clear did the releasing, proven by an
- * `antifraud_withdrawals_unlocked` audit row carrying this `reviewId`. Without
+ * It re-locks ONLY when this case's own clear did the releasing, proven by the
+ * combined restriction-release audit row carrying this `reviewId`. Without
  * that check, reopening a case on an account that was never locked in the
  * first place would lock it — inventing a restriction instead of restoring
  * one. Same contract as the release: never throws, safe to re-run.
@@ -363,16 +390,19 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
 }): Promise<WithdrawalRestoreOutcome> {
   const { userId, adminUserId, reviewId, idempotencyKey } = params;
 
+  let releaseMetadata: Record<string, unknown>;
   try {
-    const released = await adminDrizzle.execute<{ id: string }>(sql`
-      SELECT id
+    const released = await adminDrizzle.execute<{ metadata: Record<string, unknown> }>(sql`
+      SELECT metadata
       FROM admin_audit_events
-      WHERE event_type = 'antifraud_withdrawals_unlocked'
+      WHERE event_type = 'antifraud_critical_signup_restrictions_unlocked'
         AND target_user_id = ${userId}
         AND metadata ->> 'reviewId' = ${reviewId}
+      ORDER BY created_at DESC
       LIMIT 1
     `);
     if (released.rows.length === 0) return { status: "nothing_to_restore" };
+    releaseMetadata = released.rows[0]?.metadata ?? {};
   } catch (error) {
     logError(
       "antifraud.review.restoreWithdrawals",
@@ -382,13 +412,18 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
     return { status: "failed" };
   }
 
-  const reason = `Antifraud review ${reviewId} reopened`;
+  const reason = `${AUTOMATIC_FRAUD_LOCK_REASON_PREFIX}antifraud review ${reviewId} reopened`;
+  const restoreFiat = releaseMetadata.releasedFiat === true;
   try {
     const db = await getPrimaryDrizzleDb();
     const locked = await db.execute<{ user_id: string }>(sql`
       INSERT INTO user_feature_locks (
         id,
         user_id,
+        locked_deposits_fiat,
+        locked_deposits_at,
+        locked_deposits_by,
+        locked_deposits_reason,
         locked_withdrawals_crypto,
         locked_withdrawals_items,
         locked_withdrawals_at,
@@ -400,6 +435,10 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
       SELECT
         ${crypto.randomUUID()},
         u.id,
+        CASE WHEN ${restoreFiat} THEN ARRAY['all']::text[] ELSE '{}'::text[] END,
+        CASE WHEN ${restoreFiat} THEN NOW() ELSE NULL END,
+        NULL,
+        CASE WHEN ${restoreFiat} THEN ${reason} ELSE NULL END,
         ARRAY['all']::text[],
         TRUE,
         NOW(),
@@ -410,6 +449,14 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
       FROM "user" u
       WHERE u.id = ${userId}
       ON CONFLICT (user_id) DO UPDATE SET
+        locked_deposits_fiat = CASE WHEN ${restoreFiat}
+          THEN ARRAY['all']::text[] ELSE user_feature_locks.locked_deposits_fiat END,
+        locked_deposits_at = CASE WHEN ${restoreFiat}
+          THEN COALESCE(user_feature_locks.locked_deposits_at, NOW())
+          ELSE user_feature_locks.locked_deposits_at END,
+        locked_deposits_reason = CASE WHEN ${restoreFiat}
+          THEN COALESCE(user_feature_locks.locked_deposits_reason, ${reason})
+          ELSE user_feature_locks.locked_deposits_reason END,
         locked_withdrawals_crypto = ARRAY['all']::text[],
         locked_withdrawals_items = TRUE,
         locked_withdrawals_at = COALESCE(
@@ -431,6 +478,38 @@ export async function restoreWithdrawalLocksForReopenedCase(params: {
       error,
     );
     return { status: "failed" };
+  }
+
+  const releasedRewards = Array.isArray(releaseMetadata.releasedRewardCategories)
+    ? releaseMetadata.releasedRewardCategories.filter(
+        (value): value is string => typeof value === "string",
+      )
+    : [];
+  if (releasedRewards.length > 0) {
+    try {
+      const current = await getUserFeatureLocks(userId);
+      const restorable = releasedRewards.filter((category) =>
+        current.available_reward_categories.includes(
+          category as typeof current.available_reward_categories[number],
+        ),
+      ) as typeof current.available_reward_categories;
+      const updated = await updateUserRewardLocks(
+        userId,
+        Array.from(new Set([...current.locked_reward_categories, ...restorable])),
+        adminUserId,
+        reason,
+      );
+      if (restorable.some((category) => !updated.locked_reward_categories.includes(category))) {
+        throw new Error("Backend did not confirm the restored reward locks");
+      }
+    } catch (error) {
+      logError(
+        "antifraud.review.restoreRewards",
+        `reward re-lock failed for review ${reviewId}`,
+        error,
+      );
+      return { status: "failed" };
+    }
   }
 
   const metadata = {

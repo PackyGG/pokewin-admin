@@ -55,18 +55,19 @@ import {
  *   • Unset secret = the endpoint is CLOSED (503), not open. A missing
  *     credential must never mean "accept anything".
  *
- * Normally writes only the ADMIN DB. The eight containment kinds
+ * Normally writes only the ADMIN DB. The containment kinds
  * (`fiat_blacklisted_email_domain`, `abstract_email_catchall`,
  * `signup_policy_recommendation`, `risky_free_battle_containment`,
  * `behavioral_withdrawal_containment`, `critical_risk_signup`,
- * `fiat_eligibility_containment`, `fiat_deposit_identity_containment`) are
+ * `fiat_eligibility_containment`, `fiat_deposit_identity_containment`,
+ * `whop_history_auto_ban`) are
  * application-authorized containment commands: after signature and payload
  * validation, a first-time (non-duplicate) delivery validates admission
  * inside the ADMIN transaction (pure, no MAIN I/O), marks the signal row
  * `pending` on the containment outbox, and runs MAIN / backend apply work
  * strictly AFTER that transaction commits via `runDeferredContainment`
- * (`@/lib/antifraud/containment-outbox`). Active blocked domains and
- * Abstract-confirmed catch-all domains ban; suspicious clusters and
+ * (`@/lib/antifraud/containment-outbox`). Active blocked domains ban;
+ * first-seen Abstract-confirmed catch-all domains receive full locks; suspicious clusters and
  * free-battle hard signals lock withdrawals only; a refused Fiat checkout
  * turns Fiat deposits off and locks withdrawals; a critical signup also
  * locks tips. Crashes between commit and apply are retried by
@@ -284,7 +285,7 @@ export async function POST(request: Request): Promise<Response> {
 }
 
 /**
- * All eight containment kinds do EXTERNAL work (MAIN-DB write, and sometimes
+ * All containment kinds do EXTERNAL work (MAIN-DB write, and sometimes
  * a backend HTTP call). That work must not run inside the open ADMIN ingest
  * transaction below — an external stall would hold ADMIN row locks for
  * however long MAIN or the backend take to respond. Pure admission checks
@@ -356,7 +357,7 @@ function signalTrailEntry(signal: AntifraudSignalEvent): string {
  * deliveries.
  */
 async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
-  // Set inside the transaction below when this signal is one of the eight
+  // Set inside the transaction below when this signal is one of the
   // containment kinds whose apply step is external (MAIN-DB write, plus a
   // backend call for identity KYC / critical-signup tips) and validates as
   // requiring containment. `runDeferredContainment` — the actual MAIN /
@@ -395,7 +396,7 @@ async function ingestOne(signal: AntifraudSignalEvent): Promise<IngestResult> {
     // Containment intent AFTER the dedupe check, inside the transaction:
     //  • a duplicate delivery returned above, so a re-sent signal can never
     //    re-apply containment to an account staff already reviewed;
-    //  • all eight kinds only VALIDATE here (pure, no MAIN I/O) and mark
+    //  • all containment kinds only VALIDATE here (pure, no MAIN I/O) and mark
     //    the row `pending`; the actual MAIN / backend work happens after
     //    this transaction commits, via `runDeferredContainment` below.
     // Serialize distinct events for the same account so concurrent matches

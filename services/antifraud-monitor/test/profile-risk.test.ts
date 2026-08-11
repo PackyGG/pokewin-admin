@@ -277,7 +277,8 @@ test("only deterministic approved email rules recommend an automatic ban", () =>
     oauthSignup: false,
     hasFingerprint: true,
   });
-  assert.ok(catchall.recommendedActions.includes("ban"));
+  assert.ok(!catchall.recommendedActions.includes("ban"));
+  assert.ok(catchall.recommendedActions.includes("lock_withdrawals"));
   assert.ok(catchall.recommendedActions.includes("block_ip"));
 
   const blockedDomain = assessProfile({

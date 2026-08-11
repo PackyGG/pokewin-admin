@@ -67,7 +67,7 @@ test("permanent versioned signup profiles and provider evidence are present", as
   );
 });
 
-test("automatic containment bans confirmed catch-all accounts without forcing KYC", async () => {
+test("automatic containment fully locks first-seen catch-all accounts without forcing KYC", async () => {
   const ingest = await source("../../../src/app/api/antifraud/ingest/route.ts");
   const catchall = await source(
     "../../../src/lib/antifraud/abstract-catchall-containment.ts",
@@ -75,8 +75,10 @@ test("automatic containment bans confirmed catch-all accounts without forcing KY
 
   // Automated antifraud never calls the KYC API; staff decide from review.
   assert.doesNotMatch(ingest, /await requireUserKyc\(/);
-  assert.match(catchall, /is_banned = TRUE/);
-  assert.match(catchall, /DELETE FROM session/);
+  assert.match(catchall, /locked_deposits_fiat = ARRAY\['all'\]/);
+  assert.match(catchall, /locked_withdrawals_items = TRUE/);
+  assert.match(catchall, /available_reward_categories/);
+  assert.doesNotMatch(catchall, /is_banned = TRUE/);
   assert.match(ingest, /isContainmentOutboxKind/);
   assert.match(
     await source(

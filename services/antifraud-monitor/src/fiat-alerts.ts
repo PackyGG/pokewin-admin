@@ -36,6 +36,7 @@ export const FIAT_PROBLEM_CODES = [
   "blacklisted_email_domain",
   "suspicious_deposit_cluster",
   "fiat_identity_drift",
+  "whop_history_auto_ban",
 ] as const;
 
 export type FiatProblemCode = (typeof FIAT_PROBLEM_CODES)[number];
@@ -72,6 +73,7 @@ export const FIAT_ALERT_DESTINATIONS = [
   "fiat_operations",
   "high_risk_supplemental",
   "email_blacklist",
+  "auto_banned",
 ] as const;
 
 export type FiatAlertDestination = Extract<
@@ -86,9 +88,13 @@ export function fiatAlertEventKey(
   | "antifraud.fiat_credit_review_required"
   | "antifraud.fiat_risk"
   | "antifraud.fiat_operations"
-  | "antifraud.email_blacklist" {
+  | "antifraud.email_blacklist"
+  | "antifraud.account_auto_banned" {
   if (problemCode === "review") {
     return "antifraud.fiat_credit_review_required";
+  }
+  if (problemCode === "whop_history_auto_ban") {
+    return "antifraud.account_auto_banned";
   }
   switch (destination) {
     case "antifraud_risk":
@@ -98,6 +104,8 @@ export function fiatAlertEventKey(
       return "antifraud.fiat_operations";
     case "email_blacklist":
       return "antifraud.email_blacklist";
+    case "auto_banned":
+      return "antifraud.account_auto_banned";
   }
 }
 
@@ -193,6 +201,8 @@ export function fiatProblemTitle(code: FiatProblemCode): string {
       return "Suspicious Whop deposit cluster blocked";
     case "fiat_identity_drift":
       return "Fiat deposit identity changed";
+    case "whop_history_auto_ban":
+      return "Account automatically banned";
   }
 }
 
@@ -204,6 +214,12 @@ export function buildFiatDiscordPayload(
   const amount = formatUsdCents(details.credited_amount_cents);
   const fields: DiscordPayload["embeds"][number]["fields"] = [];
   const highRisk = problem.problem_code === "high_risk";
+  const blacklistedDomainAutoBan =
+    problem.problem_code === "blacklisted_email_domain" &&
+    detail(details, "email_risk_type") === "blacklisted_domain" &&
+    details.ban_confirmed === true;
+  const autoBanned =
+    problem.problem_code === "whop_history_auto_ban" || blacklistedDomainAutoBan;
   const status = detail(details, "status");
   const providerStatus = detail(details, "provider_payment_status");
   const riskScore = detail(details, "risk_score");
@@ -211,7 +227,53 @@ export function buildFiatDiscordPayload(
     ? (detailDate(details, "deposit_occurred_at") ?? problem.occurred_at)
     : null;
 
-  if (highRisk) {
+  if (autoBanned) {
+    fields.push({
+      name: "👤 Account",
+      value: clean(
+        [problem.username ?? "Unknown user", problem.user_id]
+          .filter(Boolean)
+          .join("\n"),
+      ),
+      inline: true,
+    });
+    fields.push({
+      name: "⛔ Action",
+      value: "**Account banned**\nSessions revoked",
+      inline: true,
+    });
+    if (blacklistedDomainAutoBan) {
+      fields.push({
+        name: "Blacklisted domain",
+        value: clean(detail(details, "email_domain") ?? "Unknown"),
+        inline: true,
+      });
+      fields.push({
+        name: "Matched on",
+        value: problem.source_kind === "signup" ? "Signup email" : "Whop checkout email",
+        inline: true,
+      });
+    } else {
+      fields.push({
+        name: "Whop buyer history",
+        value: clean(
+          `${detail(details, "priorDisputeCount") ?? "0"} prior dispute(s)\n` +
+            `${detail(details, "priorRefundCount") ?? "0"} prior refund(s)`,
+        ),
+        inline: true,
+      });
+      fields.push({
+        name: "Additional Whop evidence",
+        value: clean(
+          `${detail(details, "priorFraudDeclines") ?? "0"} fraud decline(s)\n` +
+            `${detail(details, "highRiskSessions") ?? "0"} high-risk session(s)`,
+        ),
+        inline: true,
+      });
+      fields.push({ name: "Provider risk", value: detail(details, "providerRiskScore") ?? "Unavailable", inline: true });
+      fields.push({ name: "Whop payment", value: clean(detail(details, "paymentId") ?? problem.source_id), inline: true });
+    }
+  } else if (highRisk) {
     fields.push({
       name: "👤 Account",
       value: clean(
@@ -444,10 +506,16 @@ export function buildFiatDiscordPayload(
     });
   }
 
-  const url = new URL(dashboardUrl).toString();
+  const url = autoBanned
+    ? new URL("/antifraud/auto-bans", dashboardUrl).toString()
+    : new URL(dashboardUrl).toString();
   const creditReview = problem.problem_code === "review";
   const description =
-    problem.problem_code === "suspicious_deposit_cluster"
+    autoBanned
+      ? blacklistedDomainAutoBan
+        ? "A confirmed blacklist rule matched this email domain. Packy automatically banned the linked account and revoked its sessions."
+        : "Whop reported a known prior dispute or refund for this buyer. Packy automatically banned the linked account and revoked its sessions."
+      : problem.problem_code === "suspicious_deposit_cluster"
       ? details.cluster_basis === "refunded_amount"
         ? "A high share of settled payments for this exact amount was refunded across distinct accounts and payment identities. Crypto and item withdrawals are locked."
         : "Multiple distinct accounts and payment identities used unusual Gmail aliases for the same amount inside a short window. Crypto and item withdrawals are locked."
@@ -476,10 +544,14 @@ export function buildFiatDiscordPayload(
                 : `Whop payment webhook ${clean(details.provider_event_id ?? problem.source_id, 256)} could not be processed.`;
 
   return {
-    username: "PackyGG Fiat",
+    username: autoBanned ? "PackyGG Antifraud" : "PackyGG Fiat",
     embeds: [
       {
-        title: patternMatch
+        title: autoBanned
+          ? blacklistedDomainAutoBan
+            ? "⛔ Blacklisted-domain account auto-ban"
+            : "⛔ Whop-history account auto-ban"
+          : patternMatch
           ? "Suspicious checkout email review"
           : highRisk
             ? "🚨 High-risk fiat deposit"
@@ -492,7 +564,9 @@ export function buildFiatDiscordPayload(
             : 0xef4444,
         fields,
         footer: {
-          text: highRisk
+          text: autoBanned
+            ? "PackyGG Antifraud · Automatic ban confirmed"
+            : highRisk
             ? "PackyGG Fiat Risk · Deposit received"
             : "PackyGG Fiat Operations",
         },
@@ -506,7 +580,9 @@ export function buildFiatDiscordPayload(
           {
             type: 2,
             style: 5,
-            label: creditReview
+            label: autoBanned
+              ? "Open Auto Bans"
+              : creditReview
               ? "Open Deposit Reviews"
               : highRisk
                 ? "Review High-Risk Deposit"
@@ -783,8 +859,44 @@ export class FiatProblemAlerts {
   async process(): Promise<void> {
     await this.captureHighRiskAssessments();
     await this.capture();
+    await this.queueConfirmedEmailDomainAutoBans();
     await this.syncDeliveries();
     await this.deliver();
+  }
+
+  private async queueConfirmedEmailDomainAutoBans(): Promise<void> {
+    const pending = await this.db.antifraud.query<{ source_kind: string; source_id: string; user_id: string }>(
+      `SELECT source_kind, source_id, user_id
+       FROM fiat_problem_alert_outbox
+       WHERE problem_code='blacklisted_email_domain'
+         AND details->>'email_risk_type'='blacklisted_domain'
+         AND COALESCE(details->>'ban_confirmed','false') <> 'true'
+         AND user_id IS NOT NULL
+         AND discord_delivered_at IS NULL
+       ORDER BY occurred_at LIMIT 500`,
+    );
+    if (pending.rows.length === 0) return;
+    const userIds = Array.from(new Set(pending.rows.map((row) => row.user_id)));
+    const confirmed = await this.db.source.query<{ id: string; banned_reason: string | null; banned_at: Date | null }>(
+      `SELECT id, banned_reason, banned_at FROM "user"
+       WHERE id=ANY($1::text[]) AND is_banned=true
+         AND banned_reason LIKE 'Automatic fraud ban:%active blocked email domain%'`,
+      [userIds],
+    );
+    const byUser = new Map(confirmed.rows.map((row) => [row.id, row]));
+    for (const alert of pending.rows) {
+      const account = byUser.get(alert.user_id);
+      if (!account) continue;
+      await this.db.antifraud.query(
+        `UPDATE fiat_problem_alert_outbox
+         SET details=details || jsonb_build_object(
+               'ban_confirmed', true, 'ban_reason', $3::text,
+               'banned_at', $4::timestamptz
+             ), next_attempt_at=now(), updated_at=now()
+         WHERE source_kind=$1 AND source_id=$2`,
+        [alert.source_kind, alert.source_id, account.banned_reason, account.banned_at],
+      );
+    }
   }
 
   private async captureHighRiskAssessments(): Promise<void> {
@@ -931,10 +1043,9 @@ export class FiatProblemAlerts {
         FROM fiat_problem_alert_outbox AS alert
         CROSS JOIN LATERAL (
           SELECT 'email_blacklist'::text AS destination
-          WHERE alert.problem_code IN (
-            'blacklisted_email_domain',
-            'suspicious_deposit_cluster'
-          )
+          WHERE alert.problem_code = 'suspicious_deposit_cluster'
+             OR (alert.problem_code = 'blacklisted_email_domain'
+                 AND alert.details->>'email_risk_type' <> 'blacklisted_domain')
 
           UNION ALL
 
@@ -952,13 +1063,22 @@ export class FiatProblemAlerts {
 
           UNION ALL
 
+          SELECT 'auto_banned'::text
+          WHERE alert.problem_code = 'whop_history_auto_ban'
+             OR (alert.problem_code = 'blacklisted_email_domain'
+                 AND alert.details->>'email_risk_type' = 'blacklisted_domain'
+                 AND alert.details->>'ban_confirmed' = 'true')
+
+          UNION ALL
+
           SELECT 'fiat_operations'::text
           WHERE alert.problem_code NOT IN (
             'blacklisted_email_domain',
             'suspicious_deposit_cluster',
             'high_risk',
             'fiat_locked_account',
-            'fiat_identity_drift'
+            'fiat_identity_drift',
+            'whop_history_auto_ban'
           )
         ) AS destination
         ON CONFLICT (source_kind, source_id, destination) DO NOTHING

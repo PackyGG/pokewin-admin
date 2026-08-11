@@ -83,7 +83,7 @@ export async function applyEmailDomainContainment(
   target: EmailDomainContainmentTarget,
 ): Promise<"banned" | "locked" | "skipped"> {
   const db = getProdPrimaryDrizzleDb();
-  const contained = await db.transaction(async (tx) => {
+  const contained = await db.transaction(async (tx): Promise<"banned" | "locked" | "skipped"> => {
     const locked = await tx.execute<{ user_id: string }>(sql`
       INSERT INTO user_feature_locks (
         id,
@@ -123,10 +123,10 @@ export async function applyEmailDomainContainment(
       RETURNING user_id
     `);
     if (locked.rows.length === 0 || !target.ban) {
-      return locked.rows.length > 0;
+      return locked.rows.length > 0 ? "locked" : "skipped";
     }
 
-    await tx.execute(sql`
+    const banned = await tx.execute<{ id: string }>(sql`
       UPDATE "user"
       SET
         is_banned = TRUE,
@@ -141,11 +141,15 @@ export async function applyEmailDomainContainment(
         banned_by = CASE WHEN is_banned THEN banned_by ELSE NULL END,
         updated_at = NOW()
       WHERE id = ${target.userId}
+        AND is_banned = FALSE
+        AND COALESCE(role::text, '') NOT IN ('admin', 'support', 'creator')
+        AND NOT COALESCE(roles::text[], ARRAY[]::text[])
+          && ARRAY['admin','support','creator']::text[]
+      RETURNING id
     `);
+    if (banned.rows.length !== 1) return "locked";
     await tx.execute(sql`DELETE FROM session WHERE "userId" = ${target.userId}`);
-    return true;
+    return "banned";
   });
-
-  if (!contained) return "skipped";
-  return target.ban ? "banned" : "locked";
+  return contained;
 }

@@ -212,6 +212,7 @@ export const APP_HOSTS: readonly AppHostConfig[] = [
       "ip-blacklist",
       "fingerprint-blacklist",
       "banned-users",
+      "auto-bans",
       "guide",
       "audit",
       "profiles",

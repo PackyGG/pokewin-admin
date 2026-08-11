@@ -227,7 +227,7 @@ test("successful containment delivery confirms the lock without mirror lag", asy
       sql.includes("WITH confirmed_matches AS") &&
       sql.includes("lock_delivered_at = COALESCE") &&
       sql.includes("event.id = ANY($1::uuid[])") &&
-      sql.includes("UPDATE fiat_problem_alert_outbox AS alert")
+      sql.includes("SELECT count(*) FROM confirmed_matches")
     ),
     true,
   );

@@ -64,6 +64,7 @@ const DASHBOARD_CONTAINMENT_EVENT_TYPES: ReadonlySet<string> = new Set([
   "critical_risk_signup",
   "fiat_deposit_identity_containment",
   "fiat_eligibility_containment",
+  "whop_history_auto_ban",
 ]);
 
 function objectPayload(value: unknown): Record<string, unknown> {
@@ -95,6 +96,11 @@ function objectPayload(value: unknown): Record<string, unknown> {
     "reviewCodes",
     "watchCodes",
     "refundedAmountClusterActiveUntil",
+    "provider",
+    "paymentId",
+    "depositIntentId",
+    "priorDisputeCount",
+    "priorRefundCount",
   ] as const;
   const compact: Record<string, unknown> = {
     deliveryPayloadTruncated: true,
@@ -234,6 +240,7 @@ export class IngestDelivery {
               OR re.event_type = 'critical_risk_signup'
               OR re.event_type = 'fiat_deposit_identity_containment'
               OR re.event_type = 'fiat_eligibility_containment'
+              OR re.event_type = 'whop_history_auto_ban'
             )
           ORDER BY re.recorded_at, re.id
           LIMIT $1
@@ -397,7 +404,6 @@ export class IngestDelivery {
           UPDATE fiat_email_domain_matches AS match
           SET
             lock_delivered_at = COALESCE(match.lock_delivered_at, now()),
-            next_attempt_at = now(),
             last_error = NULL,
             updated_at = now()
           FROM risk_events AS event
@@ -409,16 +415,7 @@ export class IngestDelivery {
             )
           RETURNING match.source_event_id, match.match_source, match.domain
         )
-        UPDATE fiat_problem_alert_outbox AS alert
-        SET next_attempt_at = now(), updated_at = now()
-        FROM confirmed_matches AS match
-        WHERE alert.source_kind = CASE
-            WHEN match.match_source = 'signup' THEN 'signup'
-            ELSE 'payment_webhook'
-          END
-          AND alert.source_id =
-            match.source_event_id || ':blacklisted_email_domain:' || match.domain
-          AND alert.discord_delivered_at IS NULL
+        SELECT count(*) FROM confirmed_matches
       `,
       [eventIds],
     );

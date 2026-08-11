@@ -201,6 +201,29 @@ test("signup blacklist alerts identify the signup email", () => {
   assert.ok(!("escalate" in payload));
 });
 
+test("confirmed blacklist bans use the Auto Ban card", () => {
+  const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
+    source_kind: "signup",
+    source_id: "signup:user-1:blacklisted_email_domain:stolas.org",
+    problem_code: "blacklisted_email_domain",
+    user_id: "user-1",
+    username: "test-user",
+    details: {
+      email_domain: "stolas.org",
+      email_risk_type: "blacklisted_domain",
+      ban_confirmed: true,
+    },
+    occurred_at: new Date("2026-07-28T12:00:00.000Z"),
+  });
+
+  assert.match(payload.embeds[0]?.description ?? "", /automatically banned/);
+  assert.equal(
+    payload.embeds[0]?.fields.find((field) => field.name === "⛔ Action")?.value,
+    "**Account banned**\nSessions revoked",
+  );
+  assert.match(payload.embeds[0]?.url ?? "", /\/antifraud\/auto-bans$/);
+});
+
 test("Gmail pattern alerts explain the rule without blacklisting Gmail", () => {
   const payload = buildFiatDiscordPayload(FIAT_WORKSPACE_URL, {
     source_kind: "payment_webhook",
@@ -284,7 +307,7 @@ test("deposit cluster alerts aggregate evidence without duplicate account alerts
 
 test("the four-route mapping preserves current fiat classification", () => {
   assert.deepEqual(fiatAlertDestinations("blacklisted_email_domain"), [
-    "email_blacklist",
+    "auto_banned",
   ]);
   assert.deepEqual(fiatAlertDestinations("suspicious_deposit_cluster"), [
     "email_blacklist",

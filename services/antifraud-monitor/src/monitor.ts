@@ -28,6 +28,7 @@ import {
 import { FiatEmailDomainGuard } from "./fiat-email-domains.js";
 import { captureIdentifierBlocklistMatches } from "./identifier-blocklists.js";
 import { FiatProblemAlerts } from "./fiat-alerts.js";
+import { WhopHistoryAutoBans } from "./whop-history-auto-bans.js";
 import { FiatDepositIdentityChecks } from "./fiat-deposit-identity.js";
 import { FreeBattleRiskMonitor } from "./free-battle-risk.js";
 import { FreshBehaviorMonitor } from "./fresh-behavior.js";
@@ -452,6 +453,7 @@ export class MonitorEngine {
   private readonly discord: DiscordAlerts;
   private readonly fiatEmailDomains: FiatEmailDomainGuard;
   private readonly fiatAlerts: FiatProblemAlerts;
+  private readonly whopHistoryAutoBans: WhopHistoryAutoBans;
   private readonly fiatDepositIdentity: FiatDepositIdentityChecks;
   private readonly freeBattleRisk: FreeBattleRiskMonitor;
   private readonly freshBehavior: FreshBehaviorMonitor;
@@ -473,6 +475,7 @@ export class MonitorEngine {
     );
     this.fiatEmailDomains = new FiatEmailDomainGuard(db, log);
     this.fiatAlerts = new FiatProblemAlerts(config, db, log);
+    this.whopHistoryAutoBans = new WhopHistoryAutoBans(db, log);
     this.fiatDepositIdentity = new FiatDepositIdentityChecks(
       config,
       db,
@@ -491,6 +494,7 @@ export class MonitorEngine {
     await this.ensureCursor();
     await this.fiatEmailDomains.ensureCursor();
     await this.fiatAlerts.ensureCursor();
+    await this.whopHistoryAutoBans.ensureCursor();
     await this.fiatDepositIdentity.ensureCursor();
     await this.freeBattleRisk.ensureCursor();
     await this.freshBehavior.ensureCursor();
@@ -675,6 +679,11 @@ export class MonitorEngine {
       // alert land in the same tick rather than a poll interval apart.
       await this.runPhase("fiat-deposit-identity", () =>
         this.fiatDepositIdentity.process(),
+      );
+      // Detect first so confirmed bans can enter the shared durable Discord
+      // outbox before the fiat alert delivery phase in this same tick.
+      await this.runPhase("whop-history-auto-bans", () =>
+        this.whopHistoryAutoBans.process(),
       );
       await this.runPhase("fiat-problem-alerts", () =>
         this.fiatAlerts.process(),

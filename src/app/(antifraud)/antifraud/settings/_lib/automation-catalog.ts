@@ -160,6 +160,24 @@ export const AUTOMATION_FLOWS: AutomationFlow[] = [
     icon: MapPinned,
   },
   {
+    name: "Whop buyer-history automatic bans",
+    scope: "Every newly created Whop payment linked to a Packy account",
+    trigger:
+      "Whop reports at least one prior buyer dispute or prior buyer refund in the signed payment webhook evidence.",
+    actions: [
+      "Open or update Account Review with the Whop evidence",
+      "Ban the Packy account through the durable signed containment outbox",
+      "Revoke all active sessions and retry transient ban failures",
+    ],
+    discordEvents: ["antifraud.account_auto_banned"],
+    controls: [
+      { label: "Inspect automatic bans", href: "/antifraud/auto-bans" },
+      { label: "Edit Discord routing", href: "/antifraud/discord" },
+    ],
+    mode: "fixed",
+    icon: Ban,
+  },
+  {
     name: "Fiat payment risk and operations",
     scope: "Whop payment lifecycle and MAIN reconciliation",
     trigger:

@@ -96,11 +96,12 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
   const release = read("src/lib/antifraud/withdrawal-release.ts");
   assert.match(release, /UPDATE user_feature_locks/);
   assert.match(release, /AUTOMATIC_FRAUD_LOCK_REASON_PREFIX/);
-  assert.match(release, /CRITICAL_SIGNUP_LOCK_REASON_PREFIX/);
   assert.match(release, /locked_withdrawals_crypto = CASE/);
   assert.match(release, /locked_withdrawals_items = CASE/);
   assert.match(release, /locked_deposits_fiat = CASE/);
-  assert.match(release, /locked_reward_categories\.includes\("tips"\)/);
+  assert.match(release, /locked_reward_categories\.length > 0/);
+  assert.match(release, /antifraud_catchall_reward_lock_snapshot/);
+  assert.match(release, /previousCategories/);
   // Idempotent: only a genuinely locked row is touched, so a replay is a no-op.
   assert.match(
     release,
@@ -136,9 +137,11 @@ test("approving a case releases every antifraud-owned automatic lock", () => {
   assert.match(release, /export async function restoreWithdrawalLocksForReopenedCase/);
   assert.match(
     release,
-    /event_type = 'antifraud_withdrawals_unlocked'[\s\S]*?metadata ->> 'reviewId' = \$\{reviewId\}[\s\S]*?return \{ status: "nothing_to_restore" \}/,
+    /event_type = 'antifraud_critical_signup_restrictions_unlocked'[\s\S]*?metadata ->> 'reviewId' = \$\{reviewId\}[\s\S]*?return \{ status: "nothing_to_restore" \}/,
   );
   assert.match(release, /INSERT INTO user_feature_locks/);
+  assert.match(release, /releasedRewardCategories/);
+  assert.match(release, /restoreFiat/);
 
   const actions = read("src/app/(antifraud)/antifraud/reviews/actions.ts");
   assert.match(
@@ -264,7 +267,7 @@ test("free-battle containment requires two battles and locks withdrawals without
   );
 });
 
-test("Abstract catch-all signup containment bans on signed provider evidence without KYC", () => {
+test("Abstract catch-all signup containment fully locks on signed provider evidence without KYC", () => {
   const helper = read(
     "src/lib/antifraud/abstract-catchall-containment.ts",
   );
@@ -275,10 +278,11 @@ test("Abstract catch-all signup containment bans on signed provider evidence wit
 
   assert.match(helper, /containmentRequired !== true/);
   assert.match(helper, /provider !== "abstract_email"/);
-  assert.match(helper, /UPDATE "user"/);
-  assert.match(helper, /is_banned = TRUE/);
-  assert.match(helper, /WHEN is_banned THEN banned_by ELSE NULL/);
-  assert.match(helper, /DELETE FROM session/);
+  assert.match(helper, /INSERT INTO user_feature_locks/);
+  assert.match(helper, /locked_deposits_fiat = ARRAY\['all'\]/);
+  assert.match(helper, /locked_withdrawals_items = TRUE/);
+  assert.match(helper, /available_reward_categories/);
+  assert.doesNotMatch(helper, /is_banned = TRUE|DELETE FROM session/);
   assert.doesNotMatch(helper, /is_locked = TRUE|requireUserKyc|getUserKyc/);
   assert.match(
     ingestBody,

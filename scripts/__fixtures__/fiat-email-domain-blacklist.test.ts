@@ -78,7 +78,9 @@ test("blacklisted domains ban, patterns review, and clusters lock without KYC", 
   assert.match(containment, /emailRiskType === "blacklisted_domain"/);
   assert.match(containment, /is_banned = TRUE/);
   assert.match(containment, /DELETE FROM session/);
-  assert.match(containment, /target\.ban \? "banned" : "locked"/);
+  assert.match(containment, /return "banned"/);
+  assert.match(containment, /NOT IN \('admin', 'support', 'creator'\)/);
+  assert.match(containment, /if \(banned\.rows\.length !== 1\) return "locked"/);
   assert.match(ingest, /signal\.payload\?\.reviewOnly !== true/);
   assert.doesNotMatch(ingest, /requireUserKyc|getUserKyc/);
   assert.doesNotMatch(containment, /requireUserKyc|getUserKyc/);

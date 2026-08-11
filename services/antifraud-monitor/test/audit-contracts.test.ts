@@ -329,6 +329,7 @@ test("notification registry owns every producer route and missing state", async 
       ["High-risk fiat supplemental", true],
       ["Email containment", true],
       ["Withdrawal holds", true],
+      ["Automatically banned accounts", true],
       ["Signed dashboard ingest", true],
     ],
   );
@@ -350,7 +351,7 @@ test("notification registry owns every producer route and missing state", async 
   ]);
   assert.deepEqual(
     notificationRoutesForFiatProblem("blacklisted_email_domain"),
-    ["email_blacklist"],
+    ["auto_banned"],
   );
   assert.deepEqual(notificationRoutesForFiatProblem("failed"), [
     "fiat_operations",

@@ -62,6 +62,13 @@ export const MONITOR_EVENT_CATALOG: MonitorEventDefinition[] = [
     "Signup poller",
   ),
   event(
+    "whop_history_auto_ban",
+    "Whop-history automatic ban",
+    "Security",
+    "Whop reports a prior buyer dispute or refund and Packy queues an automatic account ban.",
+    "Whop payment webhooks",
+  ),
+  event(
     "fiat_deposit",
     "Fiat deposit",
     "Money",

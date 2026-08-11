@@ -175,6 +175,25 @@ export async function updateFiatEmailDomain(input: {
     .parse(payload).data;
 }
 
+export async function promoteCatchallEmailDomain(input: {
+  domain: string;
+  reason: string;
+  idempotencyKey: string;
+  actorId: string;
+  actorUsername?: string;
+}): Promise<FiatEmailDomainRule & { idempotent: boolean }> {
+  const response = await request(
+    "/v1/fiat-email-domains/promote-catchall",
+    { method: "POST", body: JSON.stringify(input) },
+    true,
+  );
+  const payload = await response.json().catch(() => null);
+  if (response.status === 400) throw new Error("The catch-all domain is not safe to blacklist.");
+  if (response.status === 409) throw new Error("That promotion request conflicts with an earlier action.");
+  if (!response.ok) throw new Error("The catch-all domain could not be promoted to the blacklist.");
+  return z.object({ data: ruleSchema.extend({ idempotent: z.boolean() }) }).parse(payload).data;
+}
+
 export async function getFiatEmailDomainMatches(
   intentIds: string[],
 ): Promise<FiatEmailDomainMatch[]> {

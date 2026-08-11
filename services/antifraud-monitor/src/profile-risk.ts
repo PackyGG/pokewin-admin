@@ -402,9 +402,9 @@ export function assessProfile(input: {
         : score >= 21
           ? "monitor"
           : "clear";
-  const deterministicBan = policyMatches.some((policy) =>
-    policy === "email.catchall" || policy === "blocklist.email_domain",
-  );
+  // First-seen catch-all domains receive maximum-score containment and staff
+  // review. Only a domain already confirmed on the blocklist is deterministic.
+  const deterministicBan = policyMatches.includes("blocklist.email_domain");
   // Containment policies only. `network.tor`, `device.confirmed_vm` and
   // `fingerprint.automation` deliberately no longer auto-lock withdrawals;
   // they reach the same actions only if their catalog weight scores >= 70.

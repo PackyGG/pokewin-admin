@@ -35,6 +35,10 @@ import {
   applyRiskyFreeBattleContainment,
   riskyFreeBattleContainmentTarget,
 } from "@/lib/antifraud/risky-free-battle-containment";
+import {
+  applyWhopHistoryAutoBan,
+  whopHistoryAutoBanTarget,
+} from "@/lib/antifraud/whop-history-auto-ban";
 
 /**
  * Durable outbox for every automatic containment kind whose apply step is
@@ -64,6 +68,7 @@ export const CONTAINMENT_OUTBOX_KINDS = [
   "risky_free_battle_containment",
   "behavioral_withdrawal_containment",
   "critical_risk_signup",
+  "whop_history_auto_ban",
 ] as const;
 
 export type ContainmentOutboxKind = (typeof CONTAINMENT_OUTBOX_KINDS)[number];
@@ -109,6 +114,8 @@ export function requiresContainmentOutbox(
       return behavioralWithdrawalContainmentTarget(signal) !== null;
     case "critical_risk_signup":
       return criticalSignupContainmentTarget(signal) !== null;
+    case "whop_history_auto_ban":
+      return whopHistoryAutoBanTarget(signal) !== null;
   }
 }
 
@@ -177,7 +184,7 @@ export async function runDeferredContainment(
 }
 
 async function applyContainmentForKind(
-  signal: DeferredContainmentSignal,
+  signal: DeferredContainmentSignal & { signalRowId?: string },
 ): Promise<"locked" | "skipped"> {
   switch (signal.kind) {
     case "fiat_eligibility_containment": {
@@ -201,8 +208,7 @@ async function applyContainmentForKind(
     case "abstract_email_catchall": {
       const target = abstractCatchallContainmentTarget(signal);
       if (!target) return "skipped";
-      const result = await applyAbstractCatchallContainment(target);
-      return result === "banned" ? "locked" : "skipped";
+      return applyAbstractCatchallContainment(target, signal.signalRowId);
     }
     case "signup_policy_recommendation": {
       const target = identifierBlocklistContainmentTarget(signal);
@@ -223,6 +229,12 @@ async function applyContainmentForKind(
       const target = criticalSignupContainmentTarget(signal);
       if (!target) return "skipped";
       return applyCriticalSignupContainment(target);
+    }
+    case "whop_history_auto_ban": {
+      const target = whopHistoryAutoBanTarget(signal);
+      if (!target) return "skipped";
+      const result = await applyWhopHistoryAutoBan(target);
+      return result === "banned" ? "locked" : "skipped";
     }
   }
 }
@@ -285,7 +297,8 @@ export async function claimPendingContainmentRows(
           'signup_policy_recommendation',
           'risky_free_battle_containment',
           'behavioral_withdrawal_containment',
-          'critical_risk_signup'
+          'critical_risk_signup',
+          'whop_history_auto_ban'
         )
       ORDER BY received_at
       LIMIT ${limit}
