@@ -107,6 +107,13 @@ export const API_ENDPOINTS: readonly ApiEndpoint[] = [
   },
   {
     method: "POST",
+    path: "/api/v1/discord/creator-setups/pnl",
+    summary:
+      "Body { guildId, categoryId, channelId, actorDiscordUserId }. Creator or dashboard-admin read of the linked creator's active deal performance and canonical site PnL: attributed deposits minus card withdrawals minus affiliate claims.",
+    scopes: ["discord:creator:setup"],
+  },
+  {
+    method: "POST",
     path: "/api/v1/discord/creator-setups/stream-events",
     summary: "Body { after }. Returns recently changed creator stream sessions mapped to their Discord creator sections for private admin-log delivery.",
     scopes: ["discord:creator:setup"],

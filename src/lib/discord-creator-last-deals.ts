@@ -22,6 +22,7 @@ import {
   requireLinkedSetupActor,
 } from "@/lib/discord-creator-setups";
 import { isDiscordDashboardOperator } from "@/lib/discord-dashboard-operators";
+import { getFrameAffiliatePnlByUser } from "@/app/(creator-hub)/creator-hub/profitability/_queries/frame-affiliate-pnl-by-user";
 
 const DEAL_LIMIT = 2;
 const LEADERBOARD_PAGE_SIZE = 100;
@@ -84,6 +85,24 @@ export type CreatorLastDeals = {
       }>;
     }>;
   }>;
+};
+
+export type CreatorCurrentDealPnl = {
+  generatedAt: string;
+  creator: CreatorLastDeals["creator"];
+  deal: null | {
+    dealId: string;
+    startedAt: string;
+    endedAt: string;
+    signups: number;
+    firstTimeDepositors: number;
+    depositsUsd: number;
+    weightedWagerUsd: number;
+    sitePnlUsd: number;
+    attributedDepositsUsd: number;
+    cardWithdrawalsUsd: number;
+    affiliateClaimsUsd: number;
+  };
 };
 
 type DealRow = {
@@ -464,5 +483,50 @@ export async function getCreatorLastDeals(input: {
     generatedAt: new Date().toISOString(),
     creator: { userId: creator.id, username: creator.username },
     deals: dealResults,
+  };
+}
+
+/** Current active deal performance plus the dashboard's canonical site PnL. */
+export async function getCreatorCurrentDealPnl(input: {
+  guildId: string;
+  categoryId: string;
+  channelId: string;
+  actorDiscordUserId: string;
+}): Promise<CreatorCurrentDealPnl> {
+  const lastDeals = await getCreatorLastDeals(input);
+  const activeDeal = lastDeals.deals.find((deal) => deal.status === "active") ?? null;
+  if (!activeDeal) {
+    return {
+      generatedAt: lastDeals.generatedAt,
+      creator: lastDeals.creator,
+      deal: null,
+    };
+  }
+
+  const pnl = (await getFrameAffiliatePnlByUser([{
+    userId: lastDeals.creator.userId,
+    startIso: activeDeal.startedAt,
+    endIso: activeDeal.endedAt,
+  }])).get(lastDeals.creator.userId);
+  if (!pnl) {
+    throw new Error("Current creator deal PnL query returned no row");
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    creator: lastDeals.creator,
+    deal: {
+      dealId: activeDeal.dealId,
+      startedAt: activeDeal.startedAt,
+      endedAt: activeDeal.endedAt,
+      signups: activeDeal.signups,
+      firstTimeDepositors: activeDeal.firstTimeDepositors,
+      depositsUsd: activeDeal.depositsUsd,
+      weightedWagerUsd: activeDeal.weightedWagerUsd,
+      sitePnlUsd: money(pnl.affiliatesMadeUs),
+      attributedDepositsUsd: money(pnl.deposits),
+      cardWithdrawalsUsd: money(pnl.cardWithdrawals),
+      affiliateClaimsUsd: money(pnl.affiliateClaims),
+    },
   };
 }
