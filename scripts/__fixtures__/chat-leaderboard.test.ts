@@ -43,7 +43,12 @@ test("chat leaderboard is persisted, finalized by rank, and exposed on the page"
   assert.doesNotMatch(page, /CompetitionNavigation/);
   assert.doesNotMatch(page, /No round running/);
   assert.doesNotMatch(page, /No XP leaderboard running/);
-  assert.match(page, /Chat Raffle & XP Leaderboard/);
+  assert.match(page, /title="Chat Raffle"/);
+  assert.match(page, /<LifetimeCommunityXpSection \/>/);
+  assert.match(page, /Active XP leaderboard/);
+  assert.match(page, /formatNumber\(entry\.tickets\)/);
+  assert.match(page, /className="flex flex-wrap items-center gap-3 border-b/);
+  assert.match(page, /grid-cols-3/);
   assert.match(page, /<div className="space-y-4">/);
   assert.match(page, /<FadeIn className="space-y-4">/);
   assert.equal(page.match(/mode="create" competitionType="leaderboard"/g)?.length, 1);

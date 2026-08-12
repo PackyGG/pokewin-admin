@@ -84,7 +84,7 @@ export default async function ChatRafflePage() {
       <PageHero>
         <SectionHeading
           icon={Trophy}
-          title="Chat Raffle & XP Leaderboard"
+          title="Chat Raffle"
           action={
             <>
               <RoundFormDialog
@@ -104,6 +104,10 @@ export default async function ChatRafflePage() {
 
       <Suspense fallback={<ActiveRoundSkeleton />}>
         <ActiveRoundSection competitionType="leaderboard" />
+      </Suspense>
+
+      <Suspense fallback={<LifetimeStandingsSkeleton />}>
+        <LifetimeCommunityXpSection />
       </Suspense>
 
       <Suspense fallback={<RoundHistorySkeleton />}>
@@ -134,7 +138,7 @@ async function ActiveRoundSection({
 
   if (!round) {
     if (competitionType === "raffle") return null;
-    return <NoActiveRound competitionType={competitionType} />;
+    return <NoActiveLeaderboard />;
   }
 
   const adjustments = await safeQuery(
@@ -167,7 +171,9 @@ async function ActiveRoundSection({
         icon={competitionType === "leaderboard" ? ListOrdered : Dices}
         title={
           <>
-            {round.name}
+            {competitionType === "leaderboard" ? "Active XP leaderboard" : "Active raffle"}
+            <span className="text-muted-foreground">·</span>
+            <span className="font-medium text-muted-foreground">{round.name}</span>
             <Badge
               variant="outline"
               className={cn("h-5 px-1.5 text-[10px] uppercase", CHAT_RAFFLE_PHASE_COLOR[round.phase])}
@@ -300,26 +306,31 @@ async function ActiveRoundSection({
   );
 }
 
-/**
- * No open round: show the lifetime combined Community XP leaderboard so an
- * operator can inspect established community standing before opening a round.
- */
-async function NoActiveRound({
-  competitionType,
-}: {
-  competitionType: ChatCompetitionType;
-}) {
-  const now = new Date();
-  const dayStart = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+function NoActiveLeaderboard() {
+  return (
+    <FadeIn>
+      <div className="rounded-2xl border border-dashed p-4 text-center sm:p-5">
+        <ListOrdered className="mx-auto size-6 text-muted-foreground" />
+        <p className="mt-2 text-sm font-medium">No XP leaderboard is running</p>
+        <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
+          Create one above to reward the top XP earners. The all-time Community
+          XP standings remain available below.
+        </p>
+      </div>
+    </FadeIn>
   );
-  const dayEnd = new Date(dayStart.getTime() + 86_400_000);
+}
 
+/** Always keep the established community standings visible below live events. */
+async function LifetimeCommunityXpSection() {
+  const now = new Date();
   const preview = await safeQuery(
     () =>
       getChatRaffleStandings({
-        startsAt: dayStart,
-        endsAt: dayEnd,
+        // Lifetime reads ignore the window, but the shared scorer still
+        // requires valid bounds as part of its input contract.
+        startsAt: new Date(0),
+        endsAt: now,
         timeframe: "lifetime",
       }),
     { standings: [], totalTickets: 0, entrants: 0, truncated: false },
@@ -329,17 +340,6 @@ async function NoActiveRound({
 
   return (
     <FadeIn className="space-y-4">
-      <div className="rounded-2xl border border-dashed p-4 text-center sm:p-5">
-        <ListOrdered className="mx-auto size-6 text-muted-foreground" />
-        <p className="mt-2 text-sm font-medium">
-          Create a leaderboard to reward the top XP earners
-        </p>
-        <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
-          Below is the lifetime Community XP leaderboard across Discord and
-          linked on-site chat. Nothing is being counted toward a prize.
-        </p>
-      </div>
-
       {preview.error !== null && <QueryFailedNotice />}
 
       <SectionHeading icon={MessageSquare} title="Lifetime Community XP leaderboard" />
@@ -349,7 +349,7 @@ async function NoActiveRound({
         roundId={null}
         adjustable={false}
         lifetime
-        competitionType={competitionType}
+        competitionType="leaderboard"
         emptyMessage="No qualifying Community XP has been recorded yet."
       />
     </FadeIn>
@@ -399,7 +399,7 @@ function StandingsTable({
             return (
               <div
                 key={entry.userId}
-                className="flex items-center gap-3 border-b px-3 py-2.5 last:border-b-0"
+                className="flex flex-wrap items-center gap-3 border-b px-3 py-2.5 last:border-b-0"
               >
                 <div
                   className={cn(
@@ -468,10 +468,10 @@ function StandingsTable({
                 </div>
 
                 <div
-                  className="order-last ml-11 grid w-[calc(100%-2.75rem)] shrink-0 grid-cols-2 overflow-hidden rounded-lg border bg-muted/30 sm:order-none sm:ml-0 sm:w-auto"
+                  className="order-last ml-11 grid w-[calc(100%-2.75rem)] shrink-0 grid-cols-3 overflow-hidden rounded-lg border bg-muted/30 sm:order-none sm:ml-0 sm:w-auto"
                   title={`${formatNumber(entry.messageCount)} qualifying messages total`}
                 >
-                  <div className="min-w-24 px-3 py-1.5">
+                  <div className="min-w-0 px-2 py-1.5 sm:min-w-24 sm:px-3">
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                       Discord
                     </div>
@@ -480,13 +480,21 @@ function StandingsTable({
                       <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
                     </div>
                   </div>
-                  <div className="min-w-24 border-l px-3 py-1.5">
+                  <div className="min-w-0 border-l px-2 py-1.5 sm:min-w-24 sm:px-3">
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
                       On-site
                     </div>
                     <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
                       {formatNumber(entry.siteChatMessageCount)}
                       <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
+                    </div>
+                  </div>
+                  <div className="min-w-0 border-l px-2 py-1.5 text-right sm:min-w-20 sm:px-3">
+                    <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
+                      {lifetime || competitionType === "leaderboard" ? "XP" : "Tickets"}
+                    </div>
+                    <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
+                      {formatNumber(entry.tickets)}
                     </div>
                   </div>
                 </div>
@@ -754,6 +762,15 @@ function RoundHistorySkeleton() {
     <div className="space-y-3">
       <Skeleton className="h-6 w-40 rounded" />
       <Skeleton className="h-32 w-full rounded-2xl" />
+    </div>
+  );
+}
+
+function LifetimeStandingsSkeleton() {
+  return (
+    <div className="space-y-3">
+      <Skeleton className="h-6 w-48 rounded" />
+      <Skeleton className="h-56 w-full rounded-2xl" />
     </div>
   );
 }
