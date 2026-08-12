@@ -357,8 +357,15 @@ export async function registerIdentifierBlocklistRoutes(
     const normalizedValue = kind === "ip"
       ? (
         await db.antifraud.query<{ value: string }>(
+          // $2 MUST carry an explicit cast. Comparing an untyped bind
+          // parameter to an untyped literal ('exact') leaves PostgreSQL with
+          // nothing to resolve the type from, so it rejects the whole
+          // statement with SQLSTATE 42P18 "could not determine data type of
+          // parameter". This fired on every IP rule normalization in
+          // production and surfaced as a bare "Unhandled request error".
+          // $1 is already anchored by ::cidr on both branches.
           `SELECT CASE
-             WHEN $2 = 'exact' THEN host($1::cidr)
+             WHEN $2::text = 'exact' THEN host($1::cidr)
              ELSE $1::cidr::text
            END AS value`,
           [parsed.data.value, parsed.data.matchMode],

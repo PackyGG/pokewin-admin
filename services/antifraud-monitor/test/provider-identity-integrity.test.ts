@@ -334,14 +334,21 @@ test("blocklist VPN evidence is derived from a count, never a literal true", () 
 });
 
 test("fingerprint blocklist inserts never pass visitor IDs through a CIDR cast", () => {
+  // Normalize line endings before slicing. Git checks this repo out with CRLF
+  // on Windows, so markers written with "\n" made both indexOf calls return
+  // -1, the slice collapsed to "", and this test failed permanently — masking
+  // whatever it was meant to guard. Assert the markers resolve, so a future
+  // refactor that moves them fails loudly instead of silently passing on an
+  // empty string.
   const source = readFileSync(
     new URL("../src/identifier-blocklist-routes.ts", import.meta.url),
     "utf8",
-  );
-  const fingerprintInsert = source.slice(
-    source.indexOf(": `\n            INSERT INTO identifier_blocklists"),
-    source.indexOf("`;\n        const inserted"),
-  );
+  ).replace(/\r\n/g, "\n");
+  const start = source.indexOf(": `\n            INSERT INTO identifier_blocklists");
+  const end = source.indexOf("`;\n        const inserted");
+  assert.notEqual(start, -1, "fingerprint insert start marker not found");
+  assert.notEqual(end, -1, "fingerprint insert end marker not found");
+  const fingerprintInsert = source.slice(start, end);
   assert.ok(fingerprintInsert.length > 0, "expected a separate fingerprint insert");
   assert.match(fingerprintInsert, /'fingerprint',NULL,\$2/);
   assert.doesNotMatch(fingerprintInsert, /::cidr/);

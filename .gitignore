@@ -73,3 +73,6 @@ bun.lock
 # below keeps them out of the build program.
 _probe-*
 _verify-*
+
+# Local audit worklists (agent scratch, never committed)
+.audit/
