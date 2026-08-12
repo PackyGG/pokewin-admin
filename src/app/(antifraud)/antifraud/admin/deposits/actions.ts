@@ -93,6 +93,8 @@ async function banAccount(input: {
         blacklisted_ip_count: identifiers.ipCount,
         blacklisted_fingerprint_count: identifiers.fingerprintCount,
         blocklist_changes: identifiers.changedCount,
+        identifier_delivery_status: identifiers.deliveryStatus,
+        identifier_operation_id: identifiers.operationId,
         error: error instanceof Error ? error.message : String(error),
       },
     });

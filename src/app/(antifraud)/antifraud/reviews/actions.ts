@@ -1096,12 +1096,11 @@ async function executeQuickReviewAccountAction(
       });
     } catch (error) {
       console.error("[antifraud] quick review ban failed:", error);
-      // `blockKnownUserIdentifiers` runs before the ban transaction and is NOT
-      // rolled back with it, so a failed ban can still leave IP/fingerprint
-      // blocklist entries in place — entries that also hit other accounts
-      // sharing those identifiers. Record the partial state durably before
-      // rethrowing; otherwise this leaves no audit row at all.
-      const blocklistApplied = identifiers !== undefined;
+      // The identifier obligation is committed before the ban transaction and
+      // is not rolled back with it. A failed account mutation can therefore
+      // still propagate shared IP/fingerprint blocks from the durable retry
+      // worker. Record that partial state before rethrowing.
+      const blocklistQueued = identifiers !== undefined;
       const auditOutcome = await createAdminAuditEventDurable({
         adminUserId: session.userId,
         eventType: "antifraud_ban_partial_failure",
@@ -1111,12 +1110,14 @@ async function executeQuickReviewAccountAction(
           reviewId,
           reason,
           idempotencyKey,
-          identifier_blocklist_applied: blocklistApplied,
+          identifier_blocklist_queued: blocklistQueued,
           ...(identifiers
             ? {
                 blacklisted_ip_count: identifiers.ipCount,
                 blacklisted_fingerprint_count: identifiers.fingerprintCount,
                 blocklist_changes: identifiers.changedCount,
+                identifier_delivery_status: identifiers.deliveryStatus,
+                identifier_operation_id: identifiers.operationId,
               }
             : {}),
           error: error instanceof Error ? error.message : String(error),
@@ -1129,8 +1130,8 @@ async function executeQuickReviewAccountAction(
         );
       }
       throw new Error(
-        blocklistApplied
-          ? "The account could not be banned, but its known IP/fingerprint identifiers may already be blocklisted. Nothing was hidden."
+        blocklistQueued
+          ? "The account could not be banned, but its known IP/fingerprint identifiers were queued for blocking. Nothing was hidden."
           : "The account or its known IP/fingerprint identifiers could not be banned. Nothing was hidden.",
       );
     }
@@ -1151,6 +1152,8 @@ async function executeQuickReviewAccountAction(
         blacklisted_ip_count: identifiers.ipCount,
         blacklisted_fingerprint_count: identifiers.fingerprintCount,
         blocklist_changes: identifiers.changedCount,
+        identifier_delivery_status: identifiers.deliveryStatus,
+        identifier_operation_id: identifiers.operationId,
       },
     });
     if (auditOutcome.status === "lost") {

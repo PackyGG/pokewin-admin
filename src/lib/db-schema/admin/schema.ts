@@ -2597,8 +2597,11 @@ export const antifraud_signals = pgTable("antifraud_signals", {
 	containment_outbox_next_attempt_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	containment_outbox_claimed_until: timestamp({ withTimezone: true, mode: 'string' }),
 	containment_applied_at: timestamp({ withTimezone: true, mode: 'string' }),
+	containment_last_verified_at: timestamp({ withTimezone: true, mode: 'string' }),
+	containment_verification_count: integer().default(0).notNull(),
 }, (table) => [
 	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.containment_outbox_next_attempt_at.asc().nullsLast().op("timestamptz_ops"), table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+	index("antifraud_signals_critical_verification_idx").using("btree", table.containment_last_verified_at.asc().nullsFirst().op("timestamptz_ops"), table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(kind = 'critical_risk_signup'::text) AND (containment_outbox_status = 'applied'::text)`),
 	uniqueIndex("antifraud_signals_external_uniq").using("btree", table.external_id.asc().nullsLast().op("text_ops")).where(sql`(external_id IS NOT NULL)`),
 	index("antifraud_signals_review_containment_applied_idx").using("btree", table.review_id.asc().nullsLast().op("uuid_ops"), table.containment_applied_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(review_id IS NOT NULL) AND (containment_applied_at IS NOT NULL)`),
 	index("antifraud_signals_received_idx").using("btree", table.received_at.desc().nullsFirst().op("timestamptz_ops")),
@@ -2609,7 +2612,33 @@ export const antifraud_signals = pgTable("antifraud_signals", {
 			name: "antifraud_signals_review_id_fkey"
 		}).onDelete("set null"),
 	check("antifraud_signals_containment_outbox_attempts_check", sql`containment_outbox_attempts >= 0`),
+	check("antifraud_signals_containment_verification_count_check", sql`containment_verification_count >= 0`),
 	check("antifraud_signals_containment_outbox_status_check", sql`(containment_outbox_status IS NULL) OR (containment_outbox_status = ANY (ARRAY['pending'::text, 'applied'::text, 'skipped'::text, 'failed'::text]))`),
+]);
+
+export const antifraud_identifier_blocking_outbox = pgTable("antifraud_identifier_blocking_outbox", {
+	id: uuid().defaultRandom().primaryKey().notNull(),
+	target_user_id: text().notNull(),
+	ip_values: jsonb().default([]).notNull(),
+	fingerprint_values: jsonb().default([]).notNull(),
+	reason: text().notNull(),
+	actor_id: text().notNull(),
+	actor_username: text(),
+	status: text().default('pending').notNull(),
+	error: text(),
+	attempts: integer().default(0).notNull(),
+	next_attempt_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	claimed_until: timestamp({ withTimezone: true, mode: 'string' }),
+	applied_at: timestamp({ withTimezone: true, mode: 'string' }),
+	created_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	updated_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+}, (table) => [
+	index("antifraud_identifier_blocking_outbox_pending_idx").using("btree", table.next_attempt_at.asc().nullsLast().op("timestamptz_ops"), table.created_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+	index("antifraud_identifier_blocking_outbox_user_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops"), table.created_at.desc().nullsFirst().op("timestamptz_ops")),
+	check("antifraud_identifier_blocking_outbox_attempts_check", sql`attempts >= 0`),
+	check("antifraud_identifier_blocking_outbox_fingerprint_values_check", sql`jsonb_typeof(fingerprint_values) = 'array'::text`),
+	check("antifraud_identifier_blocking_outbox_ip_values_check", sql`jsonb_typeof(ip_values) = 'array'::text`),
+	check("antifraud_identifier_blocking_outbox_status_check", sql`status = ANY (ARRAY['pending'::text, 'failed'::text, 'applied'::text])`),
 ]);
 
 export const admin_audit_write_failures = pgTable("admin_audit_write_failures", {

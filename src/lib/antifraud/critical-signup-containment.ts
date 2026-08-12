@@ -70,7 +70,12 @@ export async function applyCriticalSignupContainment(
   target: CriticalSignupContainmentTarget,
 ): Promise<"locked" | "skipped"> {
   const db = getProdPrimaryDrizzleDb();
-  const locked = await db.execute<{ user_id: string }>(sql`
+  const locked = await db.execute<{
+    user_id: string;
+    locked_deposits_fiat: string[];
+    locked_withdrawals_crypto: string[];
+    locked_withdrawals_items: boolean;
+  }>(sql`
     INSERT INTO user_feature_locks (
       id, user_id,
       locked_deposits_fiat, locked_deposits_at, locked_deposits_by,
@@ -108,9 +113,21 @@ export async function applyCriticalSignupContainment(
         EXCLUDED.locked_withdrawals_reason
       ),
       updated_at = NOW()
-    RETURNING user_id
+    RETURNING
+      user_id,
+      locked_deposits_fiat,
+      locked_withdrawals_crypto,
+      locked_withdrawals_items
   `);
-  if (locked.rows.length === 0) return "skipped";
+  const confirmedMain = locked.rows[0];
+  if (!confirmedMain) return "skipped";
+  if (
+    !confirmedMain.locked_deposits_fiat.includes("all")
+    || !confirmedMain.locked_withdrawals_crypto.includes("all")
+    || confirmedMain.locked_withdrawals_items !== true
+  ) {
+    throw new Error("MAIN did not confirm every critical signup feature lock");
+  }
 
   const current = await getUserFeatureLocks(target.userId);
   if (!current.available_reward_categories.includes("tips")) {

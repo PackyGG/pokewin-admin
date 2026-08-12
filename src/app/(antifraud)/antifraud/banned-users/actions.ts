@@ -115,6 +115,8 @@ export async function mutateBannedUser(input: unknown): Promise<ServerActionResu
               blacklisted_ip_count: identifiers.ipCount,
               blacklisted_fingerprint_count: identifiers.fingerprintCount,
               blocklist_changes: identifiers.changedCount,
+              identifier_delivery_status: identifiers.deliveryStatus,
+              identifier_operation_id: identifiers.operationId,
             }
           : {}),
       },

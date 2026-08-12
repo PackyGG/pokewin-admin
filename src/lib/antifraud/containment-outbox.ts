@@ -153,7 +153,9 @@ export async function markContainmentPending(
  */
 export async function runDeferredContainment(
   signal: DeferredContainmentSignal & { signalRowId: string },
-  options: { attemptAlreadyCounted?: boolean } = {},
+  options: {
+    attemptAlreadyCounted?: boolean;
+  } = {},
 ): Promise<ContainmentOutboxResult> {
   try {
     if (options.attemptAlreadyCounted !== true) {
@@ -178,6 +180,9 @@ export async function runDeferredContainment(
       if (claimed.rows.length === 0) return "failed";
     }
     const outcome = await applyContainmentForKind(signal);
+    if (signal.kind === "critical_risk_signup" && outcome !== "locked") {
+      throw new Error("Critical signup lock target was not found");
+    }
     await recordContainmentOutcome(
       signal.signalRowId,
       outcome === "locked" ? "applied" : "skipped",
@@ -280,9 +285,77 @@ async function recordContainmentOutcome(
         )
         ELSE containment_outbox_next_attempt_at
       END,
-      containment_applied_at = CASE WHEN ${status} = 'applied' THEN now() ELSE containment_applied_at END
+      containment_applied_at = CASE WHEN ${status} = 'applied' THEN now() ELSE containment_applied_at END,
+      containment_last_verified_at = CASE
+        WHEN ${status} = 'applied' THEN now()
+        ELSE containment_last_verified_at
+      END
     WHERE id = ${signalRowId}::uuid
   `);
+}
+
+/**
+ * Claim applied critical locks that still belong to an active review and have
+ * not been independently re-applied/verified in the last five minutes. A
+ * staff-approved or otherwise closed review is deliberately excluded so the
+ * watchdog never fights an intentional release.
+ */
+export async function claimCriticalContainmentVerificationRows(
+  limit: number,
+): Promise<PendingContainmentRow[]> {
+  const result = await adminDrizzle.execute<{
+    id: string;
+    kind: string;
+    target_user_id: string | null;
+    risk_score: number | null;
+    payload: Record<string, unknown> | null;
+    containment_outbox_attempts: number;
+  }>(sql`
+    WITH candidates AS (
+      SELECT signal.id
+      FROM antifraud_signals AS signal
+      JOIN antifraud_reviews AS review ON review.id = signal.review_id
+      WHERE signal.kind = 'critical_risk_signup'
+        AND signal.containment_outbox_status = 'applied'
+        AND review.status IN ('open', 'in_review')
+        AND (
+          signal.containment_last_verified_at IS NULL
+          OR signal.containment_last_verified_at <= now() - interval '5 minutes'
+        )
+        AND (
+          signal.containment_outbox_claimed_until IS NULL
+          OR signal.containment_outbox_claimed_until <= now()
+        )
+      ORDER BY signal.containment_last_verified_at NULLS FIRST, signal.received_at
+      LIMIT ${limit}
+      FOR UPDATE OF signal SKIP LOCKED
+    )
+    UPDATE antifraud_signals AS row
+    SET
+      containment_outbox_claimed_until =
+        now() + make_interval(mins => ${CONTAINMENT_CLAIM_LEASE_MINUTES}),
+      containment_verification_count = LEAST(
+        row.containment_verification_count + 1,
+        2147483647
+      )
+    FROM candidates
+    WHERE row.id = candidates.id
+    RETURNING
+      row.id::text,
+      row.kind,
+      row.target_user_id,
+      row.risk_score,
+      row.payload,
+      row.containment_outbox_attempts
+  `);
+  return result.rows.map((row) => ({
+    id: row.id,
+    kind: "critical_risk_signup",
+    targetUserId: row.target_user_id,
+    riskScore: row.risk_score,
+    payload: row.payload,
+    attempts: row.containment_outbox_attempts,
+  }));
 }
 
 export type PendingContainmentRow = {
