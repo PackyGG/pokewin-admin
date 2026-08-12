@@ -3,6 +3,10 @@ import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
 import { calculateFrameSitePnlUsd } from "../../src/lib/creator-pnl-settlement-math";
+import {
+  pnlFundingMultiplierBps,
+  snapshotPnlMultiplierFunding,
+} from "../../src/lib/creator-pnl-funding-snapshot";
 
 const read = (path: string) => readFileSync(path, "utf8");
 const service = read("src/lib/creator-pnl-settlement.ts");
@@ -26,9 +30,45 @@ test("preview uses uncached half-open reads and linked multiplier 1/X attributio
   assert.match(service, /created_at < \$3::timestamptz/);
   assert.match(service, /linked_multiplier_deal_id/);
   assert.match(service, /creator_multiplier_deals/);
-  assert.match(service, /10_000 \/ n\(multiplier\.multiplier_bps\)/);
+  assert.match(service, /pnlFundingMultiplierBps\(deal\.funding_config\)/);
+  assert.doesNotMatch(service, /multiplier\.multiplier_bps/);
   assert.match(service, /Fill-funded creator play has 0% real-money attribution/);
   assert.match(service, /status: "ambiguous"/);
+});
+
+test("approved multiplier economics remain immutable after a backend edit", () => {
+  const backendDeal = {
+    multiplier_bps: 50_000,
+    withdrawable_bps: 2_000,
+    required_deposit_usd: "100.00",
+    wager_requirement_bps: 10_000,
+    max_total_wager_usd: null,
+    max_payout_usd: "1000.00",
+    min_session_duration_seconds: 600,
+    min_bet_count: 10,
+    min_wager_to_funding_ratio_bps: 5_000,
+    kick_vod_required: true,
+    auto_renew: false,
+    terms_version: "approved-v1",
+    version: 3,
+  };
+  const snapshot = snapshotPnlMultiplierFunding(backendDeal);
+  const fundingConfig = { type: "linked_multiplier", multiplier_terms_snapshot: snapshot };
+
+  backendDeal.multiplier_bps = 100_000;
+  backendDeal.terms_version = "edited-v2";
+  backendDeal.version = 4;
+
+  assert.equal(pnlFundingMultiplierBps(fundingConfig), 50_000);
+  assert.equal(snapshot.backend_terms_version, "approved-v1");
+  assert.equal(snapshot.backend_record_version, 3);
+});
+
+test("historical rows without an immutable multiplier snapshot fail closed", () => {
+  assert.equal(pnlFundingMultiplierBps({ type: "linked_multiplier", multiplier_deal_id: crypto.randomUUID() }), null);
+  assert.equal(pnlFundingMultiplierBps({ multiplier_terms_snapshot: { snapshot_version: 1, multiplier_bps: 50_000 } }), null);
+  assert.match(service, /immutable Admin multiplier snapshot is missing or invalid/);
+  assert.match(service, /PnL multiplier lifecycle is ambiguous/);
 });
 
 test("preview fails closed and freezes auditable evidence", () => {

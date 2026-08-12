@@ -6,6 +6,7 @@ import { queryMainRows, queryRows } from "@/lib/drizzle-query";
 import { calculateFrameSitePnlUsd, roundSettlementMoney } from "@/lib/creator-pnl-settlement-math";
 import { getFrameAffiliatePnlByUserUncached } from "@/app/(creator-hub)/creator-hub/profitability/_queries/frame-affiliate-pnl-by-user";
 import { advanceDueCreatorPnlDeals } from "@/lib/creator-deal-approvals";
+import { pnlFundingMultiplierBps } from "@/lib/creator-pnl-funding-snapshot";
 
 export type AdminCreatorPnlDeal = {
   id: string;
@@ -147,19 +148,20 @@ type EffectiveMultiplierInterval = {
 async function effectiveMultiplierIntervals(startIso: string, endIso: string): Promise<EffectiveMultiplierInterval[]> {
   const adminRows = await queryRows<Array<{
     deal_id: string; user_id: string; multiplier_id: string; frame_start: string; frame_end: string;
+    funding_config: Record<string, unknown>;
   }>>(adminDrizzle,
     `SELECT id::text deal_id, creator_user_id user_id, linked_multiplier_deal_id::text multiplier_id,
-            frame_start_utc::text frame_start, frame_end_utc::text frame_end
+            frame_start_utc::text frame_start, frame_end_utc::text frame_end, funding_config
        FROM creator_pnl_deals
       WHERE status <> 'cancelled' AND funding_mode IN ('linked_multiplier','new_multiplier')
         AND linked_multiplier_deal_id IS NOT NULL
         AND frame_end_utc > $1::timestamptz AND frame_start_utc < $2::timestamptz`, startIso, endIso);
   if (adminRows.length === 0) return [];
   const lifecycle = await queryMainRows<Array<{
-    id: string; user_id: string; multiplier_bps: string; activated_at: string | null; ended_at: string | null;
+    id: string; user_id: string; activated_at: string | null; ended_at: string | null;
     user_funding_usd: string | null; total_loaded_usd: string | null;
   }>>(
-    `SELECT m.id::text, m.user_id, m.multiplier_bps::text, m.activated_at::text, m.ended_at::text,
+    `SELECT m.id::text, m.user_id, m.activated_at::text, m.ended_at::text,
             m.user_funding_usd::text,m.total_loaded_usd::text
        FROM creator_multiplier_deals m
        JOIN jsonb_to_recordset($1::jsonb) AS wanted(id uuid) ON wanted.id=m.id`,
@@ -167,13 +169,14 @@ async function effectiveMultiplierIntervals(startIso: string, endIso: string): P
   const byId = new Map(lifecycle.map((row) => [row.id, row]));
   return adminRows.map((row) => {
     const linked = byId.get(row.multiplier_id);
-    if (!linked || linked.user_id !== row.user_id || !linked.activated_at || n(linked.multiplier_bps) < 20_000
+    const multiplierBps = pnlFundingMultiplierBps(row.funding_config);
+    if (!linked || linked.user_id !== row.user_id || !linked.activated_at || multiplierBps == null
       || n(linked.user_funding_usd) <= 0 || n(linked.total_loaded_usd) <= 0) {
       throw new Error(`PnL multiplier lifecycle is ambiguous for Admin deal ${row.deal_id}.`);
     }
     const start = new Date(Math.max(new Date(startIso).getTime(), new Date(row.frame_start).getTime(), new Date(linked.activated_at).getTime()));
     const end = new Date(Math.min(new Date(endIso).getTime(), new Date(row.frame_end).getTime(), linked.ended_at ? new Date(linked.ended_at).getTime() : Infinity));
-    return { deal_id: row.deal_id, user_id: row.user_id, start_at: start.toISOString(), end_at: end.toISOString(), real_bps: 10_000 / n(linked.multiplier_bps) * 10_000 };
+    return { deal_id: row.deal_id, user_id: row.user_id, start_at: start.toISOString(), end_at: end.toISOString(), real_bps: 10_000 / multiplierBps * 10_000 };
   }).filter((row) => row.start_at < row.end_at);
 }
 
@@ -270,18 +273,22 @@ async function creatorOwnGameplay(deal: AdminCreatorPnlDeal, calculationEnd = de
   if (!deal.linked_multiplier_deal_id) {
     return { wager: 0, payout: 0, pnl: 0, status: "ambiguous", note: "No linked multiplier deal is recorded; creator own-play was not inferred." };
   }
+  const multiplierBps = pnlFundingMultiplierBps(deal.funding_config);
+  if (multiplierBps == null) {
+    return { wager: 0, payout: 0, pnl: 0, status: "ambiguous", note: "The immutable Admin multiplier snapshot is missing or invalid; creator own-play was not inferred." };
+  }
   const rows = await queryMainRows<Array<{
-    multiplier_bps: string; activated_at: string | null; ended_at: string | null;
+    activated_at: string | null; ended_at: string | null;
     user_funding_usd: string | null; total_loaded_usd: string | null;
   }>>(
-    `SELECT multiplier_bps::text, activated_at::text, ended_at::text,
+    `SELECT activated_at::text, ended_at::text,
             user_funding_usd::text,total_loaded_usd::text
        FROM creator_multiplier_deals
       WHERE id = $1::uuid AND user_id = $2 LIMIT 1`,
     deal.linked_multiplier_deal_id, deal.creator_user_id,
   );
   const multiplier = rows[0];
-  if (!multiplier?.activated_at || n(multiplier.multiplier_bps) < 20_000
+  if (!multiplier?.activated_at
     || n(multiplier.user_funding_usd) <= 0 || n(multiplier.total_loaded_usd) <= 0) {
     return { wager: 0, payout: 0, pnl: 0, status: "ambiguous", note: "Linked multiplier lifecycle or multiplier is incomplete; creator own-play was not inferred." };
   }
@@ -315,10 +322,10 @@ async function creatorOwnGameplay(deal: AdminCreatorPnlDeal, calculationEnd = de
        LEFT JOIN keno_games k ON s.game_type='keno' AND k.id=s.game_id`,
     deal.creator_user_id, start, end,
   );
-  const weight = 10_000 / n(multiplier.multiplier_bps);
+  const weight = 10_000 / multiplierBps;
   const wager = money(n(game[0]?.wager) * weight);
   const payout = money(n(game[0]?.payout) * weight);
-  return { wager, payout, pnl: money(wager - payout), status: "computed", note: `Weighted at the linked multiplier's 1/X real-money share (${money(weight * 100)}%).` };
+  return { wager, payout, pnl: money(wager - payout), status: "computed", note: `Weighted at the approved multiplier's immutable 1/X real-money share (${money(weight * 100)}%).` };
 }
 
 async function realizedSpend(deal: AdminCreatorPnlDeal, calculationEnd = deal.frame_end_utc) {

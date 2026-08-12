@@ -28,6 +28,14 @@ import { rewardProgramsCanContinue } from "@/lib/creator-vip/continuity";
 import { getPublishedCreatorAgreementTerms } from "@/lib/creator-agreement-terms";
 import { isPostgresError } from "@/lib/postgres-errors";
 import { buildBackendDealPeriods } from "@/lib/creator-deal-periods";
+import {
+  snapshotPnlMultiplierFunding,
+  type PnlMultiplierFundingSnapshot,
+} from "@/lib/creator-pnl-funding-snapshot";
+import {
+  creatorApprovalWindowHasEnded,
+  hasAllCreatorApprovalAssets,
+} from "@/lib/creator-deal-provisioning-window";
 
 const DiscordId = z.string().regex(/^\d{17,20}$/);
 const UserId = z.string().trim().min(8).max(64).regex(/^[A-Za-z0-9_-]+$/);
@@ -945,6 +953,7 @@ type PnlFundingProvision = {
   linkedFillDealId: string | null;
   linkedMultiplierDealId: string | null;
   linkedBackendDealId: string;
+  multiplierTermsSnapshot: PnlMultiplierFundingSnapshot | null;
 };
 
 function pnlMultiplierApprovalMarker(
@@ -976,6 +985,7 @@ async function ensurePnlFunding(
       linkedFillDealId: null,
       linkedMultiplierDealId: linked.id,
       linkedBackendDealId: linked.id,
+      multiplierTermsSnapshot: snapshotPnlMultiplierFunding(linked),
     };
   }
 
@@ -987,7 +997,12 @@ async function ensurePnlFunding(
       if (!["pending_deposit", "funded", "live"].includes(existing.status)) {
         error(409, "pnl_multiplier_funding_unavailable", `The previously created multiplier funding is ${existing.status.replaceAll("_", " ")}.`);
       }
-      return { linkedFillDealId: null, linkedMultiplierDealId: existing.id, linkedBackendDealId: existing.id };
+      return {
+        linkedFillDealId: null,
+        linkedMultiplierDealId: existing.id,
+        linkedBackendDealId: existing.id,
+        multiplierTermsSnapshot: snapshotPnlMultiplierFunding(existing),
+      };
     }
     const conflicting = listed.find((deal) =>
       ["pending_deposit", "funded", "live", "pending_review", "flagged"].includes(deal.status));
@@ -1010,7 +1025,12 @@ async function ensurePnlFunding(
       terms_text: z.array(z.string()).parse(request.agreement_lines).join("\n"),
       terms_version: marker,
     } satisfies CreateMultiplierDealInput);
-    return { linkedFillDealId: null, linkedMultiplierDealId: created.id, linkedBackendDealId: created.id };
+    return {
+      linkedFillDealId: null,
+      linkedMultiplierDealId: created.id,
+      linkedBackendDealId: created.id,
+      multiplierTermsSnapshot: snapshotPnlMultiplierFunding(created),
+    };
   }
 
   const listed = await listAllCreatorDeals(request.creator_user_id);
@@ -1019,7 +1039,12 @@ async function ensurePnlFunding(
     if (existing.status !== "scheduled" && existing.status !== "active") {
       error(409, "pnl_fill_funding_unavailable", `The previously created fill funding is ${existing.status}.`);
     }
-    return { linkedFillDealId: existing.id, linkedMultiplierDealId: null, linkedBackendDealId: existing.id };
+    return {
+      linkedFillDealId: existing.id,
+      linkedMultiplierDealId: null,
+      linkedBackendDealId: existing.id,
+      multiplierTermsSnapshot: null,
+    };
   }
   const proposed = {
     week_start_utc: payload.frame_start_utc,
@@ -1055,7 +1080,12 @@ async function ensurePnlFunding(
       agreement_checksum: request.agreement_checksum,
     },
   } satisfies CreateDealInput);
-  return { linkedFillDealId: created.id, linkedMultiplierDealId: null, linkedBackendDealId: created.id };
+  return {
+    linkedFillDealId: created.id,
+    linkedMultiplierDealId: null,
+    linkedBackendDealId: created.id,
+    multiplierTermsSnapshot: null,
+  };
 }
 
 async function ensureAdminPnlDeal(
@@ -1138,7 +1168,12 @@ async function ensureAdminPnlDeal(
         frame_end_utc: payload.frame_end_utc,
         positive_pnl_share_bps: payload.positive_pnl_share_bps,
         funding_mode: payload.funding.type,
-        funding_config: payload.funding,
+        funding_config: funding.multiplierTermsSnapshot
+          ? {
+              ...payload.funding,
+              multiplier_terms_snapshot: funding.multiplierTermsSnapshot,
+            }
+          : payload.funding,
         linked_fill_deal_id: funding.linkedFillDealId,
         linked_multiplier_deal_id: funding.linkedMultiplierDealId,
         max_tip_per_stream_usd: payload.max_tip_per_stream_usd == null ? null : String(payload.max_tip_per_stream_usd),
@@ -1246,14 +1281,11 @@ async function ensureRewardProgram(request: typeof creator_deal_approval_request
 /**
  * Create the approved leaderboard on MAIN and bind its id to the request.
  *
- * IDEMPOTENCY IS NARROWER HERE THAN FOR DEALS. A backend deal carries our
- * `creator_approval_request_id` in its terms, so a retry can re-list deals and
- * recognise its own earlier write. Affiliate leaderboards have no such marker
- * field and no clean way to re-identify one, so the only anchor is
- * `request.leaderboard_id`, written after the remote create returns. A crash in
- * that gap can double-create a board on a later retry. That is accepted and not
- * worked around: leaderboards are site-funded, so a duplicate costs no creator
- * balance and an operator can cancel the extra board.
+ * MAIN creates this board with the approval request UUID as its requested
+ * primary key. Its admin-create endpoint serializes that UUID and returns the
+ * existing board only when every approved term still matches. Consequently a
+ * retry after MAIN committed but before `request.leaderboard_id` was saved is
+ * a safe replay rather than a second site-funded leaderboard.
  */
 async function ensureLeaderboard(request: typeof creator_deal_approval_requests.$inferSelect): Promise<string | null> {
   if (!request.leaderboard_payload) return null;
@@ -1261,6 +1293,9 @@ async function ensureLeaderboard(request: typeof creator_deal_approval_requests.
   const board = LeaderboardPayloadSchema.parse(request.leaderboard_payload);
   const codes = await validateCreatorAndCodes(request.creator_user_id, board.codes);
   const created = await affiliateLeaderboardsApi.create({
+    // A UUID is unique within MAIN's leaderboard table; using the approval UUID
+    // requires no cross-database schema marker and survives ambiguous responses.
+    requested_id: request.id,
     creator_user_id: request.creator_user_id,
     co_creator_user_ids: [],
     title: board.title,
@@ -1338,7 +1373,19 @@ export async function provisionApprovedCreatorDealRequest(
     }
     const approvedAt = request.approved_at ? new Date(request.approved_at) : new Date();
     const kind = request.request_kind as CreatorApprovalRequestKind;
-    if (new Date(request.window_end_at) <= approvedAt) error(409, "deal_window_elapsed", "The approved request has already ended.");
+    const windowEnded = creatorApprovalWindowHasEnded(request.window_end_at);
+    const allAssetsAlreadyProvisioned = hasAllCreatorApprovalAssets({
+      requestKind: kind,
+      backendDealId: request.backend_deal_id,
+      pnlDealId: request.pnl_deal_id,
+      rewardPayloadPresent: request.reward_payload !== null,
+      rewardProgramId: request.reward_program_id,
+      leaderboardPayloadPresent: request.leaderboard_payload !== null,
+      leaderboardId: request.leaderboard_id,
+    });
+    if (windowEnded && !allAssetsAlreadyProvisioned) {
+      error(409, "deal_window_elapsed", "The approved request has already ended.");
+    }
     // Fill and ADMIN-owned P&L deals may bundle rewards/leaderboards.
     // Multiplier and standalone requests carry exactly their own payload.
     let backendDealId: string | null = request.backend_deal_id;

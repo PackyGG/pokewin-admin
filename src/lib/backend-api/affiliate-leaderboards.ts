@@ -49,6 +49,7 @@ export type EditInput = {
 };
 
 export type CreateInput = {
+  requested_id?: string;
   creator_user_id: string;
   co_creator_user_ids?: string[];
   title: string;
