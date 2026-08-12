@@ -1934,7 +1934,7 @@ export const discord_notification_guilds = pgTable("discord_notification_guilds"
 	last_synced_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	created_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
+}, (_table) => [
 	check("discord_notification_guilds_id_check", sql`guild_id ~ '^[0-9]{15,21}$'::text`),
 ]);
 
@@ -2181,7 +2181,7 @@ export const discord_creator_deposit_scan_state = pgTable("discord_creator_depos
 	lease_owner: text(),
 	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
+}, (_table) => [
 	check("discord_creator_deposit_scan_lease_shape_check", sql`((lease_token IS NULL) AND (lease_owner IS NULL) AND (leased_until IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (leased_until IS NOT NULL))`),
 	check("discord_creator_deposit_scan_singleton_check", sql`singleton_id = 1`),
 ]);
@@ -2401,7 +2401,7 @@ export const discord_creator_signup_scan_state = pgTable("discord_creator_signup
 	lease_owner: text(),
 	leased_until: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	updated_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).defaultNow().notNull(),
-}, (table) => [
+}, (_table) => [
 	check("discord_creator_signup_scan_lease_shape_check", sql`((lease_token IS NULL) AND (lease_owner IS NULL) AND (leased_until IS NULL)) OR ((lease_token IS NOT NULL) AND (lease_owner IS NOT NULL) AND (leased_until IS NOT NULL))`),
 	check("discord_creator_signup_scan_singleton_check", sql`singleton_id = 1`),
 ]);
