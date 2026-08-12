@@ -39,10 +39,10 @@ test("chat raffle uses combined Community XP and freezes level provenance", asyn
     "community_level",
   ]) {
     assert.match(migration, new RegExp(`ADD COLUMN IF NOT EXISTS ${column}`));
-    assert.match(actions, new RegExp(`${column}: s\\.`));
+    assert.match(actions, new RegExp(`${column}: standing\\.`));
   }
-  assert.match(actions, /discord_message_count: s\.discordMessageCount/);
-  assert.match(actions, /site_chat_message_count: s\.siteChatMessageCount/);
+  assert.match(actions, /discord_message_count: standing\.discordMessageCount/);
+  assert.match(actions, /site_chat_message_count: standing\.siteChatMessageCount/);
 
   assert.match(page, /Combined Community XP/);
   assert.match(page, /Lifetime Community XP leaderboard/);

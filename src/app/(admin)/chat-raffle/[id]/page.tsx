@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Clock, Settings2, Ticket, Trophy, Users, Wallet } from "lucide-react";
+import { Clock, ListOrdered, Settings2, Ticket, Trophy, Users, Wallet } from "lucide-react";
 
 import { requirePageAccess } from "@/lib/dal";
 import { safeQuery } from "@/lib/errors/safe-query";
@@ -22,7 +22,7 @@ import {
 } from "@/lib/utils/format";
 import {
   CHAT_RAFFLE_PHASE_COLOR,
-  CHAT_RAFFLE_PHASE_LABEL,
+  competitionPhaseLabel,
   positionColor,
 } from "@/lib/chat-raffle/config";
 import { communityRankForLevel } from "@/lib/discord-community-ranks";
@@ -99,7 +99,7 @@ async function RoundDetail({ id }: { id: string }) {
                 CHAT_RAFFLE_PHASE_COLOR[round.phase],
               )}
             >
-              {CHAT_RAFFLE_PHASE_LABEL[round.phase]}
+              {competitionPhaseLabel(round.phase, round.competitionType)}
             </Badge>
           </>
         }
@@ -121,14 +121,14 @@ async function RoundDetail({ id }: { id: string }) {
           accent="blue"
         />
         <KpiTile
-          label="Tickets"
+          label={round.competitionType === "leaderboard" ? "XP earned" : "Tickets"}
           value={formatNumber(round.ticketsAtDraw ?? 0)}
-          sub="in the pool"
-          icon={Ticket}
+          sub={round.competitionType === "leaderboard" ? "in final ranking" : "in the pool"}
+          icon={round.competitionType === "leaderboard" ? ListOrdered : Ticket}
           accent="cyan"
         />
         <KpiTile
-          label="Drawn"
+          label={round.competitionType === "leaderboard" ? "Finalized" : "Drawn"}
           value={round.drawnAt ? formatDateTime(new Date(round.drawnAt)) : "—"}
           sub={`${formatDateTime(new Date(round.startsAt))} → ${formatDateTime(new Date(round.endsAt))}`}
           icon={Clock}
@@ -140,7 +140,9 @@ async function RoundDetail({ id }: { id: string }) {
         <div className="flex flex-wrap items-center justify-between gap-2">
           <span className="text-sm font-semibold">Combined Community XP</span>
           <span className="text-xs text-muted-foreground">
-            Discord + linked on-site chat · 1 XP = 1 ticket
+            {round.competitionType === "leaderboard"
+              ? "Discord + linked on-site chat · most XP ranks first"
+              : "Discord + linked on-site chat · 1 XP = 1 ticket"}
           </span>
         </div>
         {round.drawSeed && (
@@ -181,12 +183,14 @@ async function RoundDetail({ id }: { id: string }) {
                     {prize.winnerUsername ?? prize.winnerUserId.slice(0, 8)}
                   </Link>
                 ) : (
-                  <span className="text-sm text-muted-foreground">Not drawn</span>
+                  <span className="text-sm text-muted-foreground">
+                    {round.competitionType === "leaderboard" ? "Not finalized" : "Not drawn"}
+                  </span>
                 )}
                 <span className="text-xs text-muted-foreground">
                   {prize.label ? `${prize.label} · ` : ""}
                   {prize.winnerTickets !== null
-                    ? `${formatNumber(prize.winnerTickets)} tickets`
+                    ? `${formatNumber(prize.winnerTickets)} ${round.competitionType === "leaderboard" ? "XP" : "tickets"}`
                     : "—"}
                   {prize.paidAt
                     ? ` · paid ${formatDateTime(new Date(prize.paidAt))}`
@@ -224,10 +228,13 @@ async function RoundDetail({ id }: { id: string }) {
 
       {/* ─── Frozen snapshot ─────────────────────────────────────── */}
       <div className="space-y-3">
-        <SectionHeading icon={Ticket} title="Ticket snapshot" />
+        <SectionHeading
+          icon={round.competitionType === "leaderboard" ? ListOrdered : Ticket}
+          title={round.competitionType === "leaderboard" ? "Final XP ranking" : "Ticket snapshot"}
+        />
         {entries.data.length === 0 ? (
           <div className="rounded-2xl border border-dashed p-6 text-center text-sm text-muted-foreground">
-            No snapshot — this round was never drawn.
+            No snapshot — this {round.competitionType === "leaderboard" ? "leaderboard was never finalized" : "round was never drawn"}.
           </div>
         ) : (
           <div className="overflow-hidden rounded-2xl border bg-card">
@@ -277,7 +284,7 @@ async function RoundDetail({ id }: { id: string }) {
                 <span className="w-20 shrink-0 text-right tabular-nums text-sm font-medium">
                   {formatNumber(entry.tickets)}
                   <span className="ml-1 text-xs font-normal text-muted-foreground">
-                    tix
+                    {round.competitionType === "leaderboard" ? "XP" : "tix"}
                   </span>
                 </span>
               </div>

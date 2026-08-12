@@ -26,7 +26,7 @@ export const DISCORD_COMMAND_CATALOG: readonly DiscordCommandCatalogEntry[] = Ob
   { name: "status", description: "Show reward and claim status for the linked account.", surfaces: ALL_SERVERS_AND_DMS, access: "linked", restriction: "Linked Packy account; self only." },
   { name: "profile", description: "Render the caller’s community XP profile card.", surfaces: ["main"], access: "everyone", restriction: "Everyone; self only. No member lookup option." },
   { name: "ranks", description: "Show the nine-level community rank ladder.", surfaces: ["main"], access: "everyone", restriction: "Everyone in the PackyGG server; no DMs." },
-  { name: "lb", description: "Show a three-page snapshot of the top 30 community members.", surfaces: ["main"], access: "everyone", restriction: "Everyone in the PackyGG server; no DMs. Ten users per page." },
+  { name: "lb", description: "Show the active timed XP competition, or the lifetime community leaderboard between events.", surfaces: ["main"], access: "everyone", restriction: "Everyone in the PackyGG server; no DMs. Up to 30 users, ten per page." },
   { name: "giveaway", description: "Create or reroll durable giveaways.", surfaces: ["main"], access: "staff", restriction: "Manage Server permission; no DMs." },
   { name: "commands", description: "Post the command directory for the current server.", surfaces: CREATOR_VIP_ADMIN, access: "everyone", restriction: "Everyone in the listed server; no DMs." },
   { name: "dash", description: "Open the linked creator or VIP account in PackyDash.", surfaces: CREATOR_VIP, access: "staff", restriction: "Only approved users 660132586630414338, 934854938641715240, and 188051599099297802; linked section required." },

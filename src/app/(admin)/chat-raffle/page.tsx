@@ -5,6 +5,7 @@ import {
   Clock,
   Dices,
   History,
+  ListOrdered,
   MessageSquare,
   Ticket,
   Trophy,
@@ -30,10 +31,11 @@ import { formatCurrency, formatDateTime, formatNumber, formatRelative } from "@/
 import {
   CHAT_RAFFLE_MAX_ENTRIES,
   CHAT_RAFFLE_PHASE_COLOR,
-  CHAT_RAFFLE_PHASE_LABEL,
   canDrawRound,
   canEditRound,
+  competitionPhaseLabel,
   positionColor,
+  type ChatCompetitionType,
 } from "@/lib/chat-raffle/config";
 import {
   getActiveChatRaffleRound,
@@ -50,6 +52,7 @@ import {
   AdjustPointsDialog,
   CancelRoundButton,
   DrawRoundButton,
+  FinalizeLeaderboardButton,
   PayPrizeDialog,
   RoundFormDialog,
 } from "./chat-raffle-dialogs";
@@ -59,9 +62,9 @@ export const metadata = { title: "Chat Raffle" };
 /**
  * Players → Chat Raffle.
  *
- * Qualifying Discord and linked on-site messages become Community XP, one XP
- * becomes one ticket, and one ticket per prize place is drawn with a stored
- * seed. XP decisions, rounds, manual corrections and frozen draw snapshots
+ * Qualifying Discord and linked on-site messages become Community XP. Raffles
+ * turn XP into weighted tickets; XP leaderboards award prizes by final rank.
+ * XP decisions, competitions, manual corrections and frozen result snapshots
  * live in the ADMIN DB. MAIN is read only to resolve Discord ids to eligible
  * Packy users; its single write is the existing winner payout path.
  *
@@ -74,8 +77,15 @@ export const metadata = { title: "Chat Raffle" };
 const STANDINGS_TIMEOUT_MS = 20_000;
 const ROUNDS_TIMEOUT_MS = 10_000;
 
-export default async function ChatRafflePage() {
+export default async function ChatRafflePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   await requirePageAccess("/chat-raffle");
+  const params = await searchParams;
+  const competitionType: ChatCompetitionType =
+    params.view === "leaderboard" ? "leaderboard" : "raffle";
 
   return (
     <div className="space-y-6">
@@ -83,22 +93,60 @@ export default async function ChatRafflePage() {
         <PageHeroIdentity />
       </PageHero>
 
+      <CompetitionNavigation active={competitionType} />
+
       <Suspense fallback={<ActiveRoundSkeleton />}>
-        <ActiveRoundSection />
+        <ActiveRoundSection competitionType={competitionType} />
       </Suspense>
 
       <Suspense fallback={<RoundHistorySkeleton />}>
-        <RoundHistorySection />
+        <RoundHistorySection competitionType={competitionType} />
       </Suspense>
     </div>
   );
 }
 
+function CompetitionNavigation({ active }: { active: ChatCompetitionType }) {
+  return (
+    <nav
+      aria-label="Chat competition type"
+      className="inline-flex rounded-xl border bg-muted/30 p-1"
+    >
+      {([
+        { type: "raffle" as const, label: "Raffles", icon: Dices, href: "/chat-raffle" },
+        { type: "leaderboard" as const, label: "XP Leaderboards", icon: ListOrdered, href: "/chat-raffle?view=leaderboard" },
+      ]).map((item) => {
+        const Icon = item.icon;
+        return (
+          <Link
+            key={item.type}
+            href={item.href}
+            aria-current={active === item.type ? "page" : undefined}
+            className={cn(
+              "inline-flex h-9 items-center gap-2 rounded-lg px-3 text-sm font-medium transition-colors",
+              active === item.type
+                ? "border bg-background text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground",
+            )}
+          >
+            <Icon className="size-4" />
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
 // ─── Active round ───────────────────────────────────────────────────
 
-async function ActiveRoundSection() {
+async function ActiveRoundSection({
+  competitionType,
+}: {
+  competitionType: ChatCompetitionType;
+}) {
   const roundResult = await safeQuery(
-    () => getActiveChatRaffleRound(),
+    () => getActiveChatRaffleRound(competitionType),
     null,
     "chat-raffle.active-round",
     ROUNDS_TIMEOUT_MS,
@@ -106,7 +154,7 @@ async function ActiveRoundSection() {
   const round = roundResult.data;
 
   if (!round) {
-    return <NoActiveRound />;
+    return <NoActiveRound competitionType={competitionType} />;
   }
 
   const adjustments = await safeQuery(
@@ -136,7 +184,7 @@ async function ActiveRoundSection() {
   return (
     <FadeIn className="space-y-6">
       <SectionHeading
-        icon={Dices}
+        icon={competitionType === "leaderboard" ? ListOrdered : Dices}
         title={
           <>
             {round.name}
@@ -144,7 +192,7 @@ async function ActiveRoundSection() {
               variant="outline"
               className={cn("h-5 px-1.5 text-[10px] uppercase", CHAT_RAFFLE_PHASE_COLOR[round.phase])}
             >
-              {CHAT_RAFFLE_PHASE_LABEL[round.phase]}
+              {competitionPhaseLabel(round.phase, competitionType)}
             </Badge>
           </>
         }
@@ -156,6 +204,7 @@ async function ActiveRoundSection() {
                 triggerVariant="outline"
                 round={{
                   id: round.id,
+                  competitionType: round.competitionType,
                   name: round.name,
                   startsAt: round.startsAt,
                   endsAt: round.endsAt,
@@ -172,17 +221,29 @@ async function ActiveRoundSection() {
               <CancelRoundButton roundId={round.id} roundName={round.name} />
             )}
             {canDrawRound(round.phase) && (
-              <DrawRoundButton
-                roundId={round.id}
-                roundName={round.name}
-                entrants={entrants}
-                totalTickets={totalTickets}
-                prizeCount={round.prizes.length}
-                disabled={entrants === 0 || truncated}
-              />
+              competitionType === "leaderboard" ? (
+                <FinalizeLeaderboardButton
+                  roundId={round.id}
+                  leaderboardName={round.name}
+                  entrants={entrants}
+                  totalXp={totalTickets}
+                  prizeCount={round.prizes.length}
+                  disabled={entrants === 0 || truncated}
+                />
+              ) : (
+                <DrawRoundButton
+                  roundId={round.id}
+                  roundName={round.name}
+                  entrants={entrants}
+                  totalTickets={totalTickets}
+                  prizeCount={round.prizes.length}
+                  disabled={entrants === 0 || truncated}
+                />
+              )
             )}
             <RoundFormDialog
               mode="create"
+              competitionType={competitionType}
               triggerVariant="outline"
             />
           </>
@@ -205,10 +266,10 @@ async function ActiveRoundSection() {
           accent="blue"
         />
         <KpiTile
-          label="Tickets"
+          label={competitionType === "leaderboard" ? "XP earned" : "Tickets"}
           value={formatNumber(totalTickets)}
-          sub="1 XP = 1 ticket"
-          icon={Ticket}
+          sub={competitionType === "leaderboard" ? "determines rank" : "1 XP = 1 ticket"}
+          icon={competitionType === "leaderboard" ? ListOrdered : Ticket}
           accent="cyan"
         />
         <KpiTile
@@ -225,7 +286,9 @@ async function ActiveRoundSection() {
           <div>
             <span className="text-sm font-semibold">Combined Community XP</span>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Qualifying Discord and linked on-site chat XP earned inside this round becomes tickets.
+              {competitionType === "leaderboard"
+                ? "Qualifying XP earned inside this window determines the live rank."
+                : "Qualifying XP earned inside this round becomes tickets."}
             </p>
           </div>
           <div className="flex gap-2 text-xs tabular-nums">
@@ -243,7 +306,11 @@ async function ActiveRoundSection() {
         totalTickets={totalTickets}
         roundId={round.id}
         adjustable={editable}
-        emptyMessage="Nobody has qualified for this round yet."
+        competitionType={competitionType}
+        prizes={round.prizes}
+        emptyMessage={competitionType === "leaderboard"
+          ? "Nobody has qualified for this leaderboard yet."
+          : "Nobody has qualified for this round yet."}
       />
 
       {round.prizes.some((p) => p.winnerUserId) && (
@@ -257,7 +324,11 @@ async function ActiveRoundSection() {
  * No open round: show the lifetime combined Community XP leaderboard so an
  * operator can inspect established community standing before opening a round.
  */
-async function NoActiveRound() {
+async function NoActiveRound({
+  competitionType,
+}: {
+  competitionType: ChatCompetitionType;
+}) {
   const now = new Date();
   const dayStart = new Date(
     Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
@@ -279,16 +350,24 @@ async function NoActiveRound() {
   return (
     <FadeIn className="space-y-6">
       <SectionHeading
-        icon={Dices}
-        title="No round running"
+        icon={competitionType === "leaderboard" ? ListOrdered : Dices}
+        title={competitionType === "leaderboard" ? "No XP leaderboard running" : "No round running"}
         action={
-          <RoundFormDialog mode="create" />
+          <RoundFormDialog mode="create" competitionType={competitionType} />
         }
       />
 
       <div className="rounded-2xl border border-dashed p-6 text-center">
-        <Dices className="mx-auto size-6 text-muted-foreground" />
-        <p className="mt-2 text-sm font-medium">Start a round to hand out tickets</p>
+        {competitionType === "leaderboard" ? (
+          <ListOrdered className="mx-auto size-6 text-muted-foreground" />
+        ) : (
+          <Dices className="mx-auto size-6 text-muted-foreground" />
+        )}
+        <p className="mt-2 text-sm font-medium">
+          {competitionType === "leaderboard"
+            ? "Create a leaderboard to reward the top XP earners"
+            : "Start a round to hand out tickets"}
+        </p>
         <p className="mx-auto mt-1 max-w-lg text-xs text-muted-foreground">
           Below is the lifetime Community XP leaderboard across Discord and
           linked on-site chat. Nothing is being counted toward a prize.
@@ -304,6 +383,7 @@ async function NoActiveRound() {
         roundId={null}
         adjustable={false}
         lifetime
+        competitionType={competitionType}
         emptyMessage="No qualifying Community XP has been recorded yet."
       />
     </FadeIn>
@@ -317,6 +397,8 @@ function StandingsTable({
   totalTickets,
   roundId,
   adjustable,
+  competitionType = "raffle",
+  prizes = [],
   lifetime = false,
   emptyMessage,
 }: {
@@ -324,6 +406,8 @@ function StandingsTable({
   totalTickets: number;
   roundId: string | null;
   adjustable: boolean;
+  competitionType?: ChatCompetitionType;
+  prizes?: ChatRaffleRoundView["prizes"];
   lifetime?: boolean;
   emptyMessage: string;
 }) {
@@ -334,7 +418,7 @@ function StandingsTable({
         <span className="text-xs text-muted-foreground">
           {formatNumber(standings.length)}{" "}
           {standings.length === 1 ? "entrant" : "entrants"} ·{" "}
-          {formatNumber(totalTickets)} {lifetime ? "lifetime XP" : "tickets"}
+          {formatNumber(totalTickets)} {lifetime || competitionType === "leaderboard" ? "XP" : "tickets"}
         </span>
       </div>
 
@@ -406,6 +490,14 @@ function StandingsTable({
                     >
                       Lv {entry.communityLevel} · {entry.communityRankName}
                     </Badge>
+                    {competitionType === "leaderboard" && prizes[entry.position - 1] && (
+                      <Badge
+                        variant="outline"
+                        className="h-4 shrink-0 px-1 text-[9px] text-rose-600 dark:text-rose-400"
+                      >
+                        {formatCurrency(prizes[entry.position - 1].amountUsd)} prize
+                      </Badge>
+                    )}
                   </div>
                 </div>
 
@@ -481,13 +573,15 @@ function WinnersPanel({ round }: { round: ChatRaffleRoundView }) {
                 </Link>
               ) : (
                 <span className="text-sm text-muted-foreground">
-                  Not drawn — no eligible entrant left
+                  {round.competitionType === "leaderboard"
+                    ? "No ranked player for this place"
+                    : "Not drawn — no eligible entrant left"}
                 </span>
               )}
               <span className="text-xs text-muted-foreground">
                 {prize.label ? `${prize.label} · ` : ""}
                 {prize.winnerTickets !== null
-                  ? `${formatNumber(prize.winnerTickets)} tickets`
+                  ? `${formatNumber(prize.winnerTickets)} ${round.competitionType === "leaderboard" ? "XP" : "tickets"}`
                   : "—"}
               </span>
             </div>
@@ -532,15 +626,25 @@ function WinnersPanel({ round }: { round: ChatRaffleRoundView }) {
           — the frozen snapshot and this seed reproduce the same winners.
         </p>
       )}
+      {round.competitionType === "leaderboard" && round.drawnAt && (
+        <p className="px-1 text-[11px] text-muted-foreground">
+          Finalized {formatDateTime(new Date(round.drawnAt))} from a frozen
+          ranking of {formatNumber(round.entrantsAtDraw ?? 0)} entrants.
+        </p>
+      )}
     </div>
   );
 }
 
 // ─── History ────────────────────────────────────────────────────────
 
-async function RoundHistorySection() {
+async function RoundHistorySection({
+  competitionType,
+}: {
+  competitionType: ChatCompetitionType;
+}) {
   const result = await safeQuery(
-    () => getChatRaffleRounds(),
+    () => getChatRaffleRounds(50, competitionType),
     [] as ChatRaffleRoundView[],
     "chat-raffle.rounds",
     ROUNDS_TIMEOUT_MS,
@@ -554,7 +658,10 @@ async function RoundHistorySection() {
 
   return (
     <FadeIn className="space-y-3">
-      <SectionHeading icon={History} title="Other rounds" />
+      <SectionHeading
+        icon={History}
+        title={competitionType === "leaderboard" ? "Other XP leaderboards" : "Other rounds"}
+      />
       <div className="overflow-hidden rounded-2xl border bg-card">
         {past.map((round) => (
           <div
@@ -571,7 +678,7 @@ async function RoundHistorySection() {
                     CHAT_RAFFLE_PHASE_COLOR[round.phase],
                   )}
                 >
-                  {CHAT_RAFFLE_PHASE_LABEL[round.phase]}
+                  {competitionPhaseLabel(round.phase, competitionType)}
                 </Badge>
               </div>
               <span className="text-xs text-muted-foreground">
@@ -644,8 +751,8 @@ function TruncatedNotice() {
       <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-500" />
       <p className="text-xs text-amber-700 dark:text-amber-300">
         More than {formatNumber(CHAT_RAFFLE_MAX_ENTRIES)} users qualified, so
-        the list below is clipped and the draw is blocked — drawing from a
-        clipped pool would silently give the users past the cut zero chance.
+        the list below is clipped and finalizing winners is blocked — using a
+        clipped result would silently exclude the users past the cut.
         Shorten the round window, then reload.
       </p>
     </div>

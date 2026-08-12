@@ -195,9 +195,9 @@ export const COUNTED_ADJUSTMENT_CATEGORY_KEYS = BALANCE_ADJUSTMENT_CATEGORY_KEYS
  *
  * `chat_raffle` is excluded on the SAME unforgeability grounds: its only
  * writer is `payChatRafflePrize`, so every such ledger row traces back to a
- * drawn `chat_raffle_prizes` row (whose id and round it carries in
+ * finalized `chat_raffle_prizes` row (whose id and competition it carries in
  * `metadata.chat_raffle_round_id` / `chat_raffle_position`). A hand-picked
- * "chat raffle" credit with no draw behind it would break that.
+ * chat-competition credit with no result behind it would break that.
  *
  * IMPORTANT — this is a PICKER-ONLY filter, not a removal from the model:
  * `other` stays a fully valid `BalanceAdjustmentCategory` and stays in
@@ -326,9 +326,9 @@ export const BALANCE_ADJUSTMENT_CATEGORY_META: Record<
   },
   chat_raffle: {
     key: "chat_raffle",
-    label: "Chat raffle",
-    costLabel: "Chat-raffle prizes",
-    why: "Balance paid out to the drawn winner of a chat raffle round (tickets earned by chatting). A house-funded engagement cost. Only the /chat-raffle payout action writes this category — it always traces back to a drawn prize row.",
+    label: "Chat competition",
+    costLabel: "Chat-competition prizes",
+    why: "Balance paid to a finalized chat raffle or XP-leaderboard winner. A house-funded engagement cost. Only the /chat-raffle payout action writes this category, and every credit traces back to a finalized prize row.",
     counted: true,
   },
   lossback: {

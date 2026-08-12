@@ -7,6 +7,7 @@ import {
   Check,
   Dices,
   Gift,
+  ListOrdered,
   Plus,
   ShieldCheck,
   Sliders,
@@ -40,11 +41,12 @@ import { Spinner } from "@/components/ux";
 import { cn } from "@/lib/utils";
 import { formatCurrency, formatNumber } from "@/lib/utils/format";
 import {
-  CHAT_RAFFLE_FIXED_RULES,
   CHAT_RAFFLE_MAX_PRIZES,
   CHAT_RAFFLE_MAX_WINDOW_DAYS,
   DEFAULT_CHAT_RAFFLE_SCORING,
+  competitionRules,
   positionColor,
+  type ChatCompetitionType,
   type ChatRaffleScoring,
 } from "@/lib/chat-raffle/config";
 import {
@@ -52,6 +54,7 @@ import {
   cancelChatRaffleRound,
   createChatRaffleRound,
   drawChatRaffleRound,
+  finalizeChatLeaderboard,
   payChatRafflePrize,
   updateChatRaffleRound,
 } from "./actions";
@@ -189,6 +192,7 @@ function StatChip({
 
 export type RoundFormValues = {
   id: string;
+  competitionType: ChatCompetitionType;
   name: string;
   startsAt: string;
   endsAt: string;
@@ -203,16 +207,20 @@ export type RoundFormValues = {
 export function RoundFormDialog({
   mode,
   round,
+  competitionType: requestedCompetitionType = "raffle",
   triggerLabel,
   triggerVariant = "default",
   triggerSize = "sm",
 }: {
   mode: "create" | "edit";
   round?: RoundFormValues;
+  competitionType?: ChatCompetitionType;
   triggerLabel?: string;
   triggerVariant?: "default" | "outline" | "ghost";
   triggerSize?: "sm" | "default";
 }) {
+  const competitionType = round?.competitionType ?? requestedCompetitionType;
+  const isLeaderboard = competitionType === "leaderboard";
   const scoring = round?.scoring ?? DEFAULT_CHAT_RAFFLE_SCORING;
 
   const [open, setOpen] = useState(false);
@@ -255,6 +263,7 @@ export function RoundFormDialog({
 
     setLoading(true);
     const payload = {
+      competitionType,
       name: name.trim(),
       startsAt: startsIso,
       endsAt: endsIso,
@@ -264,14 +273,22 @@ export function RoundFormDialog({
     const result =
       mode === "create"
         ? await createChatRaffleRound(payload)
-        : await updateChatRaffleRound({ roundId: round!.id, ...payload });
+        : await updateChatRaffleRound({
+            roundId: round!.id,
+            name: payload.name,
+            startsAt: payload.startsAt,
+            endsAt: payload.endsAt,
+            scoring: payload.scoring,
+            prizes: payload.prizes,
+          });
     setLoading(false);
 
     if (!result.success) {
       toast.error(result.error);
       return;
     }
-    toast.success(mode === "create" ? "Round created" : "Round updated");
+    const noun = isLeaderboard ? "Leaderboard" : "Round";
+    toast.success(mode === "create" ? `${noun} created` : `${noun} updated`);
     setOpen(false);
   }
 
@@ -292,13 +309,19 @@ export function RoundFormDialog({
         ) : (
           <Sliders className="mr-2 size-4" />
         )}
-        {triggerLabel ?? (mode === "create" ? "New round" : "Edit round")}
+        {triggerLabel ?? (mode === "create"
+          ? isLeaderboard ? "New leaderboard" : "New round"
+          : isLeaderboard ? "Edit leaderboard" : "Edit round")}
       </DialogTrigger>
       <DialogContent className="sm:max-w-2xl">
         <DialogHeading
           icon={mode === "create" ? Sparkles : Sliders}
-          title={mode === "create" ? "New raffle round" : "Edit raffle round"}
-          description="Community XP earned from Discord and linked on-site chat in the window becomes tickets."
+          title={mode === "create"
+            ? isLeaderboard ? "New XP leaderboard" : "New raffle round"
+            : isLeaderboard ? "Edit XP leaderboard" : "Edit raffle round"}
+          description={isLeaderboard
+            ? "Players rank by Community XP earned from Discord and linked on-site chat inside the window."
+            : "Community XP earned from Discord and linked on-site chat in the window becomes tickets."}
         />
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -325,7 +348,7 @@ export function RoundFormDialog({
               id="round-name"
               value={name}
               onChange={(e) => setName(e.target.value)}
-              placeholder="Weekly chat raffle #1"
+              placeholder={isLeaderboard ? "Weekly XP leaderboard #1" : "Weekly chat raffle #1"}
               maxLength={120}
               required
               aria-label="Round name"
@@ -361,7 +384,7 @@ export function RoundFormDialog({
               </div>
             </div>
             <p className="text-[11px] text-muted-foreground">
-              Your local timezone. Only messages inside the window earn tickets.
+              Your local timezone. Only Community XP earned inside the window counts.
             </p>
           </FormSection>
 
@@ -456,7 +479,7 @@ export function RoundFormDialog({
           {/* ─── Fixed rules ────────────────────────────────────── */}
           <FormSection icon={ShieldCheck} title="Always applied">
             <ul className="grid gap-1.5 sm:grid-cols-2">
-              {CHAT_RAFFLE_FIXED_RULES.map((rule) => (
+              {competitionRules(competitionType).map((rule) => (
                 <li
                   key={rule}
                   className="flex items-start gap-1.5 text-[11px] leading-snug text-muted-foreground"
@@ -482,7 +505,9 @@ export function RoundFormDialog({
             </Button>
             <Button type="submit" disabled={loading}>
               {loading && <Spinner className="mr-2 size-4" />}
-              {mode === "create" ? "Create round" : "Save changes"}
+              {mode === "create"
+                ? isLeaderboard ? "Create leaderboard" : "Create round"
+                : "Save changes"}
             </Button>
           </DialogFooter>
         </form>
@@ -561,6 +586,79 @@ export function DrawRoundButton({
           <Button onClick={handleDraw} disabled={loading}>
             {loading && <Spinner className="mr-2 size-4" />}
             Draw now
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Freeze an ended leaderboard and award its prizes to the ranked leaders. */
+export function FinalizeLeaderboardButton({
+  roundId,
+  leaderboardName,
+  entrants,
+  totalXp,
+  prizeCount,
+  disabled,
+}: {
+  roundId: string;
+  leaderboardName: string;
+  entrants: number;
+  totalXp: number;
+  prizeCount: number;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  async function handleFinalize() {
+    setLoading(true);
+    const result = await finalizeChatLeaderboard({ roundId });
+    setLoading(false);
+    if (!result.success) {
+      toast.error(result.error);
+      return;
+    }
+    toast.success(
+      result.data.winners === 1
+        ? "Leaderboard winner finalized"
+        : `${result.data.winners} leaderboard winners finalized`,
+    );
+    setOpen(false);
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={setOpen}>
+      <DialogTrigger render={<Button size="sm" disabled={disabled} />}>
+        <ListOrdered className="mr-2 size-4" />
+        Finalize winners
+      </DialogTrigger>
+      <DialogContent>
+        <DialogHeading
+          icon={ListOrdered}
+          title={`Finalize ${leaderboardName}?`}
+          description="This freezes the final XP ranking and assigns each configured prize to that place. Equal XP is resolved by whoever reached the score first."
+        />
+
+        <div className="grid grid-cols-3 gap-2">
+          <StatChip icon={Users} label="Entrants" value={formatNumber(entrants)} />
+          <StatChip icon={Sparkles} label="Total XP" value={formatNumber(totalXp)} />
+          <StatChip icon={Trophy} label="Places" value={formatNumber(prizeCount)} />
+        </div>
+
+        <p className="text-xs text-muted-foreground">
+          Finalizing is irreversible. Nobody is paid yet; every prize still
+          requires an individual audited payout.
+        </p>
+
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>
+            Cancel
+          </Button>
+          <Button onClick={handleFinalize} disabled={loading}>
+            {loading && <Spinner className="mr-2 size-4" />}
+            Finalize ranking
           </Button>
         </DialogFooter>
       </DialogContent>

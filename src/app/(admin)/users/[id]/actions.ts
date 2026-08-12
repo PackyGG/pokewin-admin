@@ -363,12 +363,12 @@ function validateAdjustmentCategory(
     case "chat_raffle": {
       // Not hand-pickable (excluded from SELECTABLE_ADJUSTMENT_CATEGORY_KEYS):
       // the only writer is `payChatRafflePrize`, which always supplies the
-      // drawn round + place. Require them, so a hypothetical future caller
-      // can't mint an untraceable "chat raffle" credit.
+      // finalized chat competition + place. Require them, so a hypothetical
+      // future caller can't mint an untraceable prize credit.
       if (!d.chatRaffleRoundId || d.chatRafflePosition === undefined) {
         return {
           ok: false,
-          error: "Chat-raffle payouts must reference a drawn round and place",
+          error: "Chat-competition payouts must reference a finalized competition and place",
         };
       }
       return {

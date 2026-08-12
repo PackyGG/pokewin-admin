@@ -1406,6 +1406,7 @@ export const creator_reward_programs = pgTable("creator_reward_programs", {
 export const chat_raffle_rounds = pgTable("chat_raffle_rounds", {
 	id: uuid().defaultRandom().primaryKey().notNull(),
 	name: text().notNull(),
+	competition_type: text().default('raffle').notNull(),
 	status: text().default('open').notNull(),
 	starts_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
 	ends_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }).notNull(),
@@ -1425,6 +1426,7 @@ export const chat_raffle_rounds = pgTable("chat_raffle_rounds", {
 }, (table) => [
 	index("chat_raffle_rounds_ends_at_idx").using("btree", table.ends_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("chat_raffle_rounds_status_idx").using("btree", table.status.asc().nullsLast().op("text_ops")),
+	index("chat_raffle_rounds_type_status_idx").using("btree", table.competition_type.asc().nullsLast().op("text_ops"), table.status.asc().nullsLast().op("text_ops"), table.starts_at.desc().nullsFirst().op("timestamptz_ops")),
 	foreignKey({
 			columns: [table.created_by],
 			foreignColumns: [admin_users.id],
@@ -1434,7 +1436,8 @@ export const chat_raffle_rounds = pgTable("chat_raffle_rounds", {
 			columns: [table.drawn_by],
 			foreignColumns: [admin_users.id],
 			name: "chat_raffle_rounds_drawn_by_fkey"
-		}).onDelete("set null"),
+	}).onDelete("set null"),
+	check("chat_raffle_rounds_competition_type_check", sql`competition_type = ANY (ARRAY['raffle'::text, 'leaderboard'::text])`),
 ]);
 
 export const chat_raffle_prizes = pgTable("chat_raffle_prizes", {
@@ -1480,6 +1483,7 @@ export const chat_raffle_entries = pgTable("chat_raffle_entries", {
 	site_chat_message_count: integer(),
 	community_total_xp: integer(),
 	community_level: integer(),
+	score_reached_at: timestamp({ precision: 6, withTimezone: true, mode: 'string' }),
 	base_points: integer().default(0).notNull(),
 	adjustment_points: integer().default(0).notNull(),
 	tickets: integer().default(0).notNull(),

@@ -25,6 +25,15 @@ import { z } from "zod";
 export const CHAT_RAFFLE_STATUSES = ["open", "drawn", "cancelled"] as const;
 export type ChatRaffleStatus = (typeof CHAT_RAFFLE_STATUSES)[number];
 
+/** How winners are selected after the shared Community XP window closes. */
+export const CHAT_COMPETITION_TYPES = ["raffle", "leaderboard"] as const;
+export type ChatCompetitionType = (typeof CHAT_COMPETITION_TYPES)[number];
+
+export const CHAT_COMPETITION_LABEL: Record<ChatCompetitionType, string> = {
+  raffle: "Raffle",
+  leaderboard: "XP Leaderboard",
+};
+
 /**
  * The always-on rules, stated once so the UI can show them and the scorer
  * can enforce them without either side inventing its own wording.
@@ -42,6 +51,21 @@ export const CHAT_RAFFLE_FIXED_RULES = [
   "Muted users never qualify",
   "One user can win more than one place",
 ] as const;
+
+export const CHAT_LEADERBOARD_FIXED_RULES = [
+  "Discord and linked on-site chat XP both count",
+  "Staff, admins and creators never qualify",
+  "Blacklisted users never qualify",
+  "Muted users never qualify",
+  "Each prize goes to a different ranked player",
+  "Equal XP ranks whoever reached that score first",
+] as const;
+
+export function competitionRules(type: ChatCompetitionType): readonly string[] {
+  return type === "leaderboard"
+    ? CHAT_LEADERBOARD_FIXED_RULES
+    : CHAT_RAFFLE_FIXED_RULES;
+}
 
 /**
  * What an operator actually sees. `scheduled` / `running` / `ready` are all
@@ -62,6 +86,17 @@ export const CHAT_RAFFLE_PHASE_LABEL: Record<ChatRafflePhase, string> = {
   drawn: "Drawn",
   cancelled: "Cancelled",
 };
+
+export function competitionPhaseLabel(
+  phase: ChatRafflePhase,
+  type: ChatCompetitionType,
+): string {
+  if (type === "leaderboard") {
+    if (phase === "ready") return "Ready to finalize";
+    if (phase === "drawn") return "Finalized";
+  }
+  return CHAT_RAFFLE_PHASE_LABEL[phase];
+}
 
 /**
  * Phase badge colours. Neutral / informational states only — these are NOT

@@ -1,6 +1,6 @@
 import "server-only";
 
-import { asc, desc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/drizzle";
 import {
   admin_users,
@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_CHAT_RAFFLE_SCORING,
   deriveRoundPhase,
+  type ChatCompetitionType,
   type ChatRafflePhase,
   type ChatRaffleScoring,
 } from "./config";
@@ -75,6 +76,7 @@ export type ChatRafflePrizeView = {
 export type ChatRaffleRoundView = {
   id: string;
   name: string;
+  competitionType: ChatCompetitionType;
   status: string;
   phase: ChatRafflePhase;
   startsAt: string;
@@ -93,6 +95,7 @@ export type ChatRaffleRoundView = {
 type RoundWithPrizes = RoundConfigColumns & {
   id: string;
   name: string;
+  competition_type: string;
   status: string;
   starts_at: string;
   ends_at: string;
@@ -140,6 +143,7 @@ function toRoundView(row: RoundWithPrizes, now: Date): ChatRaffleRoundView {
   return {
     id: row.id,
     name: row.name,
+    competitionType: row.competition_type === "leaderboard" ? "leaderboard" : "raffle",
     status: row.status,
     phase: deriveRoundPhase(
       {
@@ -216,13 +220,18 @@ export function pickActiveRound(
     .sort((a, b) => PHASE_PRIORITY[a.phase] - PHASE_PRIORITY[b.phase])[0];
 }
 
-export async function getActiveChatRaffleRound(): Promise<ChatRaffleRoundView | null> {
+export async function getActiveChatRaffleRound(
+  competitionType: ChatCompetitionType = "raffle",
+): Promise<ChatRaffleRoundView | null> {
   const now = new Date();
   const rows = await attachPrizes(
     await adminDrizzle
       .select()
       .from(chat_raffle_rounds)
-      .where(eq(chat_raffle_rounds.status, "open"))
+      .where(and(
+        eq(chat_raffle_rounds.status, "open"),
+        eq(chat_raffle_rounds.competition_type, competitionType),
+      ))
       .orderBy(desc(chat_raffle_rounds.starts_at))
       .limit(50),
   );
@@ -247,12 +256,18 @@ export async function getChatRaffleRound(
 /** Every round, newest first. Small table — one page is the whole history. */
 export async function getChatRaffleRounds(
   limit = 50,
+  competitionType?: ChatCompetitionType,
 ): Promise<ChatRaffleRoundView[]> {
   const now = new Date();
   const rows = await attachPrizes(
     await adminDrizzle
       .select()
       .from(chat_raffle_rounds)
+      .where(
+        competitionType
+          ? eq(chat_raffle_rounds.competition_type, competitionType)
+          : undefined,
+      )
       .orderBy(desc(chat_raffle_rounds.starts_at))
       .limit(Math.min(Math.max(limit, 1), 200)),
   );
@@ -320,6 +335,7 @@ export type ChatRaffleEntryView = {
   siteChatMessageCount: number | null;
   communityTotalXp: number | null;
   communityLevel: number | null;
+  scoreReachedAt: string | null;
   basePoints: number;
   adjustmentPoints: number;
   tickets: number;
@@ -348,6 +364,9 @@ export async function getRoundEntries(
     siteChatMessageCount: r.site_chat_message_count,
     communityTotalXp: r.community_total_xp,
     communityLevel: r.community_level,
+    scoreReachedAt: r.score_reached_at
+      ? new Date(r.score_reached_at).toISOString()
+      : null,
     basePoints: r.base_points,
     adjustmentPoints: r.adjustment_points,
     tickets: r.tickets,
@@ -360,11 +379,18 @@ export async function getRoundEntries(
  * doesn't re-type a tuned config every week. Falls back to the built-in
  * defaults for the very first round.
  */
-export async function getDefaultScoringForNewRound(): Promise<ChatRaffleScoring> {
+export async function getDefaultScoringForNewRound(
+  competitionType?: ChatCompetitionType,
+): Promise<ChatRaffleScoring> {
   const latest = (
     await adminDrizzle
       .select()
       .from(chat_raffle_rounds)
+      .where(
+        competitionType
+          ? eq(chat_raffle_rounds.competition_type, competitionType)
+          : undefined,
+      )
       .orderBy(desc(chat_raffle_rounds.created_at))
       .limit(1)
   )[0];

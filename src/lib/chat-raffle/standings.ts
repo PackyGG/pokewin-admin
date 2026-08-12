@@ -9,6 +9,7 @@ import { communityRankForLevel } from "@/lib/discord-community-ranks";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
 import { CHAT_RAFFLE_MAX_ENTRIES } from "./config";
+import { compareLeaderboardCandidates } from "./leaderboard";
 
 /**
  * standings.ts — turn canonical Community XP into raffle tickets.
@@ -64,6 +65,8 @@ export type ChatRaffleStanding = {
   communityTotalXp: number;
   communityLevel: number;
   communityRankName: string;
+  /** Last qualifying award in the window; earlier wins an equal-XP tie. */
+  scoreReachedAt: string | null;
 };
 
 export type ChatRaffleStandings = {
@@ -85,6 +88,7 @@ type XpRow = {
   site_chat_message_count: number;
   message_count: number;
   community_total_xp: number;
+  score_reached_at: string | null;
 };
 
 type LinkedUserRow = {
@@ -127,7 +131,8 @@ export async function getChatRaffleStandings(params: {
           discord_counted_messages::int AS discord_message_count,
           site_chat_counted_messages::int AS site_chat_message_count,
           counted_messages::int AS message_count,
-          total_xp::int AS community_total_xp
+          total_xp::int AS community_total_xp,
+          NULL::timestamptz AS score_reached_at
         FROM discord_community_xp_profiles
         WHERE total_xp > 0
       `)
@@ -139,7 +144,8 @@ export async function getChatRaffleStandings(params: {
           count(*) FILTER (WHERE event.source = 'discord')::int AS discord_message_count,
           count(*) FILTER (WHERE event.source = 'site_chat')::int AS site_chat_message_count,
           count(*)::int AS message_count,
-          profile.total_xp::int AS community_total_xp
+          profile.total_xp::int AS community_total_xp,
+          max(event.occurred_at) AS score_reached_at
         FROM discord_community_xp_events event
         JOIN discord_community_xp_profiles profile
           ON profile.discord_user_id = event.discord_user_id
@@ -211,13 +217,14 @@ export async function getChatRaffleStandings(params: {
         communityTotalXp: xp.community_total_xp,
         communityLevel,
         communityRankName: communityRankForLevel(communityLevel).name,
+        scoreReachedAt: xp.score_reached_at
+          ? new Date(xp.score_reached_at).toISOString()
+          : null,
       };
     })
     .filter((e) => e.points > 0)
     // Re-sort: a negative adjustment can reorder the raw SQL ranking.
-    .sort((a, b) =>
-      b.points !== a.points ? b.points - a.points : a.userId.localeCompare(b.userId),
-    );
+    .sort(compareLeaderboardCandidates);
 
   const truncated = scoredEntries.length > limit;
   const capped = truncated ? scoredEntries.slice(0, limit) : scoredEntries;

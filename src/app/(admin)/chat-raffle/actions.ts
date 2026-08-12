@@ -26,15 +26,20 @@ import {
   CHAT_RAFFLE_MAX_WINDOW_DAYS,
   canDrawRound,
   canEditRound,
+  CHAT_COMPETITION_TYPES,
   chatRaffleScoringSchema,
   deriveRoundPhase,
 } from "@/lib/chat-raffle/config";
 import { drawWinners, generateDrawSeed } from "@/lib/chat-raffle/draw";
+import { selectLeaderboardWinners } from "@/lib/chat-raffle/leaderboard";
 import {
   getRoundAdjustmentTotals,
   scoringToColumns,
 } from "@/lib/chat-raffle/rounds";
-import { getChatRaffleStandings } from "@/lib/chat-raffle/standings";
+import {
+  getChatRaffleStandings,
+  type ChatRaffleStanding,
+} from "@/lib/chat-raffle/standings";
 import { adjustBalance } from "@/app/(admin)/users/[id]/actions";
 
 /**
@@ -81,6 +86,7 @@ const prizeInputSchema = z.object({
 });
 
 const roundInputSchema = z.object({
+  competitionType: z.enum(CHAT_COMPETITION_TYPES),
   name: z.string().trim().min(1).max(120),
   startsAt: z.string().datetime(),
   endsAt: z.string().datetime(),
@@ -118,6 +124,7 @@ function validatePrizePositions(
 }
 
 export async function createChatRaffleRound(input: {
+  competitionType: "raffle" | "leaderboard";
   name: string;
   startsAt: string;
   endsAt: string;
@@ -144,6 +151,7 @@ export async function createChatRaffleRound(input: {
       .insert(chat_raffle_rounds)
       .values({
         name: data.name,
+        competition_type: data.competitionType,
         status: "open",
         starts_at: startsAt.toISOString(),
         ends_at: endsAt.toISOString(),
@@ -168,6 +176,7 @@ export async function createChatRaffleRound(input: {
     metadata: {
       roundId: round.id,
       name: data.name,
+      competitionType: data.competitionType,
       startsAt: data.startsAt,
       endsAt: data.endsAt,
       prizePoolUsd: data.prizes.reduce((sum, p) => sum + p.amountUsd, 0),
@@ -188,7 +197,10 @@ export async function updateChatRaffleRound(input: {
 }): Promise<ActionResult> {
   const session = await requirePageAccess("/chat-raffle");
 
-  const parsed = roundInputSchema.safeParse(input);
+  const parsed = roundInputSchema.safeParse({
+    ...input,
+    competitionType: "raffle",
+  });
   if (!parsed.success) {
     return { success: false, error: parsed.error.issues[0]?.message ?? "Invalid input" };
   }
@@ -393,6 +405,9 @@ export async function drawChatRaffleRound(input: {
       .limit(1)
   )[0];
   if (!round) return { success: false, error: "Round not found" };
+  if (round.competition_type !== "raffle") {
+    return { success: false, error: "XP leaderboards must be finalized by rank" };
+  }
   const prizes = await adminDrizzle
     .select()
     .from(chat_raffle_prizes)
@@ -446,29 +461,7 @@ export async function drawChatRaffleRound(input: {
 
   // Cumulative ticket ranges, in display order — persisted so the draw can be
   // replayed from the snapshot alone.
-  let cursor = 0;
-  const entryRows = standings.map((s) => {
-    const ticketStart = cursor;
-    cursor += s.tickets;
-    return {
-      round_id: round.id,
-      user_id: s.userId,
-      username: s.username,
-      discord_user_id: s.discordUserId,
-      message_count: s.messageCount,
-      discord_xp: s.discordXp,
-      site_chat_xp: s.siteChatXp,
-      discord_message_count: s.discordMessageCount,
-      site_chat_message_count: s.siteChatMessageCount,
-      community_total_xp: s.communityTotalXp,
-      community_level: s.communityLevel,
-      base_points: s.basePoints,
-      adjustment_points: s.adjustmentPoints,
-      tickets: s.tickets,
-      ticket_start: ticketStart,
-      position: s.position,
-    };
-  });
+  const entryRows = snapshotEntryRows(round.id, standings);
 
   const winners = drawWinners({
     roundId: round.id,
@@ -553,6 +546,167 @@ export async function drawChatRaffleRound(input: {
         position: w.position,
         userId: w.userId,
         tickets: w.tickets,
+      })),
+    },
+  });
+
+  revalidateChatRaffle();
+  return { success: true, data: { winners: winners.length } };
+}
+
+function snapshotEntryRows(roundId: string, standings: ChatRaffleStanding[]) {
+  let cursor = 0;
+  return standings.map((standing) => {
+    const ticketStart = cursor;
+    cursor += standing.tickets;
+    return {
+      round_id: roundId,
+      user_id: standing.userId,
+      username: standing.username,
+      discord_user_id: standing.discordUserId,
+      message_count: standing.messageCount,
+      discord_xp: standing.discordXp,
+      site_chat_xp: standing.siteChatXp,
+      discord_message_count: standing.discordMessageCount,
+      site_chat_message_count: standing.siteChatMessageCount,
+      community_total_xp: standing.communityTotalXp,
+      community_level: standing.communityLevel,
+      score_reached_at: standing.scoreReachedAt,
+      base_points: standing.basePoints,
+      adjustment_points: standing.adjustmentPoints,
+      tickets: standing.tickets,
+      ticket_start: ticketStart,
+      position: standing.position,
+    };
+  });
+}
+
+/** Freeze an ended XP leaderboard and assign each prize to its ranked place. */
+export async function finalizeChatLeaderboard(input: {
+  roundId: string;
+}): Promise<ActionResult<{ winners: number }>> {
+  const session = await requirePageAccess("/chat-raffle");
+  const round = (
+    await adminDrizzle
+      .select()
+      .from(chat_raffle_rounds)
+      .where(eq(chat_raffle_rounds.id, input.roundId))
+      .limit(1)
+  )[0];
+  if (!round) return { success: false, error: "Leaderboard not found" };
+  if (round.competition_type !== "leaderboard") {
+    return { success: false, error: "Raffle winners must be drawn" };
+  }
+
+  const phase = deriveRoundPhase(
+    {
+      ...round,
+      starts_at: new Date(round.starts_at),
+      ends_at: new Date(round.ends_at),
+    },
+    new Date(),
+  );
+  if (!canDrawRound(phase)) {
+    return {
+      success: false,
+      error:
+        phase === "drawn"
+          ? "This leaderboard has already been finalized"
+          : phase === "cancelled"
+            ? "This leaderboard was cancelled"
+            : "The leaderboard window hasn't closed yet",
+    };
+  }
+
+  const prizes = await adminDrizzle
+    .select()
+    .from(chat_raffle_prizes)
+    .where(eq(chat_raffle_prizes.round_id, round.id))
+    .orderBy(chat_raffle_prizes.position);
+  if (prizes.length === 0) {
+    return { success: false, error: "Add at least one prize before finalizing" };
+  }
+
+  const adjustments = await getRoundAdjustmentTotals(round.id);
+  const { standings, totalTickets, entrants, truncated } =
+    await getChatRaffleStandings({
+      startsAt: new Date(round.starts_at),
+      endsAt: new Date(round.ends_at),
+      adjustments,
+    });
+  if (truncated) {
+    return {
+      success: false,
+      error: "Too many entrants to freeze safely. Shorten the leaderboard window, then retry.",
+    };
+  }
+  if (entrants === 0 || totalTickets === 0) {
+    return { success: false, error: "Nobody qualified for this leaderboard" };
+  }
+
+  const winners = selectLeaderboardWinners(standings, prizes.length);
+  const entryRows = snapshotEntryRows(round.id, standings);
+  const CONCURRENT_FINALIZE = "chat-leaderboard:concurrent-finalize";
+
+  try {
+    await adminDrizzle.transaction(async (tx) => {
+      const claim = await tx
+        .update(chat_raffle_rounds)
+        .set({
+          status: "drawn",
+          draw_seed: null,
+          drawn_at: new Date().toISOString(),
+          drawn_by: session.userId,
+          entrants_at_draw: entrants,
+          tickets_at_draw: totalTickets,
+        })
+        .where(and(
+          eq(chat_raffle_rounds.id, round.id),
+          eq(chat_raffle_rounds.status, "open"),
+        ))
+        .returning({ id: chat_raffle_rounds.id });
+      if (claim.length !== 1) throw new Error(CONCURRENT_FINALIZE);
+
+      await tx.delete(chat_raffle_entries)
+        .where(eq(chat_raffle_entries.round_id, round.id));
+      await tx.insert(chat_raffle_entries).values(entryRows);
+
+      for (let index = 0; index < winners.length; index += 1) {
+        const winner = winners[index];
+        const prize = prizes[index];
+        await tx.update(chat_raffle_prizes)
+          .set({
+            winner_user_id: winner.userId,
+            winner_username: winner.username,
+            winner_tickets: winner.tickets,
+            winning_ticket: null,
+          })
+          .where(eq(chat_raffle_prizes.id, prize.id));
+      }
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === CONCURRENT_FINALIZE) {
+      return {
+        success: false,
+        error: "This leaderboard was just finalized by someone else. Reload to see the winners.",
+      };
+    }
+    console.error("[finalizeChatLeaderboard] Transaction failed:", error);
+    return { success: false, error: "Couldn't finalize the leaderboard — please try again." };
+  }
+
+  await createAdminAuditEvent({
+    adminUserId: session.userId,
+    eventType: "chat_leaderboard_finalized",
+    metadata: {
+      roundId: round.id,
+      name: round.name,
+      entrants,
+      totalXp: totalTickets,
+      winners: winners.map((winner, index) => ({
+        position: index + 1,
+        userId: winner.userId,
+        xp: winner.tickets,
       })),
     },
   });
