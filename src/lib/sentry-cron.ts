@@ -4,6 +4,7 @@ type CronJob = () => Promise<Response>;
 
 type SentryCronOptions = {
   slug: string;
+  aliases?: string[];
   schedule: string;
   maxRuntimeMinutes?: number;
 };
@@ -27,20 +28,26 @@ export async function runSentryCronMonitor(
   options: SentryCronOptions,
   job: CronJob,
 ): Promise<Response> {
-  let checkInId: string | undefined;
-  observe(() => {
-    checkInId = Sentry.captureCheckIn(
-      { monitorSlug: options.slug, status: "in_progress" },
-      {
-        schedule: { type: "crontab", value: options.schedule },
-        checkinMargin: 1,
-        maxRuntime: options.maxRuntimeMinutes ?? 2,
-        failureIssueThreshold: 2,
-        recoveryThreshold: 1,
-        timezone: "UTC",
-      },
-    );
-  });
+  const monitorSlugs = [options.slug, ...(options.aliases ?? [])];
+  const checkIns = new Map<string, string>();
+  for (const monitorSlug of monitorSlugs) {
+    observe(() => {
+      checkIns.set(
+        monitorSlug,
+        Sentry.captureCheckIn(
+          { monitorSlug, status: "in_progress" },
+          {
+            schedule: { type: "crontab", value: options.schedule },
+            checkinMargin: 1,
+            maxRuntime: options.maxRuntimeMinutes ?? 2,
+            failureIssueThreshold: 2,
+            recoveryThreshold: 1,
+            timezone: "UTC",
+          },
+        ),
+      );
+    });
+  }
   const startedAt = Date.now();
 
   let response: Response;
@@ -48,15 +55,17 @@ export async function runSentryCronMonitor(
     response = await job();
   } catch (error) {
     const durationMs = Date.now() - startedAt;
-    observe(() => {
-      if (checkInId) {
+    for (const [monitorSlug, checkInId] of checkIns) {
+      observe(() => {
         Sentry.captureCheckIn({
           checkInId,
-          monitorSlug: options.slug,
+          monitorSlug,
           status: "error",
           duration: durationMs / 1_000,
         });
-      }
+      });
+    }
+    observe(() => {
       Sentry.metrics.count("cron.runs", 1, {
         attributes: { cron: options.slug, status: "error" },
       });
@@ -71,15 +80,17 @@ export async function runSentryCronMonitor(
 
   const durationMs = Date.now() - startedAt;
   const status = response.ok ? "ok" : "error";
-  observe(() => {
-    if (checkInId) {
+  for (const [monitorSlug, checkInId] of checkIns) {
+    observe(() => {
       Sentry.captureCheckIn({
         checkInId,
-        monitorSlug: options.slug,
+        monitorSlug,
         status,
         duration: durationMs / 1_000,
       });
-    }
+    });
+  }
+  observe(() => {
     Sentry.metrics.count("cron.runs", 1, {
       attributes: { cron: options.slug, status },
     });

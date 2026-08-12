@@ -199,7 +199,11 @@ export async function GET(request: Request): Promise<Response> {
   }
 
   return runSentryCronMonitor(
-    { slug: "/api/cron/warm", schedule: "*/5 * * * *" },
+    {
+      slug: "/api/cron/warm",
+      aliases: ["admin-cache-warm"],
+      schedule: "*/5 * * * *",
+    },
     async () => {
       // Postgres keep-warm — read-only ping against the prod game DB.
       // This is also the route's load-shedding gate: if the mirror cannot accept
