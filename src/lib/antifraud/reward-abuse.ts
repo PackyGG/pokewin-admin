@@ -7,7 +7,7 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { enqueueDiscordEvent } from "@/lib/discord-notifications/router";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 
-export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.1";
+export const RAIN_ABUSE_DETECTOR_VERSION = "rain-v1.2";
 export const REWARD_ABUSE_PAGE_SIZE = 40;
 
 export type RewardAbuseStatus = "pending" | "confirmed" | "dismissed";
@@ -29,6 +29,8 @@ export type RainAbuseMetrics = {
   bonusFundedPackUsd: number;
   bonusFundedPackRatio: number;
   packGameRatio: number;
+  tipsReceived30dUsd: number;
+  sponsoredBattleReceived30dUsd: number;
 };
 
 export type RewardAbuseReview = {
@@ -67,6 +69,8 @@ type CandidateRow = {
   pack_games: number;
   pack_wager_usd: string;
   bonus_funded_pack_usd: string;
+  tips_received_30d_usd: string;
+  sponsored_battle_received_30d_usd: string;
 };
 
 function money(value: string): number {
@@ -159,7 +163,9 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
       COALESCE(play.games, 0)::int AS games,
       COALESCE(play.pack_games, 0)::int AS pack_games,
       COALESCE(play.pack_wager_usd, 0)::text AS pack_wager_usd,
-      COALESCE(play.bonus_funded_pack_usd, 0)::text AS bonus_funded_pack_usd
+      COALESCE(play.bonus_funded_pack_usd, 0)::text AS bonus_funded_pack_usd,
+      COALESCE(ledger.tips_received_30d_usd, 0)::text AS tips_received_30d_usd,
+      COALESCE(sponsored.received_30d_usd, 0)::text AS sponsored_battle_received_30d_usd
     FROM rain_activity AS activity
     JOIN "user" AS account ON account.id = activity.user_id
     LEFT JOIN user_feature_locks AS feature_lock
@@ -191,7 +197,16 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
         sum(abs(tx.amount::numeric)) FILTER (
           WHERE tx.type::text IN ('pack_opening', 'battle_bet', 'upgrader_bet', 'keno_bet')
             AND tx.created_at >= now() - interval '30 days'
-        ) AS wager_usd
+        ) AS wager_usd,
+        sum(tx.amount::numeric) FILTER (
+          WHERE tx.type::text = 'creator_tip'
+            AND tx.created_at >= now() - interval '30 days'
+            AND CASE
+              WHEN tx.metadata->>'direction' = 'received' THEN true
+              WHEN tx.metadata->>'direction' = 'sent' THEN false
+              ELSE tx.balance_after::numeric > tx.balance_before::numeric
+            END
+        ) AS tips_received_30d_usd
       FROM ledger_transactions AS tx
       WHERE tx.user_id = activity.user_id AND tx.status::text = 'completed'
     ) AS ledger ON true
@@ -213,6 +228,33 @@ async function loadRainCandidates(): Promise<CandidateRow[]> {
         AND session.bet_ledger_tx_id IS NOT NULL
         AND session.bet_amount::numeric > 0
     ) AS play ON true
+    LEFT JOIN LATERAL (
+      SELECT sum(round(
+        (COALESCE(items.value_usd, 0) + COALESCE(vouchers.value_usd, 0))
+        * battle.sponsorship_percentage
+      ) / 100) AS received_30d_usd
+      FROM battle_participants AS participant
+      JOIN battles AS battle ON battle.id = participant.battle_id
+      LEFT JOIN LATERAL (
+        SELECT sum(inventory.value_at_obtained::numeric) AS value_usd
+        FROM user_inventory AS inventory
+        WHERE inventory.user_id = activity.user_id
+          AND inventory.source_type::text = 'battle'
+          AND inventory.source_id = participant.game_session_id
+      ) AS items ON true
+      LEFT JOIN LATERAL (
+        SELECT sum(voucher.value::numeric) AS value_usd
+        FROM vouchers AS voucher
+        WHERE voucher.user_id = activity.user_id
+          AND voucher.origin::text = 'battle_excess_to_voucher'
+          AND voucher.origin_id = participant.game_session_id
+      ) AS vouchers ON true
+      WHERE participant.user_id = activity.user_id
+        AND participant.created_at >= now() - interval '30 days'
+        AND battle.currency::text = 'real'
+        AND battle.status::text = 'completed'
+        AND battle.sponsorship_percentage > 0
+    ) AS sponsored ON true
     WHERE COALESCE(ledger.rain_usd, 0) >= 2
       AND account.role::text = 'user'
       AND NOT (account.roles && ARRAY['support', 'admin', 'creator']::user_role[])
@@ -248,6 +290,8 @@ function candidateMetrics(row: CandidateRow): RainAbuseMetrics {
     bonusFundedPackUsd,
     bonusFundedPackRatio: ratio(bonusFundedPackUsd, packWagerUsd),
     packGameRatio: ratio(packGames, games),
+    tipsReceived30dUsd: money(row.tips_received_30d_usd),
+    sponsoredBattleReceived30dUsd: money(row.sponsored_battle_received_30d_usd),
   };
 }
 

@@ -125,7 +125,11 @@ function ReviewCard({ review }: { review: RewardAbuseReview }) {
         <DepositsMetric recent={m.deposits30dUsd} lifetime={m.lifetimeDepositsUsd} rainRatio={Math.round((m.deposits30dUsd / Math.max(m.netRainUsd, .01)) * 100)} />
         <Metric label="Real-money play" value={usd(m.wagerUsd)} note={`${m.games} paid game sessions`} />
         <Metric label="Pack pattern" value={`${Math.round(m.packGameRatio * 100)}%`} note={`${m.packGames} pack sessions`} />
-        <Metric label="Bonus-funded packs" value={`${Math.round(m.bonusFundedPackRatio * 100)}%`} note="Inference; general bonus pool" />
+        <Metric
+          label="Bonus-funded packs"
+          value={`${Math.round(m.bonusFundedPackRatio * 100)}%`}
+          note={`${usd(m.tipsReceived30dUsd ?? 0)} tips · ${usd(m.sponsoredBattleReceived30dUsd ?? 0)} sponsored share (30d)`}
+        />
       </div>
     </article>
   );

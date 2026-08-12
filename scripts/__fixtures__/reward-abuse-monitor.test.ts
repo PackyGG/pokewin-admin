@@ -43,3 +43,12 @@ test("reward abuse page exposes explicit unambiguous staff decisions", async () 
   assert.match(controls, /Confirm abuse & disable Rain/);
   assert.match(controls, /Dismiss finding/);
 });
+
+test("reward evidence separates received tips from sponsored-battle value", async () => {
+  const detector = await readFile(detectorPath, "utf8");
+  assert.match(detector, /tx\.type::text = 'creator_tip'/);
+  assert.match(detector, /metadata->>'direction' = 'received'/);
+  assert.match(detector, /battle\.sponsorship_percentage/);
+  assert.match(detector, /inventory\.source_id = participant\.game_session_id/);
+  assert.match(detector, /voucher\.origin_id = participant\.game_session_id/);
+});
