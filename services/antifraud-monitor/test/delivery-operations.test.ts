@@ -7,10 +7,10 @@ import { fileURLToPath } from "node:url";
 import type { FastifyBaseLogger } from "fastify";
 import type pg from "pg";
 
-import type { Config } from "../../services/antifraud-monitor/src/config.js";
-import { IngestDelivery } from "../../services/antifraud-monitor/src/ingest-delivery.js";
+import type { Config } from "../src/config.js";
+import { IngestDelivery } from "../src/ingest-delivery.js";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function read(relative: string): string {
   return readFileSync(path.join(root, relative), "utf8");
