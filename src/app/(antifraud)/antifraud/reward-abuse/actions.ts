@@ -5,7 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
-import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { createAdminAuditEventDurable } from "@/lib/admin-audit";
 import { confirmRainRewardAbuse } from "@/lib/backend-api/feature-locks";
 import { reward_abuse_reviews } from "@/lib/db-schema/admin/schema";
 import { requireAntifraudAccess } from "@/lib/require-antifraud-access";
@@ -119,7 +119,7 @@ export async function decideRewardAbuseReview(
     return outcome.result;
   }
 
-  await createAdminAuditEvent({
+  await createAdminAuditEventDurable({
     adminUserId: session.userId,
     eventType: decision === "confirm"
       ? "reward_abuse_confirmed_rain_locked"
