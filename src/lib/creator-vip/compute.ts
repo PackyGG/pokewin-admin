@@ -1278,16 +1278,17 @@ export async function computeAllEntitlements(
     windows: windowsByProgram.get(program.id) ?? [],
   }));
 
-  // SHORT-CIRCUIT. Both legs require an `affiliate_code_usages` row under one
-  // of the program's codes — the wager leg needs wager rows, the lossback leg
-  // needs the signup row. A player with none can qualify for neither, so one
-  // cheap EXISTS decides it before any of the expensive work happens.
+  // SHORT-CIRCUIT. Historical attachment is an `affiliate_code_usages` row,
+  // but CURRENT attachment is the code on the user row itself. The latter is
+  // important for a newly-created program: someone who is already on its code
+  // must see the offer and its progress before their first wager lands.
   //
   // This matters because the expensive work is unconditional otherwise:
   // loadUserFacts alone is four reads including the deposit lookup (the most
   // costly query on the path), and each program adds more. For the common
-  // case — someone who simply isn't attached to a creator running a program —
-  // that is ~8 network round-trips spent to conclude "nothing".
+  // case — someone who is neither currently on nor historically attached to a
+  // creator running a program — that is ~8 network round-trips spent to
+  // conclude "nothing".
   //
   // Cheap by construction: EXISTS stops at the first matching row, and the
   // predicate is served by `idx_acu_upper_code` (verified index-served
@@ -1298,10 +1299,17 @@ export async function computeAllEntitlements(
   if (allCodes.length === 0) return [];
 
   const attached = await getProdReadDrizzleDb().execute<{ hit: boolean }>(sql`
-    SELECT EXISTS (
-      SELECT 1 FROM affiliate_code_usages
-       WHERE referred_user_id = ${userId}
-         AND UPPER(code) = ANY(${pgArrayParam(allCodes)}::text[])
+    SELECT (
+      EXISTS (
+        SELECT 1 FROM affiliate_code_usages
+         WHERE referred_user_id = ${userId}
+           AND UPPER(code) = ANY(${pgArrayParam(allCodes)}::text[])
+      )
+      OR EXISTS (
+        SELECT 1 FROM "user" u
+         WHERE u.id = ${userId}
+           AND UPPER(u.affiliate_code) = ANY(${pgArrayParam(allCodes)}::text[])
+      )
     ) AS hit
   `);
   if (attached.rows[0]?.hit !== true) return [];
