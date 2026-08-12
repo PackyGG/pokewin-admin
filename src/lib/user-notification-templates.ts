@@ -78,6 +78,7 @@ type PreviewPack = {
   name: string;
   price?: number;
   image?: string;
+  href?: string;
 };
 
 function previewPack(value: unknown): PreviewPack | undefined {
@@ -94,6 +95,7 @@ function previewPack(value: unknown): PreviewPack | undefined {
     name: pack.name.trim(),
     price: Number.isFinite(numericPrice) ? numericPrice : undefined,
     image: typeof pack.image_url === "string" ? pack.image_url : undefined,
+    href: typeof pack.url === "string" ? pack.url : undefined,
   };
 }
 
@@ -191,13 +193,15 @@ export function previewNotificationText(
       const price = formatUsd(arrayPack?.price ?? payload?.price_usd);
       return {
         title: packName,
-        body: price ? `${price} per open` : "Tap to view it.",
+        body: price ? `${price} per open` : "Available now",
         image:
           arrayPack?.image ??
           (typeof payload?.image_url === "string"
             ? payload.image_url
             : undefined),
-        href: typeof payload?.url === "string" ? payload.url : undefined,
+        href:
+          arrayPack?.href ??
+          (typeof payload?.url === "string" ? payload.url : undefined),
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.pack_release,
       };

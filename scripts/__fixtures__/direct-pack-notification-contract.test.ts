@@ -52,6 +52,21 @@ test("personal pack notifications preview up to three packs", () => {
   assert.equal(preview.href, "https://packy.gg/games/packs?sort=newest");
 });
 
+test("single-pack previews match the site fallback copy and pack link", () => {
+  const preview = previewNotificationText("pack_release", {
+    packs: [
+      {
+        name: "Only Pack",
+        url: "https://packy.gg/games/packs/only-pack",
+      },
+    ],
+  });
+
+  assert.equal(preview.title, "Only Pack");
+  assert.equal(preview.body, "Available now");
+  assert.equal(preview.href, "https://packy.gg/games/packs/only-pack");
+});
+
 test("broadcast pack announcements preserve the shared one-to-three-pack contract", () => {
   const result = validateAnnouncementPayload({
     url: "https://packy.gg/games/packs?sort=newest",
