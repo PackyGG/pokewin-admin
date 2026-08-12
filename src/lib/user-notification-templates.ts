@@ -7,18 +7,9 @@
  * backend failure: the row is written, the API returns the payload, the
  * client simply has nothing to render it with.
  *
- * MIRRORS the frontend, verified 2026-07-22 against
- *   packy-frontend `src/components/navigation/notification-text.ts`
- *   packy-frontend `src/components/navigation/notification-popover.tsx`
- *
- * Two facts from that code drive everything below:
- *
- *  1. `notificationText()` has an explicit allowlist of types. Its `default:`
- *     branch returns `{ title: "Notification", body: type.replace(/_/g," ") }`
- *     — so `promo_code_granted` renders as the literal words "promo code
- *     granted" with no code in sight.
- *  2. The popover only turns validated `payload.url` / `payload.image_url`
- *     into a linked image row. Other payload keys need an explicit template.
+ * MIRRORS the frontend notification presentation contract. Recognized types
+ * derive their copy and specialized card metadata from the payload; unknown
+ * types fall back to a generic title/body and ignore unrecognized metadata.
  *
  * This module exists so the composer can show the operator that truth up
  * front instead of letting them discover it by sending to a real account.
@@ -47,9 +38,19 @@ export type NotificationPreview = {
 /** Types the site renders with real copy, and the payload keys each reads. */
 export const KNOWN_NOTIFICATION_TYPES: Record<string, string[]> = {
   deposit_pending: ["amount_usd"],
+  deposit_review: ["amount_usd"],
   deposit_completed: ["amount_usd"],
-  reward_credited: ["amount_usd"],
+  tip_received: ["sender_username", "amount_usd"],
   promo_code_granted: ["code", "value", "amount_usd"],
+  leaderboard_ending_soon: [
+    "race_type",
+    "is_participant",
+    "position",
+    "prize_usd",
+    "prize_pool_usd",
+    "ends_at",
+    "url",
+  ],
   pack_release: ["pack_name", "price_usd", "url", "image_url", "packs"],
   admin_message: ["title", "body"],
   challenge_available: [
@@ -104,9 +105,7 @@ export function previewNotificationText(
   payload: Record<string, unknown> | undefined,
 ): NotificationPreview {
   const key = type.trim();
-  const amountUsd =
-    typeof payload?.amount_usd === "string" ? `$${payload.amount_usd}` : "";
-  const ofAmount = amountUsd ? ` of ${amountUsd}` : "";
+  const amountUsd = formatUsd(payload?.amount_usd);
 
   switch (key) {
     case "admin_message":
@@ -125,38 +124,85 @@ export function previewNotificationText(
     case "deposit_pending":
       return {
         title: "Deposit detected",
-        body: `Your deposit${ofAmount} is awaiting confirmation.`,
+        body: amountUsd
+          ? `${amountUsd} is awaiting network confirmation.`
+          : "Awaiting network confirmation.",
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.deposit_pending,
+      };
+    case "deposit_review":
+      return {
+        title: "Your deposit is in review",
+        body: amountUsd
+          ? `${amountUsd} is awaiting manual approval. We’ll notify you when it’s credited.`
+          : "Your deposit is awaiting manual approval. We’ll notify you when it’s credited.",
+        known: true,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.deposit_review,
       };
     case "deposit_completed":
       return {
         title: "Deposit completed",
-        body: `Your deposit${ofAmount} is now available.`,
+        body: amountUsd
+          ? `${amountUsd} is available in your balance.`
+          : "Available in your balance.",
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.deposit_completed,
       };
-    case "reward_credited":
+    case "tip_received": {
+      const sender =
+        typeof payload?.sender_username === "string" &&
+        payload.sender_username.trim()
+          ? payload.sender_username.trim()
+          : "Someone";
       return {
-        title: "Reward credited",
-        body: `You received a reward${ofAmount}.`,
+        title: `From ${sender}`,
+        body: amountUsd
+          ? `${amountUsd} added to your balance.`
+          : "A tip was added to your balance.",
         known: true,
-        usedKeys: KNOWN_NOTIFICATION_TYPES.reward_credited,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.tip_received,
       };
+    }
     case "promo_code_granted": {
-      // Shipped in PackyGG/frontend#749 — the code renders as a chip the user
-      // taps to copy, and the realtime toast carries its own Copy action.
       const code =
         typeof payload?.code === "string" && payload.code.trim() !== ""
           ? payload.code.trim()
           : undefined;
       const worth = formatUsd(payload?.value ?? payload?.amount_usd);
       return {
-        title: worth ? `${worth} promo code for you` : "Promo code for you",
-        body: "Redeem it in your wallet.",
+        title: worth ? `${worth} promo unlocked` : "Promo unlocked",
+        body: "Redeem it now.",
         code,
         known: true,
         usedKeys: KNOWN_NOTIFICATION_TYPES.promo_code_granted,
+      };
+    }
+    case "leaderboard_ending_soon": {
+      const raceType = payload?.race_type === "monthly" ? "monthly" : "weekly";
+      const participant = payload?.is_participant === true;
+      const positionValue = Number(payload?.position);
+      const position =
+        participant && Number.isInteger(positionValue) && positionValue > 0
+          ? positionValue
+          : undefined;
+      const prize = formatUsd(payload?.prize_usd);
+      const prizePool = formatUsd(payload?.prize_pool_usd);
+      const label = raceType === "monthly" ? "Monthly" : "Weekly";
+      return {
+        title: participant && position ? `You’re #${position}` : `${label} race is closing`,
+        body: participant
+          ? prize
+            ? `Currently holding a ${prize} prize.`
+            : "Make a final push before the standings lock."
+          : prizePool
+            ? `${prizePool} prize pool. There’s still time to enter.`
+            : "There’s still time to enter the race.",
+        href:
+          typeof payload?.url === "string"
+            ? payload.url
+            : `/races?type=${raceType}`,
+        known: true,
+        usedKeys: KNOWN_NOTIFICATION_TYPES.leaderboard_ending_soon,
       };
     }
     case "pack_release": {
@@ -221,9 +267,23 @@ export function previewNotificationText(
           ? payload.challenge_name.trim()
           : "New challenge";
       const prize = formatUsd(payload?.prize_usd);
+      const challengeLabel =
+        challengeGame === "keno"
+          ? "Keno"
+          : challengeGame === "upgrader"
+            ? "Upgrader"
+            : challengeGame === "pack"
+              ? "Pack Pull"
+              : undefined;
       return {
-        title: name,
-        body: prize ? `Complete it to claim ${prize}.` : "Ready to play now.",
+        title: `${name} is live`,
+        body: challengeLabel
+          ? prize
+            ? `Complete this ${challengeLabel} challenge to claim ${prize}.`
+            : `A new ${challengeLabel} challenge is ready to play.`
+          : prize
+            ? `Complete this challenge to claim ${prize}.`
+            : "A new challenge is ready to play.",
         href:
           typeof payload?.url === "string"
             ? payload.url

@@ -106,7 +106,7 @@ test("broadcast pack announcements preserve the shared one-to-three-pack contrac
   );
 });
 
-test("broadcast promo announcements retain reveal-card metadata", () => {
+test("templated announcement previews match the site copy", () => {
   const result = validateAnnouncementPayload({
     promoCode: " summer-25 ",
     promoValueUsd: "25",
@@ -116,6 +116,42 @@ test("broadcast promo announcements retain reveal-card metadata", () => {
     payload: { code: "SUMMER-25", value: "25.00" },
   });
   assert.equal(validateAnnouncementPayload({ promoValueUsd: "25" }).ok, false);
+
+  assert.deepEqual(
+    previewNotificationText("promo_code_granted", {
+      code: "SUMMER-25",
+      value: "25.00",
+    }),
+    {
+      title: "$25.00 promo unlocked",
+      body: "Redeem it now.",
+      code: "SUMMER-25",
+      known: true,
+      usedKeys: ["code", "value", "amount_usd"],
+    },
+  );
+  assert.deepEqual(
+    previewNotificationText("challenge_available", {
+      challenge_name: "Lucky Seven",
+      game_type: "keno",
+      prize_usd: "25.00",
+    }),
+    {
+      title: "Lucky Seven is live",
+      body: "Complete this Keno challenge to claim $25.00.",
+      href: "/rewards?tab=challenges",
+      challengeGame: "keno",
+      known: true,
+      usedKeys: [
+        "challenge_id",
+        "challenge_name",
+        "game_type",
+        "challenge_type",
+        "prize_usd",
+        "url",
+      ],
+    },
+  );
 });
 
 test("direct pack lookup keeps the personal-send capability boundary", () => {
@@ -173,17 +209,24 @@ test("direct pack lookup keeps the personal-send capability boundary", () => {
   assert.match(announcement, /<PackNotificationComposer/);
   assert.match(announcement, /scope=\"announcement\"/);
   assert.match(announcement, /<NotificationPreview/);
-  assert.match(announcement, /type=\{TEMPLATE_TYPES\.pack\}/);
+  assert.match(announcement, /type=\{type\}/);
   assert.match(announcement, /composedPayloadCheck\.payload/);
   assert.match(announcement, /composedPayloadCheck\.error/);
   assert.match(announcement, /showHeading=\{false\}/);
-  assert.match(announcement, /!packAutoFilled/);
-  assert.match(announcement, /next === "pack"[\s\S]*TEMPLATE_TYPES\.pack/);
-  assert.match(announcement, /template !== "pack"/);
+  assert.match(announcement, /!usesNotificationTemplate/);
+  assert.match(
+    announcement,
+    /next === "pack" \|\| next === "challenge" \|\| next === "promo"[\s\S]*TEMPLATE_TYPES\[next\]/,
+  );
+  assert.match(announcement, /!usesNotificationTemplate/);
   assert.doesNotMatch(announcement, /<Label[^>]*>Pack<\/Label>/);
   assert.match(
     announcement,
-    /\{packAutoFilled \? \([\s\S]{0,200}<NotificationPreview[\s\S]*?\) : \(\s*<AnnouncementPreview/,
+    /\{usesNotificationTemplate \? \([\s\S]{0,200}<NotificationPreview[\s\S]*?\) : \(\s*<AnnouncementPreview/,
+  );
+  assert.match(
+    announcement,
+    /template === "pack" \|\| template === "challenge" \|\| template === "promo"/,
   );
   assert.match(announcement, /promo: "promo_code_granted"/);
   assert.match(

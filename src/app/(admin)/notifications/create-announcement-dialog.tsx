@@ -153,6 +153,8 @@ export function CreateAnnouncementDialog({
   const [linkOpen, setLinkOpen] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [isPending, startTransition] = useTransition();
+  const usesNotificationTemplate =
+    template === "pack" || template === "challenge" || template === "promo";
 
   // Last value each field was auto-filled with. A template only overwrites a
   // field that is still empty or still holds its own last auto-fill — an edit
@@ -218,11 +220,12 @@ export function CreateAnnouncementDialog({
         challengePrizeUsd: "",
       }));
     }
-    // Only swap the type while it still carries a template default — a
-    // hand-typed type in Advanced survives a template switch.
+    // Dedicated notification cards require their exact frontend-recognized
+    // type. Generic message/page templates may preserve an advanced custom
+    // type because they intentionally use the authored announcement card.
     setType((cur) =>
-      next === "pack"
-        ? TEMPLATE_TYPES.pack
+      next === "pack" || next === "challenge" || next === "promo"
+        ? TEMPLATE_TYPES[next]
         : Object.values(TEMPLATE_TYPES).includes(cur)
           ? TEMPLATE_TYPES[next]
           : cur,
@@ -255,14 +258,31 @@ export function CreateAnnouncementDialog({
         })),
       };
     }
+    if (template === "challenge") {
+      const gameLabel =
+        challengeGame === "pack"
+          ? "Pack opening"
+          : challengeGame === "keno"
+            ? "Keno"
+            : "Upgrader";
+      return {
+        ...EMPTY_PAYLOAD_DRAFT,
+        url: mainSiteUrl("/rewards?tab=challenges"),
+        challengeName:
+          challengeName.trim() || `New ${gameLabel} challenge`,
+        challengeGame,
+        challengePrizeUsd: challengePrize,
+      };
+    }
+    if (template === "promo") {
+      return {
+        ...EMPTY_PAYLOAD_DRAFT,
+        promoCode: manualCode,
+        promoValueUsd: promo ? String(promo.valueUsd) : "",
+      };
+    }
     return {
       ...payload,
-      ...(template === "promo"
-        ? {
-            promoCode: manualCode,
-            promoValueUsd: promo ? String(promo.valueUsd) : "",
-          }
-        : {}),
     };
   }
 
@@ -357,13 +377,13 @@ export function CreateAnnouncementDialog({
       toast.error(check.error);
       return;
     }
-    const packPreview = previewNotificationText(
-      TEMPLATE_TYPES.pack,
-      check.payload,
-    );
-    const submissionTitle =
-      template === "pack" ? packPreview.title : title.trim();
-    const submissionBody = template === "pack" ? packPreview.body : body.trim();
+    const templatePreview = previewNotificationText(type, check.payload);
+    const submissionTitle = usesNotificationTemplate
+      ? templatePreview.title
+      : title.trim();
+    const submissionBody = usesNotificationTemplate
+      ? templatePreview.body
+      : body.trim();
     if (!submissionTitle) {
       toast.error("Title is required");
       return;
@@ -411,10 +431,9 @@ export function CreateAnnouncementDialog({
   }
 
   const imageInvalid =
-    template !== "pack" &&
+    !usesNotificationTemplate &&
     payload.imageUrl.trim() !== "" &&
     !isImageKitUrl(payload.imageUrl.trim());
-  const packAutoFilled = template === "pack";
   const linkExpanded = linkOpen || imageInvalid;
   const filledParts = [
     payload.imageUrl.trim() ? "Image" : null,
@@ -609,7 +628,7 @@ export function CreateAnnouncementDialog({
             </div>
           )}
 
-          {!packAutoFilled && (
+          {!usesNotificationTemplate && (
             <>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">Title</Label>
@@ -681,10 +700,10 @@ export function CreateAnnouncementDialog({
             </>
           )}
 
-          {packAutoFilled ? (
+          {usesNotificationTemplate ? (
             <div className="space-y-2">
               <NotificationPreview
-                type={TEMPLATE_TYPES.pack}
+                type={type}
                 payload={
                   composedPayloadCheck.ok
                     ? composedPayloadCheck.payload
@@ -778,7 +797,7 @@ export function CreateAnnouncementDialog({
                   </SelectContent>
                 </Select>
               </div>
-              {template !== "pack" && (
+              {!usesNotificationTemplate && (
                 <div className="space-y-1">
                   <Label className="text-xs text-muted-foreground">Type</Label>
                   <Input
@@ -827,8 +846,10 @@ export function CreateAnnouncementDialog({
               isPending ||
               uploading ||
               imageInvalid ||
-              (template === "pack"
-                ? packs.length === 0 || !composedPayloadCheck.ok
+              (usesNotificationTemplate
+                ? (template === "pack" && packs.length === 0) ||
+                  (template === "promo" && !manualCode.trim()) ||
+                  !composedPayloadCheck.ok
                 : !title.trim())
             }
             className="w-full sm:w-auto"
