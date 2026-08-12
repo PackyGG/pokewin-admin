@@ -67,14 +67,16 @@ export async function CreatorAuditTab({
                   {request.declinedAt && <span>Declined {formatDateTime(request.declinedAt)}</span>}
                   {request.completedAt && <span>Completed {formatDateTime(request.completedAt)}</span>}
                 </div>
-                {(request.backendDealIds.length > 0 || request.rewardProgramId) && (
+                {(request.backendDealIds.length > 0 || request.pnlDealId || request.rewardProgramId) && (
                   <div className="space-y-1 font-mono text-xs text-muted-foreground">
+                    <div>Type {humanizeEvent(request.requestKind)}</div>
                     {request.backendDealIds.map((dealId, index) => (
                       <div key={dealId}>
                         Deal{request.backendDealIds.length > 1 ? ` period ${index + 1}/${request.backendDealIds.length}` : ""}{" "}
                         {dealId}
                       </div>
                     ))}
+                    {request.pnlDealId && <div>PnL deal {request.pnlDealId}</div>}
                     {request.rewardProgramId && <div>Reward {request.rewardProgramId}</div>}
                   </div>
                 )}
@@ -107,11 +109,11 @@ export async function CreatorAuditTab({
       <section className="space-y-3">
         <div className="flex items-center gap-2">
           <ScrollText className="size-4 text-pink-500" />
-          <h2 className="font-semibold">Program and approval log</h2>
+          <h2 className="font-semibold">Program, approval, and payment log</h2>
           <span className="text-xs text-muted-foreground">Latest 200</span>
         </div>
-        {data.approvalEvents.length === 0 && data.rewardAuditEvents.length === 0 ? (
-          <EmptyCard text="No reward-program or creator-approval events have been recorded." />
+        {data.approvalEvents.length === 0 && data.creatorAuditEvents.length === 0 ? (
+          <EmptyCard text="No creator-program, PnL-payment, or approval events have been recorded." />
         ) : (
           <Card className="divide-y overflow-hidden">
             {[
@@ -122,12 +124,16 @@ export async function CreatorAuditTab({
                 metadata: event.metadata,
                 context: `${event.actorKind} · request ${event.requestId}`,
               })),
-              ...data.rewardAuditEvents.map((event) => ({
+              ...data.creatorAuditEvents.map((event) => ({
                 id: event.id,
                 eventType: event.eventType,
                 createdAt: event.createdAt,
                 metadata: event.metadata,
-                context: "admin audit",
+                context: event.actorUsername
+                  ? `admin ${event.actorUsername}`
+                  : event.actorAdminUserId
+                    ? `admin ${event.actorAdminUserId}`
+                    : "system",
               })),
             ]
               .sort((a, b) => b.createdAt.localeCompare(a.createdAt))

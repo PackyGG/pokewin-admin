@@ -14,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Spinner } from "@/components/ux";
 import type { AdminCreatorPnlDeal } from "@/lib/creator-pnl-settlement";
-import { formatCurrency, formatDate } from "@/lib/utils/format";
+import { formatCurrency, formatDate, formatDateTime } from "@/lib/utils/format";
 
 import { cancelCreatorPnlDealAction } from "./pnl-settlement-actions";
 
@@ -56,7 +56,14 @@ export function PnlDealControls(props: {
                   <span>Frame PnL <b>{deal.frame_site_pnl_usd == null ? "—" : formatCurrency(n(deal.frame_site_pnl_usd))}</b></span>
                   <span>Computed share <b>{deal.creator_share_usd == null ? "—" : formatCurrency(n(deal.creator_share_usd))}</b></span>
                 </div>
-                {deal.credited_amount_usd != null && <p className="mt-2">Manual credit <b>{formatCurrency(n(deal.credited_amount_usd))}</b>{deal.credit_ledger_id ? ` · ledger ${deal.credit_ledger_id}` : ""}</p>}
+                {deal.credited_amount_usd != null && (
+                  <p className="mt-2">
+                    Contractual credit <b>{formatCurrency(n(deal.credited_amount_usd))}</b>
+                    {deal.credit_ledger_id ? ` · ledger ${deal.credit_ledger_id}` : ""}
+                    {deal.credited_at ? ` · ${formatDateTime(deal.credited_at)}` : ""}
+                    {deal.credited_by_admin_user_id ? ` · admin ${deal.credited_by_admin_user_id}` : ""}
+                  </p>
+                )}
                 {deal.settlement_reason && <p className="mt-1 text-muted-foreground">Settlement note: {deal.settlement_reason}</p>}
                 {deal.settlement_breakdown && <pre className="mt-2 max-h-44 overflow-auto rounded bg-muted/40 p-2 text-[10px]">{JSON.stringify(deal.settlement_breakdown, null, 2)}</pre>}
                 {deal.cancellation_reason && <p className="mt-2 text-muted-foreground">Reason: {deal.cancellation_reason}</p>}

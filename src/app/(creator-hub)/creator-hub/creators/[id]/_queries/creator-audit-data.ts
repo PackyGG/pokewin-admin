@@ -1,6 +1,6 @@
 import "server-only";
 
-import { and, desc, eq, inArray, like, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, like, or, sql } from "drizzle-orm";
 
 import { adminDrizzle } from "@/lib/admin-db";
 import { auditActorVisibilityPredicate } from "@/lib/audit-visibility";
@@ -8,6 +8,7 @@ import { creatorsApi, type CreatorDealResponse } from "@/lib/backend-api";
 import { indexCreatorApprovalDealIds } from "@/lib/creator-approval-deal-ids";
 import {
   admin_audit_events,
+  admin_users,
   creator_deal_approval_events,
   creator_deal_approval_requests,
 } from "@/lib/db-schema/admin/schema";
@@ -63,18 +64,24 @@ export async function getCreatorAuditDetail(
           .orderBy(desc(creator_deal_approval_events.created_at))
           .limit(300);
 
-  const rewardAuditEvents = await adminDrizzle
+  const creatorAuditEvents = await adminDrizzle
     .select({
       id: admin_audit_events.id,
       eventType: admin_audit_events.event_type,
       createdAt: admin_audit_events.created_at,
       metadata: admin_audit_events.metadata,
+      actorAdminUserId: admin_audit_events.admin_user_id,
+      actorUsername: admin_users.username,
     })
     .from(admin_audit_events)
+    .leftJoin(admin_users, eq(admin_users.id, admin_audit_events.admin_user_id))
     .where(
       and(
         eq(admin_audit_events.target_user_id, creatorUserId),
-        like(admin_audit_events.event_type, "creator_reward_%"),
+        or(
+          like(admin_audit_events.event_type, "creator_reward_%"),
+          like(admin_audit_events.event_type, "creator_pnl_%"),
+        ),
         auditActorVisibilityPredicate(canViewProtectedActors),
       ),
     )
@@ -120,7 +127,7 @@ export async function getCreatorAuditDetail(
       metadata: event.metadata,
       createdAt: new Date(event.created_at).toISOString(),
     })),
-    rewardAuditEvents: rewardAuditEvents.map((event) => ({
+    creatorAuditEvents: creatorAuditEvents.map((event) => ({
       ...event,
       createdAt: new Date(event.createdAt).toISOString(),
     })),

@@ -10,6 +10,7 @@ import {
 import {
   CREATOR_PNL_MAX_FRAME_DAYS,
   CREATOR_PNL_MAX_MULTIPLIER_BPS,
+  isCreatorPnlDealDurationAllowed,
   isCreatorPnlFrameDurationAllowed,
 } from "../../src/lib/creator-pnl-contract";
 
@@ -19,6 +20,8 @@ const affiliate = read("src/app/(creator-hub)/creator-hub/profitability/_queries
 const action = read("src/app/(creator-hub)/creator-hub/creators/[id]/_components/pnl-settlement-actions.ts");
 const balanceWriter = read("src/app/(admin)/users/[id]/actions.ts");
 const button = read("src/app/(creator-hub)/creator-hub/creators/[id]/_components/pnl-settlement-button.tsx");
+const fields = read("src/app/(creator-hub)/creator-hub/creators/[id]/_components/pnl-deal-approval-fields.tsx");
+const auditQuery = read("src/app/(creator-hub)/creator-hub/creators/[id]/_queries/creator-audit-data.ts");
 const discord = read("src/lib/discord-creator-last-deals.ts");
 
 test("preview applies the exact house-cost formula", () => {
@@ -51,6 +54,14 @@ test("PnL frames stay within deterministic attribution bounds", () => {
   assert.match(affiliate, /acu\.created_at < f\.end_ts/);
   assert.doesNotMatch(affiliate, /NOW\(\) - INTERVAL/);
   assert.match(affiliate, /profitability-frame-affiliate-pnl-v4-frame-end-cohort/);
+});
+
+test("new PnL deals use one-to-four whole-week frames", () => {
+  assert.equal(isCreatorPnlDealDurationAllowed("2026-01-01T00:00:00.000Z", "2026-01-08T00:00:00.000Z"), true);
+  assert.equal(isCreatorPnlDealDurationAllowed("2026-01-01T00:00:00.000Z", "2026-01-29T00:00:00.000Z"), true);
+  assert.equal(isCreatorPnlDealDurationAllowed("2026-01-01T00:00:00.000Z", "2026-01-06T00:00:00.000Z"), false);
+  assert.equal(isCreatorPnlDealDurationAllowed("2026-01-01T00:00:00.000Z", "2026-02-05T00:00:00.000Z"), false);
+  assert.match(fields, /PNL_WEEK_QUICK_PICKS = \[1, 2, 3, 4\]/);
 });
 
 test("PnL multiplier ceiling matches the Discord contract", () => {
@@ -118,10 +129,26 @@ test("manual credit reserves Admin state and uses the canonical balance writer i
   assert.match(balanceWriter, /immediately_withdrawable: true/);
 });
 
+test("P&L credit is server-derived and fully auditable", () => {
+  assert.doesNotMatch(action, /amountUsd: z\.number/);
+  assert.match(action, /const payoutAmountUsd = roundSettlementMoney\(Number\(deal\.creator_share_usd\)\)/);
+  assert.match(action, /amount: payoutAmountUsd/);
+  assert.match(action, /creator_pnl_share_credit_reserved/);
+  assert.match(action, /creator_pnl_share_credit_failed/);
+  assert.match(action, /creator_pnl_share_credit_reconciled/);
+  assert.match(action, /creator_pnl_share_credited/);
+  assert.match(action, /deviationUsd: 0/);
+  assert.doesNotMatch(action, /overrideReason/);
+  assert.match(auditQuery, /like\(admin_audit_events\.event_type, "creator_pnl_%"\)/);
+  assert.match(fields, /PNL_SHARE_QUICK_PICKS = \[5, 10, 20, 25, 30\]/);
+  assert.match(button, /payment amount is locked to the frozen calculation/);
+  assert.doesNotMatch(button, /Manual payout/);
+});
+
 test("manual UI requires explicit confirmation and 2FA; automatic cron is gone", () => {
   assert.match(button, /Type CREDIT to confirm/);
   assert.match(button, /StepUpField/);
-  assert.match(button, /immediately increases the creator/);
+  assert.match(button, /immediately increases the\s+creator/);
   assert.equal(existsSync("src/app/api/cron/creator-pnl-settlement/route.ts"), false);
 });
 

@@ -1,5 +1,6 @@
 export const CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS = 365;
 export const CREATOR_PNL_MAX_FRAME_DAYS = CREATOR_PNL_ATTRIBUTION_LOOKBACK_DAYS;
+export const CREATOR_PNL_DEAL_DURATION_DAYS = [7, 14, 21, 28] as const;
 export const CREATOR_PNL_MAX_MULTIPLIER_BPS = 10_000_000;
 export const CREATOR_PNL_MAX_MULTIPLIER_X = CREATOR_PNL_MAX_MULTIPLIER_BPS / 10_000;
 
@@ -14,4 +15,9 @@ export function isCreatorPnlFrameDurationAllowed(startIso: string, endIso: strin
   return Number.isFinite(durationDays)
     && durationDays >= 1
     && durationDays <= CREATOR_PNL_MAX_FRAME_DAYS;
+}
+
+export function isCreatorPnlDealDurationAllowed(startIso: string, endIso: string): boolean {
+  const durationDays = creatorPnlFrameDurationDays(startIso, endIso);
+  return CREATOR_PNL_DEAL_DURATION_DAYS.some((allowed) => allowed === durationDays);
 }

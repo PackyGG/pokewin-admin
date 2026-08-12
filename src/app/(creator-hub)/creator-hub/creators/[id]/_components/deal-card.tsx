@@ -356,7 +356,6 @@ function PnlDealCard({ userId, deal, allDeals }: { userId: string; deal: AdminCr
                 dealId={deal.id}
                 expectedVersion={deal.version}
                 computedShareUsd={creatorShare}
-                initialAmountUsd={deal.credited_amount_usd == null ? null : num(deal.credited_amount_usd)}
                 retry={deal.status === "crediting" || deal.credit_status === "failed"}
               />}
             </div>

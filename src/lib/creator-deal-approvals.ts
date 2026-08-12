@@ -34,9 +34,8 @@ import {
   type PnlMultiplierFundingSnapshot,
 } from "@/lib/creator-pnl-funding-snapshot";
 import {
-  CREATOR_PNL_MAX_FRAME_DAYS,
+  isCreatorPnlDealDurationAllowed,
   CREATOR_PNL_MAX_MULTIPLIER_BPS,
-  creatorPnlFrameDurationDays,
 } from "@/lib/creator-pnl-contract";
 import {
   creatorApprovalWindowHasEnded,
@@ -157,12 +156,11 @@ const PnlPayloadSchema = z.object({
   if (endMs <= startMs) {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["frame_end_utc"], message: "P&L frame end must be after its start." });
   }
-  const durationDays = creatorPnlFrameDurationDays(deal.frame_start_utc, deal.frame_end_utc);
-  if (!Number.isFinite(durationDays) || durationDays < 1 || durationDays > CREATOR_PNL_MAX_FRAME_DAYS) {
+  if (!isCreatorPnlDealDurationAllowed(deal.frame_start_utc, deal.frame_end_utc)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["frame_end_utc"],
-      message: `P&L frame duration must be 1 to ${CREATOR_PNL_MAX_FRAME_DAYS} days.`,
+      message: "P&L frame duration must be exactly 1, 2, 3, or 4 weeks.",
     });
   }
   if (

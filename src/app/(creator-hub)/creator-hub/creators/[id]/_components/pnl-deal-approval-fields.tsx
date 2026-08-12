@@ -5,8 +5,9 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { cn } from "@/lib/utils";
 import {
-  CREATOR_PNL_MAX_FRAME_DAYS,
+  CREATOR_PNL_DEAL_DURATION_DAYS,
   CREATOR_PNL_MAX_MULTIPLIER_X,
+  isCreatorPnlDealDurationAllowed,
 } from "@/lib/creator-pnl-contract";
 
 import type { CreatorPnlApprovalPayload } from "./deal-approval-actions";
@@ -36,6 +37,9 @@ export type PnlDealDraft = {
   maxSponsoredBattleUsd: string;
   maxSponsorshipPerStreamUsd: string;
 };
+
+const PNL_SHARE_QUICK_PICKS = [5, 10, 20, 25, 30] as const;
+const PNL_WEEK_QUICK_PICKS = [1, 2, 3, 4] as const;
 
 export function buildPnlDealDraft(): PnlDealDraft {
   return {
@@ -82,8 +86,8 @@ export function parsePnlDealDraft(
   const sharePct = Number(draft.sharePct);
   if (!frameStart || !frameEnd) return { error: "Enter a valid UTC start date and duration" };
   if (new Date(frameEnd) <= new Date()) return { error: "The PnL deal must end in the future" };
-  if (!Number.isInteger(durationDays) || durationDays < 1 || durationDays > CREATOR_PNL_MAX_FRAME_DAYS) {
-    return { error: `Deal duration must be 1 to ${CREATOR_PNL_MAX_FRAME_DAYS} whole days` };
+  if (!isCreatorPnlDealDurationAllowed(frameStart, frameEnd)) {
+    return { error: "PnL deal duration must be exactly 1, 2, 3, or 4 weeks" };
   }
   if (!Number.isFinite(sharePct) || sharePct <= 0 || sharePct > 100) {
     return { error: "Creator PnL share must be greater than 0% and at most 100%" };
@@ -188,8 +192,55 @@ export function PnlDealApprovalFields({
     <div className="space-y-5">
       <div className="grid gap-3 sm:grid-cols-3">
         <Field label="Starts (UTC)"><Input type="date" value={draft.startsOn} onChange={(event) => set("startsOn", event.target.value)} disabled={disabled} /></Field>
-        <Field label="Length (days)"><Input type="number" min="1" max={CREATOR_PNL_MAX_FRAME_DAYS} step="1" value={draft.durationDays} onChange={(event) => set("durationDays", event.target.value)} disabled={disabled} /></Field>
-        <Field label="Creator share of positive PnL"><Input type="number" min="0.01" max="100" step="0.01" value={draft.sharePct} onChange={(event) => set("sharePct", event.target.value)} disabled={disabled} /></Field>
+        <Field label="Length">
+          <div className="grid grid-cols-4 gap-1">
+            {PNL_WEEK_QUICK_PICKS.map((weeks) => {
+              const days = weeks * 7;
+              return (
+                <button
+                  key={weeks}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => set("durationDays", String(days))}
+                  className={cn(
+                    "rounded-md border px-2 py-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    Number(draft.durationDays) === days
+                      ? "border-pink-500 bg-pink-500/10 text-pink-600 dark:text-pink-400"
+                      : "hover:border-pink-500/50 hover:bg-muted/50",
+                  )}
+                >
+                  {weeks}w
+                </button>
+              );
+            })}
+          </div>
+          <span className="text-[11px] text-muted-foreground">
+            {CREATOR_PNL_DEAL_DURATION_DAYS.join(", ")} days
+          </span>
+        </Field>
+        <Field label="Creator share of positive PnL">
+          <div className="space-y-2">
+            <Input type="number" min="0.01" max="100" step="0.01" value={draft.sharePct} onChange={(event) => set("sharePct", event.target.value)} disabled={disabled} />
+            <div className="grid grid-cols-5 gap-1">
+              {PNL_SHARE_QUICK_PICKS.map((percentage) => (
+                <button
+                  key={percentage}
+                  type="button"
+                  disabled={disabled}
+                  onClick={() => set("sharePct", String(percentage))}
+                  className={cn(
+                    "rounded-md border px-1.5 py-1 text-[11px] font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50",
+                    Number(draft.sharePct) === percentage
+                      ? "border-pink-500 bg-pink-500/10 text-pink-600 dark:text-pink-400"
+                      : "hover:border-pink-500/50 hover:bg-muted/50",
+                  )}
+                >
+                  {percentage}%
+                </button>
+              ))}
+            </div>
+          </div>
+        </Field>
       </div>
 
       <section className="space-y-3">
