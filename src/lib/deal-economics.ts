@@ -36,7 +36,7 @@ import type { CreatorDealResponse } from "@/lib/backend-api";
 /** House value generated per $ wagered. `expectedWager = dealCost / HOUSE_EDGE`. */
 export const HOUSE_EDGE = 0.075;
 
-/** Legacy/default modeled share where a caller has no stored board terms. */
+/** Explicit 50/50 modeling assumption used only by opt-in calculators. */
 export const LB_HOUSE_SHARE = 0.5;
 
 /** Missing admin sponsorship annotations mean the house funds the full pool. */
@@ -71,12 +71,12 @@ export function leaderboardHouseCost(
   prizeUsd: string | number | null | undefined,
   refundUsd: string | number | null | undefined = 0,
   houseSharePct: string | number | null | undefined =
-    LB_HOUSE_SHARE * 100,
+    DEFAULT_LB_HOUSE_SHARE_PCT,
 ): number {
   const net = Math.max(0, toFiniteNumber(prizeUsd) - toFiniteNumber(refundUsd));
   return net * (normalizeLeaderboardHouseSharePct(
     houseSharePct,
-    LB_HOUSE_SHARE * 100,
+    DEFAULT_LB_HOUSE_SHARE_PCT,
   ) / 100);
 }
 
@@ -103,12 +103,17 @@ export function weeklyDealsInFrame(
   frameStartMs: number,
   frameEndMs: number,
   deals: CreatorDealResponse[],
+  approvalRequestId?: string | null,
 ): CreatorDealResponse[] {
   return deals.filter((d) => {
     const ds = Date.parse(d.week_start_utc);
     const de = Date.parse(d.week_end_utc);
     if (!Number.isFinite(ds) || !Number.isFinite(de)) return false;
-    return Math.min(frameEndMs, de) > Math.max(frameStartMs, ds);
+    if (Math.min(frameEndMs, de) <= Math.max(frameStartMs, ds)) return false;
+    if (approvalRequestId == null) return true;
+    if (d.terms == null || typeof d.terms !== "object") return false;
+    return (d.terms as Record<string, unknown>).creator_approval_request_id
+      === approvalRequestId;
   });
 }
 

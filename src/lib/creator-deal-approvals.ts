@@ -1,6 +1,7 @@
 import "server-only";
 
 import { and, eq, sql } from "drizzle-orm";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { z } from "zod";
 
 import { adminDrizzle } from "@/lib/admin-db";
@@ -1358,8 +1359,7 @@ async function bindProvisionedLeaderboard(
       leaderboard_id: leaderboardId,
       updated_at: new Date().toISOString(),
     }).where(eq(creator_deal_approval_requests.id, request.id));
-    if (board.sponsoredPct !== 100) {
-      await tx.insert(admin_leaderboard_sponsorship).values({
+    await tx.insert(admin_leaderboard_sponsorship).values({
         leaderboard_id: leaderboardId,
         sponsored_percentage: String(board.sponsoredPct),
         set_by_admin_id: request.submitted_by,
@@ -1371,7 +1371,6 @@ async function bindProvisionedLeaderboard(
           updated_at: new Date().toISOString(),
         },
       });
-    }
     await tx.insert(creator_deal_approval_events).values({
       request_id: request.id,
       event_type: recovered ? "leaderboard_reconciled" : "leaderboard_provisioned",
@@ -1499,6 +1498,14 @@ export async function provisionApprovedCreatorDealRequest(
       await tx.insert(creator_deal_approval_events).values({ request_id: id, event_type: "provisioned", actor_kind: "system", metadata: { requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
       await tx.insert(admin_audit_events).values({ admin_user_id: request.submitted_by, event_type: "creator_deal_approval_provisioned", target_user_id: request.creator_user_id, metadata: { requestId: id, requestKind: kind, backendDealId, pnlDealId, rewardProgramId, leaderboardId } });
     });
+    revalidatePath(`/creator-hub/creators/${request.creator_user_id}`);
+    revalidatePath("/creator-hub/leaderboards");
+    revalidateTag("creator-deal");
+    revalidateTag("creator-leaderboards");
+    revalidateTag("creators-leaderboard-cost");
+    revalidateTag("profitability-past-deals");
+    revalidateTag("creator-hub-4w-summary");
+    revalidateTag("creator-hub-live-leaderboards");
     return { status: "approved", requestId: id };
   } catch (cause) {
     const message = cause instanceof Error ? cause.message : "Provisioning failed.";

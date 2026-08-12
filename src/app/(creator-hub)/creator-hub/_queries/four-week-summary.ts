@@ -12,6 +12,7 @@ import { inArray } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
 import { computeDealCost, weeklyDealsInFrame } from "@/lib/deal-economics";
+import { getApprovalRequestIdsByLeaderboardIds } from "@/lib/creator-leaderboard-approval-links";
 import { getLeaderboardSponsorshipMap } from "../../../(admin)/creators/_queries/leaderboard-sponsorship";
 
 import { mapPool, pagedWalk } from "../_lib/backend-walk";
@@ -227,9 +228,10 @@ const getFourWeekBase = unstable_cache(
     const ownerIds = Array.from(
       new Set(inWindow.map((lb) => lb.creator_user_id)),
     );
-    const sponsorship = await getLeaderboardSponsorshipMap(
-      inWindow.map((lb) => lb.id),
-    );
+    const [sponsorship, approvals] = await Promise.all([
+      getLeaderboardSponsorshipMap(inWindow.map((lb) => lb.id)),
+      getApprovalRequestIdsByLeaderboardIds(inWindow.map((lb) => lb.id)),
+    ]);
     const dealsByOwner = new Map<string, CreatorDealResponse[]>();
     await mapPool(ownerIds, DEAL_FETCH_CONCURRENCY, async (id) => {
       try {
@@ -253,7 +255,12 @@ const getFourWeekBase = unstable_cache(
       // each at FULL cap + (tip + sponsor) × fills, plus the leaderboard net
       // prize × 50%. expectedWager = dealCost / 7.5%.
       const deals = dealsByOwner.get(lb.creator_user_id) ?? [];
-      const wds = weeklyDealsInFrame(startMs, endMs, deals);
+      const wds = weeklyDealsInFrame(
+        startMs,
+        endMs,
+        deals,
+        approvals.get(lb.id),
+      );
       const { expectedWager } = computeDealCost({
         weeklyDeals: wds,
         lbPrizeUsd: lb.total_prize_usd,

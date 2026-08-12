@@ -18,6 +18,7 @@ import {
 import { requireCapability } from "@/lib/require-capability";
 import { requireCreatorHubAccess } from "@/lib/require-creator-hub-access";
 import { createAdminAuditEvent } from "@/lib/admin-audit";
+import { getCreatorApprovalDealMarker } from "@/lib/creator-approval-deal-ids";
 
 /**
  * Backend-API-driven creator admin actions.
@@ -120,11 +121,11 @@ const CreateDealSchema = z.object({
 }) satisfies z.ZodType<CreateDealInput>;
 
 /**
- * Admin page access OR Creator Hub access — for the deal-create mutation,
- * which is reachable from BOTH the admin page and the hub's New Deal
- * dialog. `requirePageAccess` REDIRECTS on denial, which ejected a
- * hub-toggle-only creator_manager out of the hub mid-dialog; this throws
- * instead so the dialog surfaces a toast. Same shape as the
+ * Admin page access OR Creator Hub access — for deal mutations reachable
+ * from BOTH the admin page and the hub's create/edit/terminate dialogs.
+ * `requirePageAccess` REDIRECTS on denial, which ejected a hub-toggle-only
+ * creator_manager out of the hub mid-dialog; this throws instead so the
+ * dialog surfaces a toast. Same shape as the
  * freezeClaim/unfreezeClaim precedent in leaderboards/actions.ts.
  * Fail-closed: admin → /creators page permission → requireCreatorHubAccess
  * (throws on denial). The `__can_create_creator_deal` capability check
@@ -207,7 +208,7 @@ export async function updateCreatorDeal(
   expectedVersion: number,
   patch: UpdateDealInput["patch"],
 ) {
-  const session = await requirePageAccess("/creators");
+  const session = await requireCreatorsPageOrHubAccess();
   const parsedPatch = UpdateDealPatchSchema.parse(patch);
   await requireCapability(session, "__can_update_creator_deal", "update creator deals");
 
@@ -250,7 +251,7 @@ export async function terminateCreatorDeal(
   dealId: string,
   options: { reason?: string; force_end_active_session?: boolean } = {},
 ) {
-  const session = await requirePageAccess("/creators");
+  const session = await requireCreatorsPageOrHubAccess();
   await requireCapability(session, "__can_delete_creator_deal", "delete creator deals");
 
   try {
@@ -277,6 +278,90 @@ export async function terminateCreatorDeal(
     // unchanged and would keep serving the terminated deal's cap.
     revalidateTag("creators-deal-cap");
     return deal;
+  } catch (err) {
+    throw toActionError(err);
+  }
+}
+
+/**
+ * Terminate the selected approval period and every later live period from the
+ * same approved schedule. The backend stores recurring caps as independent
+ * rows, so terminating only week 1 would otherwise allow week 2 to start.
+ */
+export async function terminateCreatorDealSchedule(
+  userId: string,
+  dealId: string,
+  options: { reason?: string; force_end_active_session?: boolean } = {},
+) {
+  const session = await requireCreatorsPageOrHubAccess();
+  await requireCapability(session, "__can_delete_creator_deal", "delete creator deals");
+
+  try {
+    const allDeals = [];
+    const limit = 100;
+    for (let offset = 0; ; offset += limit) {
+      const page = await creatorsApi.listDeals(userId, { offset, limit });
+      allDeals.push(...page.data);
+      if (allDeals.length >= page.total || page.data.length === 0) break;
+      if (allDeals.length >= 10_000) {
+        throw new Error("Creator deal history is too large to manage safely.");
+      }
+    }
+
+    const selected = allDeals.find((deal) => deal.id === dealId);
+    if (!selected) throw new Error("Deal period was not found.");
+    const selectedMarker = getCreatorApprovalDealMarker(selected);
+    const targets = selectedMarker
+      ? allDeals
+          .filter((deal) => {
+            const marker = getCreatorApprovalDealMarker(deal);
+            return marker?.requestId === selectedMarker.requestId
+              && marker.periodIndex >= selectedMarker.periodIndex
+              && (deal.status === "active" || deal.status === "scheduled");
+          })
+          .sort((left, right) => left.week_start_utc.localeCompare(right.week_start_utc))
+      : [selected];
+
+    const terminatedIds: string[] = [];
+    for (const target of targets) {
+      try {
+        await creatorsApi.terminateDeal(userId, target.id, options);
+        terminatedIds.push(target.id);
+      } catch (cause) {
+        await createAdminAuditEvent({
+          adminUserId: session.userId,
+          eventType: "creator_deal_schedule_termination_partial",
+          targetUserId: userId,
+          metadata: {
+            selected_deal_id: dealId,
+            terminated_deal_ids: terminatedIds,
+            failed_deal_id: target.id,
+            approval_request_id: selectedMarker?.requestId ?? null,
+          },
+        });
+        throw cause;
+      }
+    }
+
+    await createAdminAuditEvent({
+      adminUserId: session.userId,
+      eventType: "creator_deal_schedule_terminated",
+      targetUserId: userId,
+      metadata: {
+        via: "backend_api",
+        selected_deal_id: dealId,
+        terminated_deal_ids: terminatedIds,
+        approval_request_id: selectedMarker?.requestId ?? null,
+        reason: options.reason ?? null,
+        force_ended_active_session: !!options.force_end_active_session,
+      },
+    });
+
+    revalidatePath(`/creators/${userId}`);
+    revalidatePath(`/creator-hub/creators/${userId}`);
+    revalidateTag("creator-deal");
+    revalidateTag("creators-deal-cap");
+    return { terminatedIds };
   } catch (err) {
     throw toActionError(err);
   }

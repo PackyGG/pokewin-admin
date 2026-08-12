@@ -1,7 +1,12 @@
 import "server-only";
 
-import { eq, sql } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 
+import { adminDrizzle } from "@/lib/admin-db";
+import {
+  admin_leaderboard_sponsorship,
+  creator_deal_approval_requests,
+} from "@/lib/db-schema/admin/schema";
 import {
   affiliate_codes,
   creator_deals,
@@ -10,7 +15,10 @@ import { getProdReadDrizzleDb } from "@/lib/db";
 import { queryCreatorAnalytics } from "@/lib/creator-analytics-db";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { toNumber } from "@/lib/utils/decimal";
-import { LB_HOUSE_SHARE } from "@/lib/deal-economics";
+import {
+  DEFAULT_LB_HOUSE_SHARE_PCT,
+  normalizeLeaderboardHouseSharePct,
+} from "@/lib/deal-economics";
 import {
   affiliateLeaderboardsApi,
   type LeaderboardAdminRow,
@@ -131,6 +139,7 @@ type DealRow = {
   max_sponsored_battle_usd: string;
   max_sponsorship_per_stream_usd: string;
   total_withdraw_cap_usd: string | null;
+  terms: unknown;
 };
 
 type DealMetricsRow = {
@@ -248,6 +257,40 @@ export async function getCreatorLastDeals(input: {
     };
   }
 
+  const frameIds = frames.map((frame) => frame.id);
+  const [sponsorshipRows, approvalRows] = await Promise.all([
+    adminDrizzle
+      .select({
+        leaderboardId: admin_leaderboard_sponsorship.leaderboard_id,
+        sponsoredPercentage: admin_leaderboard_sponsorship.sponsored_percentage,
+      })
+      .from(admin_leaderboard_sponsorship)
+      .where(inArray(admin_leaderboard_sponsorship.leaderboard_id, frameIds)),
+    adminDrizzle
+      .select({
+        requestId: creator_deal_approval_requests.id,
+        leaderboardId: creator_deal_approval_requests.leaderboard_id,
+      })
+      .from(creator_deal_approval_requests)
+      .where(inArray(creator_deal_approval_requests.leaderboard_id, frameIds)),
+  ]);
+  const sponsorshipByLeaderboard = new Map(
+    sponsorshipRows.map((row) => [
+      row.leaderboardId,
+      normalizeLeaderboardHouseSharePct(
+        row.sponsoredPercentage,
+        DEFAULT_LB_HOUSE_SHARE_PCT,
+      ),
+    ]),
+  );
+  const approvalRequestByLeaderboard = new Map(
+    approvalRows.flatMap((row) =>
+      row.leaderboardId == null
+        ? []
+        : [[row.leaderboardId, row.requestId] as const],
+    ),
+  );
+
   const codes = Array.from(
     new Set(
       ownedCodes
@@ -288,6 +331,7 @@ export async function getCreatorLastDeals(input: {
       max_sponsored_battle_usd: creator_deals.max_sponsored_battle_usd,
       max_sponsorship_per_stream_usd: creator_deals.max_sponsorship_per_stream_usd,
       total_withdraw_cap_usd: creator_deals.total_withdraw_cap_usd,
+      terms: creator_deals.terms,
     })
     .from(creator_deals)
     .where(sql`${creator_deals.user_id} = ${setup.creator_user_id}
@@ -426,7 +470,9 @@ export async function getCreatorLastDeals(input: {
         totalPrizeUsd: money(frame.total_prize_usd),
         totalEntries: standings.totalEntries,
         weightedWagerUsd: money(standings.totalWageredUsd),
-        packyPaidPercentage: LB_HOUSE_SHARE * 100,
+        packyPaidPercentage:
+          sponsorshipByLeaderboard.get(frame.id)
+          ?? DEFAULT_LB_HOUSE_SHARE_PCT,
         topEntries: standings.entries.map((entry) => ({
           rank: entry.position,
           username: entry.username?.trim() || "Anonymous player",
@@ -434,15 +480,20 @@ export async function getCreatorLastDeals(input: {
           prizeUsd: entry.prizeUsd === null ? null : money(entry.prizeUsd),
         })),
       };
+      const approvalRequestId = approvalRequestByLeaderboard.get(frame.id);
       const matchingDeals = weeklyDeals
-        .filter((deal) =>
-          overlaps(
+        .filter((deal) => {
+          if (!overlaps(
             deal.week_start_utc,
             deal.week_end_utc,
             frame.start_date,
             frame.end_date,
-          ),
-        )
+          )) return false;
+          if (approvalRequestId == null) return deal.status !== "terminated";
+          if (deal.terms == null || typeof deal.terms !== "object") return false;
+          return (deal.terms as Record<string, unknown>)
+            .creator_approval_request_id === approvalRequestId;
+        })
         .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc));
       const status: LastDealStatus = frame.time_status === "active"
         ? "active"

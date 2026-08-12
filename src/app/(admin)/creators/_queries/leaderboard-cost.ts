@@ -12,6 +12,7 @@ import {
   normalizeLeaderboardHouseSharePct,
   toFiniteNumber,
 } from "@/lib/deal-economics";
+import { getApprovalRequestIdsByLeaderboardIds } from "@/lib/creator-leaderboard-approval-links";
 import { getLeaderboardSponsorshipMap } from "./leaderboard-sponsorship";
 
 // The backend caps `limit` per request; 100 mirrors the page size the
@@ -370,6 +371,8 @@ export type CreatorLbFrame = {
   houseCostUsd: number;
   /** True when now ∈ [start, end] (the frame is running right now). */
   isLive: boolean;
+  /** Approval that provisioned both this board and its exact deal periods. */
+  approvalRequestId: string | null;
 };
 
 /**
@@ -388,7 +391,10 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
   Map<string, CreatorLbFrame>
 > {
   const all = await fetchAllApprovedLeaderboards();
-  const sponsorship = await getLeaderboardSponsorshipMap(all.map((lb) => lb.id));
+  const [sponsorship, approvals] = await Promise.all([
+    getLeaderboardSponsorshipMap(all.map((lb) => lb.id)),
+    getApprovalRequestIdsByLeaderboardIds(all.map((lb) => lb.id)),
+  ]);
   const now = Date.now();
 
   const byCreator = new Map<string, CreatorLbFrame>();
@@ -422,6 +428,7 @@ export async function getActiveLeaderboardFrameByUser(): Promise<
       sponsoredPct,
       houseCostUsd,
       isLive,
+      approvalRequestId: approvals.get(lb.id) ?? null,
     };
 
     const existing = byCreator.get(lb.creator_user_id);

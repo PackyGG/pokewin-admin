@@ -241,6 +241,7 @@ function revalidate(id: string): void {
     revalidateTag("creators-leaderboard-cost");
     revalidateTag("profitability-past-deals");
     revalidateTag("creator-hub-4w-summary");
+    revalidateTag("creator-hub-live-leaderboards");
 }
 
 /**
@@ -317,6 +318,10 @@ export async function createLeaderboard(
     // Tag flush — the hub creator-detail leaderboards card is
     // unstable_cache'd (120s); a freshly-created board must show at once.
     revalidateTag("creator-leaderboards");
+    revalidateTag("creators-leaderboard-cost");
+    revalidateTag("profitability-past-deals");
+    revalidateTag("creator-hub-4w-summary");
+    revalidateTag("creator-hub-live-leaderboards");
     return { success: true, data: { id: created.id } };
 }
 
@@ -451,7 +456,9 @@ export async function setLeaderboardSponsorship(
     leaderboardId: string,
     sponsoredPercentage: number,
 ): Promise<ActionResult> {
-    const session = await requirePageAccess(PAGE_KEY);
+    const session = await requireLeaderboardActionAccess(
+        "Not authorized to set leaderboard house share.",
+    );
     const parsedId = idSchema.safeParse(leaderboardId);
     if (!parsedId.success) {
         return { success: false, error: parsedId.error.issues[0]?.message ?? "Invalid id" };

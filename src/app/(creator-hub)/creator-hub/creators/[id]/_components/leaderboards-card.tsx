@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { EmptyState } from "@/components/empty-state";
 import { formatCurrency, formatDate } from "@/lib/utils/format";
 import { cn } from "@/lib/utils";
+import { leaderboardHouseCost } from "@/lib/deal-economics";
 
 import {
   getCreatorLeaderboardWagerBreakdownMap,
@@ -156,7 +157,11 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
       approval_status: r.approval_status,
       time_status: r.time_status,
       sponsoredPct,
-      houseCostUsd: (Number(r.total_prize_usd) || 0) * (sponsoredPct / 100),
+      houseCostUsd: leaderboardHouseCost(
+        r.total_prize_usd,
+        r.refund_amount_usd,
+        sponsoredPct,
+      ),
       wageredRawUsd: wagered?.raw ?? 0,
       wageredWeightedUsd: wagered?.weighted ?? 0,
     };
@@ -211,7 +216,11 @@ export async function LeaderboardsCard({ userId }: { userId: string }) {
                 // pay off the board → rose (house spend).
                 const sponsoredPct = sponsoredPctOf(r.id);
                 const prizeUsd = Number(r.total_prize_usd) || 0;
-                const houseCostUsd = prizeUsd * (sponsoredPct / 100);
+                const houseCostUsd = leaderboardHouseCost(
+                  prizeUsd,
+                  r.refund_amount_usd,
+                  sponsoredPct,
+                );
                 return (
                 <Link
                   key={r.id}

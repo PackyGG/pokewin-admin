@@ -38,6 +38,7 @@ export type LeaderboardPreviewRow = {
   id: string;
   title: string;
   total_prize_usd: string;
+  refund_amount_usd: string | null;
   is_sponsored: boolean;
   start_date: string;
   end_date: string;

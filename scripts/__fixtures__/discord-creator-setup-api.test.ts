@@ -305,13 +305,19 @@ test("creator last-deals API uses complete leaderboard frames and actual support
   assert.match(service, /max_tip_per_stream_usd/);
   assert.match(service, /max_sponsorship_per_stream_usd/);
   assert.match(service, /weeks: matchingDeals\.map/);
+  assert.match(service, /approvalRequestByLeaderboard\.get\(frame\.id\)/);
+  assert.match(service, /creator_approval_request_id === approvalRequestId/);
+  assert.match(service, /return deal\.status !== "terminated"/);
   assert.match(service, /fillAmountUsd/);
   assert.match(service, /keepPercentage/);
   assert.match(service, /withdrawalCap7DayUsd/);
   assert.match(service, /week_start_utc\.localeCompare/);
   assert.match(service, /tipAllowancesPerStreamUsd/);
   assert.match(service, /sponsorshipAllowancesPerBattleUsd/);
-  assert.match(service, /packyPaidPercentage: LB_HOUSE_SHARE \* 100/);
+  assert.match(service, /admin_leaderboard_sponsorship/);
+  assert.match(service, /sponsorshipByLeaderboard\.get\(frame\.id\)/);
+  assert.match(service, /DEFAULT_LB_HOUSE_SHARE_PCT/);
+  assert.doesNotMatch(service, /packyPaidPercentage: LB_HOUSE_SHARE \* 100/);
   assert.match(standings, /SUM\(als\.total_wagered_usd\) OVER\(\)/);
   assert.match(
     standings,

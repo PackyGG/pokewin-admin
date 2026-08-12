@@ -333,6 +333,10 @@ export function CreateDialog({ trigger, fixedCreatorUserId }: Props) {
                     toast.error(
                         `Leaderboard created, but house share % not saved: ${sr.error}`,
                     );
+                    setOpen(false);
+                    reset();
+                    router.refresh();
+                    return;
                 }
             }
             toast.success("Leaderboard created");

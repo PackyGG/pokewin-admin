@@ -9,6 +9,7 @@ import {
 import { inArray } from "drizzle-orm";
 import { getReadDrizzleDb } from "@/lib/db";
 import { user } from "@/lib/db-schema/main/schema";
+import { leaderboardHouseCost } from "@/lib/deal-economics";
 // Reuse the EXISTING admin-side sponsored-% lookup (the house's prize-pool
 // share). The (creator-hub) group is a sibling of (admin) on disk, so this
 // relative path crosses the route-group boundary to the canonical query
@@ -247,10 +248,10 @@ const getLiveLeaderboardsBase = unstable_cache(
     for (const lb of all) {
       const prize = Number(lb.total_prize_usd) || 0;
       const refund = Number(lb.refund_amount_usd) || 0;
-      const net = prize - refund;
+      const net = Math.max(0, prize - refund);
       // No annotation → 100%. Clamp defensively to the 0–100 range.
       const pct = Math.min(100, Math.max(0, sponsorship.get(lb.id) ?? 100));
-      const houseCost = net * (pct / 100);
+      const houseCost = leaderboardHouseCost(prize, refund, pct);
 
       // Bucket by run window relative to the snapshot clock — same date math
       // as getLeaderboardCostTotal. ENDED = end strictly past; ACTIVE = now

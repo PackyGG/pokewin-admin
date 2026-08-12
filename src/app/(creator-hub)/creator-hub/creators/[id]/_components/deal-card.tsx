@@ -126,8 +126,14 @@ export async function DealCard({
   // The live deal drives the terminate / edit actions (both apply to an
   // active or a not-yet-started scheduled deal, same as the admin deals
   // table). "Previous" = deals ended by any means (completed/terminated).
-  const previousDeals = deals.filter(
-    (d) => d.status === "completed" || d.status === "terminated",
+  const nowMs = Date.now();
+  const previousDeals = deals.filter((d) =>
+    d.status === "completed"
+    || d.status === "terminated"
+    || (
+      (d.status === "active" || d.status === "scheduled")
+      && Date.parse(d.week_end_utc) <= nowMs
+    ),
   );
 
   if (!deal) {
@@ -198,7 +204,7 @@ export async function DealCard({
                     </Badge>
                     {marker?.periodCount && marker.periodCount > 1 && (
                       <Badge variant="secondary" className="text-[10px]">
-                        Week {marker.periodIndex + 1} of {marker.periodCount}
+                        Period {marker.periodIndex + 1} of {marker.periodCount}
                       </Badge>
                     )}
                     <span className="text-xs text-muted-foreground">

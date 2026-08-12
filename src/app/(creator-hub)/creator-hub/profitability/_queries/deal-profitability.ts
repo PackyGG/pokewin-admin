@@ -336,7 +336,12 @@ export async function getCreatorProfitability(): Promise<ProfitabilityData> {
     // frame board's leaderboard net prize × stored house share. One source of
     // truth via `computeDealCost`.
     const deals = dealsByOwner.get(c.id) ?? [];
-    const wds = weeklyDealsInFrame(fr.startMs, fr.endMs, deals);
+    const wds = weeklyDealsInFrame(
+      fr.startMs,
+      fr.endMs,
+      deals,
+      fr.board?.approvalRequestId,
+    );
     const { capUsd, tipSponsorUsd, leaderboardUsd, dealCost } = computeDealCost({
       weeklyDeals: wds,
       // `CreatorLbFrame.prizeUsd` is ALREADY net of refund, so pass refund 0

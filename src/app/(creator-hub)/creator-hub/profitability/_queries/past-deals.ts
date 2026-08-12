@@ -17,6 +17,7 @@ import {
   weeklyDealsInFrame,
 } from "@/lib/deal-economics";
 import { summarizeDealTermPeriods } from "@/lib/deal-term-periods";
+import { getApprovalRequestIdsByLeaderboardIds } from "@/lib/creator-leaderboard-approval-links";
 import { mapPool, pagedWalk } from "../../_lib/backend-walk";
 import { getBoardAffiliatePnl } from "./frame-affiliate-pnl-by-board";
 import { getDealWagerByDeal } from "./frame-wager-by-deal";
@@ -317,9 +318,10 @@ const getEndedDealsBase = unstable_cache(
       return { rows: [], backendUnavailable: false };
     }
 
-    const sponsorship = await getLeaderboardSponsorshipMap(
-      endedFrames.map((lb) => lb.id),
-    );
+    const [sponsorship, approvals] = await Promise.all([
+      getLeaderboardSponsorshipMap(endedFrames.map((lb) => lb.id)),
+      getApprovalRequestIdsByLeaderboardIds(endedFrames.map((lb) => lb.id)),
+    ]);
 
     // Deal terms live per creator — fetch each frame-owner's deal history once
     // with bounded concurrency, then sum the enforced deal periods overlapping
@@ -353,7 +355,12 @@ const getEndedDealsBase = unstable_cache(
       // each at FULL cap + (tip + sponsor) × fills, plus the leaderboard net
       // prize × 50% (owner rule). One source of truth via `computeDealCost`.
       const deals = dealsByOwner.get(lb.creator_user_id) ?? [];
-      const wds = weeklyDealsInFrame(startMs, endMs, deals);
+      const wds = weeklyDealsInFrame(
+        startMs,
+        endMs,
+        deals,
+        approvals.get(lb.id),
+      );
       const { capUsd, tipSponsorUsd, leaderboardUsd, dealCost } =
         computeDealCost({
           weeklyDeals: wds,

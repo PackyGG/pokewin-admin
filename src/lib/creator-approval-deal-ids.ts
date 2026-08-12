@@ -15,27 +15,39 @@ export function getCreatorApprovalDealMarker(
   const periodIndex = terms.creator_approval_period_index;
   const periodCount = terms.creator_approval_period_count;
   if (typeof requestId !== "string") return null;
-  if (typeof periodIndex !== "number" || !Number.isInteger(periodIndex)) {
+  if (
+    typeof periodIndex !== "number"
+    || !Number.isInteger(periodIndex)
+    || periodIndex < 0
+  ) {
     return null;
   }
+  const validPeriodCount =
+    typeof periodCount === "number"
+    && Number.isInteger(periodCount)
+    && periodCount > 0
+      ? periodCount
+      : null;
+  if (validPeriodCount !== null && periodIndex >= validPeriodCount) return null;
   return {
     requestId,
     periodIndex,
-    periodCount:
-      typeof periodCount === "number"
-      && Number.isInteger(periodCount)
-      && periodCount > 0
-        ? periodCount
-        : null,
+    periodCount: validPeriodCount,
   };
 }
 
 /** Active and upcoming backend periods that belong in the current Deal card. */
 export function selectLiveCreatorDealPeriods(
   deals: CreatorDealResponse[],
+  now = new Date(),
 ): CreatorDealResponse[] {
+  const nowMs = now.getTime();
   return deals
-    .filter((deal) => deal.status === "active" || deal.status === "scheduled")
+    .filter((deal) => {
+      if (deal.status !== "active" && deal.status !== "scheduled") return false;
+      const endMs = Date.parse(deal.week_end_utc);
+      return Number.isFinite(nowMs) && Number.isFinite(endMs) && endMs > nowMs;
+    })
     .sort((left, right) => {
       if (left.status !== right.status) return left.status === "active" ? -1 : 1;
       return left.week_start_utc.localeCompare(right.week_start_utc);

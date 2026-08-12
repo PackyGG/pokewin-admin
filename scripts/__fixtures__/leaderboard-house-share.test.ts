@@ -6,12 +6,15 @@ import {
   computeDealCost,
   leaderboardHouseCost,
   normalizeLeaderboardHouseSharePct,
+  weeklyDealsInFrame,
 } from "../../src/lib/deal-economics.ts";
+import type { CreatorDealResponse } from "../../src/lib/backend-api/contracts.ts";
 
 test("leaderboard cost honors the stored house-share percentage", () => {
   assert.equal(leaderboardHouseCost(2_000, 200, 25), 450);
   assert.equal(leaderboardHouseCost(2_000, 200, 75), 1_350);
   assert.equal(leaderboardHouseCost(2_000, 2_500, 75), 0);
+  assert.equal(leaderboardHouseCost(2_000), 2_000);
 });
 
 test("house-share percentages clamp and missing annotations default to full funding", () => {
@@ -19,6 +22,45 @@ test("house-share percentages clamp and missing annotations default to full fund
   assert.equal(normalizeLeaderboardHouseSharePct(-5), 0);
   assert.equal(normalizeLeaderboardHouseSharePct(150), 100);
   assert.equal(normalizeLeaderboardHouseSharePct("37.5"), 37.5);
+});
+
+test("approval-linked frames exclude overlapping periods from another contract", () => {
+  const row = (id: string, requestId: string): CreatorDealResponse => ({
+    id,
+    user_id: "creator",
+    status: "terminated",
+    week_start_utc: "2026-08-06T00:00:00.000Z",
+    week_end_utc: "2026-08-13T00:00:00.000Z",
+    fills_allowed: 7,
+    fills_used: 0,
+    per_fill_amount_usd: "100",
+    conversion_rate_bps: 5000,
+    total_withdraw_cap_usd: "500",
+    withdraw_cap_used_usd: "0",
+    cooldown_minutes: 300,
+    max_tip_per_stream_usd: "100",
+    max_tip_per_user_usd: "20",
+    max_sponsored_battle_usd: "50",
+    max_sponsorship_per_stream_usd: "200",
+    allow_site_leaderboards: false,
+    allow_code_leaderboards: false,
+    terms: { creator_approval_request_id: requestId },
+    created_by: null,
+    version: 1,
+    created_at: "2026-08-06T00:00:00.000Z",
+    updated_at: "2026-08-06T00:00:00.000Z",
+  });
+  const old = row("old", "old-request");
+  const current = row("current", "current-request");
+  assert.deepEqual(
+    weeklyDealsInFrame(
+      Date.parse("2026-08-12T00:00:00.000Z"),
+      Date.parse("2026-08-26T00:00:00.000Z"),
+      [old, current],
+      "current-request",
+    ).map((deal) => deal.id),
+    ["current"],
+  );
 });
 
 test("deal profitability uses the same stored leaderboard percentage", () => {

@@ -20,7 +20,7 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { Spinner } from "@/components/ux";
 
-import { terminateCreatorDeal } from "../../../../../(admin)/creators/backend-actions";
+import { terminateCreatorDealSchedule } from "../../../../../(admin)/creators/backend-actions";
 
 type Props = {
   userId: string;
@@ -66,11 +66,15 @@ export function TerminateDealDialog({
   function handleConfirm() {
     startTransition(async () => {
       try {
-        await terminateCreatorDeal(userId, dealId, {
+        const result = await terminateCreatorDealSchedule(userId, dealId, {
           reason: reason.trim() || undefined,
           force_end_active_session: forceEnd,
         });
-        toast.success("Deal terminated");
+        toast.success(
+          result.terminatedIds.length > 1
+            ? `${result.terminatedIds.length} remaining deal periods terminated`
+            : "Deal period terminated",
+        );
         onOpenChange(false);
         router.refresh();
       } catch (err) {
@@ -89,11 +93,11 @@ export function TerminateDealDialog({
             <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-rose-500/15 text-rose-600 ring-1 ring-inset ring-rose-500/30 dark:text-rose-400">
               <Ban className="size-4" />
             </span>
-            Terminate active deal
+            Terminate deal period
           </DialogTitle>
           <DialogDescription>
-            This ends the creator&apos;s current active deal. It can&apos;t be
-            undone — a new deal must be created to resume.
+            This ends this period and any later periods from the same approved
+            schedule. It can&apos;t be undone — a new deal must be created to resume.
           </DialogDescription>
         </DialogHeader>
 
@@ -138,7 +142,7 @@ export function TerminateDealDialog({
             className="gap-1.5"
           >
             {pending ? <Spinner size={14} /> : <Ban className="size-4" />}
-            {pending ? "Terminating…" : "Terminate deal"}
+            {pending ? "Terminating…" : "Terminate remaining deal"}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -81,7 +81,41 @@ export function EditDealDialog({ userId, deal, open, onOpenChange }: Props) {
       toast.error("Enter valid start and end dates");
       return;
     }
-    const { withdraw_cap_period_days: _withdrawCapPeriodDays, ...patch } = payload;
+    const { withdraw_cap_period_days: _withdrawCapPeriodDays, ...candidate } = payload;
+    // The backend forbids touching an active deal's time window. Sending the
+    // unchanged form dates still counts as touching it, so only send fields
+    // whose values actually differ from the persisted row.
+    const current = {
+      week_start_utc: deal.week_start_utc,
+      week_end_utc: deal.week_end_utc,
+      fills_allowed: deal.fills_allowed,
+      per_fill_amount_usd: Number(deal.per_fill_amount_usd),
+      conversion_rate_bps: deal.conversion_rate_bps,
+      total_withdraw_cap_usd:
+        deal.total_withdraw_cap_usd == null
+          ? null
+          : Number(deal.total_withdraw_cap_usd),
+      cooldown_minutes: deal.cooldown_minutes,
+      max_tip_per_stream_usd: Number(deal.max_tip_per_stream_usd),
+      max_tip_per_user_usd: Number(deal.max_tip_per_user_usd),
+      max_sponsored_battle_usd: Number(deal.max_sponsored_battle_usd),
+      max_sponsorship_per_stream_usd: Number(deal.max_sponsorship_per_stream_usd),
+      allow_site_leaderboards: deal.allow_site_leaderboards,
+      allow_code_leaderboards: deal.allow_code_leaderboards,
+    };
+    const patch = Object.fromEntries(
+      Object.entries(candidate).filter(([key, value]) => {
+        const previous = current[key as keyof typeof current];
+        if (key === "week_start_utc" || key === "week_end_utc") {
+          return Date.parse(String(value)) !== Date.parse(String(previous));
+        }
+        return value !== previous;
+      }),
+    );
+    if (Object.keys(patch).length === 0) {
+      toast.message("No changes to save");
+      return;
+    }
 
     startTransition(async () => {
       try {

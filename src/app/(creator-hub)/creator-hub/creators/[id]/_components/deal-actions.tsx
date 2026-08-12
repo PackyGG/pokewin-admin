@@ -72,7 +72,7 @@ export function DealCardActions({
         onClick={() => setOpenDialog("edit")}
       >
         <Pencil className="mr-1 size-3.5" />
-        Edit terms
+        Edit this period
       </Button>
       <Button
         variant="outline"
@@ -81,7 +81,7 @@ export function DealCardActions({
         onClick={() => setOpenDialog("terminate")}
       >
         <Ban className="mr-1 size-3.5" />
-        Terminate
+        Terminate periods
       </Button>
 
       <EditDealDialog

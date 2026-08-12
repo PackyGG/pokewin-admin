@@ -56,6 +56,11 @@ test("ignores unrelated and malformed terms", () => {
   const unrelated = markedDeal("old", "request-1", 0);
   unrelated.terms = null;
   assert.equal(indexCreatorApprovalDealIds([malformed, unrelated]).size, 0);
+
+  const negative = markedDeal("negative", "request-1", -1);
+  const outOfRange = markedDeal("out-of-range", "request-1", 2);
+  assert.equal(getCreatorApprovalDealMarker(negative), null);
+  assert.equal(getCreatorApprovalDealMarker(outOfRange), null);
 });
 
 test("keeps every active and scheduled period for the current deal card", () => {
@@ -68,7 +73,10 @@ test("keeps every active and scheduled period for the current deal card", () => 
   completed.status = "completed";
 
   assert.deepEqual(
-    selectLiveCreatorDealPeriods([scheduled, completed, active]).map((row) => row.id),
+    selectLiveCreatorDealPeriods(
+      [scheduled, completed, active],
+      new Date("2026-08-05T00:00:00.000Z"),
+    ).map((row) => row.id),
     ["active", "scheduled"],
   );
   assert.deepEqual(getCreatorApprovalDealMarker(scheduled), {
@@ -76,4 +84,15 @@ test("keeps every active and scheduled period for the current deal card", () => 
     periodIndex: 1,
     periodCount: 2,
   });
+});
+
+test("does not show stale active or scheduled rows after their window ended", () => {
+  const stale = markedDeal("stale", "request-1", 0);
+  assert.deepEqual(
+    selectLiveCreatorDealPeriods(
+      [stale],
+      new Date("2026-08-08T00:00:00.000Z"),
+    ),
+    [],
+  );
 });

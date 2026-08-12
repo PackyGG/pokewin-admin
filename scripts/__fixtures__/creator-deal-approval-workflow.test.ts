@@ -138,6 +138,8 @@ test("creator deal approval is durable, identity-bound, and recoverable", async 
   assert.match(workflow, /export type CreatorApprovalRequestKind = "deal" \| "multiplier_deal" \| "pnl_deal" \| "leaderboard_only" \| "rewards_only"/);
   assert.match(workflow, /async function ensureLeaderboard/);
   assert.match(workflow, /affiliateLeaderboardsApi\.create/);
+  assert.doesNotMatch(workflow, /if \(board\.sponsoredPct !== 100\)/);
+  assert.match(workflow, /sponsored_percentage: String\(board\.sponsoredPct\)/);
   assert.match(workflow, /if \(request\.leaderboard_id\) return request\.leaderboard_id/);
   assert.match(workflow, /findProvisionedLeaderboard/);
   assert.match(workflow, /leaderboard_reconciliation_ambiguous/);
