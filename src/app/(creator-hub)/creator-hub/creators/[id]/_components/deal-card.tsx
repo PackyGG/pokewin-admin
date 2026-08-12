@@ -14,6 +14,10 @@ import { cn } from "@/lib/utils";
 import { getDealCardDataCached } from "../_queries/deal-card-data";
 import type { CreatorDealResponse } from "@/lib/backend-api";
 import type { AdminCreatorPnlDeal } from "@/lib/creator-pnl-settlement";
+import {
+  getCreatorApprovalDealMarker,
+  selectLiveCreatorDealPeriods,
+} from "@/lib/creator-approval-deal-ids";
 import { NewDealDialog } from "./new-deal-dialog";
 import { DealCardActions, PreviousDealsButton } from "./deal-actions";
 import { PnlCalculateButton, PnlSettlementButton } from "./pnl-settlement-button";
@@ -113,20 +117,15 @@ export async function DealCard({
   if (pnlDeal) {
     return <PnlDealCard userId={userId} deal={pnlDeal} allDeals={pnlDeals} />;
   }
-  // Only a LIVE deal belongs in this card: the active one, else the next
-  // scheduled one. An ended deal (completed/terminated) must NEVER be shown
-  // here as if it were the creator's terms — it lives in "Previous deals".
-  const deal =
-    deals.find((d) => d.status === "active") ??
-    deals
-      .filter((d) => d.status === "scheduled")
-      .sort((a, b) => a.week_start_utc.localeCompare(b.week_start_utc))[0] ??
-    null;
+  // A recurring cap is provisioned as one backend row per cap period. Keep
+  // the whole live schedule visible: selecting just the active row hid every
+  // subsequent week even though it had been provisioned correctly.
+  const liveDeals = selectLiveCreatorDealPeriods(deals);
+  const deal = liveDeals[0] ?? null;
 
   // The live deal drives the terminate / edit actions (both apply to an
   // active or a not-yet-started scheduled deal, same as the admin deals
   // table). "Previous" = deals ended by any means (completed/terminated).
-  const activeDeal = deal;
   const previousDeals = deals.filter(
     (d) => d.status === "completed" || d.status === "terminated",
   );
@@ -164,9 +163,6 @@ export async function DealCard({
     );
   }
 
-  const withdrawCap = deal.total_withdraw_cap_usd;
-  const withdrawCapUsed = num(deal.withdraw_cap_used_usd);
-
   return (
     <div className="flex h-full flex-col gap-3">
       <SectionHeading
@@ -181,91 +177,82 @@ export async function DealCard({
         }
       />
       <Card size="sm" className="flex-1">
-        <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex items-center gap-2">
-              <Badge
-                variant="outline"
-                className={cn(
-                  "text-[10px] capitalize",
-                  DEAL_STATUS_COLORS[deal.status],
-                )}
-              >
-                {deal.status}
-              </Badge>
-              <span className="text-xs text-muted-foreground">
-                {formatDate(deal.week_start_utc)} → {formatDate(deal.week_end_utc)}
-              </span>
-            </div>
-            <span className="text-[11px] text-muted-foreground">
-              v{deal.version}
-            </span>
-          </div>
+        <CardContent className="divide-y p-0">
+          {liveDeals.map((liveDeal) => {
+            const marker = getCreatorApprovalDealMarker(liveDeal);
+            const withdrawCap = liveDeal.total_withdraw_cap_usd;
+            const withdrawCapUsed = num(liveDeal.withdraw_cap_used_usd);
 
-          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-            <DealTerm
-              label="Fills"
-              value={`${deal.fills_used} / ${deal.fills_allowed}`}
-            />
-            <DealTerm
-              label="Per fill"
-              value={formatCurrency(num(deal.per_fill_amount_usd))}
-            />
-            <DealTerm
-              label="Conversion"
-              value={`${(deal.conversion_rate_bps / 100).toFixed(2)}%`}
-            />
-            {/* Withdraw cap is the house's payout exposure → rose. */}
-            <DealTerm
-              label="Withdraw cap"
-              value={
-                withdrawCap == null
-                  ? "—"
-                  : `${formatCurrency(withdrawCapUsed)} / ${formatCurrency(num(withdrawCap))}`
-              }
-              valueClassName={withdrawCap != null ? "text-rose-600 dark:text-rose-400" : undefined}
-            />
-            <DealTerm
-              label="Tip / stream"
-              value={formatCurrency(num(deal.max_tip_per_stream_usd))}
-            />
-            <DealTerm
-              label="Sponsor / stream"
-              value={formatCurrency(num(deal.max_sponsorship_per_stream_usd))}
-            />
-          </div>
+            return (
+              <div key={liveDeal.id} className="space-y-3 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant="outline"
+                      className={cn(
+                        "text-[10px] capitalize",
+                        DEAL_STATUS_COLORS[liveDeal.status],
+                      )}
+                    >
+                      {liveDeal.status}
+                    </Badge>
+                    {marker?.periodCount && marker.periodCount > 1 && (
+                      <Badge variant="secondary" className="text-[10px]">
+                        Week {marker.periodIndex + 1} of {marker.periodCount}
+                      </Badge>
+                    )}
+                    <span className="text-xs text-muted-foreground">
+                      {formatDate(liveDeal.week_start_utc)} → {formatDate(liveDeal.week_end_utc)}
+                    </span>
+                  </div>
+                  <span className="text-[11px] text-muted-foreground">
+                    v{liveDeal.version}
+                  </span>
+                </div>
 
-          <div className="flex flex-wrap items-center gap-1.5 pt-1">
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                deal.allow_code_leaderboards
-                  ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                  : "text-muted-foreground",
-              )}
-            >
-              Code leaderboards {deal.allow_code_leaderboards ? "on" : "off"}
-            </Badge>
-            <Badge
-              variant="outline"
-              className={cn(
-                "text-[10px]",
-                deal.allow_site_leaderboards
-                  ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
-                  : "text-muted-foreground",
-              )}
-            >
-              Site leaderboards {deal.allow_site_leaderboards ? "on" : "off"}
-            </Badge>
-            {/* Edit / Terminate live here rather than in the heading: the
-                heading stays [Previous deals] [New Deal], mirroring the
-                Affiliate Leaderboards card, and four inline buttons up there
-                wrapped badly. */}
-            <div className="ml-auto flex items-center gap-1.5">
-              <DealCardActions userId={userId} deal={activeDeal} />
-            </div>
-          </div>
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  <DealTerm label="Fills" value={`${liveDeal.fills_used} / ${liveDeal.fills_allowed}`} />
+                  <DealTerm label="Per fill" value={formatCurrency(num(liveDeal.per_fill_amount_usd))} />
+                  <DealTerm label="Conversion" value={`${(liveDeal.conversion_rate_bps / 100).toFixed(2)}%`} />
+                  <DealTerm
+                    label="Withdraw cap"
+                    value={withdrawCap == null ? "—" : `${formatCurrency(withdrawCapUsed)} / ${formatCurrency(num(withdrawCap))}`}
+                    valueClassName={withdrawCap != null ? "text-rose-600 dark:text-rose-400" : undefined}
+                  />
+                  <DealTerm label="Tip / stream" value={formatCurrency(num(liveDeal.max_tip_per_stream_usd))} />
+                  <DealTerm label="Sponsor / stream" value={formatCurrency(num(liveDeal.max_sponsorship_per_stream_usd))} />
+                </div>
+
+                <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[10px]",
+                      liveDeal.allow_code_leaderboards
+                        ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    Code leaderboards {liveDeal.allow_code_leaderboards ? "on" : "off"}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className={cn(
+                      "text-[10px]",
+                      liveDeal.allow_site_leaderboards
+                        ? "border-emerald-500/30 text-emerald-600 dark:text-emerald-400"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    Site leaderboards {liveDeal.allow_site_leaderboards ? "on" : "off"}
+                  </Badge>
+                  <div className="ml-auto flex items-center gap-1.5">
+                    <DealCardActions userId={userId} deal={liveDeal} />
+                  </div>
+                </div>
+              </div>
+            );
+          })}
         </CardContent>
       </Card>
     </div>

@@ -9,6 +9,7 @@ test("new creator deal chooses fill, multiplier, or P&L and never creates before
   const dialog = read(`${detail}/_components/new-deal-dialog.tsx`);
   const action = read(`${detail}/_components/deal-approval-actions.ts`);
   const fields = read(`${detail}/_components/deal-form-shared.tsx`);
+  const leaderboardFields = read(`${detail}/_components/creator-leaderboard-draft-fields.tsx`);
   const pnlFields = read(`${detail}/_components/pnl-deal-approval-fields.tsx`);
 
   assert.match(dialog, /"type" \| "deal" \| "multiplier" \| "pnl" \| "rewards" \| "leaderboard" \| "confirm" \| "queued"/);
@@ -51,6 +52,11 @@ test("new creator deal chooses fill, multiplier, or P&L and never creates before
   assert.match(fields, /Every 2 weeks/);
   assert.match(fields, /withdraw_cap_period_days/);
   assert.match(dialog, /independent cap counters/);
+  assert.match(leaderboardFields, /sponsoredPct: ""/);
+  assert.match(leaderboardFields, /Financial responsibility must be chosen explicitly/);
+  assert.match(leaderboardFields, /draft\.sponsoredPct\.trim\(\) === ""/);
+  assert.match(leaderboardFields, /Enter the house share percentage/);
+  assert.match(leaderboardFields, /Portion of the prize pool the house pays on-site\. Required\./);
   assert.match(fields, /choose No limit/i);
   assert.match(fields, /forceLeaderboardsOff/);
   assert.doesNotMatch(fields, /title="Leaderboards"/);

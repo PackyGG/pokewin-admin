@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { CreatorDealResponse } from "../../src/lib/backend-api/contracts";
-import { indexCreatorApprovalDealIds } from "../../src/lib/creator-approval-deal-ids";
+import {
+  getCreatorApprovalDealMarker,
+  indexCreatorApprovalDealIds,
+  selectLiveCreatorDealPeriods,
+} from "../../src/lib/creator-approval-deal-ids";
 
 function markedDeal(id: string, requestId: string, periodIndex: number): CreatorDealResponse {
   return {
@@ -52,4 +56,24 @@ test("ignores unrelated and malformed terms", () => {
   const unrelated = markedDeal("old", "request-1", 0);
   unrelated.terms = null;
   assert.equal(indexCreatorApprovalDealIds([malformed, unrelated]).size, 0);
+});
+
+test("keeps every active and scheduled period for the current deal card", () => {
+  const active = markedDeal("active", "request-1", 0);
+  const scheduled = markedDeal("scheduled", "request-1", 1);
+  scheduled.status = "scheduled";
+  scheduled.week_start_utc = "2026-08-08T00:00:00.000Z";
+  scheduled.week_end_utc = "2026-08-15T00:00:00.000Z";
+  const completed = markedDeal("completed", "request-old", 0);
+  completed.status = "completed";
+
+  assert.deepEqual(
+    selectLiveCreatorDealPeriods([scheduled, completed, active]).map((row) => row.id),
+    ["active", "scheduled"],
+  );
+  assert.deepEqual(getCreatorApprovalDealMarker(scheduled), {
+    requestId: "request-1",
+    periodIndex: 1,
+    periodCount: 2,
+  });
 });

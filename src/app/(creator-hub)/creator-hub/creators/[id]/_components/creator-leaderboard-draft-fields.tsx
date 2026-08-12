@@ -45,9 +45,9 @@ export function buildLeaderboardDraft(
     title: `${creatorName} Leaderboard`,
     codes,
     siteBonus: "",
-    // Bundled boards default to a 50/50 split rather than the 100% the
-    // standalone instant-create dialog assumes.
-    sponsoredPct: "50",
+    // Financial responsibility must be chosen explicitly. A prefilled split
+    // is too easy to miss when rebuilding a declined/cancelled request.
+    sponsoredPct: "",
     tiers: DEFAULT_TIERS.map((tier) => ({ ...tier })),
     startsAt: "",
     endsAt: "",
@@ -74,6 +74,9 @@ export function parseLeaderboardDraft(
     return { error: "Total prize pool must be greater than zero" };
   }
 
+  if (draft.sponsoredPct.trim() === "") {
+    return { error: "Enter the house share percentage" };
+  }
   const sponsoredPct = Number(draft.sponsoredPct);
   if (!Number.isFinite(sponsoredPct) || sponsoredPct < 0 || sponsoredPct > 100) {
     return { error: "House share % must be between 0 and 100" };
@@ -296,11 +299,11 @@ export function CreatorLeaderboardDraftFields({
           step={1}
           value={draft.sponsoredPct}
           onChange={(event) => set("sponsoredPct", event.target.value)}
-          placeholder="50"
+          placeholder="Enter 0–100"
           disabled={disabled}
         />
         <p className="text-[11px] text-muted-foreground">
-          Portion of the prize pool the house pays on-site. Default 50%.
+          Portion of the prize pool the house pays on-site. Required.
         </p>
       </div>
     </div>
