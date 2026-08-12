@@ -76,3 +76,6 @@ _verify-*
 
 # Local audit worklists (agent scratch, never committed)
 .audit/
+
+# Sentry Config File
+.env.sentry-build-plugin

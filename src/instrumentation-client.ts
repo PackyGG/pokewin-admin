@@ -23,6 +23,10 @@ Sentry.init({
   tracesSampleRate: sentryTraceSampleRate(
     process.env.NEXT_PUBLIC_SENTRY_TRACES_SAMPLE_RATE,
   ),
+  tracePropagationTargets: [
+    "localhost",
+    /^https:\/\/(?:fraud\.|packs\.|marketing\.)?packydash\.com(?:\/|$)/,
+  ],
   replaysOnErrorSampleRate: 0,
   replaysSessionSampleRate: 0,
   sendDefaultPii: false,
