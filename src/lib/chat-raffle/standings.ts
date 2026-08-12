@@ -1,13 +1,16 @@
 import "server-only";
 
+import { unstable_cache } from "next/cache";
 import { sql } from "drizzle-orm";
 import { adminDrizzle } from "@/lib/admin-db";
-import { getReadDrizzleDb } from "@/lib/db";
+import { getReadDrizzleDb, readDrizzleForEnv } from "@/lib/db";
+import { readDbEnv, type DbEnv } from "@/lib/db-env";
 import { pgArrayParam } from "@/lib/drizzle-array-param";
 import { communityLevelForXp } from "@/lib/discord-community-xp";
 import { communityRankForLevel } from "@/lib/discord-community-ranks";
 import { getExcludedUserIds } from "@/lib/excluded-users/fetch";
 import { CUSTOMER_EXCLUDED_ROLES } from "@/lib/metrics/scope";
+import { withTransientPostgresReadRetry } from "@/lib/postgres-read-retry";
 import { CHAT_RAFFLE_MAX_ENTRIES } from "./config";
 import { compareLeaderboardCandidates } from "./leaderboard";
 
@@ -113,18 +116,23 @@ export async function getChatRaffleStandings(params: {
   adjustments?: Map<string, number>;
   limit?: number;
   timeframe?: "window" | "lifetime";
+  dbEnv?: DbEnv;
 }): Promise<ChatRaffleStandings> {
   const { startsAt, endsAt } = params;
   const timeframe = params.timeframe ?? "window";
   const adjustments = params.adjustments ?? new Map<string, number>();
-  const limit = Math.min(params.limit ?? CHAT_RAFFLE_MAX_ENTRIES, CHAT_RAFFLE_MAX_ENTRIES);
+  const limit = Math.min(
+    params.limit ?? CHAT_RAFFLE_MAX_ENTRIES,
+    CHAT_RAFFLE_MAX_ENTRIES,
+  );
 
   if (!(endsAt > startsAt)) {
     return { standings: [], totalTickets: 0, entrants: 0, truncated: false };
   }
 
-  const xpResult = timeframe === "lifetime"
-    ? await adminDrizzle.execute<XpRow>(sql`
+  const xpResult =
+    timeframe === "lifetime"
+      ? await adminDrizzle.execute<XpRow>(sql`
         SELECT discord_user_id,
           discord_xp::int,
           site_chat_xp::int,
@@ -136,7 +144,7 @@ export async function getChatRaffleStandings(params: {
         FROM discord_community_xp_profiles
         WHERE total_xp > 0
       `)
-    : await adminDrizzle.execute<XpRow>(sql`
+      : await adminDrizzle.execute<XpRow>(sql`
         SELECT
           event.discord_user_id,
           coalesce(sum(event.awarded_xp) FILTER (WHERE event.source = 'discord'), 0)::int AS discord_xp,
@@ -165,23 +173,33 @@ export async function getChatRaffleStandings(params: {
       : sql``;
   const roleFilter = sql`u.role::text <> ALL(${pgArrayParam([...CUSTOMER_EXCLUDED_ROLES])}::text[])`;
 
-  const db = await getReadDrizzleDb();
-  const linkedResult = await db.execute<LinkedUserRow>(sql`
-    SELECT account."accountId" AS discord_user_id,
-      u.id AS user_id, u.username, u.image, u.role::text AS role
-    FROM account
-    JOIN "user" u ON u.id = account."userId"
-    WHERE account."providerId" = 'discord'
-      AND account."accountId" = ANY(${pgArrayParam(xpResult.rows.map((row) => row.discord_user_id))}::text[])
-      AND ${roleFilter}
-      ${blacklistFilter}
-      AND NOT EXISTS (
-        SELECT 1 FROM user_mutes um
-        WHERE um.user_id = u.id
-          AND um.unmuted_at IS NULL
-          AND (um.expires_at IS NULL OR um.expires_at > (now() AT TIME ZONE 'utc'))
-      )
-  `);
+  const db = params.dbEnv
+    ? readDrizzleForEnv(params.dbEnv)
+    : await getReadDrizzleDb();
+  const linkedResult = await withTransientPostgresReadRetry(
+    () =>
+      db.execute<LinkedUserRow>(sql`
+      SELECT account."accountId" AS discord_user_id,
+        u.id AS user_id, u.username, u.image, u.role::text AS role
+      FROM account
+      JOIN "user" u ON u.id = account."userId"
+      WHERE account."providerId" = 'discord'
+        AND account."accountId" = ANY(${pgArrayParam(xpResult.rows.map((row) => row.discord_user_id))}::text[])
+        AND ${roleFilter}
+        ${blacklistFilter}
+        AND NOT EXISTS (
+          SELECT 1 FROM user_mutes um
+          WHERE um.user_id = u.id
+            AND um.unmuted_at IS NULL
+            AND (um.expires_at IS NULL OR um.expires_at > (now() AT TIME ZONE 'utc'))
+        )
+    `),
+    {
+      context: "chat-raffle.eligible-users",
+      maxAttempts: 3,
+      delayMs: 300,
+    },
+  );
   const linkedByDiscordId = new Map(
     linkedResult.rows.map((row) => [row.discord_user_id, row]),
   );
@@ -241,4 +259,34 @@ export async function getChatRaffleStandings(params: {
     entrants: capped.length,
     truncated,
   };
+}
+
+const cachedLifetimeChatRaffleStandings = unstable_cache(
+  async (dbEnv: DbEnv) =>
+    getChatRaffleStandings({
+      startsAt: new Date(0),
+      endsAt: new Date(),
+      timeframe: "lifetime",
+      dbEnv,
+    }),
+  ["chat-raffle-lifetime-standings-v1"],
+  { revalidate: 60 },
+);
+
+/**
+ * The lifetime board changes gradually but is rendered on every raffle page
+ * visit. Cache production for one minute so a burst of admin requests does not
+ * contend for another mirror session each time; development stays live so the
+ * per-admin database switch remains honest.
+ */
+export async function getLifetimeChatRaffleStandings(): Promise<ChatRaffleStandings> {
+  const dbEnv = await readDbEnv();
+  if (dbEnv === "prod") return cachedLifetimeChatRaffleStandings(dbEnv);
+
+  return getChatRaffleStandings({
+    startsAt: new Date(0),
+    endsAt: new Date(),
+    timeframe: "lifetime",
+    dbEnv,
+  });
 }

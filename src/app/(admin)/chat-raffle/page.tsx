@@ -19,6 +19,7 @@ import { FadeIn } from "@/components/fade-in";
 import {
   KpiTile,
   PageHero,
+  PageHeroIdentity,
   SectionHeading,
 } from "@/components/modern-panels";
 import { Badge } from "@/components/ui/badge";
@@ -26,7 +27,12 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { ROLE_COLORS } from "@/lib/constants";
-import { formatCurrency, formatDateTime, formatNumber, formatRelative } from "@/lib/utils/format";
+import {
+  formatCurrency,
+  formatDateTime,
+  formatNumber,
+  formatRelative,
+} from "@/lib/utils/format";
 import {
   CHAT_RAFFLE_MAX_ENTRIES,
   CHAT_RAFFLE_PHASE_COLOR,
@@ -45,6 +51,7 @@ import {
 } from "@/lib/chat-raffle/rounds";
 import {
   getChatRaffleStandings,
+  getLifetimeChatRaffleStandings,
   type ChatRaffleStanding,
 } from "@/lib/chat-raffle/standings";
 import {
@@ -82,9 +89,7 @@ export default async function ChatRafflePage() {
   return (
     <div className="space-y-4">
       <PageHero>
-        <SectionHeading
-          icon={Trophy}
-          title="Chat Raffle"
+        <PageHeroIdentity
           action={
             <>
               <RoundFormDialog
@@ -162,7 +167,10 @@ async function ActiveRoundSection({
 
   const { standings, totalTickets, entrants, truncated } = standingsResult.data;
   const discordXp = standings.reduce((sum, entry) => sum + entry.discordXp, 0);
-  const siteChatXp = standings.reduce((sum, entry) => sum + entry.siteChatXp, 0);
+  const siteChatXp = standings.reduce(
+    (sum, entry) => sum + entry.siteChatXp,
+    0,
+  );
   const editable = canEditRound(round.phase);
 
   return (
@@ -171,12 +179,19 @@ async function ActiveRoundSection({
         icon={competitionType === "leaderboard" ? ListOrdered : Dices}
         title={
           <>
-            {competitionType === "leaderboard" ? "Active XP leaderboard" : "Active raffle"}
+            {competitionType === "leaderboard"
+              ? "Active XP leaderboard"
+              : "Active raffle"}
             <span className="text-muted-foreground">·</span>
-            <span className="font-medium text-muted-foreground">{round.name}</span>
+            <span className="font-medium text-muted-foreground">
+              {round.name}
+            </span>
             <Badge
               variant="outline"
-              className={cn("h-5 px-1.5 text-[10px] uppercase", CHAT_RAFFLE_PHASE_COLOR[round.phase])}
+              className={cn(
+                "h-5 px-1.5 text-[10px] uppercase",
+                CHAT_RAFFLE_PHASE_COLOR[round.phase],
+              )}
             >
               {competitionPhaseLabel(round.phase, competitionType)}
             </Badge>
@@ -206,8 +221,8 @@ async function ActiveRoundSection({
             {editable && (
               <CancelRoundButton roundId={round.id} roundName={round.name} />
             )}
-            {canDrawRound(round.phase) && (
-              competitionType === "leaderboard" ? (
+            {canDrawRound(round.phase) &&
+              (competitionType === "leaderboard" ? (
                 <FinalizeLeaderboardButton
                   roundId={round.id}
                   leaderboardName={round.name}
@@ -225,13 +240,7 @@ async function ActiveRoundSection({
                   prizeCount={round.prizes.length}
                   disabled={entrants === 0 || truncated}
                 />
-              )
-            )}
-            <RoundFormDialog
-              mode="create"
-              competitionType={competitionType}
-              triggerVariant="outline"
-            />
+              ))}
           </>
         }
       />
@@ -254,7 +263,11 @@ async function ActiveRoundSection({
         <KpiTile
           label={competitionType === "leaderboard" ? "XP earned" : "Tickets"}
           value={formatNumber(totalTickets)}
-          sub={competitionType === "leaderboard" ? "determines rank" : "1 XP = 1 ticket"}
+          sub={
+            competitionType === "leaderboard"
+              ? "determines rank"
+              : "1 XP = 1 ticket"
+          }
           icon={competitionType === "leaderboard" ? ListOrdered : Ticket}
           accent="cyan"
         />
@@ -278,7 +291,9 @@ async function ActiveRoundSection({
             </p>
           </div>
           <div className="flex gap-2 text-xs tabular-nums">
-            <Badge variant="outline">Discord {formatNumber(discordXp)} XP</Badge>
+            <Badge variant="outline">
+              Discord {formatNumber(discordXp)} XP
+            </Badge>
             <Badge variant="outline">Site {formatNumber(siteChatXp)} XP</Badge>
           </div>
         </div>
@@ -294,9 +309,11 @@ async function ActiveRoundSection({
         adjustable={editable}
         competitionType={competitionType}
         prizes={round.prizes}
-        emptyMessage={competitionType === "leaderboard"
-          ? "Nobody has qualified for this leaderboard yet."
-          : "Nobody has qualified for this round yet."}
+        emptyMessage={
+          competitionType === "leaderboard"
+            ? "Nobody has qualified for this leaderboard yet."
+            : "Nobody has qualified for this round yet."
+        }
       />
 
       {round.prizes.some((p) => p.winnerUserId) && (
@@ -323,16 +340,8 @@ function NoActiveLeaderboard() {
 
 /** Always keep the established community standings visible below live events. */
 async function LifetimeCommunityXpSection() {
-  const now = new Date();
   const preview = await safeQuery(
-    () =>
-      getChatRaffleStandings({
-        // Lifetime reads ignore the window, but the shared scorer still
-        // requires valid bounds as part of its input contract.
-        startsAt: new Date(0),
-        endsAt: now,
-        timeframe: "lifetime",
-      }),
+    () => getLifetimeChatRaffleStandings(),
     { standings: [], totalTickets: 0, entrants: 0, truncated: false },
     "chat-raffle.preview",
     STANDINGS_TIMEOUT_MS,
@@ -340,9 +349,12 @@ async function LifetimeCommunityXpSection() {
 
   return (
     <FadeIn className="space-y-4">
-      {preview.error !== null && <QueryFailedNotice />}
+      {preview.error !== null && <QueryFailedNotice lifetime />}
 
-      <SectionHeading icon={MessageSquare} title="Lifetime Community XP leaderboard" />
+      <SectionHeading
+        icon={MessageSquare}
+        title="Lifetime Community XP leaderboard"
+      />
       <StandingsTable
         standings={preview.data.standings}
         totalTickets={preview.data.totalTickets}
@@ -384,7 +396,8 @@ function StandingsTable({
         <span className="text-xs text-muted-foreground">
           {formatNumber(standings.length)}{" "}
           {standings.length === 1 ? "entrant" : "entrants"} ·{" "}
-          {formatNumber(totalTickets)} {lifetime || competitionType === "leaderboard" ? "XP" : "tickets"}
+          {formatNumber(totalTickets)}{" "}
+          {lifetime || competitionType === "leaderboard" ? "XP" : "tickets"}
         </span>
       </div>
 
@@ -456,14 +469,16 @@ function StandingsTable({
                     >
                       Lv {entry.communityLevel} · {entry.communityRankName}
                     </Badge>
-                    {competitionType === "leaderboard" && prizes[entry.position - 1] && (
-                      <Badge
-                        variant="outline"
-                        className="h-4 shrink-0 px-1 text-[9px] text-rose-600 dark:text-rose-400"
-                      >
-                        {formatCurrency(prizes[entry.position - 1].amountUsd)} prize
-                      </Badge>
-                    )}
+                    {competitionType === "leaderboard" &&
+                      prizes[entry.position - 1] && (
+                        <Badge
+                          variant="outline"
+                          className="h-4 shrink-0 px-1 text-[9px] text-rose-600 dark:text-rose-400"
+                        >
+                          {formatCurrency(prizes[entry.position - 1].amountUsd)}{" "}
+                          prize
+                        </Badge>
+                      )}
                   </div>
                 </div>
 
@@ -477,7 +492,9 @@ function StandingsTable({
                     </div>
                     <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
                       {formatNumber(entry.discordMessageCount)}
-                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
+                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                        msgs
+                      </span>
                     </div>
                   </div>
                   <div className="min-w-0 border-l px-2 py-1.5 sm:min-w-24 sm:px-3">
@@ -486,12 +503,16 @@ function StandingsTable({
                     </div>
                     <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
                       {formatNumber(entry.siteChatMessageCount)}
-                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">msgs</span>
+                      <span className="ml-1 text-[10px] font-normal text-muted-foreground">
+                        msgs
+                      </span>
                     </div>
                   </div>
                   <div className="min-w-0 border-l px-2 py-1.5 text-right sm:min-w-20 sm:px-3">
                     <div className="text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">
-                      {lifetime || competitionType === "leaderboard" ? "XP" : "Tickets"}
+                      {lifetime || competitionType === "leaderboard"
+                        ? "XP"
+                        : "Tickets"}
                     </div>
                     <div className="mt-0.5 tabular-nums text-sm font-semibold leading-none">
                       {formatNumber(entry.tickets)}
@@ -634,7 +655,11 @@ async function RoundHistorySection({
     <FadeIn className="space-y-3">
       <SectionHeading
         icon={History}
-        title={competitionType === "leaderboard" ? "Other XP leaderboards" : "Other rounds"}
+        title={
+          competitionType === "leaderboard"
+            ? "Other XP leaderboards"
+            : "Other rounds"
+        }
       />
       <div className="overflow-hidden rounded-2xl border bg-card">
         {past.map((round) => (
@@ -644,7 +669,9 @@ async function RoundHistorySection({
           >
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-semibold">{round.name}</span>
+                <span className="truncate text-sm font-semibold">
+                  {round.name}
+                </span>
                 <Badge
                   variant="outline"
                   className={cn(
@@ -699,17 +726,21 @@ async function RoundHistorySection({
 
 // ─── Notices + skeletons ────────────────────────────────────────────
 
-function QueryFailedNotice() {
+function QueryFailedNotice({ lifetime = false }: { lifetime?: boolean }) {
   return (
     <div
       role="status"
       aria-live="polite"
       className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
     >
-      <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-500" />
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
       <p className="text-xs text-amber-700 dark:text-amber-300">
-        Couldn&apos;t score the chat window — the query timed out or failed.
-        Refresh to retry.
+        {lifetime
+          ? "Couldn't load lifetime standings because the database is busy. Refresh to retry."
+          : "Couldn't score the chat window — the query timed out or failed. Refresh to retry."}
       </p>
     </div>
   );
@@ -722,12 +753,15 @@ function TruncatedNotice() {
       aria-live="polite"
       className="flex items-start gap-2 rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3"
     >
-      <AlertTriangle aria-hidden className="mt-0.5 size-4 shrink-0 text-amber-500" />
+      <AlertTriangle
+        aria-hidden
+        className="mt-0.5 size-4 shrink-0 text-amber-500"
+      />
       <p className="text-xs text-amber-700 dark:text-amber-300">
         More than {formatNumber(CHAT_RAFFLE_MAX_ENTRIES)} users qualified, so
         the list below is clipped and finalizing winners is blocked — using a
-        clipped result would silently exclude the users past the cut.
-        Shorten the round window, then reload.
+        clipped result would silently exclude the users past the cut. Shorten
+        the round window, then reload.
       </p>
     </div>
   );
