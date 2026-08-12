@@ -27,6 +27,7 @@ const failedSignupSchema = z.object({
   fingerprint_ip: nullableString,
   user_agent: nullableString,
   auth_provider: nullableString.optional().default(null),
+  auth_account_id: nullableString.optional().default(null),
   auth_providers: z.array(z.object({
     provider: z.string(),
     linkedAt: z.string().nullable(),

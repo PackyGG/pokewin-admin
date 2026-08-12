@@ -7,7 +7,7 @@ import type {
 import { signupMonitorDurationSeconds } from "./signup-alerts.js";
 import type { Signal } from "./types.js";
 
-export const PROFILE_ASSESSMENT_VERSION = "signup-v3";
+export const PROFILE_ASSESSMENT_VERSION = "signup-v4";
 
 export type RiskCategory =
   | "identity"
@@ -145,7 +145,7 @@ const CREATOR_EXEMPTIBLE = new Set([
  * `profile_assessment_signals` rows reference the existing keys.
  */
 export function categoryForSignal(key: string): RiskCategory {
-  if (/(^|_)(fingerprint|email|username|alt_flag)(_|$)/.test(key)) {
+  if (/(^|_)(fingerprint|email|username|alt_flag|discord)(_|$)/.test(key)) {
     return "identity";
   }
   if (

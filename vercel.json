@@ -6,7 +6,7 @@
     },
     {
       "path": "/api/cron/antifraud-containment-retry",
-      "schedule": "*/5 * * * *"
+      "schedule": "* * * * *"
     },
     {
       "path": "/api/cron/reward-abuse-detection",

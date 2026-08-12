@@ -2594,10 +2594,13 @@ export const antifraud_signals = pgTable("antifraud_signals", {
 	containment_outbox_status: text(),
 	containment_outbox_error: text(),
 	containment_outbox_attempts: integer().default(0).notNull(),
+	containment_outbox_next_attempt_at: timestamp({ withTimezone: true, mode: 'string' }).defaultNow().notNull(),
+	containment_outbox_claimed_until: timestamp({ withTimezone: true, mode: 'string' }),
 	containment_applied_at: timestamp({ withTimezone: true, mode: 'string' }),
 }, (table) => [
-	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
+	index("antifraud_signals_containment_outbox_pending_idx").using("btree", table.containment_outbox_next_attempt_at.asc().nullsLast().op("timestamptz_ops"), table.received_at.asc().nullsLast().op("timestamptz_ops")).where(sql`(containment_outbox_status = ANY (ARRAY['pending'::text, 'failed'::text]))`),
 	uniqueIndex("antifraud_signals_external_uniq").using("btree", table.external_id.asc().nullsLast().op("text_ops")).where(sql`(external_id IS NOT NULL)`),
+	index("antifraud_signals_review_containment_applied_idx").using("btree", table.review_id.asc().nullsLast().op("uuid_ops"), table.containment_applied_at.desc().nullsFirst().op("timestamptz_ops")).where(sql`(review_id IS NOT NULL) AND (containment_applied_at IS NOT NULL)`),
 	index("antifraud_signals_received_idx").using("btree", table.received_at.desc().nullsFirst().op("timestamptz_ops")),
 	index("antifraud_signals_target_idx").using("btree", table.target_user_id.asc().nullsLast().op("text_ops")),
 	foreignKey({

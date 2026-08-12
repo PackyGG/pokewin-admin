@@ -51,6 +51,7 @@ import {
 } from "./profile-store.js";
 import { RiskyLocationStore } from "./risky-locations.js";
 import { baseSignupSignals, clampRiskScore, severity } from "./scoring.js";
+import { signupCampaignContext } from "./signup-campaign.js";
 import { activityScoreFor, type ScoreWeights } from "./score-catalog.js";
 import { isNonActionableRewardEnrollmentEvent } from "./event-catalog.js";
 import type { ScoreWeightStore } from "./score-weight-store.js";
@@ -1198,7 +1199,7 @@ export class MonitorEngine {
     await this.fiatEmailDomains.captureSignup(signup);
     const identifierBlocklistSignals =
       await captureIdentifierBlocklistMatches(this.db, signup);
-    const [context, weights] = await Promise.all([
+    const [sourceContext, weights] = await Promise.all([
       signupContext(this.db.source, signup),
       this.scoreWeights.get(),
     ]);
@@ -1216,6 +1217,12 @@ export class MonitorEngine {
       this.saveProviderCheck(signup.id, abstractEmail, signup.created_at),
       this.saveProviderCheck(signup.id, maxmind, signup.created_at),
     ]);
+    const campaignContext = await signupCampaignContext(
+      this.db.antifraud,
+      signup,
+      [fingerprint, proxycheck, abstractIp],
+    );
+    const context = { ...sourceContext, ...campaignContext };
     const failedProviders = [
       fingerprint,
       proxycheck,

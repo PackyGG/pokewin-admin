@@ -20,6 +20,7 @@ export type Signup = {
   fingerprint_ip: string | null;
   user_agent: string | null;
   auth_provider?: string | null;
+  auth_account_id?: string | null;
   auth_providers?: Array<{ provider: string; linkedAt: string | null }>;
   is_creator?: boolean;
 };
@@ -44,6 +45,26 @@ export function signupAuthProvider(
   return (SIGNUP_AUTH_PROVIDERS as readonly string[]).includes(normalized)
     ? normalized as SignupAuthProvider
     : "other";
+}
+
+const DISCORD_EPOCH_MS = 1_420_070_400_000n;
+
+/** Derive Discord account creation time locally from its public snowflake ID. */
+export function discordAccountCreatedAt(
+  accountId: string | null | undefined,
+): Date | null {
+  const value = accountId?.trim();
+  if (!value || !/^\d{16,22}$/.test(value)) return null;
+  try {
+    const timestamp = (BigInt(value) >> 22n) + DISCORD_EPOCH_MS;
+    const milliseconds = Number(timestamp);
+    const date = new Date(milliseconds);
+    return Number.isSafeInteger(milliseconds) && Number.isFinite(date.getTime())
+      ? date
+      : null;
+  } catch {
+    return null;
+  }
 }
 
 export function isOauthSignupProvider(

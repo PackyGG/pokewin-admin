@@ -51,7 +51,16 @@ const normalContext: SignupContext = {
   sameAffiliate30m: 0,
   sameAffiliateIp30m: 0,
   sameCountry15m: 1,
+  sameCountry2m: 1,
+  sameCountryNetwork2m: 1,
+  generatedSameCountry2m: 0,
 };
+
+function discordSnowflake(createdAt: Date): string {
+  return (
+    (BigInt(createdAt.getTime()) - 1_420_070_400_000n) << 22n
+  ).toString();
+}
 
 test("a second account on one device is reviewed without critical containment", () => {
   const signals = baseSignupSignals(signup, {
@@ -66,6 +75,79 @@ test("normal signup has no baseline risk", () => {
   const signals = baseSignupSignals(signup, normalContext);
   assert.equal(signals.length, 0);
   assert.equal(severity(0), "low");
+});
+
+test("Discord snowflake age adds bounded identity evidence", () => {
+  const signupAt = new Date("2026-08-12T12:00:00.000Z");
+  const cases = [
+    { days: 2, points: 40 },
+    { days: 14, points: 25 },
+    { days: 60, points: 10 },
+  ];
+  for (const candidate of cases) {
+    const createdAt = new Date(
+      signupAt.getTime() - candidate.days * 86_400_000,
+    );
+    const signal = baseSignupSignals(
+      {
+        ...signup,
+        created_at: signupAt,
+        auth_provider: "discord",
+        auth_account_id: discordSnowflake(createdAt),
+      },
+      normalContext,
+    ).find((entry) => entry.key === "discord_account_age");
+    assert.equal(signal?.points, candidate.points);
+    assert.equal(signal?.payload?.ageDays, candidate.days);
+  }
+});
+
+test("established or malformed Discord identities add no age score", () => {
+  const signupAt = new Date("2026-08-12T12:00:00.000Z");
+  for (const accountId of [
+    discordSnowflake(new Date(signupAt.getTime() - 180 * 86_400_000)),
+    "not-a-snowflake",
+  ]) {
+    const signals = baseSignupSignals(
+      {
+        ...signup,
+        created_at: signupAt,
+        auth_provider: "discord",
+        auth_account_id: accountId,
+      },
+      normalContext,
+    );
+    assert.equal(signals.some((entry) => entry.key === "discord_account_age"), false);
+  }
+});
+
+test("campaign correlation is one bounded non-containment signal", () => {
+  const signals = baseSignupSignals(
+    { ...signup, username: "botuser123456" },
+    {
+      ...normalContext,
+      sameCountry2m: 3,
+      sameCountryNetwork2m: 3,
+      generatedSameCountry2m: 2,
+    },
+  );
+  const campaign = signals.filter(
+    (entry) => entry.key === "signup_campaign_burst",
+  );
+  assert.equal(campaign.length, 1);
+  assert.equal(campaign[0]?.points, 35);
+  assert.equal(campaign[0]?.payload?.containmentRequired, undefined);
+});
+
+test("three ordinary same-country signups do not imply a campaign", () => {
+  const signals = baseSignupSignals(signup, {
+    ...normalContext,
+    sameCountry2m: 3,
+  });
+  assert.equal(
+    signals.some((entry) => entry.key === "signup_campaign_burst"),
+    false,
+  );
 });
 
 test("the third exact IP or fingerprint account in 30 days is a hard policy", () => {

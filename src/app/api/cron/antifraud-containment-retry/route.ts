@@ -18,9 +18,11 @@ import { reconcileConfirmedCatchallPromotions } from "@/lib/antifraud/catchall-d
  * never touches this route. This cron exists for the crash-recovery case:
  * the process died between commit and the post-commit call (row stuck
  * `pending`), or the call threw a transient error (row marked `failed`).
- * Both are durable on the row and safe to retry — the apply functions are
- * idempotent (COALESCE on `*_at`/`*_reason`, and the KYC leg checks
- * `kycRequired` before re-requiring).
+ * Both are durable on the row and safe to retry without a finite attempt
+ * ceiling. A two-minute claim lease prevents overlapping cron runs from
+ * applying one row concurrently and expires automatically after a crash.
+ * Apply functions are idempotent (COALESCE on `*_at`/`*_reason`, and the KYC
+ * leg checks `kycRequired` before re-requiring).
  *
  * Auth mirrors `/api/cron/warm`: Vercel sends `Authorization: Bearer
  * $CRON_SECRET` on the scheduled invocation; fail closed in production when

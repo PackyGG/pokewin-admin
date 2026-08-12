@@ -99,6 +99,7 @@ export async function fetchNewSignups(
         fp.ip::text AS fingerprint_ip,
         ae.user_agent,
         auth.auth_provider,
+        auth.auth_account_id,
         COALESCE(auth.auth_providers, '[]'::jsonb) AS auth_providers,
         (
           COALESCE(u.role::text, '') = 'creator'
@@ -123,6 +124,8 @@ export async function fetchNewSignups(
         SELECT
           (array_agg(a."providerId" ORDER BY a.created_at NULLS LAST, a.id))[1]
             AS auth_provider,
+          (array_agg(a."accountId" ORDER BY a.created_at NULLS LAST, a.id))[1]
+            AS auth_account_id,
           jsonb_agg(
             jsonb_build_object(
               'provider', a."providerId",
@@ -222,6 +225,9 @@ export async function signupContext(
   sameAffiliate30m: number;
   sameAffiliateIp30m: number;
   sameCountry15m: number;
+  sameCountry2m: number;
+  sameCountryNetwork2m: number;
+  generatedSameCountry2m: number;
 }> {
   const [ip, ipv6, device, clusters] = await Promise.all([
     signup.signup_ip
@@ -350,6 +356,9 @@ export async function signupContext(
       clusters.rows[0]?.same_affiliate_ip_30m ?? 0,
     ),
     sameCountry15m: Number(clusters.rows[0]?.same_country_15m ?? 0),
+    sameCountry2m: 0,
+    sameCountryNetwork2m: 0,
+    generatedSameCountry2m: 0,
   };
 }
 

@@ -79,8 +79,7 @@ export function isContainmentOutboxKind(
   return (CONTAINMENT_OUTBOX_KINDS as readonly string[]).includes(kind);
 }
 
-/** Cap on retry attempts before a `failed` row is left for manual investigation. */
-export const CONTAINMENT_OUTBOX_MAX_ATTEMPTS = 20;
+const CONTAINMENT_CLAIM_LEASE_MINUTES = 2;
 
 export type DeferredContainmentSignal = {
   kind: ContainmentOutboxKind;
@@ -131,7 +130,9 @@ export async function markContainmentPending(
 ): Promise<void> {
   await tx.execute(sql`
     UPDATE antifraud_signals
-    SET containment_outbox_status = 'pending'
+    SET containment_outbox_status = 'pending',
+        containment_outbox_next_attempt_at = now(),
+        containment_outbox_claimed_until = NULL
     WHERE id = ${signalRowId}::uuid
   `);
 }
@@ -154,14 +155,28 @@ export async function runDeferredContainment(
   signal: DeferredContainmentSignal & { signalRowId: string },
   options: { attemptAlreadyCounted?: boolean } = {},
 ): Promise<ContainmentOutboxResult> {
-  if (options.attemptAlreadyCounted !== true) {
-    await adminDrizzle.execute(sql`
-      UPDATE antifraud_signals
-      SET containment_outbox_attempts = containment_outbox_attempts + 1
-      WHERE id = ${signal.signalRowId}::uuid
-    `);
-  }
   try {
+    if (options.attemptAlreadyCounted !== true) {
+      const claimed = await adminDrizzle.execute<{ id: string }>(sql`
+        UPDATE antifraud_signals
+        SET
+          containment_outbox_attempts = LEAST(
+            containment_outbox_attempts + 1,
+            2147483647
+          ),
+          containment_outbox_claimed_until =
+            now() + make_interval(mins => ${CONTAINMENT_CLAIM_LEASE_MINUTES})
+        WHERE id = ${signal.signalRowId}::uuid
+          AND (
+            containment_outbox_claimed_until IS NULL
+            OR containment_outbox_claimed_until <= now()
+          )
+        RETURNING id::text
+      `);
+      // A retry worker already owns the durable lease. It will record the
+      // outcome; the inline path must not race the same external actions.
+      if (claimed.rows.length === 0) return "failed";
+    }
     const outcome = await applyContainmentForKind(signal);
     await recordContainmentOutcome(
       signal.signalRowId,
@@ -252,6 +267,19 @@ async function recordContainmentOutcome(
     SET
       containment_outbox_status = ${status},
       containment_outbox_error = ${error ? error.slice(0, 2000) : null},
+      containment_outbox_claimed_until = NULL,
+      containment_outbox_next_attempt_at = CASE
+        WHEN ${status} = 'failed' THEN now() + make_interval(
+          secs => LEAST(
+            300,
+            5 * power(
+              2,
+              LEAST(GREATEST(containment_outbox_attempts - 1, 0), 6)
+            )::integer
+          )
+        )
+        ELSE containment_outbox_next_attempt_at
+      END,
       containment_applied_at = CASE WHEN ${status} = 'applied' THEN now() ELSE containment_applied_at END
     WHERE id = ${signalRowId}::uuid
   `);
@@ -268,8 +296,8 @@ export type PendingContainmentRow = {
 
 /**
  * Claim a batch of rows still owed a containment attempt: freshly `pending`
- * (the process crashed between commit and the post-commit call) or `failed`
- * under the attempt cap. One atomic `UPDATE ... FROM (SELECT ... FOR UPDATE
+ * (the process crashed between commit and the post-commit call) or `failed`.
+ * One atomic `UPDATE ... FROM (SELECT ... FOR UPDATE
  * SKIP LOCKED)` claims the rows by bumping their attempt count, so
  * overlapping cron runs cannot double-claim the same row — no surrounding
  * transaction required, and the apply functions themselves are also
@@ -291,7 +319,11 @@ export async function claimPendingContainmentRows(
       SELECT id
       FROM antifraud_signals
       WHERE containment_outbox_status IN ('pending', 'failed')
-        AND containment_outbox_attempts < ${CONTAINMENT_OUTBOX_MAX_ATTEMPTS}
+        AND containment_outbox_next_attempt_at <= now()
+        AND (
+          containment_outbox_claimed_until IS NULL
+          OR containment_outbox_claimed_until <= now()
+        )
         AND kind IN (
           'fiat_eligibility_containment',
           'fiat_deposit_identity_containment',
@@ -303,12 +335,26 @@ export async function claimPendingContainmentRows(
           'critical_risk_signup',
           'whop_history_auto_ban'
         )
-      ORDER BY received_at
+      ORDER BY
+        CASE kind
+          WHEN 'critical_risk_signup' THEN 0
+          WHEN 'behavioral_withdrawal_containment' THEN 1
+          WHEN 'abstract_email_catchall' THEN 2
+          ELSE 3
+        END,
+        containment_outbox_next_attempt_at,
+        received_at
       LIMIT ${limit}
       FOR UPDATE SKIP LOCKED
     )
     UPDATE antifraud_signals AS row
-    SET containment_outbox_attempts = row.containment_outbox_attempts + 1
+    SET
+      containment_outbox_attempts = LEAST(
+        row.containment_outbox_attempts + 1,
+        2147483647
+      ),
+      containment_outbox_claimed_until =
+        now() + make_interval(mins => ${CONTAINMENT_CLAIM_LEASE_MINUTES})
     FROM candidates
     WHERE row.id = candidates.id
     RETURNING

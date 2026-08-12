@@ -122,7 +122,13 @@ test("crash between commit and the external call is recovered by the cron sweep,
     outbox,
     /WHERE containment_outbox_status IN \('pending', 'failed'\)/,
   );
-  assert.match(outbox, /containment_outbox_attempts < \$\{CONTAINMENT_OUTBOX_MAX_ATTEMPTS\}/);
+  assert.doesNotMatch(outbox, /CONTAINMENT_OUTBOX_MAX_ATTEMPTS/);
+  assert.match(outbox, /containment_outbox_next_attempt_at <= now\(\)/);
+  assert.match(outbox, /containment_outbox_claimed_until <= now\(\)/);
+  assert.match(
+    outbox,
+    /make_interval\(mins => \$\{CONTAINMENT_CLAIM_LEASE_MINUTES\}\)/,
+  );
   assert.match(outbox, /FOR UPDATE SKIP LOCKED/);
   for (const kind of ALL_KINDS) {
     assert.ok(
@@ -177,6 +183,12 @@ test("vercel.json registers the containment retry cron alongside the existing wa
   const paths = vercelConfig.crons.map((c) => c.path);
   assert.ok(paths.includes("/api/cron/warm"));
   assert.ok(paths.includes("/api/cron/antifraud-containment-retry"));
+  assert.equal(
+    vercelConfig.crons.find(
+      (cron) => cron.path === "/api/cron/antifraud-containment-retry",
+    )?.schedule,
+    "* * * * *",
+  );
 });
 
 test("containment migration adds the outbox columns antifraud_signals needs", () => {
@@ -190,4 +202,15 @@ test("containment migration adds the outbox columns antifraud_signals needs", ()
     /ADD COLUMN IF NOT EXISTS containment_outbox_attempts integer NOT NULL DEFAULT 0/,
   );
   assert.match(migration, /ADD COLUMN IF NOT EXISTS containment_applied_at timestamptz/);
+  const leaseMigration = source(
+    "drizzle/admin/migrations/20260812_containment_retry_leases.sql",
+  );
+  assert.match(
+    leaseMigration,
+    /containment_outbox_next_attempt_at timestamptz/,
+  );
+  assert.match(
+    leaseMigration,
+    /containment_outbox_claimed_until timestamptz/,
+  );
 });

@@ -3,7 +3,7 @@ import {
   isDisposableEmail,
 } from "@visulima/disposable-email-domains";
 
-import type { Signal, Signup } from "./types.js";
+import { discordAccountCreatedAt, signupAuthProvider, type Signal, type Signup } from "./types.js";
 import {
   defaultScoreWeights,
   scorePoints,
@@ -22,6 +22,9 @@ export type SignupContext = {
   sameAffiliate30m: number;
   sameAffiliateIp30m: number;
   sameCountry15m: number;
+  sameCountry2m: number;
+  sameCountryNetwork2m: number;
+  generatedSameCountry2m: number;
 };
 
 export function clampRiskScore(value: number): number {
@@ -29,7 +32,7 @@ export function clampRiskScore(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
-function generatedLooking(value: string | null): boolean {
+export function generatedLookingUsername(value: string | null): boolean {
   if (!value) return false;
   const text = value.toLowerCase().replace(/[^a-z0-9]/g, "");
   if (text.length < 8) return false;
@@ -137,12 +140,36 @@ export function baseSignupSignals(
     detail: "Packy already marked this account as a suspected alternate account.",
     points: SCORE_POINTS.existingAltFlag,
   });
-  add(generatedLooking(signup.username), {
+  const generatedUsername = generatedLookingUsername(signup.username);
+  add(generatedUsername, {
     key: "generated_username",
     title: "Generated-looking username",
     detail: "The signup username resembles machine-generated account data.",
     points: SCORE_POINTS.generatedUsername,
   });
+  if (signupAuthProvider(signup.auth_provider) === "discord") {
+    const createdAt = discordAccountCreatedAt(signup.auth_account_id);
+    const ageMs = createdAt
+      ? signup.created_at.getTime() - createdAt.getTime()
+      : Number.NaN;
+    const ageDays = ageMs / 86_400_000;
+    const validAge = Number.isFinite(ageDays) && ageDays >= 0;
+    add(validAge && ageDays < 90, {
+      key: "discord_account_age",
+      title: "New Discord identity",
+      detail: `The linked Discord account was created ${Math.max(0, Math.floor(ageDays))} days before signup.`,
+      points:
+        ageDays < 7
+          ? SCORE_POINTS.discordAccountAge.under7d
+          : ageDays < 30
+            ? SCORE_POINTS.discordAccountAge.under30d
+            : SCORE_POINTS.discordAccountAge.under90d,
+      payload: {
+        ageDays: Math.max(0, Math.floor(ageDays)),
+        createdAt: createdAt?.toISOString(),
+      },
+    });
+  }
   const disposableDomain = disposableEmailDomain(signup.email);
   add(disposableDomain !== null, {
     key: "disposable_email",
@@ -191,6 +218,32 @@ export function baseSignupSignals(
     payload: {
       count: context.sameCountry15m,
       countryCode: signup.country_code,
+    },
+  });
+  const networkCampaign = context.sameCountryNetwork2m >= 3;
+  const generatedCampaign =
+    generatedUsername
+    && context.sameCountry2m >= 3
+    && context.generatedSameCountry2m >= 2;
+  add(networkCampaign || generatedCampaign, {
+    key: "signup_campaign_burst",
+    title: "Correlated signup campaign",
+    detail: networkCampaign
+      ? `${context.sameCountryNetwork2m} accounts from the same country and provider network registered within 2 minutes.`
+      : `${context.generatedSameCountry2m} generated-looking accounts from the same country registered within 2 minutes.`,
+    // Deliberately one bounded signal: network and username corroboration do
+    // not stack, and campaign evidence alone can never reach containment.
+    points: generatedCampaign
+      ? SCORE_POINTS.signupCampaign.generatedCorroborated
+      : SCORE_POINTS.signupCampaign.networkBurst,
+    payload: {
+      windowMinutes: 2,
+      countryCode: signup.country_code,
+      sameCountryCount: context.sameCountry2m,
+      sameNetworkCount: context.sameCountryNetwork2m,
+      generatedCount: context.generatedSameCountry2m,
+      networkMatched: networkCampaign,
+      generatedMatched: generatedCampaign,
     },
   });
 

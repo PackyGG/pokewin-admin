@@ -10,6 +10,11 @@ export const DEFAULT_SCORE_WEIGHTS = {
   ipv6_subnet_velocity: 40,
   existing_alt_flag: 45,
   generated_username: 25,
+  discord_account_under_7d: 40,
+  discord_account_under_30d: 25,
+  discord_account_under_90d: 10,
+  signup_campaign_network_burst: 25,
+  signup_campaign_generated_burst: 35,
   disposable_email: 60,
   affiliate_ip_chain_three_plus: 50,
   affiliate_ip_chain_ten_plus: 100,
@@ -126,6 +131,15 @@ export function scorePoints(weights: ScoreWeights = defaultScoreWeights()) {
     ipv6SubnetVelocity: weights.ipv6_subnet_velocity,
     existingAltFlag: weights.existing_alt_flag,
     generatedUsername: weights.generated_username,
+    discordAccountAge: {
+      under7d: weights.discord_account_under_7d,
+      under30d: weights.discord_account_under_30d,
+      under90d: weights.discord_account_under_90d,
+    },
+    signupCampaign: {
+      networkBurst: weights.signup_campaign_network_burst,
+      generatedCorroborated: weights.signup_campaign_generated_burst,
+    },
     disposableEmail: weights.disposable_email,
     affiliateIpChain: {
       threePlus: weights.affiliate_ip_chain_three_plus,
@@ -331,6 +345,25 @@ export function signupScoreDefinitions(
       title: "Generated-looking username",
       description: "The username resembles machine-generated account data.",
       options: [option(weights, "generated_username", "Matched")],
+    },
+    {
+      key: "discord_account_age",
+      title: "Discord account age",
+      description: "Age derived locally from the linked Discord snowflake; established accounts receive no score.",
+      options: [
+        option(weights, "discord_account_under_7d", "Under 7 days"),
+        option(weights, "discord_account_under_30d", "7–29 days"),
+        option(weights, "discord_account_under_90d", "30–89 days"),
+      ],
+    },
+    {
+      key: "signup_campaign_burst",
+      title: "Correlated signup campaign",
+      description: "Three same-country signups within two minutes, corroborated by provider ASN or generated usernames. The two variants never stack.",
+      options: [
+        option(weights, "signup_campaign_network_burst", "Same provider network"),
+        option(weights, "signup_campaign_generated_burst", "Generated usernames"),
+      ],
     },
     {
       key: "disposable_email",

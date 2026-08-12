@@ -9,6 +9,8 @@ import {
   type ProfileAssessment,
 } from "./profile-risk.js";
 import type { Signup } from "./types.js";
+import { discordAccountCreatedAt } from "./types.js";
+import { generatedLookingUsername } from "./scoring.js";
 
 type Queryable = {
   query(sql: string, values?: unknown[]): Promise<unknown>;
@@ -26,10 +28,10 @@ export async function persistSignupIdentitySnapshot(
         auth_provider_timeline, signup_ip, ipv6_subnet_64, ipv6_subnet_56,
         ipv6_subnet_48, fingerprint_request_id, fingerprint_visitor_id,
         fingerprint_confidence, affiliate_code, referred_by, country_code,
-        is_creator
+        is_creator, discord_account_created_at, generated_username
       ) VALUES (
         $1,$2,$3,$4::jsonb,$5::inet,$6::cidr,$7::cidr,$8::cidr,$9,$10,$11,
-        $12,$13,$14,$15
+        $12,$13,$14,$15,$16,$17
       )
       ON CONFLICT (user_id) DO NOTHING
     `,
@@ -49,6 +51,10 @@ export async function persistSignupIdentitySnapshot(
       signup.referred_by,
       signup.country_code,
       signup.is_creator ?? false,
+      signup.auth_provider?.trim().toLowerCase() === "discord"
+        ? discordAccountCreatedAt(signup.auth_account_id)
+        : null,
+      generatedLookingUsername(signup.username),
     ],
   );
 }
