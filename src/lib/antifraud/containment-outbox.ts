@@ -285,7 +285,17 @@ async function recordContainmentOutcome(
         )
         ELSE containment_outbox_next_attempt_at
       END,
-      containment_applied_at = CASE WHEN ${status} = 'applied' THEN now() ELSE containment_applied_at END,
+      -- Write-once. This column is the DISPLAYED action time ("Automatically
+      -- contained at" on the review, "Banned <time>" on Auto Bans). The
+      -- five-minute verification watchdog re-runs this same success path, so
+      -- stamping now() unconditionally advanced the timestamp on every sweep
+      -- and the UI showed the last verification instead of the moment
+      -- containment actually happened. containment_last_verified_at below
+      -- already carries the per-verification time, so nothing is lost.
+      containment_applied_at = CASE
+        WHEN ${status} = 'applied' THEN COALESCE(containment_applied_at, now())
+        ELSE containment_applied_at
+      END,
       containment_last_verified_at = CASE
         WHEN ${status} = 'applied' THEN now()
         ELSE containment_last_verified_at
@@ -321,6 +331,26 @@ export async function claimCriticalContainmentVerificationRows(
         AND (
           signal.containment_last_verified_at IS NULL
           OR signal.containment_last_verified_at <= now() - interval '5 minutes'
+        )
+        -- A deliberate staff release is TERMINAL for this watchdog. Excluding
+        -- only closed reviews was not enough: staff routinely lift a lock while
+        -- the case is still open/in_review, and this sweep then silently
+        -- re-applied it within five minutes, with no audit row explaining why
+        -- the account re-locked. The watchdog exists to repair SILENT drift, so
+        -- it must stand down once an explicit, audited unlock exists for this
+        -- account after containment was applied. Re-locking still requires a
+        -- fresh signal, exactly as before.
+        AND NOT EXISTS (
+          SELECT 1
+          FROM admin_audit_events AS unlocked
+          WHERE unlocked.target_user_id = signal.target_user_id
+            AND unlocked.event_type IN (
+              'antifraud_withdrawals_unlocked',
+              'antifraud_critical_signup_restrictions_unlocked',
+              'locked_withdrawals_crypto_enabled',
+              'locked_withdrawals_items_enabled'
+            )
+            AND unlocked.created_at > signal.containment_applied_at
         )
         AND (
           signal.containment_outbox_claimed_until IS NULL

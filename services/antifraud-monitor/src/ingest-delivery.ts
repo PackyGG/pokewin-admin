@@ -59,6 +59,11 @@ type IngestResponse = {
   accepted?: unknown;
   duplicates?: unknown;
   stale?: unknown;
+  // The dashboard answers HTTP 200 with locksSkipped > 0 when containment
+  // validation rejected the command or runDeferredContainment did not return
+  // "locked" (including "failed"). Delivery succeeded; the LOCK did not. This
+  // must be read, or a lock that never happened gets a lock receipt.
+  locksSkipped?: unknown;
 };
 
 // Containment signals that are gated purely on `dashboard_delivered_at`.
@@ -92,15 +97,31 @@ function objectPayload(value: unknown): Record<string, unknown> {
   // but correctly refused to lock the account. Preserve only the reviewed
   // admission fields; bulky provider/network evidence remains available in
   // the Antifraud database and webapp.
+  // EVERY key any dashboard containment validator reads must appear here. A
+  // missing key does not degrade gracefully: the validator returns null, the
+  // dashboard records the alert and skips containment permanently, and no
+  // outbox row is written so nothing ever retries. `riskBand`, `reasonCode`
+  // (SINGULAR — distinct from the plural `reasonCodes` below) and `actions`
+  // were absent, which silently disabled critical-signup containment for
+  // exactly the 70-100 score accounts whose evidence is large enough to
+  // truncate. Guarded by the CONTAINMENT_PAYLOAD_KEYS fixture.
   const preservedKeys = [
     "containmentRequired",
     "containmentAction",
     "reviewOnly",
     "environment",
     "intentId",
+    "reasonCode",
     "reasonCodes",
     "reviewCodes",
     "watchCodes",
+    "riskBand",
+    "actions",
+    "matchSource",
+    "matchCount",
+    "qualifyingBattleCount",
+    "distinctFlaggedCreators",
+    "emailRiskType",
     "refundedAmountClusterActiveUntil",
     "provider",
     "paymentId",
@@ -323,7 +344,28 @@ export class IngestDelivery {
             )
           WHERE re.event_type = 'fiat_blacklisted_email_domain'
             AND re.occurred_at >= now() - $2::interval
-            AND match.lock_delivered_at IS NULL
+            -- An event with NO match row can never be ACKed here:
+            -- confirmContainmentEvents joins through the same match row, so it
+            -- updates zero rows, the lock_delivered_at IS NULL test stays
+            -- true, and this branch re-selects the same event forever. Because
+            -- containment branch returns before the ordinary stream is reached
+            -- and CONTAINMENT_BATCH_SIZE is 1, one unmatched row starved
+            -- Account Review delivery completely and spun at the poll rate.
+            -- Requiring the match row keeps the fast path to events it can
+            -- actually confirm; unmatched ones still deliver (and DO get a
+            -- receipt) through the general query below, which filters only on
+            -- dashboard_delivered_at and the same one-hour window.
+            AND match.source_event_id IS NOT NULL
+            -- Gate on the DELIVERY receipt, not the LOCK receipt. These are two
+            -- different facts: dashboard_delivered_at means the dashboard
+            -- received this event, lock_delivered_at means the withdrawal
+            -- lock is provably present on MAIN. Gating delivery on the lock
+            -- receipt forced the delivery path to stamp lock_delivered_at just
+            -- to stop re-selecting the row — which marked locks the dashboard
+            -- had actually SKIPPED as delivered and removed them from
+            -- confirmLocks()'s pending set, permanently disabling the only
+            -- check that verifies the lock against MAIN.
+            AND re.dashboard_delivered_at IS NULL
             AND re.payload ->> 'reviewOnly' IS DISTINCT FROM 'true'
           ORDER BY re.recorded_at, re.id
           LIMIT $1
@@ -346,9 +388,13 @@ export class IngestDelivery {
         .sort(byContainmentDeliveryOrder)
         .slice(0, CONTAINMENT_BATCH_SIZE);
       if (containmentRows.length > 0) {
-        await this.deliverEvents(containmentRows);
+        const containmentDelivery = await this.deliverEvents(containmentRows);
         await this.confirmDashboardEvents(client, containmentRows);
-        await this.confirmContainmentEvents(client, containmentRows);
+        await this.confirmContainmentEvents(
+          client,
+          containmentRows,
+          containmentDelivery.locksSkipped,
+        );
         await client.query("COMMIT");
         transactionOpen = false;
         return containmentRows.length;
@@ -411,7 +457,9 @@ export class IngestDelivery {
     }
   }
 
-  private async deliverEvents(events: RiskEventRow[]): Promise<void> {
+  private async deliverEvents(
+    events: RiskEventRow[],
+  ): Promise<{ locksSkipped: number }> {
     const target = signedIngestTarget(this.config);
     if (!target) {
       throw new Error("Dashboard ingest is not configured");
@@ -472,11 +520,25 @@ export class IngestDelivery {
         `Dashboard ingest confirmed ${confirmed}/${events.length} events`,
       );
     }
+    const locksSkipped = Number(result.locksSkipped ?? 0);
+    if (Number.isFinite(locksSkipped) && locksSkipped > 0) {
+      // Not an error: the batch WAS delivered and is correctly acknowledged.
+      // But the lock did not happen, so it must stay visible to confirmLocks()
+      // instead of being silently written off.
+      this.log.warn(
+        { locksSkipped, batchSize: events.length },
+        "dashboard accepted delivery but skipped containment locks",
+      );
+    }
+    return {
+      locksSkipped: Number.isFinite(locksSkipped) ? locksSkipped : 0,
+    };
   }
 
   private async confirmContainmentEvents(
     client: pg.PoolClient,
     events: RiskEventRow[],
+    locksSkipped = 0,
   ): Promise<void> {
     const eventIds = events
       .filter(
@@ -486,6 +548,23 @@ export class IngestDelivery {
       )
       .map((event) => event.id);
     if (eventIds.length === 0) return;
+    // Stamping the lock receipt on a CLEAN success is deliberate: confirmLocks()
+    // verifies against the MAIN *mirror*, which lags, so waiting for it would
+    // leave freshly-locked accounts pending and re-alerting.
+    //
+    // But the dashboard also answers HTTP 200 with locksSkipped > 0 when the
+    // lock did NOT happen. Stamping then recorded a lock that never existed and
+    // removed the row from confirmLocks()'s pending set — the only code that
+    // checks user_feature_locks on MAIN — so nothing ever retried or verified
+    // it. When a skip is reported we leave lock_delivered_at NULL and let
+    // confirmLocks() prove the state against MAIN with its own backoff.
+    if (locksSkipped > 0) {
+      this.log.warn(
+        { eventIds: eventIds.length },
+        "containment lock receipt withheld; leaving rows for MAIN verification",
+      );
+      return;
+    }
     await client.query(
       `
         WITH confirmed_matches AS (
